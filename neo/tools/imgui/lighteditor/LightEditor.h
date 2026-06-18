@@ -40,6 +40,8 @@ If you have questions concerning this license or the applicable additional terms
 #include "../imgui/BFGimgui.h"
 #include "../imgui/ImGuizmo.h"
 
+#include "../../renderer/MathLight.h"
+
 namespace ImGuiTools
 {
 
@@ -76,6 +78,8 @@ public:
 	bool		skipSpecular;
 	bool		hasCenter;
 	int			lightStyle;		// RBDOOM specific, saved to map as "style"
+
+	mathLightData_t     mathLight;
 
 	LightInfo();
 

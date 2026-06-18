@@ -38,6 +38,8 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/Material.h"
 #include "renderer/Image.h"
 
+#include "../../renderer/MathLight.h"
+
 namespace ImGuiTools
 {
 
@@ -65,6 +67,14 @@ void LightInfo::Defaults()
 	hasLightOrigin = false;
 	angles.Zero();
 	scale.Set( 1, 1, 1 );
+
+	memset(&mathLight, 0, sizeof(mathLight));
+	mathLight.falloff = MLF_INVSQUARE_CLAMPED;  // PBR-safe default
+	mathLight.falloffExp = 2.0f;
+	mathLight.shapeExp = 2.0f;
+	mathLight.penumbra = 0.15f;
+	mathLight.patternScale = 1.0f;
+	mathLight.energyClamp = true;
 }
 
 
@@ -195,6 +205,12 @@ void LightInfo::FromDict( const idDict* e )
 
 	// RB: Quake 1 light styles
 	lightStyle = e->GetInt( "style", -1 );
+
+	// MATH LIGHT — seed type from the editor's lightType so the helper
+	// can fall back to it when "math_type" is absent in the dict
+	mathLight.type = (lightType == LIGHT_SPOT) ? ML_SPOT :
+		(lightType == LIGHT_SUN) ? ML_SUN : ML_POINT;
+	ML_ParseFromDict(e, &mathLight);
 
 	// get the rotation matrix in either full form, or single angle form
 	idMat3 axis;
@@ -350,6 +366,8 @@ void LightInfo::ToDict( idDict* e )
 			e->Set( "angles", DELETE_VAL );
 		}
 	}
+	// MATH LIGHT — write all math_* keys, or delete them all if disabled
+	ML_WriteToDict(e, mathLight, /*deleteWhenDisabled=*/ true);
 }
 
 LightInfo::LightInfo()
@@ -1006,6 +1024,111 @@ void LightEditor::Draw()
 
 			// -1 because 0 is "<No Lightstyle>"
 			cur.lightStyle = ( currentStyleIndex > 0 ) ? currentStyleIndex - 1 : -1;
+		}
+
+		ImGui::SeparatorText("Math Falloff");
+
+		changes |= ImGui::Checkbox("Enable math-driven falloff", &cur.mathLight.enabled);
+
+		if (cur.mathLight.enabled)
+		{
+			ImGui::Indent();
+
+			static const char* typeOptions[] = { "Point", "Spot", "Sun" };
+			int typeIdx = cur.mathLight.type;
+			if (ImGui::Combo("Math Type", &typeIdx, typeOptions, IM_ARRAYSIZE(typeOptions)))
+			{
+				cur.mathLight.type = typeIdx;
+				changes = true;
+			}
+
+			if (ImGui::Button("Seed from legacy light"))
+			{
+				// map LightInfo::lightType (ELightType: POINT/SPOT/SUN) ? mathType
+				cur.mathLight.type = (int)cur.lightType;
+				cur.mathLight.falloff = MLF_INVSQUARE_CLAMPED;
+				cur.mathLight.falloffExp = 2.0f;
+				cur.mathLight.innerRadius = 0.0f;
+				cur.mathLight.shapeExp = (cur.lightType == LIGHT_SPOT) ? 2.5f : 2.0f;
+				cur.mathLight.penumbra = 0.20f;
+				cur.mathLight.pattern = MLP_NONE;
+				cur.mathLight.patternStrength = 0.0f;
+				cur.mathLight.energyClamp = true;
+				changes = true;
+			}
+
+			static const char* falloffOptions[] = {
+				"Inverse Square (unbounded)",
+				"Linear",
+				"Smooth",
+				"Exponential",
+				"Inverse Square (clamped) - PBR safe"
+			};
+			int falloffIdx = cur.mathLight.falloff;
+			if (ImGui::Combo("Falloff Curve", &falloffIdx, falloffOptions, IM_ARRAYSIZE(falloffOptions)))
+			{
+				cur.mathLight.falloff = falloffIdx;
+				changes = true;
+			}
+
+			const bool falloffExpUsed = (cur.mathLight.falloff != MLF_LINEAR &&
+				cur.mathLight.falloff != MLF_SMOOTH);
+			ImGui::BeginDisabled(!falloffExpUsed);
+			changes |= ImGui::SliderFloat("Falloff Exponent",
+				&cur.mathLight.falloffExp, 0.1f, 16.0f, "%.2f");
+			ImGui::EndDisabled();
+			if (!falloffExpUsed)
+			{
+				ImGui::SameLine();
+				ImGui::TextDisabled("(unused by this curve)");
+			}
+			changes |= ImGui::SliderFloat("Inner Radius (soft start)",
+				&cur.mathLight.innerRadius, 0.0f, 1.0f, "%.3f");
+
+
+			if (cur.mathLight.type == ML_SPOT)
+			{
+				changes |= ImGui::SliderFloat("Shape (2=ellipse, 16=rect)",
+					&cur.mathLight.shapeExp, 1.5f, 32.0f, "%.2f");
+				changes |= ImGui::SliderFloat("Penumbra",
+					&cur.mathLight.penumbra, 0.0f, 1.0f, "%.3f");
+			}
+
+			ImGui::Spacing();
+			static const char* patternOptions[] = {
+				"None",
+				"Subsurface (warm halo)",
+				"Ice (cool noise)",
+				"Caustic (sharp noise)",
+				"Banded (sine rings)",
+				"Granular (stippled)"
+			};
+			int patternIdx = cur.mathLight.pattern;
+			if (ImGui::Combo("Pattern", &patternIdx, patternOptions, IM_ARRAYSIZE(patternOptions)))
+			{
+				cur.mathLight.pattern = patternIdx;
+				changes = true;
+			}
+
+			if (cur.mathLight.pattern != MLP_NONE)
+			{
+				changes |= ImGui::SliderFloat("Pattern Strength",
+					&cur.mathLight.patternStrength, 0.0f, 1.0f, "%.3f");
+				changes |= ImGui::SliderFloat("Pattern Scale",
+					&cur.mathLight.patternScale, 0.1f, 64.0f, "%.2f");
+				changes |= ImGui::SliderFloat("Pattern Phase",
+					&cur.mathLight.patternPhase, 0.0f, 100.0f, "%.2f");
+			}
+
+			ImGui::Spacing();
+			changes |= ImGui::Checkbox("Energy clamp (PBR safe)", &cur.mathLight.energyClamp);
+			if (!cur.mathLight.energyClamp)
+			{
+				ImGui::SameLine();
+				ImGui::TextDisabled("(may blow out specular)");
+			}
+
+			ImGui::Unindent();
 		}
 
 		ImGui::SeparatorText( "Misc Options" );
