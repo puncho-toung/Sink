@@ -1214,11 +1214,10 @@ bool idMapEntity::Write( idFile* fp, int entityNum, bool valve220 ) const
 		fp->WriteFloatString( "\"%s\" \"%s\"\n", epairs.GetKeyVal( i )->GetKey().c_str(), epairs.GetKeyVal( i )->GetValue().c_str() );
 	}
 
-	// RB: the "origin" key might have been replaced by the origin brush
-	if( !epairs.GetVector( "origin", "0 0 0", origin ) )
-	{
-		origin += originOffset;
-	}
+	// the primitives are relative to the "origin" key alone: a Valve 220 originOffset is not taken out of
+	// patches or meshes on parse, so it must not be added on write; ConvertToValve220Format bakes the key
+	// into the patches when it replaces it by an origin brush
+	origin = epairs.GetVector( "origin", "0 0 0" );
 
 	// write pritimives
 	for( i = 0; i < GetNumPrimitives(); i++ )
@@ -3178,7 +3177,27 @@ bool idMapFile::ConvertToValve220Format( bool recalcPlanePoints )
 
 			origin = ent->epairs.GetVector( "origin", "0 0 0" );
 
-			if( !ent->epairs.GetMatrix( "rotation", "1 0 0 0 1 0 0 0 1", rot ) )
+			// an idDoor without "movedir" moves along "angle" and resets its axis on spawn (idDoor::Spawn),
+			// so there "angle" is a direction and no key orients the entity; only brush entities need the def
+			const char* spawnClass = "";
+			bool angleIsMoveDir = false;
+			if( ent->GetNumPrimitives() > 0 )
+			{
+				const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, classname, false ) );
+				bool isDoor;
+				if( def != NULL )
+				{
+					spawnClass = def->dict.GetString( "spawnclass" );
+					isDoor = ( idStr::Cmp( spawnClass, "idDoor" ) == 0 );
+				}
+				else
+				{
+					isDoor = ( idStr::Icmpn( classname, "func_door", 9 ) == 0 );
+				}
+				angleIsMoveDir = isDoor && !ent->epairs.FindKey( "movedir" ) && ( def == NULL || !def->dict.FindKey( "movedir" ) );
+			}
+
+			if( !angleIsMoveDir && !ent->epairs.GetMatrix( "rotation", "1 0 0 0 1 0 0 0 1", rot ) )
 			{
 				idAngles angles;
 
@@ -3341,15 +3360,50 @@ bool idMapFile::ConvertToValve220Format( bool recalcPlanePoints )
 					tbGroupID++;
 				}
 
+				if( angleIsMoveDir )
+				{
+					// keep the direction verbatim so the -1 (up) and -2 (down) codes survive; Set shares the
+					// pooled value string of "angle", so it must come before Delete( "angle" ) below
+					const char* moveDir;
+					if( ent->epairs.GetString( "angle", "", &moveDir ) )
+					{
+						ent->epairs.Set( "movedir", moveDir );
+					}
+				}
+
+				// brush entities never carry orientation keys: a rotation is baked into the primitives below
+				ent->epairs.Delete( "rotation" );
+				ent->epairs.Delete( "angles" );
+				ent->epairs.Delete( "angle" );
+
 				bool removedOrigin = false;
 				if( !transform.IsIdentity() ) //&& !isLight )
 				{
 					ent->epairs.Delete( "origin" );
-					ent->epairs.Delete( "rotation" );
-					ent->epairs.Delete( "angles" );
-					ent->epairs.Delete( "angle" );
 
 					removedOrigin = true;
+				}
+
+				// bake the rotation the engine applies at spawn: it turns the primitives about
+				// the entity origin, which a Valve 220 origin brush moves to originOffset
+				bool bakeRotation = !rot.IsIdentity();
+				idVec3 pivot = ent->originOffset;
+				idVec3 mapPivot = pivot + origin;
+
+				if( bakeRotation )
+				{
+					// these movers run their motion in the entity frame (idPendulum swings in roll on top of the axis,
+					// idRotater spins about x_axis / y_axis, scripted rotateTo / rotateOnce take absolute angles),
+					// so with the rotation baked and the axis left identity they move about world axes
+					static const char* const entityFrameMovers[] = { "idMover", "idElevator", "idMover_Periodic", "idPendulum", "idRotater", "idBobber", "idRiser", NULL };
+					for( int m = 0; entityFrameMovers[m] != NULL; m++ )
+					{
+						if( idStr::Cmp( spawnClass, entityFrameMovers[m] ) == 0 )
+						{
+							common->Warning( "ConvertToValve220Format: %s '%s' (%s) had its rotation ( %s ) baked into its primitives; its motion now runs about world axes, check it", classname.c_str(), name.c_str(), spawnClass, rot.ToAngles().ToString() );
+							break;
+						}
+					}
 				}
 
 				// convert brushes
@@ -3364,7 +3418,40 @@ bool idMapFile::ConvertToValve220Format( bool recalcPlanePoints )
 						for( int s = 0; s < brushPrim->GetNumSides(); s++ )
 						{
 							idMapBrushSide* side = brushPrim->GetSide( s );
+
+							// converts the projection in entity space and only translates; Valve 220 sides come back
+							// untouched from it, but they are rotated below like the rest
 							side->ConvertToValve220Format( transform, textureCollections );
+
+							if( bakeRotation )
+							{
+								// the plane is in entity space, the plane points and the texture are in map space
+								side->SetPlane( side->GetPlane().Rotate( pivot, rot ) );
+
+								for( int k = 0; k < 3; k++ )
+								{
+									side->planepts[k] = ( side->planepts[k] - mapPivot ) * rot + mapPivot;
+								}
+
+								// turn the texture with the face and shift it so it stays attached
+								for( int k = 0; k < 2; k++ )
+								{
+									idVec3 texAxis = side->texValve[k].ToVec3();
+									idVec3 rotatedAxis = texAxis * rot;
+
+									// drop the float noise of the turn ( 1e-8 instead of 0, and -0 ) before it is written
+									for( int c = 0; c < 3; c++ )
+									{
+										if( idMath::Fabs( rotatedAxis[c] ) < 1e-6f )
+										{
+											rotatedAxis[c] = 0.0f;
+										}
+									}
+
+									side->texValve[k][3] += ( mapPivot * texAxis - mapPivot * rotatedAxis ) / side->texScale[k];
+									side->texValve[k].ToVec3() = rotatedAxis;
+								}
+							}
 						}
 
 						// RB: this shouldn't necessary but the initial plane definitions are at the border of the max world size
@@ -3377,6 +3464,21 @@ bool idMapFile::ConvertToValve220Format( bool recalcPlanePoints )
 					else if( mapPrim->GetType() == idMapPrimitive::TYPE_PATCH )
 					{
 						idMapPatch* patch = static_cast<idMapPatch*>( mapPrim );
+
+						// idMapEntity::Write adds back only the "origin" key, so bake it like the brush plane points
+						if( removedOrigin )
+						{
+							for( int v = 0; v < patch->GetWidth() * patch->GetHeight(); v++ )
+							{
+								idVec3& xyz = ( *patch )[v].xyz;
+								if( bakeRotation )
+								{
+									xyz = ( xyz - pivot ) * rot + pivot;
+								}
+								xyz += origin;
+							}
+						}
+
 						idMapFile::AddMaterialToCollection( patch->GetMaterial(), textureCollections );
 					}
 				}
