@@ -821,6 +821,13 @@ static void WriteOutputNodes( node_t* node, idFile* procFile )
 	PruneNodes_r( node );
 	numNodes = NumberNodes_r( node, 0 );
 
+	// a world that pruned down to a single leaf still writes the one
+	// dummy node of WriteNode_r, so count it or the loaders choke on it
+	if( numNodes == 0 )
+	{
+		numNodes = 1;
+	}
+
 	// output
 	procFile->WriteFloatString( "nodes { /* numNodes = */ %i\n\n", numNodes );
 	procFile->WriteFloatString( "/* node format is: ( planeVector ) positiveChild negativeChild */\n" );
@@ -955,8 +962,12 @@ static void WriteOutputEntity( int entityNum, idFile* procFile, idFile* objFile 
 		WriteOutputSurfaces( entityNum, i, procFile, objFile );
 	}
 
-	// we will completely skip the portals and nodes if it is a single area
-	if( entityNum == 0 && e->numAreas > 1 )
+	// a single area world gets the portals (none) and nodes as well:
+	// without nodes the renderer falls back to ClearWorld(), whose dummy node
+	// makes PointInArea() return area 0 for every point, even inside solid
+	// brushes, so the light grid bake, env probe placement and everything
+	// else that asks PointInArea() for "solid" can never get -1
+	if( entityNum == 0 && e->numAreas > 0 )
 	{
 		// output the area portals
 		WriteOutputPortals( e, procFile );

@@ -295,13 +295,14 @@ void LightGrid::CalculateLightGridPointPositions( const idRenderWorld* world, in
 					idVec3			origin;
 					idVec3          baseOrigin;
 					int             step;
+					int				c;
 
 					baseOrigin = gridPoint->origin;
 #if 1
 					// RB: do what q3map1 did - try to nudge the origin around to find a valid point
 					for( step = 9; step <= 18; step += 9 )
 					{
-						for( int c = 0; c < 8; c++ )
+						for( c = 0; c < 8; c++ )
 						{
 							origin = baseOrigin;
 							if( c & 1 )
@@ -338,7 +339,10 @@ void LightGrid::CalculateLightGridPointPositions( const idRenderWorld* world, in
 							}
 						}
 
-						if( i != 8 )
+						// only try the larger step if no corner was valid; this tested the
+						// grid x index i instead, so step 18 ran only for i == 8 and then
+						// overwrote a valid step 9 origin
+						if( c != 8 )
 						{
 							break;
 						}
@@ -373,7 +377,7 @@ void LightGrid::CalculateLightGridPointPositions( const idRenderWorld* world, in
 
 	//validGridPoints = p - invalidCount;
 
-	idLib::Printf( "area %i: %i of %i grid points in empty space (%.2f%%)\n", area, invalidCount, lightGridPoints.Num(), ( ( float ) invalidCount / lightGridPoints.Num() ) * 100 );
+	idLib::Printf( "area %i: %i of %i grid points in solid or void (%.2f%%)\n", area, invalidCount, lightGridPoints.Num(), ( ( float ) invalidCount / lightGridPoints.Num() ) * 100 );
 }
 
 void idRenderWorldLocal::SetupLightGrid()

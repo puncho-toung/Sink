@@ -1280,7 +1280,9 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 
 		// write per-probe distance cube in memory
 		idStr depthName;
-		depthName.Format("%s_depth", fullname.c_str());
+		// env/ like the _amb/_spec maps (R_MakeAmbientMap) and the loader in R_DeriveEnvprobeData,
+		// otherwise the cube is unfindable after a reload and zip-lightdata.bat never packs it
+		depthName.Format("env/%s_depth", fullname.c_str());
 
 		const byte* depthFaces[6];
 		const float invZFar = 1.0f / 16384.0f;		// must match zFar in LinearizeProbeDepth
