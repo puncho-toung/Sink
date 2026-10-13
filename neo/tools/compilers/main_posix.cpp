@@ -1029,7 +1029,7 @@ public:
 		{
 			common->UpdateScreen( false );
 		}
-		exit( 0 );
+		exit( 1 );
 	}
 	virtual void			FatalError( const char* fmt, ... )
 	{
@@ -1039,7 +1039,7 @@ public:
 		{
 			common->UpdateScreen( false );
 		}
-		exit( 0 );
+		exit( 1 );
 	}
 
 	// Returns key bound to the command

@@ -2173,6 +2173,7 @@ static const evarPrefix_t EvarPrefixes[] =
 	{ EVAR_FLOAT,	"editor_float " },
 	{ EVAR_BOOL,	"editor_bool " },
 	{ EVAR_COLOR,	"editor_color " },
+	{ EVAR_MATERIAL, "editor_material " },	// the light's texture and mat_demonic
 	{ EVAR_MATERIAL, "editor_mat " },
 	{ EVAR_MODEL,	"editor_model " },
 	{ EVAR_GUI,		"editor_gui " },
@@ -2188,6 +2189,273 @@ struct LocalEvar_t
 	idStr name;
 	idStr desc;
 };
+
+// Doom 3 links entities through "name" and "target", "target1" .. "targetN", but TrenchBroom only
+// draws links between keys typed target_source and target_destination
+static const char* const FGD_NAME_DESC		= "Entity name; other entities target this";
+static const char* const FGD_TARGET_DESC	= "Entity to trigger; target1..targetN also link";
+static const char* const FGD_LINK_DESC		= "Name of another entity";
+
+// keys besides target and targetN whose value is the name of another entity
+static const char* const FGD_LINK_KEYS[] =
+{
+	"cameraTarget",
+	"guiTarget",
+	"modelTarget",
+	"triggerOpened",
+	"triggerClosed",
+	"triggerBlocked",
+	"buddy",
+	"camShot",
+	"switchToView",
+	"bind"
+};
+
+static const int FGD_NUM_LINK_KEYS = sizeof( FGD_LINK_KEYS ) / sizeof( FGD_LINK_KEYS[ 0 ] );
+
+// TrenchBroom has no boolean property type, so booleans become a No/Yes combo box
+static const char* const FGD_BOOL_CHOICES	= " =\n\t[\n\t\t0 : \"No\"\n\t\t1 : \"Yes\"\n\t]\n";
+
+// every inherit walk stops here, so a cyclic chain cannot hang the export
+static const int FGD_MAX_INHERIT_DEPTH = 32;
+
+/*
+================
+FGD_CleanString
+
+FGD strings have no escape sequences: a '"' inside a value ends the string early. A '\' becomes '/'
+so that no reader that does treat it as an escape can swallow the closing '"'.
+================
+*/
+static idStr FGD_CleanString( const char* text )
+{
+	idStr clean = text;
+	clean.ReplaceChar( '"', '\'' );
+	clean.ReplaceChar( '\\', '/' );
+	return clean;
+}
+
+/*
+================
+FGD_IsNumber
+
+idStr::IsNumeric also accepts "", "-" and ".", which TrenchBroom reads as a broken number or a word
+================
+*/
+static bool FGD_IsNumber( const char* text )
+{
+	if( !idStr::IsNumeric( text ) )
+	{
+		return false;
+	}
+
+	for( ; *text != '\0'; text++ )
+	{
+		if( idStr::CharIsNumeric( *text ) )
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+/*
+================
+FGD_LinkType
+
+The FGD type of a key whose value names an entity, or NULL: "name" is what other entities point at
+(target_source); "target", "target1" .. "targetN" and FGD_LINK_KEYS point at it (target_destination)
+================
+*/
+static const char* FGD_LinkType( const char* key )
+{
+	if( idStr::Cmp( key, "name" ) == 0 )
+	{
+		return "target_source";
+	}
+
+	// "target" followed by digits only
+	const int targetLen = 6;
+	if( idStr::Cmpn( key, "target", targetLen ) == 0 )
+	{
+		const char* c = key + targetLen;
+		while( idStr::CharIsNumeric( *c ) )
+		{
+			c++;
+		}
+
+		if( *c == '\0' )
+		{
+			return "target_destination";
+		}
+	}
+
+	for( int i = 0; i < FGD_NUM_LINK_KEYS; i++ )
+	{
+		if( idStr::Icmp( key, FGD_LINK_KEYS[ i ] ) == 0 )
+		{
+			return "target_destination";
+		}
+	}
+
+	return NULL;
+}
+
+/*
+================
+FGD_WriteLinkProperties
+
+Every class but worldspawn can be named and can target others; writes whichever of the two link
+properties the class has not declared itself
+================
+*/
+static void FGD_WriteLinkProperties( idFile* file, const bool wroteName, const bool wroteTarget )
+{
+	if( !wroteName )
+	{
+		file->Printf( "\tname(target_source) : \"%s\"\n", FGD_NAME_DESC );
+	}
+
+	if( !wroteTarget )
+	{
+		file->Printf( "\ttarget(target_destination) : \"%s\"\n", FGD_TARGET_DESC );
+	}
+}
+
+/*
+================
+FGD_FindParent
+
+The entityDef decl inherits from, or NULL when it inherits nothing or names an entityDef that does
+not exist. EDITOR_EXPORTDEFS leaves the "inherit" key in the dict. FindType without makeDefault
+creates no decl, but a name that another lookup created implicitly comes back defaulted.
+================
+*/
+static const idDeclEntityDef* FGD_FindParent( const idDeclEntityDef* decl )
+{
+	const idKeyValue* kv = decl->dict.MatchPrefix( "inherit", NULL );
+	if( kv == NULL )
+	{
+		return NULL;
+	}
+
+	const idDeclEntityDef* parent = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, kv->GetValue(), false ) );
+	if( parent == NULL || parent->GetState() == DS_DEFAULTED || parent->IsImplicit() )
+	{
+		return NULL;
+	}
+
+	return parent;
+}
+
+/*
+================
+FGD_CollectEvars
+
+Appends the editor_* declarations of dict in key order. With the child's keys first, the child's
+declaration of a name comes first, and the lookups take the first match.
+================
+*/
+static void FGD_CollectEvars( const idDict& dict, idList<LocalEvar_t>& evars )
+{
+	for( int k = 0; k < dict.GetNumKeyVals(); k++ )
+	{
+		const idKeyValue* kv = dict.GetKeyVal( k );
+
+		for( int i = 0; i < NumEvarPrefixes; i++ )
+		{
+			const int prefixLen = idStr::Length( EvarPrefixes[i].prefix );
+			if( kv->GetKey().Icmpn( EvarPrefixes[i].prefix, prefixLen ) == 0 )
+			{
+				LocalEvar_t ev;
+				ev.fullname = kv->GetKey();
+				kv->GetKey().Right( kv->GetKey().Length() - prefixLen, ev.name );
+				ev.desc = kv->GetValue();
+				ev.type = EvarPrefixes[i].type;
+				evars.Append( ev );
+				break;
+			}
+		}
+	}
+}
+
+/*
+================
+FGD_IsExported
+
+Decides whether an entityDef is written to FGD file fileIndex (0 all, 1 all-and-models, 2 slim,
+3 slim-and-models, 4 multiplayer); both passes in ExportEntityDefsToTrenchBroom_f call it, so the
+pass that resolves base() classes and the pass that writes them cannot disagree.
+================
+*/
+static bool FGD_IsExported( const idDeclEntityDef* decl, const int fileIndex, const idStrList& ignoreList )
+{
+	// only include entityDefs with "editor_" values in them
+	if( !decl->dict.MatchPrefix( "editor_" ) )
+	{
+		bool parentHasEditorKeys = false;
+
+		// a decl whose chain ends at the depth cap counts as not exported
+		const idDeclEntityDef* parent = FGD_FindParent( decl );
+		for( int depth = 0; parent != NULL && depth < FGD_MAX_INHERIT_DEPTH; depth++ )
+		{
+			if( parent->dict.MatchPrefix( "editor_" ) )
+			{
+				parentHasEditorKeys = true;
+				break;
+			}
+
+			parent = FGD_FindParent( parent );
+		}
+
+		if( !parentHasEditorKeys )
+		{
+			return false;
+		}
+	}
+
+	if( fileIndex > 1 )
+	{
+		// ignore entities that begin with those prefices
+		for( int i = 0; i < ignoreList.Num(); i++ )
+		{
+			const char* ignoreStr = ignoreList[ i ].c_str();
+			if( idStr::Icmpn( decl->GetName(), ignoreStr, ( int )strlen( ignoreStr ) ) == 0 )
+			{
+				return false;
+			}
+		}
+	}
+
+	// ignore autogenerated model definitions for slim FGD
+	bool genmodel = false;
+	if( idStr::Icmpn( decl->GetName(), "genmodel_", 9 ) == 0 )
+	{
+		genmodel = true;
+	}
+
+	// filter multiplayer entities
+	bool multiplayer = ( idStr::FindText( decl->GetName(), "_mp", false ) != -1 ||
+						 idStr::FindText( decl->GetName(), "team_ctf", false ) != -1 ||
+						 idStr::FindText( decl->GetName(), "_coop", false ) != -1 );
+
+	if( fileIndex == 4 )
+	{
+		return ( multiplayer && !genmodel );
+	}
+
+	if( multiplayer )
+	{
+		return false;
+	}
+
+	if( ( fileIndex % 2 ) == 0 && genmodel )
+	{
+		return false;
+	}
+
+	return true;
+}
 
 #include <d3xp/anim/Anim.h> // idDeclModelDef
 
@@ -2214,6 +2482,16 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 	}
 
 	defsSorted.SortWithTemplate( idSort_CompareEntityDefEntity() );
+
+	// the inherit walks below stop quietly at a missing or defaulted parent, so name each one once here
+	for( int i = 0; i < count; i++ )
+	{
+		const idKeyValue* kv = defsSorted[ i ]->dict.MatchPrefix( "inherit", NULL );
+		if( kv != NULL && FGD_FindParent( defsSorted[ i ] ) == NULL )
+		{
+			common->Warning( "entityDef '%s' inherits unknown '%s'", defsSorted[ i ]->GetName(), kv->GetValue().c_str() );
+		}
+	}
 
 	bool exportModels = false;
 
@@ -2311,9 +2589,12 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 	solidClassNames.AddUnique( "func_elevator" );
 
 	solidClassNames.AddUnique( "func_static" ); // misc_model
+	solidClassNames.AddUnique( "func_group" );
+	solidClassNames.AddUnique( "func_riser" );
 
 	for( int f = 0; f < filenames.Num(); f++ )
 	{
+		// the classes written to this file
 		int totalEntitiesCount = 0;
 		int totalModelsCount = 0;
 
@@ -2323,122 +2604,106 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 
 		if( file == NULL )
 		{
-			common->Printf( "Failed to entity declarations data to FGD.\n" );
+			common->Warning( "Failed to write entity declarations to %s", fgdFileName.c_str() );
+			continue;
 		}
 
 		file->Printf( "// DOOM 3 BFG game definition file (.fgd) generated by %s\n\n", ENGINE_VERSION );
+
+		// the multiplayer classes inherit from slim ones, so that file pulls slim in instead of standing alone
+		const int includeIndex = ( f == filenames.FindIndex( "multiplayer" ) ) ? filenames.FindIndex( "slim" ) : -1;
+		if( includeIndex != -1 )
+		{
+			file->Printf( "@include \"DOOM-3-%s.fgd\"\n\n", filenames[ includeIndex ].c_str() );
+		}
+
+		// first pass: every class this file defines or includes, so base() only names classes TrenchBroom can find
+		idList< const idDeclEntityDef* > exportedDecls;
+		idHashIndex exportedHash;
+		for( int d = 0; d < count; d++ )
+		{
+			const idDeclEntityDef* decl = defsSorted[ d ];
+			if( FGD_IsExported( decl, f, ignoreList ) || ( includeIndex != -1 && FGD_IsExported( decl, includeIndex, ignoreList ) ) )
+			{
+				exportedHash.Add( exportedHash.GenerateKey( decl->GetName(), false ), exportedDecls.Append( decl ) );
+			}
+		}
 
 		for( int d = 0; d < count; d++ )
 		{
 			const idDeclEntityDef* decl = defsSorted[ d ];
 
+			if( !FGD_IsExported( decl, f, ignoreList ) )
+			{
+				continue;
+			}
+
 			totalEntitiesCount++;
 
-			// only include entityDefs with "editor_" values in them
-			if( /*f > 0 &&*/ !decl->dict.MatchPrefix( "editor_" ) )
+			// EDITOR_EXPORTDEFS skips inherit resolution, so decl->dict holds only the decl's own keys.
+			// Fold every ancestor this file does not define into the child (the child wins), and name
+			// the nearest ancestor it does define as base() so TrenchBroom inherits the rest from there.
+			const idDeclEntityDef* baseDecl = NULL;
+			idList< const idDeclEntityDef* > foldedDecls;
+			idDict mergedDict = decl->dict;
+
+			// the decl and foldedDecls checks stop circular inheritance
+			const idDeclEntityDef* ancestor = FGD_FindParent( decl );
+			while( ancestor != NULL && ancestor != decl && foldedDecls.FindIndex( ancestor ) == -1 )
 			{
-				bool parentHasEditorKeys = false;
-
-				const idDeclEntityDef* decl2 = decl;
-				while( 1 )
+				const int key = exportedHash.GenerateKey( ancestor->GetName(), false );
+				for( int i = exportedHash.First( key ); i != -1; i = exportedHash.Next( i ) )
 				{
-					const idKeyValue* kv;
-					kv = decl2->dict.MatchPrefix( "inherit", NULL );
-					if( !kv )
+					if( exportedDecls[ i ] == ancestor )
 					{
-						break;
-					}
-
-					const idDeclEntityDef* super = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, kv->GetValue(), false ) );
-					if( !super )
-					{
-						//src.Warning( "Unknown entityDef '%s' inherited by '%s'", kv->GetValue().c_str(), GetName() );
-						break;
-					}
-					else
-					{
-						decl2 = super;
-					}
-
-					if( decl2->dict.MatchPrefix( "editor_" ) )
-					{
-						parentHasEditorKeys = true;
+						baseDecl = ancestor;
 						break;
 					}
 				}
 
-				if( !parentHasEditorKeys )
+				if( baseDecl != NULL )
 				{
-					continue;
-				}
-			}
-
-			if( f > 1 )
-			{
-				// ignore entities that begin with those prefices
-
-				bool ignore = false;
-				for( int i = 0; i < ignoreList.Num(); i++ )
-				{
-					const char* ignoreStr = ignoreList[ i ].c_str();
-					if( idStr::Icmpn( decl->GetName(), ignoreStr, ( int )strlen( ignoreStr ) ) == 0 )
-					{
-						ignore = true;
-						break;
-					}
-				}
-
-				if( ignore )
-				{
-					continue;
-				}
-			}
-
-			// ignore autogenerated model definitions for slim FGD
-			bool genmodel = false;
-			if( idStr::Icmpn( decl->GetName(), "genmodel_", 9 ) == 0 )
-			{
-				genmodel = true;
-			}
-
-			// filter multiplayer entities
-			bool multiplayer = ( idStr::FindText( decl->GetName(), "_mp", false ) != -1 ||
-								 idStr::FindText( decl->GetName(), "team_ctf", false ) != -1 ||
-								 idStr::FindText( decl->GetName(), "_coop", false ) != -1 );
-
-			if( f == 4 )
-			{
-				if( !multiplayer || genmodel )
-				{
-					continue;
-				}
-			}
-			else
-			{
-				if( multiplayer )
-				{
-					continue;
-				}
-
-				if( ( f % 2 ) == 0 && genmodel )
-				{
-					continue;
-				}
-			}
-
-			bool solidClass = false;
-			for( int i = 0; i < solidClassNames.Num(); i++ )
-			{
-				const char* solidStr = solidClassNames[ i ].c_str();
-				if( idStr::Icmpn( decl->GetName(), solidStr, ( int )strlen( solidStr ) ) == 0 &&
-						!( idStr::FindText( decl->GetName(), "_model", false ) != -1 || idStr::FindText( decl->GetName(), "_amodel", false ) != -1 ) )
-				{
-					solidClass = true;
 					break;
 				}
+
+				foldedDecls.Append( ancestor );
+				mergedDict.SetDefaults( &ancestor->dict );
+				ancestor = FGD_FindParent( ancestor );
 			}
 
-			if( idStr::Icmp( decl->GetName(), "trigger_relay" ) == 0 )
+			// The editor_* declarations of baseDecl and its ancestors, used only to type a key this class
+			// sets itself: TrenchBroom lets the child's property hide the base's, so an untyped child key
+			// would lose the base's type and description. They never add keys.
+			idList<LocalEvar_t> baseEvars;
+			const idDeclEntityDef* baseAncestor = baseDecl;
+			for( int depth = 0; baseAncestor != NULL && depth < FGD_MAX_INHERIT_DEPTH; depth++ )
+			{
+				FGD_CollectEvars( baseAncestor->dict, baseEvars );
+				baseAncestor = FGD_FindParent( baseAncestor );
+			}
+
+			// A concrete editor_mins vector marks a point entity. "?" only says the bounds come from the
+			// model or the brushes (env_chain and moveable_base are point entities with "?"), so then,
+			// as without editor_mins, the name decides.
+			bool solidClass = false;
+			const idKeyValue* minsKv = mergedDict.FindKey( "editor_mins" );
+			if( minsKv == NULL || minsKv->GetValue().Cmp( "?" ) == 0 )
+			{
+				for( int i = 0; i < solidClassNames.Num(); i++ )
+				{
+					const char* solidStr = solidClassNames[ i ].c_str();
+					if( idStr::Icmpn( decl->GetName(), solidStr, ( int )strlen( solidStr ) ) == 0 )
+					{
+						solidClass = true;
+						break;
+					}
+				}
+			}
+
+			// trigger_relay, and the _model/_amodel classes that carry a model() below, stay point entities
+			// although their names match the prefixes above (func_mover_amodel's editor_mins is "?")
+			if( idStr::Icmp( decl->GetName(), "trigger_relay" ) == 0 ||
+					idStr::FindText( decl->GetName(), "_model", false ) != -1 || idStr::FindText( decl->GetName(), "_amodel", false ) != -1 )
 			{
 				solidClass = false;
 			}
@@ -2459,16 +2724,22 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 				file->Printf( "@PointClass " );
 			}
 
-			const idKeyValue* kv;
-			kv = decl->dict.MatchPrefix( "inherit", NULL );
-
-			if( kv )
+			if( baseDecl != NULL )
 			{
-				file->Printf( "base(%s) ", kv->GetValue().c_str() );
+				// the canonical name: the raw inherit value may differ in case, and TrenchBroom compares exactly
+				file->Printf( "base(%s) ", baseDecl->GetName() );
+			}
+
+			// take the description from the decl or, failing that, the nearest folded ancestor that has one;
+			// the walk covers the decl and the folded ancestors, never baseDecl
+			const idDict* usageDict = &decl->dict;
+			for( int i = 0; i < foldedDecls.Num() && !usageDict->MatchPrefix( "editor_usage" ); i++ )
+			{
+				usageDict = &foldedDecls[ i ]->dict;
 			}
 
 			idStr text = "";
-			kv = decl->dict.MatchPrefix( "editor_usage" );
+			const idKeyValue* kv = usageDict->MatchPrefix( "editor_usage" );
 			while( kv != NULL )
 			{
 				text += kv->GetValue();
@@ -2476,18 +2747,38 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 				{
 					text += "\n";
 				}
-				kv = decl->dict.MatchPrefix( "editor_usage", kv );
+				kv = usageDict->MatchPrefix( "editor_usage", kv );
 			}
 
-			if( text.IsEmpty() )
+			// The loop above ends every line with '\n', so the trailing whitespace goes, and a class whose
+			// editor_usage is empty ends up with no text. An empty result is left to TrenchBroom's
+			// inheritance: it copies the base() description only into a class that has none at all, so
+			// with a base() the class prints no description, and "No description" is only for classes
+			// without a base().
+			text.StripTrailingWhitespace();
+			if( text.IsEmpty() && baseDecl == NULL )
 			{
-				text += "No description";
+				text = "No description";
 			}
 
 			idVec3 color;
-			if( decl->dict.GetVector( "editor_color", "0 0 1", color ) )
+			if( mergedDict.GetVector( "editor_color", "0 0 1", color ) )
 			{
-				file->Printf( "color(%i %i %i) ", int( color.x * 255 ) & 0xFF, int( color.y * 255 ) & 0xFF, int( color.z * 255 ) & 0xFF );
+				int rgb[ 3 ] = { int( color.x * 255 ) & 0xFF, int( color.y * 255 ) & 0xFF, int( color.z * 255 ) & 0xFF };
+
+				// TrenchBroom reads a color whose components are all <= 1 as 0..1 floats
+				if( rgb[ 0 ] <= 1 && rgb[ 1 ] <= 1 && rgb[ 2 ] <= 1 )
+				{
+					for( int i = 0; i < 3; i++ )
+					{
+						if( rgb[ i ] != 0 )
+						{
+							rgb[ i ] = 2;
+						}
+					}
+				}
+
+				file->Printf( "color(%i %i %i) ", rgb[ 0 ], rgb[ 1 ], rgb[ 2 ] );
 			}
 
 #if 0
@@ -2504,7 +2795,7 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 			idBounds bounds;
 			bool writeSize = false;
 
-			if( decl->dict.GetVector( "mins", NULL, bounds[0] ) && decl->dict.GetVector( "maxs", NULL, bounds[1] ) )
+			if( mergedDict.GetVector( "mins", NULL, bounds[0] ) && mergedDict.GetVector( "maxs", NULL, bounds[1] ) )
 			{
 				if( bounds[0][0] > bounds[1][0] || bounds[0][1] > bounds[1][1] || bounds[0][2] > bounds[1][2] )
 				{
@@ -2515,7 +2806,7 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 					writeSize = true;
 				}
 			}
-			else if( decl->dict.GetVector( "size", NULL, size ) )
+			else if( mergedDict.GetVector( "size", NULL, size ) )
 			{
 				if( ( size.x < 0.0f ) || ( size.y < 0.0f ) || ( size.z < 0.0f ) )
 				{
@@ -2532,40 +2823,31 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 			else
 			{
 				idStr str;
-				decl->dict.GetString( "editor_mins", "", str );
+				mergedDict.GetString( "editor_mins", "", str );
 				if( str != "?" )
 				{
-					if( decl->dict.GetVector( "editor_mins", "0 0 0", bounds[0] ) && decl->dict.GetVector( "editor_maxs", "0 0 0", bounds[1] ) )
+					if( mergedDict.GetVector( "editor_mins", "0 0 0", bounds[0] ) && mergedDict.GetVector( "editor_maxs", "0 0 0", bounds[1] ) )
 					{
 						writeSize = true;
 					}
 				}
 			}
 
-			if( writeSize )
+			// a brush entity's size comes from its brushes, TrenchBroom warns on a size() for it; a box that
+			// is flat on any axis cannot be clicked, TrenchBroom's default box serves better
+			if( writeSize && !solidClass )
 			{
-				file->Printf( "size(%i %i %i, %i %i %i) ",
-							  int( bounds[0].x ), int( bounds[0].y ), int( bounds[0].z ),
-							  int( bounds[1].x ), int( bounds[1].y ), int( bounds[1].z ) );
-			}
-
-			// collect editor specific spawn flags
-			idList<LocalEvar_t> evars;
-
-			for( int i = 0; i < NumEvarPrefixes; i++ )
-			{
-				kv = decl->dict.MatchPrefix( EvarPrefixes[i].prefix );
-				while( kv )
+				const int mins[ 3 ] = { int( bounds[0].x ), int( bounds[0].y ), int( bounds[0].z ) };
+				const int maxs[ 3 ] = { int( bounds[1].x ), int( bounds[1].y ), int( bounds[1].z ) };
+				if( maxs[ 0 ] > mins[ 0 ] && maxs[ 1 ] > mins[ 1 ] && maxs[ 2 ] > mins[ 2 ] )
 				{
-					LocalEvar_t ev;
-					ev.fullname = kv->GetKey();
-					kv->GetKey().Right( kv->GetKey().Length() - strlen( EvarPrefixes[i].prefix ), ev.name );
-					ev.desc = kv->GetValue();
-					ev.type = EvarPrefixes[i].type;
-					evars.Append( ev );
-					kv = decl->dict.MatchPrefix( EvarPrefixes[i].prefix, kv );
+					file->Printf( "size(%i %i %i, %i %i %i) ", mins[ 0 ], mins[ 1 ], mins[ 2 ], maxs[ 0 ], maxs[ 1 ], maxs[ 2 ] );
 				}
 			}
+
+			// collect editor specific spawn flags, the child's first
+			idList<LocalEvar_t> evars;
+			FGD_CollectEvars( mergedDict, evars );
 
 			idDict dictToWrite;
 
@@ -2610,9 +2892,9 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 				evars.Append( ev );
 			}
 
-			for( int i = 0; i < decl->dict.GetNumKeyVals(); i++ )
+			for( int i = 0; i < mergedDict.GetNumKeyVals(); i++ )
 			{
-				kv = decl->dict.GetKeyVal( i );
+				kv = mergedDict.GetKeyVal( i );
 
 				if( kv->GetKey().IcmpPrefix( "editor_" ) == 0 )
 				{
@@ -2686,7 +2968,9 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 					idStr::Icmp( decl->GetName(), "func_plat_model" ) != 0 &&
 					idStr::Icmp( decl->GetName(), "func_rotating_model" ) != 0 )
 			{
-				const idKeyValue* kv = dictToWrite.FindKey( "model" );
+				// the real spawnarg: dictToWrite holds an editor var's description as the value of a key
+				// the decl does not set, and a model the decl does not set is inherited from base()
+				const idKeyValue* kv = mergedDict.FindKey( "model" );
 				if( kv )
 				{
 					if( kv->GetValue().Length() )
@@ -2696,12 +2980,12 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 						// HACK
 						writeModel = true;
 
-						// precache model/animations
+						// precache model/animations; a model that fails to load gets no proxy path
 						const idDeclModelDef* modelDef = static_cast<const idDeclModelDef*>( declManager->FindType( DECL_MODELDEF, kv->GetValue(), false ) );
 						if( modelDef != NULL )
 						{
 							idRenderModel* renderModel = modelDef->ModelHandle();
-							if( renderModel )
+							if( renderModel != NULL && !renderModel->IsDefaultModel() )
 							{
 								exportedModelFileName = "_tb/";
 								exportedModelFileName.AppendPath( renderModel->Name() );
@@ -2711,19 +2995,22 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 						else
 						{
 							// there is no modelDef so use direct path
-							renderModelManager->FindModel( kv->GetValue() );
-
-							exportedModelFileName = "_tb/";
-							exportedModelFileName.AppendPath( kv->GetValue() );
-							exportedModelFileName.SetFileExtension( ".obj" );
+							idRenderModel* renderModel = renderModelManager->FindModel( kv->GetValue() );
+							if( renderModel != NULL && !renderModel->IsDefaultModel() )
+							{
+								exportedModelFileName = "_tb/";
+								exportedModelFileName.AppendPath( kv->GetValue() );
+								exportedModelFileName.SetFileExtension( ".obj" );
+							}
 						}
 					}
 				}
 			}
 
-			if( writeModel && !exportedModelFileName.IsEmpty() )
+			// TrenchBroom warns on a model() for a brush entity, as it does for size()
+			if( writeModel && !exportedModelFileName.IsEmpty() && !solidClass )
 			{
-				file->Printf( "model({ \"path\": \"%s\" }) ", exportedModelFileName.c_str() );
+				file->Printf( "model({ \"path\": \"%s\" }) ", FGD_CleanString( exportedModelFileName ).c_str() );
 			}
 			else if( idStr::Icmp( decl->GetName(), "misc_model" ) == 0 ||
 					 idStr::Icmp( decl->GetName(), "func_animate" ) == 0 ||
@@ -2806,15 +3093,25 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 				}
 			}
 
-			file->Printf( "= %s : \"%s\"\n", decl->GetName(), text.c_str() );
+			if( text.IsEmpty() )
+			{
+				file->Printf( "= %s\n", decl->GetName() );
+			}
+			else
+			{
+				file->Printf( "= %s : \"%s\"\n", decl->GetName(), FGD_CleanString( text ).c_str() );
+			}
 			file->Printf( "[\n" );
 
-			if( idStr::Icmp( decl->GetName(), "light" ) == 0 )
+			const bool lightClass = ( idStr::Icmp( decl->GetName(), "light" ) == 0 );
+			if( lightClass )
 			{
 				// RB: hardcode for now to have proper light styles combobox names
+				// -1 is the engine's own default for "style", no light style at all
 				file->Printf(
-					"\tstyle(Choices) : \"Appearance\" : 0 =\n"
+					"\tstyle(Choices) : \"Appearance\" : -1 =\n"
 					"\t[\n"
+					"\t\t-1 : \"None (engine default)\"\n"
 					"\t\t0 : \"Normal\"\n"
 					"\t\t10: \"Fluorescent flicker\"\n"
 					"\t\t2 : \"Slow, strong pulse\"\n"
@@ -2830,82 +3127,165 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 					"\t]\n" );
 			}
 
+			// every class but worldspawn can be named and can target others
+			const bool linkClass = ( idStr::Icmp( decl->GetName(), "worldspawn" ) != 0 );
+			bool wroteName = false;
+			bool wroteTarget = false;
+
 			for( int i = 0; i < dictToWrite.GetNumKeyVals(); i++ )
 			{
 				kv = dictToWrite.GetKeyVal( i );
 
-				// is it an editor var or a regular spawn argument?
-				LocalEvar_t* ev = nullptr;
-				int vc = evars.Num();
-				for( int j = 0; j < vc; j++ )
+				// Keys TrenchBroom must not offer: an FGD key cannot hold whitespace, and a substitute
+				// would not be the engine's key; origin belongs to TrenchBroom, and a default there would
+				// move the entity; the light's style is the Choices block above.
+				if( kv->GetKey().Find( ' ' ) != -1 || kv->GetKey().Find( '\t' ) != -1 ||
+						kv->GetKey().Icmp( "origin" ) == 0 ||
+						( lightClass && kv->GetKey().Icmp( "style" ) == 0 ) )
+				{
+					continue;
+				}
+
+				// is it an editor var or a regular spawn argument? A key that only the base declares
+				// keeps the base's type and description
+				const LocalEvar_t* ev = NULL;
+				for( int j = 0; j < evars.Num() && ev == NULL; j++ )
 				{
 					if( evars[ j ].name.Icmp( kv->GetKey() ) == 0 )
 					{
 						ev = &evars[ j ];
-						break;
+					}
+				}
+
+				for( int j = 0; j < baseEvars.Num() && ev == NULL; j++ )
+				{
+					if( baseEvars[ j ].name.Icmp( kv->GetKey() ) == 0 )
+					{
+						ev = &baseEvars[ j ];
 					}
 				}
 
 				idStr cleanKey = kv->GetKey();
-				cleanKey.ReplaceChar( ' ', '.' );
-
 				if( cleanKey.Icmp( "color" ) == 0 )
 				{
 					cleanKey = "_color";
 				}
 
-				// don't print the descriptive editor var itself yet
-				if( ev )
+				// regular spawn arguments are plain strings without a description
+				int evarType = ( ev != NULL ) ? ev->type : EVAR_STRING;
+				idStr desc = FGD_CleanString( ( ev != NULL ) ? ev->desc.c_str() : "" );
+				const idStr value = FGD_CleanString( kv->GetValue() );
+
+				// a value equal to the description was filled in from the editor var itself, it is no default
+				const bool hasDefault = ( !value.IsEmpty() && desc.Icmp( value ) != 0 );
+
+				const char* typeName;
+				switch( evarType )
 				{
-					file->Printf( "\t%s", cleanKey.c_str() );
+					case EVAR_INT :
+						typeName = "integer";
+						break;
 
-					switch( ev->type )
+					case EVAR_FLOAT :
+						typeName = "float";
+						break;
+
+					case EVAR_BOOL :
+						typeName = "choices";
+						break;
+
+					case EVAR_COLOR :
+						typeName = "color1";
+						break;
+
+					case EVAR_MATERIAL :
+					case EVAR_MODEL :
+					case EVAR_GUI :
+					case EVAR_SOUND :
+					case EVAR_STRING :
+					default:
+						typeName = "string";
+						break;
+				}
+
+				const char* linkType = linkClass ? FGD_LinkType( cleanKey ) : NULL;
+				if( linkType != NULL )
+				{
+					const bool nameKey = ( cleanKey.Cmp( "name" ) == 0 );
+
+					evarType = EVAR_STRING;
+					typeName = linkType;
+					if( desc.IsEmpty() )
 					{
-						case EVAR_INT :
-							file->Printf( "(integer)" );
-							break;
-
-						case EVAR_FLOAT :
-							file->Printf( "(float)" );
-							break;
-
-						case EVAR_BOOL :
-							file->Printf( "(boolean)" );
-							break;
-
-						case EVAR_COLOR :
-						case EVAR_MATERIAL :
-						case EVAR_MODEL :
-						case EVAR_GUI :
-						case EVAR_SOUND :
-						case EVAR_STRING :
-						default:
-							file->Printf( "(string)" );
-							break;
-					}
-
-					if( !ev->desc.IsEmpty() && ev->desc.Icmp( kv->GetValue().c_str() ) )
-					{
-						if( ev->type != EVAR_INT && ev->type != EVAR_FLOAT && ev->type != EVAR_BOOL )
+						if( nameKey )
 						{
-							file->Printf( " : \"%s\" : \"%s\"\n", ev->desc.c_str(), kv->GetValue().c_str() );
+							desc = FGD_NAME_DESC;
+						}
+						else if( cleanKey.CmpPrefix( "target" ) == 0 )
+						{
+							desc = FGD_TARGET_DESC;
 						}
 						else
 						{
-							file->Printf( " : \"%s\" : %s\n", ev->desc.c_str(), kv->GetValue().c_str() );
+							desc = FGD_LINK_DESC;
+						}
+					}
+
+					if( nameKey )
+					{
+						wroteName = true;
+					}
+					else if( cleanKey.Cmp( "target" ) == 0 )
+					{
+						wroteTarget = true;
+					}
+				}
+
+				// the spawnclass comes from the entityDef and must not be edited
+				const char* readOnly = ( cleanKey.Icmp( "spawnclass" ) == 0 ) ? " readonly" : "";
+
+				file->Printf( "\t%s(%s)%s : \"%s\"", cleanKey.c_str(), typeName, readOnly, desc.c_str() );
+
+				if( hasDefault )
+				{
+					if( evarType == EVAR_INT || evarType == EVAR_BOOL )
+					{
+						// unquoted and whole: a quoted integer default does not parse, and a decimal one warns
+						// "Found float default value for integer property" before TrenchBroom truncates it
+						// to the same int that atoi gives (FgdParser.cpp parseDefaultIntegerValue)
+						if( FGD_IsNumber( value ) )
+						{
+							file->Printf( " : %d", atoi( value ) );
+						}
+					}
+					else if( evarType == EVAR_FLOAT )
+					{
+						// FGD convention: a whole number unquoted, a decimal one quoted (TrenchBroom warns only on an unquoted decimal)
+						if( FGD_IsNumber( value ) )
+						{
+							if( value.Find( '.' ) == -1 )
+							{
+								file->Printf( " : %s", value.c_str() );
+							}
+							else
+							{
+								file->Printf( " : \"%s\"", value.c_str() );
+							}
 						}
 					}
 					else
 					{
-						file->Printf( " : \"%s\"\n", ev->desc.c_str() );
+						file->Printf( " : \"%s\"", value.c_str() );
 					}
 				}
-				else
-				{
-					file->Printf( "\t%s(string) : \"\" : \"%s\"\n", cleanKey.c_str(), kv->GetValue().c_str() );
-				}
+
+				file->Printf( "%s", ( evarType == EVAR_BOOL ) ? FGD_BOOL_CHOICES : "\n" );
 			}
 
+			if( linkClass )
+			{
+				FGD_WriteLinkProperties( file, wroteName, wroteTarget );
+			}
 
 			file->Printf( "]\n\n" );
 
@@ -3143,52 +3523,59 @@ void idDeclManagerLocal::ExportModelsToTrenchBroom_f( const idCmdArgs& args )
 
 	idFileList* files = fileSystem->ListFilesTree( "generated", ".blwo|.base|.bmd5mesh", true, true );
 
-	// FGD header
+	// the models FGD and the entityDefs it describes are written together, so both must open
 	idStr fgdFileName;
 	fgdFileName.Format( "_tb/fgd/DOOM-3-models.fgd" );
 	idFileLocal fgdFile( fileSystem->OpenFileWrite( fgdFileName, "fs_basepath" ) );
-	if( fgdFile == NULL )
+
+	idStr defFileName;
+	defFileName.Format( "def/_tb_models.def" );
+	idFileLocal defFile( fileSystem->OpenFileWrite( defFileName, "fs_basepath" ) );
+
+	if( fgdFile == NULL || defFile == NULL )
 	{
-		common->Printf( "Failed to write entity declarations data to FGD.\n" );
+		common->Warning( "Failed to write %s or %s", fgdFileName.c_str(), defFileName.c_str() );
+
+		fileSystem->FreeFileList( files );
+		com_editors &= ~EDITOR_EXPORTDEFS;
+		postLoadExportModels.SetBool( false );
+		return;
 	}
 
+	// FGD header
 	fgdFile->Printf( "// DOOM 3 BFG models definition file (.fgd) generated by %s\n\n", ENGINE_VERSION );
 
 	fgdFile->Printf( "@SolidClass color(0 0 0) = worldspawn : \"Every map should have exactly one worldspawn.\"\n[\n" );
-	fgdFile->Printf( "\tspawnclass(string) : \"\" : \"idWorldspawn\"\n" );
+	fgdFile->Printf( "\tspawnclass(string) readonly : \"\" : \"idWorldspawn\"\n" );
 	fgdFile->Printf( "]\n\n" );
 
 	fgdFile->Printf( "@SolidClass color(0 127 204) = func_static : \"A brush model that just sits there, doing nothing.  Can be used for conditional walls and models. When triggered, toggles between visible and hidden (see hide). Entity is non-solid when hidden.\"\n[\n" );
-	//fgdFile->Printf( "name(string) : \"\" : \"\"\n" );
-	fgdFile->Printf( "\tspawnclass(string) : \"\" : \"idStaticEntity\"\n" );
-	fgdFile->Printf( "\tsolid(boolean) : \"whether the object should be solid or not.\" : 1\n" );
-	fgdFile->Printf( "\tnoclipmodel(boolean) : \"0 by default. Sets whether or not to generate a collision model for an ASE/LWO func_static at level load. (Set to 1 for stuff the player can't interact with. This will save memory.)\" : 0\n" );
-	fgdFile->Printf( "\thide(boolean) : \"whether the object should be visible when spawned. you need to set a value for triggering on/off to work\"\n" );
-	fgdFile->Printf( "\tgui_noninteractive(boolean) : \"any gui attached will not be interactive\"\n" );
-	fgdFile->Printf( "\tinline(boolean) : \"If true, turn the model into map geometry at dmap time\"\n" );
+	FGD_WriteLinkProperties( fgdFile, false, false );
+	fgdFile->Printf( "\tspawnclass(string) readonly : \"\" : \"idStaticEntity\"\n" );
+	fgdFile->Printf( "\tsolid(choices) : \"whether the object should be solid or not.\" : 1%s", FGD_BOOL_CHOICES );
+	fgdFile->Printf( "\tnoclipmodel(choices) : \"0 by default. Sets whether or not to generate a collision model for an ASE/LWO func_static at level load. (Set to 1 for stuff the player can't interact with. This will save memory.)\" : 0%s", FGD_BOOL_CHOICES );
+	fgdFile->Printf( "\thide(choices) : \"whether the object should be visible when spawned. you need to set a value for triggering on/off to work\"%s", FGD_BOOL_CHOICES );
+	fgdFile->Printf( "\tgui_noninteractive(choices) : \"any gui attached will not be interactive\"%s", FGD_BOOL_CHOICES );
+	fgdFile->Printf( "\tinline(choices) : \"If true, turn the model into map geometry at dmap time\"%s", FGD_BOOL_CHOICES );
 	fgdFile->Printf( "\tangles(string) : \"\" : \"0 0 0\"\n" );
 	fgdFile->Printf( "\tgui(string) : \"gui attached to this static, gui2 and gui3 also work\"\n" );
 	fgdFile->Printf( "\tgui_demonic(string) : \"demonic gui attached to this statit, gui_demonic2 and gui_demonic3 also work\"\n]\n\n" );
 
-	fgdFile->Printf( "@PointClass base(func_static) color(0 127 204) model({{\n\tproxymodel -> { \"path\": proxymodel },\n\t{ \"path\": model }\n}}) = misc_model : \"Just a model\"\n[\n" );
-	//fgdFile->Printf( "name(string) : \"\" : \"\"\n" );
-	fgdFile->Printf( "\t angles(string) : \"\" : \"0 0 0\"\n" );
+	// the size matches misc_model's editor_mins/maxs in def/_tb_helpers.def
+	fgdFile->Printf( "@PointClass base(func_static) color(0 127 204) size(-8 -8 0, 8 8 16) model({{\n\tproxymodel -> { \"path\": proxymodel },\n\t{ \"path\": model }\n}}) = misc_model : \"Just a model\"\n[\n" );
+	FGD_WriteLinkProperties( fgdFile, false, false );
+	fgdFile->Printf( "\tangles(string) : \"\" : \"0 0 0\"\n" );
 	fgdFile->Printf( "\tmodel(string) : \"Model Selection (ex mapobjects/model.obj)\"\n" );
-	fgdFile->Printf( "\tmodel(string) : \"\tA proxy model in OBJ file format automatically set by RBDoom so it can be displayed in TrenchBroom\"\n" );
+	fgdFile->Printf( "\tproxymodel(string) : \"A proxy model in OBJ file format automatically set by RBDoom so it can be displayed in TrenchBroom\"\n" );
 	fgdFile->Printf( "]\n\n" );
 
 	fgdFile->Printf( "@PointClass base(misc_model) = auto_generated_model : \"Entity definition for a specific model\" []\n\n" );
 
 	// DEF header
-	idStr defFileName;
-	defFileName.Format( "def/_tb_models.def" );
-	idFileLocal defFile( fileSystem->OpenFileWrite( defFileName, "fs_basepath" ) );
-	if( defFile == NULL )
-	{
-		common->Printf( "Failed to write entity declarations data to DEF.\n" );
-	}
-
 	defFile->Printf( "// DOOM 3 BFG models definition file (.def) generated by %s\n\n", ENGINE_VERSION );
+
+	idStrList emittedNames;
+	idHashIndex emittedHash;
 
 	for( int f = 0; f < files->GetList().Num(); f++ )
 	{
@@ -3226,6 +3613,56 @@ void idDeclManagerLocal::ExportModelsToTrenchBroom_f( const idCmdArgs& args )
 		// skip TB specific helper models
 		if( idStr::Icmpn( modelName, "_tb", 3 ) == 0 )
 		{
+			continue;
+		}
+
+		idStrStatic< MAX_OSPATH > entityName;
+		{
+			idStr entityPath = modelName;
+			/*
+			if( idStr::Icmpn( entityPath, "models/mapobjects", 17 ) == 0 )
+			{
+				entityPath.StripLeadingOnce( "models/mapobjects" );
+
+				entityName = "mob";
+				entityName.AppendPath( entityPath );
+			}
+			else
+			*/
+			{
+				entityPath.StripLeadingOnce( "models" );
+
+				entityName = "genmodel";
+				entityName.AppendPath( entityPath );
+			}
+
+			entityName.BackSlashesToSlashes();
+			entityName.ReplaceChar( '/', '_' );
+			entityName.ReplaceChar( '(', '_' );
+			entityName.ReplaceChar( ')', '_' );
+			entityName.StripFileExtension();
+
+			// MakeNameCanonical cuts a decl name at its last '.', so a dotted directory would alias two entityDefs
+			entityName.ReplaceChar( '.', '_' );
+		}
+
+		// two source models can flatten to the same name; keep the first: the decl manager ignores a second
+		// entityDef of a name, TrenchBroom would keep the last and warn. Checked before FindModel, so the
+		// skipped model is not loaded and cannot overwrite the kept one's _tb/*.obj of the same stem.
+		const int nameKey = emittedHash.GenerateKey( entityName.c_str(), false );
+		bool duplicate = false;
+		for( int i = emittedHash.First( nameKey ); i != -1; i = emittedHash.Next( i ) )
+		{
+			if( emittedNames[ i ].Icmp( entityName ) == 0 )
+			{
+				duplicate = true;
+				break;
+			}
+		}
+
+		if( duplicate )
+		{
+			idLib::Printf( "Skipping model '%s', entity '%s' was already written\n", modelName.c_str(), entityName.c_str() );
 			continue;
 		}
 
@@ -3271,29 +3708,7 @@ void idDeclManagerLocal::ExportModelsToTrenchBroom_f( const idCmdArgs& args )
 			exportedModelFileName.AppendPath( modelName );
 			exportedModelFileName.SetFileExtension( ".obj" );
 
-			idStrStatic< MAX_OSPATH > entityName;
-			/*
-			if( idStr::Icmpn( modelName, "models/mapobjects", 17 ) == 0 )
-			{
-				modelName.StripLeadingOnce( "models/mapobjects" );
-
-				entityName = "mob";
-				entityName.AppendPath( modelName );
-			}
-			else
-			*/
-			{
-				modelName.StripLeadingOnce( "models" );
-
-				entityName = "genmodel";
-				entityName.AppendPath( modelName );
-			}
-
-			entityName.BackSlashesToSlashes();
-			entityName.ReplaceChar( '/', '_' );
-			entityName.ReplaceChar( '(', '_' );
-			entityName.ReplaceChar( ')', '_' );
-			entityName.StripFileExtension();
+			const idStr fgdModelFileName = FGD_CleanString( exportedModelFileName );
 
 			fgdFile->Printf( "@PointClass " );
 
@@ -3308,10 +3723,10 @@ void idDeclManagerLocal::ExportModelsToTrenchBroom_f( const idCmdArgs& args )
 			//fgdFile->Printf( "size(-8 -8 0, 8 8 16) " );
 #endif
 
-			fgdFile->Printf( "base(auto_generated_model) model({ \"path\": \"%s\" }) = %s : \"Display entity\"\n[\n", exportedModelFileName.c_str(), entityName.c_str() );
+			fgdFile->Printf( "base(auto_generated_model) model({ \"path\": \"%s\" }) = %s : \"Display entity\"\n[\n", fgdModelFileName.c_str(), entityName.c_str() );
 			//fgdFile->Printf( "[\n\t angles(string) : \"\" : \"0 0 0\"\n]\n\n");
-			fgdFile->Printf( "\t proxymodel(string) : \"\" : \"%s\"\n", exportedModelFileName.c_str() );
-			fgdFile->Printf( "\t model(string) : \"\" : \"%s\"\n", originalModelFileName.c_str() );
+			fgdFile->Printf( "\tproxymodel(string) : \"\" : \"%s\"\n", fgdModelFileName.c_str() );
+			fgdFile->Printf( "\tmodel(string) : \"\" : \"%s\"\n", FGD_CleanString( originalModelFileName ).c_str() );
 			fgdFile->Printf( "]\n\n", exportedModelFileName.c_str() );
 
 
@@ -3331,6 +3746,8 @@ void idDeclManagerLocal::ExportModelsToTrenchBroom_f( const idCmdArgs& args )
 #endif
 			defFile->Printf( "}\n\n", exportedModelFileName.c_str() );
 
+			// only a written entity claims its name
+			emittedHash.Add( nameKey, emittedNames.Append( entityName ) );
 			totalEntitiesCount++;
 		}
 

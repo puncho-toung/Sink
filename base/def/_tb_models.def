@@ -5222,13 +5222,6 @@ entityDef genmodel_mapobjects_monitors_hangingmonitor
 	 "model"          "models/mapobjects/monitors/hangingmonitor.ase"
 }
 
-entityDef genmodel_mapobjects_monitors_hangingmonitor
-{
-	 "inherit"        "misc_model"
-	 "proxymodel"     "_tb/models/mapobjects/monitors/hangingmonitor.obj"
-	 "model"          "models/mapobjects/monitors/hangingmonitor.lwo"
-}
-
 entityDef genmodel_mapobjects_monorail_skelsetup_skel_five
 {
 	 "inherit"        "misc_model"
