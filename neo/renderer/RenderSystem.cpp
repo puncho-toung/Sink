@@ -61,6 +61,13 @@ void idRenderSystemLocal::PrintPerformanceCounters()
 						( backEnd.pc.c_drawIndexes + backEnd.pc.c_shadowIndexes ) / 3,
 						backEnd.pc.c_shadowIndexes / 3
 					  );
+		//puncho start - headless equivalent of the HUD's LIGHTS line, for piped logs
+		common->Printf( "lights: math:%i tex:%i (mathInView:%i)\n",
+						backEnd.pc.c_mathLights,
+						backEnd.pc.c_textureLights,
+						pc.c_mathViewLights
+					  );
+		//puncho end
 	}
 
 	if( r_showDynamic.GetBool() )
@@ -85,8 +92,10 @@ void idRenderSystemLocal::PrintPerformanceCounters()
 	{
 		common->Printf( "callback:%i createInteractions:%i createShadowVolumes:%i\n",
 						pc.c_entityDefCallbacks, pc.c_createInteractions, pc.c_createShadowVolumes );
-		common->Printf( "viewEntities:%i  shadowEntities:%i  viewLights:%i\n", pc.c_visibleViewEntities,
-						pc.c_shadowViewEntities, pc.c_viewLights );
+		//puncho start
+		common->Printf( "viewEntities:%i  shadowEntities:%i  viewLights:%i  mathInView:%i\n", pc.c_visibleViewEntities,
+						pc.c_shadowViewEntities, pc.c_viewLights, pc.c_mathViewLights );
+		//puncho end
 	}
 	if( r_showUpdates.GetBool() )
 	{
@@ -689,6 +698,14 @@ void idRenderSystemLocal::SwapCommandBuffers_FinishRendering(
 	{
 		*pc = this->pc;
 	}
+
+	//puncho start
+	// frame-level light counts; attached on the main thread because frontend-thread tags are dropped (plan 2.5)
+	PROFILE_EVENT_TAG( "viewLights", this->pc.c_viewLights );
+	PROFILE_EVENT_TAG( "mathViewLights", this->pc.c_mathViewLights );
+	PROFILE_EVENT_TAG( "mathLightsDrawn", backEnd.pc.c_mathLights );
+	PROFILE_EVENT_TAG( "textureLightsDrawn", backEnd.pc.c_textureLights );
+	//puncho end
 
 	// print any other statistics and clear all of them
 	PrintPerformanceCounters();

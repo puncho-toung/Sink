@@ -240,6 +240,13 @@ idCVar stereoRender_deGhost( "stereoRender_deGhost", "0.05", CVAR_FLOAT | CVAR_A
 
 idCVar r_useVirtualScreenResolution( "r_useVirtualScreenResolution", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE | CVAR_NEW, "do 2D rendering at 640x480 and stretch to the current resolution" );
 
+//puncho start - MathLight parameters, moved here from RenderBackend.cpp so they sit with the other
+// renderer CVars and are declared once in RenderCommon.h for the frontend, the backend and Console.cpp.
+idCVar r_mathLightsEnabled( "r_mathLightsEnabled", "1", CVAR_RENDERER | CVAR_BOOL, "globally enable math-driven light falloff (per-light math_enabled spawn arg still required)" );
+idCVar r_showMathLights( "r_showMathLights", "0", CVAR_RENDERER | CVAR_INTEGER, "math light debug view: 0 = off, 1 = falloff t (black at source, white at volume edge), 2 = spot shape mask, 3 = pattern RGB", 0, 3 );
+idCVar r_profileLights( "r_profileLights", "1", CVAR_RENDERER | CVAR_INTEGER, "per-light profiler events: 0 = off, 1 = math lights only, 2 = all lights; requires an OPTICK=ON build", 0, 2 );
+//puncho end
+
 // RB: shadow mapping parameters
 idCVar r_useShadowAtlas( "r_useShadowAtlas", "1", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "" );
 idCVar r_shadowMapAtlasSize( "r_shadowMapAtlasSize", "8192", CVAR_RENDERER | CVAR_INTEGER | CVAR_ROM | CVAR_NEW, "size of the shadowmap atlas" );

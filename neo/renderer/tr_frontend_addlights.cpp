@@ -124,7 +124,13 @@ static void R_AddSingleLight( viewLight_t* vLight )
 		return;
 	}
 
-	SCOPED_PROFILE_EVENT( lightShader->GetName() );
+	//puncho start
+	PROFILE_STATIC_DESC( descMathLight, "R_AddSingleLight_MathLight", Optick::Category::Rendering );
+	PROFILE_STATIC_DESC( descLight, "R_AddSingleLight_Light", Optick::Category::Rendering );
+	SCOPED_PROFILE_EVENT_DESC( R_LightUsesMathPath( light->parms.mathLight ) ? descMathLight : descLight );
+	PROFILE_EVENT_TAG( "lightShader", lightShader->GetName() );
+	PROFILE_EVENT_TAG( "lightIndex", light->index );
+	//puncho end
 
 	// see if we are suppressing the light in this view
 	if( !r_skipSuppress.GetBool() )
@@ -666,6 +672,9 @@ void R_AddLights()
 	//-------------------------------------------------
 
 	tr.pc.c_viewLights = 0;
+	//puncho start
+	tr.pc.c_mathViewLights = 0;
+	//puncho end
 	viewLight_t** ptr = &tr.viewDef->viewLights;
 	while( *ptr != NULL )
 	{
@@ -682,6 +691,12 @@ void R_AddLights()
 
 		// serial work
 		tr.pc.c_viewLights++;
+		//puncho start
+		if( R_LightUsesMathPath( vLight ) )
+		{
+			tr.pc.c_mathViewLights++;
+		}
+		//puncho end
 
 		for( shadowOnlyEntity_t* shadEnt = vLight->shadowOnlyViewEntities; shadEnt != NULL; shadEnt = shadEnt->next )
 		{

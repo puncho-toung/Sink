@@ -309,6 +309,10 @@ float idConsoleLocal::DrawFPS( float y )
 	const uint64 rendererGPUShaderPassesTime = commonLocal.GetRendererGpuShaderPassMicroseconds() + commonLocal.GetRendererGpuFogAllLightsMicroseconds() + commonLocal.GetRendererGpuShaderPassPostMicroseconds() + commonLocal.GetRendererGpuDrawGuiMicroseconds();
 	const uint64 rendererGPU_TAATime = commonLocal.GetRendererGpuMotionVectorsMicroseconds() + commonLocal.GetRendererGpuTAAMicroseconds();
 	const uint64 rendererGPUPostProcessingTime = commonLocal.GetRendererGpuToneMapPassMicroseconds() + commonLocal.GetRendererGpuPostProcessingMicroseconds() + commonLocal.GetRendererGpuCrtPostProcessingMicroseconds();
+	//puncho start - the two halves of rendererGPUInteractionsTime above
+	const uint64 rendererGPUInteractionsTexTime = commonLocal.GetRendererGpuInteractionsTexMicroseconds();
+	const uint64 rendererGPUInteractionsMathTime = commonLocal.GetRendererGpuInteractionsMathMicroseconds();
+	//puncho end
 
 	// SRS - Calculate max fps and max frame time based on glConfig.displayFrequency if vsync enabled and lower than engine Hz, otherwise use com_engineHz_latched
 	const int maxFPS = ( r_swapInterval.GetInteger() > 0 && glConfig.displayFrequency > 0 ? std::min( glConfig.displayFrequency, int( com_engineHz_latched ) ) : com_engineHz_latched );
@@ -343,12 +347,12 @@ float idConsoleLocal::DrawFPS( float y )
 	{
 		// start smaller
 		int32 statsWindowWidth = 320;
-		int32 statsWindowHeight = 330;
+		int32 statsWindowHeight = 370;		//puncho: +40 for the Int(tex)/Int(math) rows
 
 		if( com_showFPS.GetInteger() > 2 )
 		{
 			statsWindowWidth += 230;
-			statsWindowHeight += 140;
+			statsWindowHeight += 160;		//puncho: +20 for the LIGHTS line
 		}
 
 		ImVec2 pos;
@@ -518,6 +522,28 @@ float idConsoleLocal::DrawFPS( float y )
 			ImGui::TextColored( colorLtGrey, "UPDATES: entityUpdates:%-3i  entityRefs:%-3i  lightUpdates:%-2i  lightRefs:%i\n",
 								commonLocal.stats_frontend.c_entityUpdates, commonLocal.stats_frontend.c_entityReferences,
 								commonLocal.stats_frontend.c_lightUpdates, commonLocal.stats_frontend.c_lightReferences );
+
+			//puncho start - math:/tex: are lights that entered the interaction path (backend, summed over every
+			// 3D view in the frame); view: and mathInView: are the frontend's last view. Under com_smp 1 the
+			// frontend counts are one frame ahead of the backend ones, so with one 3D view and a still camera
+			// math + tex <= view, the gap being fog and blend lights and lights with no interactions.
+			// r_showMathLights repaints every math light with a debug field, so the line says so in orange.
+			static const int mlDebugNameCount = 4;
+			static const char* mlDebugNames[mlDebugNameCount] =
+			{
+				"",
+				"  [DEBUG: falloff t]",
+				"  [DEBUG: spot mask]",
+				"  [DEBUG: pattern]",
+			};
+			const int mlDebug = idMath::ClampInt( 0, mlDebugNameCount - 1, r_showMathLights.GetInteger() );
+			ImGui::TextColored( mlDebug > 0 ? colorOrange : colorLtGrey, "LIGHTS: view:%-3i  math:%-3i  tex:%-3i  mathInView:%i%s",
+								commonLocal.stats_frontend.c_viewLights,
+								commonLocal.stats_backend.c_mathLights,
+								commonLocal.stats_backend.c_textureLights,
+								commonLocal.stats_frontend.c_mathViewLights,
+								mlDebugNames[mlDebug] );
+			//puncho end
 		}
 
 		//ImGui::Text( "frameData: %i (%i)\n", frameData->frameMemoryAllocated.GetValue(), frameData->highWaterAllocated );
@@ -555,6 +581,11 @@ float idConsoleLocal::DrawFPS( float y )
 #endif
 		ImGui::TextColored( rendererGPU_TAATime > maxTime ? colorRed : colorWhite,			"                    TAA:          %5llu us", rendererGPU_TAATime );
 		ImGui::TextColored( rendererGPUPostProcessingTime > maxTime ? colorRed : colorWhite, "                    PostFX:       %5llu us", rendererGPUPostProcessingTime );
+		//puncho start - with the other GPU-only rows, after the __APPLE__/USE_MoltenVK branch; labels are
+		// padded to the 14-character column set by "Interactions: "
+		ImGui::TextColored( rendererGPUInteractionsTexTime > maxTime ? colorRed : colorWhite,  "                    Int(tex):     %5llu us", rendererGPUInteractionsTexTime );
+		ImGui::TextColored( rendererGPUInteractionsMathTime > maxTime ? colorRed : colorWhite, "                    Int(math):    %5llu us", rendererGPUInteractionsMathTime );
+		//puncho end
 		ImGui::TextColored( frameBusyTime > maxTime || rendererGPUTime > maxTime ? colorRed : colorWhite, "Total:   %5lld us   Total:        %5lld us", frameBusyTime, rendererGPUTime );
 		ImGui::TextColored( colorWhite,														"Idle:    %5lld us   Idle:         %5lld us", frameIdleTime, rendererGPUIdleTime );
 		// SRS - Show CPU and GPU overall usage statistics

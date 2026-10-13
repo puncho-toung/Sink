@@ -60,6 +60,11 @@ enum renderLogMainBlock_t
 	MRB_POSTPROCESS,
 	MRB_DRAW_GUI,
 	MRB_CRT_POSTPROCESS,
+	//puncho start - MathLight profiling: one main block per interaction phase. Placed immediately
+	// before MRB_TOTAL so that only MRB_TOTAL's ordinal moves in the ASSERT_ENUM_STRING table.
+	MRB_DRAW_INTERACTIONS_TEX,
+	MRB_DRAW_INTERACTIONS_MATH,
+	//puncho end
 	MRB_TOTAL,
 
 	MRB_TOTAL_QUERIES = MRB_TOTAL * 2,
@@ -113,5 +118,9 @@ public:
 };
 
 extern idRenderLog renderLog;
+//puncho start - RenderBackend.cpp gates debug-marker string composition on this. PC_BeginNamedEvent's
+// early-out lives inside the callee, so a caller that composes a name must check the CVar itself.
+extern idCVar r_logLevel;
+//puncho end
 
 #endif // !__RENDERLOG_H__

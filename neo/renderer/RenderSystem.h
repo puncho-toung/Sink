@@ -119,6 +119,9 @@ struct performanceCounters_t
 	int		c_visibleViewEntities;
 	int		c_shadowViewEntities;
 	int		c_viewLights;
+	//puncho start - math lights the frontend placed in the view; reset per view beside c_viewLights, so last view of the frame wins
+	int		c_mathViewLights;
+	//puncho end
 	int		c_numViews;			// number of total views rendered
 	int		c_deformedSurfaces;	// idMD5Mesh::GenerateSurface
 	int		c_deformedVerts;	// idMD5Mesh::GenerateSurface
@@ -149,6 +152,12 @@ struct backEndCounters_t
 
 	int		c_drawElements;
 	int		c_drawIndexes;
+	//puncho start - lights that entered the interaction path this frame (a non-empty interaction list),
+	// split by shading path. Fog and blend lights and lights with no interactions are skipped before
+	// classification and appear in neither. Accumulates over every 3D view in the frame, like c_drawElements.
+	int		c_mathLights;
+	int		c_textureLights;
+	//puncho end
 
 	int		c_shadowAtlasUsage; // allocated pixels in the atlas
 	int		c_shadowViews;
@@ -170,6 +179,10 @@ struct backEndCounters_t
 	uint64	gpuAmbientPassMicroSec;
 	uint64	gpuShadowAtlasPassMicroSec;
 	uint64	gpuInteractionsMicroSec;
+	//puncho start - the two halves of gpuInteractionsMicroSec above
+	uint64	gpuInteractionsTexMicroSec;
+	uint64	gpuInteractionsMathMicroSec;
+	//puncho end
 	uint64	gpuShaderPassMicroSec;
 	uint64	gpuFogAllLightsMicroSec;
 	uint64	gpuBloomMicroSec;

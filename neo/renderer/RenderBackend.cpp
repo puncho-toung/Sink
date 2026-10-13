@@ -45,9 +45,6 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "MathLight.h"
 
-idCVar r_mathLightsEnabled("r_mathLightsEnabled", "1", CVAR_RENDERER | CVAR_BOOL, "globally enable math-driven light falloff (per-light math_enabled spawn arg still required)");
-idCVar r_showMathLights("r_showMathLights", "0", CVAR_RENDERER | CVAR_INTEGER, "math light debug view: 0 = off, 1 = falloff t (black at source, white at volume edge), 2 = spot shape mask, 3 = pattern RGB", 0, 3);
-
 idCVar r_useNewSsaoPass( "r_useNewSSAOPass", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "use the new SSAO pass from Donut" );
 extern DeviceManager* deviceManager;
 
@@ -1906,18 +1903,38 @@ void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const view
 			RB_GetShaderTextureMatrix( lightRegs, &lightStage->texture, lightTextureMatrix );
 		}
 
-		// texture 1 will be the light falloff texture
-		GL_SelectTexture( INTERACTION_TEXUNIT_FALLOFF );
-		vLight->falloffImage->Bind();
+		//puncho start - a math light samples neither of these (interaction.ps.hlsl:84-91,
+		// interactionSM.ps.hlsl:127-136, interactionAmbient.ps.hlsl:84-91). Binding a shared neutral image
+		// instead of the light's own makes the two paths visibly different in a capture, drops two per-stage
+		// image binds, and keeps units 3 and 4 of slot 2 identical across the whole math phase. Substitute,
+		// never skip: GetCurrentBindingLayout builds that slot unconditionally from GetImageAt( 3 ) and
+		// GetImageAt( 4 ), GetImageAt does not null-check, and those units are also the ambient pass's BRDF
+		// LUT and SSAO target. White is the identity of the lightProjRGB * lightFalloffRGB product, and is
+		// the same neutral the IBL path already binds to unit 4.
+		if( R_LightUsesMathPath( vLight ) )
+		{
+			GL_SelectTexture( INTERACTION_TEXUNIT_FALLOFF );
+			globalImages->whiteImage->Bind();
 
-		// texture 2 will be the light projection texture
-		GL_SelectTexture( INTERACTION_TEXUNIT_PROJECTION );
-		lightStage->texture.image->Bind();
+			GL_SelectTexture( INTERACTION_TEXUNIT_PROJECTION );
+			globalImages->whiteImage->Bind();
+		}
+		else
+		{
+			// texture 1 will be the light falloff texture
+			GL_SelectTexture( INTERACTION_TEXUNIT_FALLOFF );
+			vLight->falloffImage->Bind();
+
+			// texture 2 will be the light projection texture
+			GL_SelectTexture( INTERACTION_TEXUNIT_PROJECTION );
+			lightStage->texture.image->Bind();
+		}
+		//puncho end
 
 		//puncho start
 		{
 			const mathLightData_t& m = vLight->mathLight;
-			const bool useML = m.enabled && r_mathLightsEnabled.GetBool();
+			const bool useML = R_LightUsesMathPath( vLight );
 			float mlMode = 0.0f;										// flags.x: 0 = legacy path, 1 = math on, 2-4 = debug views
 			if (useML)
 			{
@@ -3770,6 +3787,13 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 	//
 	shadowIndex = 0;
 	int failedNum = 0;
+	//puncho start
+	const int profileLights = r_profileLights.GetInteger();
+	PROFILE_STATIC_DESC( descMathLightCpu, "ShadowAtlas_MathLight", Optick::Category::Rendering );
+	PROFILE_STATIC_DESC( descMathLightGpu, "ShadowAtlas_MathLight", Optick::Category::GPU_Shadows );
+	PROFILE_STATIC_DESC( descLightCpu, "ShadowAtlas_Light", Optick::Category::Rendering );
+	PROFILE_STATIC_DESC( descLightGpu, "ShadowAtlas_Light", Optick::Category::GPU_Shadows );
+	//puncho end
 
 	for( viewLight_t* vLight = viewDef->viewLights; vLight != NULL; vLight = vLight->next )
 	{
@@ -3796,6 +3820,16 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 		}
 
 		const idMaterial* lightShader = vLight->lightShader;
+		//puncho start
+		const bool isMathLight = R_LightUsesMathPath( vLight );
+		const bool profileLight = ( profileLights == 2 ) || ( profileLights == 1 && isMathLight );
+		idOptionalGpuProfileScope lightScope( profileLight ? ( isMathLight ? descMathLightCpu : descLightCpu ) : NULL,
+											  profileLight ? ( isMathLight ? descMathLightGpu : descLightGpu ) : NULL );
+		if( profileLight && isMathLight )
+		{
+			PROFILE_EVENT_TAG( "lightShader", lightShader->GetName() );
+		}
+		//puncho end
 		renderLog.OpenBlock( lightShader->GetName(), colorMdGrey );
 
 		int	side, sideStop;
@@ -3894,36 +3928,68 @@ DRAW INTERACTIONS
 
 ==============================================================================================
 */
+//puncho start
+/*
+====================
+R_MathLightTypeName / R_MathLightFalloffName
+
+Short names for a light's debug-marker tag, from static tables so a caller can compose them inside one
+va() expression. Table sizes are asserted against the enums in MathLight.h, so adding a type or falloff
+curve without naming it here stops the build instead of printing the wrong name. The clamps matter:
+mathLightData_t fields are plain ints that can come from a hand-edited map.
+====================
+*/
+static const char* R_MathLightTypeName( int type )
+{
+	static const int mlTypeNameCount = 3;
+	static const char* mlTypeNames[mlTypeNameCount] =
+	{
+		"point",
+		"spot",
+		"sun",
+	};
+	compile_time_assert( mlTypeNameCount == ( ML_SUN + 1 ) );
+
+	return mlTypeNames[idMath::ClampInt( 0, mlTypeNameCount - 1, type )];
+}
+
+static const char* R_MathLightFalloffName( int falloff )
+{
+	static const int mlFalloffNameCount = 5;
+	static const char* mlFalloffNames[mlFalloffNameCount] =
+	{
+		"invsq",
+		"linear",
+		"smooth",
+		"exp",
+		"invsq_clamped",
+	};
+	compile_time_assert( mlFalloffNameCount == ( MLF_INVSQUARE_CLAMPED + 1 ) );
+
+	return mlFalloffNames[idMath::ClampInt( 0, mlFalloffNameCount - 1, falloff )];
+}
+//puncho end
+
+//puncho start
 /*
 ==================
-idRenderBackend::DrawInteractions
+idRenderBackend::DrawInteractionsPass
+
+One filtered walk of the view's lights: the texture-light phase (mathPass false) or the math-light
+phase (mathPass true). Split out of DrawInteractions so each phase carries its own GPU timer and its
+own Optick GPU event; the loop body is the original, moved verbatim. Each light passes the filter in
+exactly one phase, so the per-light Optick scopes and the counters fire once per light per frame.
 ==================
 */
-void idRenderBackend::DrawInteractions( const viewDef_t* _viewDef )
+void idRenderBackend::DrawInteractionsPass( const viewDef_t* _viewDef, bool mathPass, Framebuffer* previousFramebuffer, bool useLightDepthBounds )
 {
-	if( r_skipInteractions.GetBool() || viewDef->viewLights == NULL )
-	{
-		return;
-	}
-
-	//OPTICK_EVENT( "Render_Interactions" );
-
-	nvrhi::ObjectType commandObject = nvrhi::ObjectTypes::D3D12_GraphicsCommandList;
-	if( deviceManager->GetGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN )
-	{
-		commandObject = nvrhi::ObjectTypes::VK_CommandBuffer;
-	}
-	OPTICK_GPU_CONTEXT( ( void* ) commandList->getNativeObject( commandObject ) );
-	OPTICK_GPU_EVENT( "Render_Interactions" );
-
-	renderLog.OpenMainBlock( MRB_DRAW_INTERACTIONS );
-	renderLog.OpenBlock( "Render_Interactions", colorYellow );
-
-	GL_SelectTexture( 0 );
-
-	const bool useLightDepthBounds = false; //r_useLightDepthBounds.GetBool() && !r_useShadowMapping.GetBool();
-
-	Framebuffer* previousFramebuffer = Framebuffer::GetActiveFramebuffer();
+	//puncho start
+	const int profileLights = r_profileLights.GetInteger();
+	PROFILE_STATIC_DESC( descMathLightCpu, "Interactions_MathLight", Optick::Category::Rendering );
+	PROFILE_STATIC_DESC( descMathLightGpu, "Interactions_MathLight", Optick::Category::GPU_Lighting );
+	PROFILE_STATIC_DESC( descLightCpu, "Interactions_Light", Optick::Category::Rendering );
+	PROFILE_STATIC_DESC( descLightGpu, "Interactions_Light", Optick::Category::GPU_Lighting );
+	//puncho end
 
 	//
 	// for each light, perform shadowing and adding
@@ -3945,8 +4011,58 @@ void idRenderBackend::DrawInteractions( const viewDef_t* _viewDef )
 			continue;
 		}
 
+		//puncho start - classify once, count. Below the fog, blend and no-interaction skips above, so the
+		// counters describe lights that entered the interaction path.
+		const bool isMathLight = R_LightUsesMathPath( vLight );
+		// filter to this phase; the continue precedes every marker, scope and counter
+		if( isMathLight != mathPass )
+		{
+			continue;
+		}
+		if( isMathLight )
+		{
+			pc.c_mathLights++;
+		}
+		else
+		{
+			pc.c_textureLights++;
+		}
+		//puncho end
+
 		const idMaterial* lightShader = vLight->lightShader;
-		renderLog.OpenBlock( lightShader->GetName(), colorMdGrey );
+		//puncho start
+		const bool profileLight = ( profileLights == 2 ) || ( profileLights == 1 && isMathLight );
+		idOptionalGpuProfileScope lightScope( profileLight ? ( isMathLight ? descMathLightCpu : descLightCpu ) : NULL,
+											  profileLight ? ( isMathLight ? descMathLightGpu : descLightGpu ) : NULL );
+		if( profileLight && isMathLight )
+		{
+			PROFILE_EVENT_TAG( "lightShader", lightShader->GetName() );
+			PROFILE_EVENT_TAG( "mlType", vLight->mathLight.type );
+			PROFILE_EVENT_TAG( "mlFalloff", vLight->mathLight.falloff );
+			PROFILE_EVENT_TAG( "mlPattern", vLight->mathLight.pattern );
+			PROFILE_EVENT_TAG( "origin", vLight->globalLightOrigin.x, vLight->globalLightOrigin.y, vLight->globalLightOrigin.z );
+		}
+		//puncho end
+		//puncho start - name the block by the path the light takes. PC_BeginNamedEvent's r_logLevel
+		// early-out is inside the callee, so the composition is gated here or every light pays a va()
+		// per frame. va() in this fork is the c_str() of a temporary that lives only to the end of this
+		// full expression (idlib/Str.h:407-409): it is passed straight through and never stored.
+		if( r_logLevel.GetInteger() > 0 )
+		{
+			if( isMathLight )
+			{
+				renderLog.OpenBlock( va( "%s [ML %s/%s]", lightShader->GetName(), R_MathLightTypeName( vLight->mathLight.type ), R_MathLightFalloffName( vLight->mathLight.falloff ) ), colorMdGrey );
+			}
+			else
+			{
+				renderLog.OpenBlock( va( "%s [TEX]", lightShader->GetName() ), colorMdGrey );
+			}
+		}
+		else
+		{
+			renderLog.OpenBlock( lightShader->GetName(), colorMdGrey );
+		}
+		//puncho end
 
 		// set the depth bounds for the whole light
 		if( useLightDepthBounds )
@@ -4052,6 +4168,70 @@ void idRenderBackend::DrawInteractions( const viewDef_t* _viewDef )
 
 		renderLog.CloseBlock();
 	}
+}
+//puncho end
+
+/*
+==================
+idRenderBackend::DrawInteractions
+==================
+*/
+void idRenderBackend::DrawInteractions( const viewDef_t* _viewDef )
+{
+	if( r_skipInteractions.GetBool() || viewDef->viewLights == NULL )
+	{
+		return;
+	}
+
+	//OPTICK_EVENT( "Render_Interactions" );
+
+	nvrhi::ObjectType commandObject = nvrhi::ObjectTypes::D3D12_GraphicsCommandList;
+	if( deviceManager->GetGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN )
+	{
+		commandObject = nvrhi::ObjectTypes::VK_CommandBuffer;
+	}
+	OPTICK_GPU_CONTEXT( ( void* ) commandList->getNativeObject( commandObject ) );
+	OPTICK_GPU_EVENT( "Render_Interactions" );
+
+	renderLog.OpenMainBlock( MRB_DRAW_INTERACTIONS );
+	renderLog.OpenBlock( "Render_Interactions", colorYellow );
+
+	GL_SelectTexture( 0 );
+
+	const bool useLightDepthBounds = false; //r_useLightDepthBounds.GetBool() && !r_useShadowMapping.GetBool();
+
+	Framebuffer* previousFramebuffer = Framebuffer::GetActiveFramebuffer();
+	//puncho start - two ordered phases, one GPU timer each. This cannot be done per light: a main block is
+	// measured only on its first Open/Close pair in a frame (the !timerUsed guards, RenderLog.cpp:169 and
+	// :196). Reordering is safe because interactions are additive (GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE)
+	// with depth writes masked and the test EQUAL against the prepass (LESS for translucent interactions),
+	// so no light occludes another; two filtered walks of the same list keep the frontend's largest-first
+	// order inside each phase. Each phase has its own braces so the two Optick GPU events do not nest in
+	// each other. Both phases open unconditionally, so an empty phase reads a live ~0 instead of a dead 0.
+	{
+		OPTICK_GPU_EVENT( "Render_Interactions_Tex" );
+
+		renderLog.OpenMainBlock( MRB_DRAW_INTERACTIONS_TEX );
+		renderLog.OpenBlock( "Render_Interactions_Tex", colorYellow );
+
+		DrawInteractionsPass( _viewDef, false, previousFramebuffer, useLightDepthBounds );
+
+		renderLog.CloseBlock();
+		renderLog.CloseMainBlock( MRB_DRAW_INTERACTIONS_TEX );
+	}
+
+	{
+		OPTICK_GPU_EVENT( "Render_Interactions_Math" );
+
+		renderLog.OpenMainBlock( MRB_DRAW_INTERACTIONS_MATH );
+		renderLog.OpenBlock( "Render_Interactions_Math", colorYellow );
+
+		DrawInteractionsPass( _viewDef, true, previousFramebuffer, useLightDepthBounds );
+
+		renderLog.CloseBlock();
+		renderLog.CloseMainBlock( MRB_DRAW_INTERACTIONS_MATH );
+	}
+	//puncho end
 
 	// disable stencil shadow test
 	GL_State( GLS_DEFAULT );
@@ -4066,7 +4246,8 @@ void idRenderBackend::DrawInteractions( const viewDef_t* _viewDef )
 	}
 
 	renderLog.CloseBlock();
-	renderLog.CloseMainBlock();
+	//puncho: named - the phase blocks above overwrote idRenderLog::mainBlock (RenderLog.cpp:186-191); an argless close would leave MRB_DRAW_INTERACTIONS begun and never ended
+	renderLog.CloseMainBlock( MRB_DRAW_INTERACTIONS );
 }
 
 /*

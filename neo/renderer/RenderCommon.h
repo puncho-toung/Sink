@@ -1147,6 +1147,11 @@ extern idCVar r_useShadowDepthBounds;		// use depth bounds test on individual sh
 // RB begin
 extern idCVar r_useShadowAtlas;				// temporary for perf testing: pack shadow maps into big atlas
 // RB end
+//puncho start
+extern idCVar r_mathLightsEnabled;			// globally enable analytic (math) light falloff
+extern idCVar r_showMathLights;				// math light debug view: 0 off, 1 falloff t, 2 spot mask, 3 pattern
+extern idCVar r_profileLights;				// per-light Optick events: 0 off, 1 math lights, 2 all lights
+//puncho end
 
 extern idCVar r_skipStaticInteractions;		// skip interactions created at level load
 extern idCVar r_skipDynamicInteractions;	// skip interactions created after level load
@@ -1571,6 +1576,29 @@ ID_INLINE bool R_CullModelBoundsToLight( const idRenderLightLocal* light, const 
 	idRenderMatrix::Multiply( light->baseLightProject, modelRenderMatrix, modelLightProject );
 	return idRenderMatrix::CullBoundsToMVP( modelLightProject, localBounds, true );
 }
+
+//puncho start
+/*
+====================
+R_LightUsesMathPath
+
+The single authority on whether a light shades through MLEvaluate this frame or through the falloff
+and projection textures. The rpUser0 upload in RenderInteractions, the interaction phase split, the
+per-light debug marker, the per-light Optick scopes and every light counter route through here, so no
+tool can report a light into a bucket the shader did not use. R_AddSingleLight runs before the
+viewLight_t copy exists and passes renderLight_t::mathLight directly.
+====================
+*/
+ID_INLINE bool R_LightUsesMathPath( const mathLightData_t& mathLight )
+{
+	return mathLight.enabled && r_mathLightsEnabled.GetBool();
+}
+
+ID_INLINE bool R_LightUsesMathPath( const viewLight_t* vLight )
+{
+	return R_LightUsesMathPath( vLight->mathLight );
+}
+//puncho end
 
 void R_AddLights();
 void R_OptimizeViewLightsList();

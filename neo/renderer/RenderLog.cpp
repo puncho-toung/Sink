@@ -60,7 +60,9 @@ const char* renderLogMainBlockLabels[] =
 	ASSERT_ENUM_STRING( MRB_POSTPROCESS,					18 ),
 	ASSERT_ENUM_STRING( MRB_DRAW_GUI,                       19 ),
 	ASSERT_ENUM_STRING( MRB_CRT_POSTPROCESS,                20 ),
-	ASSERT_ENUM_STRING( MRB_TOTAL,							21 )
+	ASSERT_ENUM_STRING( MRB_DRAW_INTERACTIONS_TEX,          21 ),	//puncho start
+	ASSERT_ENUM_STRING( MRB_DRAW_INTERACTIONS_MATH,         22 ),	//puncho end
+	ASSERT_ENUM_STRING( MRB_TOTAL,							23 )
 };
 
 extern uint64 Sys_Microseconds();
@@ -257,6 +259,16 @@ void idRenderLog::FetchGPUTimers( backEndCounters_t& pc )
 				case MRB_DRAW_INTERACTIONS:
 					pc.gpuInteractionsMicroSec = time;
 					break;
+				//puncho start - without these cases the new blocks fall through to "default: break;" and
+				// their timestamps are read from the GPU and discarded, like MRB_DRAW_DEBUG_TOOLS today.
+				case MRB_DRAW_INTERACTIONS_TEX:
+					pc.gpuInteractionsTexMicroSec = time;
+					break;
+
+				case MRB_DRAW_INTERACTIONS_MATH:
+					pc.gpuInteractionsMathMicroSec = time;
+					break;
+				//puncho end
 
 				case MRB_DRAW_SHADER_PASSES:
 					pc.gpuShaderPassMicroSec = time;

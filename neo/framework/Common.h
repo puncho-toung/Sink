@@ -108,6 +108,81 @@ public:
 	#define SCOPED_PROFILE_EVENT( x ) idScopedProfileEvent scopedProfileEvent_##__LINE__( x )
 #endif
 
+//puncho start
+// Per-light profiling helpers (plan: claudespace/plans/optick-mathlight-profiling-plan.md, D8).
+// idlib/precompiled.h includes this header before libs/optick/optick.h, so the helper below
+// needs the include itself (optick.h has #pragma once).
+#include "../libs/optick/optick.h"
+
+#if USE_OPTICK
+	typedef ::Optick::EventDescription profileDesc_t;
+
+	// function-local static description (OPTICK_FUNC gives C2457 at namespace scope); C++11 thread-safe init
+	#define PROFILE_STATIC_DESC( var, name, category ) \
+		static profileDesc_t* const var = ::Optick::CreateDescription( OPTICK_FUNC, __FILE__, __LINE__, name, category )
+	#define SCOPED_PROFILE_EVENT_DESC( desc )		::Optick::Event OPTICK_CONCAT( profEvent_, __LINE__ )( *( desc ) )
+	// one per source line, always inside braces (expands to a static plus three statements)
+	#define PROFILE_EVENT_TAG( name, ... )			OPTICK_TAG( name, __VA_ARGS__ )
+
+	// CPU scope plus GPU scope on the current OPTICK_GPU_CONTEXT; either description may be NULL.
+	// Mirrors OPTICK_GPU_EVENT, which also uses separate CPU and GPU descriptions (optick.h:1090-1093).
+	// Construct after the pass's OPTICK_GPU_CONTEXT, in the same or an inner scope; do not close or
+	// reopen the command list while it lives (without a context the GPU query dereferences a NULL
+	// command list during a capture, optick.h:794, optick_gpu.d3d12.cpp:243).
+	// Accepted exception to the AGENTS.md "no RAII on the hot path" rule, like idScopedProfileEvent.
+	class idOptionalGpuProfileScope
+	{
+	public:
+		idOptionalGpuProfileScope( const profileDesc_t* cpuDesc, const profileDesc_t* gpuDesc ) : cpuData( NULL ), gpuData( NULL )
+		{
+			// Start returns NULL when no capture is running or the thread is not registered
+			if( cpuDesc != NULL )
+			{
+				cpuData = ::Optick::Event::Start( *cpuDesc );
+			}
+			if( gpuDesc != NULL )
+			{
+				gpuData = ::Optick::GPUEvent::Start( *gpuDesc );
+			}
+		}
+
+		~idOptionalGpuProfileScope()
+		{
+			if( gpuData != NULL )
+			{
+				::Optick::GPUEvent::Stop( *gpuData );
+			}
+			if( cpuData != NULL )
+			{
+				::Optick::Event::Stop( *cpuData );
+			}
+		}
+
+		idOptionalGpuProfileScope( const idOptionalGpuProfileScope& ) = delete;
+		idOptionalGpuProfileScope& operator=( const idOptionalGpuProfileScope& ) = delete;
+
+	private:
+		::Optick::EventData*	cpuData;
+		::Optick::EventData*	gpuData;
+	};
+#else
+	struct profileDesc_t
+	{
+	};
+
+	// still declares the variable so call sites can pass it to idOptionalGpuProfileScope
+	#define PROFILE_STATIC_DESC( var, name, category )	static profileDesc_t* const var = NULL
+	#define SCOPED_PROFILE_EVENT_DESC( desc )
+	#define PROFILE_EVENT_TAG( name, ... )
+
+	class idOptionalGpuProfileScope
+	{
+	public:
+		idOptionalGpuProfileScope( const profileDesc_t*, const profileDesc_t* ) {}
+	};
+#endif
+//puncho end
+
 ID_INLINE bool BeginTraceRecording( const char* szName )
 {
 	return false;

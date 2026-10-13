@@ -366,6 +366,17 @@ public:
 	{
 		return stats_backend.gpuInteractionsMicroSec;
 	}
+	//puncho start
+	uint64		GetRendererGpuInteractionsTexMicroseconds() const
+	{
+		return stats_backend.gpuInteractionsTexMicroSec;
+	}
+
+	uint64		GetRendererGpuInteractionsMathMicroseconds() const
+	{
+		return stats_backend.gpuInteractionsMathMicroSec;
+	}
+	//puncho end
 
 	uint64		GetRendererGpuShaderPassMicroseconds() const
 	{

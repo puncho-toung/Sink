@@ -174,6 +174,9 @@ private:
 			idVec4 matrix[2], float color[4] );
 
 	void				DrawInteractions( const viewDef_t* _viewDef );
+	//puncho start
+	void				DrawInteractionsPass( const viewDef_t* _viewDef, bool mathPass, Framebuffer* previousFramebuffer, bool useLightDepthBounds );
+	//puncho end
 	void				DrawSingleInteraction( drawInteraction_t* din, bool useFastPath, bool useIBL, bool setInteractionShader );
 	int					DrawShaderPasses( const drawSurf_t* const* const drawSurfs, const int numDrawSurfs,
 										  const float guiStereoScreenOffset, const int stereoEye );
