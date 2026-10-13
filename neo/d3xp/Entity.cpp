@@ -1362,6 +1362,18 @@ void idEntity::SetModel( const char* modelname )
 	if( renderEntity.hModel )
 	{
 		renderEntity.hModel->Reset();
+
+		// FindModel silently makes a default cube for an extensionless name it can't find,
+		// which for a brush entity means dmap wrote no .proc model for it
+		if( renderEntity.hModel->IsDefaultModel() )
+		{
+			idStr extension;
+			idStr( modelname ).ExtractFileExtension( extension );
+			if( extension.Length() == 0 )
+			{
+				gameLocal.Warning( "entity '%s': inline model '%s' not in the .proc; dmap dropped its brushes?", name.c_str(), modelname );
+			}
+		}
 	}
 
 	renderEntity.callback = NULL;

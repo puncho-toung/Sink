@@ -185,8 +185,10 @@ static uBrush_t* FinishBrush()
 	{
 		if( dmapGlobals.numEntities != 1 )
 		{
-			common->Printf( "Entity %i, Brush %i: areaportals only allowed in world\n"
-							,  dmapGlobals.numEntities - 1, entityPrimitive );
+			// a warning, not a print: if this drops every brush of the entity, its inline
+			// model is missing from the .proc and the game draws a default cube instead
+			common->Warning( "Entity %i, Brush %i: areaportals only allowed in world"
+							 ,  dmapGlobals.numEntities - 1, entityPrimitive );
 			FreeBuildBrush();
 			return NULL;
 		}

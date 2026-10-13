@@ -7,3 +7,22 @@ textures/__TB_empty
 	diffusemap		textures/base_wall/snpanel2rust_d.tga
 	specularmap		textures/base_wall/snpanel2rust_s.tga
 }
+
+// the editor_material of the func_aas_portal entityDef (def/func.def), which no retail
+// .mtr declares. It must not be an areaportal: dmap drops areaportal brushes on entities,
+// leaving the entity's inline model out of the .proc (the game then draws a default cube),
+// and the AAS compiler takes cluster portals only from areaportal brushes in worldspawn
+// (AASBuild.cpp ContentsForAAS, AddBrushesForMapFile). The entity's brush is only the
+// bounds its trigger toggles; it must overlap a worldspawn visportal to do anything.
+// nonsolid + trigger leave exactly CONTENTS_TRIGGER: the collision compiler keeps only
+// brushes with contents, so the entity's clip model gets the brush bounds; no solid mask
+// includes CONTENTS_TRIGGER, TouchTriggers skips it (idFuncAASPortal takes no touch), and
+// ContentsForAAS ignores it, so a stray worldspawn brush of this does not change the AAS.
+textures/editor/aasportal
+{
+	qer_editorimage	textures/editor/visportal.tga
+	qer_nocarve		// don't let an awry CSG operation cut it up
+	nonsolid
+	trigger
+	noshadows
+}
