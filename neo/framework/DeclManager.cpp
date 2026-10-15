@@ -979,7 +979,7 @@ void idDeclManagerLocal::Init()
 	// RB begin
 	cmdSystem->AddCommand( "exportEntitiesToBlender", ExportEntityDefsToBlender_f, CMD_FL_SYSTEM, "exports all entity and model defs to _bl/entities.json" );
 	cmdSystem->AddCommand( "exportMaterialsToBlender", ExportMaterialsToBlender_f, CMD_FL_SYSTEM, "exports all materials to _bl/entities.json" );
-	cmdSystem->AddCommand( "exportFGD", ExportEntityDefsToTrenchBroom_f, CMD_FL_SYSTEM, "exports all entity and model defs to _tb/fgd/DOOM-3-*.fgd" );
+	cmdSystem->AddCommand( "exportFGD", ExportEntityDefsToTrenchBroom_f, CMD_FL_SYSTEM, "exports all entity and model defs to _tb/fgd/DOOM-3-*.fgd; the light class also declares the engine's light_* and math_* keys" );
 	cmdSystem->AddCommand( "exportModelsToTrenchBroom", ExportModelsToTrenchBroom_f, CMD_FL_SYSTEM, "exports all generated models like blwo, base .. to _tb/*.obj" );
 	cmdSystem->AddCommand( "exportImagesToTrenchBroom", ExportImagesToTrenchBroom_f, CMD_FL_SYSTEM, "exports all generated bimages to _tb/*.png" );
 
@@ -2216,6 +2216,66 @@ static const int FGD_NUM_LINK_KEYS = sizeof( FGD_LINK_KEYS ) / sizeof( FGD_LINK_
 // TrenchBroom has no boolean property type, so booleans become a No/Yes combo box
 static const char* const FGD_BOOL_CHOICES	= " =\n\t[\n\t\t0 : \"No\"\n\t\t1 : \"Yes\"\n\t]\n";
 
+// the names ML_ParseFromDict accepts, captioned as in the light editor; an unknown name falls back to
+// invsquare_clamped and none
+static const char* const FGD_FALLOFF_CHOICES	= " =\n\t[\n"
+		"\t\t\"invsquare\" : \"Inverse square (unbounded)\"\n"
+		"\t\t\"linear\" : \"Linear\"\n"
+		"\t\t\"smooth\" : \"Smooth\"\n"
+		"\t\t\"exponential\" : \"Exponential\"\n"
+		"\t\t\"invsquare_clamped\" : \"Inverse square (clamped), PBR safe\"\n"
+		"\t]\n";
+
+static const char* const FGD_PATTERN_CHOICES	= " =\n\t[\n"
+		"\t\t\"none\" : \"None\"\n"
+		"\t\t\"subsurface\" : \"Subsurface (warm halo)\"\n"
+		"\t\t\"ice\" : \"Ice (cool noise)\"\n"
+		"\t\t\"caustic\" : \"Caustic (sharp noise)\"\n"
+		"\t\t\"banded\" : \"Banded (sine rings)\"\n"
+		"\t\t\"granular\" : \"Granular (stippled)\"\n"
+		"\t]\n";
+
+struct fgdLightKey_t
+{
+	const char*		key;
+	const char*		type;			// FGD property type
+	const char*		defaultValue;	// the engine's; NULL for the spot vectors, light_origin and light_angles, whose absence is the default
+	const char*		desc;
+	const char*		choices;		// the " = [ ... ]" block of a choices key, else NULL
+};
+
+// The light keys idGameEdit::ParseSpawnArgsToRenderLight and ML_ParseFromDict read, none of which the
+// light entityDef declares. math_type is left out on purpose: the engine derives the math-light type
+// from the light's geometry, the key is informational only.
+static const fgdLightKey_t FGD_LIGHT_KEYS[] =
+{
+	{ "light_radius",			"string",	"300 300 300",			"Point light half extents x y z; without it the single light value is used",			NULL },
+	{ "light_center",			"string",	"0 0 0",				"Light and shadow centre offset inside the volume; for a parallel light the direction to the light",	NULL },
+	{ "light_target",			"string",	NULL,					"Spot frustum target in light space; with light_right and light_up it makes a spot light",	NULL },
+	{ "light_right",			"string",	NULL,					"Spot frustum right vector in light space; needs light_target and light_up",			NULL },
+	{ "light_up",				"string",	NULL,					"Spot frustum up vector in light space; needs light_target and light_right",			NULL },
+	{ "light_start",			"string",	NULL,					"Optional spot near plane point in light space",										NULL },
+	{ "light_end",				"string",	NULL,					"Optional spot far plane point in light space; defaults to light_target",				NULL },
+	{ "light_origin",			"string",	NULL,					"Shine from this world point instead of the entity origin, for a light with a fixture model",	NULL },
+	{ "light_angles",			"string",	NULL,					"Pitch yaw roll of such a light; rotation and light_rotation override it",				NULL },
+	{ "parallel",				"choices",	"0",					"Sun light: parallel rays from the light_center direction",								FGD_BOOL_CHOICES },
+	{ "noshadows",				"choices",	"0",					"The light casts no shadows",															FGD_BOOL_CHOICES },
+	{ "nospecular",				"choices",	"0",					"The light adds no specular highlights, diffuse only",									FGD_BOOL_CHOICES },
+	{ "math_enabled",			"choices",	"0",					"Shade with the math_* falloff curve instead of the light texture falloff",				FGD_BOOL_CHOICES },
+	{ "math_falloff",			"choices",	"invsquare_clamped",	"Math light falloff curve over the light volume",										FGD_FALLOFF_CHOICES },
+	{ "math_falloff_exp",		"float",	"2.0",					"Falloff exponent, 0.1 to 16; unused by linear and smooth",								NULL },
+	{ "math_inner_radius",		"float",	"0.0",					"Fraction of the falloff distance, 0 to 1, at full strength before the curve starts",	NULL },
+	{ "math_shape_exp",			"float",	"2.0",					"Spot only: beam shape exponent 1.5 to 32; 2 is an ellipse, 16 nearly a rectangle",		NULL },
+	{ "math_penumbra",			"float",	"0.15",					"Spot only: soft edge width of the beam, 0 to 1",										NULL },
+	{ "math_pattern",			"choices",	"none",					"Math light pattern that modulates the falloff",										FGD_PATTERN_CHOICES },
+	{ "math_pattern_strength",	"float",	"0.0",					"Pattern strength, 0 to 1",																NULL },
+	{ "math_pattern_scale",		"float",	"1.0",					"Pattern scale; larger is finer",														NULL },
+	{ "math_pattern_phase",		"float",	"0.0",					"Pattern phase; shifts the pattern",														NULL },
+	{ "math_energy_clamp",		"choices",	"1",					"Clamp the falloff to 0..1 like a light texture; off lets it reach 64 near the source",	FGD_BOOL_CHOICES }
+};
+
+static const int FGD_NUM_LIGHT_KEYS = sizeof( FGD_LIGHT_KEYS ) / sizeof( FGD_LIGHT_KEYS[ 0 ] );
+
 // every inherit walk stops here, so a cyclic chain cannot hang the export
 static const int FGD_MAX_INHERIT_DEPTH = 32;
 
@@ -2459,6 +2519,14 @@ static bool FGD_IsExported( const idDeclEntityDef* decl, const int fileIndex, co
 
 #include <d3xp/anim/Anim.h> // idDeclModelDef
 
+/*
+================
+idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f
+
+Writes the entityDefs with editor_* keys, their own or an ancestor's, to _tb/fgd/DOOM-3-*.fgd.
+A class whose spawnclass is idLight also gets FGD_LIGHT_KEYS, the light keys the engine reads.
+================
+*/
 void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args )
 {
 	extern idCVar postLoadExportModels;
@@ -3285,6 +3353,37 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 			if( linkClass )
 			{
 				FGD_WriteLinkProperties( file, wroteName, wroteTarget );
+			}
+
+			// The keys the engine reads for a light. dictToWrite holds every key the loop above wrote (its
+			// skips and renames never touch a light key), so a key the class declares keeps that declaration.
+			if( idStr::Icmp( mergedDict.GetString( "spawnclass" ), "idLight" ) == 0 )
+			{
+				for( int i = 0; i < FGD_NUM_LIGHT_KEYS; i++ )
+				{
+					const fgdLightKey_t& lightKey = FGD_LIGHT_KEYS[ i ];
+					if( dictToWrite.FindKey( lightKey.key ) != NULL )
+					{
+						continue;
+					}
+
+					file->Printf( "\t%s(%s) : \"%s\"", lightKey.key, lightKey.type, lightKey.desc );
+
+					if( lightKey.defaultValue != NULL )
+					{
+						// as for the editor vars: a whole number unquoted, a decimal or a word quoted
+						if( idStr::Icmp( lightKey.type, "string" ) != 0 && FGD_IsNumber( lightKey.defaultValue ) && idStr::FindChar( lightKey.defaultValue, '.' ) == -1 )
+						{
+							file->Printf( " : %s", lightKey.defaultValue );
+						}
+						else
+						{
+							file->Printf( " : \"%s\"", lightKey.defaultValue );
+						}
+					}
+
+					file->Printf( "%s", ( lightKey.choices != NULL ) ? lightKey.choices : "\n" );
+				}
 			}
 
 			file->Printf( "]\n\n" );
