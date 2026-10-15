@@ -1715,6 +1715,11 @@ void idGameLocal::MapShutdown()
 		gameRenderWorld->DebugClearPolygons( 0 );
 	}
 
+	// D16: close the light editor whatever com_editors says (a panel driven by g_editEntityMode alone
+	// holds commits too); D48: it never writes, it only warns about panel Applies left unsaved, and
+	// it is idempotent
+	ImGuiTools::LightEditorClose();
+
 	// RB: kill ingame editors to prevent crashes during shutdown
 	if( com_editors != 0 )
 	{
@@ -3776,6 +3781,10 @@ idGameLocal::UnregisterEntity
 void idGameLocal::UnregisterEntity( idEntity* ent )
 {
 	assert( ent );
+
+	// D32: the light editor holds a raw pointer to the selected light; outside the editEntities
+	// test because editEntities can already be gone (MapClear, LocalMapRestart never recreates it)
+	ImGuiTools::LightEditorEntityRemoved( ent );
 
 	if( editEntities )
 	{

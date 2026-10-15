@@ -1120,6 +1120,10 @@ creates the current command for this frame
 */
 void idUsercmdGenLocal::MakeCurrent()
 {
+	// S7 / D35: set right before Inhibited() is read, so no engine Clear() (grab change, pause,
+	// dialog, activation) can drop the lock in between
+	InhibitUsercmd( INHIBIT_TOOL, ImGuiTools::ToolWantsViewLock() );
+
 	idVec3 oldAngles = viewangles;
 
 	if( !Inhibited() )
@@ -1178,6 +1182,15 @@ void idUsercmdGenLocal::MakeCurrent()
 
 	cmd.mx = continuousMouseX;
 	cmd.my = continuousMouseY;
+
+	// S1: the light editor's easy mode leaves only movement; swallowing the SE_KEY cannot stop the
+	// DirectInput Key() path from latching attack, use or an impulse for the keys it captures
+	if( ImGuiTools::EasyModeActive() )
+	{
+		cmd.buttons &= ( BUTTON_RUN | BUTTON_JUMP | BUTTON_CROUCH );	// D3: run is movement too
+		cmd.impulse = impulse;											// roll back an impulse latched this frame
+		cmd.impulseSequence = impulseSequence;							// (InitCurrent seeded cmd from these)
+	}
 
 	impulseSequence = cmd.impulseSequence;
 	impulse = cmd.impulse;

@@ -51,6 +51,17 @@ void	DrawToolWindows();
 
 void	LightEditorInit( const idDict* dict, idEntity* entity );
 
+// light editor easy mode (light-editor-easy-mode plan 3.2)
+bool	EasyModeActive();								// light editor open and in easy mode
+bool	ToolWantsViewLock();							// a modal (Q/E/R/T) is active: camera and movement locked
+bool	ToolKeyEvent( int keyNum, bool down );			// every SE_KEY, first thing in ImGuiHook::InjectSysEvent; true = swallow
+void	RunToolFrame();									// once per frame from idCommonLocal::Draw; no ImGui frame or draw call
+bool	LightEditorIsOpen();							// between LightEditorOpen and LightEditorClose; decides the editLights toggle
+void	LightEditorOpen();								// editLights on: shown with no selection, easy mode
+void	LightEditorClose();								// editLights off, map shutdown: never saves, idempotent; one console warning for dropped panel Applies, no ImGui call
+void	LightEditorDeselect();							// the deselect routine with revert, for the editLights off path (D30)
+void	LightEditorEntityRemoved( idEntity* ent );		// from idGameLocal::UnregisterEntity (D32)
+
 void	AfEditorInit();
 
 }

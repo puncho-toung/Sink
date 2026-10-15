@@ -42,6 +42,8 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "../../renderer/MathLight.h"
 
+struct viewDef_t;
+
 namespace ImGuiTools
 {
 
@@ -83,6 +85,7 @@ public:
 
 	LightInfo();
 
+	void		SetLightType( ELightType type );	// D45: also sets mathLight.type
 	void		Defaults();
 	void		DefaultPoint();
 	void		DefaultProjected();
@@ -91,8 +94,50 @@ public:
 	void		ToDict( idDict* e );
 };
 
+// D24 / plan 3.5: one light committed in this session, keyed by entityName. The locator part
+// (isNew .. indexHint) is resolved once, at the light's first commit.
+class LightCommit
+{
+public:
+	idStr		entityName;
+	bool		isNew;			// created in this session (Ctrl+D): in the in-memory map, nowhere on disk
+	bool		writeName;		// the name was given to an unnamed map light and must reach the file
+	bool		pending;		// dict not yet spliced into the .map
+	idStr		name;			// the light's name key; may exist only in memory
+	idStr		classname;
+	idVec3		onDiskOrigin;	// meaningless while isNew
+	int			indexHint;		// in-memory map index at resolution, -1 if unknown; never the file order
+
+	idDict		dict;			// ToDict's dict of the last commit ("" = delete the key)
+};
+
+// plan 3.3: what AUTO keeps from the moment it was (re)entered ("autoBase")
+class LightAutoBase
+{
+public:
+	float		farHalfWidth;		// spot W0: half width of the far plane
+	float		farHalfHeight;		// spot H0
+	float		handedness;			// spot h0 = sign( ( right0 x up0 ) . target0 ), 0 counts as -1
+	float		zNear;				// spot zNear0, used with explicit start/end
+	float		centerLength;		// sun: max( |lightCenter0|, 1 )
+	bool		haveFallback;		// 'fallback' holds the previous frame's horizontal vector
+	idVec3		fallback;			// spot: the previous r (light-local)
+};
+
+// plan 3.1: easy mode's states
+enum EEasyState
+{
+	EASY_NONE,			// E0: editLights on, no light selected
+	EASY_AUTO,			// E1: the selected light tracks the reticle
+	EASY_CHECKPOINT,	// E2: frozen at cur while the player roams
+	EASY_MODAL			// E3: Q, E, R or T toggled on; camera and movement locked
+};
+
 class LightEditor
 {
+public:
+	static const int	NUM_EASY_KEYS = 12;		// Q E R T F H, MOUSE1, MOUSE2, MWHEELUP, MWHEELDOWN, ENTER, KP_ENTER
+
 private:
 	bool				isShown;
 
@@ -130,6 +175,48 @@ private:
 	bool				shortcutSaveMapEnabled;
 	bool				shortcutDuplicateLightEnabled;
 
+	// D24: the locator inputs of the selected light, set by Init
+	idVec3				spawnOrigin;			// the spawn dict's "origin"
+	bool				entityNameFromDict;		// entityName is the light's own name key, not invented by Init
+	bool				lightIsNew;				// the selected light was created by DuplicateLight
+	bool				duplicateIsNew;			// set by DuplicateLight, read and cleared by Init
+
+	// plan 3.5: survives Reset() and re-selection; cleared by closing the editor. D48: a pending entry
+	// is a panel Apply not yet saved (Ctrl+S / Save Map); nothing writes it on its own
+	idList<LightCommit>	committed;
+	idStr				lastWarning;
+
+	// plan 3.1 easy mode; outside Reset() because a selection re-enters Init -> Reset from RunFrame,
+	// and Init resets only the per-light part (D31)
+	bool				editorOpen;				// between LightEditorOpen and LightEditorClose
+	bool				easyMode;				// S6: easy, or advanced (the panel)
+	EEasyState			easyState;				// kept while advanced, restored by F
+	int					modalKey;				// K_Q, K_E, K_R or K_T in EASY_MODAL
+	bool				closePending;			// V-A21: editLights is buffered; presses are dropped until it runs
+	idStaticList<int, 16>	pressQueue;			// plan 3.2: tool presses in arrival order
+	bool				keyLatched[ NUM_EASY_KEYS ];	// down seen, up not yet: filters WM_KEYDOWN auto-repeat
+	bool				keySwallowed[ NUM_EASY_KEYS ];	// the down was taken, so its up is taken too
+	int					lastMouseX;				// usercmdGen->MouseState() reference for the deltas
+	int					lastMouseY;
+	int					modalX;					// raw mouse counts since modal entry (y > 0 = moved down)
+	int					modalY;
+	int					modalWheel;				// wheel clicks since modal entry, up positive
+	int					lastRunFrame;			// idLib::frameNumber of the last RunFrame
+	LightInfo			checkpointUndo;			// E2: what RMB restores
+	LightInfo			modalBase;				// E3: modal results are functions of this and the counts (D17)
+	LightAutoBase		autoBase;				// captured at every E1 entry
+	idVec3				lastAim;				// the aim point P of the last AUTO frame, for the reticle
+	bool				lastAimHit;
+	bool				applyPending;			// ST-3: cur was written this frame and is not yet on the entity
+	idStr				hintText;				// UI-5 / D48: a transient note on the state line ("saved <name>")
+	int					hintUntilFrame;			// ... shown until this frame
+
+	bool				HandlePress( int key );
+	void				SwitchMode();
+	void				LeaveEditor();
+	void				EnterModal( int key );
+	void				DrawEasyOverlay();
+
 	void				LoadLightStyles();
 	static bool			StyleItemsGetter( void* data, int idx, const char** out_text );
 
@@ -141,14 +228,49 @@ private:
 	void				LoadCurrentTexture();
 
 	void				TempApplyChanges();
-	void				SaveChanges( bool saveMap );
+	bool				SaveChanges( bool flushNow, bool onlyThisLight );
+	int					Flush( const char* onlyEntity );		// D48: only SaveChanges writes the .map
+	int					PendingApplies() const;
+	void				WarnUnsavedApplies() const;
 	void				CancelChanges();
 
 	void				DuplicateLight();
 
+	int					FindCommit( const char* name ) const;
+	idStr				InventLightName() const;
+	int					ResolveLocator( LightCommit& commit, idDict& dict );
+	bool				SetupToolView( viewDef_t& vd ) const;
+
 	LightEditor()
 	{
 		isShown = false;
+
+		spawnOrigin.Zero();
+		entityNameFromDict = false;
+		lightIsNew = false;
+		duplicateIsNew = false;
+
+		editorOpen = false;
+		easyMode = true;
+		easyState = EASY_NONE;
+		modalKey = 0;
+		closePending = false;
+		for( int i = 0; i < NUM_EASY_KEYS; i++ )
+		{
+			keyLatched[i] = false;
+			keySwallowed[i] = false;
+		}
+		lastMouseX = 0;
+		lastMouseY = 0;
+		modalX = 0;
+		modalY = 0;
+		modalWheel = 0;
+		lastRunFrame = -2;
+		memset( &autoBase, 0, sizeof( autoBase ) );
+		lastAim.Zero();
+		lastAimHit = false;
+		applyPending = false;
+		hintUntilFrame = 0;
 
 		Reset();
 	}
@@ -169,6 +291,28 @@ public:
 	}
 
 	void				Draw();
+
+	inline bool			IsOpen() const
+	{
+		return editorOpen;
+	}
+
+	inline bool			EasyModeActive() const
+	{
+		return editorOpen && easyMode;
+	}
+
+	inline bool			WantsViewLock() const
+	{
+		return EasyModeActive() && easyState == EASY_MODAL;
+	}
+
+	bool				KeyEvent( int keyNum, bool down );
+	void				RunFrame();
+	void				Open();
+	void				Close();
+	bool				Deselect( bool commit );
+	void				EntityRemoved( idEntity* ent );
 };
 
 } //namespace ImGuiTools

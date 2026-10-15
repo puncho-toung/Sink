@@ -309,6 +309,14 @@ public:
 	virtual void				MapRemoveEntity( const char* name ) const;
 	virtual void				MapEntityTranslate( const char* name, const idVec3& v ) const;
 
+	// light editor easy mode; appended so the existing vtable order is unchanged
+	virtual bool				EditEntitySelectFromView();
+	virtual bool				PlayerTraceFromEye( float maxDist, idEntity* ignore, idVec3& hitPoint, idVec3& hitNormal ) const;
+	virtual int					MapFindEntityAtOrigin( const idVec3& origin, const char* classname ) const;
+	virtual void				MapCopyDictToEntityByIndex( int index, const idDict* dict ) const;
+	virtual const char* 		MapGetFileName() const;
+	virtual bool				MapIsGLTF() const;
+
 };
 
 extern idGameEdit* 				gameEdit;

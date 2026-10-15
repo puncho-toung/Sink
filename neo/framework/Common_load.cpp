@@ -224,6 +224,11 @@ Exits with mapSpawned = false
 */
 void idCommonLocal::UnloadMap()
 {
+	// EA-14: MapShutdown's close makes no ImGui call, so a button held across the unload must not
+	// leave ImGui's mouse latches set (returns at once when ImGui is not initialised). D48: an
+	// unload never writes the light editor's lights
+	ImGuiHook::ResetInputLatches();
+
 	// end the current map in the game
 	if( game )
 	{

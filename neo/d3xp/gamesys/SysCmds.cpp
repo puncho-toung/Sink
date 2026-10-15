@@ -2732,15 +2732,26 @@ void Cmd_TestId_f( const idCmdArgs& args )
 // RB begin
 void Cmd_EditLights_f( const idCmdArgs& args )
 {
-	if( g_editEntityMode.GetInteger() != 1 )
+	// EA-4: the editor's own state decides the direction, not g_editEntityMode, which editAFs or a
+	// hand-set value can change while the light editor is open (RMB out must always leave)
+	if( !ImGuiTools::LightEditorIsOpen() )
 	{
 		g_editEntityMode.SetInteger( 1 );
 
 		// turn off com_smp multithreading so we can load and check light textures on main thread
 		com_editors |= EDITOR_LIGHT;
+
+		// S1: easy mode, no light selected, mouse kept by the game
+		ImGuiTools::LightEditorOpen();
 	}
 	else
 	{
+		// S4 / D30 / D48: revert and deselect, then close; leaving never writes the .map. The latch
+		// reset must come before Close, which may run when ImGui is already gone
+		ImGuiTools::LightEditorDeselect();
+		ImGuiHook::ResetInputLatches();
+		ImGuiTools::LightEditorClose();
+
 		g_editEntityMode.SetInteger( 0 );
 
 		com_editors &= ~EDITOR_LIGHT;

@@ -93,9 +93,60 @@ void LightEditorInit( const idDict* dict, idEntity* ent )
 
 
 	LightEditor::Instance().ShowIt( true );
-	SetReleaseToolMouse( true );
+
+	// plan 3.8: easy mode keeps the grabbed mouse, the panel takes the cursor
+	SetReleaseToolMouse( !LightEditor::Instance().EasyModeActive() );
 
 	LightEditor::ReInit( dict, ent );
+}
+
+bool EasyModeActive()
+{
+	return LightEditor::Instance().EasyModeActive();
+}
+
+bool ToolWantsViewLock()
+{
+	return LightEditor::Instance().WantsViewLock();
+}
+
+bool ToolKeyEvent( int keyNum, bool down )
+{
+	if( keyNum < 0 || keyNum >= K_LAST_KEY )
+	{
+		return false;
+	}
+	return LightEditor::Instance().KeyEvent( keyNum, down );
+}
+
+void RunToolFrame()
+{
+	LightEditor::Instance().RunFrame();
+}
+
+bool LightEditorIsOpen()
+{
+	return LightEditor::Instance().IsOpen();
+}
+
+void LightEditorOpen()
+{
+	LightEditor::Instance().Open();
+}
+
+void LightEditorClose()
+{
+	LightEditor::Instance().Close();
+}
+
+void LightEditorDeselect()
+{
+	LightEditor::Instance().Deselect( false );
+}
+
+void LightEditorEntityRemoved( idEntity* ent )
+{
+	LightEditor::Instance().EntityRemoved( ent );
 }
 
 void AfEditorInit()

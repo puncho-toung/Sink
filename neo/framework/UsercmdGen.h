@@ -128,7 +128,8 @@ public:
 typedef enum
 {
 	INHIBIT_SESSION = 0,
-	INHIBIT_ASYNC
+	INHIBIT_ASYNC,
+	INHIBIT_TOOL		// a light editor modal locks the camera and movement (S7)
 } inhibit_t;
 
 typedef enum

@@ -374,6 +374,14 @@ void idCommonLocal::Draw()
 	{
 		bool gameDraw = false;
 
+		// D20 / plan 3.9: the light editor's per-frame tool logic, after the player has moved and before
+		// the scene is drawn; latched inside on idLib::frameNumber, as Draw() runs more than once a
+		// frame, and never from an out-of-sequence UpdateScreen redraw that comes before the tics (EA-10)
+		if( ( com_editors & EDITOR_LIGHT ) && !insideUpdateScreen )
+		{
+			ImGuiTools::RunToolFrame();
+		}
+
 		// normal drawing for both single and multi player
 		if( !com_skipGameDraw.GetBool() && Game()->GetLocalClientNum() >= 0 )
 		{

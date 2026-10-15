@@ -856,7 +856,12 @@ void idGameEdit::ClearEntitySelection()
 	{
 		ent->fl.selected = false;
 	}
-	gameLocal.editEntities->ClearSelectedEntities();
+
+	// MapClear deletes editEntities and LocalMapRestart never recreates it
+	if( gameLocal.editEntities )
+	{
+		gameLocal.editEntities->ClearSelectedEntities();
+	}
 }
 
 /*
@@ -870,6 +875,28 @@ void idGameEdit::AddSelectedEntity( idEntity* ent )
 	{
 		gameLocal.editEntities->AddSelectedEntity( ent );
 	}
+}
+
+/*
+================
+idGameEdit::EditEntitySelectFromView
+
+the edit-mode pick idPlayer::FireWeapon does, without firing; true only means the click was
+consumed (SelectEntity also returns true inside its 300 ms debounce without selecting)
+================
+*/
+bool idGameEdit::EditEntitySelectFromView()
+{
+	idPlayer* player = gameLocal.GetLocalPlayer();
+	if( !player || !gameLocal.editEntities )
+	{
+		return false;
+	}
+
+	idVec3 eye;
+	idMat3 viewAxis;
+	player->GetViewPos( eye, viewAxis );
+	return gameLocal.editEntities->SelectEntity( eye, viewAxis[0], player );
 }
 
 /*
@@ -1031,6 +1058,10 @@ void idGameEdit::EntityUpdateChangeableSpawnArgs( idEntity* ent, const idDict* d
 	if( ent )
 	{
 		ent->UpdateChangeableSpawnArgs( dict );
+
+		// D36 / RV-2: push the change to the renderer now; UpdateVisuals only flags it for the
+		// next Think, which put every editor change one frame late
+		ent->Present();
 	}
 }
 
@@ -1174,6 +1205,53 @@ bool idGameEdit::PlayerGetRenderView( renderView_t& rv ) const
 
 /*
 ================
+idGameEdit::PlayerTraceFromEye
+
+the light editor's aim point: idDragEntity's trace from the eye along the view, skipping the
+player; 'ignore' (the selected light) is taken out of this one trace, the engine's idiom, so a
+light's own fixture model never catches the aim (D8)
+================
+*/
+bool idGameEdit::PlayerTraceFromEye( float maxDist, idEntity* ignore, idVec3& hitPoint, idVec3& hitNormal ) const
+{
+	idPlayer* player = gameLocal.GetLocalPlayer();
+	if( !player )
+	{
+		return false;
+	}
+
+	idVec3 eye;
+	idMat3 viewAxis;
+	player->GetViewPos( eye, viewAxis );
+
+	// a clip model something else disabled stays disabled: only the state this call changed is undone
+	idClipModel* clipModel = ( ignore != NULL ) ? ignore->GetPhysics()->GetClipModel() : NULL;
+	const bool wasEnabled = ( clipModel != NULL && clipModel->IsEnabled() );
+	if( wasEnabled )
+	{
+		clipModel->Disable();
+	}
+
+	trace_t trace;
+	gameLocal.clip.TracePoint( trace, eye, eye + viewAxis[0] * maxDist, CONTENTS_SOLID | CONTENTS_RENDERMODEL | CONTENTS_BODY, player );
+
+	if( wasEnabled )
+	{
+		clipModel->Enable();
+	}
+
+	if( trace.fraction == 1.0f )
+	{
+		return false;
+	}
+
+	hitPoint = trace.endpos;
+	hitNormal = trace.c.normal;
+	return true;
+}
+
+/*
+================
 idGameEdit::MapGetEntityDict
 ================
 */
@@ -1308,6 +1386,109 @@ void idGameEdit::MapCopyDictToEntityAtOrigin( const idVec3& origin, const idDict
 	}
 }
 
+
+/*
+================
+idGameEdit::MapFindEntityAtOrigin
+
+D24: the index of the one unnamed entity of the given class whose "origin" lies within 0.125
+of 'origin' (the FindEntityAtOrigin tolerance), or -1 when there is none or more than one
+================
+*/
+int idGameEdit::MapFindEntityAtOrigin( const idVec3& origin, const char* classname ) const
+{
+	idMapFile* mapFile = gameLocal.GetLevelMap();
+	if( !mapFile || !classname )
+	{
+		return -1;
+	}
+
+	idBounds bo( origin );
+	bo.ExpandSelf( 0.125f );
+
+	int found = -1;
+	for( int i = 0; i < mapFile->GetNumEntities(); i++ )
+	{
+		idMapEntity* ent = mapFile->GetEntity( i );
+		if( !ent || idStr::Icmp( ent->epairs.GetString( "classname" ), classname ) != 0 || ent->epairs.GetString( "name" )[0] != '\0' )
+		{
+			continue;
+		}
+
+		idVec3 entPos;
+		ent->epairs.GetVector( "origin", "", entPos );
+		if( !bo.ContainsPoint( entPos ) )
+		{
+			continue;
+		}
+
+		if( found != -1 )
+		{
+			// ambiguous: the caller must never pick one of two candidates
+			return -1;
+		}
+		found = i;
+	}
+	return found;
+}
+
+/*
+================
+idGameEdit::MapCopyDictToEntityByIndex
+
+the by-index twin of MapCopyDictToEntity, for an entity that has no name in the map yet
+================
+*/
+void idGameEdit::MapCopyDictToEntityByIndex( int index, const idDict* dict ) const
+{
+	idMapFile* mapFile = gameLocal.GetLevelMap();
+	if( mapFile && index >= 0 && index < mapFile->GetNumEntities() )
+	{
+		idMapEntity* mapent = mapFile->GetEntity( index );
+		if( mapent )
+		{
+			for( int i = 0; i < dict->GetNumKeyVals(); i++ )
+			{
+				const idKeyValue* kv = dict->GetKeyVal( i );
+				const char* key = kv->GetKey();
+				const char* val = kv->GetValue();
+
+				// "" deletes the key, as in MapCopyDictToEntity and EntityChangeSpawnArgs
+				if( val[0] == '\0' )
+				{
+					mapent->epairs.Delete( key );
+				}
+				else
+				{
+					mapent->epairs.Set( key, val );
+				}
+			}
+		}
+	}
+}
+
+/*
+================
+idGameEdit::MapGetFileName
+
+the loaded map's name without extension, "" when no map is loaded
+================
+*/
+const char* idGameEdit::MapGetFileName() const
+{
+	return gameLocal.GetMapFileName();
+}
+
+/*
+================
+idGameEdit::MapIsGLTF
+================
+*/
+bool idGameEdit::MapIsGLTF() const
+{
+	idMapFile* mapFile = gameLocal.GetLevelMap();
+	return ( mapFile && mapFile->IsGLTF() );
+}
 
 /*
 ================

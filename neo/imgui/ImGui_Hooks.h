@@ -63,6 +63,10 @@ void	Destroy();
 
 bool	RightMouseActive();
 
+// D5: forget held mouse buttons, the wheel and every key level ImGui holds, without touching
+// the game's usercmd state; for input routing changes (the light editor's mode switch)
+void	ResetInputLatches();
+
 } //namespace ImGuiHook
 
 

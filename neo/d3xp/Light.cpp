@@ -205,6 +205,17 @@ void idGameEdit::ParseSpawnArgsToRenderLight( const idDict* args, renderLight_t*
 	else { renderLight->mathLight.type = ML_POINT; }
 
 	ML_ParseFromDict(args, &renderLight->mathLight);
+
+	// D45: the math type follows the light's geometry; a map's math_type never disagrees (projected
+	// first, as the light editor's FromDict decides it)
+	if( !renderLight->pointLight )
+	{
+		renderLight->mathLight.type = ML_SPOT;
+	}
+	else
+	{
+		renderLight->mathLight.type = renderLight->parallel ? ML_SUN : ML_POINT;
+	}
 }
 
 /*
@@ -237,8 +248,51 @@ void idLight::UpdateChangeableSpawnArgs( const idDict* source )
 	gameEdit->ParseSpawnArgsToRenderLight( source ? source : &spawnArgs, &renderLight );
 
 	// RB: allow the ingame light editor to move the light
-	GetPhysics()->SetOrigin( renderLight.origin );
-	GetPhysics()->SetAxis( renderLight.axis );
+	// D36 / RV-3: the entity pose comes from the same dict, exactly as idEntity::Spawn derives it,
+	// and the light's offsets from it exactly as Spawn; putting the physics at the render light's
+	// pose moved a fixture onto its light and applied a light_origin offset twice in Present
+	const idDict* args = source ? source : &spawnArgs;
+	idVec3 entOrigin;
+	idMat3 entAxis;
+
+	args->GetVector( "origin", "0 0 0", entOrigin );
+	if( args->GetString( "model" )[0] != '\0' )
+	{
+		// only entities with a model have origin brushes
+		entOrigin += args->GetVector( BRUSH_ORIGIN_KEY, "0 0 0" );
+	}
+
+	if( !args->GetMatrix( "rotation", "1 0 0 0 1 0 0 0 1", entAxis ) )
+	{
+		idAngles entAngles;
+
+		entAxis.Identity();
+		if( args->GetAngles( "angles", "0 0 0", entAngles ) )
+		{
+			if( entAngles.pitch != 0.0f || entAngles.yaw != 0.0f || entAngles.roll != 0.0f )
+			{
+				entAxis = entAngles.ToMat3();
+			}
+		}
+		else
+		{
+			const float angle = args->GetFloat( "angle" );
+			if( angle != 0.0f )
+			{
+				entAxis = idAngles( 0.0f, angle, 0.0f ).ToMat3();
+			}
+		}
+	}
+
+	// a bound static physics holds a master-relative pose
+	if( !GetBindMaster() )
+	{
+		GetPhysics()->SetOrigin( entOrigin );
+		GetPhysics()->SetAxis( entAxis );
+	}
+
+	localLightOrigin = ( renderLight.origin - entOrigin ) * entAxis.Transpose();
+	localLightAxis = renderLight.axis * entAxis.Transpose();
 
 	// link func_static modelTarget
 	modelTarget = NULL;

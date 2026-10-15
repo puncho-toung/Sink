@@ -770,6 +770,13 @@ void NotifyDisplaySizeChanged( int width, int height )
 // inject a sys event
 bool InjectSysEvent( const sysEvent_t* event )
 {
+	// D2 / D39: the light editor counts its presses from every SE_KEY, before the gate below, in
+	// both of its modes; a key it takes reaches neither ImGui nor the bindings
+	if( event != NULL && event->evType == SE_KEY && ImGuiTools::ToolKeyEvent( event->evValue, event->evValue2 != 0 ) )
+	{
+		return true;
+	}
+
 	if( IsInitialized() && ( UseInput() || RightMouseActive() ) )
 	{
 		if( event == NULL )
@@ -816,6 +823,23 @@ bool InjectSysEvent( const sysEvent_t* event )
 bool RightMouseActive()
 {
 	return g_MousePressed[1];
+}
+
+void ResetInputLatches()
+{
+	if( !IsInitialized() )
+	{
+		return;
+	}
+
+	// RV-18: nothing else resets these, so an event routed elsewhere leaves them stuck
+	for( int i = 0; i < 5; ++i )
+	{
+		g_MousePressed[i] = false;
+	}
+	g_MouseWheel = 0.0f;
+
+	ImGui::GetIO().ClearInputKeys();
 }
 
 bool InjectMouseWheel( int delta )
