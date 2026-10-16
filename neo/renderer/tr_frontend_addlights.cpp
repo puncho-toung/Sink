@@ -671,10 +671,6 @@ void R_AddLights()
 	// cull lights from the list if they turned out to not be needed
 	//-------------------------------------------------
 
-	tr.pc.c_viewLights = 0;
-	//puncho start
-	tr.pc.c_mathViewLights = 0;
-	//puncho end
 	viewLight_t** ptr = &tr.viewDef->viewLights;
 	while( *ptr != NULL )
 	{
@@ -690,12 +686,9 @@ void R_AddLights()
 		ptr = &vLight->next;
 
 		// serial work
-		tr.pc.c_viewLights++;
-		//puncho start
-		if( R_LightUsesMathPath( vLight ) )
-		{
-			tr.pc.c_mathViewLights++;
-		}
+		//puncho start - c_viewLights and c_mathViewLights are counted in R_OptimizeViewLightsList: a light
+		// that passed the portal, frustum and occlusion tests above can still hold no visible surface, and
+		// the backend skips such a light entirely
 		//puncho end
 
 		for( shadowOnlyEntity_t* shadEnt = vLight->shadowOnlyViewEntities; shadEnt != NULL; shadEnt = shadEnt->next )
@@ -720,6 +713,10 @@ void R_OptimizeViewLightsList()
 {
 	// go through each visible light
 	int numViewLights = 0;
+	//puncho start - reset per view, so the last view of the frame wins
+	tr.pc.c_viewLights = 0;
+	tr.pc.c_mathViewLights = 0;
+	//puncho end
 	for( viewLight_t* vLight = tr.viewDef->viewLights; vLight != NULL; vLight = vLight->next )
 	{
 		numViewLights++;
@@ -729,7 +726,25 @@ void R_OptimizeViewLightsList()
 		{
 			vLight->localShadows = NULL;
 			vLight->globalShadows = NULL;
+
+			//puncho start - DrawInteractions skips this light (no shadow map, no interaction pass), so it is
+			// not in view; a fog or blend light still draws its volume in FogAllLights
+			if( !vLight->lightShader->IsFogLight() && !vLight->lightShader->IsBlendLight() )
+			{
+				continue;
+			}
+			//puncho end
 		}
+
+		//puncho start - in view means the backend will draw it. Counted here and not in R_AddLights so that a
+		// light whose volume passed the portal, frustum and occlusion tests there but holds no visible
+		// surface is left out. The HUD comment in Console.cpp says why a light behind a wall can still count
+		tr.pc.c_viewLights++;
+		if( R_LightUsesMathPath( vLight ) )
+		{
+			tr.pc.c_mathViewLights++;
+		}
+		//puncho end
 	}
 
 	if( r_useShadowSurfaceScissor.GetBool() )

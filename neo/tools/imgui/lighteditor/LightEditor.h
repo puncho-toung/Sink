@@ -196,7 +196,6 @@ private:
 	bool				easyMode;				// S6: easy, or advanced (the panel)
 	EEasyState			easyState;				// kept while advanced, restored by F
 	int					modalKey;				// K_Q, K_E, K_R or K_T in EASY_MODAL
-	bool				closePending;			// V-A21: editLights is buffered; presses are dropped until it runs
 	idStaticList<int, 16>	pressQueue;			// plan 3.2: tool presses in arrival order
 	bool				keyLatched[ NUM_EASY_KEYS ];	// down seen, up not yet: filters WM_KEYDOWN auto-repeat
 	bool				keySwallowed[ NUM_EASY_KEYS ];	// the down was taken, so its up is taken too
@@ -217,7 +216,6 @@ private:
 
 	bool				HandlePress( int key );
 	void				SwitchMode();
-	void				LeaveEditor();
 	void				EnterModal( int key );
 	void				DrawEasyOverlay();
 
@@ -258,7 +256,6 @@ private:
 		easyMode = true;
 		easyState = EASY_NONE;
 		modalKey = 0;
-		closePending = false;
 		for( int i = 0; i < NUM_EASY_KEYS; i++ )
 		{
 			keyLatched[i] = false;

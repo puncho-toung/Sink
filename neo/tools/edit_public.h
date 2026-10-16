@@ -57,7 +57,7 @@ bool	ToolWantsViewLock();							// a modal (Q/E/R/T) is active: camera and movem
 bool	ToolKeyEvent( int keyNum, bool down );			// every SE_KEY, first thing in ImGuiHook::InjectSysEvent; true = swallow
 void	RunToolFrame();									// once per frame from idCommonLocal::Draw; no ImGui frame or draw call
 bool	LightEditorIsOpen();							// between LightEditorOpen and LightEditorClose; decides the editLights toggle
-void	LightEditorOpen();								// editLights on: shown with no selection, easy mode
+void	LightEditorOpen();								// editLights on: nothing shown until a light is picked (then the advanced panel), or the easy overlay with le_startEasy 1
 void	LightEditorClose();								// editLights off, map shutdown: never saves, idempotent; one console warning for dropped panel Applies, no ImGui call
 void	LightEditorDeselect();							// the deselect routine with revert, for the editLights off path (D30)
 void	LightEditorEntityRemoved( idEntity* ent );		// from idGameLocal::UnregisterEntity (D32)

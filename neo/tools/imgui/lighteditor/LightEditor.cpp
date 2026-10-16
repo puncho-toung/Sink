@@ -43,6 +43,7 @@ If you have questions concerning this license or the applicable additional terms
 // plan 3.7: easy mode tunables (tool-only: not networked, not saved in savegames)
 idCVar le_traceDist( "le_traceDist", "8192", CVAR_TOOL | CVAR_FLOAT, "light editor: aim trace length in units", 64.0f, 131072.0f );
 idCVar le_showLegend( "le_showLegend", "1", CVAR_TOOL | CVAR_BOOL | CVAR_ARCHIVE, "light editor: show the easy mode legend (H toggles)" );
+idCVar le_startEasy( "le_startEasy", "0", CVAR_TOOL | CVAR_BOOL | CVAR_ARCHIVE, "light editor: editLights opens the easy overlay; 0 shows nothing until a light is picked, then the advanced panel (F switches either way)" );
 idCVar le_logInput( "le_logInput", "0", CVAR_TOOL | CVAR_BOOL, "light editor: print every mouse button and wheel key event while the editor is open (WP-LE1 input check)" );
 idCVar le_scaleSens( "le_scaleSens", "0.004", CVAR_TOOL | CVAR_FLOAT, "light editor: log-scale per mouse count in the Q and E modals (250 counts ~ x2.7)" );
 idCVar le_wheelSens( "le_wheelSens", "0.10", CVAR_TOOL | CVAR_FLOAT, "light editor: log-scale per wheel click in the E modal" );
@@ -533,7 +534,7 @@ void LightEditor::ReInit( const idDict* dict, idEntity* light )
 void LightEditor::Init( const idDict* dict, idEntity* light )
 {
 	// D31 / RV-6: every selection (E0 LMB, the panel's FireWeapon pick, Ctrl+D) starts in AUTO with
-	// no checkpoint and no modal; mode, closePending, the press queue, the key
+	// no checkpoint and no modal; mode, the press queue, the key
 	// latches, the delta reference and the committed list survive
 	easyState = EASY_AUTO;
 	modalKey = 0;
@@ -2436,15 +2437,20 @@ void LightEditor::Draw()
 
 		ImGui::Spacing();
 
-		// D6 / D30: Apply and Cancel deselect through the one routine; the panel stays open with
-		// no light, and only the editLights command closes the editor
+		// D6 / D30: Apply and Cancel deselect through the one routine, and the panel then hides and
+		// the game takes the mouse back, as before easy mode; the editor stays open for the next pick,
+		// F, or the editLights command. A refused commit keeps the light and the panel
 		if( ImGui::Button( "Apply" ) )
 		{
-			Deselect( true );
+			if( Deselect( true ) )
+			{
+				showTool = false;
+			}
 		}
 		else if( ImGui::SameLine(), ImGui::Button( "Cancel" ) )
 		{
 			Deselect( false );
+			showTool = false;
 		}
 
 		ImGui::EndDisabled();
@@ -3135,7 +3141,7 @@ bool LightEditor::KeyEvent( int keyNum, bool down )
 	keySwallowed[ slot ] = own;
 
 	// a full queue drops the newest press (idStaticList::Append asserts when full, so test first)
-	if( own && !closePending && pressQueue.Num() < pressQueue.Max() )
+	if( own && pressQueue.Num() < pressQueue.Max() )
 	{
 		pressQueue.Append( keyNum );
 	}
@@ -3186,10 +3192,6 @@ void LightEditor::RunFrame()
 	lastMouseY = mouseY;
 
 	// presses that write cur (undo, cancel) raise applyPending themselves
-	if( closePending )
-	{
-		pressQueue.Clear();
-	}
 	for( int i = 0; i < pressQueue.Num(); i++ )
 	{
 		if( !HandlePress( pressQueue[ i ] ) )
@@ -3265,7 +3267,7 @@ void LightEditor::RunFrame()
 
 /*
 plan 3.1: one counted press. Returns false when the rest of this frame's presses must be dropped
-(a mode switch, or RMB out of the editor).
+(a mode switch: F, or RMB out of easy mode).
 */
 bool LightEditor::HandlePress( int key )
 {
@@ -3308,7 +3310,7 @@ bool LightEditor::HandlePress( int key )
 			AutoCaptureBase( cur, autoBase );
 			easyState = EASY_AUTO;
 		}
-		return !closePending;
+		return true;
 	}
 
 	switch( easyState )
@@ -3332,7 +3334,10 @@ bool LightEditor::HandlePress( int key )
 			}
 			else if( key == K_MOUSE2 )
 			{
-				LeaveEditor();
+				// S4: back out of easy mode to the state editLights opened in (nothing shown, the
+				// game's mouse, lights pickable); the editor stays open, only the command closes it
+				SwitchMode();
+				return false;
 			}
 			break;
 
@@ -3345,9 +3350,10 @@ bool LightEditor::HandlePress( int key )
 			}
 			else if( key == K_MOUSE2 )
 			{
-				// S4 / D7: revert, deselect, leave
+				// S4 / D7: revert, deselect, and back out of easy mode as from NONE
 				Deselect( false );
-				LeaveEditor();
+				SwitchMode();
+				return false;
 			}
 			else if( IsModalKey( key ) )
 			{
@@ -3395,10 +3401,10 @@ bool LightEditor::HandlePress( int key )
 			break;
 	}
 
-	return !closePending;
+	return true;
 }
 
-// S6: F, in both directions
+// S6: F in both directions, and RMB out of easy mode (NONE, or AUTO after its deselect)
 void LightEditor::SwitchMode()
 {
 	if( easyMode )
@@ -3425,8 +3431,11 @@ void LightEditor::SwitchMode()
 		}
 	}
 
-	// the panel gets the cursor; easy mode gets the grabbed mouse back
-	SetReleaseToolMouse( !easyMode );
+	// easy mode draws its overlay; advanced mode draws the panel only with a light, else it waits for
+	// a pick with the game's mouse, as the editor did before easy mode
+	isShown = easyMode || lightEntity != NULL;
+	// the panel gets the cursor; easy mode, and advanced mode with no light, keep the grabbed mouse
+	SetReleaseToolMouse( !easyMode && lightEntity != NULL );
 
 	// D5: never usercmdGen->Clear() (the grab change runs it already); the key latches stay, the
 	// keys are still down. The caller drops the rest of this frame's presses.
@@ -3435,15 +3444,6 @@ void LightEditor::SwitchMode()
 	int mouseButton;
 	bool mouseDown;
 	usercmdGen->MouseState( &lastMouseX, &lastMouseY, &mouseButton, &mouseDown );
-}
-
-// S4 / D48: RMB with nothing selected, or after reverting in AUTO; it never writes anything
-void LightEditor::LeaveEditor()
-{
-	// the command toggles editLights and noclip off exactly as the console does, next frame;
-	// closePending keeps a second RMB from toggling it back on
-	closePending = true;
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "editLights\n" );
 }
 
 // U-2: Q, E, R or T pressed in AUTO
@@ -3501,10 +3501,12 @@ void LightEditor::Open()
 
 	editorOpen = true;
 	hintUntilFrame = 0;
-	isShown = true;
-	easyMode = true;
+	// le_startEasy picks the opening mode; F switches either way (S6). Advanced mode starts as the
+	// editor did before easy mode: nothing shown and the game's mouse, until a pick (LightEditorInit)
+	// shows the panel and releases the cursor
+	easyMode = le_startEasy.GetBool();
+	isShown = easyMode;
 	easyState = EASY_NONE;
-	closePending = false;
 
 	Reset();
 	entityName.Clear();
@@ -3539,7 +3541,6 @@ void LightEditor::Close()
 	committed.Clear();
 	lastWarning.Clear();
 
-	closePending = false;
 	easyState = EASY_NONE;
 	easyMode = true;
 	isShown = false;
@@ -3668,7 +3669,7 @@ void LightEditor::DrawEasyOverlay()
 		ImGui::Separator();
 		ImGui::TextUnformatted( "LMB  select / checkpoint / release checkpoint" );
 		ImGui::TextUnformatted( "ENTER  save the light to the map" );
-		ImGui::TextUnformatted( "RMB  back: cancel modal / undo checkpoint / close" );
+		ImGui::TextUnformatted( "RMB  back: cancel modal / undo checkpoint / leave easy mode" );
 		ImGui::TextUnformatted( "Q    scale (mouse x)                 E    scale X/Y (mouse), Z (wheel)" );
 		ImGui::TextUnformatted( "R    rotate Z (mouse x) X (mouse y) Y (wheel)        modal keys toggle; same key or RMB cancels" );
 		ImGui::TextUnformatted( "T    hue (mouse x), brightness (mouse y)" );
@@ -4584,6 +4585,32 @@ static void SelfTestCancelMath( LightSelfTest& test )
 				"Cancel: a math light switched to Texture gets math_enabled 1 and exactly its own math keys back" );
 }
 
+// the opening mode follows le_startEasy; runs Open and Close on the tool, so only while it is closed
+static void SelfTestOpenMode( LightSelfTest& test )
+{
+	LightEditor& editor = LightEditor::Instance();
+	if( editor.IsOpen() )
+	{
+		common->Printf( "SKIP Open: the editor is open, le_startEasy not checked\n" );
+		return;
+	}
+
+	const bool startEasy = le_startEasy.GetBool();
+
+	le_startEasy.SetBool( false );
+	editor.Open();
+	const bool opensHidden = editor.IsOpen() && !editor.EasyModeActive() && !editor.IsShown();
+	editor.Close();
+
+	le_startEasy.SetBool( true );
+	editor.Open();
+	const bool opensEasy = editor.EasyModeActive() && editor.IsShown();
+	editor.Close();
+
+	le_startEasy.SetBool( startEasy );
+	test.Check( opensHidden && opensEasy && !editor.IsOpen(), "Open: le_startEasy 0 shows nothing until a pick, 1 opens easy mode" );
+}
+
 } //namespace ImGuiTools
 
 CONSOLE_COMMAND( le_selfTest, "checks the easy-mode light geometry contracts and the map splice", NULL )
@@ -4596,6 +4623,7 @@ CONSOLE_COMMAND( le_selfTest, "checks the easy-mode light geometry contracts and
 	ImGuiTools::SelfTestLightType( test );
 	ImGuiTools::SelfTestMathStyle( test );
 	ImGuiTools::SelfTestCancelMath( test );
+	ImGuiTools::SelfTestOpenMode( test );
 
 	common->Printf( "le_selfTest: %d checks, %d passed, %d failed\n", test.run, test.run - test.failed, test.failed );
 }

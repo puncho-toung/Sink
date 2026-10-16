@@ -119,7 +119,9 @@ struct performanceCounters_t
 	int		c_visibleViewEntities;
 	int		c_shadowViewEntities;
 	int		c_viewLights;
-	//puncho start - math lights the frontend placed in the view; reset per view beside c_viewLights, so last view of the frame wins
+	//puncho start - c_viewLights is the lights the backend will draw (with interactions, or fog / blend), set in
+	// R_OptimizeViewLightsList once the interactions exist; c_mathViewLights is the math lights among them. Both
+	// reset per view, so the last view of the frame wins
 	int		c_mathViewLights;
 	//puncho end
 	int		c_numViews;			// number of total views rendered

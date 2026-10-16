@@ -524,10 +524,15 @@ float idConsoleLocal::DrawFPS( float y )
 								commonLocal.stats_frontend.c_lightUpdates, commonLocal.stats_frontend.c_lightReferences );
 
 			//puncho start - math:/tex: are lights that entered the interaction path (backend, summed over every
-			// 3D view in the frame); view: and mathInView: are the frontend's last view. Under com_smp 1 the
-			// frontend counts are one frame ahead of the backend ones, so with one 3D view and a still camera
-			// math + tex <= view, the gap being fog and blend lights and lights with no interactions.
-			// r_showMathLights repaints every math light with a debug field, so the line says so in orange.
+			// 3D view in the frame); view: and mathInView: are the frontend's last view, counted once the
+			// interactions exist (R_OptimizeViewLightsList), so a light that passed the portal, frustum and
+			// occlusion tests but holds no visible surface is not in view. Under com_smp 1 the frontend counts
+			// are one frame ahead of the backend ones, so with one 3D view and a still camera math + tex <= view,
+			// the gap being fog and blend lights. A light behind a wall still counts while its volume reaches
+			// past the wall or holds the camera (the occlusion test is skipped then; r_showLights 1 highlights
+			// those): its interactions with the surfaces on this side are drawn, shadowed to nothing when the
+			// light casts shadows. r_showMathLights repaints every math light with a debug field, so the line
+			// says so in orange.
 			static const int mlDebugNameCount = 4;
 			static const char* mlDebugNames[mlDebugNameCount] =
 			{

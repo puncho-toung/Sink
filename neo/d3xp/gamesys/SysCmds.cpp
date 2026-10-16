@@ -2733,7 +2733,7 @@ void Cmd_TestId_f( const idCmdArgs& args )
 void Cmd_EditLights_f( const idCmdArgs& args )
 {
 	// EA-4: the editor's own state decides the direction, not g_editEntityMode, which editAFs or a
-	// hand-set value can change while the light editor is open (RMB out must always leave)
+	// hand-set value can change while the light editor is open (the toggle must always close it)
 	if( !ImGuiTools::LightEditorIsOpen() )
 	{
 		g_editEntityMode.SetInteger( 1 );
@@ -2741,7 +2741,7 @@ void Cmd_EditLights_f( const idCmdArgs& args )
 		// turn off com_smp multithreading so we can load and check light textures on main thread
 		com_editors |= EDITOR_LIGHT;
 
-		// S1: easy mode, no light selected, mouse kept by the game
+		// no light selected, mouse kept by the game; le_startEasy 1 opens the easy overlay, else a pick opens the panel
 		ImGuiTools::LightEditorOpen();
 	}
 	else
