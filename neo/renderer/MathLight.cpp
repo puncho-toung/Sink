@@ -53,6 +53,9 @@ void ML_ParseFromDict(const idDict* args, mathLightData_t* m)
     // Clear first so toggling math_enabled off leaves no stale state
     memset(m, 0, sizeof(*m));
 
+    // a cleared style would read as style 0 ("Normal"), so a disabled block has none
+    m->style = -1;
+
     m->enabled = args->GetBool("math_enabled", "0");
     if (!m->enabled)
     {
@@ -108,6 +111,10 @@ void ML_ParseFromDict(const idDict* args, mathLightData_t* m)
     m->patternStrength = idMath::ClampFloat(0.0f, 1.0f, m->patternStrength);
 
     m->energyClamp = args->GetBool("math_energy_clamp", "1");
+
+    // D62: an index outside the table is no style, as an unknown falloff or pattern name is the default
+    const int style = args->GetInt("math_style", "-1");
+    m->style = (style >= 0 && style < ML_NUM_STYLES) ? style : -1;
 }
 
 
@@ -135,6 +142,12 @@ void ML_WriteToDict(idDict* args, const mathLightData_t& m, bool deleteWhenDisab
             args->Set("math_pattern_scale", DELETE_VAL);
             args->Set("math_pattern_phase", DELETE_VAL);
             args->Set("math_energy_clamp", DELETE_VAL);
+            args->Set("math_style", DELETE_VAL);
+        }
+        else
+        {
+            // D51: the tab is the switch; the other math keys stay as they are, so switching back is free
+            args->Set("math_enabled", "0");
         }
         return;
     }
@@ -162,4 +175,47 @@ void ML_WriteToDict(idDict* args, const mathLightData_t& m, bool deleteWhenDisab
     args->SetFloat("math_pattern_phase", m.patternPhase);
 
     args->SetBool("math_energy_clamp", m.energyClamp);
+
+    // D54: written like "style", only when there is one
+    if (m.style != -1)
+    {
+        args->SetInt("math_style", m.style);
+    }
+    else
+    {
+        args->Set("math_style", DELETE_VAL);
+    }
+}
+
+/*
+================
+ML_StyleMultiplier
+
+D62: the brightness a light-style string gives at a game time. The a-z characters play one per
+frameTimeMs and are interpolated as idLight::SharedThink interpolates "style", scaled so that
+'a' = 0, 'm' = 1 and 'z' = 25/12 (characters outside a-z are clamped to them); an empty string is 1.
+A pure function of the clock, so every peer and le_selfTest get the same value.
+================
+*/
+float ML_StyleMultiplier(const char* style, int timeMs, int frameTimeMs)
+{
+    const int length = idStr::Length(style);
+    if (length <= 0)
+    {
+        return 1.0f;
+    }
+
+    // ls_frametime comes from the map; zero would divide by zero
+    frameTimeMs = Max(frameTimeMs, 1);
+    timeMs = Max(timeMs, 0);
+
+    const int step = timeMs / frameTimeMs;
+    const int frame = step % length;
+    const int nextFrame = (frame + 1) % length;
+    const float backLerp = (float)(timeMs - step * frameTimeMs) / (float)frameTimeMs;
+
+    const int lastCh = idMath::ClampInt(0, 25, style[frame] - 'a');
+    const int nextCh = idMath::ClampInt(0, 25, style[nextFrame] - 'a');
+
+    return (lastCh * (1.0f - backLerp) + nextCh * backLerp) * (1.0f / 12.0f);
 }

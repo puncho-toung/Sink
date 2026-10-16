@@ -247,6 +247,11 @@ void idLight::UpdateChangeableSpawnArgs( const idDict* source )
 
 	gameEdit->ParseSpawnArgsToRenderLight( source ? source : &spawnArgs, &renderLight );
 
+	// D62: an edited radius and colour are what style and math_style scale from now on (a radius base
+	// left at the spawn radius made SharedThink undo a styled light's radius edit)
+	lightStyleBase = renderLight.lightRadius;
+	mathStyleBase.Set( renderLight.shaderParms[ SHADERPARM_RED ], renderLight.shaderParms[ SHADERPARM_GREEN ], renderLight.shaderParms[ SHADERPARM_BLUE ] );
+
 	// RB: allow the ingame light editor to move the light
 	// D36 / RV-3: the entity pose comes from the same dict, exactly as idEntity::Spawn derives it,
 	// and the light's offsets from it exactly as Spawn; putting the physics at the render light's
@@ -345,6 +350,7 @@ idLight::idLight():
 	lightStyle			= -1;
 	lightStyleFrameTime = 100;
 	lightStyleBase.Set( 300, 300, 300 );
+	mathStyleBase.Set( 1, 1, 1 );
 
 	lightStyleState.Reset();
 
@@ -415,6 +421,10 @@ void idLight::Restore( idRestoreGame* savefile )
 
 	savefile->ReadRenderLight( renderLight );
 
+	// light styles are not saved (light_styles restarts empty, lightStyle -1), so math_style restarts
+	// off with them instead of reading the constructor's zero as style 0
+	renderLight.mathLight.style = -1;
+
 	savefile->ReadBool( hadPrelightModel );
 
 	savefile->ReadVec3( localLightOrigin );
@@ -469,6 +479,7 @@ void idLight::Spawn()
 
 	// set the base color from the shader parms
 	baseColor.Set( renderLight.shaderParms[ SHADERPARM_RED ], renderLight.shaderParms[ SHADERPARM_GREEN ], renderLight.shaderParms[ SHADERPARM_BLUE ] );
+	mathStyleBase = baseColor;
 	previousBaseColor.Set( renderLight.shaderParms[ SHADERPARM_RED ], renderLight.shaderParms[ SHADERPARM_GREEN ], renderLight.shaderParms[ SHADERPARM_BLUE ] );
 	nextBaseColor.Set( renderLight.shaderParms[ SHADERPARM_RED ], renderLight.shaderParms[ SHADERPARM_GREEN ], renderLight.shaderParms[ SHADERPARM_BLUE ] );
 
@@ -528,6 +539,7 @@ void idLight::Spawn()
 	else
 	{
 		// RB: it's not defined in entityDef light so use predefined Quake 1 table
+		static_assert( sizeof( predef_lightstyles ) / sizeof( predef_lightstyles[ 0 ] ) == ML_NUM_STYLES, "math_style indexes the predefined light style table" );
 		for( int i = 0; i < 12; i++ )
 		{
 			idStr style = spawnArgs.GetString( va( "light_style%d", i ), predef_lightstyles[ i ] );
@@ -630,6 +642,9 @@ void idLight::SetLightLevel()
 	renderLight.shaderParms[ SHADERPARM_RED ]	= color[ 0 ];
 	renderLight.shaderParms[ SHADERPARM_GREEN ]	= color[ 1 ];
 	renderLight.shaderParms[ SHADERPARM_BLUE ]	= color[ 2 ];
+
+	// D62: On, Off, levels and fades change the colour math_style multiplies
+	mathStyleBase = color;
 
 	if( modelTarget )
 	{
@@ -1104,14 +1119,32 @@ void idLight::SharedThink()
 	int otime;
 	int lastch, nextch;
 
-	if( lightStyle == -1 )
+	// D62: math_style plays a light_styles string as a brightness multiplier on the math light's
+	// colour, never on its radius; ML_ParseFromDict leaves it -1 unless the math block is enabled.
+	// A light with both styles gets both.
+	const int mathStyle = renderLight.mathLight.style;
+	const bool mathStyled = ( mathStyle >= 0 && mathStyle < light_styles.Num() );
+	if( mathStyled )
 	{
-		return;
+		const float brightness = ML_StyleMultiplier( light_styles[ mathStyle ].c_str(), gameLocal.time, lightStyleFrameTime );
+		renderLight.shaderParms[ SHADERPARM_RED ]	= mathStyleBase.x * brightness;
+		renderLight.shaderParms[ SHADERPARM_GREEN ]	= mathStyleBase.y * brightness;
+		renderLight.shaderParms[ SHADERPARM_BLUE ]	= mathStyleBase.z * brightness;
 	}
 
-	if( lightStyle > light_styles.Num() )
+	// no radius style (or an index past the table): a math-styled light still keeps thinking and is
+	// presented, as the radius style does below
+	if( lightStyle < 0 || lightStyle >= light_styles.Num() )
 	{
-		//gameLocal.Error( "Light style out of range\n" );
+		if( mathStyled )
+		{
+			if( !common->IsClient() )
+			{
+				BecomeActive( TH_THINK );
+			}
+
+			PresentLightDefChange();
+		}
 		return;
 	}
 

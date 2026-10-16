@@ -146,6 +146,7 @@ private:
 	idVec3				entityPos;
 
 	LightInfo			original;
+	idDict				originalMath;	// the light's math_* keys at selection or its last commit; Cancel puts back exactly these
 	LightInfo			cur; // current status of the light
 	LightInfo			curNotMoving;
 
@@ -159,6 +160,9 @@ private:
 	// RB: light style support
 	idList<idStr>		styleNames;
 	int					currentStyleIndex;
+
+	// D62: the LightKind tab the panel last showed (true = Math); it mirrors ImGui's tab bar, not the light
+	bool				tabShowsMath;
 
 	ImGuizmo::OPERATION mCurrentGizmoOperation = ImGuizmo::TRANSLATE;
 	ImGuizmo::MODE		mCurrentGizmoMode = ImGuizmo::WORLD;
@@ -271,6 +275,7 @@ private:
 		lastAimHit = false;
 		applyPending = false;
 		hintUntilFrame = 0;
+		tabShowsMath = true;	// a new tab bar opens on its first tab
 
 		Reset();
 	}

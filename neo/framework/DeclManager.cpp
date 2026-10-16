@@ -2271,7 +2271,8 @@ static const fgdLightKey_t FGD_LIGHT_KEYS[] =
 	{ "math_pattern_strength",	"float",	"0.0",					"Pattern strength, 0 to 1",																NULL },
 	{ "math_pattern_scale",		"float",	"1.0",					"Pattern scale; larger is finer",														NULL },
 	{ "math_pattern_phase",		"float",	"0.0",					"Pattern phase; shifts the pattern",														NULL },
-	{ "math_energy_clamp",		"choices",	"1",					"Clamp the falloff to 0..1 like a light texture; off lets it reach 64 near the source",	FGD_BOOL_CHOICES }
+	{ "math_energy_clamp",		"choices",	"1",					"Clamp the falloff to 0..1 like a light texture; off lets it reach 64 near the source",	FGD_BOOL_CHOICES },
+	{ "math_style",				"integer",	"-1",					"Math light brightness style, repeating like style: -1 None, 0 Normal, 1 Flicker A, 2 Slow Strong Pulse, 3 Candle A, 4 Fast Strobe, 5 Gentle Pulse, 6 Flicker B, 7 Candle B, 8 Candle C, 9 Slow Strobe, 10 Fluorescent Flicker, 11 Slow Pulse (no black)",	NULL }
 };
 
 static const int FGD_NUM_LIGHT_KEYS = sizeof( FGD_LIGHT_KEYS ) / sizeof( FGD_LIGHT_KEYS[ 0 ] );

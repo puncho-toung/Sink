@@ -169,6 +169,7 @@ private:
 	int				lightStyleFrameTime;
 	idVec3			lightStyleBase;
 // jmarshall end
+	idVec3			mathStyleBase;				// D62: the colour math_style multiplies, set where the light's colour is
 	int				triggercount;
 	idEntity* 		lightParent;
 	idVec4			fadeFrom;

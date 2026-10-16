@@ -66,6 +66,10 @@ enum mathPattern_t : int
     MLP_GRANULAR = 5,
 };
 
+// D62: math_style indexes the same table as the light's "style" key, idLight's light_styles (by
+// default the twelve predef_lightstyles of renderer/Material.h); -1 is no style
+const int ML_NUM_STYLES = 12;
+
 
 // LAYOUT IS LOAD-BEARING. id Software relies on a memcmp of renderLight_t
 // to detect redundant light updates
@@ -75,7 +79,7 @@ struct mathLightData_t
     int     type;               // mathLightType_t
     int     falloff;            // mathFalloff_t
     int     pattern;            // mathPattern_t
-    int     _flagsPad;          // reserved for future flag bits; init to 0
+    int     style;              // math_style, -1 or 0..ML_NUM_STYLES-1; game side only, never uploaded (D62)
 
     float   falloffExp;
     float   innerRadius;
@@ -99,5 +103,6 @@ static_assert(sizeof(mathLightData_t) <= 64,
 // Shared helpers for MathLight.cpp
 void ML_ParseFromDict(const idDict* args, mathLightData_t* m);
 void ML_WriteToDict(idDict* args, const mathLightData_t& m, bool deleteWhenDisabled);
+float ML_StyleMultiplier(const char* style, int timeMs, int frameTimeMs);
 
 #endif 

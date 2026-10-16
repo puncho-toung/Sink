@@ -71,6 +71,73 @@ static int MathTypeFor( ELightType type )
 	return ( type == LIGHT_SUN ) ? ML_SUN : ML_POINT;
 }
 
+// S2 / D15 / V-B17: the soft linear math block a light without one gets, at its first selection (Init)
+// or when the Math tab is picked for it (D62). Every field is set, as the struct may hold a parser's
+// zeros or an older block: Defaults() plus the linear curve and the soft inner edge
+static void SeedMathLight( mathLightData_t& seed, ELightType type )
+{
+	seed.enabled = true;
+	seed.type = MathTypeFor( type );
+	seed.style = -1;
+	seed.falloff = MLF_LINEAR;
+	seed.falloffExp = 2.0f;
+	seed.innerRadius = 0.10f;
+	seed.shapeExp = 2.0f;
+	seed.penumbra = 0.15f;
+	seed.pattern = MLP_NONE;
+	seed.patternStrength = 0.0f;
+	seed.patternScale = 1.0f;
+	seed.patternPhase = 0.0f;
+	seed.energyClamp = true;
+}
+
+// adds the math_* keys of from to to
+static void CopyMathKeys( const idDict& from, idDict& to )
+{
+	for( const idKeyValue* kv = from.MatchPrefix( "math_" ); kv != NULL; kv = from.MatchPrefix( "math_", kv ) )
+	{
+		to.Set( kv->GetKey(), kv->GetValue() );
+	}
+}
+
+// applies the math_* entries of d to to, as idGameEdit::EntityChangeSpawnArgs applies them ("" deletes)
+static void ApplyMathKeys( idDict& to, const idDict& d )
+{
+	for( const idKeyValue* kv = d.MatchPrefix( "math_" ); kv != NULL; kv = d.MatchPrefix( "math_", kv ) )
+	{
+		if( kv->GetValue().IsEmpty() )
+		{
+			to.Delete( kv->GetKey() );
+		}
+		else
+		{
+			to.Set( kv->GetKey(), kv->GetValue() );
+		}
+	}
+}
+
+// Cancel means no change. D51 leaves the math keys on a light whose block is off, so the original's
+// ToDict cannot undo a seed or a tab switch: this rewrites the math part of d (that ToDict output,
+// bound for a light whose math keys are current) so the light ends with exactly originalMath's keys
+static void RestoreMathKeys( const idDict& originalMath, const idDict& current, idDict& d )
+{
+	idDict touched;
+	CopyMathKeys( d, touched );
+	CopyMathKeys( current, touched );
+	for( int i = 0; i < touched.GetNumKeyVals(); i++ )
+	{
+		const idKeyValue* kv = touched.GetKeyVal( i );
+		d.Set( kv->GetKey(), originalMath.GetString( kv->GetKey(), "" ) );
+	}
+
+	// a key the original had that neither ToDict nor the light has now (math_style set to None)
+	for( int i = 0; i < originalMath.GetNumKeyVals(); i++ )
+	{
+		const idKeyValue* kv = originalMath.GetKeyVal( i );
+		d.Set( kv->GetKey(), kv->GetValue() );
+	}
+}
+
 // D45: the one way the light's type changes, so the math-light type follows it
 void LightInfo::SetLightType( ELightType type )
 {
@@ -102,6 +169,7 @@ void LightInfo::Defaults()
 	scale.Set( 1, 1, 1 );
 
 	memset(&mathLight, 0, sizeof(mathLight));
+	mathLight.style = -1;	// D62: zero would be style 0 ("Normal")
 	mathLight.falloff = MLF_INVSQUARE_CLAMPED;  // PBR-safe default
 	mathLight.falloffExp = 2.0f;
 	mathLight.shapeExp = 2.0f;
@@ -433,11 +501,12 @@ void LightInfo::ToDict( idDict* e )
 			e->Set( "angles", DELETE_VAL );
 		}
 	}
-	// MATH LIGHT — write all math_* keys, or delete them all if disabled
+	// MATH LIGHT — write all math_* keys; D51: a disabled block writes only math_enabled "0" and the
+	// other math keys stay on the light, so the Math tab brings them back
 	// D45: math_type is written from the light's type, so a mismatched map converges on its next commit
 	mathLightData_t math = mathLight;
 	math.type = MathTypeFor( lightType );
-	ML_WriteToDict( e, math, /*deleteWhenDisabled=*/ true );
+	ML_WriteToDict( e, math, /*deleteWhenDisabled=*/ false );
 }
 
 LightInfo::LightInfo()
@@ -500,6 +569,7 @@ void LightEditor::Init( const idDict* dict, idEntity* light )
 	{
 		original.FromDict( dict );
 		cur.FromDict( dict );
+		CopyMathKeys( *dict, originalMath );
 
 		gameEdit->EntityGetOrigin( light, entityPos );
 
@@ -570,24 +640,11 @@ void LightEditor::Init( const idDict* dict, idEntity* light )
 	// plan 3.3: AUTO keeps the endpoint dimensions the light has when it is entered
 	AutoCaptureBase( cur, autoBase );
 
-	// S2 / D15 / V-B17: a light without math keys becomes a soft linear math light, on cur only, so a
-	// cancel leaves a legacy light untouched and the map changes only on commit; the parser has zeroed
-	// the struct, so every field is set (Defaults() plus the linear curve and the soft inner edge)
+	// S2 / D15 / V-B17: a light without math keys becomes a soft linear math light, on cur only, so the
+	// map changes only on commit
 	if( dict != NULL && dict->FindKey( "math_enabled" ) == NULL )
 	{
-		mathLightData_t& seed = cur.mathLight;
-		seed.enabled = true;
-		seed.type = MathTypeFor( cur.lightType );
-		seed.falloff = MLF_LINEAR;
-		seed.falloffExp = 2.0f;
-		seed.innerRadius = 0.10f;
-		seed.shapeExp = 2.0f;
-		seed.penumbra = 0.15f;
-		seed.pattern = MLP_NONE;
-		seed.patternStrength = 0.0f;
-		seed.patternScale = 1.0f;
-		seed.patternPhase = 0.0f;
-		seed.energyClamp = true;
+		SeedMathLight( cur.mathLight, cur.lightType );
 
 		// the preview shows it at once
 		TempApplyChanges();
@@ -602,6 +659,7 @@ void LightEditor::Reset()
 	entityPos.z = idMath::INFINITUM;
 
 	original.Defaults();
+	originalMath.Clear();
 	cur.Defaults();
 
 	lightEntity = NULL;
@@ -999,6 +1057,11 @@ bool LightEditor::SaveChanges( bool flushNow, bool onlyThisLight )
 
 	original = cur;
 
+	// Cancel now goes back to this commit: the light's math keys once d is on it
+	originalMath.Clear();
+	CopyMathKeys( *gameEdit->EntityGetSpawnArgs( lightEntity ), originalMath );
+	ApplyMathKeys( originalMath, d );
+
 	if( flushNow )
 	{
 		// written above (D34 / U-5: the splice is the light editor's only .map writer)
@@ -1048,6 +1111,7 @@ void LightEditor::CancelChanges()
 	{
 		idDict d;
 		original.ToDict( &d );
+		RestoreMathKeys( originalMath, *gameEdit->EntityGetSpawnArgs( lightEntity ), d );
 
 		gameEdit->EntityChangeSpawnArgs( lightEntity, &d );
 		gameEdit->EntityUpdateChangeableSpawnArgs( lightEntity, NULL );
@@ -1062,8 +1126,10 @@ void LightEditor::DuplicateLight()
 		// written by the panel's save)
 		SaveChanges( false, false );
 
-		// spawn the new light
+		// spawn the new light; D51: it keeps the math block a Texture tab left on the source (ToDict then
+		// sets math_enabled, and DeleteEmptyKeys drops a cleared math_style)
 		idDict d;
+		CopyMathKeys( *gameEdit->EntityGetSpawnArgs( lightEntity ), d );
 		cur.ToDict( &d );
 		d.DeleteEmptyKeys();
 
@@ -2176,138 +2242,187 @@ void LightEditor::Draw()
 		}
 #endif
 
-		ImGui::SeparatorText( "Color & Texturing" );
+		ImGui::SeparatorText( "Color" );
 
 		changes |= ImGui::ColorEdit3( "Color", vecToArr( cur.color ) );
 
 		ImGui::Spacing();
 
-		if( ImGui::Combo( "Texture", &currentTextureIndex, TextureItemsGetter, this, textureNames.Num() + 1 ) )
+		// D62: a math light and a texture light are two tabs, and the tab is the switch (D51). The shown
+		// tab follows cur.mathLight.enabled: a new light, Cancel or an undo asks for its tab with SetSelected,
+		// which ImGui applies a frame later, so nothing flips while a tab is asked for; a tab that opens
+		// unasked is the user's click. A new ImGui context (resize) opens on the first tab, so ask on appearing
+		const bool tabRequest = ( tabShowsMath != cur.mathLight.enabled ) || ImGui::IsWindowAppearing();
+		if( ImGui::BeginTabBar( "LightKind" ) )
 		{
-			changes = true;
-
-			// -1 because 0 is "<No Texture>"
-			cur.strTexture = ( currentTextureIndex > 0 ) ? textureNames[currentTextureIndex - 1] : "";
-			LoadCurrentTexture();
-		}
-
-		if( currentTextureMaterial != nullptr && currentTexture != nullptr )
-		{
-			ImVec2 size( currentTexture->GetUploadWidth(), currentTexture->GetUploadHeight() );
-
-			ImGui::Image( ( void* )currentTextureMaterial, size, ImVec2( 0, 0 ), ImVec2( 1, 1 ),
-						  ImColor( 255, 255, 255, 255 ), ImColor( 255, 255, 255, 128 ) );
-		}
-
-		ImGui::SeparatorText( "Flicker Style" );
-
-		if( ImGui::Combo( "Style", &currentStyleIndex, StyleItemsGetter, this, styleNames.Num() + 1 ) )
-		{
-			changes = true;
-
-			// -1 because 0 is "<No Lightstyle>"
-			cur.lightStyle = ( currentStyleIndex > 0 ) ? currentStyleIndex - 1 : -1;
-		}
-
-		ImGui::SeparatorText("Math Falloff");
-
-		changes |= ImGui::Checkbox("Enable math-driven falloff", &cur.mathLight.enabled);
-
-		if (cur.mathLight.enabled)
-		{
-			ImGui::Indent();
-
-			// D45: no separate math type; it is the light type chosen at the top
-			static const char* typeOptions[] = { "point", "spot", "sun" };
-			ImGui::TextDisabled( "type: %s (follows the light type above)", typeOptions[ idMath::ClampInt( 0, 2, cur.mathLight.type ) ] );
-
-			if (ImGui::Button("Seed from legacy light"))
+			if( ImGui::BeginTabItem( "Math", NULL, ( tabRequest && cur.mathLight.enabled ) ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None ) )
 			{
-				// map LightInfo::lightType (ELightType: POINT/SPOT/SUN) ? mathType
-				cur.mathLight.type = MathTypeFor( cur.lightType );
-				cur.mathLight.falloff = MLF_INVSQUARE_CLAMPED;
-				cur.mathLight.falloffExp = 2.0f;
-				cur.mathLight.innerRadius = 0.0f;
-				cur.mathLight.shapeExp = (cur.lightType == LIGHT_SPOT) ? 2.5f : 2.0f;
-				cur.mathLight.penumbra = 0.20f;
-				cur.mathLight.pattern = MLP_NONE;
-				cur.mathLight.patternStrength = 0.0f;
-				cur.mathLight.energyClamp = true;
-				changes = true;
+				if( !tabRequest && !cur.mathLight.enabled && lightEntity != NULL )
+				{
+					// D51: the math keys the Texture tab left on the light come back (math_enabled forced on);
+					// a light that never had a math block gets Init's seed
+					idDict block;
+					CopyMathKeys( *gameEdit->EntityGetSpawnArgs( lightEntity ), block );
+					block.Delete( "math_enabled" );
+
+					if( block.GetNumKeyVals() > 0 )
+					{
+						block.Set( "math_enabled", "1" );
+						ML_ParseFromDict( &block, &cur.mathLight );
+						cur.mathLight.type = MathTypeFor( cur.lightType );
+					}
+					else
+					{
+						SeedMathLight( cur.mathLight, cur.lightType );
+					}
+					changes = true;
+				}
+				tabShowsMath = true;
+
+				// D45: no separate math type; it is the light type chosen at the top
+				static const char* typeOptions[] = { "point", "spot", "sun" };
+				ImGui::TextDisabled( "type: %s (follows the light type above)", typeOptions[ idMath::ClampInt( 0, 2, cur.mathLight.type ) ] );
+
+				// D54 / D62: math_style plays the same table as the Texture tab's style, as brightness
+				int mathStyleIndex = cur.mathLight.style + 1;
+				if( ImGui::Combo( "Style", &mathStyleIndex, StyleItemsGetter, this, Min( styleNames.Num(), ML_NUM_STYLES ) + 1 ) )
+				{
+					changes = true;
+
+					// -1 because 0 is "<No Lightstyle>"
+					cur.mathLight.style = ( mathStyleIndex > 0 ) ? mathStyleIndex - 1 : -1;
+				}
+
+				if (ImGui::Button("Seed from legacy light"))
+				{
+					// map LightInfo::lightType (ELightType: POINT/SPOT/SUN) ? mathType
+					cur.mathLight.type = MathTypeFor( cur.lightType );
+					cur.mathLight.falloff = MLF_INVSQUARE_CLAMPED;
+					cur.mathLight.falloffExp = 2.0f;
+					cur.mathLight.innerRadius = 0.0f;
+					cur.mathLight.shapeExp = (cur.lightType == LIGHT_SPOT) ? 2.5f : 2.0f;
+					cur.mathLight.penumbra = 0.20f;
+					cur.mathLight.pattern = MLP_NONE;
+					cur.mathLight.patternStrength = 0.0f;
+					cur.mathLight.energyClamp = true;
+					changes = true;
+				}
+
+				static const char* falloffOptions[] = {
+					"Inverse Square (unbounded)",
+					"Linear",
+					"Smooth",
+					"Exponential",
+					"Inverse Square (clamped) - PBR safe"
+				};
+				int falloffIdx = cur.mathLight.falloff;
+				if (ImGui::Combo("Falloff Curve", &falloffIdx, falloffOptions, IM_ARRAYSIZE(falloffOptions)))
+				{
+					cur.mathLight.falloff = falloffIdx;
+					changes = true;
+				}
+
+				const bool falloffExpUsed = (cur.mathLight.falloff != MLF_LINEAR &&
+					cur.mathLight.falloff != MLF_SMOOTH);
+				ImGui::BeginDisabled(!falloffExpUsed);
+				changes |= ImGui::SliderFloat("Falloff Exponent",
+					&cur.mathLight.falloffExp, 0.1f, 16.0f, "%.2f");
+				ImGui::EndDisabled();
+				if (!falloffExpUsed)
+				{
+					ImGui::SameLine();
+					ImGui::TextDisabled("(unused by this curve)");
+				}
+				changes |= ImGui::SliderFloat("Inner Radius (soft start)",
+					&cur.mathLight.innerRadius, 0.0f, 1.0f, "%.3f");
+
+
+				if (cur.mathLight.type == ML_SPOT)
+				{
+					changes |= ImGui::SliderFloat("Shape (2=ellipse, 16=rect)",
+						&cur.mathLight.shapeExp, 1.5f, 32.0f, "%.2f");
+					changes |= ImGui::SliderFloat("Penumbra",
+						&cur.mathLight.penumbra, 0.0f, 1.0f, "%.3f");
+				}
+
+				ImGui::Spacing();
+				static const char* patternOptions[] = {
+					"None",
+					"Subsurface (warm halo)",
+					"Ice (cool noise)",
+					"Caustic (sharp noise)",
+					"Banded (sine rings)",
+					"Granular (stippled)"
+				};
+				int patternIdx = cur.mathLight.pattern;
+				if (ImGui::Combo("Pattern", &patternIdx, patternOptions, IM_ARRAYSIZE(patternOptions)))
+				{
+					cur.mathLight.pattern = patternIdx;
+					changes = true;
+				}
+
+				if (cur.mathLight.pattern != MLP_NONE)
+				{
+					changes |= ImGui::SliderFloat("Pattern Strength",
+						&cur.mathLight.patternStrength, 0.0f, 1.0f, "%.3f");
+					changes |= ImGui::SliderFloat("Pattern Scale",
+						&cur.mathLight.patternScale, 0.1f, 64.0f, "%.2f");
+					changes |= ImGui::SliderFloat("Pattern Phase",
+						&cur.mathLight.patternPhase, 0.0f, 100.0f, "%.2f");
+				}
+
+				ImGui::Spacing();
+				changes |= ImGui::Checkbox("Energy clamp (PBR safe)", &cur.mathLight.energyClamp);
+				if (!cur.mathLight.energyClamp)
+				{
+					ImGui::SameLine();
+					ImGui::TextDisabled("(may blow out specular)");
+				}
+
+				ImGui::EndTabItem();
 			}
 
-			static const char* falloffOptions[] = {
-				"Inverse Square (unbounded)",
-				"Linear",
-				"Smooth",
-				"Exponential",
-				"Inverse Square (clamped) - PBR safe"
-			};
-			int falloffIdx = cur.mathLight.falloff;
-			if (ImGui::Combo("Falloff Curve", &falloffIdx, falloffOptions, IM_ARRAYSIZE(falloffOptions)))
+			if( ImGui::BeginTabItem( "Texture", NULL, ( tabRequest && !cur.mathLight.enabled ) ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None ) )
 			{
-				cur.mathLight.falloff = falloffIdx;
-				changes = true;
+				if( !tabRequest && cur.mathLight.enabled )
+				{
+					// D51: ToDict writes math_enabled "0" and leaves the other math keys on the light
+					cur.mathLight.enabled = false;
+					changes = true;
+				}
+				tabShowsMath = false;
+
+				if( ImGui::Combo( "Texture", &currentTextureIndex, TextureItemsGetter, this, textureNames.Num() + 1 ) )
+				{
+					changes = true;
+
+					// -1 because 0 is "<No Texture>"
+					cur.strTexture = ( currentTextureIndex > 0 ) ? textureNames[currentTextureIndex - 1] : "";
+					LoadCurrentTexture();
+				}
+
+				if( currentTextureMaterial != nullptr && currentTexture != nullptr )
+				{
+					ImVec2 size( currentTexture->GetUploadWidth(), currentTexture->GetUploadHeight() );
+
+					ImGui::Image( ( void* )currentTextureMaterial, size, ImVec2( 0, 0 ), ImVec2( 1, 1 ),
+								  ImColor( 255, 255, 255, 255 ), ImColor( 255, 255, 255, 128 ) );
+				}
+
+				ImGui::SeparatorText( "Flicker Style" );
+
+				if( ImGui::Combo( "Style", &currentStyleIndex, StyleItemsGetter, this, styleNames.Num() + 1 ) )
+				{
+					changes = true;
+
+					// -1 because 0 is "<No Lightstyle>"
+					cur.lightStyle = ( currentStyleIndex > 0 ) ? currentStyleIndex - 1 : -1;
+				}
+
+				ImGui::EndTabItem();
 			}
 
-			const bool falloffExpUsed = (cur.mathLight.falloff != MLF_LINEAR &&
-				cur.mathLight.falloff != MLF_SMOOTH);
-			ImGui::BeginDisabled(!falloffExpUsed);
-			changes |= ImGui::SliderFloat("Falloff Exponent",
-				&cur.mathLight.falloffExp, 0.1f, 16.0f, "%.2f");
-			ImGui::EndDisabled();
-			if (!falloffExpUsed)
-			{
-				ImGui::SameLine();
-				ImGui::TextDisabled("(unused by this curve)");
-			}
-			changes |= ImGui::SliderFloat("Inner Radius (soft start)",
-				&cur.mathLight.innerRadius, 0.0f, 1.0f, "%.3f");
-
-
-			if (cur.mathLight.type == ML_SPOT)
-			{
-				changes |= ImGui::SliderFloat("Shape (2=ellipse, 16=rect)",
-					&cur.mathLight.shapeExp, 1.5f, 32.0f, "%.2f");
-				changes |= ImGui::SliderFloat("Penumbra",
-					&cur.mathLight.penumbra, 0.0f, 1.0f, "%.3f");
-			}
-
-			ImGui::Spacing();
-			static const char* patternOptions[] = {
-				"None",
-				"Subsurface (warm halo)",
-				"Ice (cool noise)",
-				"Caustic (sharp noise)",
-				"Banded (sine rings)",
-				"Granular (stippled)"
-			};
-			int patternIdx = cur.mathLight.pattern;
-			if (ImGui::Combo("Pattern", &patternIdx, patternOptions, IM_ARRAYSIZE(patternOptions)))
-			{
-				cur.mathLight.pattern = patternIdx;
-				changes = true;
-			}
-
-			if (cur.mathLight.pattern != MLP_NONE)
-			{
-				changes |= ImGui::SliderFloat("Pattern Strength",
-					&cur.mathLight.patternStrength, 0.0f, 1.0f, "%.3f");
-				changes |= ImGui::SliderFloat("Pattern Scale",
-					&cur.mathLight.patternScale, 0.1f, 64.0f, "%.2f");
-				changes |= ImGui::SliderFloat("Pattern Phase",
-					&cur.mathLight.patternPhase, 0.0f, 100.0f, "%.2f");
-			}
-
-			ImGui::Spacing();
-			changes |= ImGui::Checkbox("Energy clamp (PBR safe)", &cur.mathLight.energyClamp);
-			if (!cur.mathLight.energyClamp)
-			{
-				ImGui::SameLine();
-				ImGui::TextDisabled("(may blow out specular)");
-			}
-
-			ImGui::Unindent();
+			ImGui::EndTabBar();
 		}
 
 		ImGui::SeparatorText( "Misc Options" );
@@ -4322,6 +4437,153 @@ static void SelfTestLightType( LightSelfTest& test )
 	test.Check( idStr::Icmp( mismatchedDict.GetString( "math_type" ), "point" ) == 0, "light type: ToDict writes math_type point for a point light whose math type says spot" );
 }
 
+// D51 / D54 / D62: the math_style key, the disabled block that keeps its keys, and the brightness
+static void SelfTestMathStyle( LightSelfTest& test )
+{
+	idDict plain;
+	plain.Set( "classname", "light" );
+	plain.Set( "math_enabled", "1" );
+	LightInfo plainLight;
+	plainLight.FromDict( &plain );
+	idDict plainWritten;
+	plainLight.ToDict( &plainWritten );
+	test.Check( plainLight.mathLight.style == -1 && plainWritten.FindKey( "math_style" ) != NULL && plainWritten.GetString( "math_style" )[ 0 ] == '\0', "math_style: absent reads as -1, and ToDict writes no value (\"\" removes the key)" );
+
+	idDict strobe = plain;
+	strobe.Set( "math_style", "4" );
+	strobe.Set( "math_falloff", "linear" );
+	LightInfo strobeLight;
+	strobeLight.FromDict( &strobe );
+	idDict strobeWritten;
+	strobeLight.ToDict( &strobeWritten );
+	test.Check( strobeLight.mathLight.style == 4 && idStr::Cmp( strobeWritten.GetString( "math_style" ), "4" ) == 0, "math_style: 4 reads as 4 and writes \"4\"" );
+
+	idDict pastTable = plain;
+	pastTable.Set( "math_style", "12" );
+	idDict gated = strobe;
+	gated.Set( "math_enabled", "0" );
+	LightInfo pastTableLight;
+	pastTableLight.FromDict( &pastTable );
+	LightInfo gatedLight;
+	gatedLight.FromDict( &gated );
+	test.Check( pastTableLight.mathLight.style == -1 && gatedLight.mathLight.style == -1 && !gatedLight.mathLight.enabled,
+				"math_style: an index past the table, or a disabled block, reads as no style" );
+
+	// the Texture tab: ToDict's dict merged onto the light as idGameEdit::EntityChangeSpawnArgs merges it
+	LightInfo textureTab = strobeLight;
+	textureTab.mathLight.enabled = false;
+	idDict textureWritten;
+	textureTab.ToDict( &textureWritten );
+	int otherMathKeys = 0;
+	for( const idKeyValue* kv = textureWritten.MatchPrefix( "math_" ); kv != NULL; kv = textureWritten.MatchPrefix( "math_", kv ) )
+	{
+		if( kv->GetKey().Cmp( "math_enabled" ) != 0 )
+		{
+			otherMathKeys++;
+		}
+	}
+	idDict merged = strobe;
+	for( int i = 0; i < textureWritten.GetNumKeyVals(); i++ )
+	{
+		const idKeyValue* kv = textureWritten.GetKeyVal( i );
+		if( kv->GetValue().IsEmpty() )
+		{
+			merged.Delete( kv->GetKey() );
+		}
+		else
+		{
+			merged.Set( kv->GetKey(), kv->GetValue() );
+		}
+	}
+	test.Check( otherMathKeys == 0 && idStr::Cmp( merged.GetString( "math_enabled" ), "0" ) == 0 && idStr::Cmp( merged.GetString( "math_style" ), "4" ) == 0
+				&& idStr::Cmp( merged.GetString( "math_falloff" ), "linear" ) == 0, "D51: a disabled block writes only math_enabled 0; math_style and the other math keys stay on the light" );
+
+	idDict deleted;
+	ML_WriteToDict( &deleted, textureTab.mathLight, true );
+	test.Check( deleted.FindKey( "math_style" ) != NULL && deleted.GetString( "math_style" )[ 0 ] == '\0' && deleted.GetString( "math_falloff" )[ 0 ] == '\0',
+				"D51: deleteWhenDisabled true still removes every math key, math_style with them" );
+
+	// idLight::SharedThink: the math light's colour is its base times this
+	const idVec3 base( 0.5f, 1.0f, 2.0f );
+	const idVec3 atA = base * ML_StyleMultiplier( "a", 1234, 100 );
+	const idVec3 atM = base * ML_StyleMultiplier( "m", 1234, 100 );
+	const idVec3 atZ = base * ML_StyleMultiplier( "z", 1234, 100 );
+	test.Check( atA.Compare( vec3_zero, 1e-6f ), "math_style: 'a' darkens the colour to 0" );
+	test.Check( atM.Compare( base, 1e-5f ), "math_style: 'm' keeps the base colour (x1)" );
+	test.Check( atZ.Compare( base * ( 25.0f / 12.0f ), 1e-5f ), "math_style: 'z' brightens the colour to x25/12 (about 2)" );
+
+	// the a-z steps play one per ls_frametime and interpolate, wrapping at the end of the string
+	const char* fastStrobe = predef_lightstyles[ 4 ];
+	test.Check( SelfTestNear( ML_StyleMultiplier( fastStrobe, 0, 100 ), 1.0f, 1e-6f ) && SelfTestNear( ML_StyleMultiplier( fastStrobe, 100, 100 ), 0.0f, 1e-6f )
+				&& SelfTestNear( ML_StyleMultiplier( fastStrobe, 50, 100 ), 0.5f, 1e-6f ) && SelfTestNear( ML_StyleMultiplier( "ma", 150, 100 ), 0.5f, 1e-6f ),
+				"math_style: Fast Strobe steps m, a at ls_frametime 100 and interpolates; the string wraps" );
+	test.Check( SelfTestNear( ML_StyleMultiplier( fastStrobe, 250, 0 ), 1.0f, 1e-6f ) && SelfTestNear( ML_StyleMultiplier( "", 250, 100 ), 1.0f, 1e-6f ),
+				"math_style: ls_frametime 0 and an empty string are safe" );
+}
+
+// Cancel means no change, though D51 leaves math keys on a light whose block is off (CancelChanges on
+// a dict standing in for the light's spawnArgs)
+static void SelfTestCancelMath( LightSelfTest& test )
+{
+	// a legacy light, seeded on selection (Init's TempApplyChanges), switched to Texture, cancelled
+	idDict legacy;
+	legacy.Set( "classname", "light" );
+	legacy.Set( "light_radius", "300 300 300" );
+	idDict legacyMath;
+	CopyMathKeys( legacy, legacyMath );
+	LightInfo legacyOriginal;
+	legacyOriginal.FromDict( &legacy );
+	LightInfo seeded = legacyOriginal;
+	SeedMathLight( seeded.mathLight, seeded.lightType );
+
+	idDict light = legacy;
+	idDict seededDict;
+	seeded.ToDict( &seededDict );
+	ApplyMathKeys( light, seededDict );
+	seeded.mathLight.enabled = false;
+	idDict textureDict;
+	seeded.ToDict( &textureDict );
+	ApplyMathKeys( light, textureDict );
+	const bool keptAfterSwitch = ( light.FindKey( "math_falloff" ) != NULL && idStr::Cmp( light.GetString( "math_enabled" ), "0" ) == 0 );
+
+	idDict cancelDict;
+	legacyOriginal.ToDict( &cancelDict );
+	RestoreMathKeys( legacyMath, light, cancelDict );
+	ApplyMathKeys( light, cancelDict );
+	test.Check( keptAfterSwitch && light.MatchPrefix( "math_" ) == NULL, "Cancel: a seeded legacy light switched to Texture is left with no math_* key" );
+
+	// a math light with three keys, edited (all keys written), switched to Texture, cancelled
+	idDict mathDict = legacy;
+	mathDict.Set( "math_enabled", "1" );
+	mathDict.Set( "math_falloff", "linear" );
+	mathDict.Set( "math_style", "4" );
+	idDict mathKeys;
+	CopyMathKeys( mathDict, mathKeys );
+	LightInfo mathOriginal;
+	mathOriginal.FromDict( &mathDict );
+
+	idDict live = mathDict;
+	idDict editedDict;
+	mathOriginal.ToDict( &editedDict );
+	ApplyMathKeys( live, editedDict );
+	LightInfo switched = mathOriginal;
+	switched.mathLight.enabled = false;
+	idDict switchedDict;
+	switched.ToDict( &switchedDict );
+	ApplyMathKeys( live, switchedDict );
+	const bool offAfterSwitch = ( idStr::Cmp( live.GetString( "math_enabled" ), "0" ) == 0 );
+
+	idDict restoreDict;
+	mathOriginal.ToDict( &restoreDict );
+	RestoreMathKeys( mathKeys, live, restoreDict );
+	ApplyMathKeys( live, restoreDict );
+	idDict liveMath;
+	CopyMathKeys( live, liveMath );
+	test.Check( offAfterSwitch && liveMath.GetNumKeyVals() == 3 && idStr::Cmp( live.GetString( "math_enabled" ), "1" ) == 0
+				&& idStr::Cmp( live.GetString( "math_falloff" ), "linear" ) == 0 && idStr::Cmp( live.GetString( "math_style" ), "4" ) == 0,
+				"Cancel: a math light switched to Texture gets math_enabled 1 and exactly its own math keys back" );
+}
+
 } //namespace ImGuiTools
 
 CONSOLE_COMMAND( le_selfTest, "checks the easy-mode light geometry contracts and the map splice", NULL )
@@ -4332,6 +4594,8 @@ CONSOLE_COMMAND( le_selfTest, "checks the easy-mode light geometry contracts and
 	ImGuiTools::SelfTestGeometry( test );
 	ImGuiTools::SelfTestColor( test );
 	ImGuiTools::SelfTestLightType( test );
+	ImGuiTools::SelfTestMathStyle( test );
+	ImGuiTools::SelfTestCancelMath( test );
 
 	common->Printf( "le_selfTest: %d checks, %d passed, %d failed\n", test.run, test.run - test.failed, test.failed );
 }
