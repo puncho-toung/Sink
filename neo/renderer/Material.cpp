@@ -85,6 +85,7 @@ void idMaterial::CommonInit()
 {
 	desc = "<none>";
 	renderBump = "";
+	dmapArgs.Clear();
 	contentFlags = CONTENTS_SOLID;
 	surfaceFlags = SURFTYPE_NONE;
 	materialFlags = 0;
@@ -211,6 +212,7 @@ void idMaterial::FreeData()
 		R_StaticFree( ops );
 		ops = NULL;
 	}
+	dmapArgs.Clear();
 }
 
 /*
@@ -2599,6 +2601,7 @@ void idMaterial::ParseMaterial( idLexer& src )
 	numStages = 0;
 	pd->registersAreConstant = true;			// until shown otherwise
 	textureRepeat_t	trpDefault = TR_REPEAT;		// allow a global setting for repeat
+	bool			warnedForeignKeyword = false;	// qer_* / q3map_* skips warn once per material
 
 	while( 1 )
 	{
@@ -2969,6 +2972,28 @@ void idMaterial::ParseMaterial( idLexer& src )
 		{
 			// create the new stage
 			ParseStage( src, trpDefault );
+			continue;
+		}
+		// dmap_<keyword> <args...>: compile-only, dmap parses the arguments, the material keeps the text.
+		// These two branches must stay after every explicit keyword, so qer_editorimage and the
+		// qer_nocarve infoParm above still win over the prefix skips
+		else if( !token.Icmpn( "dmap_", 5 ) )
+		{
+			dmapKeyword_t& dmapKeyword = dmapArgs.Alloc();
+			dmapKeyword.keyword = token;
+			src.ParseRestOfLine( dmapKeyword.args );
+			continue;
+		}
+		// editor and Quake 3 compiler keywords from foreign material sources: skipping them instead of
+		// defaulting keeps the rest of the material
+		else if( !token.Icmpn( "qer_", 4 ) || !token.Icmpn( "q3map_", 6 ) )
+		{
+			if( !warnedForeignKeyword )
+			{
+				common->Warning( "material '%s': skipping foreign keyword '%s'", GetName(), token.c_str() );
+				warnedForeignKeyword = true;
+			}
+			src.SkipRestOfLine();
 			continue;
 		}
 		else
@@ -3345,6 +3370,10 @@ void idMaterial::Print() const
 		{
 			common->Printf( "%i = %i %s %i\n", op->c, op->a, opNames[ op->opType ], op->b );
 		}
+	}
+	for( i = 0 ; i < dmapArgs.Num() ; i++ )
+	{
+		common->Printf( "dmap keyword: %s %s\n", dmapArgs[i].keyword.c_str(), dmapArgs[i].args.c_str() );
 	}
 }
 

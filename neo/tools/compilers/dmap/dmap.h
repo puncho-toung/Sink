@@ -27,6 +27,10 @@ If you have questions concerning this license or the applicable additional terms
 ===========================================================================
 */
 
+// guarded since dress.h includes it and dmap.cpp includes both
+#ifndef __DMAP_H__
+#define __DMAP_H__
+
 #include "../../../renderer/RenderCommon.h"
 
 // DMAP TODO
@@ -56,6 +60,7 @@ typedef struct
 	idVec3				origin;
 	primitive_t* 		primitives;
 	bool				hasPolyTris;	// true if any of the primitives are polyTris
+	bool				dmapOnly;		// its entityDef says dmapOnly: compile-time helper, no primitives
 	struct tree_s* 		tree;
 
 	int					numAreas;
@@ -308,6 +313,8 @@ typedef struct
 
 extern dmapGlobals_t dmapGlobals;
 
+extern idCVar dmap_maxSurfaceVerts;
+
 int FindFloatPlane( const idPlane& plane, bool* fixedDegeneracies = NULL );
 
 
@@ -418,6 +425,9 @@ mapTri_t* CullTrisInOpaqueLeafs( mapTri_t* triList, tree_t* tree );
 void	ClipSidesByTree( uEntity_t* e );
 void	SplitTrisToSurfaces( mapTri_t* triList, tree_t* tree );
 void	PutPrimitivesInAreas( uEntity_t* e );
+// clips one tri into the non-opaque areas of e's tree and adds copies of the pieces to the
+// areas' optimize groups; the caller keeps tri. Used for curves, inlined models and the dress passes
+void	AddMapTriToAreas( mapTri_t* tri, uEntity_t* e );
 void	Prelight( uEntity_t* e );
 
 // RB begin
@@ -514,8 +524,9 @@ void		ClipTriList( const mapTri_t* list, const idPlane& plane, float epsilon, ma
 int			NumberNodes_r( node_t* node, int nextNode, int& nextLeaf );
 int			NumberNodes_r( node_t* node, int nextNumber );
 
-srfTriangles_t*	ShareMapTriVerts( const mapTri_t* tris );
+srfTriangles_t*	ShareMapTriVerts( const mapTri_t* tris, const int maxVerts, const mapTri_t** rest );
 void WriteOutputFile();
 
 //=============================================================================
 
+#endif /* !__DMAP_H__ */

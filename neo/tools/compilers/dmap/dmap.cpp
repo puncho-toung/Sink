@@ -31,8 +31,12 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "dmap.h"
+#include "dress.h"
 
 idCVar dmap_verbose( "dmap_verbose", "0", CVAR_BOOL | CVAR_SYSTEM | CVAR_NEW, "dmap developer mode" );
+// the .proc indexes are 16 bit (triIndex_t), so the default is the hard limit; lower values only
+// exist to exercise the split, higher ones make WriteUTriangles stop with an error
+idCVar dmap_maxSurfaceVerts( "dmap_maxSurfaceVerts", "65535", CVAR_INTEGER | CVAR_SYSTEM | CVAR_TOOL | CVAR_NEW, "dmap starts a new output surface before one would exceed this many vertexes", 3, idMath::INFINITUM );
 
 dmapGlobals_t	dmapGlobals;
 
@@ -131,6 +135,9 @@ bool ProcessModel( uEntity_t* e, bool floodFillWorld )
 	// fragments in the solid areas
 	PutPrimitivesInAreas( e );
 
+	// generated geometry that must be light carved and optimized like the brushes
+	DressAreasPreOptimize( e );
+
 	// now build shadow volumes for the lights and split
 	// the optimize lists by the light beam trees
 	// so there won't be unneeded overdraw in the static
@@ -147,8 +154,15 @@ bool ProcessModel( uEntity_t* e, bool floodFillWorld )
 		FixEntityTjunctions( e );
 	}
 
+	// generated geometry the optimizer must not re-triangulate, but that still
+	// takes part in the global T-junction fix
+	DressAreasPostOptimize( e );
+
 	// now fix t junctions across areas
 	FixGlobalTjunctions( e );
+
+	// generated geometry that must reach the .proc exactly as the pass made it
+	DressAreasPostTjunction( e );
 
 	return true;
 }
@@ -496,6 +510,17 @@ void Dmap( const idCmdArgs& args )
 	else
 	{
 		leaked = true;
+	}
+
+	// the dress passes all ran inside ProcessModels and were the last readers of the map
+	// primitives of dmapOnly helpers: strip them now, while uEntities still says which entities
+	// those are (FreeDMapFile frees it), so the collision build below makes no model of a helper
+	for( int i = 1; i < dmapGlobals.numEntities; i++ )
+	{
+		if( dmapGlobals.uEntities[i].dmapOnly )
+		{
+			dmapGlobals.uEntities[i].mapEntity->RemovePrimitiveData();
+		}
 	}
 
 	FreeDMapFile();

@@ -56,6 +56,7 @@ If you have questions concerning this license or the applicable additional terms
 static	int		entityPrimitive;		// to track editor brush numbers
 static	int		c_numMapPatches;
 static	int		c_areaportals;
+static	int		c_dmapOnlyEntities;
 
 static	uEntity_t*	uEntity;
 
@@ -597,9 +598,21 @@ static bool	ProcessMapEntity( idMapEntity* mapEnt )
 	uEntity->mapEntity = mapEnt;
 	dmapGlobals.numEntities++;
 
+	// a dmapOnly entity is a compile-time helper: it keeps mapEntity, so the dress passes can read
+	// its keys and map primitives, but gets no primitives of its own, so ProcessModels skips it and
+	// nothing of it reaches the .proc; Dmap strips its map primitives before the collision build.
+	// Map-only is a property of the classname's plain def, read the same way by the game's spawn
+	// and collision paths and by dmap, so all of them agree and no _mp variant is consulted
+	const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, mapEnt->epairs.GetString( "classname" ), false ) );
+	if( def != NULL && def->dict.GetBool( "dmapOnly" ) )
+	{
+		uEntity->dmapOnly = true;
+		c_dmapOnlyEntities++;
+	}
+
 	int numPolygons = 0;
 
-	for( entityPrimitive = 0; entityPrimitive < mapEnt->GetNumPrimitives(); entityPrimitive++ )
+	for( entityPrimitive = 0; !uEntity->dmapOnly && entityPrimitive < mapEnt->GetNumPrimitives(); entityPrimitive++ )
 	{
 		prim = mapEnt->GetPrimitive( entityPrimitive );
 
@@ -870,6 +883,7 @@ bool LoadDMapFile( const char* filename )
 	dmapGlobals.numEntities = 0;
 	c_numMapPatches = 0;
 	c_areaportals = 0;
+	c_dmapOnlyEntities = 0;
 
 	size = dmapGlobals.dmapFile->GetNumEntities() * sizeof( dmapGlobals.uEntities[0] );
 	dmapGlobals.uEntities = ( uEntity_t* )Mem_Alloc( size, TAG_TOOLS );
@@ -920,6 +934,7 @@ bool LoadDMapFile( const char* filename )
 	common->Printf( "%5i total world triSurfs\n", triSurfs );
 	common->Printf( "%5i patches\n", c_numMapPatches );
 	common->Printf( "%5i entities\n", dmapGlobals.numEntities );
+	common->Printf( "%5i map-only entities\n", c_dmapOnlyEntities );
 	common->Printf( "%5i planes\n", dmapGlobals.mapPlanes.Num() );
 	common->Printf( "%5i areaportals\n", c_areaportals );
 	common->Printf( "size: %5.0f,%5.0f,%5.0f to %5.0f,%5.0f,%5.0f\n", mapBounds[0][0], mapBounds[0][1], mapBounds[0][2],

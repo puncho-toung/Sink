@@ -118,44 +118,6 @@ void Write1DMatrix( idFile* f, int x, float* m )
 	f->WriteFloatString( ") " );
 }
 
-static int CountUniqueShaders( optimizeGroup_t* groups )
-{
-	optimizeGroup_t*		a, *b;
-	int					count;
-
-	count = 0;
-
-	for( a = groups ; a ; a = a->nextGroup )
-	{
-		if( !a->triList )  	// ignore groups with no tris
-		{
-			continue;
-		}
-		for( b = groups ; b != a ; b = b->nextGroup )
-		{
-			if( !b->triList )
-			{
-				continue;
-			}
-			if( a->material != b->material )
-			{
-				continue;
-			}
-			if( a->mergeGroup != b->mergeGroup )
-			{
-				continue;
-			}
-			break;
-		}
-		if( a == b )
-		{
-			count++;
-		}
-	}
-
-	return count;
-}
-
 
 /*
 ==============
@@ -212,9 +174,14 @@ static bool MatchVert( const idDrawVert* a, const idDrawVert* b )
 ShareMapTriVerts
 
 Converts independent triangles to shared vertex triangles
+
+Takes the tris in list order and stops before the first one whose new vertexes
+would push the surface past maxVerts; that tri and all after it come back in
+rest (NULL when everything fit) for the caller to share into the next surface.
+A surface under the cap is built exactly as it was before the cap existed.
 ====================
 */
-srfTriangles_t*	ShareMapTriVerts( const mapTri_t* tris )
+srfTriangles_t*	ShareMapTriVerts( const mapTri_t* tris, const int maxVerts, const mapTri_t** rest )
 {
 	const mapTri_t*	step;
 	int			count;
@@ -223,18 +190,33 @@ srfTriangles_t*	ShareMapTriVerts( const mapTri_t* tris )
 	int			numIndexes;
 	srfTriangles_t*	uTri;
 
+	// a tri adds at most 3 vertexes, so with room for 3 the first tri always fits and
+	// every call makes progress; below that the caller's loop would never end
+	if( maxVerts < 3 )
+	{
+		common->Error( "ShareMapTriVerts: maxVerts %i < 3", maxVerts );
+	}
+
 	// unique the vertexes
 	count = CountTriList( tris );
 
+	// the tri that goes over the cap writes up to 3 vertex slots before it is taken back;
+	// the indexes are not capped, every remaining tri may still fit
 	uTri = R_AllocStaticTriSurf();
-	R_AllocStaticTriSurfVerts( uTri, count * 3 );
+	R_AllocStaticTriSurfVerts( uTri, Min( count * 3, maxVerts + 3 ) );
 	R_AllocStaticTriSurfIndexes( uTri, count * 3 );
 
 	numVerts = 0;
 	numIndexes = 0;
+	*rest = NULL;
 
 	for( step = tris ; step ; step = step->next )
 	{
+		// share the tri as usual, then take it back whole if it went over the cap:
+		// the slots it wrote past the restored counts are simply never read
+		const int prevNumVerts = numVerts;
+		const int prevNumIndexes = numIndexes;
+
 		for( i = 0 ; i < 3 ; i++ )
 		{
 			const idDrawVert*	dv;
@@ -261,6 +243,14 @@ srfTriangles_t*	ShareMapTriVerts( const mapTri_t* tris )
 			}
 
 			uTri->indexes[numIndexes++] = j;
+		}
+
+		if( numVerts > maxVerts )
+		{
+			numVerts = prevNumVerts;
+			numIndexes = prevNumIndexes;
+			*rest = step;
+			break;
 		}
 	}
 
@@ -299,6 +289,15 @@ static void WriteUTriangles( idFile* procFile, const srfTriangles_t* uTris, cons
 {
 	int			col;
 	int			i;
+
+	// ShareMapTriVerts has already stored the indexes as triIndex_t, so past 65535 vertexes they
+	// wrapped and no later check (R_RangeCheckIndexes included) can see it; only a dmap_maxSurfaceVerts
+	// above 65535 gets here
+	if( uTris->numVerts > 65535 )
+	{
+		// no CloseFile: procFile is WriteOutputFile's idFileLocal, closed when Error unwinds; closing it here would free it twice
+		common->Error( "WriteUTriangles: %i vertexes in one surface, the .proc index is 16-bit (max 65535)", uTris->numVerts );
+	}
 
 	// emit this chain
 	procFile->WriteFloatString( "/* numVerts = */ %i /* numIndexes = */ %i\n",
@@ -434,61 +433,38 @@ static void WriteOutputSurfaces( int entityNum, int areaNum, idFile* procFile, i
 {
 	mapTri_t*	ambient, *copy;
 	int			surfaceNum;
-	int			numSurfaces;
 	idMapEntity*	entity;
 	uArea_t*		area;
 	optimizeGroup_t*	group, *groupStep;
-	int			i; // , j;
 //	int			col;
 	srfTriangles_t*	uTri;
 //	mapTri_t	*tri;
-	typedef struct interactionTris_s
+	const char*	name = "";
+
+	// all .proc surfaces of the area are built before anything is written, because the
+	// model header must carry the real count once a surface was split at the vertex cap
+	typedef struct
 	{
-		struct interactionTris_s*	next;
-		mapTri_t*	triList;
-		mapLight_t*	light;
-	} interactionTris_t;
+		const idMaterial*	material;
+		srfTriangles_t*		tri;
+	} outputSurface_t;
 
-	interactionTris_t*	interactions, *checkInter; //, *nextInter;
-
+	idList<outputSurface_t>	surfaces;
+	const int				maxVerts = dmap_maxSurfaceVerts.GetInteger();
 
 	area = &dmapGlobals.uEntities[entityNum].areas[areaNum];
 	entity = dmapGlobals.uEntities[entityNum].mapEntity;
 
-	numSurfaces = CountUniqueShaders( area->groups );
-
-
-	if( entityNum == 0 )
+	if( entityNum != 0 )
 	{
-		procFile->WriteFloatString( "model { /* name = */ \"_area%i\" /* numSurfaces = */ %i\n\n",
-									areaNum, numSurfaces );
-
-		if( objFile )
-		{
-			objFile->Printf( "g _area%i\n", areaNum );
-		}
-	}
-	else
-	{
-		const char* name;
-
 		entity->epairs.GetString( "name", "", &name );
 		if( !name[0] )
 		{
 			fileSystem->CloseFile( procFile );
 			common->Error( "Entity %i has surfaces, but no name key", entityNum );
 		}
-
-		procFile->WriteFloatString( "model { /* name = */ \"%s\" /* numSurfaces = */ %i\n\n",
-									name, numSurfaces );
-
-		if( objFile )
-		{
-			objFile->Printf( "g model_%s\n", name );
-		}
 	}
 
-	surfaceNum = 0;
 	for( group = area->groups ; group ; group = group->nextGroup )
 	{
 		if( group->surfaceEmited )
@@ -502,10 +478,6 @@ static void WriteOutputSurfaces( int entityNum, int areaNum, idFile* procFile, i
 		// vertexes because they had different planes, texture coordinates, or lights.
 		// Different mergeGroups will stay in separate surfaces.
 		ambient = NULL;
-
-		// each light that illuminates any of the groups in the surface will
-		// get its own list of indexes out of the original surface
-		interactions = NULL;
 
 		for( groupStep = group ; groupStep ; groupStep = groupStep->nextGroup )
 		{
@@ -522,28 +494,6 @@ static void WriteOutputSurfaces( int entityNum, int areaNum, idFile* procFile, i
 			copy = CopyTriList( groupStep->triList );
 			ambient = MergeTriLists( ambient, copy );
 			groupStep->surfaceEmited = true;
-
-			// duplicate it into an interaction for each groupLight
-			for( i = 0 ; i < groupStep->numGroupLights ; i++ )
-			{
-				for( checkInter = interactions ; checkInter ; checkInter = checkInter->next )
-				{
-					if( checkInter->light == groupStep->groupLights[i] )
-					{
-						break;
-					}
-				}
-				if( !checkInter )
-				{
-					// create a new interaction
-					checkInter = ( interactionTris_t* )Mem_ClearedAlloc( sizeof( *checkInter ), TAG_TOOLS );
-					checkInter->light = groupStep->groupLights[i];
-					checkInter->next = interactions;
-					interactions = checkInter;
-				}
-				copy = CopyTriList( groupStep->triList );
-				checkInter->triList = MergeTriLists( checkInter->triList, copy );
-			}
 		}
 
 		if( !ambient )
@@ -551,19 +501,56 @@ static void WriteOutputSurfaces( int entityNum, int areaNum, idFile* procFile, i
 			continue;
 		}
 
-		if( surfaceNum >= numSurfaces )
+		// a surface is one draw with 16 bit indexes: share the vertexes into as many
+		// surfaces as it takes to keep each one within maxVerts
+		const int		firstSurface = surfaces.Num();
+		int				totalVerts = 0;
+		const mapTri_t*	tris = ambient;
+		while( tris != NULL )
 		{
-			fileSystem->CloseFile( procFile );
-			common->Error( "WriteOutputSurfaces: surfaceNum >= numSurfaces" );
+			outputSurface_t& surface = surfaces.Alloc();
+			surface.material = ambient->material;
+			surface.tri = ShareMapTriVerts( tris, maxVerts, &tris );
+			totalVerts += surface.tri->numVerts;
 		}
 
-		procFile->WriteFloatString( "/* surface %i */ { ", surfaceNum );
-		surfaceNum++;
-		procFile->WriteFloatString( "\"%s\" ", ambient->material->GetName() );
+		if( surfaces.Num() - firstSurface > 1 )
+		{
+			common->Printf( "%s: surface %i (%s) split into %i parts (%i vertexes)\n", ( entityNum == 0 ) ? va( "_area%i", areaNum ) : name,
+							firstSurface, ambient->material->GetName(), surfaces.Num() - firstSurface, totalVerts );
+		}
 
-		uTri = ShareMapTriVerts( ambient );
-		idStrStatic<256> matName( ambient->material->GetName() );
 		FreeTriList( ambient );
+	}
+
+	if( entityNum == 0 )
+	{
+		procFile->WriteFloatString( "model { /* name = */ \"_area%i\" /* numSurfaces = */ %i\n\n",
+									areaNum, surfaces.Num() );
+
+		if( objFile )
+		{
+			objFile->Printf( "g _area%i\n", areaNum );
+		}
+	}
+	else
+	{
+		procFile->WriteFloatString( "model { /* name = */ \"%s\" /* numSurfaces = */ %i\n\n",
+									name, surfaces.Num() );
+
+		if( objFile )
+		{
+			objFile->Printf( "g model_%s\n", name );
+		}
+	}
+
+	for( surfaceNum = 0 ; surfaceNum < surfaces.Num() ; surfaceNum++ )
+	{
+		uTri = surfaces[surfaceNum].tri;
+		const char* matName = surfaces[surfaceNum].material->GetName();
+
+		procFile->WriteFloatString( "/* surface %i */ { ", surfaceNum );
+		procFile->WriteFloatString( "\"%s\" ", matName );
 
 		CleanupUTriangles( uTri );
 		WriteUTriangles( procFile, uTri, entity->originOffset );
@@ -617,7 +604,7 @@ static void WriteOutputSurfaces( int entityNum, int areaNum, idFile* procFile, i
 			}
 
 			int debugArea = ( entityNum == 0 ) ? areaNum : -1;
-			WriteObjTriangles( objFile, debugArea, uTri, entityToWorldTransform, matName.c_str() );
+			WriteObjTriangles( objFile, debugArea, uTri, entityToWorldTransform, matName );
 		}
 		// RB end
 

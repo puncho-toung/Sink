@@ -441,6 +441,13 @@ typedef enum
 	SURF_OCCLUSION				= BIT( 13 ),	// RB: occluder surface
 } surfaceFlags_t;
 
+// a compile-only material keyword: dmap parses the arguments, the renderer only stores the text
+typedef struct
+{
+	idStr		keyword;		// "dmap_smoothAngle"
+	idStr		args;			// rest of the line from ParseRestOfLine (single spaces, no quotes), may be empty
+} dmapKeyword_t;
+
 
 class idSoundEmitter;
 
@@ -740,6 +747,13 @@ public:
 		return renderBump;
 	};
 
+	// returns the dmap_* keywords of this material in parse order, empty if there are none;
+	// only the compilers read them
+	const idList<dmapKeyword_t>&	GetDmapArgs() const
+	{
+		return dmapArgs;
+	}
+
 	// set specific material flag(s)
 	void				SetMaterialFlag( const int flag ) const
 	{
@@ -992,6 +1006,7 @@ private:
 private:
 	idStr				desc;				// description
 	idStr				renderBump;			// renderbump command options, without the "renderbump" at the start
+	idList<dmapKeyword_t>	dmapArgs;		// dmap_* keywords with the rest of their line, for the compilers only
 
 	idImage*			lightFalloffImage;	// only for light shaders
 
