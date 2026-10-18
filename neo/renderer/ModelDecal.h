@@ -46,7 +46,7 @@ If you have questions concerning this license or the applicable additional terms
 ===============================================================================
 */
 
-static const int NUM_DECAL_BOUNDING_PLANES	= 6;
+// NUM_DECAL_BOUNDING_PLANES and decalProjectionParms_t are in idlib/geometry/DecalProjection.h
 #ifdef ID_PC
 	static const int MAX_DEFERRED_DECALS		= 16;
 	static const int DEFFERED_DECAL_TIMEOUT		= 1000;	// don't create a decal if it wasn't visible within the first second
@@ -62,20 +62,6 @@ static const int MAX_DECAL_INDEXES			= ( MAX_DECAL_VERTS - 2 ) * 3;
 compile_time_assert( CONST_ISPOWEROFTWO( MAX_DECALS ) );
 // the max indices must be a multiple of 2 for copying indices to write-combined memory
 compile_time_assert( ( ( MAX_DECAL_INDEXES* sizeof( triIndex_t ) ) & 15 ) == 0 );
-
-struct decalProjectionParms_t
-{
-	idPlane					boundingPlanes[NUM_DECAL_BOUNDING_PLANES];
-	idPlane					fadePlanes[2];
-	idPlane					textureAxis[2];
-	idVec3					projectionOrigin;
-	idBounds				projectionBounds;
-	const idMaterial* 		material;
-	float					fadeDepth;
-	int						startTime;
-	bool					parallel;
-	bool					force;
-};
 
 // RB begin
 #if defined(_WIN32)
@@ -109,6 +95,10 @@ public:
 
 	// Transform the projection parameters from global space to local.
 	static void					GlobalProjectionParmsToLocal( decalProjectionParms_t& localParms, const decalProjectionParms_t& globalParms, const idVec3& origin, const idMat3& axis );
+
+	// Prints the projection maths on fixed input (decalSelfTest): the parms of a parallel and
+	// a perspective projector and the decals both clip from a fixed corner.
+	static void					SelfTest();
 
 	// clear the model for reuse
 	void						ReUse();

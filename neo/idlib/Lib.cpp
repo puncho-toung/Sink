@@ -167,6 +167,22 @@ dword PackColor( const idVec4& color )
 
 /*
 ================
+PackColorRound
+
+Rounds to the nearest byte; Ftob clamps, so values outside 0..1 pack as 0 or 255.
+================
+*/
+dword PackColorRound( const idVec4& color )
+{
+	byte dx = idMath::Ftob( color.x * 255.0f + 0.5f );
+	byte dy = idMath::Ftob( color.y * 255.0f + 0.5f );
+	byte dz = idMath::Ftob( color.z * 255.0f + 0.5f );
+	byte dw = idMath::Ftob( color.w * 255.0f + 0.5f );
+	return ( dx << 0 ) | ( dy << 8 ) | ( dz << 16 ) | ( dw << 24 );
+}
+
+/*
+================
 UnpackColor
 ================
 */

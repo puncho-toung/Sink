@@ -52,6 +52,10 @@ If you have questions concerning this license or the applicable additional terms
 // the tessellation pass dmap_tessSize and dmap_colorGen
 static const char* const dressKeywords[] = { NULL };
 
+// the classes of map-only (dmapOnly) entities some dress pass bakes, NULL terminated. The
+// passes match the classname exactly: a def that inherits one of them is not baked
+static const char* const dressEntityClasses[] = { "func_decal", NULL };
+
 /*
 ====================
 DressCheckMaterialKeywords
@@ -113,6 +117,40 @@ static void DressCheckMaterialKeywords( uEntity_t* e )
 
 /*
 ====================
+DressCheckMapOnlyEntities
+
+The game inhibits every dmapOnly entity and dmap strips its primitives, so one that
+no pass bakes is lost without a trace; say so once per entity.
+====================
+*/
+static void DressCheckMapOnlyEntities()
+{
+	for( int i = 1; i < dmapGlobals.numEntities; i++ )
+	{
+		if( !dmapGlobals.uEntities[i].dmapOnly )
+		{
+			continue;
+		}
+
+		const idDict& epairs = dmapGlobals.uEntities[i].mapEntity->epairs;
+		const char* classname = epairs.GetString( "classname" );
+		int k;
+		for( k = 0; dressEntityClasses[k] != NULL; k++ )
+		{
+			if( !idStr::Icmp( classname, dressEntityClasses[k] ) )
+			{
+				break;
+			}
+		}
+		if( dressEntityClasses[k] == NULL )
+		{
+			common->Warning( "map-only entity '%s' (%s): no dmap pass handles this class, it bakes nothing", epairs.GetString( "name", va( "entity %i", i ) ), classname );
+		}
+	}
+}
+
+/*
+====================
 DressAreasPreOptimize
 
 Between PutPrimitivesInAreas and Prelight. Passes collect first and insert after
@@ -130,7 +168,9 @@ void DressAreasPreOptimize( uEntity_t* e )
 	// first, while the groups still carry only the map's own materials
 	DressCheckMaterialKeywords( e );
 
-	// no pass is registered here yet
+	DressDecalsPreOptimize( e );
+
+	DressCheckMapOnlyEntities();
 }
 
 /*
@@ -167,7 +207,7 @@ void DressAreasPostTjunction( uEntity_t* e )
 		return;
 	}
 
-	// no pass is registered here yet
+	DressDecalsPostTjunction( e );
 }
 
 /*

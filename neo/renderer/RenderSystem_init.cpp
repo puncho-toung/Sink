@@ -717,6 +717,18 @@ void R_TestVideo_f( const idCmdArgs& args )
 	common->SW()->PlayShaderDirectly( wavString.c_str() );
 }
 
+/*
+=============
+R_DecalSelfTest_f
+
+Prints the decal projection maths on fixed input; two runs must print the same.
+=============
+*/
+static void R_DecalSelfTest_f( const idCmdArgs& args )
+{
+	idRenderModelDecal::SelfTest();
+}
+
 static int R_QsortSurfaceAreas( const void* a, const void* b )
 {
 	const idMaterial*	ea, *eb;
@@ -1867,6 +1879,7 @@ void R_InitCommands()
 	cmdSystem->AddCommand( "modulateLights", R_ModulateLights_f, CMD_FL_RENDERER | CMD_FL_CHEAT, "modifies shader parms on all lights" );
 	cmdSystem->AddCommand( "testImage", R_TestImage_f, CMD_FL_RENDERER | CMD_FL_CHEAT, "displays the given image centered on screen", idCmdSystem::ArgCompletion_ImageName );
 	cmdSystem->AddCommand( "testVideo", R_TestVideo_f, CMD_FL_RENDERER | CMD_FL_CHEAT, "displays the given cinematic", idCmdSystem::ArgCompletion_VideoName );
+	cmdSystem->AddCommand( "decalSelfTest", R_DecalSelfTest_f, CMD_FL_RENDERER | CMD_FL_CHEAT, "prints the decal projection maths on fixed input" );
 	cmdSystem->AddCommand( "reportSurfaceAreas", R_ReportSurfaceAreas_f, CMD_FL_RENDERER, "lists all used materials sorted by surface area" );
 	cmdSystem->AddCommand( "showInteractionMemory", R_ShowInteractionMemory_f, CMD_FL_RENDERER, "shows memory used by interactions" );
 	cmdSystem->AddCommand( "vid_restart", R_VidRestart_f, CMD_FL_RENDERER, "restarts renderSystem" );

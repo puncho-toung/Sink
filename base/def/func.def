@@ -13,6 +13,24 @@ entityDef func_group {
 	"editor_usage"				"Used to group brushes together just for editor convenience.  They are turned into normal brushes by the utilities."
 }
 
+entityDef func_decal {
+	"editor_color"			"1 0.5 0"
+	"editor_mins"			"-8 -8 -8"
+	"editor_maxs"			"8 8 8"
+	"editor_usage"			"Compile-time decal projector: dmap bakes 'material' onto world and inlined geometry inside a box 'depth' units deep centred on the origin, projecting along the entity's reverse forward axis (place it on the surface facing out of it). Movers and non-inlined func_statics are skipped (runtime decals cover them). Never spawned in game. The material must be discrete (DECAL_MACRO). 'target' aims the projector at another entity instead of 'angles'."
+	"editor_mat material"	"decal material (discrete, e.g. DECAL_MACRO)"
+	"editor_var size"		"width height, in units, on the plane through the origin"
+	"editor_float depth"	"projection depth in units, centred on the origin (default 32)"
+	"editor_float fade"		"fade depth at the far end in units, at most depth/2, 0 = hard edge (default 8)"
+	"editor_bool parallel"	"1 = orthographic, 0 = perspective from depth/2 in front of the origin"
+	"dmapOnly"				"1"
+	"material"				""
+	"size"					"64 64"
+	"depth"					"32"
+	"fade"					"8"
+	"parallel"				"0"
+}
+
 entityDef func_mover {
 	"editor_color"				"0 .5 .8"
 	"editor_mins"				"?"

@@ -128,7 +128,7 @@ MatchVert
 #define	ST_EPSILON	0.001
 #define	COSINE_EPSILON	0.999
 
-static bool MatchVert( const idDrawVert* a, const idDrawVert* b )
+static bool MatchVert( const idDrawVert* a, const idDrawVert* b, const bool compareColor )
 {
 	if( idMath::Fabs( a->xyz[0] - b->xyz[0] ) > XYZ_EPSILON )
 	{
@@ -148,6 +148,13 @@ static bool MatchVert( const idDrawVert* a, const idDrawVert* b )
 		return false;
 	}
 	if( idMath::Fabs( a->GetTexCoordT() - b->GetTexCoordT() ) > ST_EPSILON )
+	{
+		return false;
+	}
+
+	// only where the colour is written: the verts of a surface without colour hold whatever
+	// colour the tris were made with, and comparing it would change which verts weld
+	if( compareColor && a->GetColor() != b->GetColor() )
 	{
 		return false;
 	}
@@ -179,9 +186,12 @@ Takes the tris in list order and stops before the first one whose new vertexes
 would push the surface past maxVerts; that tri and all after it come back in
 rest (NULL when everything fit) for the caller to share into the next surface.
 A surface under the cap is built exactly as it was before the cap existed.
+
+The colour is copied always and only tells verts apart when carriesColor is set,
+the surfaces written with PROC_VERTEX_FORMAT_COLOR.
 ====================
 */
-srfTriangles_t*	ShareMapTriVerts( const mapTri_t* tris, const int maxVerts, const mapTri_t** rest )
+srfTriangles_t*	ShareMapTriVerts( const mapTri_t* tris, const int maxVerts, const mapTri_t** rest, const bool carriesColor )
 {
 	const mapTri_t*	step;
 	int			count;
@@ -226,7 +236,7 @@ srfTriangles_t*	ShareMapTriVerts( const mapTri_t* tris, const int maxVerts, cons
 			// search for a match
 			for( j = 0 ; j < numVerts ; j++ )
 			{
-				if( MatchVert( &uTri->verts[j], dv ) )
+				if( MatchVert( &uTri->verts[j], dv, carriesColor ) )
 				{
 					break;
 				}
@@ -240,6 +250,7 @@ srfTriangles_t*	ShareMapTriVerts( const mapTri_t* tris, const int maxVerts, cons
 				uTri->verts[j].SetNormal( dv->GetNormal() );
 				uTri->verts[j].SetTexCoordS( dv->GetTexCoordS() );
 				uTri->verts[j].SetTexCoordT( dv->GetTexCoordT() );
+				uTri->verts[j].SetColor( dv->GetColor() );
 			}
 
 			uTri->indexes[numIndexes++] = j;
@@ -282,10 +293,11 @@ static void CleanupUTriangles( srfTriangles_t* tri )
 ====================
 WriteUTriangles
 
-Writes text verts and indexes to procfile
+Writes text verts and indexes to procfile: PROC_VERTEX_FORMAT_BASIC writes 8 floats per
+vertex (xyz st normal), PROC_VERTEX_FORMAT_COLOR adds the colour as 4 more (rgba 0..1)
 ====================
 */
-static void WriteUTriangles( idFile* procFile, const srfTriangles_t* uTris, const idVec3& offsetOrigin = vec3_origin )
+static void WriteUTriangles( idFile* procFile, const srfTriangles_t* uTris, const idVec3& offsetOrigin, const int vertexFormat )
 {
 	int			col;
 	int			i;
@@ -300,14 +312,14 @@ static void WriteUTriangles( idFile* procFile, const srfTriangles_t* uTris, cons
 	}
 
 	// emit this chain
-	procFile->WriteFloatString( "/* numVerts = */ %i /* numIndexes = */ %i\n",
-								uTris->numVerts, uTris->numIndexes );
+	procFile->WriteFloatString( "/* numVerts = */ %i /* numIndexes = */ %i /* vertexFormat = */ %i\n",
+								uTris->numVerts, uTris->numIndexes, vertexFormat );
 
 	// verts
 	col = 0;
 	for( i = 0 ; i < uTris->numVerts ; i++ )
 	{
-		float	vec[8];
+		float	vec[12];
 		const idDrawVert* dv;
 
 		dv = &uTris->verts[i];
@@ -325,7 +337,20 @@ static void WriteUTriangles( idFile* procFile, const srfTriangles_t* uTris, cons
 		vec[6] = normal.y;
 		vec[7] = normal.z;
 
-		Write1DMatrix( procFile, 8, vec );
+		if( vertexFormat == PROC_VERTEX_FORMAT_COLOR )
+		{
+			idVec4 color;
+			UnpackColor( dv->GetColor(), color );
+			vec[8] = color.x;
+			vec[9] = color.y;
+			vec[10] = color.z;
+			vec[11] = color.w;
+			Write1DMatrix( procFile, 12, vec );
+		}
+		else
+		{
+			Write1DMatrix( procFile, 8, vec );
+		}
 
 		if( ++col == 3 )
 		{
@@ -447,6 +472,7 @@ static void WriteOutputSurfaces( int entityNum, int areaNum, idFile* procFile, i
 	{
 		const idMaterial*	material;
 		srfTriangles_t*		tri;
+		int					vertexFormat;
 	} outputSurface_t;
 
 	idList<outputSurface_t>	surfaces;
@@ -490,6 +516,13 @@ static void WriteOutputSurfaces( int entityNum, int areaNum, idFile* procFile, i
 				continue;
 			}
 
+			// the colour pass flags every group of a merge group, so one surface never mixes;
+			// if one did, the writer would drop the colour of part of it
+			if( groupStep->vertexColor != group->vertexColor )
+			{
+				common->Error( "WriteOutputSurfaces: merge group of '%s' mixes coloured and plain groups", group->material->GetName() );
+			}
+
 			// copy it out to the ambient list
 			copy = CopyTriList( groupStep->triList );
 			ambient = MergeTriLists( ambient, copy );
@@ -510,7 +543,8 @@ static void WriteOutputSurfaces( int entityNum, int areaNum, idFile* procFile, i
 		{
 			outputSurface_t& surface = surfaces.Alloc();
 			surface.material = ambient->material;
-			surface.tri = ShareMapTriVerts( tris, maxVerts, &tris );
+			surface.tri = ShareMapTriVerts( tris, maxVerts, &tris, group->vertexColor );
+			surface.vertexFormat = group->vertexColor ? PROC_VERTEX_FORMAT_COLOR : PROC_VERTEX_FORMAT_BASIC;
 			totalVerts += surface.tri->numVerts;
 		}
 
@@ -553,7 +587,7 @@ static void WriteOutputSurfaces( int entityNum, int areaNum, idFile* procFile, i
 		procFile->WriteFloatString( "\"%s\" ", matName );
 
 		CleanupUTriangles( uTri );
-		WriteUTriangles( procFile, uTri, entity->originOffset );
+		WriteUTriangles( procFile, uTri, entity->originOffset, surfaces[surfaceNum].vertexFormat );
 
 		// RB
 		if( objFile )

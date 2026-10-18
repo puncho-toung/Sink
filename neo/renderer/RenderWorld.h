@@ -41,7 +41,12 @@ If you have questions concerning this license or the applicable additional terms
 */
 
 #define PROC_FILE_EXT				"proc"
-#define	PROC_FILE_ID				"mapProcFile003"
+#define	PROC_FILE_ID				"mapProcFile004"
+// 004 ends every surface header with a vertexFormat token: 0 = 8 floats per vertex (xyz st normal),
+// 1 = 12 (xyz st normal rgba). 003 has no token and 8 floats per vertex; the readers accept both
+#define	PROC_FILE_ID_003			"mapProcFile003"
+#define	PROC_VERTEX_FORMAT_BASIC	0
+#define	PROC_VERTEX_FORMAT_COLOR	1
 
 
 // shader parms

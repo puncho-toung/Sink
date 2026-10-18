@@ -242,6 +242,7 @@ typedef struct optimizeGroup_s
 	textureVectors_t	texVec;
 
 	bool				surfaceEmited;
+	bool				vertexColor;		// the tris carry a meaningful vertex colour: written as .proc vertexFormat 1
 
 	mapTri_t* 			triList;
 	mapTri_t* 			regeneratedTris;	// after each island optimization
@@ -524,7 +525,7 @@ void		ClipTriList( const mapTri_t* list, const idPlane& plane, float epsilon, ma
 int			NumberNodes_r( node_t* node, int nextNode, int& nextLeaf );
 int			NumberNodes_r( node_t* node, int nextNumber );
 
-srfTriangles_t*	ShareMapTriVerts( const mapTri_t* tris, const int maxVerts, const mapTri_t** rest );
+srfTriangles_t*	ShareMapTriVerts( const mapTri_t* tris, const int maxVerts, const mapTri_t** rest, const bool carriesColor );
 void WriteOutputFile();
 
 //=============================================================================

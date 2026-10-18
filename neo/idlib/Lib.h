@@ -157,6 +157,8 @@ dword	PackColor( const idVec3& color );
 void	UnpackColor( const dword color, idVec3& unpackedColor );
 dword	PackColor( const idVec4& color );
 void	UnpackColor( const dword color, idVec4& unpackedColor );
+// PackColor truncates, which loses a step on a text round trip and at exact fade knees
+dword	PackColorRound( const idVec4& color );
 
 // little/big endian conversion
 short	BigShort( short l );
@@ -307,6 +309,7 @@ public:
 #include "geometry/JointTransform.h"
 #include "geometry/DrawVert.h"
 #include "geometry/Winding.h"
+#include "geometry/DecalProjection.h"
 #include "geometry/Winding2D.h"
 #include "geometry/Surface.h"
 #include "geometry/Surface_Patch.h"

@@ -41,8 +41,8 @@ If you have questions concerning this license or the applicable additional terms
 	ProcessModel calls the three dispatchers at fixed points of the pass order.
 	Each pass lives in its own file (dress_decal.cpp, later dress_scatter.cpp,
 	dress_smooth.cpp, dress_tess.cpp); dress.cpp holds only the dispatchers,
-	the check that warns about dmap_* material keywords no pass reads, and
-	DressSeed.
+	the checks that warn about dmap_* material keywords no pass reads and
+	map-only entities no pass bakes, and DressSeed.
 
 	A pass collects the tris it generates and inserts them (AddMapTriToAreas)
 	only after its walk of the areas is done, see the contract in dress.cpp.
@@ -63,6 +63,15 @@ void	DressAreasPostOptimize( uEntity_t* e );
 // after FixGlobalTjunctions: written exactly as the pass made it, nothing changes it
 // afterwards and it splits no edge of the world
 void	DressAreasPostTjunction( uEntity_t* e );
+
+// func_decal (dress_decal.cpp), from DressAreasPreOptimize: clips the world's tris whose
+// material allows overlays to every projector and adds the fragments with the decal material
+void	DressDecalsPreOptimize( uEntity_t* e );
+
+// func_decal, from DressAreasPostTjunction: writes the fade as vertex colour (the surface is
+// written with PROC_VERTEX_FORMAT_COLOR) and gives the fade band groups their projector's
+// merge group back, so each projector is written as one surface
+void	DressDecalsPostTjunction( uEntity_t* e );
 
 // a seed for idRandom::SetSeed derived from map content only: the map entity index, the
 // primitive index inside that entity and a side (brush side, patch or mesh triangle) index.

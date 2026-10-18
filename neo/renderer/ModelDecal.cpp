@@ -76,99 +76,11 @@ idRenderModelDecal::CreateProjectionParms
 */
 bool idRenderModelDecal::CreateProjectionParms( decalProjectionParms_t& parms, const idFixedWinding& winding, const idVec3& projectionOrigin, const bool parallel, const float fadeDepth, const idMaterial* material, const int startTime )
 {
-
-	if( winding.GetNumPoints() != NUM_DECAL_BOUNDING_PLANES - 2 )
+	if( !idDecalProjection::CreateParms( parms, winding, projectionOrigin, parallel, fadeDepth, material, startTime ) )
 	{
 		common->Printf( "idRenderModelDecal::CreateProjectionInfo: winding must have %d points\n", NUM_DECAL_BOUNDING_PLANES - 2 );
 		return false;
 	}
-
-	assert( material != NULL );
-
-	parms.projectionOrigin = projectionOrigin;
-	parms.material = material;
-	parms.parallel = parallel;
-	parms.fadeDepth = fadeDepth;
-	parms.startTime = startTime;
-	parms.force = false;
-
-	// get the winding plane and the depth of the projection volume
-	idPlane windingPlane;
-	winding.GetPlane( windingPlane );
-	float depth = windingPlane.Distance( projectionOrigin );
-
-	// find the bounds for the projection
-	winding.GetBounds( parms.projectionBounds );
-	if( parallel )
-	{
-		parms.projectionBounds.ExpandSelf( depth );
-	}
-	else
-	{
-		parms.projectionBounds.AddPoint( projectionOrigin );
-	}
-
-	// calculate the world space projection volume bounding planes, positive sides face outside the decal
-	if( parallel )
-	{
-		for( int i = 0; i < winding.GetNumPoints(); i++ )
-		{
-			idVec3 edge = winding[( i + 1 ) % winding.GetNumPoints()].ToVec3() - winding[i].ToVec3();
-			parms.boundingPlanes[i].Normal().Cross( windingPlane.Normal(), edge );
-			parms.boundingPlanes[i].Normalize();
-			parms.boundingPlanes[i].FitThroughPoint( winding[i].ToVec3() );
-		}
-	}
-	else
-	{
-		for( int i = 0; i < winding.GetNumPoints(); i++ )
-		{
-			parms.boundingPlanes[i].FromPoints( projectionOrigin, winding[i].ToVec3(), winding[( i + 1 ) % winding.GetNumPoints()].ToVec3() );
-		}
-	}
-	parms.boundingPlanes[NUM_DECAL_BOUNDING_PLANES - 2] = windingPlane;
-	parms.boundingPlanes[NUM_DECAL_BOUNDING_PLANES - 2][3] -= depth;
-	parms.boundingPlanes[NUM_DECAL_BOUNDING_PLANES - 1] = -windingPlane;
-
-	// fades will be from these plane
-	parms.fadePlanes[0] = windingPlane;
-	parms.fadePlanes[0][3] -= fadeDepth;
-	parms.fadePlanes[1] = -windingPlane;
-	parms.fadePlanes[1][3] += depth - fadeDepth;
-
-	// calculate the texture vectors for the winding
-	float	len, texArea, inva;
-	idVec3	temp;
-	idVec5	d0, d1;
-
-	const idVec5& a = winding[0];
-	const idVec5& b = winding[1];
-	const idVec5& c = winding[2];
-
-	d0 = b.ToVec3() - a.ToVec3();
-	d0.s = b.s - a.s;
-	d0.t = b.t - a.t;
-	d1 = c.ToVec3() - a.ToVec3();
-	d1.s = c.s - a.s;
-	d1.t = c.t - a.t;
-
-	texArea = ( d0[3] * d1[4] ) - ( d0[4] * d1[3] );
-	inva = 1.0f / texArea;
-
-	temp[0] = ( d0[0] * d1[4] - d0[4] * d1[0] ) * inva;
-	temp[1] = ( d0[1] * d1[4] - d0[4] * d1[1] ) * inva;
-	temp[2] = ( d0[2] * d1[4] - d0[4] * d1[2] ) * inva;
-	len = temp.Normalize();
-	parms.textureAxis[0].Normal() = temp * ( 1.0f / len );
-	parms.textureAxis[0][3] = winding[0].s - ( winding[0].ToVec3() * parms.textureAxis[0].Normal() );
-
-	temp[0] = ( d0[3] * d1[0] - d0[0] * d1[3] ) * inva;
-	temp[1] = ( d0[3] * d1[1] - d0[1] * d1[3] ) * inva;
-	temp[2] = ( d0[3] * d1[2] - d0[2] * d1[3] ) * inva;
-	len = temp.Normalize();
-	parms.textureAxis[1].Normal() = temp * ( 1.0f / len );
-	parms.textureAxis[1][3] = winding[0].t - ( winding[0].ToVec3() * parms.textureAxis[1].Normal() );
-
 	return true;
 }
 
@@ -248,17 +160,15 @@ void idRenderModelDecal::CreateDecalFromWinding( const idWinding& w, const idMat
 
 	decal_t& decal = decals[decalIndex];
 
-	const float invFadeDepth = -1.0f / fadeDepth;
-
 	int firstVert = decal.numVerts;
 
 	// create the vertices
 	for( int i = 0; i < w.GetNumPoints(); i++ )
 	{
-		float depthFade = fadePlanes[0].Distance( w[i].ToVec3() ) * invFadeDepth;
+		float depthFade = idDecalProjection::DepthFade( fadePlanes[0], fadeDepth, w[i].ToVec3() );
 		if( depthFade < 0.0f )
 		{
-			depthFade = fadePlanes[1].Distance( w[i].ToVec3() ) * invFadeDepth;
+			depthFade = idDecalProjection::DepthFade( fadePlanes[1], fadeDepth, w[i].ToVec3() );
 		}
 		if( depthFade < 0.0f )
 		{
@@ -515,79 +425,31 @@ void idRenderModelDecal::CreateDecal( const idRenderModel* model, const decalPro
 					continue;
 				}
 
-				const idDrawVert* verts[3] =
-				{
-					&tri->verts[i0],
-					&tri->verts[i1],
-					&tri->verts[i2]
-				};
+				const int orBits = cullBits[i0] | cullBits[i1] | cullBits[i2];
 
-				// skip back facing triangles
-				const idPlane plane( verts[0]->xyz, verts[1]->xyz, verts[2]->xyz );
-				if( plane.Normal() * localParms.boundingPlanes[NUM_DECAL_BOUNDING_PLANES - 2].Normal() < -0.1f )
+				// skip back facing triangles, then clip the exact surface triangle to the projection
+				// volume, only against the planes the cull bits say it crosses
+				idFixedWinding fw;
+				if( !idDecalProjection::ClipTriangle( localParms, tri->verts[i0].xyz, tri->verts[i1].xyz, tri->verts[i2].xyz, orBits, fw ) )
 				{
 					continue;
 				}
 
-				// create a winding with texture coordinates for the triangle
-				idFixedWinding fw;
-				fw.SetNumPoints( 3 );
-				if( localParms.parallel )
-				{
-					for( int j = 0; j < 3; j++ )
-					{
-						fw[j] = verts[j]->xyz;
-						fw[j].s = localParms.textureAxis[0].Distance( verts[j]->xyz );
-						fw[j].t = localParms.textureAxis[1].Distance( verts[j]->xyz );
-					}
-				}
-				else
-				{
-					for( int j = 0; j < 3; j++ )
-					{
-						const idVec3 dir = verts[j]->xyz - localParms.projectionOrigin;
-						float scale;
-						localParms.boundingPlanes[NUM_DECAL_BOUNDING_PLANES - 1].RayIntersection( verts[j]->xyz, dir, scale );
-						const idVec3 intersection = verts[j]->xyz + scale * dir;
+				// there is a part of the triangle between the bounding planes, so clip the
+				// triangle based on depth and add decals for the depth faded parts
+				idFixedWinding back;
 
-						fw[j] = verts[j]->xyz;
-						fw[j].s = localParms.textureAxis[0].Distance( intersection );
-						fw[j].t = localParms.textureAxis[1].Distance( intersection );
-					}
+				if( fw.Split( &back, localParms.fadePlanes[0], 0.1f ) == SIDE_CROSS )
+				{
+					CreateDecalFromWinding( back, localParms.material, localParms.fadePlanes, localParms.fadeDepth, localParms.startTime );
 				}
 
-				const int orBits = cullBits[i0] | cullBits[i1] | cullBits[i2];
-
-				// clip the exact surface triangle to the projection volume
-				for( int j = 0; j < NUM_DECAL_BOUNDING_PLANES; j++ )
+				if( fw.Split( &back, localParms.fadePlanes[1], 0.1f ) == SIDE_CROSS )
 				{
-					if( ( orBits & ( 1 << j ) ) != 0 )
-					{
-						if( !fw.ClipInPlace( -localParms.boundingPlanes[j] ) )
-						{
-							break;
-						}
-					}
+					CreateDecalFromWinding( back, localParms.material, localParms.fadePlanes, localParms.fadeDepth, localParms.startTime );
 				}
 
-				// if there is a part of the triangle between the bounding planes then clip
-				// the triangle based on depth and add decals for the depth faded parts
-				if( fw.GetNumPoints() != 0 )
-				{
-					idFixedWinding back;
-
-					if( fw.Split( &back, localParms.fadePlanes[0], 0.1f ) == SIDE_CROSS )
-					{
-						CreateDecalFromWinding( back, localParms.material, localParms.fadePlanes, localParms.fadeDepth, localParms.startTime );
-					}
-
-					if( fw.Split( &back, localParms.fadePlanes[1], 0.1f ) == SIDE_CROSS )
-					{
-						CreateDecalFromWinding( back, localParms.material, localParms.fadePlanes, localParms.fadeDepth, localParms.startTime );
-					}
-
-					CreateDecalFromWinding( fw, localParms.material, localParms.fadePlanes, localParms.fadeDepth, localParms.startTime );
-				}
+				CreateDecalFromWinding( fw, localParms.material, localParms.fadePlanes, localParms.fadeDepth, localParms.startTime );
 			}
 		}
 	}
@@ -874,6 +736,142 @@ drawSurf_t* idRenderModelDecal::CreateDecalDrawSurf( const viewEntity_t* space, 
 	R_SetupDrawSurfShader( drawSurf, material, &space->entityDef->parms );
 
 	return drawSurf;
+}
+
+/*
+=====================
+R_DecalSelfTestPrintParms
+=====================
+*/
+static void R_DecalSelfTestPrintParms( const char* label, const decalProjectionParms_t& parms )
+{
+	common->Printf( "%s parms: parallel %i, fadeDepth %.6f\n", label, ( int )parms.parallel, parms.fadeDepth );
+	for( int i = 0; i < NUM_DECAL_BOUNDING_PLANES; i++ )
+	{
+		const idPlane& plane = parms.boundingPlanes[i];
+		common->Printf( "  boundingPlane %i: %.6f %.6f %.6f %.6f\n", i, plane[0], plane[1], plane[2], plane[3] );
+	}
+	for( int i = 0; i < 2; i++ )
+	{
+		const idPlane& plane = parms.fadePlanes[i];
+		common->Printf( "  fadePlane %i: %.6f %.6f %.6f %.6f\n", i, plane[0], plane[1], plane[2], plane[3] );
+	}
+	for( int i = 0; i < 2; i++ )
+	{
+		const idPlane& plane = parms.textureAxis[i];
+		common->Printf( "  textureAxis %i: %.6f %.6f %.6f %.6f\n", i, plane[0], plane[1], plane[2], plane[3] );
+	}
+	const idBounds& bounds = parms.projectionBounds;
+	common->Printf( "  bounds: %.6f %.6f %.6f to %.6f %.6f %.6f\n", bounds[0][0], bounds[0][1], bounds[0][2], bounds[1][0], bounds[1][1], bounds[1][2] );
+	common->Printf( "  origin: %.6f %.6f %.6f\n", parms.projectionOrigin[0], parms.projectionOrigin[1], parms.projectionOrigin[2] );
+}
+
+/*
+=====================
+idRenderModelDecal::SelfTest
+
+The projection maths on fixed input, printed so that a change to them shows up as a
+diff between two runs. A tilted, non-square projector off the world origin is aimed
+at a wall with a floor in front of it: the wall crosses the far fade plane, the floor
+both fade planes and the near cap, and the side planes clip both. The parallel and the
+perspective decals get different start times, so they never share a decal_t.
+Deterministic: no clock, no random, no map.
+=====================
+*/
+void idRenderModelDecal::SelfTest()
+{
+	const idVec3 base( 96.0f, 48.0f, 32.0f );
+
+	// the far cap lies in the plane x = 4 + y / 8 + z / 16 (around base), its normal faces
+	// the projection origin at +x; s runs along +y and t along -z
+	idFixedWinding winding;
+	winding += idVec5( base + idVec3( 2.875f, -15.0f,  12.0f ), idVec2( 0.0f, 0.0f ) );
+	winding += idVec5( base + idVec3( 6.625f,  15.0f,  12.0f ), idVec2( 1.0f, 0.0f ) );
+	winding += idVec5( base + idVec3( 5.125f,  15.0f, -12.0f ), idVec2( 1.0f, 1.0f ) );
+	winding += idVec5( base + idVec3( 1.375f, -15.0f, -12.0f ), idVec2( 0.0f, 1.0f ) );
+
+	const idVec3 projectionOrigin = base + idVec3( 30.0f, 1.0f, 2.0f );
+	const float fadeDepth = 6.0f;
+
+	common->Printf( "decalSelfTest: begin\n" );
+
+	decalProjectionParms_t parallelParms;
+	decalProjectionParms_t perspectiveParms;
+	if( !CreateProjectionParms( parallelParms, winding, projectionOrigin, true, fadeDepth, tr.defaultMaterial, 0 )
+			|| !CreateProjectionParms( perspectiveParms, winding, projectionOrigin, false, fadeDepth, tr.defaultMaterial, 1 ) )
+	{
+		common->Printf( "decalSelfTest: CreateProjectionParms failed\n" );
+		return;
+	}
+	parallelParms.force = true;			// the test surface's material does not have to allow overlays
+	perspectiveParms.force = true;
+
+	R_DecalSelfTestPrintParms( "parallel", parallelParms );
+	R_DecalSelfTestPrintParms( "perspective", perspectiveParms );
+
+	// a wall at x = 10 facing +x and a floor at z = -8 facing +z in front of it, sharing the
+	// wall's bottom edge
+	static const idVec3 cornerVerts[6] =
+	{
+		idVec3( 10.0f, -20.0f, -8.0f ),
+		idVec3( 10.0f,  20.0f, -8.0f ),
+		idVec3( 10.0f,  20.0f, 20.0f ),
+		idVec3( 10.0f, -20.0f, 20.0f ),
+		idVec3( 40.0f,  20.0f, -8.0f ),
+		idVec3( 40.0f, -20.0f, -8.0f )
+	};
+	static const triIndex_t cornerIndexes[12] = { 1, 0, 3,  1, 3, 2,  5, 0, 1,  5, 1, 4 };
+
+	srfTriangles_t* tri = R_AllocStaticTriSurf();
+	R_AllocStaticTriSurfVerts( tri, 6 );
+	R_AllocStaticTriSurfIndexes( tri, 12 );
+	tri->numVerts = 6;
+	tri->numIndexes = 12;
+	for( int i = 0; i < 6; i++ )
+	{
+		tri->verts[i].Clear();
+		tri->verts[i].xyz = base + cornerVerts[i];
+	}
+	memcpy( tri->indexes, cornerIndexes, sizeof( cornerIndexes ) );
+	R_BoundTriSurf( tri );
+
+	// the model owns the geometry from here on
+	idRenderModelStatic* model = new( TAG_MODEL ) idRenderModelStatic;
+	model->InitEmpty( "_decalSelfTest" );
+	modelSurface_t surface;
+	surface.id = 0;
+	surface.shader = tr.defaultMaterial;
+	surface.geometry = tri;
+	model->AddSurface( surface );
+
+	idRenderModelDecal* decalModel = new( TAG_MODEL ) idRenderModelDecal();
+	decalModel->CreateDecal( model, parallelParms );
+	decalModel->CreateDecal( model, perspectiveParms );
+
+	int totalVerts = 0;
+	int totalIndexes = 0;
+	for( unsigned int i = decalModel->firstDecal; i < decalModel->nextDecal; i++ )
+	{
+		const decal_t& decal = decalModel->decals[i & ( MAX_DECALS - 1 )];
+
+		common->Printf( "decal %u: startTime %i, %i verts, %i indexes\n", i, decal.startTime, decal.numVerts, decal.numIndexes );
+		for( int j = 0; j < decal.numVerts; j++ )
+		{
+			const idDrawVert& vert = decal.verts[j];
+			const idVec2 st = vert.GetTexCoord();
+			common->Printf( "  vert %i: %.6f %.6f %.6f st %.4f %.4f fade %.6f\n", j, vert.xyz[0], vert.xyz[1], vert.xyz[2], st.x, st.y, decal.vertDepthFade[j] );
+		}
+		for( int j = 0; j + 2 < decal.numIndexes; j += 3 )
+		{
+			common->Printf( "  tri %i: %i %i %i\n", j / 3, decal.indexes[j + 0], decal.indexes[j + 1], decal.indexes[j + 2] );
+		}
+		totalVerts += decal.numVerts;
+		totalIndexes += decal.numIndexes;
+	}
+	common->Printf( "decalSelfTest: %i decals, %i verts, %i indexes\n", ( int )( decalModel->nextDecal - decalModel->firstDecal ), totalVerts, totalIndexes );
+
+	delete decalModel;
+	delete model;
 }
 
 

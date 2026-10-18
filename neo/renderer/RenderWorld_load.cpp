@@ -147,7 +147,7 @@ extern idCVar binaryLoadRenderModels;
 idRenderWorldLocal::ParseModel
 ================
 */
-idRenderModel* idRenderWorldLocal::ParseModel( idLexer* src, const char* mapName, ID_TIME_T mapTimeStamp, idFile* fileOut )
+idRenderModel* idRenderWorldLocal::ParseModel( idLexer* src, const char* mapName, ID_TIME_T mapTimeStamp, idFile* fileOut, const int procVersion )
 {
 	idToken token;
 
@@ -189,18 +189,36 @@ idRenderModel* idRenderWorldLocal::ParseModel( idLexer* src, const char* mapName
 		tri->numVerts = src->ParseInt();
 		tri->numIndexes = src->ParseInt();
 
+		// 004 names the vertex layout of each surface, 003 is always the basic one
+		int vertexFormat = PROC_VERTEX_FORMAT_BASIC;
+		if( procVersion >= 4 )
+		{
+			vertexFormat = src->ParseInt();
+			if( vertexFormat != PROC_VERTEX_FORMAT_BASIC && vertexFormat != PROC_VERTEX_FORMAT_COLOR )
+			{
+				src->Error( "idRenderWorldLocal::ParseModel: model '%s' surface %i '%s': bad vertexFormat %i", model->Name(), i, surf.shader->GetName(), vertexFormat );
+			}
+		}
+		const int floatsPerVert = ( vertexFormat == PROC_VERTEX_FORMAT_COLOR ) ? 12 : 8;
+
 		// parse the vertices
-		idTempArray<float> verts( tri->numVerts * 8 );
+		idTempArray<float> verts( tri->numVerts * floatsPerVert );
 		for( int j = 0; j < tri->numVerts; j++ )
 		{
-			src->Parse1DMatrix( 8, &verts[j * 8] );
+			src->Parse1DMatrix( floatsPerVert, &verts[j * floatsPerVert] );
 		}
 
-		// parse the indices
+		// parse the indices; triIndex_t would wrap a bad one silently, and the island
+		// search below indexes vertIslands with them
 		idTempArray<triIndex_t> indexes( tri->numIndexes );
 		for( int j = 0; j < tri->numIndexes; j++ )
 		{
-			indexes[j] = src->ParseInt();
+			const int index = src->ParseInt();
+			if( index < 0 || index >= tri->numVerts )
+			{
+				src->Error( "idRenderWorldLocal::ParseModel: model '%s' surface %i '%s': index %i out of range (%i verts)", model->Name(), i, surf.shader->GetName(), index, tri->numVerts );
+			}
+			indexes[j] = ( triIndex_t )index;
 		}
 
 #if 1
@@ -260,10 +278,10 @@ idRenderModel* idRenderWorldLocal::ParseModel( idLexer* src, const char* mapName
 			{
 				if( vertIslands[k] == j )
 				{
-					minS = Min( minS, verts[k * 8 + 3] );
-					maxS = Max( maxS, verts[k * 8 + 3] );
-					minT = Min( minT, verts[k * 8 + 4] );
-					maxT = Max( maxT, verts[k * 8 + 4] );
+					minS = Min( minS, verts[k * floatsPerVert + 3] );
+					maxS = Max( maxS, verts[k * floatsPerVert + 3] );
+					minT = Min( minT, verts[k * floatsPerVert + 4] );
+					maxT = Max( maxT, verts[k * floatsPerVert + 4] );
 				}
 			}
 			const float averageS = idMath::Ftoi( ( minS + maxS ) * 0.5f );
@@ -272,21 +290,35 @@ idRenderModel* idRenderWorldLocal::ParseModel( idLexer* src, const char* mapName
 			{
 				if( vertIslands[k] == j )
 				{
-					verts[k * 8 + 3] -= averageS;
-					verts[k * 8 + 4] -= averageT;
+					verts[k * floatsPerVert + 3] -= averageS;
+					verts[k * floatsPerVert + 4] -= averageT;
 				}
 			}
 		}
 #endif
 
+		// the verts come from an uncleared allocation, so a surface without colour used to draw and
+		// cache whatever color and color2 bytes were left in it; the basic format is opaque white
+		const dword opaqueWhite = PackColor( colorWhite );
+
 		R_AllocStaticTriSurfVerts( tri, tri->numVerts );
 		for( int j = 0; j < tri->numVerts; j++ )
 		{
-			tri->verts[j].xyz[0] = verts[j * 8 + 0];
-			tri->verts[j].xyz[1] = verts[j * 8 + 1];
-			tri->verts[j].xyz[2] = verts[j * 8 + 2];
-			tri->verts[j].SetTexCoord( verts[j * 8 + 3], verts[j * 8 + 4] );
-			tri->verts[j].SetNormal( verts[j * 8 + 5], verts[j * 8 + 6], verts[j * 8 + 7] );
+			tri->verts[j].Clear();
+			tri->verts[j].xyz[0] = verts[j * floatsPerVert + 0];
+			tri->verts[j].xyz[1] = verts[j * floatsPerVert + 1];
+			tri->verts[j].xyz[2] = verts[j * floatsPerVert + 2];
+			tri->verts[j].SetTexCoord( verts[j * floatsPerVert + 3], verts[j * floatsPerVert + 4] );
+			tri->verts[j].SetNormal( verts[j * floatsPerVert + 5], verts[j * floatsPerVert + 6], verts[j * floatsPerVert + 7] );
+			if( vertexFormat == PROC_VERTEX_FORMAT_COLOR )
+			{
+				// rounded: dmap wrote byte / 255 with six decimals, which can parse a hair below the byte
+				tri->verts[j].SetColor( PackColorRound( idVec4( verts[j * floatsPerVert + 8], verts[j * floatsPerVert + 9], verts[j * floatsPerVert + 10], verts[j * floatsPerVert + 11] ) ) );
+			}
+			else
+			{
+				tri->verts[j].SetColor( opaqueWhite );
+			}
 		}
 
 		R_AllocStaticTriSurfIndexes( tri, tri->numIndexes );
@@ -777,10 +809,12 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 	// see if we have a generated version of this
 	static const byte BPROC_VERSION_BFG = 1;
 	static const byte BPROC_VERSION_MOC_DATA = 2;
-	static const byte BPROC_VERSION = BPROC_VERSION_MOC_DATA;
+	static const byte BPROC_VERSION_VERTEX_COLOR = 3;
+	static const byte BPROC_VERSION = BPROC_VERSION_VERTEX_COLOR;
 
 
 	static const unsigned int BPROC_MAGIC_BFG = ( 'P' << 24 ) | ( 'R' << 16 ) | ( 'O' << 8 ) | BPROC_VERSION_BFG;
+	static const unsigned int BPROC_MAGIC_MOC_DATA = ( 'P' << 24 ) | ( 'R' << 16 ) | ( 'O' << 8 ) | BPROC_VERSION_MOC_DATA;
 	static const unsigned int BPROC_MAGIC = ( 'P' << 24 ) | ( 'R' << 16 ) | ( 'O' << 8 ) | BPROC_VERSION;
 	bool loaded = false;
 	idFileLocal file( fileSystem->OpenFileReadMemory( generatedFileName ) );
@@ -789,7 +823,12 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 		int numEntries = 0;
 		int magic = 0;
 		file->ReadBig( magic );
-		if( magic == BPROC_MAGIC_BFG || magic == BPROC_MAGIC )
+
+		// retail ships its maps as version 1 or 2 caches in the .resources, without a .proc, so there an
+		// old cache is the only world there is. With a .proc beside it an old cache is stale, the version
+		// bump is what makes it stale: the .proc is parsed again (opaque white verts) and the cache rewritten
+		const bool oldCache = ( magic == BPROC_MAGIC_BFG || magic == BPROC_MAGIC_MOC_DATA );
+		if( magic == BPROC_MAGIC || ( oldCache && currentTimeStamp == FILE_NOT_FOUND_TIMESTAMP ) )
 		{
 			file->ReadBig( numEntries );
 			file->ReadString( mapName );
@@ -853,12 +892,13 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 		mapName = name;
 		mapTimeStamp = currentTimeStamp;
 
-		if( !src->ReadToken( &token ) || token.Icmp( PROC_FILE_ID ) )
+		if( !src->ReadToken( &token ) || ( token.Icmp( PROC_FILE_ID ) && token.Icmp( PROC_FILE_ID_003 ) ) )
 		{
-			common->Printf( "idRenderWorldLocal::InitFromMap: bad id '%s' instead of '%s'\n", token.c_str(), PROC_FILE_ID );
+			common->Printf( "idRenderWorldLocal::InitFromMap: bad id '%s' instead of '%s' or '%s'\n", token.c_str(), PROC_FILE_ID, PROC_FILE_ID_003 );
 			delete src;
 			return false;
 		}
+		const int procVersion = ( token.Icmp( PROC_FILE_ID_003 ) == 0 ) ? 3 : 4;
 
 		int numEntries = 0;
 		idFileLocal outputFile( fileSystem->OpenFileWrite( generatedFileName, "fs_basepath" ) );
@@ -884,7 +924,7 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 
 			if( token == "model" )
 			{
-				lastModel = ParseModel( src, name, currentTimeStamp, outputFile );
+				lastModel = ParseModel( src, name, currentTimeStamp, outputFile, procVersion );
 
 				// add it to the model manager list
 				renderModelManager->AddModel( lastModel );
