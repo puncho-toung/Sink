@@ -47,6 +47,10 @@ public:
 	virtual bool			Parse( const char* text, const int textLength, bool allowBinaryVersion );
 	virtual void			FreeData();
 	virtual void			Print();
+
+	// true when the plain entityDef of this classname says "dmapOnly" "1": a compile-time helper
+	// that the game never spawns and dmap bakes (see DeclEntityDef.cpp)
+	static bool				IsMapOnlyClass( const char* classname );
 };
 
 #endif /* !__DECLENTITYDEF_H__ */

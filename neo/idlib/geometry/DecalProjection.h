@@ -82,6 +82,10 @@ public:
 	// The raw depth fade of a point against one fade plane: 0 at the plane, 1 one fadeDepth
 	// behind it, negative in front of it. Callers clamp and combine the two planes.
 	static float			DepthFade( const idPlane& fadePlane, const float fadeDepth, const idVec3& xyz );
+
+	// The clamp both decal kinds apply to a depth fade: 0 in front of the fade plane, 1 from 0.99
+	// on, so the far end is fully faded. The vertex alpha is 1 minus the result.
+	static float			ClampDepthFade( const float depthFade );
 };
 
 /*
@@ -94,6 +98,26 @@ Inline: the runtime decals call it per vertex.
 ID_INLINE float idDecalProjection::DepthFade( const idPlane& fadePlane, const float fadeDepth, const idVec3& xyz )
 {
 	return fadePlane.Distance( xyz ) * ( -1.0f / fadeDepth );
+}
+
+/*
+=================
+idDecalProjection::ClampDepthFade
+
+Inline for the same reason.
+=================
+*/
+ID_INLINE float idDecalProjection::ClampDepthFade( const float depthFade )
+{
+	if( depthFade < 0.0f )
+	{
+		return 0.0f;
+	}
+	if( depthFade > 0.99f )
+	{
+		return 1.0f;
+	}
+	return depthFade;
 }
 
 #endif /* !__DECALPROJECTION_H__ */

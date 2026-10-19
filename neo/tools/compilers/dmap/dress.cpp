@@ -54,7 +54,7 @@ static const char* const dressKeywords[] = { NULL };
 
 // the classes of map-only (dmapOnly) entities some dress pass bakes, NULL terminated. The
 // passes match the classname exactly: a def that inherits one of them is not baked
-static const char* const dressEntityClasses[] = { "func_decal", NULL };
+static const char* const dressEntityClasses[] = { FUNC_DECAL_CLASSNAME, NULL };
 
 /*
 ====================
@@ -79,7 +79,7 @@ static void DressCheckMaterialKeywords( uEntity_t* e )
 
 	for( int i = 0; i < materials.Num(); i++ )
 	{
-		const idList<dmapKeyword_t>& args = materials[i]->GetDmapArgs();
+		const idList<dmapKeyword_t, TAG_MATERIAL>& args = materials[i]->GetDmapArgs();
 
 		for( int j = 0; j < args.Num(); j++ )
 		{
@@ -160,7 +160,7 @@ their walk, see the contract above.
 void DressAreasPreOptimize( uEntity_t* e )
 {
 	// world only, like the inlined static models
-	if( e != &dmapGlobals.uEntities[0] )
+	if( dmapGlobals.entityNum != 0 )
 	{
 		return;
 	}
@@ -183,7 +183,7 @@ after their walk, see the contract above.
 */
 void DressAreasPostOptimize( uEntity_t* e )
 {
-	if( e != &dmapGlobals.uEntities[0] )
+	if( dmapGlobals.entityNum != 0 )
 	{
 		return;
 	}
@@ -202,7 +202,7 @@ above.
 */
 void DressAreasPostTjunction( uEntity_t* e )
 {
-	if( e != &dmapGlobals.uEntities[0] )
+	if( dmapGlobals.entityNum != 0 )
 	{
 		return;
 	}

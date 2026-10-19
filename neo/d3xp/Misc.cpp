@@ -1674,10 +1674,17 @@ void idStaticEntity::Spawn()
 	bool solid;
 	bool hidden;
 
-	// an inline static model will not do anything at all
+	// one solidity rule for every static, inlined or not: dmap draws an inline model into the world,
+	// but the entity still owns the collision of that geometry
+	solid = spawnArgs.GetBool( "solid" );
+	hidden = spawnArgs.GetBool( "hide" );
+	GetPhysics()->SetContents( ( solid && !hidden ) ? CONTENTS_SOLID : 0 );
+
+	// an inline static model will not do anything at all: dmap drew it into the world. idEntity::Hide,
+	// because idStaticEntity::Hide would zero the contents set above
 	if( spawnArgs.GetBool( "inline" ) )
 	{
-		Hide();
+		idEntity::Hide();
 		return;
 	}
 
@@ -1708,22 +1715,10 @@ void idStaticEntity::Spawn()
 		{
 			if( !isGUI )
 			{
-				Hide();
+				idEntity::Hide();
 				return;
 			}
 		}
-	}
-
-	solid = spawnArgs.GetBool( "solid" );
-	hidden = spawnArgs.GetBool( "hide" );
-
-	if( solid && !hidden )
-	{
-		GetPhysics()->SetContents( CONTENTS_SOLID );
-	}
-	else
-	{
-		GetPhysics()->SetContents( 0 );
 	}
 
 	spawnTime = gameLocal.time;

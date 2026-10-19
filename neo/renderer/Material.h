@@ -749,7 +749,7 @@ public:
 
 	// returns the dmap_* keywords of this material in parse order, empty if there are none;
 	// only the compilers read them
-	const idList<dmapKeyword_t>&	GetDmapArgs() const
+	const idList<dmapKeyword_t, TAG_MATERIAL>&	GetDmapArgs() const
 	{
 		return dmapArgs;
 	}
@@ -1006,7 +1006,6 @@ private:
 private:
 	idStr				desc;				// description
 	idStr				renderBump;			// renderbump command options, without the "renderbump" at the start
-	idList<dmapKeyword_t>	dmapArgs;		// dmap_* keywords with the rest of their line, for the compilers only
 
 	idImage*			lightFalloffImage;	// only for light shaders
 
@@ -1067,6 +1066,10 @@ private:
 	struct mtrParsingData_s*	pd;			// only used during parsing
 
 	float				surfaceArea;		// only for listSurfaceAreas
+
+	// dmap_* keywords with the rest of their line, for the compilers only; in the cold tail, so the
+	// fields the backend reads keep their offsets
+	idList<dmapKeyword_t, TAG_MATERIAL>	dmapArgs;
 
 	// we defer loading of the editor image until it is asked for, so the game doesn't load up
 	// all the invisible and uncompressed images.

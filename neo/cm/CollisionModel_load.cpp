@@ -133,7 +133,7 @@ void idCollisionModelManagerLocal::LoadProcBSP( const char* name )
 		return;
 	}
 
-	if( !src->ReadToken( &token ) || ( token.Icmp( PROC_FILE_ID ) && token.Icmp( PROC_FILE_ID_003 ) ) )
+	if( !src->ReadToken( &token ) || ProcFileVersion( token ) == 0 )
 	{
 		common->Warning( "idCollisionModelManagerLocal::LoadProcBSP: bad id '%s' instead of '%s' or '%s'", token.c_str(), PROC_FILE_ID, PROC_FILE_ID_003 );
 		delete src;

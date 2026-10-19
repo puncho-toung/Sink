@@ -975,19 +975,11 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	}
 	mapFileName = mapFile->GetName();
 
-	// strip the primitives of map-only helpers ("dmapOnly" in the classname's plain def): the
-	// game's own .cm rebuild must agree with dmap's .cm, which never contains these helpers. The
-	// geometry CRC was taken at parse, so it does not change, and the game strips every primitive
-	// after loading anyway. Entities without primitives have nothing to strip and skip the lookup
+	// map-only helpers (idDeclEntityDef::IsMapOnlyClass) lose their primitives; the geometry CRC was taken at parse
 	for( int i = 1; i < mapFile->GetNumEntities(); i++ )
 	{
 		idMapEntity* mapEnt = mapFile->GetEntity( i );
-		if( mapEnt->GetNumPrimitives() < 1 )
-		{
-			continue;
-		}
-		const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, mapEnt->epairs.GetString( "classname" ), false ) );
-		if( def != NULL && def->dict.GetBool( "dmapOnly" ) )
+		if( mapEnt->GetNumPrimitives() > 0 && idDeclEntityDef::IsMapOnlyClass( mapEnt->epairs.GetString( "classname" ) ) )
 		{
 			mapEnt->RemovePrimitiveData();
 		}
@@ -4075,21 +4067,10 @@ bool idGameLocal::InhibitEntitySpawn( idDict& spawnArgs )
 		}
 	}
 
-	// compile-time helper entities ("dmapOnly" "1" in their entityDef) are consumed by dmap and
-	// never spawn, so they take no entity slot, snapshot header or save state. The rule reads only
-	// the map and the def, so every peer inhibits the same entities. spawnArgs holds the raw map
-	// keys here, the def defaults are merged later, hence the explicit def lookup. Map-only is a
-	// property of the classname's plain def, read the same way by the game's spawn and collision
-	// paths and by dmap, so all of them agree and no _mp variant is consulted (the game then never
-	// spawns it, in SP or MP). An entity an earlier rule already inhibited skips the lookup, so its
-	// def is not parsed and its media not cached for nothing
-	if( !result )
+	// map-only helpers never spawn (idDeclEntityDef::IsMapOnlyClass); last, so an inhibited entity's def is not parsed for nothing
+	if( !result && idDeclEntityDef::IsMapOnlyClass( spawnArgs.GetString( "classname" ) ) )
 	{
-		const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, spawnArgs.GetString( "classname" ), false ) );
-		if( def != NULL && def->dict.GetBool( "dmapOnly" ) )
-		{
-			result = true;
-		}
+		result = true;
 	}
 
 	return result;

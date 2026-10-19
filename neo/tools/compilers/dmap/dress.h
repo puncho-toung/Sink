@@ -64,6 +64,9 @@ void	DressAreasPostOptimize( uEntity_t* e );
 // afterwards and it splits no edge of the world
 void	DressAreasPostTjunction( uEntity_t* e );
 
+// the class of the compile-time decal projectors (base/def/func.def)
+static const char* const FUNC_DECAL_CLASSNAME = "func_decal";
+
 // func_decal (dress_decal.cpp), from DressAreasPreOptimize: clips the world's tris whose
 // material allows overlays to every projector and adds the fragments with the decal material
 void	DressDecalsPreOptimize( uEntity_t* e );

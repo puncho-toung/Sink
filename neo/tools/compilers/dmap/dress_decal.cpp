@@ -78,8 +78,9 @@ typedef struct
 } decalProjector_t;
 
 // the projectors of the map being compiled. Filled by DressDecalsPreOptimize and not
-// changed until DressDecalsPostTjunction, since the addresses of its elements are the
-// merge groups of the decal tris
+// changed until the next compile resets it there: the addresses of its elements are the
+// merge groups of the decal tris, so they live through output like every other merge
+// group target (the brush sides and model surfaces of the discrete materials)
 static idList<decalProjector_t>	decalProjectors;
 
 /*
@@ -104,26 +105,33 @@ static idStr DecalName( int entityNum )
 DecalProjectorForMergeGroup
 
 The index of the projector whose hard part (band = false) or fade band (band = true)
-has this merge group, -1 for every other merge group.
+has this merge group, -1 for every other merge group. O(1): the post-t-junction pass
+asks for every group of the world, and the two merge groups of a projector are its
+address and the address one byte into it, so the index follows from the offset.
 ====================
 */
 static int DecalProjectorForMergeGroup( const void* mergeGroup, bool& band )
 {
-	for( int i = 0; i < decalProjectors.Num(); i++ )
+	if( decalProjectors.Num() == 0 )
 	{
-		const byte* projector = ( const byte* )&decalProjectors[i];
-		if( mergeGroup == projector )
-		{
-			band = false;
-			return i;
-		}
-		if( mergeGroup == projector + 1 )
-		{
-			band = true;
-			return i;
-		}
+		return -1;
 	}
-	return -1;
+
+	const byte* first = ( const byte* )&decalProjectors[0];
+	const byte* group = ( const byte* )mergeGroup;
+	if( group < first || group > ( const byte* )&decalProjectors[decalProjectors.Num() - 1] + 1 )
+	{
+		return -1;
+	}
+
+	const size_t offset = ( size_t )( group - first );
+	const size_t inside = offset % sizeof( decalProjector_t );
+	if( inside > 1 )
+	{
+		return -1;
+	}
+	band = ( inside == 1 );
+	return ( int )( offset / sizeof( decalProjector_t ) );
 }
 
 /*
@@ -304,7 +312,7 @@ void DressDecalsPreOptimize( uEntity_t* e )
 	for( int i = 1; i < dmapGlobals.numEntities; i++ )
 	{
 		const uEntity_t* entity = &dmapGlobals.uEntities[i];
-		if( !entity->dmapOnly || idStr::Icmp( entity->mapEntity->epairs.GetString( "classname" ), "func_decal" ) != 0 )
+		if( !entity->dmapOnly || idStr::Icmp( entity->mapEntity->epairs.GetString( "classname" ), FUNC_DECAL_CLASSNAME ) != 0 )
 		{
 			continue;
 		}
@@ -325,6 +333,10 @@ void DressDecalsPreOptimize( uEntity_t* e )
 	// hard part, the address one byte into it the merge group of the fade band, an address
 	// no other merge group can have
 	idList<mapTri_t> decalTris;
+
+	// it grows by Alloc: at the default granularity of 16 every growth copies all the 192-byte
+	// tris so far, quadratic in the fragment count
+	decalTris.SetGranularity( 4096 );
 
 	for( int p = 0; p < decalProjectors.Num(); p++ )
 	{
@@ -441,7 +453,7 @@ void DressDecalsPostTjunction( uEntity_t* e )
 
 			// every group of the projector, band or hard, so the surface they merge into is
 			// coloured throughout; far fade plane only, the near edge is hard; clamped as the
-			// runtime decals clamp it (idRenderModelDecal::CreateDecalFromWinding)
+			// runtime decals clamp it (idDecalProjection::ClampDepthFade)
 			decalProjector_t& projector = decalProjectors[p];
 			const decalProjectionParms_t& parms = projector.parms;
 			if( parms.fadeDepth > 0.0f )
@@ -450,15 +462,7 @@ void DressDecalsPostTjunction( uEntity_t* e )
 				{
 					for( int k = 0; k < 3; k++ )
 					{
-						float depthFade = idDecalProjection::DepthFade( parms.fadePlanes[0], parms.fadeDepth, tri->v[k].xyz );
-						if( depthFade < 0.0f )
-						{
-							depthFade = 0.0f;
-						}
-						else if( depthFade > 0.99f )
-						{
-							depthFade = 1.0f;
-						}
+						const float depthFade = idDecalProjection::ClampDepthFade( idDecalProjection::DepthFade( parms.fadePlanes[0], parms.fadeDepth, tri->v[k].xyz ) );
 						// rounded, so a vertex on the knee is exactly opaque
 						const dword color = PackColorRound( idVec4( 1.0f, 1.0f, 1.0f, 1.0f - depthFade ) );
 						tri->v[k].SetColor( color );
@@ -491,8 +495,4 @@ void DressDecalsPostTjunction( uEntity_t* e )
 			common->Printf( "func_decal '%s': %i tri corners coloured, %i in the fade band\n", DecalName( projector.entityNum ).c_str(), projector.numCorners, projector.numBandCorners );
 		}
 	}
-
-	// the last reader of the projectors. The groups keep &decalProjectors[p] as their merge
-	// group, an identity that is only ever compared and never dereferenced, so the list can go
-	decalProjectors.Clear();
 }

@@ -319,7 +319,7 @@ static void WriteUTriangles( idFile* procFile, const srfTriangles_t* uTris, cons
 	col = 0;
 	for( i = 0 ; i < uTris->numVerts ; i++ )
 	{
-		float	vec[12];
+		float	vec[PROC_VERTEX_FLOATS_COLOR];
 		const idDrawVert* dv;
 
 		dv = &uTris->verts[i];
@@ -345,11 +345,11 @@ static void WriteUTriangles( idFile* procFile, const srfTriangles_t* uTris, cons
 			vec[9] = color.y;
 			vec[10] = color.z;
 			vec[11] = color.w;
-			Write1DMatrix( procFile, 12, vec );
+			Write1DMatrix( procFile, PROC_VERTEX_FLOATS_COLOR, vec );
 		}
 		else
 		{
-			Write1DMatrix( procFile, 8, vec );
+			Write1DMatrix( procFile, PROC_VERTEX_FLOATS_BASIC, vec );
 		}
 
 		if( ++col == 3 )
@@ -486,7 +486,6 @@ static void WriteOutputSurfaces( int entityNum, int areaNum, idFile* procFile, i
 		entity->epairs.GetString( "name", "", &name );
 		if( !name[0] )
 		{
-			fileSystem->CloseFile( procFile );
 			common->Error( "Entity %i has surfaces, but no name key", entityNum );
 		}
 	}

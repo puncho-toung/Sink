@@ -36,7 +36,7 @@ If you have questions concerning this license or the applicable additional terms
 idCVar dmap_verbose( "dmap_verbose", "0", CVAR_BOOL | CVAR_SYSTEM | CVAR_NEW, "dmap developer mode" );
 // the .proc indexes are 16 bit (triIndex_t), so the default is the hard limit; lower values only
 // exist to exercise the split, higher ones make WriteUTriangles stop with an error
-idCVar dmap_maxSurfaceVerts( "dmap_maxSurfaceVerts", "65535", CVAR_INTEGER | CVAR_SYSTEM | CVAR_TOOL | CVAR_NEW, "dmap starts a new output surface before one would exceed this many vertexes", 3, idMath::INFINITUM );
+idCVar dmap_maxSurfaceVerts( "dmap_maxSurfaceVerts", "65535", CVAR_INTEGER | CVAR_SYSTEM | CVAR_TOOL | CVAR_NEW, "dmap starts a new output surface before one would exceed this many vertexes; a test knob: lower it to test the surface split, the .proc limit is 65535", 3, idMath::INFINITUM );
 
 dmapGlobals_t	dmapGlobals;
 
@@ -286,11 +286,34 @@ void ResetDmapGlobals()
 
 /*
 ============
+idScopedDmapEditorFlag
+
+Sets EDITOR_DMAP while Dmap runs, so the entity defs it parses first do not precache game
+media (idDeclEntityDef::Parse). A scope object, because Dmap returns early and common->Error
+throws out of it.
+============
+*/
+class idScopedDmapEditorFlag
+{
+public:
+	idScopedDmapEditorFlag()
+	{
+		com_editors |= EDITOR_DMAP;
+	}
+	~idScopedDmapEditorFlag()
+	{
+		com_editors &= ~EDITOR_DMAP;
+	}
+};
+
+/*
+============
 Dmap
 ============
 */
 void Dmap( const idCmdArgs& args )
 {
+	idScopedDmapEditorFlag	editorFlag;
 	int			i;
 	int			start, end;
 	char		path[1024];

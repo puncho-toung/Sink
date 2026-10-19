@@ -47,6 +47,23 @@ If you have questions concerning this license or the applicable additional terms
 #define	PROC_FILE_ID_003			"mapProcFile003"
 #define	PROC_VERTEX_FORMAT_BASIC	0
 #define	PROC_VERTEX_FORMAT_COLOR	1
+#define	PROC_VERTEX_FLOATS_BASIC	8		// floats per vertex of PROC_VERTEX_FORMAT_BASIC
+#define	PROC_VERTEX_FLOATS_COLOR	12		// floats per vertex of PROC_VERTEX_FORMAT_COLOR
+
+// the format version a .proc's first token names: 4 (PROC_FILE_ID), 3 (PROC_FILE_ID_003), 0 for
+// any other token; every .proc reader checks the id with it
+ID_INLINE int ProcFileVersion( const char* token )
+{
+	if( idStr::Icmp( token, PROC_FILE_ID ) == 0 )
+	{
+		return 4;
+	}
+	if( idStr::Icmp( token, PROC_FILE_ID_003 ) == 0 )
+	{
+		return 3;
+	}
+	return 0;
+}
 
 
 // shader parms

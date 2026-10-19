@@ -141,8 +141,10 @@ bool idDeclEntityDef::Parse( const char* text, const int textLength, bool allowB
 
 	// precache all referenced media
 	// do this as long as we arent in modview
+	// nor in a compile: a def first parsed by dmap or the AAS compiler must not precache game media,
+	// and the next map load reparses it (BeginLevelLoad purges every decl) and caches it then
 #if !defined( DMAP )
-	if( !( com_editors & ( EDITOR_AAS | EDITOR_EXPORTDEFS ) ) )
+	if( !( com_editors & ( EDITOR_AAS | EDITOR_EXPORTDEFS | EDITOR_DMAP ) ) )
 	{
 		game->CacheDictionaryMedia( &dict );
 	}
@@ -174,4 +176,23 @@ Dumps all key/value pairs, including inherited ones
 void idDeclEntityDef::Print()
 {
 	dict.Print();
+}
+
+/*
+================
+idDeclEntityDef::IsMapOnlyClass
+
+A map-only class ("dmapOnly" "1" in its entityDef) is a compile-time helper. dmap keeps the
+entity's keys and map primitives for the dress passes but writes no geometry of its own for
+it, and strips its primitives before the collision build. The game never spawns it, so it
+takes no entity slot, snapshot header or save state, and strips its primitives before its
+own .cm rebuild, which must agree with dmap's. The rule reads the classname's plain def only,
+never the map keys and no _mp variant, so the game's spawn and collision paths and dmap agree,
+on every peer, in SP and MP. The lookup parses the def on first use.
+================
+*/
+bool idDeclEntityDef::IsMapOnlyClass( const char* classname )
+{
+	const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, classname, false ) );
+	return ( def != NULL && def->dict.GetBool( "dmapOnly" ) );
 }

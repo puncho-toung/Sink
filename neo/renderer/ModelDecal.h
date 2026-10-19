@@ -97,7 +97,8 @@ public:
 	static void					GlobalProjectionParmsToLocal( decalProjectionParms_t& localParms, const decalProjectionParms_t& globalParms, const idVec3& origin, const idMat3& axis );
 
 	// Prints the projection maths on fixed input (decalSelfTest): the parms of a parallel and
-	// a perspective projector and the decals both clip from a fixed corner.
+	// a perspective projector and the decals both clip from a fixed corner, then checks them
+	// (PASS/FAIL lines and a summary).
 	static void					SelfTest();
 
 	// clear the model for reuse

@@ -208,6 +208,7 @@ typedef enum
 	EDITOR_AAS					= BIT( 10 ),
 	EDITOR_MATERIAL				= BIT( 11 ),
 	EDITOR_EXPORTDEFS			= BIT( 12 ), // RB
+	EDITOR_DMAP					= BIT( 13 ), // set while the in-engine dmap runs
 } toolFlag_t;
 
 #define STRTABLE_ID				"#str_"

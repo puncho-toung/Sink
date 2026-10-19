@@ -199,7 +199,7 @@ idRenderModel* idRenderWorldLocal::ParseModel( idLexer* src, const char* mapName
 				src->Error( "idRenderWorldLocal::ParseModel: model '%s' surface %i '%s': bad vertexFormat %i", model->Name(), i, surf.shader->GetName(), vertexFormat );
 			}
 		}
-		const int floatsPerVert = ( vertexFormat == PROC_VERTEX_FORMAT_COLOR ) ? 12 : 8;
+		const int floatsPerVert = ( vertexFormat == PROC_VERTEX_FORMAT_COLOR ) ? PROC_VERTEX_FLOATS_COLOR : PROC_VERTEX_FLOATS_BASIC;
 
 		// parse the vertices
 		idTempArray<float> verts( tri->numVerts * floatsPerVert );
@@ -824,11 +824,12 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 		int magic = 0;
 		file->ReadBig( magic );
 
-		// retail ships its maps as version 1 or 2 caches in the .resources, without a .proc, so there an
-		// old cache is the only world there is. With a .proc beside it an old cache is stale, the version
-		// bump is what makes it stale: the .proc is parsed again (opaque white verts) and the cache rewritten
+		// version 1 or 2 caches ship in the retail .resources without a .proc; in production mode the cache
+		// is trusted like every other cache (the BRM and BCM loaders). Otherwise an old cache beside a .proc
+		// is stale, the version bump is what makes it stale: the .proc is parsed again (opaque white verts)
+		// and the cache rewritten
 		const bool oldCache = ( magic == BPROC_MAGIC_BFG || magic == BPROC_MAGIC_MOC_DATA );
-		if( magic == BPROC_MAGIC || ( oldCache && currentTimeStamp == FILE_NOT_FOUND_TIMESTAMP ) )
+		if( magic == BPROC_MAGIC || ( oldCache && ( fileSystem->InProductionMode() || currentTimeStamp == FILE_NOT_FOUND_TIMESTAMP ) ) )
 		{
 			file->ReadBig( numEntries );
 			file->ReadString( mapName );
@@ -892,13 +893,13 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 		mapName = name;
 		mapTimeStamp = currentTimeStamp;
 
-		if( !src->ReadToken( &token ) || ( token.Icmp( PROC_FILE_ID ) && token.Icmp( PROC_FILE_ID_003 ) ) )
+		if( !src->ReadToken( &token ) || ProcFileVersion( token ) == 0 )
 		{
 			common->Printf( "idRenderWorldLocal::InitFromMap: bad id '%s' instead of '%s' or '%s'\n", token.c_str(), PROC_FILE_ID, PROC_FILE_ID_003 );
 			delete src;
 			return false;
 		}
-		const int procVersion = ( token.Icmp( PROC_FILE_ID_003 ) == 0 ) ? 3 : 4;
+		const int procVersion = ProcFileVersion( token );
 
 		int numEntries = 0;
 		idFileLocal outputFile( fileSystem->OpenFileWrite( generatedFileName, "fs_basepath" ) );

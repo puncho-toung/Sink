@@ -170,15 +170,7 @@ void idRenderModelDecal::CreateDecalFromWinding( const idWinding& w, const idMat
 		{
 			depthFade = idDecalProjection::DepthFade( fadePlanes[1], fadeDepth, w[i].ToVec3() );
 		}
-		if( depthFade < 0.0f )
-		{
-			depthFade = 0.0f;
-		}
-		else if( depthFade > 0.99f )
-		{
-			depthFade = 1.0f;
-		}
-		decal.vertDepthFade[decal.numVerts] = 1.0f - depthFade;
+		decal.vertDepthFade[decal.numVerts] = 1.0f - idDecalProjection::ClampDepthFade( depthFade );
 		decal.verts[decal.numVerts].Clear();
 		decal.verts[decal.numVerts].xyz = w[i].ToVec3();
 		decal.verts[decal.numVerts].SetTexCoord( w[i].s, w[i].t );
@@ -768,6 +760,59 @@ static void R_DecalSelfTestPrintParms( const char* label, const decalProjectionP
 
 /*
 =====================
+R_DecalSelfTestCheck
+=====================
+*/
+static void R_DecalSelfTestCheck( const bool ok, const char* what, int& numChecks, int& numFailed )
+{
+	numChecks++;
+	if( !ok )
+	{
+		numFailed++;
+	}
+	common->Printf( "%s %s\n", ok ? "PASS" : "FAIL", what );
+}
+
+/*
+=====================
+R_DecalSelfTestCheckParms
+
+What must hold for any projector, whatever its numbers.
+=====================
+*/
+static void R_DecalSelfTestCheckParms( const char* label, const decalProjectionParms_t& parms, int& numChecks, int& numFailed )
+{
+	// the far cap faces the projection origin, so the origin is a positive depth in front of it
+	const float depth = -parms.boundingPlanes[NUM_DECAL_BOUNDING_PLANES - 1].Distance( parms.projectionOrigin );
+	R_DecalSelfTestCheck( depth > 0.0f, va( "%s: depth is positive", label ), numChecks, numFailed );
+
+	bool unitNormals = true;
+	for( int i = 0; i < NUM_DECAL_BOUNDING_PLANES; i++ )
+	{
+		if( idMath::Fabs( parms.boundingPlanes[i].Normal().Length() - 1.0f ) > 1e-4f )
+		{
+			unitNormals = false;
+		}
+	}
+	R_DecalSelfTestCheck( unitNormals, va( "%s: the bounding plane normals are unit length", label ), numChecks, numFailed );
+
+	// the caps are the winding plane, and the texture axes lie in it
+	const idVec3& windingNormal = parms.boundingPlanes[NUM_DECAL_BOUNDING_PLANES - 2].Normal();
+	bool inPlane = true;
+	for( int i = 0; i < 2; i++ )
+	{
+		idVec3 axis = parms.textureAxis[i].Normal();
+		axis.Normalize();
+		if( idMath::Fabs( axis * windingNormal ) > 1e-4f )
+		{
+			inPlane = false;
+		}
+	}
+	R_DecalSelfTestCheck( inPlane, va( "%s: the texture axes are orthogonal to the winding normal", label ), numChecks, numFailed );
+}
+
+/*
+=====================
 idRenderModelDecal::SelfTest
 
 The projection maths on fixed input, printed so that a change to them shows up as a
@@ -776,10 +821,18 @@ at a wall with a floor in front of it: the wall crosses the far fade plane, the 
 both fade planes and the near cap, and the side planes clip both. The parallel and the
 perspective decals get different start times, so they never share a decal_t.
 Deterministic: no clock, no random, no map.
+
+After the dump it checks, like le_selfTest, a PASS or FAIL line each and a summary:
+the totals, what must hold for any projector and any fade, and four fades against the
+logged run of the projection's move into idlib (P02 evidence a1/selftest-after.txt).
+The dump itself never changes, so two runs still diff.
 =====================
 */
 void idRenderModelDecal::SelfTest()
 {
+	int numChecks = 0;
+	int numFailed = 0;
+
 	const idVec3 base( 96.0f, 48.0f, 32.0f );
 
 	// the far cap lies in the plane x = 4 + y / 8 + z / 16 (around base), its normal faces
@@ -801,6 +854,8 @@ void idRenderModelDecal::SelfTest()
 			|| !CreateProjectionParms( perspectiveParms, winding, projectionOrigin, false, fadeDepth, tr.defaultMaterial, 1 ) )
 	{
 		common->Printf( "decalSelfTest: CreateProjectionParms failed\n" );
+		R_DecalSelfTestCheck( false, "CreateProjectionParms", numChecks, numFailed );
+		common->Printf( "decalSelfTest: %i checks, %i passed, %i failed\n", numChecks, numChecks - numFailed, numFailed );
 		return;
 	}
 	parallelParms.force = true;			// the test surface's material does not have to allow overlays
@@ -868,7 +923,58 @@ void idRenderModelDecal::SelfTest()
 		totalVerts += decal.numVerts;
 		totalIndexes += decal.numIndexes;
 	}
-	common->Printf( "decalSelfTest: %i decals, %i verts, %i indexes\n", ( int )( decalModel->nextDecal - decalModel->firstDecal ), totalVerts, totalIndexes );
+	const int numDecals = ( int )( decalModel->nextDecal - decalModel->firstDecal );
+	common->Printf( "decalSelfTest: %i decals, %i verts, %i indexes\n", numDecals, totalVerts, totalIndexes );
+
+	R_DecalSelfTestCheck( numDecals == 8 && totalVerts == 55 && totalIndexes == 336, "8 decals, 55 verts, 336 indexes", numChecks, numFailed );
+	R_DecalSelfTestCheckParms( "parallel", parallelParms, numChecks, numFailed );
+	R_DecalSelfTestCheckParms( "perspective", perspectiveParms, numChecks, numFailed );
+
+	bool fadesInRange = true;
+	for( unsigned int i = decalModel->firstDecal; i < decalModel->nextDecal; i++ )
+	{
+		const decal_t& decal = decalModel->decals[i & ( MAX_DECALS - 1 )];
+		for( int j = 0; j < decal.numVerts; j++ )
+		{
+			// written so that a NaN fails too
+			if( !( decal.vertDepthFade[j] >= 0.0f && decal.vertDepthFade[j] <= 1.0f ) )
+			{
+				fadesInRange = false;
+			}
+		}
+	}
+	R_DecalSelfTestCheck( fadesInRange, "every vertDepthFade is in [0, 1]", numChecks, numFailed );
+
+	// fades inside the fade band, as the dump printed them in the logged run
+	static const struct
+	{
+		const char*		projector;
+		unsigned int	decal;
+		int				vert;
+		float			fade;
+	} loggedFades[4] =
+	{
+		{ "parallel", 0, 0, 0.775295f },
+		{ "parallel", 1, 3, 0.567966f },
+		{ "perspective", 5, 0, 0.819079f },
+		{ "perspective", 6, 2, 0.613687f }
+	};
+	for( int k = 0; k < 4; k++ )
+	{
+		const unsigned int i = loggedFades[k].decal;
+		bool matches = false;
+		if( i >= decalModel->firstDecal && i < decalModel->nextDecal )
+		{
+			const decal_t& decal = decalModel->decals[i & ( MAX_DECALS - 1 )];
+			if( loggedFades[k].vert < decal.numVerts )
+			{
+				matches = ( idMath::Fabs( decal.vertDepthFade[loggedFades[k].vert] - loggedFades[k].fade ) <= 1e-5f );
+			}
+		}
+		R_DecalSelfTestCheck( matches, va( "%s decal %u vert %i fade is the logged %.6f", loggedFades[k].projector, i, loggedFades[k].vert, loggedFades[k].fade ), numChecks, numFailed );
+	}
+
+	common->Printf( "decalSelfTest: %i checks, %i passed, %i failed\n", numChecks, numChecks - numFailed, numFailed );
 
 	delete decalModel;
 	delete model;

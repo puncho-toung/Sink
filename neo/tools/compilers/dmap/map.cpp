@@ -598,13 +598,8 @@ static bool	ProcessMapEntity( idMapEntity* mapEnt )
 	uEntity->mapEntity = mapEnt;
 	dmapGlobals.numEntities++;
 
-	// a dmapOnly entity is a compile-time helper: it keeps mapEntity, so the dress passes can read
-	// its keys and map primitives, but gets no primitives of its own, so ProcessModels skips it and
-	// nothing of it reaches the .proc; Dmap strips its map primitives before the collision build.
-	// Map-only is a property of the classname's plain def, read the same way by the game's spawn
-	// and collision paths and by dmap, so all of them agree and no _mp variant is consulted
-	const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, mapEnt->epairs.GetString( "classname" ), false ) );
-	if( def != NULL && def->dict.GetBool( "dmapOnly" ) )
+	// a map-only helper (idDeclEntityDef::IsMapOnlyClass) keeps mapEntity but gets no primitives, so nothing of it reaches the .proc
+	if( idDeclEntityDef::IsMapOnlyClass( mapEnt->epairs.GetString( "classname" ) ) )
 	{
 		uEntity->dmapOnly = true;
 		c_dmapOnlyEntities++;
