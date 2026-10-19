@@ -139,7 +139,7 @@ static int DecalProjectorForMergeGroup( const void* mergeGroup, bool& band )
 ParseDecalProjector
 
 Builds the projector of one func_decal: a box 'depth' deep centred on the origin along
-the entity's forward axis, 'size' wide and high on the plane through the origin,
+the entity's forward axis, 'decalSize' wide and high on the plane through the origin,
 projecting toward -forward. Warns and returns false when the entity cannot bake.
 ====================
 */
@@ -169,7 +169,7 @@ static bool ParseDecalProjector( int entityNum, decalProjector_t& projector )
 		return false;
 	}
 
-	const idVec2 size = args.GetVec2( "size", "64 64" );
+	const idVec2 size = args.GetVec2( "decalSize", "64 64" );
 	if( size.x <= 0.0f || size.y <= 0.0f )
 	{
 		common->Warning( "func_decal '%s': size %g %g is not positive, skipped", name.c_str(), size.x, size.y );
@@ -244,7 +244,7 @@ static bool ParseDecalProjector( int entityNum, decalProjector_t& projector )
 
 	// the winding is the far cap, depth / 2 behind the origin; perspective projects from
 	// depth / 2 in front of it, so the far cap is twice the size and the origin plane
-	// still sees 'size'. s runs along +axis[1] and t along -axis[2], so the image reads
+	// still sees 'decalSize'. s runs along +axis[1] and t along -axis[2], so the image reads
 	// upright and unmirrored from where the entity faces
 	const float capScale = parallel ? 0.5f : 1.0f;
 	const idVec3 farCenter = origin - halfDepth * axis[0];
