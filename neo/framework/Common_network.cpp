@@ -44,6 +44,10 @@ idCVar com_forceLatestSnap( "com_forceLatestSnap", "0", CVAR_BOOL, "" );
 idCVar net_effectiveSnapRateEnable( "net_effectiveSnapRateEnable", "1", CVAR_BOOL, "Dynamically adjust client snaprate" );
 idCVar net_effectiveSnapRateDebug( "net_effectiveSnapRateDebug", "0", CVAR_BOOL, "Debug" );
 
+//puncho start - ai-harness (plans/ai-harness/00-PLAN.md §2.6): measurement only, never archived or synced
+idCVar net_snapDryRun( "net_snapDryRun", "0", CVAR_SYSTEM | CVAR_BOOL, "host with no peers: build the snapshot every net_snapRate ms and discard it, so the host's write cost shows in single player. Verified on the harness maps only: the dry run applies the multiplayer encoding limits to single-player state" );
+//puncho end
+
 // Min buffered snapshot time to keep as a percentage of the effective snaprate
 //	-ie we want to keep 50% of the amount of time difference between last two snaps.
 //	-we need to scale this because we may get throttled at the snaprate may change
@@ -133,6 +137,18 @@ void idCommonLocal::SendSnapshots()
 		return;
 	}
 	idLobbyBase& lobby = session->GetActingGameStateLobbyBase();
+	//puncho start - ai-harness (00-PLAN.md §2.6): with no peers the dry run writes the snapshot into a local that is
+	// dropped, on the real cadence; nextSnapshotSendTime advances as a real send does, or it would run every frame.
+	// Keyed on !IsClient(): the single-player game lobby never reaches InitStateLobbyHost, so IsHost() is false
+	// there. Nothing is submitted, no delta is cut and the client side is untouched.
+	if( net_snapDryRun.GetBool() && !lobby.HasActivePeers() && !IsClient() )
+	{
+		idSnapShot dryRun;
+		game->ServerWriteSnapshot( dryRun );
+		nextSnapshotSendTime = MSEC_ALIGN_TO_FRAME( currentTime + net_snapRate.GetInteger() );
+		return;
+	}
+	//puncho end
 	if( !lobby.IsHost() )
 	{
 		return;

@@ -284,6 +284,12 @@ void idGameLocal::Clear()
 
 	lastCmdRunTimeOnClient.Zero();
 	lastCmdRunTimeOnServer.Zero();
+
+	//puncho start - ai-harness
+	ClearAIStats();
+	aiProfileFile = NULL;
+	aiProfileLen = 0;
+	//puncho end
 }
 
 /*
@@ -405,6 +411,14 @@ void idGameLocal::Shutdown()
 	mpGame.Shutdown();
 
 	MapShutdown();
+
+	//puncho start - ai-harness: MapShutdown flushed the rows; the file itself lives until the game shuts down
+	if( aiProfileFile != NULL )
+	{
+		fileSystem->CloseFile( aiProfileFile );
+		aiProfileFile = NULL;
+	}
+	//puncho end
 
 	aasList.DeleteContents( true );
 	aasNames.Clear();
@@ -1718,6 +1732,12 @@ void idGameLocal::MapShutdown()
 
 	gamestate = GAMESTATE_SHUTDOWN;
 
+	//puncho start - ai-harness: the CSV rows of the last second, then a clean census for the next map (the
+	// file stays open: the cvar did not change)
+	FlushAIProfileLog();
+	ClearAIStats();
+	//puncho end
+
 	if( gameRenderWorld )
 	{
 		// clear any debug lines, text, and polygons
@@ -2651,6 +2671,7 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 	int			num;
 	float		ms;
 	idTimer		timer_think, timer_events, timer_singlethink;
+	clipStats_t	clipBefore, clipAfter;	//puncho - ai-harness
 
 	idPlayer*	player;
 	const renderView_t* view;
@@ -2756,6 +2777,17 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			// sort the active entity list
 			SortActiveEntityList();
 
+			//puncho start - ai-harness (00-PLAN.md §2.2, §2.6): the one reset of the live census; snapStats is copied
+			// here rather than read later because ServerWriteSnapshot runs on the main thread between game frames.
+			// idClip's own counters are read by difference around the think loop so PrintStatistics can keep
+			// zeroing them
+			memset( &aiStats, 0, sizeof( aiStats ) );
+			memset( &aiHudStats.worst, 0, sizeof( aiHudStats.worst ) );
+			aiHudStats.worstName[0] = '\0';
+			aiHudStats.snap = snapStats;
+			clip.GetStatistics( clipBefore );
+			//puncho end
+
 			timer_think.Clear();
 			timer_think.Start();
 
@@ -2846,6 +2878,15 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			}
 
 			timer_think.Stop();
+			//puncho start - ai-harness: idClip's share of the think loop
+			clip.GetStatistics( clipAfter );
+			aiStats.clipTranslations = ( int )( clipAfter.numTranslations - clipBefore.numTranslations );
+			aiStats.clipContents = ( int )( clipAfter.numContents - clipBefore.numContents );
+			aiStats.clipContacts = ( int )( clipAfter.numContacts - clipBefore.numContacts );
+			aiStats.clipGathers = ( int )( clipAfter.numGathers - clipBefore.numGathers );
+			aiStats.clipGatherCandidates = ( int )( clipAfter.numGatherCandidates - clipBefore.numGatherCandidates );
+			aiStats.clipTrmQueries = ( int )( clipAfter.numTrmQueries - clipBefore.numTrmQueries );
+			//puncho end
 			timer_events.Clear();
 			timer_events.Start();
 
@@ -2875,6 +2916,10 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 						time, timer_think.Milliseconds() + timer_events.Milliseconds(),
 						timer_think.Milliseconds(), timer_events.Milliseconds(), num );
 			}
+
+			//puncho start - ai-harness: the tic's record, after ServiceEvents so an order tic's path calls are in (00-PLAN.md §2.5)
+			RunAIStats( num, ( int )( ( timer_think.Milliseconds() + timer_events.Milliseconds() ) * 1000.0f ) );
+			//puncho end
 
 			BuildReturnValue( ret );
 
@@ -2918,6 +2963,261 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 		g_recordTrace.SetBool( false );
 	}
 }
+
+//puncho start - ai-harness (plans/ai-harness/00-PLAN.md §2.5)
+
+// the column order is the contract TOOLS/aiharness/summarize.py reads: the §2.5 list plus wallMs, the wall
+// clock at the row (time is FRAME_TO_MSEC( framenum ), so it steps one tic whatever the wall clock does; a
+// throttled or unfocused run only shows in wallMs)
+static const char* const aiProfileCsvHeader =
+	"tic,time,usTic,ents,thinks,moving,"
+	"usThink,usPerceive,usScript,usMove,usMovePath,usMoveAvoid,usMovePhysics,usPath,usAnimUpdate,usAnimCtl,"
+	"maxThinkUs,maxThinkEnt,"
+	"pathReq,pathFail,nearestGoal,routeQueries,pathQueued,pathAgeMaxMs,areaLookups,walkPathValid,"
+	"los,scriptInstr,enemyWalks,obstQueries,"
+	"clipTrans,clipContents,clipContacts,clipGathers,clipCand,clipTrm,"
+	"snapSeq,snapObjects,snapMinionObjects,snapMinionBytes,usSnapWrite,usSnapMinion,wallMs\n";
+
+/*
+================
+idGameLocal::ClearAIStats
+
+  The census, the ring and the per-second aggregates; not the CSV file, which outlives a map change.
+================
+*/
+void idGameLocal::ClearAIStats()
+{
+	memset( &aiStats, 0, sizeof( aiStats ) );
+	memset( &snapStats, 0, sizeof( snapStats ) );
+	memset( &aiHudStats, 0, sizeof( aiHudStats ) );
+	memset( aiThinkRing, 0, sizeof( aiThinkRing ) );
+	memset( &aiSecSum, 0, sizeof( aiSecSum ) );
+	aiSecTics = 0;
+	aiSecMaxThink = 0;
+	aiSecNextTime = 0;
+}
+
+/*
+================
+idGameLocal::FlushAIProfileLog
+
+  One Write per flush (one WriteFile on Win32, fwrite elsewhere), so the rows are written once per
+  second, when the buffer is full and in MapShutdown, never per tic inside RunFrame.
+================
+*/
+void idGameLocal::FlushAIProfileLog()
+{
+	if( aiProfileFile != NULL && aiProfileLen > 0 )
+	{
+		aiProfileFile->Write( aiProfileBuf, aiProfileLen );
+	}
+	aiProfileLen = 0;
+}
+
+/*
+================
+idGameLocal::RunAIStats
+
+  Fills the per-tic record the com_showFPS 3 window reads through GetAIStats, keeps the per-second
+  aggregates, prints the aistats: line and appends the CSV row. Called once per tic from RunFrame after
+  ServiceEvents, on the game thread, which also draws the window (00-PLAN.md §1.2): no copy, no lock.
+================
+*/
+void idGameLocal::RunAIStats( int numEnts, int usTic )
+{
+	int		i;
+
+	// WP-R3 owns these two: there is no path queue today, every request is served inside the caller's
+	// think, so the age is 0 by construction (00-PLAN.md §2.7, D3)
+	aiStats.pathQueued = 0;
+	aiStats.pathAgeMaxMs = 0;
+
+	aiHudStats.tic = aiStats;
+	aiHudStats.ents = numEnts;
+	aiHudStats.usTic = usTic;
+
+	// the 128-tic peak for the HUD
+	aiThinkRing[ framenum & 127 ] = aiStats.usThink;
+	aiHudStats.usThinkMax128 = 0;
+	for( i = 0; i < 128; i++ )
+	{
+		if( aiThinkRing[i] > aiHudStats.usThinkMax128 )
+		{
+			aiHudStats.usThinkMax128 = aiThinkRing[i];
+		}
+	}
+
+	// per-second aggregates, summed as the int array the block is (Game.h)
+	const int* tic = ( const int* )&aiStats;
+	int* sum = ( int* )&aiSecSum;
+	for( i = 0; i < ( int )( sizeof( aiTicStats_t ) / sizeof( int ) ); i++ )
+	{
+		sum[i] += tic[i];
+	}
+	aiSecTics++;
+	if( aiStats.usThink > aiSecMaxThink )
+	{
+		aiSecMaxThink = aiStats.usThink;
+	}
+
+	// the CSV: a cvar change closes the old file and opens the new one with its header row
+	if( ai_profileLog.IsModified() )
+	{
+		ai_profileLog.ClearModified();
+		FlushAIProfileLog();
+		if( aiProfileFile != NULL )
+		{
+			fileSystem->CloseFile( aiProfileFile );
+			aiProfileFile = NULL;
+		}
+		const char* logName = ai_profileLog.GetString();
+		if( strchr( logName, '/' ) != NULL || strchr( logName, '\\' ) != NULL || strchr( logName, ':' ) != NULL || strstr( logName, ".." ) != NULL )
+		{
+			Warning( "ai_profileLog: a plain file name, no path" );
+		}
+		else if( logName[0] != '\0' )
+		{
+			aiProfileFile = fileSystem->OpenFileWrite( va( "aiprofile/%s.csv", logName ), "fs_savepath" );
+			if( aiProfileFile == NULL )
+			{
+				Warning( "ai_profileLog: couldn't open aiprofile/%s.csv", ai_profileLog.GetString() );
+			}
+			else
+			{
+				aiProfileLen = idStr::snPrintf( aiProfileBuf, sizeof( aiProfileBuf ), "%s", aiProfileCsvHeader );
+			}
+		}
+	}
+	if( aiProfileFile != NULL )
+	{
+		char	row[ 1024 ];
+		char	snap[ 128 ];
+		const aiTicStats_t& t = aiStats;
+		const snapStats_t& sn = aiHudStats.snap;
+
+		// the snapshot columns repeat the last snapshot until the next one (10 Hz against 60 Hz, snapSeq
+		// tells a repeat) and are blank before the first
+		if( sn.sequence > 0 )
+		{
+			idStr::snPrintf( snap, sizeof( snap ), "%d,%d,%d,%d,%d,%d", sn.sequence, sn.objects, sn.minionObjects, sn.minionBytes, sn.usWrite, sn.usMinion );
+		}
+		else
+		{
+			idStr::Copynz( snap, ",,,,,", sizeof( snap ) );
+		}
+		const int len = idStr::snPrintf( row, sizeof( row ),
+										"%d,%d,%d,%d,%d,%d,"
+										"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
+										"%d,%s,"
+										"%d,%d,%d,%d,%d,%d,%d,%d,"
+										"%d,%d,%d,%d,"
+										"%d,%d,%d,%d,%d,%d,"
+										"%s,%d\n",
+										framenum, time, usTic, numEnts, t.thinks, t.moveTics,
+										t.usThink, t.usPerceive, t.usScript, t.usMove, t.usMovePath, t.usMoveAvoid, t.usMovePhysics, t.usPath, t.usAnimUpdate, t.usAnimCtl,
+										aiHudStats.worst.usThink, aiHudStats.worstName,
+										t.pathRequests, t.pathFailed, t.nearestGoal, t.routeQueries, t.pathQueued, t.pathAgeMaxMs, t.areaLookups, t.walkPathValid,
+										t.losTraces, t.scriptInstr, t.enemyWalks, t.obstacleQueries,
+										t.clipTranslations, t.clipContents, t.clipContacts, t.clipGathers, t.clipGatherCandidates, t.clipTrmQueries,
+										snap, Sys_Milliseconds() );
+		if( aiProfileLen + len >= ( int )sizeof( aiProfileBuf ) )
+		{
+			FlushAIProfileLog();
+		}
+		memcpy( aiProfileBuf + aiProfileLen, row, len );
+		aiProfileLen += len;
+	}
+
+	// once per second of game time, the first one a full second after the map starts: the flush, the
+	// console line, the five worst idAI
+	if( aiSecNextTime == 0 )
+	{
+		aiSecNextTime = time + 1000;
+	}
+	if( time < aiSecNextTime )
+	{
+		return;
+	}
+	aiSecNextTime = time + 1000;
+	FlushAIProfileLog();
+
+	if( g_aiStats.GetInteger() >= 2 && aiSecTics > 0 )
+	{
+		// per-tic averages over the second, the timers in ms; max is the largest tic usThink of the second
+		const float perTic = 1.0f / aiSecTics;
+		const float toMs = 0.001f * perTic;
+		const aiTicStats_t& s = aiSecSum;
+		Printf( "aistats: t %d tics %d ents %d thinks %.1f moving %.1f think %.3f ms max %.3f "
+				"perceive %.3f script %.3f move %.3f (path %.3f avoid %.3f phys %.3f) pathReq %.3f anim %.3f (update %.3f ctl %.3f) "
+				"| req %.1f fail %.1f nearest %.1f route %.1f area %.1f wpv %.1f los %.1f instr %.0f enemyWalk %.1f obst %.1f "
+				"clip %.1f/%.1f/%.1f gathers %.1f cand %.1f trm %.1f "
+				"| snap %d minions of %d, %d B, %.3f ms (minions %.3f)\n",
+				time, aiSecTics, numEnts, s.thinks * perTic, s.moveTics * perTic,
+				s.usThink * toMs, aiSecMaxThink * 0.001f, s.usPerceive * toMs, s.usScript * toMs,
+				s.usMove * toMs, s.usMovePath * toMs, s.usMoveAvoid * toMs, s.usMovePhysics * toMs,
+				s.usPath * toMs, ( s.usAnimUpdate + s.usAnimCtl ) * toMs, s.usAnimUpdate * toMs, s.usAnimCtl * toMs,
+				s.pathRequests * perTic, s.pathFailed * perTic, s.nearestGoal * perTic, s.routeQueries * perTic, s.areaLookups * perTic, s.walkPathValid * perTic,
+				s.losTraces * perTic, s.scriptInstr * perTic, s.enemyWalks * perTic, s.obstacleQueries * perTic,
+				s.clipTranslations * perTic, s.clipContents * perTic, s.clipContacts * perTic, s.clipGathers * perTic, s.clipGatherCandidates * perTic, s.clipTrmQueries * perTic,
+				aiHudStats.snap.minionObjects, aiHudStats.snap.objects, aiHudStats.snap.minionBytes, aiHudStats.snap.usWrite * 0.001f, aiHudStats.snap.usMinion * 0.001f );
+	}
+
+	if( g_aiStats.GetInteger() >= 3 )
+	{
+		// the five idAI with the largest share of their last think, kept sorted in five slots; a dormant AI
+		// keeps the figure of the last tic it thought
+		const idAI* worst[5] = { NULL, NULL, NULL, NULL, NULL };
+		for( i = 0; i < num_entities; i++ )
+		{
+			if( entities[i] == NULL || !entities[i]->IsType( idAI::Type ) )
+			{
+				continue;
+			}
+			const idAI* ai = static_cast<const idAI*>( entities[i] );
+			int j;
+			for( j = 4; j >= 0 && ( worst[j] == NULL || worst[j]->lastThinkStats.usThink < ai->lastThinkStats.usThink ); j-- )
+			{
+			}
+			if( j < 4 )
+			{
+				for( int k = 4; k > j + 1; k-- )
+				{
+					worst[k] = worst[k - 1];
+				}
+				worst[j + 1] = ai;
+			}
+		}
+		for( i = 0; i < 5 && worst[i] != NULL; i++ )
+		{
+			const aiTicStats_t& w = worst[i]->lastThinkStats;
+			Printf( "aistats:   %-28s %.3f ms  perceive %.3f script %.3f move %.3f (path %.3f avoid %.3f phys %.3f) anim %.3f/%.3f  req %d area %d wpv %d los %d instr %d obst %d\n",
+					worst[i]->name.c_str(), w.usThink * 0.001f, w.usPerceive * 0.001f, w.usScript * 0.001f,
+					w.usMove * 0.001f, w.usMovePath * 0.001f, w.usMoveAvoid * 0.001f, w.usMovePhysics * 0.001f,
+					w.usAnimUpdate * 0.001f, w.usAnimCtl * 0.001f,
+					w.pathRequests, w.areaLookups, w.walkPathValid, w.losTraces, w.scriptInstr, w.obstacleQueries );
+		}
+	}
+
+	memset( &aiSecSum, 0, sizeof( aiSecSum ) );
+	aiSecTics = 0;
+	aiSecMaxThink = 0;
+}
+
+/*
+================
+idGameLocal::GetAIStats
+================
+*/
+const aiHudStats_t* idGameLocal::GetAIStats() const
+{
+	// host only: a client runs no think loop
+	if( g_aiStats.GetInteger() == 0 || common->IsClient() )
+	{
+		return NULL;
+	}
+	return &aiHudStats;
+}
+//puncho end
 
 /*
 ====================

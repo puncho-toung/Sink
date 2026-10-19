@@ -289,6 +289,64 @@ enum slowmoState_t
 
 //============================================================================
 
+//puncho start - ai-harness (plans/ai-harness/00-PLAN.md §2.3). Adds the elapsed microseconds to accum
+// and opens an Optick event on desc, both only while ai_profile is set, so a site costs one cvar read
+// with the harness off. Mirrors idOptionalGpuProfileScope (framework/Common.h): Event::Start returns
+// NULL outside a capture. The timer is read last on entry and first on exit so the Optick calls stay
+// outside the accumulated figure. Accepted RAII exception, like idScopedProfileEvent.
+class idAIProfileScope
+{
+public:
+	idAIProfileScope( int& accumulator, const profileDesc_t* desc );
+	~idAIProfileScope();
+
+	idAIProfileScope( const idAIProfileScope& ) = delete;
+	idAIProfileScope& operator=( const idAIProfileScope& ) = delete;
+
+private:
+	int*			accum;		// NULL when ai_profile was clear at construction
+	uint64			start;
+#if USE_OPTICK
+	::Optick::EventData*	event;
+#endif
+};
+
+ID_INLINE idAIProfileScope::idAIProfileScope( int& accumulator, const profileDesc_t* desc )
+{
+	if( ai_profile.GetInteger() == 0 )
+	{
+		accum = NULL;
+		start = 0;
+#if USE_OPTICK
+		event = NULL;
+#endif
+		return;
+	}
+	accum = &accumulator;
+#if USE_OPTICK
+	event = ( desc != NULL ) ? ::Optick::Event::Start( *desc ) : NULL;
+#endif
+	start = Sys_Microseconds();
+}
+
+ID_INLINE idAIProfileScope::~idAIProfileScope()
+{
+	if( accum == NULL )
+	{
+		return;
+	}
+	*accum += ( int )( Sys_Microseconds() - start );
+#if USE_OPTICK
+	if( event != NULL )
+	{
+		::Optick::Event::Stop( *event );
+	}
+#endif
+}
+//puncho end
+
+//============================================================================
+
 class idGameLocal : public idGame
 {
 public:
@@ -322,6 +380,19 @@ public:
 	idThread* 				frameCommandThread;
 
 	idClip					clip;					// collision detection
+	//puncho start - ai-harness (plans/ai-harness/00-PLAN.md §2.2, §2.5): host-side debug state, never saved or replicated
+	aiTicStats_t			aiStats;				// the live tic census, zeroed after SortActiveEntityList
+	snapStats_t				snapStats;				// written by ServerWriteSnapshot on the main thread between game frames
+	aiHudStats_t			aiHudStats;				// the last tic's record for the HUD, filled by RunAIStats
+	int						aiThinkRing[ 128 ];		// per-tic usThink by framenum, for the HUD peak
+	aiTicStats_t			aiSecSum;				// per-second aggregates for the aistats: line
+	int						aiSecTics;
+	int						aiSecMaxThink;
+	int						aiSecNextTime;			// game time of the next aistats: line and CSV flush
+	idFile*					aiProfileFile;			// the ai_profileLog CSV, NULL while the cvar is empty
+	int						aiProfileLen;			// bytes waiting in aiProfileBuf
+	char					aiProfileBuf[ 32 * 1024 ];	// CSV rows between the per-second flushes: one Write per second, not per tic
+	//puncho end
 	idPush					push;					// geometric pushing
 	idPVS					pvs;					// potential visible set
 
@@ -411,6 +482,9 @@ public:
 	void					RunSingleUserCmd( usercmd_t& cmd, idPlayer& player );
 	void					RunEntityThink( idEntity& ent, idUserCmdMgr& userCmdMgr );
 	virtual bool			Draw( int clientNum );
+	//puncho start - ai-harness
+	virtual const aiHudStats_t*	GetAIStats() const;
+	//puncho end
 	virtual bool			HandlePlayerGuiEvent( const sysEvent_t* ev );
 	virtual void			ServerWriteSnapshot( idSnapShot& ss );
 	virtual void			ProcessReliableMessage( int clientNum, int type, const idBitMsg& msg );
@@ -713,6 +787,11 @@ private:
 	void					SortActiveEntityList();
 	void					ShowTargets();
 	void					RunDebugInfo();
+	//puncho start - ai-harness: once per tic after ServiceEvents; the flush also runs from MapShutdown
+	void					RunAIStats( int numEnts, int usTic );
+	void					FlushAIProfileLog();
+	void					ClearAIStats();			// the census, ring and aggregates; not the CSV file
+	//puncho end
 
 	void					RunSharedThink();
 

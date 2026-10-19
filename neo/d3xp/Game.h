@@ -66,6 +66,76 @@ struct gameReturn_t
 #define TIME_GROUP1		0
 #define TIME_GROUP2		1
 
+//puncho start - ai-harness (plans/ai-harness/00-PLAN.md §2.2, §2.5, §2.6). The three blocks live in the
+// game interface, not Game_local.h, so framework/Console.cpp can draw them without naming a d3xp type.
+
+// Host-side minion tic census (plans/ai-harness/00-PLAN.md §2.2). Zeroed at the top of the think
+// loop in idGameLocal::RunFrame; idAI::Think keeps its own difference in lastThinkStats. Timers are
+// microseconds and run only while ai_profile is set; counts always run. Never replicated or saved.
+// Every field is an int: Think and RunAIStats subtract and sum the block as an int array.
+struct aiTicStats_t
+{
+	// timers (ai_profile)
+	int		usThink;				// Minions::Think, the envelope
+	int		usPerceive;				// Minions::Decide::Perceive
+	int		usScript;				// Minions::Decide::Script
+	int		usMove;					// Minions::Move
+	int		usMovePath;				// Minions::Move::Path (GetMovePos, contains Path::Requests)
+	int		usMoveAvoid;			// Minions::Move::Avoid
+	int		usMovePhysics;			// Minions::Move::Physics (contains Anim::Controllers)
+	int		usPath;					// Path::Requests (PathToGoal, wherever it is called from)
+	int		usAnimUpdate;			// Anim::Update
+	int		usAnimCtl;				// Anim::Controllers
+	// counts (always on)
+	int		thinks;					// Think bodies that ran (past CheckDormant and ai_think), the TH_PHYSICS-only branch included
+	int		moveTics;				// *Move calls with a moving command
+	int		pathRequests;			// PathToGoal calls
+	int		pathFailed;				// PathToGoal calls that returned false
+	int		nearestGoal;			// idAASLocal::FindNearestGoal calls (combat only)
+	int		routeQueries;			// idAASLocal::RouteToGoalArea calls, the nested ones inside WalkPathToGoal included
+	int		pathQueued;				// 0 until a path queue exists: every request is served inside the caller's think; WP-R3 owns it (D3)
+	int		pathAgeMaxMs;			// 0 until then; WP-R3: the oldest request served this tic. A maximum, not additive: once filled,
+									// the per-AI delta and the per-second sum of it are meaningless
+	int		areaLookups;			// idAASLocal::PointReachableAreaNum (idAI's wrapper and AI_pathing's direct call)
+	int		walkPathValid;			// idAASLocal::WalkPathValid, the ones inside WalkPathToGoal included
+	int		losTraces;				// idActor::CanSee
+	int		scriptInstr;			// statements executed by idInterpreter::Execute (all threads)
+	int		enemyWalks;				// entities visited by Event_FindEnemyAI
+	int		obstacleQueries;		// FindPathAroundObstacles calls
+	int		clipTranslations;		// idClip statistics, by difference over the think loop
+	int		clipContents;
+	int		clipContacts;
+	int		clipGathers;			// new idClip counters (measure-plan §2.1)
+	int		clipGatherCandidates;
+	int		clipTrmQueries;
+};
+
+// The idAI share of the last snapshot idGameLocal::ServerWriteSnapshot wrote (§2.6). Written on the
+// main thread between game frames, copied into aiHudStats_t at the top of the next tic.
+struct snapStats_t
+{
+	int		objects;				// entities added to the snapshot
+	int		minionObjects;			// of those, idAI
+	int		minionBytes;			// their message bytes
+	int		usWrite;				// the whole entity loop
+	int		usMinion;				// the idAI iterations, accumulated in clock ticks and read once
+	int		sequence;				// snapshots written; 0 until the first
+};
+
+// The last tic's record for the com_showFPS 3 window, the aistats: line and the CSV (§2.5). POD on
+// purpose (the worst AI's name is a fixed char array) so the block copies with memcpy.
+struct aiHudStats_t
+{
+	aiTicStats_t	tic;					// the whole tic
+	aiTicStats_t	worst;					// the one idAI with the largest usThink this tic
+	char			worstName[ 32 ];
+	snapStats_t		snap;					// the last snapshot written
+	int				usThinkMax128;			// peak tic usThink over the last 128 tics
+	int				ents;					// entities in the think loop
+	int				usTic;					// timer_think + timer_events, the engine's own whole-tic figure
+};
+//puncho end
+
 class idGame
 {
 public:
@@ -123,6 +193,10 @@ public:
 
 	// Makes rendering and sound system calls to display for a given clientNum.
 	virtual bool				Draw( int clientNum ) = 0;
+
+	//puncho start - ai-harness: the last tic's AI census for the com_showFPS 3 window; NULL on a client or with g_aiStats 0
+	virtual const aiHudStats_t*	GetAIStats() const = 0;
+	//puncho end
 
 	virtual bool				HandlePlayerGuiEvent( const sysEvent_t* ev ) = 0;
 
@@ -330,7 +404,7 @@ extern idGameEdit* 				gameEdit;
 ===============================================================================
 */
 
-const int GAME_API_VERSION		= 8;
+const int GAME_API_VERSION		= 9;		//puncho: 9 = idGame::GetAIStats (ai-harness)
 
 typedef struct
 {

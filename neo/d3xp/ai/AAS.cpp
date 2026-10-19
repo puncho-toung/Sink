@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "AAS_local.h"
+#include "../Game_local.h"		//puncho - ai-harness: gameLocal.aiStats
 
 /*
 ============
@@ -165,6 +166,8 @@ idAASLocal::PointReachableAreaNum
 */
 int idAASLocal::PointReachableAreaNum( const idVec3& origin, const idBounds& searchBounds, const int areaFlags ) const
 {
+	gameLocal.aiStats.areaLookups++;	//puncho - ai-harness: counts idAI's wrapper and AI_pathing's direct call alike (00-PLAN.md §2.1)
+
 	if( !file )
 	{
 		return 0;

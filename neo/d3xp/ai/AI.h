@@ -172,6 +172,7 @@ extern const idEventDef AI_EnableGravity;
 extern const idEventDef AI_DisableGravity;
 extern const idEventDef AI_TriggerParticles;
 extern const idEventDef AI_RandomPath;
+extern const idEventDef AI_MoveToPosition;		//puncho - ai-harness: external linkage for ai_moveMinions (SysCmds.cpp)
 
 class idPathCorner;
 
@@ -275,6 +276,11 @@ public:
 
 	idAI();
 	~idAI();
+
+	//puncho start - ai-harness (plans/ai-harness/00-PLAN.md §2.2): this AI's share of the last tic's census, the
+	// difference of gameLocal.aiStats around Think. Host-side debug state: not saved, not in Save/Restore order
+	aiTicStats_t			lastThinkStats;
+	//puncho end
 
 	void					Save( idSaveGame* savefile ) const;
 	void					Restore( idRestoreGame* savefile );

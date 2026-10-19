@@ -425,6 +425,21 @@ void idGameLocal::ServerWriteSnapshot( idSnapShot& ss )
 		pvs.FreeCurrentPVS( portalSkyPVS );
 	}
 
+	//puncho start - ai-harness (plans/ai-harness/00-PLAN.md §2.6): the idAI share of the snapshot. The Optick scope
+	// lives to the end of the function (only the PVS frees follow the loop) so the loop keeps its shape; usWrite
+	// is the explicit pair around the loop alone. usMinion accumulates clock ticks in an idTimer because one
+	// header-only entity is below the microsecond clock's resolution (the timer_singlethink pattern).
+	// Counts always on, the two clocks only under ai_profile (D10).
+	PROFILE_STATIC_DESC( descSnap, "Net::MinionSnapshot", ::Optick::Category::Network );
+	SCOPED_PROFILE_EVENT_DESC( descSnap );
+	const bool		profileSnap = ai_profile.GetInteger() != 0;
+	idTimer			timerMinion;
+	int				snapObjects = 0;
+	int				snapMinionObjects = 0;
+	int				snapMinionBytes = 0;
+	const uint64	usWriteStart = profileSnap ? Sys_Microseconds() : 0;
+	//puncho end
+
 	// Add all entities to the snapshot
 	for( idEntity* ent = spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
 	{
@@ -432,6 +447,14 @@ void idGameLocal::ServerWriteSnapshot( idSnapShot& ss )
 		{
 			continue;
 		}
+
+		//puncho start - ai-harness
+		const bool isMinion = ent->IsType( idAI::Type );
+		if( isMinion && profileSnap )
+		{
+			timerMinion.Start();
+		}
+		//puncho end
 
 		msg.InitWrite( buffer, sizeof( buffer ) );
 		msg.WriteBits( spawnIds[ ent->entityNumber ], 32 - GENTITYNUM_BITS );
@@ -447,7 +470,36 @@ void idGameLocal::ServerWriteSnapshot( idSnapShot& ss )
 		}
 
 		ss.S_AddObject( SNAP_ENTITIES + ent->entityNumber, ~0U, msg, ent->GetName() );
+
+		//puncho start - ai-harness
+		snapObjects++;
+		if( isMinion )
+		{
+			if( profileSnap )
+			{
+				timerMinion.Stop();
+			}
+			snapMinionObjects++;
+			snapMinionBytes += msg.GetSize();
+		}
+		//puncho end
 	}
+
+	//puncho start - ai-harness: written on the main thread between game frames (SendSnapshots is the only caller);
+	// RunFrame copies the block at the top of the next tic. The two tags go on the Net::MinionSnapshot event.
+	snapStats.objects = snapObjects;
+	snapStats.minionObjects = snapMinionObjects;
+	snapStats.minionBytes = snapMinionBytes;
+	snapStats.usWrite = profileSnap ? ( int )( Sys_Microseconds() - usWriteStart ) : 0;
+	snapStats.usMinion = profileSnap ? ( int )( timerMinion.Milliseconds() * 1000.0f ) : 0;
+	snapStats.sequence++;
+	{
+		PROFILE_EVENT_TAG( "minionObjects", snapStats.minionObjects );
+	}
+	{
+		PROFILE_EVENT_TAG( "minionBytes", snapStats.minionBytes );
+	}
+	//puncho end
 
 	// Free PVS handles for all the players
 	for( int i = 0; i < MAX_PLAYERS; i++ )

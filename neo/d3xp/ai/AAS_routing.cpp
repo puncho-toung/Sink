@@ -1151,6 +1151,11 @@ bool idAASLocal::RouteToGoalArea( int areaNum, const idVec3 origin, int goalArea
 	idRoutingCache* areaCache, *portalCache, *clusterCache;
 	idReachability* bestReach, *r, *nextr;
 
+	//puncho start - ai-harness: a count only, no scope: WalkPathToGoal calls this many times per request and a
+	// timer here would double count Path::Requests; the LRU eviction below is untouched (00-PLAN.md §2.1)
+	gameLocal.aiStats.routeQueries++;
+	//puncho end
+
 	travelTime = 0;
 	*reach = NULL;
 
@@ -1345,6 +1350,12 @@ idAASLocal::FindNearestGoal
 */
 bool idAASLocal::FindNearestGoal( aasGoal_t& goal, int areaNum, const idVec3 origin, const idVec3& target, int travelFlags, aasObstacle_t* obstacles, int numObstacles, idAASCallback& callback ) const
 {
+	//puncho start - ai-harness: a Path::Requests leaf, disjoint from PathToGoal by construction (00-PLAN.md §2.1)
+	PROFILE_STATIC_DESC( descPath, "Path::Requests", ::Optick::Category::Navigation );
+	idAIProfileScope scopePath( gameLocal.aiStats.usPath, descPath );
+	gameLocal.aiStats.nearestGoal++;
+	//puncho end
+
 	int i, j, k, badTravelFlags, nextAreaNum, bestAreaNum;
 	unsigned short t, bestTravelTime;
 	idRoutingUpdate* updateListStart, *updateListEnd, *curUpdate, *nextUpdate;
