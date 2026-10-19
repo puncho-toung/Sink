@@ -1137,6 +1137,7 @@ bool idInterpreter::Execute()
 	float		floatVal;
 	idScriptObject* obj;
 	const function_t* func;
+	int			numExecuted;	//puncho - ai-harness: statements this call, counted here and added to gameLocal.aiStats once at the exit (00-PLAN.md §2.2)
 
 	if( threadDying || !currentFunction )
 	{
@@ -1150,11 +1151,13 @@ bool idInterpreter::Execute()
 	}
 
 	runaway = 5000000;
+	numExecuted = 0;	//puncho - ai-harness
 
 	doneProcessing = false;
 	while( !doneProcessing && !threadDying )
 	{
 		instructionPointer++;
+		numExecuted++;	//puncho - ai-harness
 
 		if( !--runaway )
 		{
@@ -2114,6 +2117,8 @@ bool idInterpreter::Execute()
 				break;
 		}
 	}
+
+	gameLocal.aiStats.scriptInstr += numExecuted;	//puncho - ai-harness: the one add per call
 
 	return threadDying;
 }

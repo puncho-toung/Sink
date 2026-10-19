@@ -272,6 +272,24 @@ ID_INLINE const idTraceModel* idClipModel::GetTraceModel() const
 //
 //===============================================================
 
+//puncho start - ai-harness: the statistics as one block, so idGameLocal::RunFrame can read them by
+// difference around the think loop (plans/ai-harness/00-PLAN.md §2.2, measure-plan §2.1)
+// unsigned: the three new counters are never zeroed between PrintStatistics calls and wrap within
+// minutes at 200 minions, and the differences RunFrame takes must not overflow signed
+struct clipStats_t
+{
+	unsigned int	numTranslations;
+	unsigned int	numRotations;
+	unsigned int	numMotions;
+	unsigned int	numRenderModelTraces;
+	unsigned int	numContents;
+	unsigned int	numContacts;
+	unsigned int	numGathers;				// ClipModelsTouchingBounds calls (one sector walk each)
+	unsigned int	numGatherCandidates;	// clip models those walks handed back
+	unsigned int	numTrmQueries;			// touched models with a trace model in Translation, Rotation and Contacts
+};
+//puncho end
+
 class idClip
 {
 
@@ -331,6 +349,9 @@ public:
 
 	// stats and debug drawing
 	void					PrintStatistics();
+	//puncho start - ai-harness: copies all nine counters without zeroing them
+	void					GetStatistics( clipStats_t& stats ) const;
+	//puncho end
 	void					DrawClipModels( const idVec3& eye, const float radius, const idEntity* passEntity );
 	bool					DrawModelContactFeature( const contactInfo_t& contact, const idClipModel* clipModel, int lifetime ) const;
 
@@ -348,6 +369,11 @@ private:
 	int						numRenderModelTraces;
 	int						numContents;
 	int						numContacts;
+	//puncho start - ai-harness: mutable like touchCount, ClipModelsTouchingBounds is const; unsigned so the wrap is defined
+	mutable unsigned int	numGathers;
+	mutable unsigned int	numGatherCandidates;
+	unsigned int			numTrmQueries;
+	//puncho end
 
 private:
 	struct clipSector_s* 	CreateClipSectors_r( const int depth, const idBounds& bounds, idVec3& maxSector );

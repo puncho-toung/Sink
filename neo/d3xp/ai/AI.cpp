@@ -399,6 +399,8 @@ idAI::idAI()
 	eyeFocusRate		= 0.0f;
 	headFocusRate		= 0.0f;
 	focusAlignTime		= 0;
+
+	memset( &lastThinkStats, 0, sizeof( lastThinkStats ) );	//puncho - ai-harness
 }
 
 /*
@@ -1214,6 +1216,25 @@ void idAI::Think()
 		return;
 	}
 
+	//puncho start - ai-harness (plans/ai-harness/00-PLAN.md §2.1, §2.2): the Minions::Think envelope. The Optick
+	// bar is RAII; the accumulator is an explicit microsecond pair read together with the before and after
+	// copies of the tic block below, so lastThinkStats is this AI's own share (an RAII timer would close
+	// after the after-copy and every per-AI figure would read 0). One cvar read per think.
+	PROFILE_STATIC_DESC( descThink, "Minions::Think", ::Optick::Category::AI );
+	const bool profileThink = ai_profile.GetInteger() != 0;
+	idOptionalGpuProfileScope thinkEvent( profileThink ? descThink : NULL, NULL );
+	aiTicStats_t statsBefore;		// written and read only under profileThink
+	uint64 usThinkStart = 0;
+	if( profileThink )
+	{
+		// the copy goes before the increment: a store into the block right before copying it would stall
+		// on store forwarding, and thinks must read 1 in the per-AI delta
+		statsBefore = gameLocal.aiStats;
+		usThinkStart = Sys_Microseconds();
+	}
+	gameLocal.aiStats.thinks++;
+	//puncho end
+
 	if( thinkFlags & TH_THINK )
 	{
 		// clear out the enemy when he dies or is hidden
@@ -1237,7 +1258,13 @@ void idAI::Think()
 			{
 				PlayCinematic();
 			}
-			RunPhysics();
+			//puncho start - ai-harness: Minions::Move::Physics, so the Anim::Controllers reached through RunPhysics stays inside usMovePhysics (00-PLAN.md §2.1, D2)
+			{
+				PROFILE_STATIC_DESC( descPhysics, "Minions::Move::Physics", ::Optick::Category::Physics );
+				idAIProfileScope scopePhysics( gameLocal.aiStats.usMovePhysics, descPhysics );
+				RunPhysics();
+			}
+			//puncho end
 		}
 		else if( !allowHiddenMovement && IsHidden() )
 		{
@@ -1259,7 +1286,14 @@ void idAI::Think()
 
 				case MOVETYPE_FLY :
 					// flying monsters
-					UpdateEnemyPosition();
+					//puncho start - ai-harness: Minions::Decide::Perceive, braced here and not at the function top because
+					// Event_LocateEnemy also calls UpdateEnemyPosition from script, inside Decide::Script (00-PLAN.md §2.1)
+					{
+						PROFILE_STATIC_DESC( descPerceive, "Minions::Decide::Perceive", ::Optick::Category::AI );
+						idAIProfileScope scopePerceive( gameLocal.aiStats.usPerceive, descPerceive );
+						UpdateEnemyPosition();
+					}
+					//puncho end
 					UpdateAIScript();
 					FlyMove();
 					PlayChatter();
@@ -1268,7 +1302,14 @@ void idAI::Think()
 
 				case MOVETYPE_STATIC :
 					// static monsters
-					UpdateEnemyPosition();
+					//puncho start - ai-harness: Minions::Decide::Perceive, braced here and not at the function top because
+					// Event_LocateEnemy also calls UpdateEnemyPosition from script, inside Decide::Script (00-PLAN.md §2.1)
+					{
+						PROFILE_STATIC_DESC( descPerceive, "Minions::Decide::Perceive", ::Optick::Category::AI );
+						idAIProfileScope scopePerceive( gameLocal.aiStats.usPerceive, descPerceive );
+						UpdateEnemyPosition();
+					}
+					//puncho end
 					UpdateAIScript();
 					StaticMove();
 					PlayChatter();
@@ -1277,7 +1318,14 @@ void idAI::Think()
 
 				case MOVETYPE_ANIM :
 					// animation based movement
-					UpdateEnemyPosition();
+					//puncho start - ai-harness: Minions::Decide::Perceive, braced here and not at the function top because
+					// Event_LocateEnemy also calls UpdateEnemyPosition from script, inside Decide::Script (00-PLAN.md §2.1)
+					{
+						PROFILE_STATIC_DESC( descPerceive, "Minions::Decide::Perceive", ::Optick::Category::AI );
+						idAIProfileScope scopePerceive( gameLocal.aiStats.usPerceive, descPerceive );
+						UpdateEnemyPosition();
+					}
+					//puncho end
 					UpdateAIScript();
 					AnimMove();
 					PlayChatter();
@@ -1286,7 +1334,14 @@ void idAI::Think()
 
 				case MOVETYPE_SLIDE :
 					// velocity based movement
-					UpdateEnemyPosition();
+					//puncho start - ai-harness: Minions::Decide::Perceive, braced here and not at the function top because
+					// Event_LocateEnemy also calls UpdateEnemyPosition from script, inside Decide::Script (00-PLAN.md §2.1)
+					{
+						PROFILE_STATIC_DESC( descPerceive, "Minions::Decide::Perceive", ::Optick::Category::AI );
+						idAIProfileScope scopePerceive( gameLocal.aiStats.usPerceive, descPerceive );
+						UpdateEnemyPosition();
+					}
+					//puncho end
 					UpdateAIScript();
 					SlideMove();
 					PlayChatter();
@@ -1302,7 +1357,13 @@ void idAI::Think()
 	}
 	else if( thinkFlags & TH_PHYSICS )
 	{
-		RunPhysics();
+		//puncho start - ai-harness: Minions::Move::Physics, so the Anim::Controllers reached through RunPhysics stays inside usMovePhysics (00-PLAN.md §2.1, D2)
+		{
+			PROFILE_STATIC_DESC( descPhysics, "Minions::Move::Physics", ::Optick::Category::Physics );
+			idAIProfileScope scopePhysics( gameLocal.aiStats.usMovePhysics, descPhysics );
+			RunPhysics();
+		}
+		//puncho end
 	}
 
 	if( af_push_moveables )
@@ -1322,11 +1383,38 @@ void idAI::Think()
 	*/
 
 	UpdateMuzzleFlash();
-	UpdateAnimation();
+	//puncho start - ai-harness: Anim::Update, braced because idAnimatedEntity::UpdateAnimation is shared (00-PLAN.md §2.1)
+	{
+		PROFILE_STATIC_DESC( descAnimUpdate, "Anim::Update", ::Optick::Category::Animation );
+		idAIProfileScope scopeAnimUpdate( gameLocal.aiStats.usAnimUpdate, descAnimUpdate );
+		UpdateAnimation();
+	}
+	//puncho end
 	UpdateParticles();
 	Present();
 	UpdateDamageEffects();
 	LinkCombat();
+
+	//puncho start - ai-harness: this AI's share of the tic by difference, and the worst AI of the tic by usThink;
+	// both only with the timers on, since the g_aiStats 3 list ranks by usThink
+	if( profileThink )
+	{
+		gameLocal.aiStats.usThink += ( int )( Sys_Microseconds() - usThinkStart );
+		compile_time_assert( sizeof( aiTicStats_t ) % sizeof( int ) == 0 );
+		const int* after = ( const int* )&gameLocal.aiStats;
+		const int* before = ( const int* )&statsBefore;
+		int* delta = ( int* )&lastThinkStats;
+		for( int i = 0; i < ( int )( sizeof( aiTicStats_t ) / sizeof( int ) ); i++ )
+		{
+			delta[i] = after[i] - before[i];
+		}
+		if( lastThinkStats.usThink > gameLocal.aiHudStats.worst.usThink )
+		{
+			gameLocal.aiHudStats.worst = lastThinkStats;
+			idStr::Copynz( gameLocal.aiHudStats.worstName, name.c_str(), sizeof( gameLocal.aiHudStats.worstName ) );
+		}
+	}
+	//puncho end
 
 	if( ai_showHealth.GetBool() )
 	{
@@ -1375,6 +1463,11 @@ idAI::UpdateAIScript
 */
 void idAI::UpdateAIScript()
 {
+	//puncho start - ai-harness: Minions::Decide::Script, the state thread and the anim-state threads (00-PLAN.md §2.1, U1)
+	PROFILE_STATIC_DESC( descScript, "Minions::Decide::Script", ::Optick::Category::Script );
+	idAIProfileScope scopeScript( gameLocal.aiStats.usScript, descScript );
+	//puncho end
+
 	UpdateScript();
 
 	// clear the hit enemy flag so we catch the next time we hit someone
@@ -1614,11 +1707,19 @@ idAI::PathToGoal
 */
 bool idAI::PathToGoal( aasPath_t& path, int areaNum, const idVec3& origin, int goalAreaNum, const idVec3& goalOrigin ) const
 {
+	//puncho start - ai-harness: Path::Requests at the choke point, wherever it is called from (00-PLAN.md §2.1, D3);
+	// pathFailed counts every false return, the three early outs included
+	PROFILE_STATIC_DESC( descPath, "Path::Requests", ::Optick::Category::Navigation );
+	idAIProfileScope scopePath( gameLocal.aiStats.usPath, descPath );
+	gameLocal.aiStats.pathRequests++;
+	//puncho end
+
 	idVec3 org;
 	idVec3 goal;
 
 	if( !aas )
 	{
+		gameLocal.aiStats.pathFailed++;	//puncho - ai-harness
 		return false;
 	}
 
@@ -1626,6 +1727,7 @@ bool idAI::PathToGoal( aasPath_t& path, int areaNum, const idVec3& origin, int g
 	aas->PushPointIntoAreaNum( areaNum, org );
 	if( !areaNum )
 	{
+		gameLocal.aiStats.pathFailed++;	//puncho - ai-harness
 		return false;
 	}
 
@@ -1633,17 +1735,26 @@ bool idAI::PathToGoal( aasPath_t& path, int areaNum, const idVec3& origin, int g
 	aas->PushPointIntoAreaNum( goalAreaNum, goal );
 	if( !goalAreaNum )
 	{
+		gameLocal.aiStats.pathFailed++;	//puncho - ai-harness
 		return false;
 	}
 
+	//puncho start - ai-harness: the result is kept in a local so the failure can be counted
+	bool found;
 	if( move.moveType == MOVETYPE_FLY )
 	{
-		return aas->FlyPathToGoal( path, areaNum, org, goalAreaNum, goal, travelFlags );
+		found = aas->FlyPathToGoal( path, areaNum, org, goalAreaNum, goal, travelFlags );
 	}
 	else
 	{
-		return aas->WalkPathToGoal( path, areaNum, org, goalAreaNum, goal, travelFlags );
+		found = aas->WalkPathToGoal( path, areaNum, org, goalAreaNum, goal, travelFlags );
 	}
+	if( !found )
+	{
+		gameLocal.aiStats.pathFailed++;
+	}
+	return found;
+	//puncho end
 }
 
 /*
@@ -1705,10 +1816,18 @@ float idAI::TravelDistance( const idVec3& start, const idVec3& end ) const
 
 	idReachability* reach;
 	int travelTime;
-	if( !aas->RouteToGoalArea( fromArea, start, toArea, travelFlags, travelTime, &reach ) )
+	//puncho start - ai-harness: the direct route query is a Path::Requests leaf, braced at the call (00-PLAN.md §2.1)
+	bool routed;
+	{
+		PROFILE_STATIC_DESC( descPath, "Path::Requests", ::Optick::Category::Navigation );
+		idAIProfileScope scopePath( gameLocal.aiStats.usPath, descPath );
+		routed = aas->RouteToGoalArea( fromArea, start, toArea, travelFlags, travelTime, &reach );
+	}
+	if( !routed )
 	{
 		return -1;
 	}
+	//puncho end
 
 	if( ai_debugMove.GetBool() )
 	{
@@ -2533,6 +2652,11 @@ idAI::GetMovePos
 */
 bool idAI::GetMovePos( idVec3& seekPos )
 {
+	//puncho start - ai-harness: Minions::Move::Path, the per-think routing; contains Path::Requests (00-PLAN.md §2.1)
+	PROFILE_STATIC_DESC( descMovePath, "Minions::Move::Path", ::Optick::Category::Navigation );
+	idAIProfileScope scopeMovePath( gameLocal.aiStats.usMovePath, descMovePath );
+	//puncho end
+
 	int			areaNum;
 	aasPath_t	path;
 	bool		result;
@@ -2931,6 +3055,11 @@ idAI::CheckObstacleAvoidance
 */
 void idAI::CheckObstacleAvoidance( const idVec3& goalPos, idVec3& newPos )
 {
+	//puncho start - ai-harness: Minions::Move::Avoid; the obstacle allocator is counted, never called from here (00-PLAN.md §2.1)
+	PROFILE_STATIC_DESC( descMoveAvoid, "Minions::Move::Avoid", ::Optick::Category::Navigation );
+	idAIProfileScope scopeMoveAvoid( gameLocal.aiStats.usMoveAvoid, descMoveAvoid );
+	//puncho end
+
 	idEntity*		obstacle;
 	obstaclePath_t	path;
 	idVec3			dir;
@@ -2948,6 +3077,7 @@ void idAI::CheckObstacleAvoidance( const idVec3& goalPos, idVec3& newPos )
 
 	obstacle = NULL;
 	AI_OBSTACLE_IN_PATH = false;
+	gameLocal.aiStats.obstacleQueries++;	//puncho - ai-harness
 	foundPath = FindPathAroundObstacles( &physicsObj, aas, enemy.GetEntity(), origin, goalPos, path );
 	if( ai_showObstacleAvoidance.GetBool() )
 	{
@@ -3048,6 +3178,15 @@ idAI::DeadMove
 */
 void idAI::DeadMove()
 {
+	//puncho start - ai-harness: Minions::Move (00-PLAN.md §2.1); moveTics counts the calls with a moving command
+	PROFILE_STATIC_DESC( descMove, "Minions::Move", ::Optick::Category::GameLogic );
+	idAIProfileScope scopeMove( gameLocal.aiStats.usMove, descMove );
+	if( move.moveCommand >= NUM_NONMOVING_COMMANDS )
+	{
+		gameLocal.aiStats.moveTics++;
+	}
+	//puncho end
+
 	idVec3				delta;
 	monsterMoveResult_t	moveResult;
 
@@ -3056,7 +3195,13 @@ void idAI::DeadMove()
 	GetMoveDelta( viewAxis, viewAxis, delta );
 	physicsObj.SetDelta( delta );
 
-	RunPhysics();
+	//puncho start - ai-harness: Minions::Move::Physics, braced because idEntity::RunPhysics is shared; contains Anim::Controllers (00-PLAN.md §2.1, D2)
+	{
+		PROFILE_STATIC_DESC( descPhysics, "Minions::Move::Physics", ::Optick::Category::Physics );
+		idAIProfileScope scopePhysics( gameLocal.aiStats.usMovePhysics, descPhysics );
+		RunPhysics();
+	}
+	//puncho end
 
 	moveResult = physicsObj.GetMoveResult();
 	AI_ONGROUND = physicsObj.OnGround();
@@ -3069,6 +3214,15 @@ idAI::AnimMove
 */
 void idAI::AnimMove()
 {
+	//puncho start - ai-harness: Minions::Move (00-PLAN.md §2.1); moveTics counts the calls with a moving command
+	PROFILE_STATIC_DESC( descMove, "Minions::Move", ::Optick::Category::GameLogic );
+	idAIProfileScope scopeMove( gameLocal.aiStats.usMove, descMove );
+	if( move.moveCommand >= NUM_NONMOVING_COMMANDS )
+	{
+		gameLocal.aiStats.moveTics++;
+	}
+	//puncho end
+
 	idVec3				goalPos;
 	idVec3				delta;
 	idVec3				goalDelta;
@@ -3151,7 +3305,13 @@ void idAI::AnimMove()
 	physicsObj.SetDelta( delta );
 	physicsObj.ForceDeltaMove( disableGravity );
 
-	RunPhysics();
+	//puncho start - ai-harness: Minions::Move::Physics, braced because idEntity::RunPhysics is shared; contains Anim::Controllers (00-PLAN.md §2.1, D2)
+	{
+		PROFILE_STATIC_DESC( descPhysics, "Minions::Move::Physics", ::Optick::Category::Physics );
+		idAIProfileScope scopePhysics( gameLocal.aiStats.usMovePhysics, descPhysics );
+		RunPhysics();
+	}
+	//puncho end
 
 	if( ai_debugMove.GetBool() )
 	{
@@ -3217,6 +3377,15 @@ idAI::SlideMove
 */
 void idAI::SlideMove()
 {
+	//puncho start - ai-harness: Minions::Move (00-PLAN.md §2.1); moveTics counts the calls with a moving command
+	PROFILE_STATIC_DESC( descMove, "Minions::Move", ::Optick::Category::GameLogic );
+	idAIProfileScope scopeMove( gameLocal.aiStats.usMove, descMove );
+	if( move.moveCommand >= NUM_NONMOVING_COMMANDS )
+	{
+		gameLocal.aiStats.moveTics++;
+	}
+	//puncho end
+
 	idVec3				goalPos;
 	idVec3				delta;
 	idVec3				goalDelta;
@@ -3290,7 +3459,13 @@ void idAI::SlideMove()
 	vel.z = z;
 	physicsObj.SetLinearVelocity( vel );
 	physicsObj.UseVelocityMove( true );
-	RunPhysics();
+	//puncho start - ai-harness: Minions::Move::Physics, braced because idEntity::RunPhysics is shared; contains Anim::Controllers (00-PLAN.md §2.1, D2)
+	{
+		PROFILE_STATIC_DESC( descPhysics, "Minions::Move::Physics", ::Optick::Category::Physics );
+		idAIProfileScope scopePhysics( gameLocal.aiStats.usMovePhysics, descPhysics );
+		RunPhysics();
+	}
+	//puncho end
 
 	if( ( move.moveCommand == MOVE_FACE_ENEMY ) && enemy.GetEntity() )
 	{
@@ -3557,6 +3732,15 @@ idAI::FlyMove
 */
 void idAI::FlyMove()
 {
+	//puncho start - ai-harness: Minions::Move (00-PLAN.md §2.1); moveTics counts the calls with a moving command
+	PROFILE_STATIC_DESC( descMove, "Minions::Move", ::Optick::Category::GameLogic );
+	idAIProfileScope scopeMove( gameLocal.aiStats.usMove, descMove );
+	if( move.moveCommand >= NUM_NONMOVING_COMMANDS )
+	{
+		gameLocal.aiStats.moveTics++;
+	}
+	//puncho end
+
 	idVec3	goalPos;
 	idVec3	oldorigin;
 	idVec3	newDest;
@@ -3609,7 +3793,13 @@ void idAI::FlyMove()
 	physicsObj.UseVelocityMove( false );
 	physicsObj.SetDelta( vec3_zero );
 	physicsObj.ForceDeltaMove( disableGravity );
-	RunPhysics();
+	//puncho start - ai-harness: Minions::Move::Physics, braced because idEntity::RunPhysics is shared; contains Anim::Controllers (00-PLAN.md §2.1, D2)
+	{
+		PROFILE_STATIC_DESC( descPhysics, "Minions::Move::Physics", ::Optick::Category::Physics );
+		idAIProfileScope scopePhysics( gameLocal.aiStats.usMovePhysics, descPhysics );
+		RunPhysics();
+	}
+	//puncho end
 
 	monsterMoveResult_t	moveResult = physicsObj.GetMoveResult();
 	if( !af_push_moveables && attack.Length() && TestMelee() )
@@ -3655,6 +3845,15 @@ idAI::StaticMove
 */
 void idAI::StaticMove()
 {
+	//puncho start - ai-harness: Minions::Move (00-PLAN.md §2.1); moveTics counts the calls with a moving command
+	PROFILE_STATIC_DESC( descMove, "Minions::Move", ::Optick::Category::GameLogic );
+	idAIProfileScope scopeMove( gameLocal.aiStats.usMove, descMove );
+	if( move.moveCommand >= NUM_NONMOVING_COMMANDS )
+	{
+		gameLocal.aiStats.moveTics++;
+	}
+	//puncho end
+
 	idActor*	enemyEnt = enemy.GetEntity();
 
 	if( AI_DEAD )
@@ -3677,7 +3876,13 @@ void idAI::StaticMove()
 	Turn();
 
 	physicsObj.ForceDeltaMove( true ); // disable gravity
-	RunPhysics();
+	//puncho start - ai-harness: Minions::Move::Physics, braced because idEntity::RunPhysics is shared; contains Anim::Controllers (00-PLAN.md §2.1, D2)
+	{
+		PROFILE_STATIC_DESC( descPhysics, "Minions::Move::Physics", ::Optick::Category::Physics );
+		idAIProfileScope scopePhysics( gameLocal.aiStats.usMovePhysics, descPhysics );
+		RunPhysics();
+	}
+	//puncho end
 
 	AI_ONGROUND = false;
 
@@ -4607,10 +4812,18 @@ idVec3 idAI::FirstVisiblePointOnPath( const idVec3 origin, const idVec3& target,
 	for( i = 0; i < 10; i++ )
 	{
 
-		if( !aas->RouteToGoalArea( curAreaNum, curOrigin, targetAreaNum, travelFlags, travelTime, &reach ) )
+		//puncho start - ai-harness: the direct route query is a Path::Requests leaf, braced at the call (00-PLAN.md §2.1)
+		bool routed;
+		{
+			PROFILE_STATIC_DESC( descPath, "Path::Requests", ::Optick::Category::Navigation );
+			idAIProfileScope scopePath( gameLocal.aiStats.usPath, descPath );
+			routed = aas->RouteToGoalArea( curAreaNum, curOrigin, targetAreaNum, travelFlags, travelTime, &reach );
+		}
+		if( !routed )
 		{
 			break;
 		}
+		//puncho end
 
 		if( !reach )
 		{
@@ -5703,6 +5916,12 @@ idAI::UpdateAnimationControllers
 */
 bool idAI::UpdateAnimationControllers()
 {
+	//puncho start - ai-harness: Anim::Controllers, the per-tic skeleton build and the IK sweeps, reached from
+	// inside RunPhysics so it is also inside Minions::Move::Physics (00-PLAN.md §2.1, D2)
+	PROFILE_STATIC_DESC( descAnimCtl, "Anim::Controllers", ::Optick::Category::Animation );
+	idAIProfileScope scopeAnimCtl( gameLocal.aiStats.usAnimCtl, descAnimCtl );
+	//puncho end
+
 	idVec3		local;
 	idVec3		focusPos;
 	idQuat		jawQuat;

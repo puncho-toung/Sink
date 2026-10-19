@@ -816,6 +816,7 @@ idClip::idClip()
 	clipSectors = NULL;
 	worldBounds.Zero();
 	numRotations = numTranslations = numMotions = numRenderModelTraces = numContents = numContacts = 0;
+	numGathers = numGatherCandidates = numTrmQueries = 0;	//puncho - ai-harness
 }
 
 /*
@@ -909,6 +910,7 @@ void idClip::Init()
 
 	// set counters to zero
 	numRotations = numTranslations = numMotions = numRenderModelTraces = numContents = numContacts = 0;
+	numGathers = numGatherCandidates = numTrmQueries = 0;	//puncho - ai-harness
 }
 
 /*
@@ -1044,6 +1046,11 @@ int idClip::ClipModelsTouchingBounds( const idBounds& bounds, int contentMask, i
 
 	touchCount++;
 	ClipModelsTouchingBounds_r( clipSectors, parms );
+
+	//puncho start - ai-harness: one gather per sector walk, its candidates by count
+	numGathers++;
+	numGatherCandidates += parms.count;
+	//puncho end
 
 	return parms.count;
 }
@@ -1373,6 +1380,7 @@ bool idClip::Translation( trace_t& results, const idVec3& start, const idVec3& e
 
 	num = GetTraceClipModels( traceBounds, contentMask, passEntity, clipModelList );
 
+	unsigned int trmQueries = 0;		//puncho - ai-harness: counted in a local, added once after the loop (00-PLAN.md §2.2)
 	for( i = 0; i < num; i++ )
 	{
 		touch = clipModelList[i];
@@ -1381,6 +1389,13 @@ bool idClip::Translation( trace_t& results, const idVec3& start, const idVec3& e
 		{
 			continue;
 		}
+
+		//puncho start - ai-harness
+		if( touch->traceModelIndex != -1 )
+		{
+			trmQueries++;
+		}
+		//puncho end
 
 		if( touch->renderModelHandle != -1 )
 		{
@@ -1405,6 +1420,7 @@ bool idClip::Translation( trace_t& results, const idVec3& start, const idVec3& e
 			}
 		}
 	}
+	numTrmQueries += trmQueries;	//puncho - ai-harness
 
 	return ( results.fraction < 1.0f );
 }
@@ -1455,6 +1471,7 @@ bool idClip::Rotation( trace_t& results, const idVec3& start, const idRotation& 
 
 	num = GetTraceClipModels( traceBounds, contentMask, passEntity, clipModelList );
 
+	unsigned int trmQueries = 0;		//puncho - ai-harness: counted in a local, added once after the loop (00-PLAN.md §2.2)
 	for( i = 0; i < num; i++ )
 	{
 		touch = clipModelList[i];
@@ -1463,6 +1480,13 @@ bool idClip::Rotation( trace_t& results, const idVec3& start, const idRotation& 
 		{
 			continue;
 		}
+
+		//puncho start - ai-harness
+		if( touch->traceModelIndex != -1 )
+		{
+			trmQueries++;
+		}
+		//puncho end
 
 		// no rotational collision with render models
 		if( touch->renderModelHandle != -1 )
@@ -1485,6 +1509,7 @@ bool idClip::Rotation( trace_t& results, const idVec3& start, const idRotation& 
 			}
 		}
 	}
+	numTrmQueries += trmQueries;	//puncho - ai-harness
 
 	return ( results.fraction < 1.0f );
 }
@@ -1736,6 +1761,7 @@ int idClip::Contacts( contactInfo_t* contacts, const int maxContacts, const idVe
 
 	num = GetTraceClipModels( traceBounds, contentMask, passEntity, clipModelList );
 
+	unsigned int trmQueries = 0;		//puncho - ai-harness: counted in a local, added once after the loop (00-PLAN.md §2.2)
 	for( i = 0; i < num; i++ )
 	{
 		touch = clipModelList[i];
@@ -1744,6 +1770,13 @@ int idClip::Contacts( contactInfo_t* contacts, const int maxContacts, const idVe
 		{
 			continue;
 		}
+
+		//puncho start - ai-harness
+		if( touch->traceModelIndex != -1 )
+		{
+			trmQueries++;
+		}
+		//puncho end
 
 		// no contacts with render models
 		if( touch->renderModelHandle != -1 )
@@ -1768,6 +1801,7 @@ int idClip::Contacts( contactInfo_t* contacts, const int maxContacts, const idVe
 			break;
 		}
 	}
+	numTrmQueries += trmQueries;	//puncho - ai-harness
 
 	return numContacts;
 }
@@ -1991,10 +2025,35 @@ idClip::PrintStatistics
 */
 void idClip::PrintStatistics()
 {
-	gameLocal.Printf( "t = %-3d, r = %-3d, m = %-3d, render = %-3d, contents = %-3d, contacts = %-3d\n",
-					  numTranslations, numRotations, numMotions, numRenderModelTraces, numContents, numContacts );
+	gameLocal.Printf( "t = %-3d, r = %-3d, m = %-3d, render = %-3d, contents = %-3d, contacts = %-3d, gathers = %-3u, cand = %-3u, trm = %-3u\n",	//puncho - ai-harness: the three new counters
+					  numTranslations, numRotations, numMotions, numRenderModelTraces, numContents, numContacts,
+					  numGathers, numGatherCandidates, numTrmQueries );	//puncho - ai-harness
 	numRotations = numTranslations = numMotions = numRenderModelTraces = numContents = numContacts = 0;
+	numGathers = numGatherCandidates = numTrmQueries = 0;	//puncho - ai-harness
 }
+
+//puncho start - ai-harness
+/*
+===============
+idClip::GetStatistics
+
+  The nine counters as one block, not zeroed: RunFrame reads them by difference around the think
+  loop while PrintStatistics (g_showCollisionTraces) keeps its own print-and-zero cadence.
+===============
+*/
+void idClip::GetStatistics( clipStats_t& stats ) const
+{
+	stats.numTranslations = numTranslations;
+	stats.numRotations = numRotations;
+	stats.numMotions = numMotions;
+	stats.numRenderModelTraces = numRenderModelTraces;
+	stats.numContents = numContents;
+	stats.numContacts = numContacts;
+	stats.numGathers = numGathers;
+	stats.numGatherCandidates = numGatherCandidates;
+	stats.numTrmQueries = numTrmQueries;
+}
+//puncho end
 
 /*
 ============

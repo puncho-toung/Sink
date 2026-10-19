@@ -397,8 +397,10 @@ void idAI::Event_FindEnemyAI( int useFOV )
 
 	bestDist = idMath::INFINITUM;
 	bestEnemy = NULL;
+	int walked = 0;		//puncho - ai-harness: every entity the walk visits, before the filters; added once after the loop (00-PLAN.md §2.2)
 	for( ent = gameLocal.activeEntities.Next(); ent != NULL; ent = ent->activeNode.Next() )
 	{
+		walked++;	//puncho - ai-harness
 		if( ent->fl.hidden || ent->fl.isDormant || !ent->IsType( idActor::Type ) )
 		{
 			continue;
@@ -423,6 +425,8 @@ void idAI::Event_FindEnemyAI( int useFOV )
 			bestEnemy = actor;
 		}
 	}
+
+	gameLocal.aiStats.enemyWalks += walked;	//puncho - ai-harness
 
 	gameLocal.pvs.FreeCurrentPVS( pvs );
 	idThread::ReturnEntity( bestEnemy );

@@ -89,6 +89,11 @@ extern idCVar	ai_showPaths;
 extern idCVar	ai_showObstacleAvoidance;
 extern idCVar	ai_blockedFailSafe;
 extern idCVar	ai_showHealth;
+//puncho start - ai-harness
+extern idCVar	ai_profile;
+extern idCVar	g_aiStats;
+extern idCVar	ai_profileLog;
+//puncho end
 
 extern idCVar	g_dvTime;
 extern idCVar	g_dvAmplitude;

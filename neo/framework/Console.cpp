@@ -224,6 +224,7 @@ extern bool R_UseTemporalAA();
 float idConsoleLocal::DrawFPS( float y )
 {
 	extern idCVar r_swapInterval;
+	extern idCVar net_snapDryRun;		//puncho - ai-harness: Common_network.cpp, tags the snap: row
 
 	static float previousTimes[FPS_FRAMES];
 	static float previousCpuUsage[FPS_FRAMES] = {};
@@ -349,10 +350,22 @@ float idConsoleLocal::DrawFPS( float y )
 		int32 statsWindowWidth = 320;
 		int32 statsWindowHeight = 370;		//puncho: +40 for the Int(tex)/Int(math) rows
 
+		//puncho start - ai-harness (plans/ai-harness/00-PLAN.md §2.5): the host's AI census of the last tic, read in
+		// place with no copy and no lock because the game thread is idle or has just finished when this draws (on the
+		// game thread right after the tic, or from UpdateScreen on the main thread after WaitForThread); NULL on a
+		// client, with g_aiStats 0 or before the game module is up (the game != NULL convention of common_frame.cpp)
+		const aiHudStats_t* aiHud = ( game != NULL ) ? game->GetAIStats() : NULL;
+		//puncho end
+
 		if( com_showFPS.GetInteger() > 2 )
 		{
 			statsWindowWidth += 230;
 			statsWindowHeight += 160;		//puncho: +20 for the LIGHTS line
+			if( aiHud != NULL )
+			{
+				statsWindowWidth += 150;	//puncho: the AI rows are about 100 characters wide (ai-harness)
+				statsWindowHeight += 120;	//puncho: +20 per AI row
+			}
 		}
 
 		ImVec2 pos;
@@ -548,6 +561,38 @@ float idConsoleLocal::DrawFPS( float y )
 								commonLocal.stats_backend.c_textureLights,
 								commonLocal.stats_frontend.c_mathViewLights,
 								mlDebugNames[mlDebug] );
+			//puncho end
+
+			//puncho start - ai-harness: six rows, last tic, ms with one decimal (00-PLAN.md §2.5). Derived here, never
+			// stored: decide = perceive + script; post = move - path - avoid - phys (negative when Event_RestoreMove ran
+			// GetMovePos or the avoidance outside Move that tic); present = think - decide - move - animUpdate; ik is
+			// Anim::Controllers, which also sits inside phys because RunPhysics calls it (§2.1)
+			if( aiHud != NULL )
+			{
+				const aiTicStats_t& t = aiHud->tic;
+				ImGui::TextColored( colorLtGrey, "AI    thinks %-3i  moving %-3i  think %.1f ms  [max128 %.1f]   worst %s %.2f ms",
+									t.thinks, t.moveTics, t.usThink * 0.001f, aiHud->usThinkMax128 * 0.001f,
+									aiHud->worstName, aiHud->worst.usThink * 0.001f );
+				ImGui::TextColored( colorLtGrey, "      decide %.1f  (perceive %.1f  script %.1f)    move %.1f  (path %.1f  avoid %.1f  phys %.1f  post %.1f)",
+									( t.usPerceive + t.usScript ) * 0.001f, t.usPerceive * 0.001f, t.usScript * 0.001f,
+									t.usMove * 0.001f, t.usMovePath * 0.001f, t.usMoveAvoid * 0.001f, t.usMovePhysics * 0.001f,
+									( t.usMove - t.usMovePath - t.usMoveAvoid - t.usMovePhysics ) * 0.001f );
+				ImGui::TextColored( colorLtGrey, "      path: req %-3i fail %-3i queued %-3i age %i ms    anim %.1f  (update %.1f  ik %.1f)    present %.1f",
+									t.pathRequests, t.pathFailed, t.pathQueued, t.pathAgeMaxMs,
+									( t.usAnimUpdate + t.usAnimCtl ) * 0.001f, t.usAnimUpdate * 0.001f, t.usAnimCtl * 0.001f,
+									( t.usThink - t.usPerceive - t.usScript - t.usMove - t.usAnimUpdate ) * 0.001f );
+				ImGui::TextColored( colorLtGrey, "      counts: los %-3i area %-4i wpv %-5i script %-6i enemyWalk %-3i obst %i",
+									t.losTraces, t.areaLookups, t.walkPathValid, t.scriptInstr, t.enemyWalks, t.obstacleQueries );
+				// the clip difference spans the whole think loop, the player's own traces included, ServiceEvents excluded
+				ImGui::TextColored( colorLtGrey, "      clip (think loop): trans %-4i cont %-3i contacts %-3i gathers %-4i cand %-5i trm %i",
+									t.clipTranslations, t.clipContents, t.clipContacts, t.clipGathers, t.clipGatherCandidates, t.clipTrmQueries );
+				// [dry run] follows the cvar: with it set and no peers the dry run wrote the snapshot; with a peer the
+				// real send did and the tag is only a reminder that the cvar is on
+				ImGui::TextColored( colorLtGrey, "      snap: %i minions of %i objects, %i B, write %.2f ms (minions %.2f)%s",
+									aiHud->snap.minionObjects, aiHud->snap.objects, aiHud->snap.minionBytes,
+									aiHud->snap.usWrite * 0.001f, aiHud->snap.usMinion * 0.001f,
+									net_snapDryRun.GetBool() ? "  [dry run]" : "" );
+			}
 			//puncho end
 		}
 

@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "AAS_local.h"
+#include "../Game_local.h"		//puncho - ai-harness: gameLocal.aiStats
 
 #define SUBSAMPLE_WALK_PATH		1
 #define SUBSAMPLE_FLY_PATH		0
@@ -162,6 +163,8 @@ bool idAASLocal::WalkPathValid( int areaNum, const idVec3& origin, int goalAreaN
 	idReachability* reach;
 	const aasArea_t* area;
 	idVec3 p, dir;
+
+	gameLocal.aiStats.walkPathValid++;	//puncho - ai-harness: the calls inside WalkPathToGoal included (00-PLAN.md §2.1)
 
 	if( file == NULL )
 	{

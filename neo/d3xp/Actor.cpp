@@ -1696,6 +1696,7 @@ bool idActor::CanSee( idEntity* ent, bool useFov ) const
 
 	eye = GetEyePosition();
 
+	gameLocal.aiStats.losTraces++;	//puncho - ai-harness: one line-of-sight trace per CanSee that gets this far (00-PLAN.md §2.1)
 	gameLocal.clip.TracePoint( tr, eye, toPos, MASK_OPAQUE, this );
 	if( tr.fraction >= 1.0f || ( gameLocal.GetTraceEntity( tr ) == ent ) )
 	{

@@ -971,6 +971,236 @@ void Cmd_Spawn_f( const idCmdArgs& args )
 	gameLocal.SpawnEntityDef( dict );
 }
 
+//puncho start - ai-harness (plans/ai-harness/00-PLAN.md §5 WP-H5, measure-plan §2.7): the scale knob for the
+// harness. Host only, cheats required; the entity walk is over gameLocal.entities[0 .. num_entities).
+
+/*
+===================
+Cmd_AISpawnMinions_f
+
+ai_spawnMinions <count> [classname] [spacing] [team]: a square grid of idAI starting 128 units in front
+of the player and centred on the view direction, each dropped onto the floor and facing the player,
+named minion_<n> after the highest existing one, neverDormant so they think outside the PVS.
+===================
+*/
+void Cmd_AISpawnMinions_f( const idCmdArgs& args )
+{
+	idPlayer* player = gameLocal.GetLocalPlayer();
+	if( !player || !gameLocal.CheatsOk( false ) )
+	{
+		return;
+	}
+	if( common->IsClient() )
+	{
+		gameLocal.Printf( "ai_spawnMinions: host only\n" );
+		return;
+	}
+	if( args.Argc() < 2 )
+	{
+		gameLocal.Printf( "usage: ai_spawnMinions <count> [classname] [spacing] [team]\n" );
+		return;
+	}
+
+	int count = atoi( args.Argv( 1 ) );
+	const char* classname = ( args.Argc() > 2 ) ? args.Argv( 2 ) : "monster_zombie_maint";
+	const float spacing = ( args.Argc() > 3 ) ? atof( args.Argv( 3 ) ) : 72.0f;
+	const int team = ( args.Argc() > 4 ) ? atoi( args.Argv( 4 ) ) : 0;
+	const int freeSlots = MAX_GENTITIES - gameLocal.num_entities;
+	if( count > freeSlots )
+	{
+		count = freeSlots;
+	}
+	if( count < 1 )
+	{
+		gameLocal.Printf( "ai_spawnMinions: count must be at least 1, or no free entities\n" );
+		return;
+	}
+
+	// a minion off the AAS fails PathToGoal every tic and wanders, polluting pathFailed: only spawn on a
+	// reachable walk area of the def's own AAS
+	const idDeclEntityDef* def = gameLocal.FindEntityDef( classname, false );
+	if( def == NULL )
+	{
+		gameLocal.Printf( "ai_spawnMinions: unknown entityDef '%s'\n", classname );
+		return;
+	}
+	const idAAS* aas = gameLocal.GetAAS( def->dict.GetString( "use_aas" ) );
+	if( aas == NULL )
+	{
+		gameLocal.Printf( "ai_spawnMinions: no AAS '%s' for '%s' on this map\n", def->dict.GetString( "use_aas" ), classname );
+		return;
+	}
+
+	// continue the numbering after the highest existing minion_<n>
+	int next = 1;
+	for( int i = 0; i < gameLocal.num_entities; i++ )
+	{
+		const idEntity* ent = gameLocal.entities[i];
+		if( ent != NULL && ent->name.Cmpn( "minion_", 7 ) == 0 )
+		{
+			const int n = atoi( ent->name.c_str() + 7 );
+			if( n >= next )
+			{
+				next = n + 1;
+			}
+		}
+	}
+
+	// ceil( sqrt( count ) ) per row; rows go away from the player
+	int perRow = ( int )idMath::Sqrt( ( float )count );
+	if( perRow * perRow < count )
+	{
+		perRow++;
+	}
+	const float yaw = player->viewAngles.yaw;
+	const idVec3 forward = idAngles( 0.0f, yaw, 0.0f ).ToForward();
+	const idVec3 right = idAngles( 0.0f, yaw - 90.0f, 0.0f ).ToForward();
+	const idVec3 playerOrg = player->GetPhysics()->GetOrigin();
+	const float halfWidth = 0.5f * ( perRow - 1 ) * spacing;
+
+	int spawned = 0;
+	int unplaced = 0;
+	for( int i = 0; i < count; i++ )
+	{
+		const int row = i / perRow;
+		const int col = i % perRow;
+		idVec3 org = playerOrg + forward * ( 128.0f + row * spacing ) + right * ( col * spacing - halfWidth );
+
+		// one downward trace from 64 above the player's z puts the minion on the floor; a slot over nothing, one
+		// that starts in solid, or one outside the AAS is skipped
+		trace_t tr;
+		const idVec3 top( org.x, org.y, playerOrg.z + 64.0f );
+		const idVec3 bottom( org.x, org.y, playerOrg.z - 1024.0f );
+		gameLocal.clip.TracePoint( tr, top, bottom, MASK_MONSTERSOLID, player );
+		if( tr.fraction >= 1.0f || tr.fraction <= 0.0f )
+		{
+			unplaced++;
+			continue;
+		}
+		org = tr.endpos;
+		if( aas->PointReachableAreaNum( org, aas->GetSettings()->boundingBoxes[0], AREA_REACHABLE_WALK ) == 0 )
+		{
+			unplaced++;
+			continue;
+		}
+
+		idDict dict;
+		dict.Set( "classname", classname );
+		dict.Set( "origin", org.ToString() );
+		dict.Set( "angle", va( "%f", ( playerOrg - org ).ToYaw() ) );
+		dict.Set( "name", va( "minion_%d", next ) );
+		dict.Set( "team", va( "%d", team ) );
+		dict.Set( "neverDormant", "1" );
+		idEntity* ent = NULL;
+		if( !gameLocal.SpawnEntityDef( dict, &ent ) || ent == NULL )
+		{
+			unplaced++;
+			continue;
+		}
+		// activate it now, as the trigger command does: monster_base::wake_on_enemy() disallows movement until
+		// AI_ACTIVATED, and a flag already set when the script reaches it skips that wait, so a team-0 minion
+		// with no enemy takes a later ai_moveMinions order (give it a few seconds: state_Idle stops any move on
+		// entry). For a team other than the player's, EV_Activate also sets the player as the enemy at once
+		// (ReactionTo returns ATTACK_ON_ACTIVATE), which is what a hostile spawn wants
+		ent->ProcessEvent( &EV_Activate, player );
+		next++;
+		spawned++;
+	}
+	gameLocal.Printf( "ai_spawnMinions: %d spawned, %d could not be placed\n", spawned, unplaced );
+}
+
+/*
+===================
+Cmd_AIMoveMinions_f
+
+ai_moveMinions [aim | here | x y z]: every minion_* gets the moveToPosition event the scripts use, to the
+point the player looks at (default), the player's origin, or the given point.
+===================
+*/
+void Cmd_AIMoveMinions_f( const idCmdArgs& args )
+{
+	idPlayer* player = gameLocal.GetLocalPlayer();
+	if( !player || !gameLocal.CheatsOk( false ) )
+	{
+		return;
+	}
+	if( common->IsClient() )
+	{
+		gameLocal.Printf( "ai_moveMinions: host only\n" );
+		return;
+	}
+
+	idVec3 pos;
+	if( args.Argc() >= 4 )
+	{
+		pos.Set( atof( args.Argv( 1 ) ), atof( args.Argv( 2 ) ), atof( args.Argv( 3 ) ) );
+	}
+	else if( args.Argc() >= 2 && idStr::Icmp( args.Argv( 1 ), "here" ) == 0 )
+	{
+		pos = player->GetPhysics()->GetOrigin();
+	}
+	else
+	{
+		// the point the player looks at, 8192 units along the view
+		trace_t tr;
+		const idVec3 start = player->GetEyePosition();
+		const idVec3 end = start + player->viewAngles.ToForward() * 8192.0f;
+		gameLocal.clip.TracePoint( tr, start, end, MASK_SOLID, player );
+		pos = tr.endpos;
+	}
+
+	int moved = 0;
+	for( int i = 0; i < gameLocal.num_entities; i++ )
+	{
+		idEntity* ent = gameLocal.entities[i];
+		if( ent == NULL || !ent->IsType( idAI::Type ) || ent->name.Cmpn( "minion_", 7 ) != 0 )
+		{
+			continue;
+		}
+		// posted, not processed: a console command runs between frames where the census is already closed, so
+		// the order is served in the next tic's ServiceEvents and its path calls land in that tic's CSV row
+		ent->PostEventMS( &AI_MoveToPosition, 0, pos );
+		moved++;
+	}
+	gameLocal.Printf( "ai_moveMinions: %d ordered to %s\n", moved, pos.ToString() );
+}
+
+/*
+===================
+Cmd_AIKillMinions_f
+
+ai_killMinions: removes every minion_*
+===================
+*/
+void Cmd_AIKillMinions_f( const idCmdArgs& args )
+{
+	if( !gameLocal.GetLocalPlayer() || !gameLocal.CheatsOk( false ) )
+	{
+		return;
+	}
+	if( common->IsClient() )
+	{
+		gameLocal.Printf( "ai_killMinions: host only\n" );
+		return;
+	}
+
+	int removed = 0;
+	for( int i = 0; i < gameLocal.num_entities; i++ )
+	{
+		idEntity* ent = gameLocal.entities[i];
+		if( ent == NULL || !ent->IsType( idAI::Type ) || ent->name.Cmpn( "minion_", 7 ) != 0 )
+		{
+			continue;
+		}
+		// deleted now, as the remove command does, so "ai_killMinions; ai_spawnMinions N" in one frame numbers
+		// from minion_1 again (a posted remove would leave a gap the map script's loops stop at)
+		delete ent;
+		removed++;
+	}
+	gameLocal.Printf( "ai_killMinions: %d removed\n", removed );
+}
+//puncho end
+
 /*
 ==================
 Cmd_Damage_f
@@ -2816,6 +3046,11 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "teleport",				Cmd_Teleport_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"teleports the player to an entity location", idGameLocal::ArgCompletion_EntityName );
 	cmdSystem->AddCommand( "trigger",				Cmd_Trigger_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"triggers an entity", idGameLocal::ArgCompletion_EntityName );
 	cmdSystem->AddCommand( "spawn",					Cmd_Spawn_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"spawns a game entity", idCmdSystem::ArgCompletion_Decl<DECL_ENTITYDEF> );
+	//puncho start - ai-harness
+	cmdSystem->AddCommand( "ai_spawnMinions",		Cmd_AISpawnMinions_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"ai_spawnMinions <count> [classname] [spacing] [team]: spawns idAI on a grid in front of the player, named minion_<n>" );
+	cmdSystem->AddCommand( "ai_moveMinions",		Cmd_AIMoveMinions_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"ai_moveMinions [aim | here | x y z]: orders every minion_* to the point" );
+	cmdSystem->AddCommand( "ai_killMinions",		Cmd_AIKillMinions_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"removes every minion_*" );
+	//puncho end
 	cmdSystem->AddCommand( "damage",				Cmd_Damage_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"apply damage to an entity", idGameLocal::ArgCompletion_EntityName );
 	cmdSystem->AddCommand( "remove",				Cmd_Remove_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"removes an entity", idGameLocal::ArgCompletion_EntityName );
 	cmdSystem->AddCommand( "killMonsters",			Cmd_KillMonsters_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"removes all monsters" );

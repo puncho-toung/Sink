@@ -146,6 +146,12 @@ idCVar ai_blockedFailSafe(			"ai_blockedFailSafe",		"1",			CVAR_GAME | CVAR_BOOL
 
 idCVar ai_showHealth(				"ai_showHealth",			"0",			CVAR_GAME | CVAR_BOOL, "Draws the AI's health above its head" );
 
+//puncho start - ai-harness (plans/ai-harness/00-PLAN.md §2.4): host-side measurement; none archived, synced or cheat-flagged
+idCVar ai_profile(					"ai_profile",				"0",			CVAR_GAME | CVAR_INTEGER, "1 = time the idAI think buckets and open their Optick scopes; 0 = counts only" );
+idCVar g_aiStats(					"g_aiStats",				"0",			CVAR_GAME | CVAR_INTEGER, "1 = AI rows in the com_showFPS 3 window; 2 = plus one aistats: console line per second; 3 = plus the five slowest idAI" );
+idCVar ai_profileLog(				"ai_profileLog",			"",				CVAR_GAME, "file name: appends one CSV row per tic to <fs_savepath>/aiprofile/<name>.csv; empty closes the file" );
+//puncho end
+
 idCVar g_dvTime(					"g_dvTime",					"1",			CVAR_GAME | CVAR_FLOAT, "" );
 idCVar g_dvAmplitude(				"g_dvAmplitude",			"0.001",		CVAR_GAME | CVAR_FLOAT, "" );
 idCVar g_dvFrequency(				"g_dvFrequency",			"0.5",			CVAR_GAME | CVAR_FLOAT, "" );

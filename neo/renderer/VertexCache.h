@@ -37,7 +37,12 @@ If you have questions concerning this license or the applicable additional terms
 
 	const int VERTCACHE_INDEX_MEMORY_PER_FRAME = 31 * 1024 * 1024;
 	const int VERTCACHE_VERTEX_MEMORY_PER_FRAME = 31 * 1024 * 1024;
-	const int VERTCACHE_JOINT_MEMORY_PER_FRAME = 256 * 1024;
+	//puncho start - ai-harness: 1280 KB (was 256 KB). The joint buffer is a structured SRV bound at an offset, so
+	// no 64 KB constant-buffer limit applies; the only cost is NUM_FRAME_DATA x this much host-visible memory.
+	// A skinned monster with its head uploads about 3.1 KB per frame (256 B alignment): 256 KB overflowed at
+	// about 85 in view with "Out of joint buffer cache" (a map-dropping idLib::Error), this holds about 400.
+	const int VERTCACHE_JOINT_MEMORY_PER_FRAME = 1280 * 1024;
+	//puncho end
 
 	// there are a lot more static indexes than vertexes, because interactions are just new
 	// index lists that reference existing vertexes
