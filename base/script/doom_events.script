@@ -276,6 +276,10 @@ scriptEvent	void 	setcvar( string name, string value );
 // Returns the string for a cvar.
 scriptEvent	string	getcvar( string name );
 
+// puncho - ai-avoidance (WP-A7): pins the avoidance class of an ai_squad for the map: "full" (the stock planner),
+// "light" (the follower rules: the flow field, separation, the planner only when stuck) or "off" (ignore obstacles).
+scriptEvent	void	aiSetAvoid( string squad, string avoid );
+
 // Returns a random value X where 0 <= X < range.
 scriptEvent	float	random( float range );
 
@@ -1087,6 +1091,10 @@ scriptEvent	vector	predictEnemyPos( float time );
 scriptEvent	float	canHitEnemy();
 scriptEvent	float	canHitEnemyFromAnim( string anim );
 scriptEvent	float	canHitEnemyFromJoint( string jointname );
+
+// puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part C): the ai_squad marker's value when it set the key, else the def key, else default; read it once in init, not per frame.
+scriptEvent	float	getCombatKey( string key, float default );
+
 scriptEvent float	enemyPositionValid();
 scriptEvent	void 	chargeAttack( string damageDef );
 scriptEvent	float	testChargeAttack();

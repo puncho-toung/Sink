@@ -189,6 +189,7 @@ private:
 	void						Event_DebugBounds( const idVec3& color, const idVec3& mins, const idVec3& maxs, const float lifetime );
 	void						Event_DrawText( const char* text, const idVec3& origin, float scale, const idVec3& color, const int align, const float lifetime );
 	void						Event_InfluenceActive();
+	void						Event_AISetAvoid( const char* squad, const char* avoid );	//puncho - ai-avoidance (WP-A7)
 
 public:
 	CLASS_PROTOTYPE( idThread );

@@ -7084,6 +7084,8 @@ bool idPhysics_AF::Evaluate( int timeStepMSec, int endTimeMSec )
 		return false;
 	}
 
+	gameLocal.aiStats.ragdollsActive++;	//puncho - ai-combat (plans/ai-combat/00-PLAN.md §2.4): an articulated figure simulated this tic (the corpses after a fight)
+
 	// move the af velocity into the frame of a pusher
 	AddPushVelocity( -current.pushVelocity );
 

@@ -57,6 +57,7 @@ const int 	MAX_AAS_WALL_EDGES			= 256;
 const int 	MAX_OBSTACLES				= 256;
 const int	MAX_PATH_NODES				= 256;
 const int 	MAX_OBSTACLE_PATH			= 64;
+const int	MAX_WALL_OBSTACLE_SLOTS		= 64;		//puncho - ai-avoidance (WP-A4): obstacle slots actors and moveables leave to the walls
 
 typedef struct obstacle_s
 {
@@ -92,6 +93,7 @@ void pathNode_s::Init()
 }
 
 idBlockAlloc<pathNode_t, 128>	pathNodeAllocator;
+static int						obstacleWarnMs;		//puncho - ai-avoidance (WP-A4): wall clock of the last truncation warning
 
 
 /*
@@ -361,8 +363,15 @@ int GetObstacles( const idPhysics* physics, const idAAS* aas, const idEntity* ig
 	idEntity* obEnt;
 	idClipModel* clipModel;
 	idClipModel* clipModelList[ MAX_GENTITIES ];
+	//puncho start - ai-avoidance (WP-A2, WP-A4)
+	aasWallQuad_t wallQuads[MAX_AAS_WALL_EDGES];
+	int numWalls, numWallsFound, maxWalls;
+	bool truncatedActors, truncatedWalls;
+	//puncho end
 
 	numObstacles = 0;
+	numWallsFound = 0;
+	truncatedActors = truncatedWalls = false;
 
 	seekDelta = seekPos - startPos;
 	expBounds[0] = physics->GetBounds()[0].ToVec2() - idVec2( CM_BOX_EPSILON, CM_BOX_EPSILON );
@@ -374,13 +383,100 @@ int GetObstacles( const idPhysics* physics, const idAAS* aas, const idEntity* ig
 	// clip bounds for the obstacle search space
 	clipBounds[0] = clipBounds[1] = startPos;
 	clipBounds.AddPoint( seekPos );
-	clipBounds.ExpandSelf( MAX_OBSTACLE_RADIUS );
+	//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md §3.4, WP-A4): with ai_avoidHorizon the box grows by what the
+	// largest spawned obstacle needs, not by 256 on every side. An obstacle blocks the line from up to its radius plus the
+	// agent's half extent aside, and its far corner, where the tree steps around it, lies that far again; the tree drops
+	// a node closer than CLIP_BOUNDS_EPSILON to the box. So the box holds every obstacle that can block the segment and
+	// the room to pass one of them on either side; the stock 256 gave the room for several rows. ai_avoidInflate
+	// overrides the derived figure for the A/B
+	if( ai_avoidHorizon.GetFloat() > 0.0f )
+	{
+		float inflate = ai_avoidInflate.GetFloat();
+		if( inflate <= 0.0f )
+		{
+			const float agentRadius = Max3( -expBounds[0].x, expBounds[1].x, Max( -expBounds[0].y, expBounds[1].y ) );
+			inflate = 2.0f * ( agentRadius + gameLocal.maxObstacleRadius ) + CLIP_BOUNDS_EPSILON;
+		}
+		clipBounds.ExpandSelf( inflate );
+	}
+	else
+	{
+		clipBounds.ExpandSelf( MAX_OBSTACLE_RADIUS );
+	}
+	//puncho end
 	clipMask = physics->GetClipMask();
 
 	// find all obstacles touching the clip bounds
 	numListedClipModels = gameLocal.clip.ClipModelsTouchingBounds( clipBounds, clipMask, clipModelList, MAX_GENTITIES );
 
-	for( i = 0; i < numListedClipModels && numObstacles < MAX_OBSTACLES; i++ )
+	//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md): the loop only picks the clip models now; their outlines
+	// are built after it, so ai_avoidMaxActors can drop the actors beyond the k nearest before paying for them. An actor
+	// records its flat distance from the start, a moveable -1: moveables always count
+	idClipModel*	kept[MAX_OBSTACLES];
+	float			keptDistSqr[MAX_OBSTACLES];
+	int				numKept = 0;
+	int				numKeptActors = 0;
+	const int		maxActors = ai_avoidMaxActors.GetInteger();
+	const int		maxDynamic = maxObstacles - MAX_WALL_OBSTACLE_SLOTS;	// WP-A4: a crowd may not take the walls' slots
+	const short		ownGroup = physics->GetClipModel()->GetGroup();		// WP-A3
+	//puncho start - ai-avoidance (WP-A5): with the neighbour grid the k nearest actors come from it, the same filters as the
+	// clip loop below (not me, not the one I ignore, not my group, not one walking my way) on last tic's positions; the clip
+	// loop then keeps an actor only if it is one of them and the distance sort below is skipped
+	int				nearNums[32];
+	int				numNear = 0;
+	bool			nearFromGrid = false;
+	if( maxActors > 0 && gameLocal.NeighborGridValid() )
+	{
+		float			nearDistSqr[32];
+		int				indices[MAX_AI_NEIGHBORS];
+		const idEntity*	self = physics->GetClipModel()->GetEntity();
+		const idVec3	myVel = physics->GetLinearVelocity();
+		const idVec3	center = clipBounds.GetCenter();
+		const int		num = gameLocal.GatherNeighbors( center, ( clipBounds[1].ToVec2() - clipBounds[0].ToVec2() ).Length() * 0.5f, indices, MAX_AI_NEIGHBORS );
+
+		nearFromGrid = true;
+		for( i = 0; i < num; i++ )
+		{
+			const aiNeighbor_t& n = gameLocal.aiNeighbors[indices[i]];
+			if( ( self != NULL && n.entityNumber == self->entityNumber ) || ( ignore != NULL && n.entityNumber == ignore->entityNumber ) )
+			{
+				continue;
+			}
+			if( ownGroup != 0 && n.group == ownGroup )
+			{
+				continue;
+			}
+			if( n.origin.x < clipBounds[0].x || n.origin.x > clipBounds[1].x || n.origin.y < clipBounds[0].y || n.origin.y > clipBounds[1].y )
+			{
+				continue;
+			}
+			if( n.velocity.LengthSqr() > Square( 10.0f ) && myVel.LengthSqr() > Square( 10.0f ) && n.velocity * myVel > 0.0f )
+			{
+				continue;
+			}
+			const float distSqr = ( n.origin.ToVec2() - startPos.ToVec2() ).LengthSqr();
+			if( numNear == maxActors && distSqr >= nearDistSqr[numNear - 1] )
+			{
+				continue;
+			}
+			if( numNear < maxActors )
+			{
+				numNear++;
+			}
+			for( j = numNear - 1; j > 0 && nearDistSqr[j - 1] > distSqr; j-- )
+			{
+				nearDistSqr[j] = nearDistSqr[j - 1];
+				nearNums[j] = nearNums[j - 1];
+			}
+			nearDistSqr[j] = distSqr;
+			nearNums[j] = n.entityNumber;
+		}
+	}
+	//puncho end
+	gameLocal.aiStats.avoidCandidates += numListedClipModels;
+	//puncho end
+
+	for( i = 0; i < numListedClipModels && numKept < maxDynamic; i++ )
 	{
 		clipModel = clipModelList[i];
 		obEnt = clipModel->GetEntity();
@@ -397,6 +493,23 @@ int GetObstacles( const idPhysics* physics, const idAAS* aas, const idEntity* ig
 			if( ( obPhys == physics ) || ( obEnt == ignore ) || ( obEnt->health <= 0 ) )
 			{
 				continue;
+			}
+			// ai-avoidance (WP-A3): a friend of my collision group is no obstacle; physics leaves it out of my sweeps too
+			if( ownGroup != 0 && clipModel->GetGroup() == ownGroup )
+			{
+				continue;
+			}
+			// ai-avoidance (WP-A5): not one of the k nearest the grid picked
+			if( nearFromGrid )
+			{
+				for( j = 0; j < numNear && nearNums[j] != obEnt->entityNumber; j++ )
+				{
+				}
+				if( j == numNear )
+				{
+					gameLocal.aiStats.avoidActorsDropped++;
+					continue;
+				}
 			}
 			// if the actor is moving
 			idVec3 v1 = obPhys->GetLinearVelocity();
@@ -431,6 +544,68 @@ int GetObstacles( const idPhysics* physics, const idAAS* aas, const idEntity* ig
 			continue;
 		}
 
+		//puncho start - ai-avoidance: pick it; the outline is built below
+		kept[numKept] = clipModel;
+		if( obEnt->IsType( idActor::Type ) )
+		{
+			keptDistSqr[numKept] = ( clipModel->GetOrigin().ToVec2() - startPos.ToVec2() ).LengthSqr();
+			numKeptActors++;
+		}
+		else
+		{
+			keptDistSqr[numKept] = -1.0f;
+		}
+		numKept++;
+		//puncho end
+	}
+	truncatedActors = ( i < numListedClipModels );	//puncho - ai-avoidance (WP-A4): candidates never looked at
+
+	//puncho start - ai-avoidance: the ai_avoidMaxActors cut. The k-th smallest actor distance by insertion into k slots,
+	// then the list is compacted in its gather order; ties beyond k are dropped too. Not when the grid chose (WP-A5)
+	if( maxActors > 0 && numKeptActors > maxActors && !nearFromGrid )
+	{
+		float	nearDistSqr[MAX_OBSTACLES];
+		int		numNear = 0;
+		int		numActors = 0;
+
+		for( i = 0; i < numKept; i++ )
+		{
+			const float distSqr = keptDistSqr[i];
+			if( distSqr < 0.0f || ( numNear == maxActors && distSqr >= nearDistSqr[numNear - 1] ) )
+			{
+				continue;
+			}
+			if( numNear < maxActors )
+			{
+				numNear++;
+			}
+			for( j = numNear - 1; j > 0 && nearDistSqr[j - 1] > distSqr; j-- )
+			{
+				nearDistSqr[j] = nearDistSqr[j - 1];
+			}
+			nearDistSqr[j] = distSqr;
+		}
+		const float farthestKept = nearDistSqr[numNear - 1];
+		for( i = 0, j = 0; i < numKept; i++ )
+		{
+			if( keptDistSqr[i] >= 0.0f )
+			{
+				if( keptDistSqr[i] > farthestKept || numActors == maxActors )
+				{
+					continue;
+				}
+				numActors++;
+			}
+			kept[j++] = kept[i];
+		}
+		gameLocal.aiStats.avoidActorsDropped += numKept - j;
+		numKept = j;
+	}
+
+	for( i = 0; i < numKept; i++ )
+	{
+		clipModel = kept[i];
+
 		// project a box containing the obstacle onto the floor plane
 		box = idBox( clipModel->GetBounds(), clipModel->GetOrigin(), clipModel->GetAxis() );
 		numVerts = box.GetParallelProjectionSilhouetteVerts( physics->GetGravityNormal(), silVerts );
@@ -458,8 +633,10 @@ int GetObstacles( const idPhysics* physics, const idAAS* aas, const idEntity* ig
 		// expand the 2D winding for collision with a 2D box
 		obstacle.winding.ExpandForAxialBox( expBounds );
 		obstacle.winding.GetBounds( obstacle.bounds );
-		obstacle.entity = obEnt;
+		obstacle.entity = clipModel->GetEntity();
 	}
+	gameLocal.aiStats.avoidObstacles += numObstacles;
+	//puncho end
 
 	// if there are no dynamic obstacles the path should be through valid AAS space
 	if( numObstacles == 0 )
@@ -476,64 +653,123 @@ int GetObstacles( const idPhysics* physics, const idAAS* aas, const idEntity* ig
 		}
 	}
 
+	//puncho start - ai-avoidance: Minions::Move::Avoid::Walls, the wall share of the gather (nested in ::Gather)
+	const int numBeforeWalls = numObstacles;
+	PROFILE_STATIC_DESC( descWalls, "Minions::Move::Avoid::Walls", ::Optick::Category::Navigation );
+	idAIProfileScope scopeWalls( gameLocal.aiStats.usAvoidWalls, descWalls );
+	//puncho end
+
 	// create obstacles for AAS walls
 	if( aas )
 	{
 		float halfBoundsSize = ( expBounds[ 1 ].x - expBounds[ 0 ].x ) * 0.5f;
 
-		numWallEdges = aas->GetWallEdges( areaNum, clipBounds, TFL_WALK, wallEdges, MAX_AAS_WALL_EDGES );
-		aas->SortWallEdges( wallEdges, numWallEdges );
-
-		lastVerts[0] = lastVerts[1] = 0;
-		lastEdgeNormal.Zero();
-		nextVerts[0] = nextVerts[1] = 0;
-		for( i = 0; i < numWallEdges && numObstacles < MAX_OBSTACLES; i++ )
+		//puncho start - ai-avoidance (WP-A2): the chained quads come from the per-area cache, built once per area and map;
+		// the stock build per plan stays behind ai_avoidWallCache 0 for the A/B. (WP-A4) the walls take the slots the
+		// actors and moveables left, MAX_WALL_OBSTACLE_SLOTS at least
+		maxWalls = maxObstacles - numObstacles;
+		if( maxWalls > MAX_AAS_WALL_EDGES )
 		{
-			aas->GetEdge( wallEdges[i], start, end );
-			aas->GetEdgeVertexNumbers( wallEdges[i], verts );
-			edgeDir = end.ToVec2() - start.ToVec2();
-			edgeDir.Normalize();
-			edgeNormal.x = edgeDir.y;
-			edgeNormal.y = -edgeDir.x;
-			if( i < numWallEdges - 1 )
+			maxWalls = MAX_AAS_WALL_EDGES;
+		}
+		if( ai_avoidWallCache.GetBool() )
+		{
+			numWallsFound = aas->GetWallQuads( areaNum, clipBounds, TFL_WALK, halfBoundsSize, wallQuads, maxWalls );
+			numWalls = numWallsFound;
+			if( numWalls > maxWalls )
 			{
-				aas->GetEdge( wallEdges[i + 1], nextStart, nextEnd );
-				aas->GetEdgeVertexNumbers( wallEdges[i + 1], nextVerts );
-				nextEdgeDir = nextEnd.ToVec2() - nextStart.ToVec2();
-				nextEdgeDir.Normalize();
-				nextEdgeNormal.x = nextEdgeDir.y;
-				nextEdgeNormal.y = -nextEdgeDir.x;
+				numWalls = maxWalls;
+				truncatedWalls = true;
 			}
+			for( i = 0; i < numWalls; i++ )
+			{
+				obstacle_t& obstacle = obstacles[numObstacles++];
+				obstacle.winding.Clear();
+				obstacle.winding.AddPoint( wallQuads[i].verts[0] );
+				obstacle.winding.AddPoint( wallQuads[i].verts[1] );
+				obstacle.winding.AddPoint( wallQuads[i].verts[2] );
+				obstacle.winding.AddPoint( wallQuads[i].verts[3] );
+				obstacle.winding.GetBounds( obstacle.bounds );
+				obstacle.entity = NULL;
+			}
+		}
+		else
+		{
+		//puncho end
 
-			obstacle_t& obstacle = obstacles[numObstacles++];
-			obstacle.winding.Clear();
-			obstacle.winding.AddPoint( end.ToVec2() );
-			obstacle.winding.AddPoint( start.ToVec2() );
-			obstacle.winding.AddPoint( start.ToVec2() - edgeDir - edgeNormal * halfBoundsSize );
-			obstacle.winding.AddPoint( end.ToVec2() + edgeDir - edgeNormal * halfBoundsSize );
-			if( lastVerts[1] == verts[0] )
-			{
-				obstacle.winding[2] -= lastEdgeNormal * halfBoundsSize;
-			}
-			else
-			{
-				obstacle.winding[1] -= edgeDir;
-			}
-			if( verts[1] == nextVerts[0] )
-			{
-				obstacle.winding[3] -= nextEdgeNormal * halfBoundsSize;
-			}
-			else
-			{
-				obstacle.winding[0] += edgeDir;
-			}
-			obstacle.winding.GetBounds( obstacle.bounds );
-			obstacle.entity = NULL;
+			numWallEdges = aas->GetWallEdges( areaNum, clipBounds, TFL_WALK, wallEdges, MAX_AAS_WALL_EDGES );
+			aas->SortWallEdges( wallEdges, numWallEdges );
+			numWallsFound = numWallEdges;	//puncho - ai-avoidance: GetWallEdges stops at its cap, so this is a floor
 
-			memcpy( lastVerts, verts, sizeof( lastVerts ) );
-			lastEdgeNormal = edgeNormal;
+			lastVerts[0] = lastVerts[1] = 0;
+			lastEdgeNormal.Zero();
+			nextVerts[0] = nextVerts[1] = 0;
+			for( i = 0; i < numWallEdges && numObstacles < maxObstacles; i++ )
+			{
+				aas->GetEdge( wallEdges[i], start, end );
+				aas->GetEdgeVertexNumbers( wallEdges[i], verts );
+				edgeDir = end.ToVec2() - start.ToVec2();
+				edgeDir.Normalize();
+				edgeNormal.x = edgeDir.y;
+				edgeNormal.y = -edgeDir.x;
+				if( i < numWallEdges - 1 )
+				{
+					aas->GetEdge( wallEdges[i + 1], nextStart, nextEnd );
+					aas->GetEdgeVertexNumbers( wallEdges[i + 1], nextVerts );
+					nextEdgeDir = nextEnd.ToVec2() - nextStart.ToVec2();
+					nextEdgeDir.Normalize();
+					nextEdgeNormal.x = nextEdgeDir.y;
+					nextEdgeNormal.y = -nextEdgeDir.x;
+				}
+
+				obstacle_t& obstacle = obstacles[numObstacles++];
+				obstacle.winding.Clear();
+				obstacle.winding.AddPoint( end.ToVec2() );
+				obstacle.winding.AddPoint( start.ToVec2() );
+				obstacle.winding.AddPoint( start.ToVec2() - edgeDir - edgeNormal * halfBoundsSize );
+				obstacle.winding.AddPoint( end.ToVec2() + edgeDir - edgeNormal * halfBoundsSize );
+				if( lastVerts[1] == verts[0] )
+				{
+					obstacle.winding[2] -= lastEdgeNormal * halfBoundsSize;
+				}
+				else
+				{
+					obstacle.winding[1] -= edgeDir;
+				}
+				if( verts[1] == nextVerts[0] )
+				{
+					obstacle.winding[3] -= nextEdgeNormal * halfBoundsSize;
+				}
+				else
+				{
+					obstacle.winding[0] += edgeDir;
+				}
+				obstacle.winding.GetBounds( obstacle.bounds );
+				obstacle.entity = NULL;
+
+				memcpy( lastVerts, verts, sizeof( lastVerts ) );
+				lastEdgeNormal = edgeNormal;
+			}
+		//puncho start - ai-avoidance (WP-A4)
+		truncatedWalls = ( i < numWallEdges ) || ( numWallEdges == MAX_AAS_WALL_EDGES );
+		}
+		//puncho end
+	}
+
+	//puncho start - ai-avoidance (WP-A4): what the obstacle array cut, counted per plan and said once a second of wall clock
+	gameLocal.aiStats.avoidWallEdges += numObstacles - numBeforeWalls;
+	if( truncatedActors || truncatedWalls )
+	{
+		gameLocal.aiStats.avoidTruncated++;
+		const int nowMs = Sys_Milliseconds();
+		if( nowMs - obstacleWarnMs >= 1000 || nowMs < obstacleWarnMs )
+		{
+			obstacleWarnMs = nowMs;
+			gameLocal.Warning( "GetObstacles: %d obstacle slots too few: %d actors and moveables kept of %d clip models listed, %d wall edges kept of %d",
+							   maxObstacles, numBeforeWalls, numListedClipModels, numObstacles - numBeforeWalls, numWallsFound );
 		}
 	}
+	//puncho end
 
 	// show obstacles
 	if( ai_showObstacleAvoidance.GetBool() )
@@ -1119,7 +1355,18 @@ bool idAI::FindPathAroundObstacles( const idPhysics* physics, const idAAS* aas, 
 	aas->PushPointIntoAreaNum( areaNum, path.startPosOutsideObstacles );
 
 	// get all the nearby obstacles
-	numObstacles = GetObstacles( physics, aas, ignore, areaNum, path.startPosOutsideObstacles, path.seekPosOutsideObstacles, obstacles, MAX_OBSTACLES, clipBounds );
+	//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md): the three parts of Minions::Move::Avoid, braced at their
+	// calls; the residue (area lookup, the two pushes out of obstacles, FreePathTree_r) is avoid - gather - tree - optimal
+	{
+		PROFILE_STATIC_DESC( descGather, "Minions::Move::Avoid::Gather", ::Optick::Category::Navigation );
+		idAIProfileScope scopeGather( gameLocal.aiStats.usAvoidGather, descGather );
+		numObstacles = GetObstacles( physics, aas, ignore, areaNum, path.startPosOutsideObstacles, path.seekPosOutsideObstacles, obstacles, MAX_OBSTACLES, clipBounds );
+	}
+	if( numObstacles > 0 )
+	{
+		gameLocal.aiStats.avoidTrees++;
+	}
+	//puncho end
 
 	// get a source position outside the obstacles
 	GetPointOutsideObstacles( obstacles, numObstacles, path.startPosOutsideObstacles.ToVec2(), &insideObstacle, NULL );
@@ -1144,20 +1391,32 @@ bool idAI::FindPathAroundObstacles( const idPhysics* physics, const idAAS* aas, 
 		}
 	}
 
-	// build a path tree
-	root = BuildPathTree( obstacles, numObstacles, clipBounds, path.startPosOutsideObstacles.ToVec2(), path.seekPosOutsideObstacles.ToVec2(), path );
-
-	// draw the path tree
-	if( ai_showObstacleAvoidance.GetBool() )
+	//puncho start - ai-avoidance: Minions::Move::Avoid::Tree and ::Optimal
 	{
-		DrawPathTree( root, physics->GetOrigin().z );
+		PROFILE_STATIC_DESC( descTree, "Minions::Move::Avoid::Tree", ::Optick::Category::Navigation );
+		idAIProfileScope scopeTree( gameLocal.aiStats.usAvoidTree, descTree );
+
+		// build a path tree
+		root = BuildPathTree( obstacles, numObstacles, clipBounds, path.startPosOutsideObstacles.ToVec2(), path.seekPosOutsideObstacles.ToVec2(), path );
+
+		// draw the path tree
+		if( ai_showObstacleAvoidance.GetBool() )
+		{
+			DrawPathTree( root, physics->GetOrigin().z );
+		}
+
+		// prune the tree
+		PrunePathTree( root, path.seekPosOutsideObstacles.ToVec2() );
 	}
 
-	// prune the tree
-	PrunePathTree( root, path.seekPosOutsideObstacles.ToVec2() );
+	{
+		PROFILE_STATIC_DESC( descOptimal, "Minions::Move::Avoid::Optimal", ::Optick::Category::Navigation );
+		idAIProfileScope scopeOptimal( gameLocal.aiStats.usAvoidOptimal, descOptimal );
 
-	// find the optimal path
-	pathToGoalExists = FindOptimalPath( root, obstacles, numObstacles, physics->GetOrigin().z, physics->GetLinearVelocity(), path.seekPos );
+		// find the optimal path
+		pathToGoalExists = FindOptimalPath( root, obstacles, numObstacles, physics->GetOrigin().z, physics->GetLinearVelocity(), path.seekPos );
+	}
+	//puncho end
 
 	// free the tree
 	FreePathTree_r( root );

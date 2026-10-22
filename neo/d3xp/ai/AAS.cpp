@@ -60,6 +60,14 @@ idAASLocal::idAASLocal
 idAASLocal::idAASLocal()
 {
 	file = NULL;
+	//puncho start - ai-avoidance (WP-A2)
+	areaWalls = NULL;
+	wallEdgeStamp = NULL;
+	wallQueryStamp = 0;
+	memset( flowFields, 0, sizeof( flowFields ) );	// WP-A6: the cells come with the file (SetupFlowFields)
+	flowCells = NULL;
+	flowUseCount = 0;
+	//puncho end
 }
 
 /*
@@ -83,6 +91,7 @@ bool idAASLocal::Init( const idStr& mapName, unsigned int mapFileCRC )
 	{
 		common->Printf( "Keeping %s\n", file->GetName() );
 		RemoveAllObstacles();
+		FlushFlowFields();	//puncho - ai-avoidance (WP-A6, audit M5): the previous game's slots and cells go (its first asks filled them); the routing cache stays, as stock keeps it
 	}
 	else
 	{
@@ -95,6 +104,8 @@ bool idAASLocal::Init( const idStr& mapName, unsigned int mapFileCRC )
 			return false;
 		}
 		SetupRouting();
+		SetupWallCache();	//puncho - ai-avoidance (WP-A2)
+		SetupFlowFields();	//puncho - ai-avoidance (WP-A6, audit M4)
 	}
 	return true;
 }
@@ -109,6 +120,8 @@ void idAASLocal::Shutdown()
 	if( file )
 	{
 		ShutdownRouting();
+		ShutdownWallCache();	//puncho - ai-avoidance (WP-A2)
+		ShutdownFlowFields();	//puncho - ai-avoidance (WP-A6)
 		RemoveAllObstacles();
 		AASFileManager->FreeAAS( file );
 		file = NULL;

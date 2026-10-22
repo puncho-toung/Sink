@@ -290,7 +290,7 @@ bool idAASFindAttackPosition::TestArea( const idAAS* aas, int areaNum )
 	axis = local_dir.ToMat3();
 	fromPos = areaCenter + fireOffset * axis;
 
-	return self->GetAimDir( fromPos, target, self, dir );
+	return self->GetAimDir( fromPos, target, self, MASK_SHOT_RENDERMODEL, dir );	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §B): the attack position aims as the launch does
 }
 
 /*
@@ -308,6 +308,30 @@ idAI::idAI()
 	blockedRadius		= 0.0f;
 	blockedMoveTime		= 750;
 	blockedAttackTime	= 750;
+	//puncho start - ai-avoidance
+	avoidPlanTic		= -1;
+	avoidMoveStart		= 0;
+	avoidDir.Zero();
+	avoidDetour			= false;
+	avoidBlocked		= false;
+	avoidPlanWasBlocked	= false;
+	avoidStepWasBlocked	= false;
+	avoidTier			= AVOID_TIER_UNSEEN;
+	avoidHeldInPath		= false;
+	avoidTierTic		= -1;
+	avoidHeldStatus		= MOVE_STATUS_MOVING;
+	avoidHeldObstacle	= NULL;
+	sepLastDir.Zero();
+	sepCorrection.Zero();
+	sepDeltaScale		= 1.0f;
+	minionRole			= MINION_ROLE_ELITE;
+	avoidClass			= AVOID_CLASS_BY_ROLE;
+	flowStuckTics		= 0;
+	flowOnField			= false;
+	aiSquad				= -1;
+	flowAreaNum			= 0;
+	flowPromotedUntil	= 0;
+	//puncho end
 	turnRate			= 360.0f;
 	turnVel				= 0.0f;
 	anim_turn_yaw		= 0.0f;
@@ -328,7 +352,15 @@ idAI::idAI()
 	fly_bob_vert		= 0.0f;
 	fly_bob_horz		= 0.0f;
 	lastHitCheckResult	= false;
+	fireNearFriends		= false;	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §B): Spawn reads fire_near_friends
+	shooterSniper		= false;	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): ReadCombatLevers sets it
+	accuracyScale		= 1.0f;		//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §C): ReadCombatLevers sets it
 	lastHitCheckTime	= 0;
+	canHitFailTime		= -1;		//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §A): no failed test yet
+	shooterAskTime		= -1;		//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): never asked
+	shooterPassTime		= -1;		//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): no test said yes yet
+	shooterTokenGen		= -1;		//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): no token
+	shooterTokenTime	= -1;		//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): no hold
 	lastAttackTime		= 0;
 	melee_range			= 0.0f;
 	projectile_height_to_distance_ratio = 1.0f;
@@ -740,6 +772,9 @@ void idAI::Restore( idRestoreGame* savefile )
 	{
 		RestorePhysics( &physicsObj );
 	}
+	SetCollisionGroup();	//puncho - ai-avoidance (WP-A3): the group is derived, not saved
+	ReadSquadRole();		//puncho - ai-avoidance (WP-A7): so is the role; the squad table was re-read in LoadMap
+	ReadCombatLevers();		//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §C): and so are fire_near_friends and the accuracy scale
 
 
 	//Clean up the emitters
@@ -802,6 +837,7 @@ void idAI::Spawn()
 
 	spawnArgs.GetInt(	"team",					"1",		team );
 	spawnArgs.GetInt(	"rank",					"0",		rank );
+	ReadSquadRole();	//puncho - ai-avoidance (WP-A6/A7): the role from the def and the ai_squad marker
 	spawnArgs.GetInt(	"fly_offset",			"0",		fly_offset );
 	spawnArgs.GetFloat( "fly_speed",			"100",		fly_speed );
 	spawnArgs.GetFloat( "fly_bob_strength",		"50",		fly_bob_strength );
@@ -815,6 +851,11 @@ void idAI::Spawn()
 
 	spawnArgs.GetFloat( "melee_range",			"64",		melee_range );
 	spawnArgs.GetFloat( "projectile_height_to_distance_ratio",	"1", projectile_height_to_distance_ratio );
+	//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §B): the test mask of canHitEnemyFromAnim, boxes
+	// by default, non-zero the stock mesh test; the launch aims against meshes either way
+	//puncho - ai-combat (plans/ai-combat/07-REVIEW-c8.md m3): ReadCombatLevers is the one read; a GetBool here read "0.5" as false, the lever as true
+	ReadCombatLevers();	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §C): the ai_squad marker's fire_near_friends, when the marker sets it, wins over the def key; the accuracy scale likewise
+	//puncho end
 
 	spawnArgs.GetFloat( "turn_rate",			"360",		turnRate );
 
@@ -979,6 +1020,7 @@ void idAI::Spawn()
 		}
 		physicsObj.SetClipMask( MASK_MONSTERSOLID );
 	}
+	SetCollisionGroup();	//puncho - ai-avoidance (WP-A3)
 
 	// move up to make sure the monster is at least an epsilon above the floor
 	physicsObj.SetOrigin( GetPhysics()->GetOrigin() + idVec3( 0, 0, CM_CLIP_EPSILON ) );
@@ -1233,6 +1275,10 @@ void idAI::Think()
 		usThinkStart = Sys_Microseconds();
 	}
 	gameLocal.aiStats.thinks++;
+	if( minionRole == MINION_ROLE_FOLLOWER )
+	{
+		gameLocal.aiStats.roleFollowers++;	// ai-avoidance (WP-A7): for the overlay row
+	}
 	//puncho end
 
 	if( thinkFlags & TH_THINK )
@@ -1245,6 +1291,10 @@ void idAI::Think()
 			{
 				EnemyDead();
 			}
+		}
+		else if( move.moveType != MOVETYPE_DEAD )
+		{
+			gameLocal.aiStats.noEnemy++;	//puncho - ai-combat (plans/ai-combat/00-PLAN.md §2.4): a live thinking monster with no enemy; nothing added on the enemy path
 		}
 
 		current_yaw += deltaViewAngles.yaw;
@@ -2257,6 +2307,7 @@ bool idAI::MoveToAttackPosition( idEntity* ent, int attack_anim )
 		pos = ent->GetPhysics()->GetOrigin();
 	}
 
+	gameLocal.aiStats.attackPosSearches++;	//puncho - ai-combat (plans/ai-combat/00-PLAN.md §2.4): one FindNearestGoal per call from here
 	idAASFindAttackPosition findGoal( this, physicsObj.GetGravityAxis(), ent, pos, missileLaunchOffset[ attack_anim ] );
 	if( !aas->FindNearestGoal( goal, areaNum, org, pos, travelFlags, &obstacle, 1, findGoal ) )
 	{
@@ -2358,6 +2409,7 @@ bool idAI::MoveToCover( idEntity* entity, const idVec3& hideFromPos )
 	// consider the entity the monster tries to hide from as an obstacle
 	obstacle.absBounds = entity->GetPhysics()->GetAbsBounds();
 
+	gameLocal.aiStats.coverSearches++;	//puncho - ai-combat (plans/ai-combat/00-PLAN.md §2.4): one FindNearestGoal per call from here
 	idAASFindCover findCover( hideFromPos );
 	if( !aas->FindNearestGoal( hideGoal, areaNum, org, hideFromPos, travelFlags, &obstacle, 1, findCover ) )
 	{
@@ -2700,6 +2752,7 @@ bool idAI::GetMovePos( idVec3& seekPos )
 
 	move.moveStatus = MOVE_STATUS_MOVING;
 	result = false;
+	flowOnField = false;	//puncho - ai-avoidance (WP-A6): never stale from an earlier tic when the field branch below is not reached
 	if( gameLocal.time > move.blockTime )
 	{
 		if( move.moveCommand == MOVE_WANDER )
@@ -2719,7 +2772,29 @@ bool idAI::GetMovePos( idVec3& seekPos )
 		if( aas && move.toAreaNum )
 		{
 			areaNum	= PointReachableAreaNum( org );
-			if( PathToGoal( path, areaNum, org, move.toAreaNum, move.moveDest ) )
+			//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md §3.5, WP-A6): a follower reads its area's exit from the
+			// goal's flow field instead of string-pulling and planning; the goal's own area, a stuck promotion and a cell
+			// without a walk exit take the stock path below
+			flowAreaNum = areaNum;
+			if( FlowFollower() && areaNum != move.toAreaNum && gameLocal.framenum >= flowPromotedUntil )
+			{
+				int exitAreaNum;
+				const idBounds& bounds = physicsObj.GetBounds();
+				const float radius = Max( Max( -bounds[0].x, bounds[1].x ), Max( -bounds[0].y, bounds[1].y ) );
+				if( aas->FlowFieldExit( areaNum, org, radius, move.toAreaNum, travelFlags, seekPos, exitAreaNum ) )
+				{
+					flowOnField = true;
+					result = true;
+					move.nextWanderTime = 0;
+					gameLocal.aiStats.flowSteps++;
+				}
+			}
+			if( flowOnField )
+			{
+				// steered by the field
+			}
+			else if( PathToGoal( path, areaNum, org, move.toAreaNum, move.moveDest ) )
+			//puncho end
 			{
 				seekPos = path.moveGoal;
 				result = true;
@@ -3048,6 +3123,144 @@ void idAI::GetMoveDelta( const idMat3& oldaxis, const idMat3& axis, idVec3& delt
 	delta *= physicsObj.GetGravityAxis();
 }
 
+//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md)
+/*
+=====================
+idAI::UpdateAvoidTier
+
+  WP-A1: this tic's tier against every player (co-op counts): CLOSE within 256 flat of a living player, SEEN in the
+  merged player PVS within 1024, UNSEEN otherwise. Computed once per tic however many readers ask; the band layer's
+  per-tic front (AIF_Front) replaces the test when it lands. Valid during entity thinking, when the merged PVS is set up.
+=====================
+*/
+void idAI::UpdateAvoidTier()
+{
+	if( avoidTierTic == gameLocal.framenum )
+	{
+		return;
+	}
+	avoidTierTic = gameLocal.framenum;
+
+	// flat distance to the nearest living player
+	float bestDistSqr = idMath::INFINITUM;
+	const idVec3& origin = physicsObj.GetOrigin();
+	for( int i = 0; i < gameLocal.numClients; i++ )
+	{
+		const idEntity* ent = gameLocal.entities[i];
+		if( ent == NULL || !ent->IsType( idPlayer::Type ) || ent->health <= 0 )
+		{
+			continue;
+		}
+		idVec3 delta = ent->GetPhysics()->GetOrigin() - origin;
+		delta.z = 0.0f;
+		const float distSqr = delta.LengthSqr();
+		if( distSqr < bestDistSqr )
+		{
+			bestDistSqr = distSqr;
+		}
+	}
+	if( bestDistSqr < Square( ai_avoidTierClose.GetFloat() ) )
+	{
+		avoidTier = AVOID_TIER_CLOSE;
+	}
+	else if( bestDistSqr < Square( ai_avoidTierSeen.GetFloat() ) && gameLocal.InPlayerPVS( this ) )
+	{
+		avoidTier = AVOID_TIER_SEEN;
+	}
+	else
+	{
+		avoidTier = AVOID_TIER_UNSEEN;
+	}
+}
+
+/*
+=====================
+idAI::GetAvoidTier
+=====================
+*/
+int idAI::GetAvoidTier()
+{
+	UpdateAvoidTier();
+	return avoidTier;
+}
+
+/*
+=====================
+idAI::AvoidPeriod
+
+  How many tics the last avoidance plan stays good for: ai_avoidPeriod, or with ai_avoidTiers the period of this tic's
+  tier. 1 is the stock behaviour, a plan every tic.
+=====================
+*/
+int idAI::AvoidPeriod()
+{
+	if( !ai_avoidTiers.GetBool() )
+	{
+		return ai_avoidPeriod.GetInteger();
+	}
+	UpdateAvoidTier();
+	if( avoidTier == AVOID_TIER_CLOSE )
+	{
+		return ai_avoidPeriodClose.GetInteger();
+	}
+	if( avoidTier == AVOID_TIER_SEEN )
+	{
+		return ai_avoidPeriodSeen.GetInteger();
+	}
+	return ai_avoidPeriodUnseen.GetInteger();
+}
+
+//puncho start - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md §3.4)
+/*
+=====================
+idAI::CanHitRetryMs
+
+  The decision clock's interval for this tic (plans/ai-combat/07-DESIGN-c8-levers.md §A): ai_canHitRetryMs, times 2 when
+  SEEN and 4 when UNSEEN with ai_attackTierScale. Read by the clock in canHitEnemyFromAnim and by AssignShooterTokens,
+  which gives no token to a monster the clock would still refuse (plans/ai-combat/08-PLAN-shooter-tokens.md); 0 never
+  gates
+=====================
+*/
+int idAI::CanHitRetryMs()
+{
+	int retry = ai_canHitRetryMs.GetInteger();
+	if( retry > 0 && ai_attackTierScale.GetBool() )
+	{
+		const int tier = GetAvoidTier();
+		if( tier == AVOID_TIER_SEEN )
+		{
+			retry *= 2;
+		}
+		else if( tier == AVOID_TIER_UNSEEN )
+		{
+			retry *= 4;
+		}
+	}
+	return retry;
+}
+//puncho end
+
+/*
+=====================
+idAI::SetCollisionGroup
+
+  WP-A3 (plans/ai-avoidance/00-PLAN.md §3.2): with ai_collisionGroup the movement clip model and the combat model carry
+  the team as their collision group (team + 1, so 0 stays "none"), and this monster's sweeps and plans skip every
+  friendly monster. Players carry no group (plan Q1 default), so monsters still collide with and avoid them. Derived
+  from the team, never saved: set at spawn and after restore.
+=====================
+*/
+void idAI::SetCollisionGroup()
+{
+	const short group = ai_collisionGroup.GetBool() ? ( short )( team + 1 ) : 0;
+	physicsObj.GetClipModel()->SetGroup( group );
+	if( combatModel != NULL )
+	{
+		combatModel->SetGroup( group );
+	}
+}
+//puncho end
+
 /*
 =====================
 idAI::CheckObstacleAvoidance
@@ -3066,7 +3279,7 @@ void idAI::CheckObstacleAvoidance( const idVec3& goalPos, idVec3& newPos )
 	float			dist;
 	bool			foundPath;
 
-	if( ignore_obstacles )
+	if( ignore_obstacles || EffectiveAvoidClass() == AVOID_CLASS_OFF )	//puncho - ai-avoidance (WP-A7): avoid "off" is ignore_obstacles
 	{
 		newPos = goalPos;
 		move.obstacle = NULL;
@@ -3075,10 +3288,56 @@ void idAI::CheckObstacleAvoidance( const idVec3& goalPos, idVec3& newPos )
 
 	const idVec3& origin = physicsObj.GetOrigin();
 
+	//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md): a walker plans every AvoidPeriod() tics, phase
+	// entityNumber, and at once on a new order or when the last plan or the physics step after it reported blocked.
+	// Between plans the last answer is reused: the goal itself when that plan went straight to it (what a plan finds
+	// while nothing blocks), otherwise the detour direction. Flyers plan every tic: their seek point also sets the speed.
+	const int period = ( move.moveType == MOVETYPE_ANIM ) ? AvoidPeriod() : 1;
+	if( period > 1 && avoidPlanTic >= 0 && !avoidBlocked && avoidMoveStart == move.startTime
+			&& gameLocal.framenum - avoidPlanTic < period && ( ( gameLocal.framenum + entityNumber ) % period ) != 0 )
+	{
+		gameLocal.aiStats.avoidSkipped++;
+		// WP-A1: the held plan holds its status too (GetMovePos reset it to MOVING this tic), so check_blocked sees what
+		// the plan tic saw; the tics on which that differs from MOVING are counted
+		AI_OBSTACLE_IN_PATH = avoidHeldInPath;
+		move.moveStatus = avoidHeldStatus;
+		move.obstacle = avoidHeldObstacle.GetEntity();
+		if( avoidHeldStatus != MOVE_STATUS_MOVING )
+		{
+			gameLocal.aiStats.avoidHeld++;
+		}
+		if( avoidDetour )
+		{
+			newPos = origin + avoidDir * 64.0f;
+		}
+		else
+		{
+			newPos = goalPos;
+		}
+		return;
+	}
+	//puncho end
+
 	obstacle = NULL;
 	AI_OBSTACLE_IN_PATH = false;
 	gameLocal.aiStats.obstacleQueries++;	//puncho - ai-harness
-	foundPath = FindPathAroundObstacles( &physicsObj, aas, enemy.GetEntity(), origin, goalPos, path );
+
+	//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md §3.4, WP-A4): a walker plans against the point at most
+	// ai_avoidHorizon ahead on its line to goalPos: the heading it steers is the same, the search box is no longer up to
+	// 2 560 units long. Flyers and sliders keep the full point, which also sets their speed
+	idVec3 seekPos = goalPos;
+	const float horizon = ai_avoidHorizon.GetFloat();
+	if( horizon > 0.0f && move.moveType == MOVETYPE_ANIM )
+	{
+		dir = goalPos - origin;
+		dist = dir.Normalize();
+		if( dist > horizon )
+		{
+			seekPos = origin + dir * horizon;
+		}
+	}
+	//puncho end
+	foundPath = FindPathAroundObstacles( &physicsObj, aas, enemy.GetEntity(), origin, seekPos, path );
 	if( ai_showObstacleAvoidance.GetBool() )
 	{
 		gameRenderWorld->DebugLine( colorBlue, goalPos + idVec3( 1.0f, 1.0f, 0.0f ), goalPos + idVec3( 1.0f, 1.0f, 64.0f ), 1 );
@@ -3169,6 +3428,27 @@ void idAI::CheckObstacleAvoidance( const idVec3& goalPos, idVec3& newPos )
 		newPos = path.seekPos;
 		move.obstacle = NULL;
 	}
+
+	//puncho start - ai-avoidance: remember this plan for the tics AvoidPeriod() skips; a blocked plan is counted and, by
+	// ai_avoidBlockedReplan, forces the next tic to plan again (the four BLOCKED_BY_* values close moveStatus_t, AI.h)
+	avoidPlanTic = gameLocal.framenum;
+	avoidMoveStart = move.startTime;
+	const bool planBlocked = ( move.moveStatus >= MOVE_STATUS_BLOCKED_BY_WALL );
+	if( planBlocked )
+	{
+		gameLocal.aiStats.avoidBlocked++;
+	}
+	const int blockedReplan = ai_avoidBlockedReplan.GetInteger();
+	avoidBlocked = planBlocked && ( blockedReplan == 0 || ( blockedReplan == 1 && !avoidPlanWasBlocked ) );
+	avoidPlanWasBlocked = planBlocked;
+	avoidDir = newPos - origin;
+	avoidDir.z = 0.0f;
+	const float detourLen = avoidDir.Normalize();
+	avoidDetour = ( detourLen > 1.0f ) && ( ( newPos.ToVec2() - seekPos.ToVec2() ).LengthSqr() > Square( 1.0f ) );
+	avoidHeldStatus = move.moveStatus;
+	avoidHeldObstacle = move.obstacle.GetEntity();
+	avoidHeldInPath = AI_OBSTACLE_IN_PATH;
+	//puncho end
 }
 
 /*
@@ -3234,6 +3514,10 @@ void idAI::AnimMove()
 	idMat3 oldaxis = viewAxis;
 
 	AI_BLOCKED = false;
+	//puncho start - ai-avoidance (WP-A5): this tic's separation, set by Separation() below when the grid has neighbours
+	sepDeltaScale = 1.0f;
+	sepCorrection.Zero();
+	//puncho end
 
 	if( move.moveCommand < NUM_NONMOVING_COMMANDS )
 	{
@@ -3256,7 +3540,20 @@ void idAI::AnimMove()
 	{
 		if( move.moveCommand != MOVE_WANDER )
 		{
-			CheckObstacleAvoidance( goalPos, newDest );
+			//puncho start - ai-avoidance (WP-A6): on the field the heading is the exit direction bent by the area's walls and
+			// by the separation; no plan, no tree. Otherwise the stock plan, then the separation (WP-A5)
+			if( flowOnField )
+			{
+				newDest = goalPos;
+				WallRepulsion( newDest );
+				AI_OBSTACLE_IN_PATH = false;
+			}
+			else
+			{
+				CheckObstacleAvoidance( goalPos, newDest );
+			}
+			Separation( newDest );
+			//puncho end
 			TurnToward( newDest );
 		}
 		else
@@ -3285,6 +3582,11 @@ void idAI::AnimMove()
 	else if( allowMove )
 	{
 		GetMoveDelta( oldaxis, viewAxis, delta );
+		//puncho start - ai-avoidance (WP-A5, plan D4): a push against the heading slows the step; the overlap correction
+		// rides the delta so StepMove clips it against the world like any move. The origin is never set here
+		delta *= sepDeltaScale;
+		delta += sepCorrection;
+		//puncho end
 	}
 	else
 	{
@@ -3319,6 +3621,37 @@ void idAI::AnimMove()
 	}
 
 	moveResult = physicsObj.GetMoveResult();
+	//puncho start - ai-avoidance (WP-A6, plan §3.6): a follower that asked for a step and gained under 0.5 units for 3 tics
+	// running is promoted to the stock path and planner for one avoidance period, then returns to the field. Set here at the
+	// end of tic f and first read by GetMovePos at f + 1, so the bound is f + 1 + P: off the field for the P tics f + 1 .. f + P
+	// (audit M3: without the 1 it was P - 1 tics, none at the stock period 1)
+	if( flowOnField )
+	{
+		if( delta.LengthSqr() > 0.0f && ( physicsObj.GetOrigin() - oldorigin ).LengthSqr() < Square( 0.5f ) )
+		{
+			if( ++flowStuckTics >= 3 )
+			{
+				flowStuckTics = 0;
+				flowPromotedUntil = gameLocal.framenum + 1 + AvoidPeriod();
+				gameLocal.aiStats.flowPromoted++;
+			}
+		}
+		else
+		{
+			flowStuckTics = 0;
+		}
+	}
+	//puncho end
+	//puncho start - ai-avoidance: what a blocked step does to the next plan (ai_avoidBlockedReplan): 0 plans again next tic
+	// whatever the period says, 1 only when the step before was free, 2 leaves the period alone
+	const bool stepBlocked = ( moveResult == MM_BLOCKED );
+	const int blockedReplan = ai_avoidBlockedReplan.GetInteger();
+	if( stepBlocked && ( blockedReplan == 0 || ( blockedReplan == 1 && !avoidStepWasBlocked ) ) )
+	{
+		avoidBlocked = true;
+	}
+	avoidStepWasBlocked = stepBlocked;
+	//puncho end
 	if( !af_push_moveables && attack.Length() && TestMelee() )
 	{
 		DirectDamage( attack, enemy.GetEntity() );
@@ -3965,6 +4298,11 @@ bool idAI::Pain( idEntity* inflictor, idEntity* attacker, int damage, const idVe
 
 	AI_PAIN = idActor::Pain( inflictor, attacker, damage, dir, location );
 	AI_DAMAGE = true;
+	if( AI_PAIN != 0 )
+	{
+		canHitFailTime = -1;	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §A): a monster that was just hit looks for a shot at once
+		gameLocal.aiStats.painEvents++;	//puncho - ai-combat (plans/ai-combat/00-PLAN.md §2.4): a pain animation interrupted the attack
+	}
 
 	// force a blink
 	blink_time = 0;
@@ -4118,6 +4456,17 @@ void idAI::Killed( idEntity* inflictor, idEntity* attacker, int damage, const id
 		AI_DAMAGE = true;
 		return;
 	}
+
+	//puncho start - ai-combat (plans/ai-combat/00-PLAN.md §2.4): once per death, past the AI_DEAD test; the kill line only with
+	// the aistats: line on (g_aiStats 2), so the kill timeline comes from the engine and not from script polling
+	gameLocal.aiStats.deaths++;
+	if( g_aiStats.GetInteger() >= 2 )
+	{
+		const int attackerTeam = ( attacker != NULL && attacker->IsType( idActor::Type ) ) ? static_cast<idActor*>( attacker )->team : -1;
+		gameLocal.Printf( "COMBAT_KILL %.3f %s team %d by %s team %d\n", gameLocal.time * 0.001f, name.c_str(), team,
+						  ( attacker != NULL ) ? attacker->name.c_str() : "none", attackerTeam );
+	}
+	//puncho end
 
 	// stop all voice sounds
 	StopSound( SND_CHANNEL_VOICE, false );
@@ -4468,8 +4817,14 @@ void idAI::ClearEnemy()
 		StopMove( MOVE_STATUS_DEST_NOT_FOUND );
 	}
 
+	if( enemy.GetEntity() != NULL )
+	{
+		gameLocal.aiStats.enemyLost++;	//puncho - ai-combat (plans/ai-combat/00-PLAN.md §2.4): an enemy let go: EnemyDead, the script, the monster's own death
+	}
 	enemyNode.Remove();
 	enemy				= NULL;
+	canHitFailTime		= -1;	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §A): the next enemy is tested at once
+	shooterTokenGen		= -1;	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): the token belongs to the enemy's pool
 	AI_ENEMY_IN_FOV		= false;
 	AI_ENEMY_VISIBLE	= false;
 	AI_ENEMY_DEAD		= true;
@@ -4742,6 +5097,7 @@ void idAI::SetEnemy( idActor* newEnemy )
 	}
 	else if( enemy.GetEntity() != newEnemy )
 	{
+		gameLocal.aiStats.enemyChanges++;	//puncho - ai-combat (plans/ai-combat/00-PLAN.md §2.4): a new target; the first acquisition (from none) included
 
 		// Check to see if we should unlock the 'Turncloak' achievement
 		const idActor* enemyEnt = enemy.GetEntity();
@@ -4755,6 +5111,8 @@ void idAI::SetEnemy( idActor* newEnemy )
 		}
 
 		enemy = newEnemy;
+		canHitFailTime = -1;	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §A): a new enemy is tested at once, not left the old one's no
+		shooterTokenGen = -1;	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): the next pass ranks the new enemy's pool
 		enemyNode.AddToEnd( newEnemy->enemyList );
 		if( newEnemy->health <= 0 )
 		{
@@ -4918,7 +5276,7 @@ void idAI::CreateProjectileClipModel() const
 idAI::GetAimDir
 =====================
 */
-bool idAI::GetAimDir( const idVec3& firePos, idEntity* aimAtEnt, const idEntity* ignore, idVec3& aimDir ) const
+bool idAI::GetAimDir( const idVec3& firePos, idEntity* aimAtEnt, const idEntity* ignore, int clipMask, idVec3& aimDir ) const	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §B): clipMask replaces the literal MASK_SHOT_RENDERMODEL
 {
 	idVec3	targetPos1;
 	idVec3	targetPos2;
@@ -4961,7 +5319,7 @@ bool idAI::GetAimDir( const idVec3& firePos, idEntity* aimAtEnt, const idEntity*
 	// try aiming for chest
 	delta = firePos - targetPos1;
 	max_height = delta.LengthFast() * projectile_height_to_distance_ratio;
-	result = PredictTrajectory( firePos, targetPos1, projectileSpeed, projectileGravity, projectileClipModel, MASK_SHOT_RENDERMODEL, max_height, ignore, aimAtEnt, ai_debugTrajectory.GetBool() ? 1000 : 0, aimDir );
+	result = PredictTrajectory( firePos, targetPos1, projectileSpeed, projectileGravity, projectileClipModel, clipMask, max_height, ignore, aimAtEnt, ai_debugTrajectory.GetBool() ? 1000 : 0, aimDir );	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §B)
 	if( result || !aimAtEnt->IsType( idActor::Type ) )
 	{
 		return result;
@@ -4970,7 +5328,7 @@ bool idAI::GetAimDir( const idVec3& firePos, idEntity* aimAtEnt, const idEntity*
 	// try aiming for head
 	delta = firePos - targetPos2;
 	max_height = delta.LengthFast() * projectile_height_to_distance_ratio;
-	result = PredictTrajectory( firePos, targetPos2, projectileSpeed, projectileGravity, projectileClipModel, MASK_SHOT_RENDERMODEL, max_height, ignore, aimAtEnt, ai_debugTrajectory.GetBool() ? 1000 : 0, aimDir );
+	result = PredictTrajectory( firePos, targetPos2, projectileSpeed, projectileGravity, projectileClipModel, clipMask, max_height, ignore, aimAtEnt, ai_debugTrajectory.GetBool() ? 1000 : 0, aimDir );	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §B)
 
 	return result;
 }
@@ -4982,6 +5340,7 @@ idAI::BeginAttack
 */
 void idAI::BeginAttack( const char* name )
 {
+	gameLocal.aiStats.attacksCharge++;	//puncho - ai-combat (plans/ai-combat/00-PLAN.md §2.4): the leap's attackBegin (frame command or event) and Event_ChargeAttack
 	attack = name;
 	lastAttackTime = gameLocal.time;
 }
@@ -5077,12 +5436,20 @@ idProjectile* idAI::LaunchProjectile( const char* jointname, idEntity* target, b
 		gameLocal.Warning( "%s (%s) doesn't have a projectile specified", name.c_str(), GetEntityDefName() );
 		return NULL;
 	}
+	gameLocal.aiStats.attacksMissile++;	//puncho - ai-combat (plans/ai-combat/00-PLAN.md §2.4): one ranged attack per launch, whatever num_projectiles says
 
 	attack_accuracy = spawnArgs.GetFloat( "attack_accuracy", "7" );
 	attack_cone = spawnArgs.GetFloat( "attack_cone", "70" );
 	projectile_spread = spawnArgs.GetFloat( "projectile_spread", "0" );
 	num_projectiles = spawnArgs.GetInt( "num_projectiles", "1" );
 	forceMuzzle = spawnArgs.GetBool( "forceMuzzle", "0" );
+	//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §C): the accuracy levers scale both spreads (in
+	// degrees), the game's ai_accuracyScale times this monster's own scale (squad, def, 1: ReadCombatLevers); above 1 is
+	// less accurate. Per launch, not per tic
+	const float accuracyLever = ai_accuracyScale.GetFloat() * accuracyScale;
+	attack_accuracy *= accuracyLever;
+	projectile_spread *= accuracyLever;
+	//puncho end
 
 	GetMuzzle( jointname, muzzle, axis );
 
@@ -5143,7 +5510,7 @@ idProjectile* idAI::LaunchProjectile( const char* jointname, idEntity* target, b
 	}
 
 	// set aiming direction
-	GetAimDir( muzzle, target, this, dir );
+	GetAimDir( muzzle, target, this, MASK_SHOT_RENDERMODEL, dir );	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §B): the launch aims against meshes, as stock
 	ang = dir.ToAngles();
 
 	// adjust his aim so it's not perfect.  uses sine based movement so the tracers appear less random in their spread.
@@ -5344,6 +5711,7 @@ bool idAI::AttackMelee( const char* meleeDefName )
 	const char* p;
 	const idSoundShader* shader;
 
+	gameLocal.aiStats.attacksMelee++;	//puncho - ai-combat (plans/ai-combat/00-PLAN.md §2.4): every swing (the melee frame command), hit or miss
 	meleeDef = gameLocal.FindEntityDefDict( meleeDefName, false );
 	if( meleeDef == NULL )
 	{

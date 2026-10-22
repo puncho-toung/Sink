@@ -361,10 +361,10 @@ float idConsoleLocal::DrawFPS( float y )
 		{
 			statsWindowWidth += 230;
 			statsWindowHeight += 160;		//puncho: +20 for the LIGHTS line
-			if( aiHud != NULL )
+			if( aiHud != NULL && com_showFPS.GetInteger() > 3 )	//puncho - ai-combat: the AI rows are com_showFPS 4
 			{
 				statsWindowWidth += 150;	//puncho: the AI rows are about 100 characters wide (ai-harness)
-				statsWindowHeight += 120;	//puncho: +20 per AI row
+				statsWindowHeight += 200;	//puncho: +20 per AI row (ten rows since ai-combat)
 			}
 		}
 
@@ -566,8 +566,9 @@ float idConsoleLocal::DrawFPS( float y )
 			//puncho start - ai-harness: six rows, last tic, ms with one decimal (00-PLAN.md §2.5). Derived here, never
 			// stored: decide = perceive + script; post = move - path - avoid - phys (negative when Event_RestoreMove ran
 			// GetMovePos or the avoidance outside Move that tic); present = think - decide - move - animUpdate; ik is
-			// Anim::Controllers, which also sits inside phys because RunPhysics calls it (§2.1)
-			if( aiHud != NULL )
+			// Anim::Controllers, which also sits inside phys because RunPhysics calls it (§2.1).
+			// ai-combat: the rows are their own level, com_showFPS 4, so 3 stays the stock timing view
+			if( aiHud != NULL && com_showFPS.GetInteger() > 3 )
 			{
 				const aiTicStats_t& t = aiHud->tic;
 				ImGui::TextColored( colorLtGrey, "AI    thinks %-3i  moving %-3i  think %.1f ms  [max128 %.1f]   worst %s %.2f ms",
@@ -583,6 +584,21 @@ float idConsoleLocal::DrawFPS( float y )
 									( t.usThink - t.usPerceive - t.usScript - t.usMove - t.usAnimUpdate ) * 0.001f );
 				ImGui::TextColored( colorLtGrey, "      counts: los %-3i area %-4i wpv %-5i script %-6i enemyWalk %-3i obst %i",
 									t.losTraces, t.areaLookups, t.walkPathValid, t.scriptInstr, t.enemyWalks, t.obstacleQueries );
+				//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md): the avoid split and its counts
+				ImGui::TextColored( colorLtGrey, "      avoid: gather %.1f (walls %.1f) tree %.1f optimal %.1f    cand %-5i obst %-4i walls %-4i trees %-3i skipped %-3i blocked %-3i dropped %-4i truncated %i held %-3i groupSkip %i",
+									t.usAvoidGather * 0.001f, t.usAvoidWalls * 0.001f, t.usAvoidTree * 0.001f, t.usAvoidOptimal * 0.001f,
+									t.avoidCandidates, t.avoidObstacles, t.avoidWallEdges, t.avoidTrees, t.avoidSkipped, t.avoidBlocked, t.avoidActorsDropped, t.avoidTruncated,
+									t.avoidHeld, t.clipGroupSkipped );
+				ImGui::TextColored( colorLtGrey, "      crowd: grid %.2f ms    sep pairs %-4i steered %-3i corrections %i",
+									t.usGrid * 0.001f, t.sepPairs, t.sepSteered, t.sepCorrections );
+				ImGui::TextColored( colorLtGrey, "      flow: followers %-3i on field %-3i promoted %-2i    cells built %-3i fields opened %i    squads %i pinned %i",
+									t.roleFollowers, t.flowSteps, t.flowPromoted, t.flowCellsBuilt, t.flowFieldsOpened, aiHud->squads, aiHud->squadsPinned );
+				//puncho end
+				//puncho start - ai-combat (plans/ai-combat/00-PLAN.md §2.4): the combat loop's events of the last tic
+				ImGui::TextColored( colorLtGrey, "      combat: melee %-3i missile %-3i charge %-2i proj %-3i dmg %-3i friendly %-2i pain %-3i deaths %-2i ragdolls %-3i enemyChg %-2i lost %-2i noEnemy %-3i canHit %-3i atkPos %-2i cover %-2i traces %.2f ms",
+									t.attacksMelee, t.attacksMissile, t.attacksCharge, t.projectilesAlive, t.damageEvents, t.friendlyDamage, t.painEvents, t.deaths,
+									t.ragdollsActive, t.enemyChanges, t.enemyLost, t.noEnemy, t.canHitTraces, t.attackPosSearches, t.coverSearches, t.usCombatTraces * 0.001f );
+				//puncho end
 				// the clip difference spans the whole think loop, the player's own traces included, ServiceEvents excluded
 				ImGui::TextColored( colorLtGrey, "      clip (think loop): trans %-4i cont %-3i contacts %-3i gathers %-4i cand %-5i trm %i",
 									t.clipTranslations, t.clipContents, t.clipContacts, t.clipGathers, t.clipGatherCandidates, t.clipTrmQueries );

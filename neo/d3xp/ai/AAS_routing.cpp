@@ -399,6 +399,7 @@ void idAASLocal::RemoveRoutingCacheUsingArea( int areaNum )
 		DeleteClusterCache( file->GetPortal( -clusterNum ).clusters[1] );
 	}
 	DeletePortalCache();
+	FlushFlowFields();	//puncho - ai-avoidance (WP-A6): the fields index this cache
 }
 
 /*
@@ -418,6 +419,7 @@ void idAASLocal::DisableArea( int areaNum )
 	file->SetAreaTravelFlag( areaNum, TFL_INVALID );
 
 	RemoveRoutingCacheUsingArea( areaNum );
+	FlushWallCache();	//puncho - ai-avoidance (WP-A2)
 }
 
 /*
@@ -437,6 +439,7 @@ void idAASLocal::EnableArea( int areaNum )
 	file->RemoveAreaTravelFlag( areaNum, TFL_INVALID );
 
 	RemoveRoutingCacheUsingArea( areaNum );
+	FlushWallCache();	//puncho - ai-avoidance (WP-A2)
 }
 
 /*

@@ -148,8 +148,53 @@ idCVar ai_showHealth(				"ai_showHealth",			"0",			CVAR_GAME | CVAR_BOOL, "Draws
 
 //puncho start - ai-harness (plans/ai-harness/00-PLAN.md §2.4): host-side measurement; none archived, synced or cheat-flagged
 idCVar ai_profile(					"ai_profile",				"0",			CVAR_GAME | CVAR_INTEGER, "1 = time the idAI think buckets and open their Optick scopes; 0 = counts only" );
-idCVar g_aiStats(					"g_aiStats",				"0",			CVAR_GAME | CVAR_INTEGER, "1 = AI rows in the com_showFPS 3 window; 2 = plus one aistats: console line per second; 3 = plus the five slowest idAI" );
+idCVar g_aiStats(					"g_aiStats",				"0",			CVAR_GAME | CVAR_INTEGER, "1 = AI rows in the com_showFPS 4 window; 2 = plus one aistats: console line per second and a COMBAT_KILL line per death; 3 = plus the five slowest idAI" );
 idCVar ai_profileLog(				"ai_profileLog",			"",				CVAR_GAME, "file name: appends one CSV row per tic to <fs_savepath>/aiprofile/<name>.csv; empty closes the file" );
+//puncho end
+//puncho start - ai-combat (plans/ai-combat/00-PLAN.md §2.7): host-side measurement; not archived, synced or cheat-flagged
+idCVar ai_benchSeed(				"ai_benchSeed",				"0",			CVAR_GAME | CVAR_INTEGER, "seed of the game's random number generator at map load in single player; 0 = stock (0); multiplayer keeps the server's seed" );
+//puncho end
+//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §A, WP-C8): the decision clock; host-side policy, not
+// archived, synced or cheat-flagged
+idCVar ai_canHitRetryMs(			"ai_canHitRetryMs",			"150",			CVAR_GAME | CVAR_INTEGER, "after canHitEnemyFromAnim says a shot is blocked, a monster does not test again for this many ms, times the tier factor of ai_attackTierScale; a new enemy or an accepted pain ends the wait (plans/ai-combat/07-DESIGN-c8-levers.md); 0 = stock, test every tic", 0, 1000 );
+idCVar ai_attackTierScale(			"ai_attackTierScale",		"1",			CVAR_GAME | CVAR_BOOL, "ai_canHitRetryMs: multiply the wait by the monster's tier, 1 when CLOSE (ai_avoidTierClose), 2 when SEEN (ai_avoidTierSeen), 4 when UNSEEN (plans/ai-combat/07-DESIGN-c8-levers.md); 0 = 1 for every tier" );
+//puncho end
+//puncho start - ai-combat (plans/ai-combat/07-REVIEW-c8.md M1): the box test's off switch, so an A/B has a stock; host-side policy,
+// not archived, synced or cheat-flagged
+idCVar ai_canHitBoxTest(			"ai_canHitBoxTest",			"1",			CVAR_GAME | CVAR_BOOL, "canHitEnemyFromAnim tests a shot against bounding boxes, so a friend's box in the arc blocks it, except for a monster whose fire_near_friends is set (plans/ai-combat/07-DESIGN-c8-levers.md §B); 0 = every monster tests against meshes, the stock test" );
+//puncho end
+//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §C, WP-C8): the accuracy lever; host-side policy, not
+// archived, synced or cheat-flagged
+idCVar ai_accuracyScale(			"ai_accuracyScale",			"1",			CVAR_GAME | CVAR_FLOAT, "multiplies every monster's attack_accuracy and projectile_spread (spreads in degrees) at launch, on top of the scale its ai_squad marker or def gives with the key accuracy; above 1 is less accurate, 1 = stock (plans/ai-combat/07-DESIGN-c8-levers.md)", 0.1f, 10.0f );
+//puncho end
+//puncho start - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): the shooter tokens; host-side policy, not archived,
+// synced or cheat-flagged
+idCVar ai_shooterTokens(			"ai_shooterTokens",			"0",			CVAR_GAME | CVAR_BOOL, "shooter tokens: a monster tests a ranged shot (canHitEnemyFromAnim) only while it holds a token; each player accepts ai_shooterTokensPlayer shooters, the nearest to it, and each team fields ai_shooterTokensTeam shooters against monsters, the nearest to their targets; a failed test passes the token on; sniper 1 (def, entity or ai_squad marker) needs none (plans/ai-combat/08-PLAN-shooter-tokens.md); 0 = off, every monster tests" );
+idCVar ai_shooterTokensPlayer(		"ai_shooterTokensPlayer",	"10",			CVAR_GAME | CVAR_INTEGER, "ai_shooterTokens: shooters one player accepts at once, the nearest to it; 0 = no cap", 0, 32 );
+idCVar ai_shooterTokensTeam(		"ai_shooterTokensTeam",		"8",			CVAR_GAME | CVAR_INTEGER, "ai_shooterTokens: shooters one team fields at once against monsters, the nearest to their targets; 0 = no cap", 0, 32 );
+idCVar ai_shooterTokenHoldMs(		"ai_shooterTokenHoldMs",	"2000",			CVAR_GAME | CVAR_INTEGER, "ai_shooterTokens: no challenger takes a token this long after it was given; after it the nearest win", 0, 10000 );
+//puncho end
+//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md): the two avoidance cuts behind cvars, both off by default;
+// host-side policy, none archived, synced or cheat-flagged
+idCVar ai_avoidPeriod(				"ai_avoidPeriod",			"1",			CVAR_GAME | CVAR_INTEGER, "re-plan a walking monster's obstacle avoidance every N tics (phase = entity number), at once on a new order or when blocked; 1 = every tic (stock)", 1, 16 );
+idCVar ai_avoidTiers(				"ai_avoidTiers",			"0",			CVAR_GAME | CVAR_BOOL, "pick the avoidance period by tier instead of ai_avoidPeriod: ai_avoidPeriodClose within 256 units of a player, ai_avoidPeriodSeen in a player's PVS within 1024, ai_avoidPeriodUnseen otherwise" );
+idCVar ai_avoidPeriodClose(			"ai_avoidPeriodClose",		"2",			CVAR_GAME | CVAR_INTEGER, "ai_avoidTiers: avoidance period within 256 units of a player", 1, 16 );
+idCVar ai_avoidPeriodSeen(			"ai_avoidPeriodSeen",		"4",			CVAR_GAME | CVAR_INTEGER, "ai_avoidTiers: avoidance period in a player's PVS within 1024 units", 1, 16 );
+idCVar ai_avoidPeriodUnseen(			"ai_avoidPeriodUnseen",		"6",			CVAR_GAME | CVAR_INTEGER, "ai_avoidTiers: avoidance period out of every player's PVS or beyond 1024 units", 1, 16 );
+idCVar ai_avoidBlockedReplan(		"ai_avoidBlockedReplan",	"2",			CVAR_GAME | CVAR_INTEGER, "with ai_avoidPeriod or ai_avoidTiers, what a blocked monster does: 0 = plans every tic while it stays blocked; 1 = plans on the tic it becomes blocked, then holds its period; 2 = keeps its period, blocked or not (default, plan D2: measured equal to 1 and the simplest)", 0, 2 );
+idCVar ai_avoidTierClose(			"ai_avoidTierClose",		"256",			CVAR_GAME | CVAR_FLOAT, "ai_avoidTiers: a monster within this flat distance of any player is CLOSE", 0.0f, 8192.0f );
+idCVar ai_avoidTierSeen(			"ai_avoidTierSeen",			"1024",			CVAR_GAME | CVAR_FLOAT, "ai_avoidTiers: a monster in a player's PVS within this flat distance is SEEN; beyond it or out of every PVS it is UNSEEN", 0.0f, 8192.0f );
+idCVar ai_collisionGroup(			"ai_collisionGroup",		"0",			CVAR_GAME | CVAR_BOOL, "monsters of one team pass through each other and leave each other out of their obstacle avoidance (a collision group on the clip model, read at spawn: set it before the map loads); players still collide with them" );
+idCVar ai_neighborGrid(				"ai_neighborGrid",			"0",			CVAR_GAME | CVAR_BOOL, "build the per-tic neighbour grid of every actor after the think loop; the obstacle avoidance takes its ai_avoidMaxActors nearest actors from it" );
+idCVar ai_separation(				"ai_separation",			"0",			CVAR_GAME | CVAR_BOOL, "separation steering: a walking monster bends its heading away from the actors inside ai_sepRadius x the sum of the two radii and is pushed out of overlaps deeper than 4 units by at most ai_sepCorrect units per tic (builds the neighbour grid)" );
+idCVar ai_sepRadius(				"ai_sepRadius",				"1.2",			CVAR_GAME | CVAR_FLOAT, "ai_separation: the ring a monster keeps, as a factor on the sum of its radius and the neighbour's", 1.0f, 4.0f );
+idCVar ai_sepCorrect(				"ai_sepCorrect",			"2",			CVAR_GAME | CVAR_FLOAT, "ai_separation: the most units an overlap correction moves a monster per tic (through its move delta, clipped by the world)", 0.0f, 16.0f );
+idCVar ai_sepBudget(				"ai_sepBudget",				"64",			CVAR_GAME | CVAR_INTEGER, "ai_separation: overlap corrections allowed per tic over every monster", 0, 1024 );
+idCVar ai_flowField(				"ai_flowField",				"0",			CVAR_GAME | CVAR_INTEGER, "followers walk a flow field per goal area over the AAS routing cache instead of string-pulling and planning: 0 = off (stock); 1 = monsters whose role is follower (minion_class trash, or the ai_squad marker); 2 = every walking monster (an A/B on maps without roles)", 0, 2 );
+idCVar ai_avoidMaxActors(			"ai_avoidMaxActors",		"0",			CVAR_GAME | CVAR_INTEGER, "keep only the k nearest other actors as avoidance obstacles; walls and moveables always count; 0 = all (stock)", 0, 32 );
+idCVar ai_avoidHorizon(				"ai_avoidHorizon",			"0",			CVAR_GAME | CVAR_FLOAT, "a walking monster plans its obstacle avoidance against the point at most this far ahead on its line to the goal, and the search box grows by the largest spawned actor or moveable instead of 256; 0 = the full seek point and 256 (stock)", 0.0f, 4096.0f );
+idCVar ai_avoidInflate(				"ai_avoidInflate",			"0",			CVAR_GAME | CVAR_FLOAT, "with ai_avoidHorizon, grow the obstacle search box by this on every side instead of the derived figure; 0 = twice the largest spawned actor or moveable plus the agent (the room to pass one of them), 256 = the stock room", 0.0f, 1024.0f );
+idCVar ai_avoidWallCache(			"ai_avoidWallCache",		"1",			CVAR_GAME | CVAR_BOOL, "take the AAS wall-edge obstacles from the per-area cache; 0 = rebuild them from the wall edges on every plan (stock)" );
 //puncho end
 
 idCVar g_dvTime(					"g_dvTime",					"1",			CVAR_GAME | CVAR_FLOAT, "" );

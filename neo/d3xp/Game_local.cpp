@@ -678,6 +678,18 @@ void idGameLocal::SaveGame( idFile* f, idFile* strings )
 	savegame.WriteBool( influenceActive );
 	savegame.WriteInt( nextGibTime );
 
+	//puncho start - ai-avoidance (WP-A7, audit M2): the squad table is map data re-read on restore, but a pin set by
+	// sys.aiSetAvoid is game state a script set once (map scripts have no load hook): saved by name, since the table's
+	// order is the map file's
+	savegame.WriteInt( numAISquads );
+	for( i = 0; i < numAISquads; i++ )
+	{
+		savegame.WriteString( aiSquads[i].name );
+		savegame.WriteByte( aiSquads[i].avoid );
+		savegame.WriteByte( aiSquads[i].pinned );
+	}
+	//puncho end
+
 	// spawnSpots
 	// initialSpots
 	// currentInitialSpot
@@ -988,6 +1000,7 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 		}
 	}
 	mapFileName = mapFile->GetName();
+	ReadAISquads();	//puncho - ai-avoidance (WP-A7): before the monsters spawn and look their squad up
 
 	// load the collision map
 	collisionModelManager->LoadMap( mapFile, false );
@@ -1025,7 +1038,7 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	firstFreeEntityIndex[0]	= MAX_CLIENTS;
 
 	// reset the random number generator.
-	random.SetSeed( common->IsMultiplayer() ? randseed : 0 );
+	random.SetSeed( common->IsMultiplayer() ? randseed : ai_benchSeed.GetInteger() );	//puncho - ai-combat (plans/ai-combat/00-PLAN.md §2.7, WP-C3): 0 is the stock seed; multiplayer keeps the server's
 
 	camera			= NULL;
 	world			= NULL;
@@ -1064,6 +1077,17 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	cinematicMaxSkipTime = 0;
 
 	clip.Init();
+	maxObstacleRadius = 0.0f;	//puncho - ai-avoidance (WP-A4): grown by every actor and moveable the map spawns or restores
+	//puncho start - ai-avoidance (WP-A5): no grid until the first tic builds one
+	aiNeighborTic = -1;
+	numAINeighbors = 0;
+	aiNeighborMaxRadius = 0.0f;
+	sepCorrectionsLeft = 0;
+	//puncho end
+	//puncho start - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md, WP-T3): no token pass yet; the generation restarts with the map
+	shooterTokenGen = 0;
+	shooterTokenTic = -1;
+	//puncho end
 
 	common->UpdateLevelLoadPacifier();
 
@@ -1171,6 +1195,13 @@ void idGameLocal::LocalMapRestart()
 	program.Restart();
 
 	InitScriptForMap();
+
+	//puncho start - ai-avoidance (WP-A5, WP-A7; audit M2, m10): the squad table and its pins go back to the map file's, and
+	// the grid of the old incarnations is never read by the new ones (LoadMap does both; a restart never gets there)
+	ReadAISquads();
+	aiNeighborTic = -1;
+	shooterTokenTic = -1;	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md, WP-T3): nor are the tokens of the old incarnations
+	//puncho end
 
 	MapPopulate();
 
@@ -1637,6 +1668,35 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 	savegame.ReadBool( influenceActive );
 	savegame.ReadInt( nextGibTime );
 
+	//puncho start - ai-avoidance (WP-A7, audit M2): the pins of sys.aiSetAvoid, re-applied by name to the table LoadMap
+	// re-read from the map file above, before the monsters restore and look their squad up
+	if( saveGameVersion >= BUILD_NUMBER_SAVE_VERSION_AI_SQUAD_PINS )
+	{
+		idStr squadName;
+		byte avoid, pinned;
+
+		savegame.ReadInt( num );
+		for( i = 0; i < num; i++ )
+		{
+			savegame.ReadString( squadName );
+			savegame.ReadByte( avoid );
+			savegame.ReadByte( pinned );
+			if( !pinned )
+			{
+				continue;
+			}
+			const int squad = FindAISquad( squadName );
+			if( squad < 0 )
+			{
+				Warning( "restore: the pinned ai_squad '%s' is not on this map any more", squadName.c_str() );
+				continue;
+			}
+			aiSquads[squad].avoid = avoid;
+			aiSquads[squad].pinned = 1;
+		}
+	}
+	//puncho end
+
 	// spawnSpots
 	// initialSpots
 	// currentInitialSpot
@@ -1648,6 +1708,13 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 	idEvent::Restore( &savegame );
 
 	savegame.RestoreObjects();
+
+	//puncho start - ai-avoidance (WP-A4): the restored actors and moveables, as SpawnEntityDef does for spawned ones
+	for( idEntity* ent = spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
+	{
+		GrowMaxObstacleRadius( ent );
+	}
+	//puncho end
 
 	mpGame.Reset();
 	mpGame.Precache();
@@ -2839,6 +2906,20 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 // jmarshall
 			RunSharedThink();
 // jmarshall end
+			//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md §3.3, WP-A5): the neighbour grid from the positions this
+			// tic's physics produced, read by the next tic's thinks; separation needs it, the obstacle gather uses it when there
+			if( ai_neighborGrid.GetBool() || ai_separation.GetBool() )
+			{
+				BuildNeighborGrid();
+			}
+			//puncho end
+			//puncho start - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): the shooter tokens for the next tic's
+			// thinks, from this tic's asks, failures and positions; inside the merged player PVS (the clock's tier reads it)
+			if( ai_shooterTokens.GetBool() )
+			{
+				idAI::AssignShooterTokens();
+			}
+			//puncho end
 			// Run catch-up for any client projectiles.
 			// This is done after the main think so that all projectiles will be up-to-date
 			// when snapshots are created.
@@ -2966,7 +3047,15 @@ static const char* const aiProfileCsvHeader =
 	"pathReq,pathFail,nearestGoal,routeQueries,pathQueued,pathAgeMaxMs,areaLookups,walkPathValid,"
 	"los,scriptInstr,enemyWalks,obstQueries,"
 	"clipTrans,clipContents,clipContacts,clipGathers,clipCand,clipTrm,"
-	"snapSeq,snapObjects,snapMinionObjects,snapMinionBytes,usSnapWrite,usSnapMinion,wallMs\n";
+	"snapSeq,snapObjects,snapMinionObjects,snapMinionBytes,usSnapWrite,usSnapMinion,wallMs,"
+	"usAvoidGather,usAvoidTree,usAvoidOptimal,avoidCand,avoidObst,avoidWalls,avoidTrees,avoidSkipped,avoidBlocked,avoidDropped,"
+	"usAvoidWalls,avoidTruncated,"
+	"avoidHeld,clipGroupSkipped,"
+	"usGrid,sepPairs,sepSteered,sepCorrections,"
+	"flowSteps,flowCellsBuilt,flowFieldsOpened,flowPromoted,roleFollowers,"	// ai-avoidance: appended after wallMs; WP-A2/A4 after avoidDropped; WP-A1/A3, WP-A5, WP-A6/A7 after those
+	"attacksMelee,attacksMissile,attacksCharge,projectilesAlive,damageEvents,friendlyDamage,painEvents,deaths,ragdollsActive,"
+	"enemyChanges,enemyLost,noEnemy,canHitTraces,attackPosSearches,coverSearches,usCombatTraces,"	// ai-combat (plans/ai-combat/00-PLAN.md §2.4): appended after roleFollowers
+	"usShooterTokens,shooterCandidates,shooterHolders,shooterGrants,shooterYields,shooterExpired,shooterDenied,shooterTests,shooterSniperAsks\n";	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): appended after usCombatTraces
 
 /*
 ================
@@ -2986,6 +3075,33 @@ void idGameLocal::ClearAIStats()
 	aiSecMaxThink = 0;
 	aiSecNextTime = 0;
 }
+
+//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md §3.4, WP-A4)
+/*
+================
+idGameLocal::GrowMaxObstacleRadius
+
+  An actor or moveable has its clip model: fold its flat corner radius (any yaw covered) into the largest one, the
+  figure GetObstacles sizes its gather box with when ai_avoidHorizon is set. Only grows: a body that shrinks later
+  (a crouch) is still inside it.
+================
+*/
+void idGameLocal::GrowMaxObstacleRadius( const idEntity* ent )
+{
+	if( !ent->IsType( idActor::Type ) && !ent->IsType( idMoveable::Type ) )
+	{
+		return;
+	}
+	const idBounds& bounds = ent->GetPhysics()->GetBounds();
+	const float x = Max( -bounds[0].x, bounds[1].x );
+	const float y = Max( -bounds[0].y, bounds[1].y );
+	const float radius = idMath::Sqrt( x * x + y * y );
+	if( radius > maxObstacleRadius )
+	{
+		maxObstacleRadius = radius;
+	}
+}
+//puncho end
 
 /*
 ================
@@ -3025,6 +3141,14 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 	aiHudStats.tic = aiStats;
 	aiHudStats.ents = numEnts;
 	aiHudStats.usTic = usTic;
+	//puncho start - ai-avoidance (WP-A7): the squad table for the overlay row
+	aiHudStats.squads = numAISquads;
+	aiHudStats.squadsPinned = 0;
+	for( int i = 0; i < numAISquads; i++ )
+	{
+		aiHudStats.squadsPinned += aiSquads[i].pinned ? 1 : 0;
+	}
+	//puncho end
 
 	// the 128-tic peak for the HUD
 	aiThinkRing[ framenum & 127 ] = aiStats.usThink;
@@ -3080,7 +3204,7 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 	}
 	if( aiProfileFile != NULL )
 	{
-		char	row[ 1024 ];
+		char	row[ 1536 ];		//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): 91 columns since 08; 1024 could truncate a row of wide values into a malformed line
 		char	snap[ 128 ];
 		const aiTicStats_t& t = aiStats;
 		const snapStats_t& sn = aiHudStats.snap;
@@ -3102,14 +3226,29 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 										"%d,%d,%d,%d,%d,%d,%d,%d,"
 										"%d,%d,%d,%d,"
 										"%d,%d,%d,%d,%d,%d,"
-										"%s,%d\n",
+										"%s,%d,"
+										"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
+										"%d,%d,"
+										"%d,%d,"
+										"%d,%d,%d,%d,"
+										"%d,%d,%d,%d,%d,"
+										"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
+										"%d,%d,%d,%d,%d,%d,%d,%d,%d\n",	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): the shooter tokens
 										framenum, time, usTic, numEnts, t.thinks, t.moveTics,
 										t.usThink, t.usPerceive, t.usScript, t.usMove, t.usMovePath, t.usMoveAvoid, t.usMovePhysics, t.usPath, t.usAnimUpdate, t.usAnimCtl,
 										aiHudStats.worst.usThink, aiHudStats.worstName,
 										t.pathRequests, t.pathFailed, t.nearestGoal, t.routeQueries, t.pathQueued, t.pathAgeMaxMs, t.areaLookups, t.walkPathValid,
 										t.losTraces, t.scriptInstr, t.enemyWalks, t.obstacleQueries,
 										t.clipTranslations, t.clipContents, t.clipContacts, t.clipGathers, t.clipGatherCandidates, t.clipTrmQueries,
-										snap, Sys_Milliseconds() );
+										snap, Sys_Milliseconds(),
+										t.usAvoidGather, t.usAvoidTree, t.usAvoidOptimal, t.avoidCandidates, t.avoidObstacles, t.avoidWallEdges, t.avoidTrees, t.avoidSkipped, t.avoidBlocked, t.avoidActorsDropped,
+										t.usAvoidWalls, t.avoidTruncated,
+										t.avoidHeld, t.clipGroupSkipped,
+										t.usGrid, t.sepPairs, t.sepSteered, t.sepCorrections,
+										t.flowSteps, t.flowCellsBuilt, t.flowFieldsOpened, t.flowPromoted, t.roleFollowers,
+										t.attacksMelee, t.attacksMissile, t.attacksCharge, t.projectilesAlive, t.damageEvents, t.friendlyDamage, t.painEvents, t.deaths, t.ragdollsActive,
+										t.enemyChanges, t.enemyLost, t.noEnemy, t.canHitTraces, t.attackPosSearches, t.coverSearches, t.usCombatTraces,
+										t.usShooterTokens, t.shooterCandidates, t.shooterHolders, t.shooterGrants, t.shooterYields, t.shooterExpired, t.shooterDenied, t.shooterTests, t.shooterSniperAsks );	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md)
 		if( aiProfileLen + len >= ( int )sizeof( aiProfileBuf ) )
 		{
 			FlushAIProfileLog();
@@ -3150,6 +3289,26 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 				s.losTraces * perTic, s.scriptInstr * perTic, s.enemyWalks * perTic, s.obstacleQueries * perTic,
 				s.clipTranslations * perTic, s.clipContents * perTic, s.clipContacts * perTic, s.clipGathers * perTic, s.clipGatherCandidates * perTic, s.clipTrmQueries * perTic,
 				aiHudStats.snap.minionObjects, aiHudStats.snap.objects, aiHudStats.snap.minionBytes, aiHudStats.snap.usWrite * 0.001f, aiHudStats.snap.usMinion * 0.001f );
+		//puncho start - ai-avoidance: the avoid split, same averages
+		Printf( "aistats:   avoid gather %.3f (walls %.3f) tree %.3f optimal %.3f ms | cand %.1f obst %.1f walls %.1f trees %.1f skipped %.1f blocked %.1f dropped %.1f truncated %.1f held %.1f groupSkip %.1f\n",
+				s.usAvoidGather * toMs, s.usAvoidWalls * toMs, s.usAvoidTree * toMs, s.usAvoidOptimal * toMs,
+				s.avoidCandidates * perTic, s.avoidObstacles * perTic, s.avoidWallEdges * perTic, s.avoidTrees * perTic, s.avoidSkipped * perTic, s.avoidBlocked * perTic, s.avoidActorsDropped * perTic,
+				s.avoidTruncated * perTic, s.avoidHeld * perTic, s.clipGroupSkipped * perTic );
+		Printf( "aistats:   crowd grid %.3f ms | sep pairs %.1f steered %.1f corrections %.1f | flow steps %.1f cells %.1f fields %.1f promoted %.1f followers %.1f\n",
+				s.usGrid * toMs, s.sepPairs * perTic, s.sepSteered * perTic, s.sepCorrections * perTic,
+				s.flowSteps * perTic, s.flowCellsBuilt * perTic, s.flowFieldsOpened * perTic, s.flowPromoted * perTic, s.roleFollowers * perTic );
+		//puncho end
+		//puncho start - ai-combat (plans/ai-combat/00-PLAN.md §2.4): the combat loop's events, the same per-tic averages; traces in ms
+		Printf( "aistats:   combat melee %.2f missile %.2f charge %.2f proj %.1f dmg %.2f friendly %.2f pain %.2f deaths %.2f ragdolls %.1f | enemyChg %.2f lost %.2f noEnemy %.1f canHit %.1f atkPos %.2f cover %.2f | traces %.3f ms\n",
+				s.attacksMelee * perTic, s.attacksMissile * perTic, s.attacksCharge * perTic, s.projectilesAlive * perTic, s.damageEvents * perTic, s.friendlyDamage * perTic,
+				s.painEvents * perTic, s.deaths * perTic, s.ragdollsActive * perTic, s.enemyChanges * perTic, s.enemyLost * perTic, s.noEnemy * perTic,
+				s.canHitTraces * perTic, s.attackPosSearches * perTic, s.coverSearches * perTic, s.usCombatTraces * toMs );
+		//puncho end
+		//puncho start - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md §3.10): the shooter tokens, the same per-tic averages; the pass in ms
+		Printf( "aistats:   shooters cand %.1f held %.1f grants %.2f yields %.2f expired %.2f denied %.1f tests %.1f sniper %.1f | tokens %.3f ms\n",
+				s.shooterCandidates * perTic, s.shooterHolders * perTic, s.shooterGrants * perTic, s.shooterYields * perTic, s.shooterExpired * perTic,
+				s.shooterDenied * perTic, s.shooterTests * perTic, s.shooterSniperAsks * perTic, s.usShooterTokens * toMs );
+		//puncho end
 	}
 
 	if( g_aiStats.GetInteger() >= 3 )
@@ -4238,6 +4397,11 @@ bool idGameLocal::SpawnEntityDef( const idDict& args, idEntity** ent, bool setDe
 
 		obj->CallSpawn();
 
+		if( obj->IsType( idEntity::Type ) )
+		{
+			GrowMaxObstacleRadius( static_cast<idEntity*>( obj ) );	//puncho - ai-avoidance (WP-A4)
+		}
+
 		if( ent && obj->IsType( idEntity::Type ) )
 		{
 			*ent = static_cast<idEntity*>( obj );
@@ -4421,6 +4585,14 @@ void idGameLocal::SpawnMapEntities()
 
 		mapEnt = mapFile->GetEntity( i );
 		args = mapEnt->epairs;
+
+		//puncho start - ai-avoidance (WP-A7): the ai_squad marker is map data ReadAISquads took, not an entity
+		if( idStr::Icmp( args.GetString( "classname" ), "ai_squad" ) == 0 )
+		{
+			inhibit++;
+			continue;
+		}
+		//puncho end
 
 		if( !InhibitEntitySpawn( args ) )
 		{

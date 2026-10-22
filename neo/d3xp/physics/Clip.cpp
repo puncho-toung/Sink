@@ -397,6 +397,7 @@ idClipModel::Init
 void idClipModel::Init()
 {
 	enabled = true;
+	group = 0;	//puncho - ai-avoidance (WP-A3)
 	entity = NULL;
 	id = 0;
 	owner = NULL;
@@ -476,6 +477,7 @@ idClipModel::idClipModel
 idClipModel::idClipModel( const idClipModel* model )
 {
 	enabled = model->enabled;
+	group = model->group;	//puncho - ai-avoidance (WP-A3)
 	entity = model->entity;
 	id = model->id;
 	owner = model->owner;
@@ -1101,15 +1103,33 @@ idClip::GetTraceClipModels
   cm->entity == passOwner ( missiles don't clip with owner )
   cm->owner == passEntity ( don't interact with your own missiles )
   cm->owner == passOwner ( don't interact with other missiles from same owner )
+  cm->group == mdl->group ( ai-avoidance WP-A3: a moving model with a collision group passes through its group;
+                            friendly minions out of each other's sweeps, plans/ai-avoidance/00-PLAN.md §3.2 )
 ====================
 */
-int idClip::GetTraceClipModels( const idBounds& bounds, int contentMask, const idEntity* passEntity, idClipModel** clipModelList ) const
+int idClip::GetTraceClipModels( const idBounds& bounds, int contentMask, const idEntity* passEntity, const idClipModel* mdl, idClipModel** clipModelList ) const
 {
 	int i, num;
 	idClipModel*	cm;
 	idEntity* passOwner;
 
 	num = ClipModelsTouchingBounds( bounds, contentMask, clipModelList, MAX_GENTITIES );
+
+	//puncho start - ai-avoidance (WP-A3): one compare per candidate, before the pass entity tests; point traces pass
+	// mdl NULL and are not touched. Counted for the think-loop census
+	if( mdl != NULL && mdl->group != 0 )
+	{
+		const short group = mdl->group;
+		for( i = 0; i < num; i++ )
+		{
+			if( clipModelList[i]->group == group )
+			{
+				clipModelList[i] = NULL;
+				gameLocal.aiStats.clipGroupSkipped++;
+			}
+		}
+	}
+	//puncho end
 
 	if( !passEntity )
 	{
@@ -1129,6 +1149,11 @@ int idClip::GetTraceClipModels( const idBounds& bounds, int contentMask, const i
 	{
 
 		cm = clipModelList[i];
+
+		if( cm == NULL )
+		{
+			continue;	//puncho - ai-avoidance (WP-A3): skipped by the group above
+		}
 
 		// check if we should ignore this entity
 		if( cm->entity == passEntity )
@@ -1290,7 +1315,7 @@ void idClip::TranslationEntities( trace_t& results, const idVec3& start, const i
 		radius = trm->bounds.GetRadius();
 	}
 
-	num = GetTraceClipModels( traceBounds, contentMask, passEntity, clipModelList );
+	num = GetTraceClipModels( traceBounds, contentMask, passEntity, mdl, clipModelList );
 
 	for( i = 0; i < num; i++ )
 	{
@@ -1378,7 +1403,7 @@ bool idClip::Translation( trace_t& results, const idVec3& start, const idVec3& e
 		radius = trm->bounds.GetRadius();
 	}
 
-	num = GetTraceClipModels( traceBounds, contentMask, passEntity, clipModelList );
+	num = GetTraceClipModels( traceBounds, contentMask, passEntity, mdl, clipModelList );
 
 	unsigned int trmQueries = 0;		//puncho - ai-harness: counted in a local, added once after the loop (00-PLAN.md §2.2)
 	for( i = 0; i < num; i++ )
@@ -1469,7 +1494,7 @@ bool idClip::Rotation( trace_t& results, const idVec3& start, const idRotation& 
 		traceBounds.FromBoundsRotation( trm->bounds, start, trmAxis, rotation );
 	}
 
-	num = GetTraceClipModels( traceBounds, contentMask, passEntity, clipModelList );
+	num = GetTraceClipModels( traceBounds, contentMask, passEntity, mdl, clipModelList );
 
 	unsigned int trmQueries = 0;		//puncho - ai-harness: counted in a local, added once after the loop (00-PLAN.md §2.2)
 	for( i = 0; i < num; i++ )
@@ -1597,7 +1622,7 @@ bool idClip::Motion( trace_t& results, const idVec3& start, const idVec3& end, c
 			}
 		}
 
-		num = GetTraceClipModels( traceBounds, contentMask, passEntity, clipModelList );
+		num = GetTraceClipModels( traceBounds, contentMask, passEntity, mdl, clipModelList );
 
 		for( i = 0; i < num; i++ )
 		{
@@ -1662,7 +1687,7 @@ bool idClip::Motion( trace_t& results, const idVec3& start, const idVec3& end, c
 		if( num == -1 )
 		{
 			traceBounds.FromBoundsRotation( trm->bounds, endPosition, trmAxis, endRotation );
-			num = GetTraceClipModels( traceBounds, contentMask, passEntity, clipModelList );
+			num = GetTraceClipModels( traceBounds, contentMask, passEntity, mdl, clipModelList );
 		}
 
 		for( i = 0; i < num; i++ )
@@ -1759,7 +1784,7 @@ int idClip::Contacts( contactInfo_t* contacts, const int maxContacts, const idVe
 		traceBounds.ExpandSelf( depth );
 	}
 
-	num = GetTraceClipModels( traceBounds, contentMask, passEntity, clipModelList );
+	num = GetTraceClipModels( traceBounds, contentMask, passEntity, mdl, clipModelList );
 
 	unsigned int trmQueries = 0;		//puncho - ai-harness: counted in a local, added once after the loop (00-PLAN.md §2.2)
 	for( i = 0; i < num; i++ )
@@ -1846,7 +1871,7 @@ int idClip::Contents( const idVec3& start, const idClipModel* mdl, const idMat3&
 		traceBounds[1] = trm->bounds[1] + start;
 	}
 
-	num = GetTraceClipModels( traceBounds, -1, passEntity, clipModelList );
+	num = GetTraceClipModels( traceBounds, -1, passEntity, mdl, clipModelList );
 
 	for( i = 0; i < num; i++ )
 	{

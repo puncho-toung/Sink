@@ -116,6 +116,7 @@ const idEventDef EV_Thread_DebugCircle( "debugCircle", "vvvfdf" );
 const idEventDef EV_Thread_DebugBounds( "debugBounds", "vvvf" );
 const idEventDef EV_Thread_DrawText( "drawText", "svfvdf" );
 const idEventDef EV_Thread_InfluenceActive( "influenceActive", NULL, 'd' );
+const idEventDef EV_Thread_AISetAvoid( "aiSetAvoid", "ss" );	//puncho - ai-avoidance (WP-A7)
 
 CLASS_DECLARATION( idClass, idThread )
 EVENT( EV_Thread_Execute,				idThread::Event_Execute )
@@ -201,6 +202,7 @@ EVENT( EV_Thread_DebugCircle,			idThread::Event_DebugCircle )
 EVENT( EV_Thread_DebugBounds,			idThread::Event_DebugBounds )
 EVENT( EV_Thread_DrawText,				idThread::Event_DrawText )
 EVENT( EV_Thread_InfluenceActive,		idThread::Event_InfluenceActive )
+EVENT( EV_Thread_AISetAvoid,			idThread::Event_AISetAvoid )	//puncho - ai-avoidance (WP-A7)
 END_CLASS
 
 idThread*			idThread::currentThread = NULL;
@@ -2153,3 +2155,17 @@ void idThread::Event_InfluenceActive()
 		idThread::ReturnInt( false );
 	}
 }
+
+//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md §3.6, WP-A7)
+/*
+================
+idThread::Event_AISetAvoid
+
+  sys.aiSetAvoid( squad, class ): pin an ai_squad's avoidance class ( "full", "light" or "off" ) for a set piece
+================
+*/
+void idThread::Event_AISetAvoid( const char* squad, const char* avoid )
+{
+	gameLocal.SetAISquadAvoid( squad, avoid );
+}
+//puncho end

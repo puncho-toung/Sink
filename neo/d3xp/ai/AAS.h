@@ -68,6 +68,15 @@ typedef struct aasObstacle_s
 	idBounds					expAbsBounds;	// expanded absolute bounds of obstacle
 } aasObstacle_t;
 
+//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md §3.4, WP-A2): one wall-edge obstacle for the obstacle
+// avoidance, the quad GetObstacles (AI_pathing.cpp) built per plan before the cache: the floor edge from verts[1] to
+// verts[0] and two points half an agent width behind it, mitred where the wall chain continues
+typedef struct aasWallQuad_s
+{
+	idVec2						verts[4];
+} aasWallQuad_t;
+//puncho end
+
 class idAASCallback
 {
 public:
@@ -112,6 +121,17 @@ public:
 	virtual int					GetWallEdges( int areaNum, const idBounds& bounds, int travelFlags, int* edges, int maxEdges ) const = 0;
 	// Sort the wall edges to create continuous sequences of walls.
 	virtual void				SortWallEdges( int* edges, int numEdges ) const = 0;
+	//puncho start - ai-avoidance (WP-A2): the wall-edge quads of the areas reachable from areaNum whose bounds touch
+	// bounds, from the per-area cache, for an agent of the given half width. Returns the number of quads found and
+	// fills the first maxQuads of them.
+	virtual int					GetWallQuads( int areaNum, const idBounds& bounds, int travelFlags, float halfWidth, aasWallQuad_t* quads, int maxQuads ) const = 0;
+	// (WP-A6) The exit of areaNum toward goalAreaNum from the flow field of ( goalAreaNum, travelFlags ): the floor edge the walk
+	// reachability the routing cache picks for the area crosses, found once per area and kept until the routing cache is
+	// flushed; the point returned is the one on that edge nearest to origin, a radius in from its ends and a step into the
+	// next area, so a horde spreads over the whole edge instead of filing through its middle. False when the area is the goal
+	// area, the goal is not reachable from it, or the way out is not a walk.
+	virtual bool				FlowFieldExit( int areaNum, const idVec3& origin, float radius, int goalAreaNum, int travelFlags, idVec3& exit, int& exitAreaNum ) const = 0;
+	//puncho end
 	// Get the vertex numbers for an edge.
 	virtual void				GetEdgeVertexNumbers( int edgeNum, int verts[2] ) const = 0;
 	// Get an edge.

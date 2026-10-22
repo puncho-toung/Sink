@@ -108,7 +108,69 @@ struct aiTicStats_t
 	int		clipGathers;			// new idClip counters (measure-plan §2.1)
 	int		clipGatherCandidates;
 	int		clipTrmQueries;
+	//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md): the obstacle-avoidance split and its counts; appended
+	// after the WP-R0 block so the CSV and the summarizer keep their column order
+	int		usAvoidGather;			// Minions::Move::Avoid::Gather: GetObstacles, the AAS wall edges included
+	int		usAvoidTree;			// Minions::Move::Avoid::Tree: BuildPathTree and PrunePathTree
+	int		usAvoidOptimal;			// Minions::Move::Avoid::Optimal: FindOptimalPath
+	int		avoidCandidates;		// clip models ClipModelsTouchingBounds listed for GetObstacles
+	int		avoidObstacles;			// actor and moveable outlines built, the ai_avoidMaxActors cut applied
+	int		avoidWallEdges;			// AAS wall-edge obstacles added
+	int		avoidTrees;				// FindPathAroundObstacles calls that built a tree over obstacles (GetObstacles > 0)
+	int		avoidSkipped;			// CheckObstacleAvoidance calls answered from the cached plan (ai_avoidPeriod, ai_avoidTiers)
+	int		avoidBlocked;			// full plans that ended in a MOVE_STATUS_BLOCKED_BY_* status
+	int		avoidActorsDropped;		// actor obstacles dropped by the ai_avoidMaxActors cap
+	int		usAvoidWalls;			// Minions::Move::Avoid::Walls: the AAS wall-edge quads, inside usAvoidGather (WP-A2)
+	int		avoidTruncated;			// plans where the obstacle array cut actors or walls (WP-A4: 64 slots are the walls')
+	int		avoidHeld;				// skipped tics whose held plan status was not MOVING (WP-A1: the status is held with the plan)
+	int		clipGroupSkipped;		// clip candidates dropped by the collision group in the think loop (WP-A3)
+	int		usGrid;					// Minions::Crowd::Grid: BuildNeighborGrid after the think loop, outside usThink (WP-A5)
+	int		sepPairs;				// neighbour pairs inside the separation ring (WP-A5)
+	int		sepSteered;				// monsters whose heading the separation bent this tic (WP-A5)
+	int		sepCorrections;			// overlap corrections applied this tic, ai_sepBudget at most (WP-A5)
+	int		flowSteps;				// monsters steered by a flow field this tic, no string-pulling and no plan (WP-A6)
+	int		flowCellsBuilt;			// flow field cells filled this tic, one RouteToGoalArea each (WP-A6)
+	int		flowFieldsOpened;		// flow field slots taken for a new goal area this tic (WP-A6)
+	int		flowPromoted;			// stuck followers promoted to one stock plan this tic (WP-A6)
+	int		roleFollowers;			// thinking monsters whose role is follower (WP-A7)
+	//puncho end
+	//puncho start - ai-combat (plans/ai-combat/00-PLAN.md §2.4): the combat loop's events, appended after WP-A7 so the CSV
+	// keeps its column order. Every one is a ++ at the event; the only per-think test is noEnemy's else branch in idAI::Think
+	int		attacksMelee;			// idAI::AttackMelee calls: melee swings (the melee frame command), hit or miss
+	int		attacksMissile;			// idAI::LaunchProjectile calls: one per launch whatever num_projectiles says
+	int		attacksCharge;			// idAI::BeginAttack calls: the leap's attackBegin (frame command or event) and Event_ChargeAttack
+	int		projectilesAlive;		// idProjectile::Think calls: live projectiles this tic, the players' included
+	int		damageEvents;			// idActor::Damage with an idAI victim and damage > 0: hits landed on monsters
+	int		friendlyDamage;			// of those, from an idActor of the victim's team other than itself; must be 0
+	int		painEvents;				// idAI::Pain that set AI_PAIN: an interrupted attack
+	int		deaths;					// idAI::Killed, once per death (past the AI_DEAD test); a gib is that death
+	int		ragdollsActive;			// idPhysics_AF::Evaluate past the at-rest test: articulated figures simulated this tic
+	int		enemyChanges;			// idAI::SetEnemy with a different, non-NULL enemy; the first acquisition (from none) included
+	int		enemyLost;				// idAI::ClearEnemy with an enemy set: EnemyDead, the script's clearEnemy, the monster's own death
+	int		noEnemy;				// thinking monsters, not dead, without an enemy
+	int		canHitTraces;			// Event_CanHitEnemy / CanHitEnemyFromAnim / CanHitEnemyFromJoint calls that reached their traces
+	int		attackPosSearches;		// idAI::MoveToAttackPosition searches (FindNearestGoal)
+	int		coverSearches;			// idAI::MoveToCover searches (FindNearestGoal)
+	int		usCombatTraces;			// Minions::Decide::CombatTraces: idActor::CanSee's trace and the canHit* traces (ai_profile)
+	//puncho end
+	//puncho start - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md §3.10): the shooter tokens, appended after
+	// usCombatTraces so the CSV keeps its column order
+	int		usShooterTokens;		// Minions::Combat::Tokens: idAI::AssignShooterTokens after the think loop, outside usThink like usGrid (ai_profile)
+	int		shooterCandidates;		// monsters the pass ranked this tic
+	int		shooterHolders;			// tokens held after the pass, every pool (read by the next tic)
+	int		shooterGrants;			// tokens the pass handed to a monster that did not hold one: the churn
+	int		shooterYields;			// holders the pass let go because a failed test put them on the decision clock
+	int		shooterExpired;			// holders the pass let go because they stopped asking
+	int		shooterDenied;			// canHitEnemyFromAnim calls ShooterMayTest refused for want of a token (no trace, no GetAnim)
+	int		shooterTests;			// Event_CanHitEnemyFromAnim tests that reached their traces, always counted; part of canHitTraces
+	int		shooterSniperAsks;		// sniper calls ShooterMayTest saw past the touching test, with the tokens on
+	//puncho end
 };
+//puncho start - ai-combat: the block is summed and differenced as an int array (idAI::Think, RunAIStats); the count keeps a
+// member of another size out, a float of the same size still needs the reader's eye (an X-macro list would close that)
+#define AI_TIC_STAT_INTS	78
+compile_time_assert( sizeof( aiTicStats_t ) == AI_TIC_STAT_INTS * sizeof( int ) );
+//puncho end
 
 // The idAI share of the last snapshot idGameLocal::ServerWriteSnapshot wrote (§2.6). Written on the
 // main thread between game frames, copied into aiHudStats_t at the top of the next tic.
@@ -133,6 +195,8 @@ struct aiHudStats_t
 	int				usThinkMax128;			// peak tic usThink over the last 128 tics
 	int				ents;					// entities in the think loop
 	int				usTic;					// timer_think + timer_events, the engine's own whole-tic figure
+	int				squads;					// ai-avoidance (WP-A7): ai_squad markers read from the map, and how many a script pinned
+	int				squadsPinned;
 };
 //puncho end
 

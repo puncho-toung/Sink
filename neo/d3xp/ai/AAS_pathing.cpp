@@ -825,3 +825,450 @@ int idAASLocal::GetWallEdges( int areaNum, const idBounds& bounds, int travelFla
 	}
 	return numEdges;
 }
+
+//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md §3.4, WP-A2): wall quads per area
+
+const int MAX_AREA_WALL_EDGES = 256;	// wall edges one area may have; GetWallEdges listed as many for a whole search box
+
+/*
+============
+idAASLocal::SetupWallCache
+============
+*/
+void idAASLocal::SetupWallCache()
+{
+	areaWalls = ( aasAreaWalls_t* ) Mem_ClearedAlloc( file->GetNumAreas() * sizeof( aasAreaWalls_t ), TAG_AAS );
+	wallEdgeStamp = ( int* ) Mem_ClearedAlloc( 2 * file->GetNumEdges() * sizeof( int ), TAG_AAS );
+	wallQueryStamp = 0;
+	wallQuads.SetGranularity( 256 );
+}
+
+/*
+============
+idAASLocal::ShutdownWallCache
+============
+*/
+void idAASLocal::ShutdownWallCache()
+{
+	Mem_Free( areaWalls );
+	areaWalls = NULL;
+	Mem_Free( wallEdgeStamp );
+	wallEdgeStamp = NULL;
+	wallQuads.Clear();
+}
+
+/*
+============
+idAASLocal::FlushWallCache
+
+  Every area is built again on its next query. The quads come from the file's faces, edges and reachabilities, which
+  no area state change touches today; EnableArea and DisableArea flush here as they flush the routing cache, so a
+  build that one day reads the area flags stays right.
+============
+*/
+void idAASLocal::FlushWallCache()
+{
+	if( areaWalls == NULL )
+	{
+		return;
+	}
+	memset( areaWalls, 0, file->GetNumAreas() * sizeof( aasAreaWalls_t ) );
+	wallQuads.SetNum( 0 );
+}
+
+/*
+============
+idAASLocal::BuildAreaWalls
+
+  The wall edges of one area as GetWallEdges finds them (a floor edge no other floor face of the area shares and no
+  reachability with the travel flags uses), chained with SortWallEdges, and the quad GetObstacles (AI_pathing.cpp)
+  made per edge, kept at zero agent width with the back corners' direction per unit of half width so one cache serves
+  every monster size. A chain closes within the area only: an edge whose wall goes on in the next area is extended a
+  unit at that end instead of mitred, as the stock build did where its list ended.
+============
+*/
+void idAASLocal::BuildAreaWalls( int areaNum, int travelFlags ) const
+{
+	int i, j, k, l, face1Num, face2Num, edge1Num, edge2Num, absEdge1Num, numEdges;
+	int edges[MAX_AREA_WALL_EDGES], verts[MAX_AREA_WALL_EDGES][2];
+	idVec2 dirs[MAX_AREA_WALL_EDGES], edgeNormal;
+	const aasArea_t* area;
+	const aasFace_t* face1, *face2;
+	idReachability* reach;
+	idVec3 start, end;
+
+	area = &file->GetArea( areaNum );
+	numEdges = 0;
+
+	for( i = 0; i < area->numFaces && numEdges < MAX_AREA_WALL_EDGES; i++ )
+	{
+		face1Num = file->GetFaceIndex( area->firstFace + i );
+		face1 = &file->GetFace( abs( face1Num ) );
+
+		if( !( face1->flags & FACE_FLOOR ) )
+		{
+			continue;
+		}
+
+		for( j = 0; j < face1->numEdges && numEdges < MAX_AREA_WALL_EDGES; j++ )
+		{
+			edge1Num = file->GetEdgeIndex( face1->firstEdge + j );
+			absEdge1Num = abs( edge1Num );
+
+			// test if the edge is shared by another floor face of this area
+			for( k = 0; k < area->numFaces; k++ )
+			{
+				if( k == i )
+				{
+					continue;
+				}
+				face2Num = file->GetFaceIndex( area->firstFace + k );
+				face2 = &file->GetFace( abs( face2Num ) );
+
+				if( !( face2->flags & FACE_FLOOR ) )
+				{
+					continue;
+				}
+
+				for( l = 0; l < face2->numEdges; l++ )
+				{
+					edge2Num = abs( file->GetEdgeIndex( face2->firstEdge + l ) );
+					if( edge2Num == absEdge1Num )
+					{
+						break;
+					}
+				}
+				if( l < face2->numEdges )
+				{
+					break;
+				}
+			}
+			if( k < area->numFaces )
+			{
+				continue;
+			}
+
+			// test if the edge is used by a reachability
+			for( reach = area->reach; reach; reach = reach->next )
+			{
+				if( reach->travelType & travelFlags )
+				{
+					if( reach->edgeNum == absEdge1Num )
+					{
+						break;
+					}
+				}
+			}
+			if( reach )
+			{
+				continue;
+			}
+
+			edges[numEdges++] = edge1Num;
+		}
+	}
+	if( numEdges == MAX_AREA_WALL_EDGES )
+	{
+		common->DWarning( "idAASLocal::BuildAreaWalls: area %d of %s has more than %d wall edges", areaNum, file->GetName(), MAX_AREA_WALL_EDGES );
+	}
+
+	SortWallEdges( edges, numEdges );
+
+	for( i = 0; i < numEdges; i++ )
+	{
+		GetEdge( edges[i], start, end );
+		GetEdgeVertexNumbers( edges[i], verts[i] );
+		dirs[i] = end.ToVec2() - start.ToVec2();
+		dirs[i].Normalize();
+	}
+
+	aasAreaWalls_t& walls = areaWalls[areaNum];
+	walls.firstQuad = wallQuads.Num();
+	walls.numQuads = numEdges;
+	walls.travelFlags = travelFlags;
+
+	for( i = 0; i < numEdges; i++ )
+	{
+		GetEdge( edges[i], start, end );
+		edgeNormal.Set( dirs[i].y, -dirs[i].x );
+
+		aasCachedWallQuad_t& quad = wallQuads.Alloc();
+		quad.edgeNum = edges[i];
+		quad.verts[0] = end.ToVec2();
+		quad.verts[1] = start.ToVec2();
+		quad.verts[2] = start.ToVec2() - dirs[i];
+		quad.verts[3] = end.ToVec2() + dirs[i];
+		quad.back[0] = -edgeNormal;
+		quad.back[1] = -edgeNormal;
+		// a chained corner is mitred with the neighbour's normal, a free end is extended along the edge
+		if( i > 0 && verts[i - 1][1] == verts[i][0] )
+		{
+			quad.back[0] -= idVec2( dirs[i - 1].y, -dirs[i - 1].x );
+		}
+		else
+		{
+			quad.verts[1] -= dirs[i];
+		}
+		if( i < numEdges - 1 && verts[i][1] == verts[i + 1][0] )
+		{
+			quad.back[1] -= idVec2( dirs[i + 1].y, -dirs[i + 1].x );
+		}
+		else
+		{
+			quad.verts[0] += dirs[i];
+		}
+	}
+}
+
+/*
+============
+idAASLocal::GetWallQuads
+
+  The same walk over the areas as GetWallEdges, each area's quads from the cache. A query stamp per signed edge
+  drops an edge two areas both list, as GetWallEdges' list test did, without a search.
+============
+*/
+int idAASLocal::GetWallQuads( int areaNum, const idBounds& bounds, int travelFlags, float halfWidth, aasWallQuad_t* quads, int maxQuads ) const
+{
+	int i, numQuads, stampIndex;
+	int* areaQueue, curArea, queueStart, queueEnd;
+	byte* areasVisited;
+	const aasArea_t* area;
+	idReachability* reach;
+
+	if( !file )
+	{
+		return 0;
+	}
+
+	wallQueryStamp++;
+	if( wallQueryStamp == INT_MAX )
+	{
+		memset( wallEdgeStamp, 0, 2 * file->GetNumEdges() * sizeof( int ) );
+		wallQueryStamp = 1;
+	}
+
+	numQuads = 0;
+
+	areasVisited = ( byte* ) _alloca16( file->GetNumAreas() );
+	memset( areasVisited, 0, file->GetNumAreas() * sizeof( byte ) );
+	areaQueue = ( int* ) _alloca16( file->GetNumAreas() * sizeof( int ) );
+
+	queueStart = -1;
+	queueEnd = 0;
+	areaQueue[0] = areaNum;
+	areasVisited[areaNum] = true;
+
+	for( curArea = areaNum; queueStart < queueEnd; curArea = areaQueue[++queueStart] )
+	{
+		if( areaWalls[curArea].travelFlags != travelFlags )
+		{
+			BuildAreaWalls( curArea, travelFlags );
+		}
+		const aasAreaWalls_t& walls = areaWalls[curArea];
+		for( i = 0; i < walls.numQuads; i++ )
+		{
+			const aasCachedWallQuad_t& quad = wallQuads[walls.firstQuad + i];
+			stampIndex = ( abs( quad.edgeNum ) << 1 ) | INT32_SIGNBITSET( quad.edgeNum );
+			if( wallEdgeStamp[stampIndex] == wallQueryStamp )
+			{
+				continue;
+			}
+			wallEdgeStamp[stampIndex] = wallQueryStamp;
+			if( numQuads < maxQuads )
+			{
+				quads[numQuads].verts[0] = quad.verts[0];
+				quads[numQuads].verts[1] = quad.verts[1];
+				quads[numQuads].verts[2] = quad.verts[2] + quad.back[0] * halfWidth;
+				quads[numQuads].verts[3] = quad.verts[3] + quad.back[1] * halfWidth;
+			}
+			numQuads++;
+		}
+
+		// add new areas to the queue
+		area = &file->GetArea( curArea );
+		for( reach = area->reach; reach; reach = reach->next )
+		{
+			if( reach->travelType & travelFlags )
+			{
+				// if the area the reachability leads to hasn't been visited yet and the area bounds touch the search bounds
+				if( !areasVisited[reach->toAreaNum] && bounds.IntersectsBounds( file->GetArea( reach->toAreaNum ).bounds ) )
+				{
+					areaQueue[queueEnd++] = reach->toAreaNum;
+					areasVisited[reach->toAreaNum] = true;
+				}
+			}
+		}
+	}
+	return numQuads;
+}
+//puncho end
+
+//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md §3.5, WP-A6): flow fields per goal area
+
+/*
+============
+idAASLocal::SetupFlowFields
+
+  The cells of every slot at once, with the file (audit M4): a slot takeover inside a think is then a stamp bump, not an
+  allocation or a memset of numAreas cells. MAX_AAS_FLOW_FIELDS * numAreas * sizeof( aasFlowCell_t ), 44 B per area per slot
+============
+*/
+void idAASLocal::SetupFlowFields()
+{
+	const int numAreas = file->GetNumAreas();
+
+	flowCells = ( aasFlowCell_t* ) Mem_ClearedAlloc( MAX_AAS_FLOW_FIELDS * numAreas * sizeof( aasFlowCell_t ), TAG_AAS );
+	memset( flowFields, 0, sizeof( flowFields ) );
+	for( int i = 0; i < MAX_AAS_FLOW_FIELDS; i++ )
+	{
+		flowFields[i].cells = flowCells + i * numAreas;
+	}
+	flowUseCount = 0;
+}
+
+/*
+============
+idAASLocal::ShutdownFlowFields
+============
+*/
+void idAASLocal::ShutdownFlowFields()
+{
+	Mem_Free( flowCells );
+	flowCells = NULL;
+	memset( flowFields, 0, sizeof( flowFields ) );
+}
+
+/*
+============
+idAASLocal::FlushFlowFields
+
+  Every slot is free again and its cells are refilled on the next ask. Called where the routing cache is deleted, since
+  a cell is one of its answers, when a kept AAS is initialised for the next game (audit M5) and at the use count's wrap;
+  the cell memory stays allocated for the map.
+============
+*/
+void idAASLocal::FlushFlowFields() const
+{
+	for( int i = 0; i < MAX_AAS_FLOW_FIELDS; i++ )
+	{
+		flowFields[i].goalAreaNum = 0;
+		flowFields[i].travelFlags = 0;
+		flowFields[i].lastUse = 0;
+	}
+}
+
+/*
+============
+idAASLocal::FlowFieldExit
+
+  The field of ( goalAreaNum, travelFlags ) from the 16 slots, the least recently read slot taken over for a new goal;
+  the cell of areaNum is filled with one RouteToGoalArea on its first ask, so a horde to one goal pays O( areas touched )
+  once and a table read per minion per tic after that. Only a walk reachability is an exit: any other travel type is the
+  stock path's job (jumps, ledges), as is the goal area itself and an unreachable goal. The point handed back is the one on
+  the crossed floor edge nearest to the asker, a radius in from the edge's ends and FLOW_EXIT_STEP into the next area: a
+  horde spreads over the edge, and a body on the edge still has something ahead of it to turn toward.
+============
+*/
+const float FLOW_EXIT_STEP = 8.0f;
+
+bool idAASLocal::FlowFieldExit( int areaNum, const idVec3& origin, float radius, int goalAreaNum, int travelFlags, idVec3& exit, int& exitAreaNum ) const
+{
+	int i, oldest;
+	aasFlowField_t* field;
+
+	if( file == NULL || areaNum <= 0 || areaNum >= file->GetNumAreas() || goalAreaNum <= 0 || goalAreaNum >= file->GetNumAreas() || areaNum == goalAreaNum )
+	{
+		return false;
+	}
+
+	// the LRU clock is this AAS's own count of asks (audit M5): game time restarts at 0 on a load while a kept AAS keeps its
+	// slots, and slots stamped with framenum then won every comparison for minutes. The one wrap in a very long session
+	// hands every slot back instead of comparing across it
+	if( flowUseCount == INT_MAX )
+	{
+		FlushFlowFields();
+		flowUseCount = 0;
+	}
+	flowUseCount++;
+
+	field = NULL;
+	oldest = 0;
+	for( i = 0; i < MAX_AAS_FLOW_FIELDS; i++ )
+	{
+		if( flowFields[i].goalAreaNum == goalAreaNum && flowFields[i].travelFlags == travelFlags )
+		{
+			field = &flowFields[i];
+			break;
+		}
+		if( flowFields[i].lastUse < flowFields[oldest].lastUse )
+		{
+			oldest = i;
+		}
+	}
+	if( field == NULL )
+	{
+		field = &flowFields[oldest];
+		field->goalAreaNum = goalAreaNum;
+		field->travelFlags = travelFlags;
+		// a new stamp unbuilds every cell without touching one (audit M4); the memset is at the wrap, once per INT_MAX takeovers
+		if( field->stamp == INT_MAX )
+		{
+			memset( field->cells, 0, file->GetNumAreas() * sizeof( aasFlowCell_t ) );
+			field->stamp = 0;
+		}
+		field->stamp++;
+		gameLocal.aiStats.flowFieldsOpened++;
+	}
+	field->lastUse = flowUseCount;
+
+	aasFlowCell_t& cell = field->cells[areaNum];
+	if( cell.stamp != field->stamp )
+	{
+		int travelTime;
+		idReachability* reach;
+
+		cell.stamp = field->stamp;
+		cell.toAreaNum = -1;
+		if( RouteToGoalArea( areaNum, origin, goalAreaNum, travelFlags, travelTime, &reach ) && reach != NULL && reach->travelType == TFL_WALK )
+		{
+			if( reach->edgeNum != 0 )
+			{
+				GetEdge( reach->edgeNum, cell.edge[0], cell.edge[1] );
+			}
+			else
+			{
+				cell.edge[0] = cell.edge[1] = reach->end;
+			}
+			cell.cross = reach->end - reach->start;
+			cell.cross.z = 0.0f;
+			if( cell.cross.Normalize() < 0.001f )
+			{
+				cell.cross.Zero();
+			}
+			cell.toAreaNum = reach->toAreaNum;
+		}
+		gameLocal.aiStats.flowCellsBuilt++;
+	}
+	if( cell.toAreaNum < 0 )
+	{
+		return false;
+	}
+
+	// the nearest point of the edge, kept a radius from its ends when the edge is long enough for that, then a step across
+	idVec3 edgeDir = cell.edge[1] - cell.edge[0];
+	const float edgeLen = edgeDir.Normalize();
+	float along = ( origin - cell.edge[0] ) * edgeDir;
+	if( edgeLen > 2.0f * radius )
+	{
+		along = idMath::ClampFloat( radius, edgeLen - radius, along );
+	}
+	else
+	{
+		along = edgeLen * 0.5f;
+	}
+	exit = cell.edge[0] + edgeDir * along + cell.cross * FLOW_EXIT_STEP;
+	exitAreaNum = cell.toAreaNum;
+	return true;
+}
+//puncho end

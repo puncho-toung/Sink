@@ -86,6 +86,44 @@ private:
 };
 
 
+//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md §3.4, WP-A2): the wall-edge quads of an area, built on the
+// first query for the area and its travel flags and kept for the map
+typedef struct aasAreaWalls_s
+{
+	int							firstQuad;				// into wallQuads
+	int							numQuads;
+	int							travelFlags;			// the flags the quads were built against; 0 = not built
+} aasAreaWalls_t;
+
+typedef struct aasCachedWallQuad_s
+{
+	int							edgeNum;				// the signed AAS edge, the key of the per-query stamp
+	idVec2						verts[4];				// the quad at zero agent width: end, start, start - dir, end + dir
+	idVec2						back[2];				// added to verts[2] and verts[3] per unit of the agent's half width
+} aasCachedWallQuad_t;
+
+// (plans/ai-avoidance/00-PLAN.md §3.5, WP-A6): one direction field per ( goal area, travel flags ), a thin index over the
+// routing cache (plan D5): a cell holds what RouteToGoalArea answered for its area, filled on the first ask
+typedef struct aasFlowCell_s
+{
+	idVec3						edge[2];				// the floor edge the walk reachability out of the area crosses (both its end point when it names none)
+	idVec3						cross;					// unit direction from the reachability's start to its end: into the next area
+	int							toAreaNum;				// the area it leads to; -1 = no walk route from here
+	int							stamp;					// the field's stamp when the cell was filled: unbuilt while they differ (audit M4)
+} aasFlowCell_t;
+
+typedef struct aasFlowField_s
+{
+	int							goalAreaNum;			// 0 = free slot
+	int							travelFlags;
+	int							lastUse;				// flowUseCount at the last read, the LRU key: the AAS's own count, never game time (audit M5)
+	int							stamp;					// bumped on every takeover of the slot: no cell is touched until it is asked for
+	aasFlowCell_t* 				cells;					// numAreas of them, a slice of flowCells (SetupFlowFields)
+} aasFlowField_t;
+
+const int MAX_AAS_FLOW_FIELDS = 16;
+//puncho end
+
 class idAASLocal : public idAAS
 {
 public:
@@ -107,6 +145,8 @@ public:
 	virtual const idPlane& 		GetPlane( int planeNum ) const;
 	virtual int					GetWallEdges( int areaNum, const idBounds& bounds, int travelFlags, int* edges, int maxEdges ) const;
 	virtual void				SortWallEdges( int* edges, int numEdges ) const;
+	virtual int					GetWallQuads( int areaNum, const idBounds& bounds, int travelFlags, float halfWidth, aasWallQuad_t* quads, int maxQuads ) const;	//puncho - ai-avoidance
+	virtual bool				FlowFieldExit( int areaNum, const idVec3& origin, float radius, int goalAreaNum, int travelFlags, idVec3& exit, int& exitAreaNum ) const;	//puncho - ai-avoidance (WP-A6)
 	virtual void				GetEdgeVertexNumbers( int edgeNum, int verts[2] ) const;
 	virtual void				GetEdge( int edgeNum, idVec3& start, idVec3& end ) const;
 	virtual bool				SetAreaState( const idBounds& bounds, const int areaContents, bool disabled );
@@ -142,6 +182,17 @@ private:	// routing data
 	mutable int					totalCacheMemory;		// total cache memory used
 	idList<idRoutingObstacle*, TAG_AAS>	obstacleList;			// list with obstacles
 
+private:	// wall quads per area (ai-avoidance WP-A2), filled from const queries like the routing cache
+	mutable aasAreaWalls_t* 	areaWalls;				// one per area, cleared memory until the first query
+	mutable idList<aasCachedWallQuad_t, TAG_AAS>	wallQuads;	// the pool the areas index into
+	mutable int* 				wallEdgeStamp;			// per signed edge (2 * numEdges), the query that last listed it
+	mutable int					wallQueryStamp;			// the current query
+
+private:	// flow fields per goal area (ai-avoidance WP-A6), filled from const queries like the routing cache they index
+	mutable aasFlowField_t		flowFields[MAX_AAS_FLOW_FIELDS];
+	mutable aasFlowCell_t* 		flowCells;				// MAX_AAS_FLOW_FIELDS * numAreas cells, allocated with the file (audit M4)
+	mutable int					flowUseCount;			// one per FlowFieldExit, the LRU clock: a kept AAS or a restored framenum cannot skew it (audit M5)
+
 private:	// routing
 	bool						SetupRouting();
 	void						ShutdownRouting();
@@ -170,6 +221,15 @@ private:	// routing
 	void						SetObstacleState( const idRoutingObstacle* obstacle, bool enable );
 
 private:	// pathing
+	//puncho start - ai-avoidance (WP-A2)
+	void						SetupWallCache();
+	void						ShutdownWallCache();
+	void						FlushWallCache();
+	void						BuildAreaWalls( int areaNum, int travelFlags ) const;
+	void						SetupFlowFields();		// WP-A6
+	void						ShutdownFlowFields();	// WP-A6
+	void						FlushFlowFields() const;	// WP-A6: with the routing cache, on a kept AAS, at the use count's wrap
+	//puncho end
 	bool						EdgeSplitPoint( idVec3& split, int edgeNum, const idPlane& plane ) const;
 	bool						FloorEdgeSplitPoint( idVec3& split, int areaNum, const idPlane& splitPlane, const idPlane& frontPlane, bool closest ) const;
 	idVec3						SubSampleWalkPath( int areaNum, const idVec3& origin, const idVec3& start, const idVec3& end, int travelFlags, int& endAreaNum ) const;

@@ -94,6 +94,46 @@ extern idCVar	ai_profile;
 extern idCVar	g_aiStats;
 extern idCVar	ai_profileLog;
 //puncho end
+//puncho start - ai-combat
+extern idCVar	ai_benchSeed;
+//puncho end
+//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part A)
+extern idCVar	ai_canHitRetryMs;
+extern idCVar	ai_attackTierScale;
+//puncho end
+//puncho start - ai-combat (plans/ai-combat/07-REVIEW-c8.md M1)
+extern idCVar	ai_canHitBoxTest;
+//puncho end
+//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part C)
+extern idCVar	ai_accuracyScale;
+//puncho end
+//puncho start - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md, WP-T1)
+extern idCVar	ai_shooterTokens;
+extern idCVar	ai_shooterTokensPlayer;
+extern idCVar	ai_shooterTokensTeam;
+extern idCVar	ai_shooterTokenHoldMs;
+//puncho end
+//puncho start - ai-avoidance
+extern idCVar	ai_avoidPeriod;
+extern idCVar	ai_avoidTiers;
+extern idCVar	ai_avoidPeriodClose;
+extern idCVar	ai_avoidPeriodSeen;
+extern idCVar	ai_avoidPeriodUnseen;
+extern idCVar	ai_avoidBlockedReplan;
+extern idCVar	ai_avoidTierClose;
+extern idCVar	ai_avoidTierSeen;
+extern idCVar	ai_collisionGroup;
+extern idCVar	ai_neighborGrid;
+extern idCVar	ai_separation;
+extern idCVar	ai_sepRadius;
+extern idCVar	ai_sepCorrect;
+extern idCVar	ai_sepBudget;
+extern idCVar	ai_flowField;
+extern idCVar	ai_avoidMaxActors;
+extern idCVar	ai_avoidHorizon;
+extern idCVar	ai_avoidInflate;
+extern idCVar	ai_avoidWallCache;
+//puncho end
 
 extern idCVar	g_dvTime;
 extern idCVar	g_dvAmplitude;

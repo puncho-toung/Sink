@@ -105,6 +105,7 @@ const idEventDef AI_PredictEnemyPos( "predictEnemyPos", "f", 'v' );
 const idEventDef AI_CanHitEnemy( "canHitEnemy", NULL, 'd' );
 const idEventDef AI_CanHitEnemyFromAnim( "canHitEnemyFromAnim", "s", 'd' );
 const idEventDef AI_CanHitEnemyFromJoint( "canHitEnemyFromJoint", "s", 'd' );
+const idEventDef AI_GetCombatKey( "getCombatKey", "sf", 'f' );	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §C)
 const idEventDef AI_EnemyPositionValid( "enemyPositionValid", NULL, 'd' );
 const idEventDef AI_ChargeAttack( "chargeAttack", "s" );
 const idEventDef AI_TestChargeAttack( "testChargeAttack", NULL, 'f' );
@@ -246,6 +247,7 @@ EVENT( AI_PredictEnemyPos,					idAI::Event_PredictEnemyPos )
 EVENT( AI_CanHitEnemy,						idAI::Event_CanHitEnemy )
 EVENT( AI_CanHitEnemyFromAnim,				idAI::Event_CanHitEnemyFromAnim )
 EVENT( AI_CanHitEnemyFromJoint,				idAI::Event_CanHitEnemyFromJoint )
+EVENT( AI_GetCombatKey,						idAI::Event_GetCombatKey )	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §C)
 EVENT( AI_EnemyPositionValid,				idAI::Event_EnemyPositionValid )
 EVENT( AI_ChargeAttack,						idAI::Event_ChargeAttack )
 EVENT( AI_TestChargeAttack,					idAI::Event_TestChargeAttack )
@@ -791,7 +793,7 @@ void idAI::Event_LaunchProjectile( const char* entityDefName )
 	gameLocal.clip.Translation( tr, start, muzzle, projClip, projClip->GetAxis(), MASK_SHOT_RENDERMODEL, this );
 	muzzle = tr.endpos;
 
-	GetAimDir( muzzle, enemy.GetEntity(), this, dir );
+	GetAimDir( muzzle, enemy.GetEntity(), this, MASK_SHOT_RENDERMODEL, dir );	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §B): the launch aims against meshes, as stock
 
 	proj->Launch( muzzle, dir, vec3_origin );
 
@@ -1763,9 +1765,19 @@ void idAI::Event_CanHitEnemy()
 
 	// expand the ray out as far as possible so we can detect anything behind the enemy
 	dir = toPos - eye;
-	dir.Normalize();
-	toPos = eye + dir * MAX_WORLD_SIZE;
-	gameLocal.clip.TracePoint( tr, eye, toPos, MASK_SHOT_BOUNDINGBOX, this );
+	//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §B): not as far as possible but 128 units past the
+	// enemy's eye: that still finds whatever stands just behind it, and the ray no longer sweeps the map beyond
+	const float distance = dir.Normalize();
+	toPos = eye + dir * ( distance + 128.0f );
+	//puncho end
+	//puncho start - ai-combat (plans/ai-combat/00-PLAN.md §2.4): the second trace family of combat, outside losTraces; timed with ai_profile only
+	gameLocal.aiStats.canHitTraces++;
+	{
+		PROFILE_STATIC_DESC( descCombatTraces, "Minions::Decide::CombatTraces", ::Optick::Category::AI );
+		idAIProfileScope scopeTraces( gameLocal.aiStats.usCombatTraces, descCombatTraces );
+		gameLocal.clip.TracePoint( tr, eye, toPos, MASK_SHOT_BOUNDINGBOX, this );
+	}
+	//puncho end
 	hit = gameLocal.GetTraceEntity( tr );
 	if( tr.fraction >= 1.0f || ( hit == enemyEnt ) )
 	{
@@ -1807,6 +1819,33 @@ void idAI::Event_CanHitEnemyFromAnim( const char* animname )
 		return;
 	}
 
+	//puncho start - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md §3.4; 07-REVIEW m1, M3): an enemy in touching
+	// range gets the stock ray below whatever the token or the clock say: one cheap ray, and only as many as fit around a
+	// body. Otherwise the shooter token first (a managed monster without one makes no test), then the decision clock of
+	// 07 §A: a blocked shot is not tested again for CanHitRetryMs, keyed on the body, not the anim (chooseAnim hands a
+	// random variant name every tic), except on the tic of the failure itself, so a second launch anim is still tested
+	// that tic as in stock. Both skip GetAnim (a name scan, and a random draw for a base name). A yes is never cached (the
+	// launch re-solves the aim); SetEnemy, ClearEnemy and Pain clear canHitFailTime
+	const bool touching = enemyEnt->GetPhysics()->GetAbsBounds().IntersectsBounds( physicsObj.GetAbsBounds().Expand( 16.0f ) );
+	if( !touching )
+	{
+		if( !ShooterMayTest() )
+		{
+			idThread::ReturnInt( false );
+			return;
+		}
+		if( canHitFailTime >= 0 && canHitFailTime != gameLocal.time )
+		{
+			const int retry = CanHitRetryMs();
+			if( retry > 0 && gameLocal.time - canHitFailTime < retry )
+			{
+				idThread::ReturnInt( false );
+				return;
+			}
+		}
+	}
+	//puncho end
+
 	anim = GetAnim( ANIMCHANNEL_LEGS, animname );
 	if( !anim )
 	{
@@ -1815,7 +1854,7 @@ void idAI::Event_CanHitEnemyFromAnim( const char* animname )
 	}
 
 	// just do a ray test if close enough
-	if( enemyEnt->GetPhysics()->GetAbsBounds().IntersectsBounds( physicsObj.GetAbsBounds().Expand( 16.0f ) ) )
+	if( touching )	//puncho - ai-combat (07-REVIEW m1): tested above, before the gates
 	{
 		Event_CanHitEnemy();
 		return;
@@ -1857,15 +1896,33 @@ void idAI::Event_CanHitEnemyFromAnim( const char* animname )
 		start = ownerBounds.GetCenter();
 	}
 
-	gameLocal.clip.Translation( tr, start, fromPos, projectileClipModel, mat3_identity, MASK_SHOT_RENDERMODEL, this );
-	fromPos = tr.endpos;
+	//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §B): the test mask. Boxes unless fire_near_friends:
+	// a friend's box in the arc says blocked, so fewer shots go through friends, and idClip runs no render-model trace.
+	// The launch still aims against meshes (LaunchProjectile, Event_LaunchMissile); fire_near_friends 1 is the stock test
+	const int testMask = ( fireNearFriends || !ai_canHitBoxTest.GetBool() ) ? MASK_SHOT_RENDERMODEL : MASK_SHOT_BOUNDINGBOX;	//puncho - ai-combat (plans/ai-combat/07-REVIEW-c8.md M1): ai_canHitBoxTest 0 gives every monster the stock test
+	//puncho end
 
-	if( GetAimDir( fromPos, enemy.GetEntity(), this, dir ) )
+	//puncho start - ai-combat (plans/ai-combat/00-PLAN.md §2.4): the sweep to the launch point and the trajectory test's traces, counted once
+	bool canHit;
+	gameLocal.aiStats.canHitTraces++;
+	gameLocal.aiStats.shooterTests++;	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): the projectile tests apart from canHitEnemy's rays
 	{
+		PROFILE_STATIC_DESC( descCombatTraces, "Minions::Decide::CombatTraces", ::Optick::Category::AI );
+		idAIProfileScope scopeTraces( gameLocal.aiStats.usCombatTraces, descCombatTraces );
+		gameLocal.clip.Translation( tr, start, fromPos, projectileClipModel, mat3_identity, testMask, this );	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §B)
+		fromPos = tr.endpos;
+		canHit = GetAimDir( fromPos, enemy.GetEntity(), this, testMask, dir );	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §B)
+	}
+	//puncho end
+
+	if( canHit )
+	{
+		shooterPassTime = gameLocal.time;	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): a holder whose test said yes keeps its token through the attack (SHOOTER_LEASE_MS)
 		idThread::ReturnInt( true );
 	}
 	else
 	{
+		canHitFailTime = gameLocal.time;	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §A): the retry interval starts here
 		idThread::ReturnInt( false );
 	}
 }
@@ -1936,10 +1993,16 @@ void idAI::Event_CanHitEnemyFromJoint( const char* jointname )
 		start = ownerBounds.GetCenter();
 	}
 
-	gameLocal.clip.Translation( tr, start, muzzle, projectileClipModel, mat3_identity, MASK_SHOT_BOUNDINGBOX, this );
-	muzzle = tr.endpos;
-
-	gameLocal.clip.Translation( tr, muzzle, toPos, projectileClipModel, mat3_identity, MASK_SHOT_BOUNDINGBOX, this );
+	//puncho start - ai-combat (plans/ai-combat/00-PLAN.md §2.4): two sweeps, counted once
+	gameLocal.aiStats.canHitTraces++;
+	{
+		PROFILE_STATIC_DESC( descCombatTraces, "Minions::Decide::CombatTraces", ::Optick::Category::AI );
+		idAIProfileScope scopeTraces( gameLocal.aiStats.usCombatTraces, descCombatTraces );
+		gameLocal.clip.Translation( tr, start, muzzle, projectileClipModel, mat3_identity, MASK_SHOT_BOUNDINGBOX, this );
+		muzzle = tr.endpos;
+		gameLocal.clip.Translation( tr, muzzle, toPos, projectileClipModel, mat3_identity, MASK_SHOT_BOUNDINGBOX, this );
+	}
+	//puncho end
 	if( tr.fraction >= 1.0f || ( gameLocal.GetTraceEntity( tr ) == enemyEnt ) )
 	{
 		lastHitCheckResult = true;
@@ -1951,6 +2014,21 @@ void idAI::Event_CanHitEnemyFromJoint( const char* jointname )
 
 	idThread::ReturnInt( lastHitCheckResult );
 }
+
+//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §C)
+/*
+=====================
+idAI::Event_GetCombatKey
+
+  getCombatKey( key, default ): the squad's override, else the def key, else default. For a script's init, not its
+  per-frame loop: it walks the lever table and the dict each call
+=====================
+*/
+void idAI::Event_GetCombatKey( const char* key, float def )
+{
+	idThread::ReturnFloat( GetCombatKey( key, def ) );
+}
+//puncho end
 
 /*
 =====================
