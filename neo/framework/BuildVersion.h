@@ -31,6 +31,7 @@ const int BUILD_NUMBER_SAVE_VERSION_CHANGE                      = 1401;
 const int BUILD_NUMBER_SAVE_VERSION_SCRIPT_CHANGES1             = 1402;
 const int BUILD_NUMBER_SAVE_VERSION_LIGHT_MODELTARGET_CHANGE    = 1403;
 const int BUILD_NUMBER_SAVE_VERSION_MATH_LIGHTS                 = 1404; 
+const int BUILD_NUMBER_SAVE_VERSION_ENTITY_BITS_14              = 1405;		// 14-bit entity index: spawn ids in saves pack 18 + 14 bits (d3xp/Game_local.h)
 
-const int BUILD_NUMBER = BUILD_NUMBER_SAVE_VERSION_MATH_LIGHTS;         
+const int BUILD_NUMBER = BUILD_NUMBER_SAVE_VERSION_ENTITY_BITS_14;
 const int BUILD_NUMBER_MINOR = 0;

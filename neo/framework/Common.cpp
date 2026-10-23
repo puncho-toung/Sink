@@ -1350,7 +1350,9 @@ void idCommonLocal::Init( int argc, const char* const* argv, const char* cmdline
 		// spawn the game thread, even if we are going to run without SMP
 		// one meg stack, because it can parse decls from gui surfaces (unfortunately)
 		// use a lower priority so job threads can run on the same core
-		gameThread.StartWorkerThread( "Game/Draw", CORE_1B, THREAD_BELOW_NORMAL, 0x100000 );
+		// 4 MB: the game's clip and radius queries keep lists of MAX_GENTITIES (16384) pointers on
+		// the stack, 128 KB each and several deep inside one AI think (D3-Sink 2026-10-23)
+		gameThread.StartWorkerThread( "Game/Draw", CORE_1B, THREAD_BELOW_NORMAL, 0x400000 );
 		// boost this thread's priority, so it will prevent job threads from running while
 		// the render back end still has work to do
 

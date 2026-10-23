@@ -1426,6 +1426,13 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 	pipelineFile->OpenForReading( saveGameFile );
 	idRestoreGame savegame( pipelineFile, stringTableFile, saveGameVersion );
 
+	// spawn ids are stored packed with GENTITYNUM_BITS index bits; a save written with the old
+	// 12-bit index would restore every entity reference wrong
+	if( saveGameVersion < BUILD_NUMBER_SAVE_VERSION_ENTITY_BITS_14 )
+	{
+		savegame.Error( "idGameLocal::InitFromSaveGame: save game version %i predates the 14-bit entity index (version %i) and cannot be restored.", saveGameVersion, BUILD_NUMBER_SAVE_VERSION_ENTITY_BITS_14 );
+	}
+
 	// Create the list of all objects in the game
 	savegame.CreateObjects();
 
@@ -4047,9 +4054,14 @@ void idGameLocal::RegisterEntity( idEntity* ent, int forceSpawnId, const idDict&
 
 	ent->fl.skipReplication = spawnArgsToCopy.GetBool( "net_skip_replication", false );
 
+	// the generation part of a spawn id has 32 - GENTITYNUM_BITS bits (18 since the index grew
+	// to 14): instead of a fatal error after that many spawns on one map, the generation wraps
+	// like any generational handle; a stale idEntityPtr would have to survive a whole cycle of
+	// spawns to alias. Zero stays the null spawn id.
 	if( spawnCount >= ( 1 << ( 32 - GENTITYNUM_BITS ) ) )
 	{
-		Error( "idGameLocal::RegisterEntity: spawn count overflow" );
+		Warning( "idGameLocal::RegisterEntity: spawn count wrapped after %i spawns", spawnCount );
+		spawnCount = 1;
 	}
 
 	if( !spawnArgsToCopy.GetInt( "spawn_entnum", "0", spawn_entnum ) )
