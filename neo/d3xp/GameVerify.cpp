@@ -206,6 +206,26 @@ void GameVerify_BeginTic()
 
 /*
 ==================
+GameVerify_PrintSmokeCount
+
+One line: the live smoke count and the smoke model's anchor (see printSmokeCount).
+==================
+*/
+static void GameVerify_PrintSmokeCount()
+{
+	if( gameLocal.smokeParticles == NULL )
+	{
+		gameLocal.Printf( "smoke %i none\n", gameLocal.framenum );
+		return;
+	}
+
+	const idVec3& anchor = gameLocal.smokeParticles->GetAnchor();
+	gameLocal.Printf( "smoke %i count %i anchor ( %.1f %.1f %.1f )\n", gameLocal.framenum,
+					  gameLocal.smokeParticles->NumActiveSmokes(), anchor.x, anchor.y, anchor.z );
+}
+
+/*
+==================
 GameVerify_EndTic
 
 Called by idGameLocal::RunFrame after the tic's think loop and events, when the tic's state is
@@ -259,6 +279,9 @@ void GameVerify_EndTic()
 			g_stopTime.SetBool( true );
 		}
 		gameLocal.Printf( "walkTics: done at tic %i\n", gameLocal.framenum );
+		// the live recipe's smoke check (GD1, V1.5) rides on the done line: a cfg cannot run a
+		// command after the walk without a wait that would hold the capture back
+		GameVerify_PrintSmokeCount();
 		w.armed = false;
 	}
 }
@@ -281,20 +304,13 @@ printSmokeCount
 
 The live recipe's positive check (GD1, V1.5): smoke was emitted when the count is above 0. The
 anchor is the smoke model's render origin (WP-CR2): the eye of the first player view rendered in a
-frame, snapped to 4096 units; it stays 0 0 0 without a local player.
+frame, snapped to 4096 units; it stays 0 0 0 without a local player. The walk's done line prints
+the same line, because nothing in a cfg can follow the walk without holding its capture back.
 ==================
 */
 CONSOLE_COMMAND( printSmokeCount, "prints the number of live smoke particles and the smoke model's anchor", NULL )
 {
-	if( gameLocal.smokeParticles == NULL )
-	{
-		gameLocal.Printf( "smoke %i none\n", gameLocal.framenum );
-		return;
-	}
-
-	const idVec3& anchor = gameLocal.smokeParticles->GetAnchor();
-	gameLocal.Printf( "smoke %i count %i anchor ( %.1f %.1f %.1f )\n", gameLocal.framenum,
-					  gameLocal.smokeParticles->NumActiveSmokes(), anchor.x, anchor.y, anchor.z );
+	GameVerify_PrintSmokeCount();
 }
 
 /*
