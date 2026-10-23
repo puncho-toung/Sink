@@ -495,6 +495,26 @@ static int2 textureSize( Texture2D<float> buffer, int mipLevel )
 //}
 
 // ----------------------
+// depth reconstruction
+// ----------------------
+
+// The depth clear ( sky ) lies at infinity under reversed-Z, where reconstructing a position from it
+// divides by zero. The generic reconstructions ( clipW = -P23 / ( -P22 - ndc.z ) ) pass the depth
+// through here first: the clear becomes the depth of a point 65536 units along the same pixel ray,
+// ndc z = P23 / distance - P22 from the projection's z row ( rpProjectionMatrixZ ). The forward
+// clear is finite and passes unchanged.
+static float SkyGuardedDepth( float depth, float4 projectionMatrixZ )
+{
+#if ID_REVERSED_Z
+	if( depth == DEPTH_CONVENTION_CLEAR )
+	{
+		return projectionMatrixZ.w * ( 1.0 / 65536.0 ) - projectionMatrixZ.z;
+	}
+#endif
+	return depth;
+}
+
+// ----------------------
 // PSX rendering
 // ----------------------
 
@@ -515,7 +535,13 @@ static float3 psxVertexJitter( float4 psxDistortions, float4 projectionMatrixW, 
 		float2 resolution = float2( psxDistortions.x, psxDistortions.y );
 
 		// depth independent snapping
+		// the snap scale is -ndc.z with forward depth ( 0 at the near plane, about 1 far away );
+		// under reversed-Z ( near 1, far 0 ) 1 - ndc.z keeps that scale and so today's look
+#if ID_REVERSED_Z
+		float w = dot4( projectionMatrixW, float4( vertex.xy, 1.0 - vertex.z, 1.0 ) );
+#else
 		float w = dot4( projectionMatrixW, float4( vertex.xyz, 1.0 ) );
+#endif
 		vertex.xy = round( vertex.xy / w * resolution ) / resolution * w;
 
 		//vertex.xy = floor( vertex.xy / 4.0 ) * 4.0;

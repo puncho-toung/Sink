@@ -240,6 +240,7 @@ const int RDF_NOSHADOWS		= BIT( 0 ); // force renderer to use faster lighting on
 const int RDF_NOAMBIENT		= BIT( 1 ); // don't render indirect lighting
 const int RDF_IRRADIANCE	= BIT( 2 ); // render into 256^2 HDR render target for irradiance/radiance GGX calculation
 const int RDF_UNDERWATER	= BIT( 3 ); // TODO enable automatic underwater caustics and fog
+const int RDF_MAINVIEW		= BIT( 4 ); // the player's main 3D view: the only view that stores previous-frame state (motion vectors, TAA history)
 
 typedef struct renderView_s
 {

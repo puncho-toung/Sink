@@ -1,0 +1,18 @@
+// cr_verify.mtr: materials only the camera-relative verification fixtures use
+// (rbdoom-cr/neo/tools/verify/make_fixtures.py, maps/test/cr_subviews.map). Copy to
+// NecroGameBuild/base/materials with the fixture maps.
+
+// A direct portal: the surface shows the view of the entity's cameraTarget through an oblique
+// near plane (R_PortalViewBySurface, tr_frontend_subview.cpp). No stock material uses the
+// directPortal keyword, so the fixture brings its own, laid out like textures/common/mirror.
+textures/cr_verify/direct_portal
+{
+	discrete		// never merge with other surfaces
+	qer_editorimage textures/common/qer_mirror.tga
+	solid
+	directPortal
+	{
+		blend add
+		map textures/common/qer_mirror.tga
+	}
+}

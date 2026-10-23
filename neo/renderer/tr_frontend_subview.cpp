@@ -157,7 +157,7 @@ bool R_PreciseCullSurface( const drawSurf_t* drawSurf, idBounds& ndcBounds )
 
 	// backface and frustum cull
 	idVec3 localViewOrigin;
-	R_GlobalPointToLocal( drawSurf->space->modelMatrix, tr.viewDef->renderView.vieworg, localViewOrigin );
+	R_GlobalPointToLocal( drawSurf->space->modelMatrixAbs, tr.viewDef->renderView.vieworg, localViewOrigin );
 
 	for( int i = 0; i < tri->numIndexes; i += 3 )
 	{
@@ -188,9 +188,9 @@ bool R_PreciseCullSurface( const drawSurf_t* drawSurf, idBounds& ndcBounds )
 		// now find the exact screen bounds of the clipped triangle
 		idFixedWinding w;
 		w.SetNumPoints( 3 );
-		R_LocalPointToGlobal( drawSurf->space->modelMatrix, v1, w[0].ToVec3() );
-		R_LocalPointToGlobal( drawSurf->space->modelMatrix, v2, w[1].ToVec3() );
-		R_LocalPointToGlobal( drawSurf->space->modelMatrix, v3, w[2].ToVec3() );
+		R_LocalPointToGlobal( drawSurf->space->modelMatrixAbs, v1, w[0].ToVec3() );
+		R_LocalPointToGlobal( drawSurf->space->modelMatrixAbs, v2, w[1].ToVec3() );
+		R_LocalPointToGlobal( drawSurf->space->modelMatrixAbs, v3, w[2].ToVec3() );
 		w[0].s = w[0].t = w[1].s = w[1].t = w[2].s = w[2].t = 0.0f;
 
 		for( int j = 0; j < 4; j++ )
@@ -237,7 +237,7 @@ static viewDef_t* R_MirrorViewBySurface( const drawSurf_t* drawSurf )
 	// create plane axis for the portal we are seeing
 	idPlane originalPlane, plane;
 	R_PlaneForSurface( drawSurf->frontEndGeo, originalPlane );
-	R_LocalPlaneToGlobal( drawSurf->space->modelMatrix, originalPlane, plane );
+	R_LocalPlaneToGlobal( drawSurf->space->modelMatrixAbs, originalPlane, plane );
 
 	orientation_t surface;
 	surface.origin = plane.Normal() * -plane[3];
@@ -262,7 +262,7 @@ static viewDef_t* R_MirrorViewBySurface( const drawSurf_t* drawSurf )
 	const idVec3 center = ( drawSurf->frontEndGeo->bounds[0] + drawSurf->frontEndGeo->bounds[1] ) * 0.5f;
 	const idVec3 viewOrigin = center + ( originalPlane.Normal() * 16.0f );
 
-	R_LocalPointToGlobal( drawSurf->space->modelMatrix, viewOrigin, parms->initialViewAreaOrigin );
+	R_LocalPointToGlobal( drawSurf->space->modelMatrixAbs, viewOrigin, parms->initialViewAreaOrigin );
 
 	// set the mirror clip plane
 	parms->numClipPlanes = 1;
@@ -308,7 +308,7 @@ static viewDef_t* R_PortalViewBySurface( const drawSurf_t* surf )
 	// Difference in view axis
 	idPlane originalPlane, plane;
 	R_PlaneForSurface( surf->frontEndGeo, originalPlane );
-	R_LocalPlaneToGlobal( surf->space->modelMatrix, originalPlane, plane );
+	R_LocalPlaneToGlobal( surf->space->modelMatrixAbs, originalPlane, plane );
 
 	orientation_t surface;
 	surface.origin = plane.Normal() * -plane[3];

@@ -156,7 +156,8 @@ static void R_RenderGuiSurf( idUserInterface* gui, const drawSurf_t* drawSurf )
 	R_SurfaceToTextureAxis( drawSurf->frontEndGeo, origin, axis );
 
 	float guiModelMatrix[16];
-	float modelMatrix[16];
+	float modelMatrixAbs[16];
+	float modelMatrixRel[16];
 
 	guiModelMatrix[0 * 4 + 0] = axis[0][0] * ( 1.0f / SCREEN_WIDTH );
 	guiModelMatrix[1 * 4 + 0] = axis[1][0] * ( 1.0f / SCREEN_HEIGHT );
@@ -179,14 +180,17 @@ static void R_RenderGuiSurf( idUserInterface* gui, const drawSurf_t* drawSurf )
 	guiModelMatrix[2 * 4 + 3] = 0.0f;
 	guiModelMatrix[3 * 4 + 3] = 1.0f;
 
-	R_MatrixMultiply( guiModelMatrix, drawSurf->space->modelMatrix, modelMatrix );
+	// both frames, in the order of the old ( gui x model ) x view product; a nested gui
+	// reads this guiSpace's matrices again
+	R_MatrixMultiply( guiModelMatrix, drawSurf->space->modelMatrixAbs, modelMatrixAbs );
+	R_MatrixMultiply( guiModelMatrix, drawSurf->space->modelMatrixRel, modelMatrixRel );
 
 	tr.guiRecursionLevel++;
 
 	// call the gui, which will call the 2D drawing functions
 	tr.guiModel->Clear();
 	gui->Redraw( tr.viewDef->renderView.time[0] );
-	tr.guiModel->EmitToCurrentView( modelMatrix, drawSurf->space->weaponDepthHack );
+	tr.guiModel->EmitToCurrentView( modelMatrixAbs, modelMatrixRel, drawSurf->space->weaponDepthHack );
 	tr.guiModel->Clear();
 
 	tr.guiRecursionLevel--;

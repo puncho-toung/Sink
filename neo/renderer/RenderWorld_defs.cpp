@@ -33,6 +33,14 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "RenderCommon.h"
 
+// parallel (sun) lights are faked as a point this far along their direction.
+// 1e9 keeps the direction error under 0.03 degrees anywhere in the world:
+// the MIN_WORLD_COORD..MAX_WORLD_COORD diagonal is ~454k units, atan( 454k / 1e9 ) ~= 0.026.
+// Never larger (and never INFINITUM): the shaders take the vector to this point
+// ( interactionSM.vs.hlsl:144 and :213 ) and normalize it, which forms dot( L, L ) in fp32,
+// so |L| must stay below sqrt( FLT_MAX ) ~= 1.8e19.
+static const float PARALLEL_LIGHT_FAKE_DISTANCE = 1.0e9f;
+
 /*
 =================================================================================
 
@@ -437,7 +445,7 @@ void R_DeriveLightData( idRenderLightLocal* light )
 			// make point straight up if not specified
 			dir[2] = 1.0f;
 		}
-		light->globalLightOrigin = light->parms.origin + dir * 100000.0f;
+		light->globalLightOrigin = light->parms.origin + dir * PARALLEL_LIGHT_FAKE_DISTANCE;
 	}
 	else
 	{
@@ -700,10 +708,19 @@ void R_CreateLightRefs( idRenderLightLocal* light )
 	// cull the light if it is behind a closed door
 	// it is debatable if we want to use the entity origin or the center offset origin,
 	// but we definitely don't want to use a parallel offset origin
-	light->areaNum = light->world->PointInArea( light->globalLightOrigin );
-	if( light->areaNum == -1 )
+	if( light->parms.parallel )
 	{
-		light->areaNum = light->world->PointInArea( light->parms.origin );
+		// the sun reaches every area its volume touches, not only those connected to the
+		// sun entity's area, so -1 ( outside the world ) turns off the connected-area culls
+		light->areaNum = -1;
+	}
+	else
+	{
+		light->areaNum = light->world->PointInArea( light->globalLightOrigin );
+		if( light->areaNum == -1 )
+		{
+			light->areaNum = light->world->PointInArea( light->parms.origin );
+		}
 	}
 
 	// bump the view count so we can tell if an
@@ -1100,7 +1117,7 @@ void R_ReCreateWorldReferences()
 			}
 			renderEnvironmentProbe_t parms = probe->parms;
 
-			probe->world->FreeLightDef( i );
+			probe->world->FreeEnvprobeDef( i );
 			rw->UpdateEnvprobeDef( i, &parms );
 		}
 		// RB end

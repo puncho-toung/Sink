@@ -1421,6 +1421,7 @@ static	void	RegenerateTriangles( optIsland_t* island )
 
 		tri->material = island->group->material;
 		tri->mergeGroup = island->group->mergeGroup;
+		tri->stBase = island->group->stBase;	//puncho - camera-relative dmap st: the optVertex st below are relative to it
 
 		tri->v[0] = optTri->v[0]->v;
 		tri->v[1] = optTri->v[1]->v;

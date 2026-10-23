@@ -402,6 +402,12 @@ void idImage::AllocImage()
 			break;
 
 		case FMT_DEPTH_STENCIL:
+#if ID_REVERSED_Z
+			// reversed-Z gains nothing in a 24-bit integer buffer, and stencil is still needed
+			// ( material stencil stages, SWF masks ), so it is always the float D32S8; that format
+			// is also what keys the reversed convention ( R_IsReversedDepth )
+			format = nvrhi::Format::D32S8;
+#else
 			// SRS - Check if D24S8 is supported, otherwise fall back to D32S8
 			if( deviceManager->m_DeviceParams.enableImageFormatD24S8 )
 			{
@@ -411,6 +417,7 @@ void idImage::AllocImage()
 			{
 				format = nvrhi::Format::D32S8;
 			}
+#endif
 			break;
 
 		case FMT_SHADOW_ARRAY:
@@ -564,6 +571,14 @@ void idImage::AllocImage()
 		{
 			textureDesc.setInitialState( nvrhi::ResourceStates::DepthWrite )
 			.setClearValue( nvrhi::Color( 1.f ) );
+#if ID_REVERSED_Z
+			// the optimized clear value must match GL_Clear's: the reversed D32S8 attachments clear
+			// to 0, the D32 shadow maps keep 1
+			if( opts.format == FMT_DEPTH_STENCIL )
+			{
+				textureDesc.setClearValue( nvrhi::Color( DEPTH_CONVENTION_CLEAR ) );
+			}
+#endif
 		}
 
 		if( opts.isUAV )

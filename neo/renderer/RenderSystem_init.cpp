@@ -116,6 +116,9 @@ idCVar r_lodBias( "r_lodBias", "0.5", CVAR_RENDERER | CVAR_ARCHIVE, "UNUSED: ima
 idCVar r_useStateCaching( "r_useStateCaching", "1", CVAR_RENDERER | CVAR_BOOL, "avoid redundant state changes in GL_*() calls" );
 
 idCVar r_znear( "r_znear", "3", CVAR_RENDERER | CVAR_FLOAT, "near Z clip plane distance", 0.001f, 200.0f );
+idCVar r_cameraRelative( "r_cameraRelative", "1", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "1: build the view and every per-view matrix relative to the eye (the subtraction is done in double); 0: today's absolute matrices" );
+// reports the compile-time switch only: set/+set can override a ROM cvar, so nothing may test it ( test ID_REVERSED_Z )
+idCVar r_reversedZ( "r_reversedZ", ID_REVERSED_Z ? "1" : "0", CVAR_RENDERER | CVAR_ROM | CVAR_NEW, "reports whether this build uses reversed-Z (compile-time)" );
 
 idCVar r_swapInterval( "r_swapInterval", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "0 = tear, 1 = swap-tear where available, 2 = always v-sync" );
 
@@ -164,6 +167,15 @@ idCVar r_offsetFactor( "r_offsetfactor", "0", CVAR_RENDERER | CVAR_FLOAT, "polyg
 	idCVar r_offsetUnits( "r_offsetunits", "-600", CVAR_RENDERER | CVAR_FLOAT, "polygon offset parameter" );
 #endif
 // RB end
+#if ID_REVERSED_Z
+// the bias magnitude on reversed ( D32S8 ) attachments, where the backend flips its sign before the
+// pipeline key is built; a float depth bias is relative to the depth's exponent, so it needs its own tuning
+#if defined(__ANDROID__)
+	idCVar r_offsetUnitsReversed( "r_offsetUnitsReversed", "2", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "polygon offset magnitude on reversed-Z depth buffers (r_offsetunits keeps the forward value)" );
+#else
+	idCVar r_offsetUnitsReversed( "r_offsetUnitsReversed", "600", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "polygon offset magnitude on reversed-Z depth buffers (r_offsetunits keeps the forward value)" );
+#endif
+#endif
 
 idCVar r_subviewOnly( "r_subviewOnly", "0", CVAR_RENDERER | CVAR_BOOL, "1 = don't render main view, allowing subviews to be debugged" );
 idCVar r_testGamma( "r_testGamma", "0", CVAR_RENDERER | CVAR_FLOAT, "if > 0 draw a grid pattern to test gamma levels", 0, 195 );
@@ -205,7 +217,7 @@ idCVar r_showNormals( "r_showNormals", "0", CVAR_RENDERER | CVAR_FLOAT, "draws w
 idCVar r_showMemory( "r_showMemory", "0", CVAR_RENDERER | CVAR_BOOL, "print frame memory utilization" );
 idCVar r_showCull( "r_showCull", "0", CVAR_RENDERER | CVAR_BOOL, "report sphere and box culling stats" );
 idCVar r_showAddModel( "r_showAddModel", "0", CVAR_RENDERER | CVAR_BOOL, "report stats from tr_addModel" );
-idCVar r_showDepth( "r_showDepth", "0", CVAR_RENDERER | CVAR_BOOL, "display the contents of the depth buffer and the depth range" );
+idCVar r_showDepth( "r_showDepth", "0", CVAR_RENDERER | CVAR_INTEGER, "0 off, 1 main depth as linear distance, 2 SSAO input, 3 Hi-Z mip 0, 4 probe capture", 0, 4, idCmdSystem::ArgCompletion_Integer<0, 4> );
 idCVar r_showSurfaces( "r_showSurfaces", "0", CVAR_RENDERER | CVAR_BOOL, "report surface/light/shadow counts" );
 idCVar r_showPrimitives( "r_showPrimitives", "0", CVAR_RENDERER | CVAR_INTEGER, "report drawsurf/index/vertex counts" );
 idCVar r_showEdges( "r_showEdges", "0", CVAR_RENDERER | CVAR_BOOL, "draw the sil edges" );
@@ -259,6 +271,7 @@ idCVar r_shadowMapRandomizeJitter( "r_shadowMapRandomizeJitter", "1", CVAR_RENDE
 idCVar r_shadowMapSamples( "r_shadowMapSamples", "16", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "1, 4, 12 or 16", 1, 64 );
 idCVar r_shadowMapSplits( "r_shadowMapSplits", "3", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "number of splits for cascaded shadow mapping with parallel lights", 0, 4 );
 idCVar r_shadowMapSplitWeight( "r_shadowMapSplitWeight", "0.9", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "" );
+idCVar r_shadowMapSplitFar( "r_shadowMapSplitFar", "10000", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE | CVAR_NEW, "far distance of the last sun shadow cascade in world units; beyond it surfaces are lit without a shadow lookup", 1000.0f, 1000000.0f );
 idCVar r_shadowMapLodScale( "r_shadowMapLodScale", "1.4", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "" );
 idCVar r_shadowMapLodBias( "r_shadowMapLodBias", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "" );
 idCVar r_shadowMapPolygonFactor( "r_shadowMapPolygonFactor", "2", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "polygonOffset factor for drawing shadow buffer" );
@@ -1525,6 +1538,7 @@ void R_EnvShot_f( const idCmdArgs& args )
 	for( i = 0 ; i < 6 ; i++ )
 	{
 		ref = primary.renderView;
+		ref.rdflags &= ~RDF_MAINVIEW;	// a capture face is never the main view: it must not store previous-frame state
 
 		extension = envDirection[ i ];
 
@@ -1908,6 +1922,7 @@ void idRenderSystemLocal::Clear()
 	memset( &cubeAxis, 0, sizeof( cubeAxis ) ); // RB
 	takingScreenshot = false;
 	takingEnvprobe = false;
+	invalidateViewHistory = false;
 
 	if( unitSquareTriangles != NULL )
 	{
@@ -2341,6 +2356,151 @@ srfTriangles_t* R_MakeTestImageTriangles()
 	return tri;
 }
 
+#if ID_REVERSED_Z
+/*
+===============
+R_DepthIs
+===============
+*/
+static bool R_DepthIs( const float depth, const float expected )
+{
+	return idMath::Fabs( depth - expected ) <= expected * 0.001f;
+}
+
+/*
+===============
+R_TestDepthConvention
+
+Startup self-test of the reversed-Z conversion, compiled into every reversed build and gated by
+ID_REVERSED_Z alone ( r_reversedZ is ROM, but set / +set can still change it ). In eye space
+( looking down -Z, MVP = the infinite reversed projection, zNear 3 ) it pushes boxes at d = 2n and
+d = 1e5 through the idRenderMatrix helpers on whichever path this build compiled ( SSE or generic ),
+checks that depth falls with distance and the near and behind-the-eye sentinels, and clips with the
+oblique portal projection. It prints exactly one line, which the verify sheet greps.
+===============
+*/
+static void R_TestDepthConvention()
+{
+	const float zNear = 3.0f;
+	const float depthNear = zNear / ( 2.0f * zNear );	// d = 2n
+	const float depthFar = zNear / 1e5f;				// d = 1e5
+	const char* failed = NULL;
+
+	idRenderMatrix proj;
+	idRenderMatrix::CreateProjectionMatrixFov( 90.0f, 90.0f, zNear, 0.0f, 0.0f, 0.0f, proj );
+	if( proj[2][2] != 0.0f || proj[2][3] != zNear || proj[3][2] != -1.0f )
+	{
+		failed = "CreateProjectionMatrix";
+	}
+
+	// eye-space boxes: around d = 2n, around d = 1e5, spanning both, crossing the eye plane ( d from
+	// -10 to 10 ), and around the near plane ( d from 2 to 4 ) wider than the frustum there
+	const idBounds nearBox( idVec3( -0.1f, -0.1f, -2.0f * zNear - 0.001f ), idVec3( 0.1f, 0.1f, -2.0f * zNear + 0.001f ) );
+	const idBounds farBox( idVec3( -1.0f, -1.0f, -1e5f - 1.0f ), idVec3( 1.0f, 1.0f, -1e5f + 1.0f ) );
+	const idBounds spanBox( idVec3( -1.0f, -1.0f, -1e5f ), idVec3( 1.0f, 1.0f, -2.0f * zNear ) );
+	const idBounds crossingBox( idVec3( -1.0f, -1.0f, -10.0f ), idVec3( 1.0f, 1.0f, 10.0f ) );
+	const idBounds nearPlaneBox( idVec3( -100.0f, -100.0f, -4.0f ), idVec3( 100.0f, 100.0f, -2.0f ) );
+
+	idBounds projected;
+	float minDepth = 0.0f;
+	float maxDepth = 0.0f;
+
+	// ProjectedBounds: the near side of a box crossing W = 0 is max Z in window space only
+	idRenderMatrix::ProjectedBounds( projected, proj, nearBox );
+	const float boundsNear = projected[1][2];
+	idRenderMatrix::ProjectedBounds( projected, proj, farBox );
+	const float boundsFar = projected[1][2];
+	if( failed == NULL && ( !R_DepthIs( boundsNear, depthNear ) || !R_DepthIs( boundsFar, depthFar ) || boundsNear <= boundsFar ) )
+	{
+		failed = "ProjectedBounds";
+	}
+	idRenderMatrix::ProjectedBounds( projected, proj, crossingBox );
+	if( failed == NULL && ( projected[1][2] != 1.0f || !R_DepthIs( projected[0][2], zNear / 10.0f ) ) )
+	{
+		failed = "ProjectedBounds window-space sentinel";
+	}
+	idRenderMatrix::ProjectedBounds( projected, proj, crossingBox, false );
+	if( failed == NULL && projected[0][2] > -1e29f )
+	{
+		failed = "ProjectedBounds world-space sentinel";
+	}
+
+	// ProjectedNearClippedBounds: the near clip is at Z = W
+	idRenderMatrix::ProjectedNearClippedBounds( projected, proj, spanBox );
+	if( failed == NULL && ( !R_DepthIs( projected[1][2], depthNear ) || !R_DepthIs( projected[0][2], depthFar ) ) )
+	{
+		failed = "ProjectedNearClippedBounds";
+	}
+	idRenderMatrix::ProjectedNearClippedBounds( projected, proj, crossingBox );
+	if( failed == NULL && ( !R_DepthIs( projected[1][2], 1.0f ) || !R_DepthIs( projected[0][2], zNear / 10.0f ) ) )
+	{
+		failed = "ProjectedNearClippedBounds near clip";
+	}
+
+	// ProjectedFullyClippedBounds: the clipped faces of nearPlaneBox only reach d = 4, so its max Z of 1
+	// can only come from LocalNearClipCenterFromMVP finding the near-plane centre inside the box
+	idRenderMatrix::ProjectedFullyClippedBounds( projected, proj, spanBox );
+	if( failed == NULL && ( !R_DepthIs( projected[1][2], depthNear ) || !R_DepthIs( projected[0][2], depthFar ) ) )
+	{
+		failed = "ProjectedFullyClippedBounds";
+	}
+	idRenderMatrix::ProjectedFullyClippedBounds( projected, proj, nearPlaneBox );
+	if( failed == NULL && ( projected[1][2] != 1.0f || !R_DepthIs( projected[0][2], zNear / 4.0f ) ) )
+	{
+		failed = "LocalNearClipCenterFromMVP";
+	}
+
+	// DepthBoundsForBounds and the draw-sort key built from it ( R_SortDrawSurfs )
+	idRenderMatrix::DepthBoundsForBounds( minDepth, maxDepth, proj, spanBox );
+	if( failed == NULL && ( !R_DepthIs( maxDepth, depthNear ) || !R_DepthIs( minDepth, depthFar ) ) )
+	{
+		failed = "DepthBoundsForBounds";
+	}
+	idRenderMatrix::DepthBoundsForBounds( minDepth, maxDepth, proj, nearBox );
+	const uint64 keyNear = idMath::Ftoui16( ( 1.0f - maxDepth ) * 0xFFFF );
+	idRenderMatrix::DepthBoundsForBounds( minDepth, maxDepth, proj, farBox );
+	const uint64 keyFar = idMath::Ftoui16( ( 1.0f - maxDepth ) * 0xFFFF );
+	if( failed == NULL && keyNear >= keyFar )
+	{
+		failed = "draw-sort key order";
+	}
+	idRenderMatrix::DepthBoundsForBounds( minDepth, maxDepth, proj, crossingBox );
+	if( failed == NULL && ( maxDepth != 1.0f || !R_DepthIs( minDepth, zNear / 10.0f ) ) )
+	{
+		failed = "DepthBoundsForBounds sentinel";
+	}
+
+	// the oblique portal projection: a camera-space plane tilted 37 degrees, 12.5 units ahead on the
+	// view axis. A point 1 unit before it must fail the near clip ( z > w ), one 1 unit beyond it pass
+	float oblique[16];
+	memset( oblique, 0, sizeof( oblique ) );
+	oblique[0 * 4 + 0] = 1.0f;
+	oblique[1 * 4 + 1] = 1.0f;
+	oblique[2 * 4 + 3] = -1.0f;
+	oblique[3 * 4 + 2] = zNear;
+	R_ObliqueNearPlane( oblique, idVec4( 0.6f, 0.0f, -0.8f, -10.0f ) );
+	const idVec4 before( -0.6f, 0.0f, -11.7f, 1.0f );
+	const idVec4 beyond( 0.6f, 0.0f, -13.3f, 1.0f );
+	const float beforeZ = oblique[2] * before.x + oblique[6] * before.y + oblique[10] * before.z + oblique[14] * before.w;
+	const float beforeW = oblique[3] * before.x + oblique[7] * before.y + oblique[11] * before.z + oblique[15] * before.w;
+	const float beyondZ = oblique[2] * beyond.x + oblique[6] * beyond.y + oblique[10] * beyond.z + oblique[14] * beyond.w;
+	const float beyondW = oblique[3] * beyond.x + oblique[7] * beyond.y + oblique[11] * beyond.z + oblique[15] * beyond.w;
+	if( failed == NULL && ( beforeZ <= beforeW || beyondZ < 0.0f || beyondZ > beyondW ) )
+	{
+		failed = "R_ObliqueNearPlane";
+	}
+
+	if( failed == NULL )
+	{
+		common->Printf( "reversed-Z self-test: PASS\n" );
+	}
+	else
+	{
+		common->Printf( "reversed-Z self-test: FAIL %s\n", failed );
+	}
+}
+#endif
+
 /*
 ===============
 idRenderSystemLocal::Init
@@ -2384,10 +2544,13 @@ void idRenderSystemLocal::Init()
 
 	renderModelManager->Init();
 
-	// set the identity space
-	identitySpace.modelMatrix[0 * 4 + 0] = 1.0f;
-	identitySpace.modelMatrix[1 * 4 + 1] = 1.0f;
-	identitySpace.modelMatrix[2 * 4 + 2] = 1.0f;
+	// set the identity space ( both frames, the local view origin stays zero )
+	identitySpace.modelMatrixAbs[0 * 4 + 0] = 1.0f;
+	identitySpace.modelMatrixAbs[1 * 4 + 1] = 1.0f;
+	identitySpace.modelMatrixAbs[2 * 4 + 2] = 1.0f;
+	identitySpace.modelMatrixRel[0 * 4 + 0] = 1.0f;
+	identitySpace.modelMatrixRel[1 * 4 + 1] = 1.0f;
+	identitySpace.modelMatrixRel[2 * 4 + 2] = 1.0f;
 
 	// set cubemap axis for cubemap sampling tools
 
@@ -2474,6 +2637,10 @@ void idRenderSystemLocal::Init()
 
 	// make sure the command buffers are ready to accept the first screen update
 	SwapCommandBuffers( NULL, NULL, NULL, NULL, NULL, NULL );
+
+#if ID_REVERSED_Z
+	R_TestDepthConvention();
+#endif
 
 	common->Printf( "renderSystem initialized.\n" );
 	common->Printf( "--------------------------------------\n" );

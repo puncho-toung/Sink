@@ -85,11 +85,27 @@ public:
 	// free old smokes
 	void						FreeSmokes();
 
+	// moves the model's anchor near the eye, at most once per game frame (frameNum)
+	void						UpdateAnchor( const idVec3& eye, const int frameNum );
+
+	int							NumActiveSmokes() const
+	{
+		return numActiveSmokes;
+	}
+	const idVec3& 				GetAnchor() const
+	{
+		return anchor;
+	}
+
 private:
 	bool						initialized;
 
 	renderEntity_t				renderEntity;			// used to present a model to the renderer
 	int							renderEntityHandle;		// handle to static renderer model
+
+	// vertices are built relative to this, not to the world origin; not saved, reset by Init
+	idVec3						anchor;
+	int							anchorFrame;			// gameLocal.framenum of the last UpdateAnchor, -1 for none
 
 	static const int			MAX_SMOKE_PARTICLES = 10000;
 	singleSmoke_t				smokes[MAX_SMOKE_PARTICLES];

@@ -944,13 +944,22 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 		{ BUILTIN_BLIT, "builtin/blit", "", { { "TEXTURE_ARRAY", "0" } }, false, SHADER_STAGE_FRAGMENT, LAYOUT_UNKNOWN, BINDING_LAYOUT_BLIT },
 		{ BUILTIN_RECT, "builtin/rect", "", { }, false, SHADER_STAGE_VERTEX, LAYOUT_DRAW_VERT, BINDING_LAYOUT_BLIT },
 
+		// the Hi-Z reduction ( its only user; MipMapGenPass ignores its mode argument ) keeps the farthest
+		// depth: MODE_MAX in the forward convention, MODE_MIN under reversed-Z ( both are in shaders.cfg )
+#if ID_REVERSED_Z
+		{ BUILTIN_MIPMAPGEN_CS, "builtin/mipmapgen", "", { { "MODE", std::to_string( MipMapGenPass::Mode::MODE_MIN ).c_str() }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_MIPMAPGEN ) } }, false, SHADER_STAGE_COMPUTE, LAYOUT_UNKNOWN, BINDING_LAYOUT_MIPMAPGEN },
+#else
 		{ BUILTIN_MIPMAPGEN_CS, "builtin/mipmapgen", "", { { "MODE", std::to_string( MipMapGenPass::Mode::MODE_MAX ).c_str() }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_MIPMAPGEN ) } }, false, SHADER_STAGE_COMPUTE, LAYOUT_UNKNOWN, BINDING_LAYOUT_MIPMAPGEN },
+#endif
 		{ BUILTIN_TONEMAPPING, "builtin/post/tonemapping", "", { { "HISTOGRAM_BINS", "256" }, { "SOURCE_ARRAY", "0" }, { "QUAD_Z", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TONEMAP ) } }, false, SHADER_STAGE_DEFAULT, LAYOUT_UNKNOWN, BINDING_LAYOUT_TONEMAP },
 		{ BUILTIN_TONEMAPPING_TEX_ARRAY, "builtin/post/tonemapping", "_tex_array", { { "HISTOGRAM_BINS", "256" }, { "SOURCE_ARRAY", "1" }, { "QUAD_Z", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TONEMAP ) } }, false, SHADER_STAGE_DEFAULT, LAYOUT_UNKNOWN, BINDING_LAYOUT_TONEMAP },
 		{ BUILTIN_HISTOGRAM_CS, "builtin/post/histogram", "", { { "HISTOGRAM_BINS", "256" }, { "SOURCE_ARRAY", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_HISTOGRAM ) } }, false, SHADER_STAGE_COMPUTE, LAYOUT_UNKNOWN, BINDING_LAYOUT_HISTOGRAM },
 		{ BUILTIN_HISTOGRAM_TEX_ARRAY_CS, "builtin/post/histogram", "_tex_array", { { "HISTOGRAM_BINS", "256" }, { "SOURCE_ARRAY", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_HISTOGRAM ) } }, false, SHADER_STAGE_COMPUTE, LAYOUT_UNKNOWN, BINDING_LAYOUT_HISTOGRAM },
 		{ BUILTIN_EXPOSURE_CS, "builtin/post/exposure", "", { { "HISTOGRAM_BINS", "256" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_EXPOSURE ) } }, false, SHADER_STAGE_COMPUTE, LAYOUT_UNKNOWN, BINDING_LAYOUT_EXPOSURE },
 		// SP end
+
+		// r_showDepth ( DBG_ShowDepth ): reuses the retro post-process layout, whose t3 is a depth texture
+		{ BUILTIN_DEBUG_DEPTH, "builtin/debug/depth", "", { { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_POST_PROCESS_FINAL2 ) } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_POST_PROCESS_FINAL2 },
 	};
 	int numBuiltins = sizeof( builtins ) / sizeof( builtins[0] );
 

@@ -2648,6 +2648,11 @@ void idGameLocal::RunSharedThink()
 }
 // jmarshall end
 
+//puncho start - camera-relative WP-CRV: the tic hooks of walkTics (GameVerify.cpp); they return at once unless it is armed
+void GameVerify_BeginTic();
+void GameVerify_EndTic();
+//puncho end
+
 /*
 ================
 idGameLocal::RunFrame
@@ -2760,6 +2765,10 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 
 			// update our gravity vector if needed.
 			UpdateGravity();
+
+			//puncho start - camera-relative WP-CRV: walkTics moves the player here, before the PVS and the think loop
+			GameVerify_BeginTic();
+			//puncho end
 
 			// create a merged pvs for all players
 			SetupPlayerPVS();
@@ -2889,6 +2898,10 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			SelectTimeGroup( false );
 
 			timer_events.Stop();
+
+			//puncho start - camera-relative WP-CRV: the tic's state is final; walkTics prints its pose and queues its capture
+			GameVerify_EndTic();
+			//puncho end
 
 			// free the player pvs
 			FreePlayerPVS();
@@ -5542,7 +5555,7 @@ void idGameLocal::RandomizeInitialSpawns()
 	teamInitialSpots[0].Clear();
 	teamInitialSpots[1].Clear();
 
-	spot.dist = 0;
+	spot.dist = 0.0f;
 	spot.ent = FindEntityUsingDef( NULL, "info_player_deathmatch" );
 	while( spot.ent )
 	{
@@ -5747,11 +5760,11 @@ idEntity* idGameLocal::SelectInitialSpawnPoint( idPlayer* player )
 				// skip initial spawn points for CTF
 				if( teamSpawnSpots[ team ][ i ].ent->spawnArgs.GetBool( "initial" ) )
 				{
-					teamSpawnSpots[ team ][ i ].dist = 0x0;
+					teamSpawnSpots[ team ][ i ].dist = 0.0f;
 					continue;
 				}
 
-				teamSpawnSpots[ team ][ i ].dist = 0x7fffffff;
+				teamSpawnSpots[ team ][ i ].dist = idMath::INFINITUM;
 
 				for( j = 0; j < MAX_CLIENTS; j++ )
 				{
@@ -5785,7 +5798,7 @@ idEntity* idGameLocal::SelectInitialSpawnPoint( idPlayer* player )
 		for( i = 0; i < spawnSpots.Num(); i++ )
 		{
 			pos = spawnSpots[ i ].ent->GetPhysics()->GetOrigin();
-			spawnSpots[ i ].dist = 0x7fffffff;
+			spawnSpots[ i ].dist = idMath::INFINITUM;
 			for( j = 0; j < MAX_CLIENTS; j++ )
 			{
 				if( !entities[ j ] || !entities[ j ]->IsType( idPlayer::Type )

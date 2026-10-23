@@ -127,6 +127,15 @@ typedef struct portalArea_s
 	areaReference_t	envprobeRefs;	// head/tail of doubly linked list, may change
 } portalArea_t;
 
+// ParseModel moves each world area model to a chunk origin, so the model's vertices and
+// bounds are relative to it. Kept by area number from the model parse on: portalAreas
+// does not exist yet then, and FreeDefs, which the retain path runs, must not lose it
+struct areaChunk_t
+{
+	idVec3			origin;			// multiple of 1024, the parms.origin of the area's world entity
+	idBounds		absBounds;		// FinishSurfaces bounds of the absolute vertices, source of globalBounds
+};
+
 
 static const int	CHILDREN_HAVE_MULTIPLE_AREAS = -2;
 static const int	AREANUM_SOLID = -1;
@@ -247,6 +256,7 @@ public:
 	int						numInterAreaPortals;
 
 	idList<idRenderModel*, TAG_MODEL>	localModels;
+	idList<areaChunk_t, TAG_RENDER>		areaChunks;		// by area number, cleared in FreeWorld only
 
 	idList<idRenderEntityLocal*, TAG_ENTITY>		entityDefs;
 	idList<idRenderLightLocal*, TAG_LIGHT>			lightDefs;
@@ -296,6 +306,7 @@ public:
 	void					ReadBinaryAreaPortals( idFile* file );
 	void					ReadBinaryNodes( idFile* file );
 	idRenderModel* 			ReadBinaryModel( idFile* file );
+	void					SetAreaChunk( int areaNum, const idVec3& origin, const idBounds& absBounds );
 
 	//--------------------------
 	// RenderWorld_portals.cpp

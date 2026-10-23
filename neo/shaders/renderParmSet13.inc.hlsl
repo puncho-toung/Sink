@@ -47,6 +47,8 @@ struct renderParmSet13_t
 
 	float4 rpJitterTexScale;
 	float4 rpJitterTexOffset;
+
+	float4 rpWorldOffset;
 };
 
 #if USE_PUSH_CONSTANTS

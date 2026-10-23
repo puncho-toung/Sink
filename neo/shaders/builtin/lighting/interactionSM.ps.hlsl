@@ -203,6 +203,7 @@ void main( PS_IN fragment, out PS_OUT result )
 	// shadow mapping
 	//
 	int shadowIndex = 0;
+	bool beyondCascades = false;	// sun only: past the last cascade's far, lit without a lookup
 
 #if LIGHT_POINT
 	float3 toLightGlobal = normalize( fragment.texcoord8.xyz );
@@ -238,6 +239,10 @@ void main( PS_IN fragment, out PS_OUT result )
 			break;
 		}
 	}
+
+	// the select above falls back to the last cascade for any depth, but that cascade's crop
+	// ends at the far the frontend computed ( viewDef_t::shadowCascadeFar ); beyond it is lit
+	beyondCascades = ( viewZ > pc.rpShadowCascadeFar.x );
 #endif
 
 #if 0
@@ -443,7 +448,7 @@ void main( PS_IN fragment, out PS_OUT result )
 	//float vogelPhi = InterleavedGradientNoiseAnim( fragment.position.xy, pc.rpJitterTexOffset.w );
 
 	float shadowTexelSize = pc.rpScreenCorrectionFactor.z * pc.rpJitterTexScale.x;
-	for( float si = 0.0; si < numSamples; si += 1.0 )
+	for( float si = 0.0; si < numSamples && !beyondCascades; si += 1.0 )
 	{
 		float2 jitter = VogelDiskSample( si, numSamples, vogelPhi );
 
@@ -517,6 +522,12 @@ void main( PS_IN fragment, out PS_OUT result )
 
 	// allow shadows to fade out
 	shadow = saturate( max( shadow, pc.rpJitterTexScale.z ) );
+
+	// past the last sun cascade the lookup was skipped: fully lit
+	if( beyondCascades )
+	{
+		shadow = 1.0;
+	}
 
 	float3 halfAngleVector = normalize( lightVector + viewVector );
 	float hdotN = clamp( dot3( halfAngleVector, localNormal ), 0.0, 1.0 );

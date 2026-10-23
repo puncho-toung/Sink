@@ -81,6 +81,9 @@ typedef struct mapTri_s
 	int					planeNum;			// not set universally, just in some areas
 
 	idDrawVert			v[3];
+	//puncho start - camera-relative dmap st: v[].st are stored relative to these whole tiles, see TriListForSide
+	idVec2				stBase;
+	//puncho end
 	const struct hashVert_s* hashVert[3];
 	struct optVertex_s* optVert[3];
 } mapTri_t;
@@ -235,6 +238,9 @@ typedef struct optimizeGroup_s
 	// groups will not be combined into model surfaces
 	// after optimization
 	textureVectors_t	texVec;
+	//puncho start - camera-relative dmap st
+	idVec2				stBase;			// the mapTri_t::stBase of every triangle in the group
+	//puncho end
 
 	bool				surfaceEmited;
 
@@ -514,7 +520,7 @@ void		ClipTriList( const mapTri_t* list, const idPlane& plane, float epsilon, ma
 int			NumberNodes_r( node_t* node, int nextNode, int& nextLeaf );
 int			NumberNodes_r( node_t* node, int nextNumber );
 
-srfTriangles_t*	ShareMapTriVerts( const mapTri_t* tris );
+srfTriangles_t*	ShareMapTriVerts( const mapTri_t* tris, idList<idVec2>& texCoords );	//puncho - camera-relative dmap st: texCoords gets the full st of each vertex
 void WriteOutputFile();
 
 //=============================================================================

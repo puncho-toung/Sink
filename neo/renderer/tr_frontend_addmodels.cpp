@@ -205,9 +205,18 @@ idRenderModel* R_EntityDefDynamicModel( idRenderEntityLocal* def )
 	{
 		idPlane eye, clip;
 		idVec3 ndc;
-		R_TransformModelToClip( def->parms.origin, tr.viewDef->worldSpace.modelViewMatrix, tr.viewDef->projectionMatrix, eye, clip );
+		// the view is relative to the render origin, so the origin is made relative in double first
+		const idVec3d& renderOrigin = tr.viewDef->renderOrigin;
+		const idVec3 origin = renderOrigin.IsZero() ? def->parms.origin : ( idVec3d( def->parms.origin ) - renderOrigin ).ToVec3();
+		R_TransformModelToClip( origin, tr.viewDef->worldSpace.modelViewMatrix, tr.viewDef->projectionMatrix, eye, clip );
 		R_TransformClipToDevice( clip, ndc );
+		// scaled by the distance from the far plane, in NDC: idRenderMatrix::ApplyModelDepthHack
+		// moves z toward the near plane by this much
+#if ID_REVERSED_Z
+		def->parms.modelDepthHack = model->DepthHack() * ndc.z;
+#else
 		def->parms.modelDepthHack = model->DepthHack() * ( 1.0f - ndc.z );
+#endif
 	}
 	else
 	{
@@ -421,7 +430,7 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 
 				// this doesn't say that the shadow can't effect anything, only that it can't
 				// effect anything in the view
-				if( idRenderMatrix::CullBoundsToMVP( viewDef->worldSpace.mvp, shadowBounds ) )
+				if( idRenderMatrix::CullBoundsToMVP( viewDef->worldCullMVP, shadowBounds ) )
 				{
 					continue;
 				}
@@ -499,8 +508,19 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 	vEntity->weaponDepthHack = renderEntity->weaponDepthHack;
 	vEntity->skipMotionBlur = renderEntity->skipMotionBlur;
 
-	memcpy( vEntity->modelMatrix, entityDef->modelMatrix, sizeof( vEntity->modelMatrix ) );
-	R_MatrixMultiply( entityDef->modelMatrix, viewDef->worldSpace.modelViewMatrix, vEntity->modelViewMatrix );
+	// the absolute matrix for the frontend, and the matrix relative to the render origin for the
+	// model view and the backend; at a zero origin both are the def's matrix
+	const idVec3d& renderOrigin = viewDef->renderOrigin;
+	memcpy( vEntity->modelMatrixAbs, entityDef->modelMatrix, sizeof( vEntity->modelMatrixAbs ) );
+	memcpy( vEntity->modelMatrixRel, vEntity->modelMatrixAbs, sizeof( vEntity->modelMatrixRel ) );
+	if( !renderOrigin.IsZero() )
+	{
+		// only the translation moves, subtracted in double from the def's own matrix
+		vEntity->modelMatrixRel[3 * 4 + 0] = float( double( vEntity->modelMatrixAbs[3 * 4 + 0] ) - renderOrigin.x );
+		vEntity->modelMatrixRel[3 * 4 + 1] = float( double( vEntity->modelMatrixAbs[3 * 4 + 1] ) - renderOrigin.y );
+		vEntity->modelMatrixRel[3 * 4 + 2] = float( double( vEntity->modelMatrixAbs[3 * 4 + 2] ) - renderOrigin.z );
+	}
+	R_MatrixMultiply( vEntity->modelMatrixRel, viewDef->worldSpace.modelViewMatrix, vEntity->modelViewMatrix );
 
 	idRenderMatrix viewMat;
 	idRenderMatrix::Transpose( *( idRenderMatrix* )vEntity->modelViewMatrix, viewMat );
@@ -516,9 +536,12 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 	}
 
 	// local light and view origins are used to determine if the view is definitely outside
-	// an extruded shadow volume, which means we can skip drawing the end caps
-	idVec3 localViewOrigin;
-	R_GlobalPointToLocal( vEntity->modelMatrix, viewDef->renderView.vieworg, localViewOrigin );
+	// an extruded shadow volume, which means we can skip drawing the end caps.
+	// The eye relative to the render origin, in the relative matrix's local space: the same
+	// point as the absolute pair gives, and the value the backend uploads
+	const idVec3 eye = renderOrigin.IsZero() ? viewDef->renderView.vieworg : ( idVec3d( viewDef->renderView.vieworg ) - renderOrigin ).ToVec3();
+	R_GlobalPointToLocal( vEntity->modelMatrixRel, eye, vEntity->localViewOrigin );
+	const idVec3& localViewOrigin = vEntity->localViewOrigin;
 
 	//---------------------------
 	// add all the model surfaces
@@ -552,7 +575,8 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 		if( shader->IsLOD() )
 		{
 			// foresthale 2014-11-24: calculate the bounds and get the distance from camera to bounds
-			idBounds& localBounds = tri->bounds;
+			// ( a copy: tri->bounds is shared by every view and job that draws this model )
+			idBounds localBounds = tri->bounds;
 			if( tri->staticModelWithJoints )
 			{
 				// skeletal models have difficult to compute bounds for surfaces, so use the whole entity
@@ -698,7 +722,7 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 				idRenderMatrix::OffsetScaleForBounds( modelRenderMatrix, surfaceBounds, inverseBaseModelProject );
 
 				idRenderMatrix invProjectMVPMatrix;
-				idRenderMatrix::Multiply( viewDef->worldSpace.unjitteredMVP, inverseBaseModelProject, invProjectMVPMatrix );
+				idRenderMatrix::Multiply( viewDef->worldCullUnjitteredMVP, inverseBaseModelProject, invProjectMVPMatrix );
 
 				tr.pc.c_mocTests += 1;
 
@@ -936,11 +960,6 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 			{
 				continue;
 			}
-
-			// Calculate the local light origin to determine if the view is inside the shadow
-			// projection and to calculate the triangle facing for dynamic shadow volumes.
-			idVec3 localLightOrigin;
-			R_GlobalPointToLocal( vEntity->modelMatrix, lightDef->globalLightOrigin, localLightOrigin );
 
 			//--------------------------
 			// surface light interactions

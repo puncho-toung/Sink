@@ -164,7 +164,7 @@ typedef enum
 typedef struct
 {
 	idEntity*	ent;
-	int			dist;
+	float		dist;		// squared, to the nearest other player; INFINITUM if none (an int saturated and tied past 46341 units)
 	int			team;
 } spawnSpot_t;
 
@@ -610,6 +610,7 @@ public:
 	void					SpreadLocations();
 	idLocationEntity* 		LocationForPoint( const idVec3& point );	// May return NULL
 	idEntity* 				SelectInitialSpawnPoint( idPlayer* player );
+	static int				sortSpawnPoints( const void* ptr1, const void* ptr2 );	// public so testSpawnSort runs the game's comparator
 
 	void					SetPortalState( qhandle_t portal, int blockingBits );
 	void					SaveEntityNetworkEvent( const idEntity* ent, int event, const idBitMsg* msg );
@@ -810,7 +811,6 @@ private:
 	// call after any change to serverInfo. Will update various quick-access flags
 	void					UpdateServerInfoFlags();
 	void					RandomizeInitialSpawns();
-	static int				sortSpawnPoints( const void* ptr1, const void* ptr2 );
 
 	bool					SimulateProjectiles();
 };
