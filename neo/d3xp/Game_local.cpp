@@ -5079,6 +5079,15 @@ void idGameLocal::RadiusDamage( const idVec3& origin, idEntity* inflictor, idEnt
 			continue;
 		}
 
+		//puncho start - MP-C7 (plans/00-MASTER-PLAN.md stream C): a client damages players only, as in
+		// idProjectile::Collide. The projectiles a client launches are not replicated (net_skip_replication), so
+		// idProjectile::Explode does not return before the splash and it lands here on the client too
+		if( common->IsClient() && !ent->IsType( idPlayer::Type ) )
+		{
+			continue;
+		}
+		//puncho end
+
 		if( ent == inflictor || ( ent->IsType( idAFAttachment::Type ) && static_cast<idAFAttachment*>( ent )->GetBody() == inflictor ) )
 		{
 			continue;
