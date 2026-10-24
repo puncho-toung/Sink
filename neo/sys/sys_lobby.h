@@ -194,6 +194,8 @@ public:
 
 	static const int OOB_BANDWIDTH_TEST			= 10;
 
+	static const int OOB_GOODBYE_REFUSED		= 11;	//puncho - version rule (MP-A0): host refuses a loaded peer; carries the reason, ends the peer's session without migration
+
 	enum connectionState_t
 	{
 		CONNECTION_FREE				= 0,		// Free peer slot
@@ -526,7 +528,7 @@ public:		// Turning this on for now, for the sake of getting this up and running
 	virtual void						SendReliable( int type, idBitMsg& msg, bool callReceiveReliable = true, peerMask_t sessionUserMask = MAX_UNSIGNED_TYPE( peerMask_t ) );
 	virtual void						SendReliableToLobbyUser( lobbyUserID_t lobbyUserID, int type, idBitMsg& msg );
 	virtual void						SendReliableToHost( int type, idBitMsg& msg );
-	void								SendGoodbye( const lobbyAddress_t& remoteAddress, bool wasFull = false );
+	void								SendGoodbye( const lobbyAddress_t& remoteAddress, bool wasFull = false, const char* refusedReason = NULL );	//puncho - refusedReason: version rule (MP-A0)
 	void								QueueReliableMessage( int peerNum, byte type )
 	{
 		QueueReliableMessage( peerNum, type, NULL, 0 );
@@ -552,6 +554,7 @@ public:		// Turning this on for now, for the sake of getting this up and running
 	bool								ConnectToNextSearchResult();
 	bool								CheckVersion( idBitMsg& msg, lobbyAddress_t peerAddress );
 	void								VerifyPeerContent( int p, const unsigned int localDigests[ CONTENT_DIGEST_COUNT ] );	//puncho - version rule (MP-A0)
+	void								RefusePeer( int p, const char* reason );	//puncho - version rule (MP-A0)
 	bool								VerifyNumConnectingUsers( idBitMsg& msg );
 	bool								VerifyLobbyUserIDs( idBitMsg& msg );
 	int									HandleInitialPeerConnection( idBitMsg& msg, const lobbyAddress_t& peerAddress, int peerNum );

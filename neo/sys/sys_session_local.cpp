@@ -3340,7 +3340,14 @@ void idSessionLocal::GoodbyeFromHost( idLobby& lobby, int peerNum, const lobbyAd
 
 		const bool leaveGameWithParty = ( msgType == idLobby::OOB_GOODBYE_W_PARTY );
 
-		if( leaveGameWithParty && lobby.lobbyType == idLobby::TYPE_GAME && lobby.IsPeer() && GetState() == idSession::GAME_LOBBY && GetPartyLobby().host >= 0 &&
+		//puncho start - version rule (MP-A0): the host refused us (idLobby::RefusePeer) and is still there, so this is
+		// not a lost host to migrate away from: leave every lobby, back to the main menu
+		if( msgType == idLobby::OOB_GOODBYE_REFUSED )
+		{
+			MoveToMainMenu();
+		}
+		//puncho end
+		else if( leaveGameWithParty && lobby.lobbyType == idLobby::TYPE_GAME && lobby.IsPeer() && GetState() == idSession::GAME_LOBBY && GetPartyLobby().host >= 0 &&
 				lobby.peers[peerNum].address.Compare( GetPartyLobby().peers[GetPartyLobby().host].address, true ) )
 		{
 			// If a host is telling us goodbye from a game lobby, and the game host is the same as our party host,

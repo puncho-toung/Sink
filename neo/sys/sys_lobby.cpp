@@ -507,8 +507,24 @@ void idLobby::HandlePacket( lobbyAddress_t& remoteAddress, idBitMsg fragMsg, idP
 			}
 
 		}
-		else if( userData == OOB_GOODBYE || userData == OOB_GOODBYE_W_PARTY || userData == OOB_GOODBYE_FULL )
+		else if( userData == OOB_GOODBYE || userData == OOB_GOODBYE_W_PARTY || userData == OOB_GOODBYE_FULL || userData == OOB_GOODBYE_REFUSED )	//puncho - OOB_GOODBYE_REFUSED: version rule (MP-A0)
 		{
+			//puncho start - version rule (MP-A0): our host refused us; say why before the goodbye ends the session
+			// (idSessionLocal::GoodbyeFromHost). Only the first copy finds a connected host, the redundant ones do not
+			if( userData == OOB_GOODBYE_REFUSED && !IsHost() && peerNum >= 0 && peerNum == host && peers[peerNum].GetConnectionState() != CONNECTION_FREE )
+			{
+				char reason[ 512 ];
+				msg.ReadString( reason, sizeof( reason ) );
+				idLib::Printf( "NET: Refused by host %s: %s\n", remoteAddress.ToString(), reason );
+
+				char text[ 256 ];	// the dialog's override message is an idStrStatic< 256 >
+				idStr::snPrintf( text, sizeof( text ), "Refused by the host: %s", reason );
+				idStaticList< idSWFScriptFunction*, 4 > callbacks;
+				idStaticList< idStrId, 4 > optionText;
+				optionText.Append( idStrId( "#str_swf_continue" ) );
+				common->Dialog().AddDynamicDialog( GDM_KICKED, callbacks, optionText, false, text );
+			}
+			//puncho end
 			HandleGoodbyeFromPeer( peerNum, remoteAddress, userData );
 			return;
 		}
@@ -1245,7 +1261,7 @@ void idLobby::DisconnectAllPeers()
 idLobby::SendGoodbye
 ========================
 */
-void idLobby::SendGoodbye( const lobbyAddress_t& remoteAddress, bool wasFull )
+void idLobby::SendGoodbye( const lobbyAddress_t& remoteAddress, bool wasFull, const char* refusedReason )
 {
 
 	if( net_skipGoodbye.GetBool() )
@@ -1259,7 +1275,16 @@ void idLobby::SendGoodbye( const lobbyAddress_t& remoteAddress, bool wasFull )
 
 	int msgType = OOB_GOODBYE;
 
-	if( wasFull )
+	//puncho start - version rule (MP-A0): a refusal carries its reason to the peer, in every redundant copy
+	byte buffer[ 512 ];
+	idBitMsg msg( buffer, sizeof( buffer ) );
+	if( refusedReason != NULL )
+	{
+		msgType = OOB_GOODBYE_REFUSED;
+		msg.WriteString( refusedReason, sizeof( buffer ) );
+	}
+	//puncho end
+	else if( wasFull )
 	{
 		msgType = OOB_GOODBYE_FULL;
 	}
@@ -1270,7 +1295,7 @@ void idLobby::SendGoodbye( const lobbyAddress_t& remoteAddress, bool wasFull )
 
 	for( int i = 0; i < NUM_REDUNDANT_GOODBYES; i++ )
 	{
-		SendConnectionLess( remoteAddress, msgType );
+		SendConnectionLess( remoteAddress, msgType, msg.GetReadData(), msg.GetSize() );	//puncho - with the refusal's reason, empty otherwise
 	}
 }
 
@@ -1810,8 +1835,31 @@ void idLobby::VerifyPeerContent( int p, const unsigned int localDigests[ CONTENT
 		return;
 	}
 
-	idLib::Printf( "NET: Refusing peer %i (%s), content differs:%s\n", p, peer.address.ToString(), differs.c_str() );
-	DisconnectPeerFromSession( p );
+	idStr reason = "content differs:";
+	reason += differs;
+	RefusePeer( p, reason.c_str() );
+}
+
+/*
+========================
+idLobby::RefusePeer
+
+Host only. Drops a peer that may not play here and tells it why: the refusal goodbye replaces the plain one, so the peer
+leaves its session instead of taking a lost host for granted and migrating into a lobby of its own.
+========================
+*/
+void idLobby::RefusePeer( int p, const char* reason )
+{
+	if( !verify( IsHost() ) )
+	{
+		return;
+	}
+
+	peer_t& peer = peers[p];
+
+	idLib::Printf( "NET: Refusing peer %i (%s), %s\n", p, peer.address.ToString(), reason );
+	SendGoodbye( peer.address, false, reason );
+	SetPeerConnectionState( p, CONNECTION_FREE, true );
 }
 //puncho end
 
@@ -2920,8 +2968,9 @@ void idLobby::HandleReliableMsg( int p, idBitMsg& msg, const lobbyAddress_t* rem
 		// different build (an older one sends nothing): refused without reading past the end
 		if( msg.GetRemainingData() != ( int )sizeof( peer.contentDigests ) )
 		{
-			idLib::Printf( "NET: Refusing peer %i (%s), RELIABLE_LOADING_DONE carries %i bytes instead of the %i of the content digests: a different build\n", p, peer.address.ToString(), msg.GetRemainingData(), ( int )sizeof( peer.contentDigests ) );
-			DisconnectPeerFromSession( p );
+			char reason[ 128 ];
+			idStr::snPrintf( reason, sizeof( reason ), "RELIABLE_LOADING_DONE carries %i bytes instead of the %i of the content digests: a different build", msg.GetRemainingData(), ( int )sizeof( peer.contentDigests ) );
+			RefusePeer( p, reason );
 			return;
 		}
 		for( int i = 0; i < CONTENT_DIGEST_COUNT; i++ )
