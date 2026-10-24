@@ -2142,14 +2142,16 @@ void idProgram::CompileStats()
 idProgram::PrintCapacity
 
 MP-A5 (K42): doom_main, every mod's mod_main and the map script share one image with fixed caps; a phase 12 row
-revisits them from this line, never from a guess
+revisits them from this line, never from a guess. The counts print at every load, the warning once per session.
 ==============
 */
 void idProgram::PrintCapacity() const
 {
+	static bool warned = false;
 	gameLocal.Printf( "script image: %d of %d functions, %d of %d statements, %d of %d global bytes\n", functions.Num(), MAX_FUNCS, statements.Num(), MAX_STATEMENTS, numVariables, MAX_GLOBALS );
-	if( functions.Num() * 5 > MAX_FUNCS * 4 || statements.Num() * 5 > MAX_STATEMENTS * 4 || numVariables * 5 > MAX_GLOBALS * 4 )
+	if( !warned && ( functions.Num() * 5 > MAX_FUNCS * 4 || statements.Num() * 5 > MAX_STATEMENTS * 4 || numVariables * 5 > MAX_GLOBALS * 4 ) )
 	{
+		warned = true;
 		gameLocal.Warning( "script image: under 20%% headroom against a cap (functions %d of %d, statements %d of %d, global bytes %d of %d)", functions.Num(), MAX_FUNCS, statements.Num(), MAX_STATEMENTS, numVariables, MAX_GLOBALS );
 	}
 }

@@ -198,6 +198,15 @@ struct declConflict_t
 	int							loserLine;
 	int							loserLayer;
 };
+
+// MP-A5 (K44): one layer's count and CRC of the explicit names of one decl type it first defines
+struct layerDeclDigest_t
+{
+	int							layer;
+	declType_t					type;
+	int							count;
+	unsigned int				crc;
+};
 //puncho end
 
 class idDeclManagerLocal : public idDeclManager
@@ -215,10 +224,7 @@ public:
 	virtual void				RegisterDeclType( const char* typeName, declType_t type, idDecl * ( *allocator )() );
 	virtual void				RegisterDeclFolder( const char* folder, const char* extension, declType_t defaultType );
 	virtual void				FinishDeclRegistration();	//puncho - MP-A5 (K23, K44)
-	virtual const idDict&		GetLayerSaveHeader() const	//puncho - MP-A5 (K44)
-	{
-		return layerSaveHeader;
-	}
+	virtual void				GetLayerSaveHeader( idDict& header ) const;	//puncho - MP-A5 (K44)
 	virtual int					GetChecksum() const;
 	virtual int					GetNumDeclTypes() const;
 	virtual int					GetNumDecls( declType_t type );
@@ -292,7 +298,10 @@ private:
 	bool						insideLevelLoad;
 	//puncho start - MP-A5 (K23, K44)
 	idList<declConflict_t>		conflicts;		// every decl defined in more than one file, rebuilt per file on reload
-	idDict						layerSaveHeader;	// computed once after registration
+	// the save header, computed once after registration; plain data, since an idDict in this global object would be
+	// cleared at exit after idDict's string pools are gone (an error during init exits without Shutdown)
+	idStr						layerModList;
+	idList<layerDeclDigest_t>	layerDigests;
 	//puncho end
 
 	static idCVar				decl_show;
@@ -1131,7 +1140,8 @@ void idDeclManagerLocal::Shutdown()
 	// free decl files
 	loadedFiles.DeleteContents( true );
 	conflicts.Clear();			//puncho - MP-A5 (K23)
-	layerSaveHeader.Clear();	//puncho - MP-A5 (K44)
+	layerModList.Clear();		//puncho - MP-A5 (K44)
+	layerDigests.Clear();
 
 	// free the decl types and folders
 	declTypes.DeleteContents( true );
@@ -2146,14 +2156,13 @@ void idDeclManagerLocal::FinishDeclRegistration()
 {
 	const int numLayers = fileSystem->GetNumLayers();
 
-	layerSaveHeader.Clear();
-	idStr modList;
+	layerModList.Clear();
+	layerDigests.Clear();
 	for( int layer = 1; layer < numLayers; layer++ )
 	{
-		modList += ( layer > 1 ) ? "," : "";
-		modList += fileSystem->GetLayerName( layer );
+		layerModList += ( layer > 1 ) ? "," : "";
+		layerModList += fileSystem->GetLayerName( layer );
 	}
-	layerSaveHeader.Set( "modList", modList );
 
 	int counts[ MAX_MOD_LAYERS + 1 ];
 	unsigned int crcs[ MAX_MOD_LAYERS + 1 ];
@@ -2182,13 +2191,32 @@ void idDeclManagerLocal::FinishDeclRegistration()
 		{
 			if( counts[layer] > 0 )
 			{
-				CRC32_FinishChecksum( crcs[layer] );
-				layerSaveHeader.Set( va( "layerDecls_%d_%s", layer, declTypes[type]->typeName.c_str() ), va( "%d %08x", counts[layer], crcs[layer] ) );
+				layerDeclDigest_t& digest = layerDigests.Alloc();
+				digest.layer = layer;
+				digest.type = ( declType_t )type;
+				digest.count = counts[layer];
+				digest.crc = crcs[layer];
+				CRC32_FinishChecksum( digest.crc );
 			}
 		}
 	}
 
 	PrintConflicts();
+}
+
+/*
+===================
+idDeclManagerLocal::GetLayerSaveHeader
+===================
+*/
+void idDeclManagerLocal::GetLayerSaveHeader( idDict& header ) const
+{
+	header.Set( "modList", layerModList );
+	for( int i = 0; i < layerDigests.Num(); i++ )
+	{
+		const layerDeclDigest_t& digest = layerDigests[i];
+		header.Set( va( "layerDecls_%d_%s", digest.layer, declTypes[digest.type]->typeName.c_str() ), va( "%d %08x", digest.count, digest.crc ) );
+	}
 }
 //puncho end
 

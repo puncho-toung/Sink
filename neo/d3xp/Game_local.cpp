@@ -742,7 +742,7 @@ void idGameLocal::GetSaveGameDetails( idSaveGameDetails& gameDetails )
 	gameDetails.descriptors.SetInt( SAVEGAME_DETAIL_FIELD_PLAYTIME, playTime );
 	//puncho - MP-A5 (K44): the mod list in order and, per layer, the decl name counts and digests; the load check refuses a
 	// save whose mods or first-defined names differ, before any map loads
-	gameDetails.descriptors.Copy( declManager->GetLayerSaveHeader() );
+	declManager->GetLayerSaveHeader( gameDetails.descriptors );
 
 	// PS3 only strings that use the dict just set
 

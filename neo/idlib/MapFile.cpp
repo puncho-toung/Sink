@@ -2369,11 +2369,13 @@ bool idMapFile::WriteDiff( const idMapFile* otherMap, const char* fileName, cons
 idMapFile::WriteLevelEdits
 
 Today every in-engine writer wrote the merged level map whole; with mods loaded that baked every layer's patch into the
-write target, and the next load applied the patches again. A map served below the write target (a base or mod map
-under fs_game) keeps its file: the edits go into the write target's own <map>_extra_ents.map as a diff against the map
-merged through the layers below it, which also carries over that patch's earlier edits; refused while a mod above the
-write target (fs_game empty) patches the map too. glTF maps cannot be written, so they always take the patch. The write
-target's own map, or a new map name, is written whole as today, refused while any layer holds a patch for it.
+write target, and the next load applied the patches again. So the map file keeps its text whenever a patch is in play:
+the edits go into the write target's own <map>_extra_ents.map as a diff against the raw map merged with the patches of
+the layers below the write target, which carries over that patch's earlier edits too. That holds for a map served below
+the write target (a base or mod map under fs_game), for a glTF map, which cannot be written, and for the write target's
+own map while it or a layer below it holds a patch. A patch above the write target (a mod over base with fs_game empty)
+applies after it, so its keys cannot be told apart from the edits: refused. With no patch anywhere the write target's own
+map is written whole, as today; a new map name is too, refused while that name has a patch.
 ===============
 */
 bool idMapFile::WriteLevelEdits( const char* fileName )
@@ -2381,39 +2383,49 @@ bool idMapFile::WriteLevelEdits( const char* fileName )
 	idStr target = fileName;
 	target.StripFileExtension();
 	target.StripFileExtension();
-
-	const int writeLayer = idLib::fileSystem->GetWriteLayer();
-	const int mapLayer = idLib::fileSystem->GetFileLayer( sourceName );
-	if( target.Icmp( name ) == 0 && ( gltfFormat || mapLayer < writeLayer ) )
+	if( target.Icmp( name ) != 0 )
 	{
-		// a mod above the write target (fs_game empty) patches after it, so its keys are in the level map yet cannot
-		// be told apart from the edits
-		for( int layer = writeLayer + 1; layer < idLib::fileSystem->GetNumLayers(); layer++ )
+		if( RefuseWholeMapWrite( target ) )
 		{
-			if( LayerHoldsPatch( name, layer ) )
-			{
-				idLib::common->Warning( "%s: %s, above the write target %s, patches it too: set fs_game to keep the edits as a patch", name.c_str(), idLib::fileSystem->GetLayerName( layer ), idLib::fileSystem->GetLayerName( writeLayer ) );
-				return false;
-			}
-		}
-		idMapFile below;
-		if( !below.Parse( name, false, false, false, writeLayer ) )
-		{
-			idLib::common->Warning( "%s: couldn't parse %s to diff the edits against", fileName, sourceName.c_str() );
 			return false;
 		}
-		return below.WriteDiff( this, va( "%s_extra_ents", name.c_str() ), ".map" );
+		return Write( target, ".map" );
 	}
-	if( target.Icmp( name ) == 0 && mapLayer > writeLayer )
+
+	const int numLayers = idLib::fileSystem->GetNumLayers();
+	const int writeLayer = idLib::fileSystem->GetWriteLayer();
+	const int mapLayer = idLib::fileSystem->GetFileLayer( sourceName );
+	if( mapLayer > writeLayer )
 	{
 		idLib::common->Warning( "%s is served by %s, above the write target %s: set fs_game to keep the edits as a patch", sourceName.c_str(), idLib::fileSystem->GetLayerName( mapLayer ), idLib::fileSystem->GetLayerName( writeLayer ) );
 		return false;
 	}
-	if( RefuseWholeMapWrite( target ) )
+	for( int layer = writeLayer + 1; layer < numLayers; layer++ )
 	{
+		if( LayerHoldsPatch( name, layer ) )
+		{
+			idLib::common->Warning( "%s: %s, above the write target %s, patches it too: set fs_game to keep the edits as a patch", name.c_str(), idLib::fileSystem->GetLayerName( layer ), idLib::fileSystem->GetLayerName( writeLayer ) );
+			return false;
+		}
+	}
+
+	bool patched = gltfFormat || mapLayer < writeLayer;
+	for( int layer = 0; layer <= writeLayer && !patched; layer++ )
+	{
+		patched = LayerHoldsPatch( name, layer );
+	}
+	if( !patched )
+	{
+		return Write( target, ".map" );
+	}
+
+	idMapFile below;
+	if( !below.Parse( name, false, false, false, writeLayer ) )
+	{
+		idLib::common->Warning( "%s: couldn't parse %s to diff the edits against", fileName, sourceName.c_str() );
 		return false;
 	}
-	return Write( target, ".map" );
+	return below.WriteDiff( this, va( "%s_extra_ents", name.c_str() ), ".map" );
 }
 //puncho end
 

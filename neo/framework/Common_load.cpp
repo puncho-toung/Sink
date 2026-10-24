@@ -1147,7 +1147,8 @@ static bool CheckSaveLayers( const idDict& saved, idStr& refusal )
 		return false;
 	}
 
-	const idDict& current = declManager->GetLayerSaveHeader();
+	idDict current;
+	declManager->GetLayerSaveHeader( current );
 	const char* savedMods = saved.GetString( "modList" );
 	const char* currentMods = current.GetString( "modList" );
 	if( idStr::Icmp( savedMods, currentMods ) != 0 )

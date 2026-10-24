@@ -1279,9 +1279,8 @@ void idGameEdit::MapSave( const char* path ) const
 	idMapFile* mapFile = gameLocal.GetLevelMap();
 	if( mapFile )
 	{
-		//puncho - MP-A5 (K41a): a glTF map, which can't be written, or a map below the write target gets its edits as a
-		// patch in the write target's <map>_extra_ents.map, diffed against the map merged through the layers below it;
-		// the write target's own map is written whole, refused while a patch exists
+		//puncho - MP-A5 (K41a): while a patch is in play (a map below the write target, a glTF map, or a patch at or below
+		// the write target) the edits go into the write target's <map>_extra_ents.map; otherwise the map is written whole
 		mapFile->WriteLevelEdits( ( path ) ? path : mapFile->GetName() );
 	}
 }
