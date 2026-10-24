@@ -446,7 +446,7 @@ idRenderModel* idRenderWorldLocal::ParseModel( idLexer* src, const char* mapName
 	{
 		model->WriteBinaryModel( fileOut, &mapTimeStamp );
 
-		// .bproc v3: every model blob is followed by its chunk origin and absolute bounds,
+		// .bproc v4 (BPROC_VERSION_AREA_CHUNKS): every model blob is followed by its chunk origin and absolute bounds,
 		// zero and cleared for a model that is not a world area, so read and write mirror
 		fileOut->WriteVec3( chunkOrigin );
 		fileOut->WriteBigArray( absBounds.ToFloatPtr(), 6 );
