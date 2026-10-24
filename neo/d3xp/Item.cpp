@@ -1196,7 +1196,7 @@ void idItemTeam::Event_TakeFlag( idPlayer* player )
 	if( scriptTaken )
 	{
 		idThread* thread = new idThread();
-		thread->CallFunction( scriptTaken, false );
+		thread->CallFunction( scriptTaken, true );
 		thread->DelayedStart( 0 );
 	}
 
@@ -1289,7 +1289,7 @@ void idItemTeam::Event_DropFlag( bool death )
 	if( scriptDropped )
 	{
 		idThread* thread = new idThread();
-		thread->CallFunction( scriptDropped, false );
+		thread->CallFunction( scriptDropped, true );
 		thread->DelayedStart( 0 );
 	}
 
@@ -1348,7 +1348,7 @@ void idItemTeam::Event_FlagReturn( idPlayer* player )
 	if( scriptReturned )
 	{
 		idThread* thread = new idThread();
-		thread->CallFunction( scriptReturned, false );
+		thread->CallFunction( scriptReturned, true );
 		thread->DelayedStart( 0 );
 	}
 
@@ -1408,7 +1408,7 @@ void idItemTeam::Event_FlagCapture()
 	if( scriptCaptured )
 	{
 		idThread* thread = new idThread();
-		thread->CallFunction( scriptCaptured, false );
+		thread->CallFunction( scriptCaptured, true );
 		thread->DelayedStart( 0 );
 	}
 

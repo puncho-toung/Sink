@@ -1384,7 +1384,7 @@ void idTrigger_Touch::TouchEntities()
 		ActivateTargets( entity );
 
 		idThread* thread = new idThread();
-		thread->CallFunction( entity, scriptFunction, false );
+		thread->CallFunction( entity, scriptFunction, true );
 		thread->DelayedStart( 0 );
 	}
 }
