@@ -33,6 +33,7 @@ const int BUILD_NUMBER_SAVE_VERSION_LIGHT_MODELTARGET_CHANGE    = 1403;
 const int BUILD_NUMBER_SAVE_VERSION_MATH_LIGHTS                 = 1404;
 const int BUILD_NUMBER_SAVE_VERSION_FUNC_DECAL                  = 1405;
 const int BUILD_NUMBER_SAVE_VERSION_AI_SQUAD_PINS               = 1406;	// ai-avoidance (WP-A7, audit M2): the squad pins of sys.aiSetAvoid
+const int BUILD_NUMBER_SAVE_VERSION_ENTITY_BITS_14              = 1407;		// 14-bit entity index: spawn ids in saves pack 18 + 14 bits (d3xp/Game_local.h)
 
-const int BUILD_NUMBER = BUILD_NUMBER_SAVE_VERSION_AI_SQUAD_PINS;
+const int BUILD_NUMBER = BUILD_NUMBER_SAVE_VERSION_ENTITY_BITS_14;
 const int BUILD_NUMBER_MINOR = 0;

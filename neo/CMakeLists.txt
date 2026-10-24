@@ -266,6 +266,10 @@ elseif(MSVC)
 	set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /SAFESEH:NO")
 	set(CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO "${CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO} /SAFESEH:NO")
 
+	# D3-Sink: the game's entity-count-sized stack lists (MAX_GENTITIES 16384, d3xp/Game_local.h) need
+	# more than the 1 MB default on the main thread when the game runs there (com_smp 0)
+	set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /STACK:4194304")
+
 	add_definitions(-DWIN32 
 					-DNOMINMAX
 					-D_WINDOWS

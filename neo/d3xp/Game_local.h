@@ -72,7 +72,12 @@ class EnvironmentProbe; // RB
 
 const int MAX_CLIENTS			= MAX_PLAYERS;
 const int MAX_CLIENTS_IN_PVS	= MAX_CLIENTS >> 3;
-const int GENTITYNUM_BITS		= 12;
+// 14 bits since 2026-10-23: 16384 entity slots. The width is baked into spawn ids (the other
+// 18 bits are the generation, which wraps in RegisterEntity), idEntityPtr, saves (gated by
+// BUILD_NUMBER_SAVE_VERSION_ENTITY_BITS_14), snapshots and bind packing; the snapshot layer's
+// MAX_OBJ_PARMS (sys/SnapshotProcessor.h) and the game thread's stack (framework/Common.cpp)
+// are sized to match. Client and server must agree on it.
+const int GENTITYNUM_BITS		= 14;
 const int MAX_GENTITIES			= 1 << GENTITYNUM_BITS;
 const int ENTITYNUM_NONE		= MAX_GENTITIES - 1;
 const int ENTITYNUM_WORLD		= MAX_GENTITIES - 2;

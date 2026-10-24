@@ -146,7 +146,10 @@ private:
 		// The real solution should be coming soon.
 		// Doom MP: we encountered the same problem, going from 1024 to 4096 as well until a better solution is in place
 		// (initial, useless, exchange of func_statics is killing us)
-		static const int MAX_OBJ_PARMS		= 4096;
+		// D3-Sink 2026-10-23: one object per replicated entity, so this mirrors MAX_GENTITIES
+		// (GENTITYNUM_BITS 14 in d3xp/Game_local.h, which this layer cannot include) plus the
+		// fixed snapshot objects; about 1.3 MB per processor
+		static const int MAX_OBJ_PARMS		= 16384 + 128;
 
 		static const int MAX_LZW_PARMS		= 32;
 		static const int MAX_OBJ_HEADERS	= 256;
