@@ -118,6 +118,10 @@ public:
 	virtual void				MakeDefault();
 	virtual bool				EverReferenced() const;
 	virtual ID_TIME_T			GetSourceFileTimestamp() const; // RB
+	//puncho start - content check (P1-A3b, K45, K38)
+	virtual unsigned int		GetTextCRC() const;
+	virtual int					GetLayer() const;
+	//puncho end
 
 protected:
 	virtual bool				SetDefaultText();
@@ -153,6 +157,7 @@ private:
 	int							sourceTextLength;		// length of decl text in source file
 	int							sourceLine;				// this is where the actual declaration token starts
 	int							checksum;				// checksum of the decl text
+	unsigned int				textCRC;				//puncho - content check (P1-A3b, K45): CRC32 of the decl text, '\r' dropped
 	declType_t					type;					// decl type
 	declState_t					declState;				// decl state
 	int							index;					// index in the per-type list
@@ -5203,6 +5208,7 @@ idDeclLocal::idDeclLocal()
 	sourceTextLength = 0;
 	sourceLine = 0;
 	checksum = 0;
+	textCRC = 0;		//puncho - content check (P1-A3b, K45)
 	type = DECL_ENTITYDEF;
 	index = 0;
 	declState = DS_UNPARSED;
@@ -5351,6 +5357,28 @@ int idDeclLocal::GetTextLength() const
 	return textLength;
 }
 
+//puncho start - content check (P1-A3b, K45, K38)
+/*
+=================
+idDeclLocal::GetTextCRC
+=================
+*/
+unsigned int idDeclLocal::GetTextCRC() const
+{
+	return textCRC;
+}
+
+/*
+=================
+idDeclLocal::GetLayer
+=================
+*/
+int idDeclLocal::GetLayer() const
+{
+	return ( sourceFile != NULL ) ? sourceFile->layer : -1;
+}
+//puncho end
+
 /*
 =================
 idDeclLocal::SetText
@@ -5372,6 +5400,13 @@ void idDeclLocal::SetTextLocal( const char* text, const int length )
 	Mem_Free( textSource );
 
 	checksum = MD5_BlockChecksum( text, length );
+
+	//puncho start - content check (P1-A3b, K45): the content digests hash every explicit decl's text; reading this value
+	// spares them a Huffman decode of every text at each load, and dropping '\r' makes CRLF and LF copies agree (K18)
+	CRC32_InitChecksum( textCRC );
+	CRC32_UpdateChecksumNoCR( textCRC, text, length );
+	CRC32_FinishChecksum( textCRC );
+	//puncho end
 
 #ifdef GET_HUFFMAN_FREQUENCIES
 	for( int i = 0; i < length; i++ )

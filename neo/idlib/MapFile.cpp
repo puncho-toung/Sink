@@ -1666,6 +1666,7 @@ bool idMapFile::Parse( const char* filename, bool ignoreRegion, bool osPath, boo
 	}
 	sourceName = fullName;	//puncho - MP-A5 (K41a)
 	entityLines.Clear();
+	layerEntitiesCRC.Clear();	//puncho - content check (P1-A3b, K38): filled only by a merge through the layers
 
 	version = OLD_MAP_VERSION;
 	fileTime = src.GetFileTime();
@@ -1891,14 +1892,37 @@ bool idMapFile::Parse( const char* filename, bool ignoreRegion, bool osPath, boo
 		{
 			const int numLayers = idLib::fileSystem->GetNumLayers();
 			const int lastLayer = ( patchLayerLimit >= 0 && patchLayerLimit < numLayers ) ? patchLayerLimit : numLayers;
+
+			// content check (P1-A3b, K38): each layer's part, taken before the merge: the served map file's entities
+			// count for the layer that serves it, and each patch for its own layer. A shadowed copy is never read
+			const int mapLayer = ( numLayers > 1 ) ? idLib::fileSystem->GetFileLayer( sourceName ) : 0;
+			const unsigned int mapEntitiesCRC = GetEntitiesCRC();
+			layerEntitiesCRC.SetNum( numLayers );
+			for( int layer = 0; layer < numLayers; layer++ )
+			{
+				CRC32_InitChecksum( layerEntitiesCRC[layer] );
+				if( layer == mapLayer )
+				{
+					const unsigned int crc = LittleLong( mapEntitiesCRC );
+					CRC32_UpdateChecksum( layerEntitiesCRC[layer], &crc, sizeof( crc ) );
+				}
+			}
+
 			for( int layer = 0; layer < lastLayer; layer++ )
 			{
 				idMapFile extrasMap;
 				extrasMap.readLayer = layer;
 				if( extrasMap.Parse( fullName, ignoreRegion, false, true ) )
 				{
+					const unsigned int crc = LittleLong( extrasMap.GetEntitiesCRC() );
+					CRC32_UpdateChecksum( layerEntitiesCRC[layer], &crc, sizeof( crc ) );
 					MergePatch( extrasMap, layer );
 				}
+			}
+
+			for( int layer = 0; layer < numLayers; layer++ )
+			{
+				CRC32_FinishChecksum( layerEntitiesCRC[layer] );
 			}
 		}
 		//puncho end
@@ -2448,27 +2472,6 @@ void idMapFile::SetGeometryCRC()
 //puncho start - content check (P1-A3a, K37)
 /*
 ===============
-CRC32_UpdateChecksumNoCR
-
-Hashes the text as if every '\r' were removed, so a CRLF and an LF copy of one file agree.
-===============
-*/
-static void CRC32_UpdateChecksumNoCR( unsigned int& crc, const char* text, int length )
-{
-	int start = 0;
-	for( int i = 0; i < length; i++ )
-	{
-		if( text[i] == '\r' )
-		{
-			CRC32_UpdateChecksum( crc, text + start, i - start );
-			start = i + 1;
-		}
-	}
-	CRC32_UpdateChecksum( crc, text + start, length - start );
-}
-
-/*
-===============
 idMapFile::GetEntitiesCRC
 
 CRC32 of every entity's key/values, entities in map order and pairs in dict order, as they stand after Parse has
@@ -2495,6 +2498,18 @@ unsigned int idMapFile::GetEntitiesCRC() const
 	}
 	CRC32_FinishChecksum( crc );
 	return crc;
+}
+//puncho end
+
+//puncho start - content check (P1-A3b, K38)
+/*
+===============
+idMapFile::GetLayerEntitiesCRC
+===============
+*/
+unsigned int idMapFile::GetLayerEntitiesCRC( int layer ) const
+{
+	return ( layer >= 0 && layer < layerEntitiesCRC.Num() ) ? layerEntitiesCRC[layer] : 0;
 }
 //puncho end
 

@@ -497,6 +497,14 @@ private:
 	idStrList									fileList;
 	idStr 										filename;
 	int											filenum;
+	//puncho start - content check (P1-A3b, K38): per fileList entry, recorded by GetFilenum as the compiler meets it
+	struct sourceFile_t
+	{
+		int										layer;		// the content layer the text was read from; -1 for none (console text)
+		unsigned int							crc;		// CRC32 of the text, '\r' dropped
+	};
+	idList<sourceFile_t, TAG_SCRIPT>			fileSources;
+	//puncho end
 
 	int											numVariables;
 	byte										variables[ MAX_GLOBALS ];
@@ -538,9 +546,10 @@ public:
 	void										Restart();
 	bool										CompileText( const char* source, const char* text, bool console );
 	//puncho start - MP-A5 (K42)
-	bool										CompileSource( const char* fileName, const char* text, bool console );
+	bool										CompileSource( const char* fileName, const char* text, bool console, int layer );	// P1-A3b: layer as GetFilenum
 	void										PrintCapacity() const;
 	//puncho end
+	void										GetLayerChecksums( unsigned int* crcs, int numLayers ) const;	//puncho - content check (P1-A3b, K38)
 	const function_t*							CompileFunction( const char* functionName, const char* text );
 	void										CompileFile( const char* filename );
 	void										BeginCompilation();
@@ -550,7 +559,7 @@ public:
 	void										FreeData();
 
 	const char*									GetFilename( int num );
-	int											GetFilenum( const char* name );
+	int											GetFilenum( const char* name, const char* text = NULL, int layer = -1 );	//puncho - text, layer: P1-A3b (K38)
 	int											GetLineNumberForStatement( int index );
 	const char*									GetFilenameForStatement( int index );
 

@@ -56,8 +56,9 @@ idCVar net_migrateHost( "net_migrateHost", "-1", CVAR_INTEGER, "Become host of s
 //puncho start - content check (P1-A3a, K17): the gate's stale RELIABLE_LOADING_DONE. A peer keeps a copy of the last one
 // it sent; with the cvar set it sends that copy again, carrying the previous load's id, as it starts the next load
 idCVar net_debugStaleLoadingDone( "net_debugStaleLoadingDone", "0", CVAR_BOOL | CVAR_NOCHEAT, "P1-A3a gate: a peer that starts a load first sends the host its RELIABLE_LOADING_DONE of the previous load again" );
-static byte		lastLoadingDone[ 128 ];
+static byte		lastLoadingDone[ 4 + CONTENT_DIGESTS_WIRE_SIZE( MAX_MOD_LAYERS + 1 ) ];	// P1-A3b: the load id and every layer's rows
 static int		lastLoadingDoneSize = 0;
+compile_time_assert( sizeof( lastLoadingDone ) < 700 );	// P1-A3b (K38): RELIABLE_LOADING_DONE at MAX_MOD_LAYERS
 //puncho end
 extern idCVar net_debugBaseStates;
 
@@ -429,7 +430,7 @@ void idSessionLocal::StartLoading()
 			//puncho start - version rule (MP-A0): this load takes one fresh RELIABLE_LOADING_DONE per peer, whatever an
 			// ended match left behind (idLobby::HandleReliableMsg)
 			GetActingGameStateLobby().peers[p].loaded = false;
-			memset( GetActingGameStateLobby().peers[p].contentDigests, 0, sizeof( GetActingGameStateLobby().peers[p].contentDigests ) );
+			memset( &GetActingGameStateLobby().peers[p].contentDigests, 0, sizeof( GetActingGameStateLobby().peers[p].contentDigests ) );
 			//puncho end
 			if( GetActingGameStateLobby().peers[p].IsConnected() )
 			{
@@ -2511,11 +2512,20 @@ void idSessionLocal::LoadingFinished()
 		//puncho start - version rule (MP-A0, MD13): the host compares these with its own and refuses this peer on any difference.
 		// The load id leads (P1-A3a, K17): the host drops a message from another load instead of comparing it
 		msg.WriteLong( GetActingGameStateLobby().loadId );
-		unsigned int digests[ CONTENT_DIGEST_COUNT ];
+		// P1-A3b (K38): the global rows, the layer count, then a row per content layer, base first
+		contentDigests_t digests;
 		game->GetContentDigests( digests );
 		for( int i = 0; i < CONTENT_DIGEST_COUNT; i++ )
 		{
-			msg.WriteLong( digests[i] );
+			msg.WriteLong( digests.global[i] );
+		}
+		msg.WriteByte( digests.numLayers );
+		for( int layer = 0; layer < digests.numLayers; layer++ )
+		{
+			for( int i = 0; i < LAYER_DIGEST_COUNT; i++ )
+			{
+				msg.WriteLong( digests.layers[layer][i] );
+			}
 		}
 		//puncho end
 		GetActingGameStateLobby().QueueReliableMessage( GetActingGameStateLobby().host, idLobby::RELIABLE_LOADING_DONE, msg.GetReadData(), msg.GetSize() );

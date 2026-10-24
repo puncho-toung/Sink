@@ -84,6 +84,7 @@ void idGameLocal::InitAsyncNetwork()
 	declRemapBytes = 0;
 	declRemapDeferred = false;
 	declRemapWarned = false;
+	declRemapHighWarned = false;	// P1-A3b, K46
 	declRemapHash.Clear();
 	for( int k = 0; k < MAX_DECL_REMAP; k++ )
 	{
@@ -182,6 +183,13 @@ int idGameLocal::ServerRemapDecl( int clientNum, declType_t type, int index )
 	declRemap[k].warned = false;
 	declRemapBytes += slotBytes;
 	declRemapHash.Add( index, k );
+
+	// P1-A3b (K46): the table's headroom is a phase 12 row; it is read from this line, once per load
+	if( !declRemapHighWarned && ( numDeclRemap * 4 > MAX_DECL_REMAP * 3 || declRemapBytes * 4 > MAX_DECL_REMAP_BYTES * 3 ) )
+	{
+		declRemapHighWarned = true;
+		Warning( "ServerRemapDecl: the implicit decl announce table is past 75%% of a cap (%d of %d slots, %d of %d bytes)", numDeclRemap, MAX_DECL_REMAP, declRemapBytes, MAX_DECL_REMAP_BYTES );
+	}
 
 	if( net_debugDeclRemap.GetInteger() > 0 )
 	{
@@ -332,21 +340,26 @@ void idGameLocal::ClientReadDeclRemap( const idBitMsg& msg )
 //puncho start - version rule (MP-A0, MD13)
 /*
 ================
-DeclNameDigest
+DeclLayerDigests
 
-CRC32 of the explicit decls of one type, each as its index, its canonical name and a CRC32 of its text. Implicit
-decls (FindType with makeDefault and no definition in any file) are left out: a machine appends them in the order it
-first asks for them, which follows its own rendering, UI and map history, so two identical builds would disagree on
-them, and DeclManager.h promises consistent indices only for the explicit ones. They cross through the announce table
-instead (P1-A3a, K19). The index is hashed with the name so a pair whose explicit decls landed at different indices is
-still refused, and the text (K18) so a decl of the same name with other text is too: an fs_game override, or the same
-file served from a .resources on one peer and loose on the other. text is scratch, kept across calls.
+One row per content layer for one decl type: a CRC32 of the explicit decls whose winning file that layer serves, each as
+its index, its canonical name and the CRC32 of its text (P1-A3b, K38). Implicit decls (FindType with makeDefault and no
+definition in any file) are left out: a machine appends them in the order it first asks for them, which follows its own
+rendering, UI and map history, so two identical builds would disagree on them, and DeclManager.h promises consistent
+indices only for the explicit ones. They cross through the announce table instead (P1-A3a, K19). The index is hashed
+with the name so a pair whose explicit decls landed at different indices is still refused, and the text (K18) so a decl
+of the same name with other text is too: an override in a layer, or the same file served from a .resources on one peer
+and loose on the other. The text CRC is the one the decl stored when its text was set (K45), '\r' dropped, so no text
+is decompressed here.
 ================
 */
-static unsigned int DeclNameDigest( declType_t type, idList<char>& text )
+static void DeclLayerDigests( declType_t type, layerDigest_t row, contentDigests_t& digests )
 {
-	unsigned int crc;
-	CRC32_InitChecksum( crc );
+	unsigned int crcs[ MAX_MOD_LAYERS + 1 ];
+	for( int layer = 0; layer < digests.numLayers; layer++ )
+	{
+		CRC32_InitChecksum( crcs[layer] );
+	}
 	const int numDecls = declManager->GetNumDecls( type );
 	for( int i = 0; i < numDecls; i++ )
 	{
@@ -356,34 +369,21 @@ static unsigned int DeclNameDigest( declType_t type, idList<char>& text )
 		{
 			continue;
 		}
+		// a file no layer holds any more (written by an editor, then removed) counts as base's
+		const int declLayer = decl->GetLayer();
+		const int layer = ( declLayer >= 0 && declLayer < digests.numLayers ) ? declLayer : 0;
 		const int index = LittleLong( i );
 		const char* name = decl->GetName();
-		CRC32_UpdateChecksum( crc, &index, sizeof( index ) );
-		CRC32_UpdateChecksum( crc, name, idStr::Length( name ) + 1 );
-
-		//puncho start - content check (P1-A3a, K18): the decl's source text as the file held it, every '\r' dropped so
-		// a CRLF and an LF copy agree. idDeclLocal::checksum, an MD5 of the same text with its '\r's, stays as it is
-		const int textLength = decl->GetTextLength();
-		text.SetNum( textLength + 1 );
-		decl->GetText( text.Ptr() );
-		int length = 0;
-		for( int c = 0; c < textLength; c++ )
-		{
-			if( text[c] != '\r' )
-			{
-				text[length++] = text[c];
-			}
-		}
-		unsigned int textCrc;
-		CRC32_InitChecksum( textCrc );
-		CRC32_UpdateChecksum( textCrc, text.Ptr(), length );
-		CRC32_FinishChecksum( textCrc );
-		textCrc = LittleLong( textCrc );
-		CRC32_UpdateChecksum( crc, &textCrc, sizeof( textCrc ) );
-		//puncho end
+		const unsigned int textCrc = LittleLong( decl->GetTextCRC() );
+		CRC32_UpdateChecksum( crcs[layer], &index, sizeof( index ) );
+		CRC32_UpdateChecksum( crcs[layer], name, idStr::Length( name ) + 1 );
+		CRC32_UpdateChecksum( crcs[layer], &textCrc, sizeof( textCrc ) );
 	}
-	CRC32_FinishChecksum( crc );
-	return crc;
+	for( int layer = 0; layer < digests.numLayers; layer++ )
+	{
+		CRC32_FinishChecksum( crcs[layer] );
+		digests.layers[layer][row] = crcs[layer];
+	}
 }
 
 /*
@@ -395,10 +395,18 @@ different content once the map is loaded. Each category hashes what stands behin
 sends, from names and ids as stored (no pointers, no locale), so a Linux and a Windows build of one source agree.
 The decl types are the ones sent as indices, through ServerRemapDecl / ClientRemapDecl or a raw Index():
 entityDefs (snapshot spawns, damage defs), materials (collision surfaces), skins (weapons), sounds and FX.
+P1-A3b (K38): the decls, the script and the map's entities are split by content layer, so a refusal names the mod;
+classes, the map's geometry, the merged entities that spawn and the compiled script image stay global. The time it
+takes is printed, a phase 12 row (K45): the host pays it once per load, at the first peer's RELIABLE_LOADING_DONE.
 ================
 */
-void idGameLocal::GetContentDigests( unsigned int digests[ CONTENT_DIGEST_COUNT ] ) const
+void idGameLocal::GetContentDigests( contentDigests_t& digests ) const
 {
+	const uint64 startTime = Sys_Microseconds();
+
+	memset( &digests, 0, sizeof( digests ) );
+	digests.numLayers = Min( fileSystem->GetNumLayers(), MAX_MOD_LAYERS + 1 );
+
 	unsigned int crc;
 	CRC32_InitChecksum( crc );
 	for( int i = 0; i < idClass::GetNumTypes(); i++ )
@@ -407,18 +415,29 @@ void idGameLocal::GetContentDigests( unsigned int digests[ CONTENT_DIGEST_COUNT 
 		CRC32_UpdateChecksum( crc, name, idStr::Length( name ) + 1 );
 	}
 	CRC32_FinishChecksum( crc );
-	digests[ CONTENT_DIGEST_CLASSES ] = crc;
+	digests.global[ CONTENT_DIGEST_CLASSES ]		= crc;
+	digests.global[ CONTENT_DIGEST_MAP_GEOMETRY ]	= ( mapFile != NULL ) ? mapFile->GetGeometryCRC() : 0;
+	digests.global[ CONTENT_DIGEST_MAP_ENTITIES ]	= ( mapFile != NULL ) ? mapFile->GetEntitiesCRC() : 0;	// P1-A3a, K37
+	// the per-layer SCRIPT rows say which files were read; this proves both peers compiled the same image from them
+	digests.global[ CONTENT_DIGEST_SCRIPT_IMAGE ]	= program.CalculateChecksum( false );
 
+	DeclLayerDigests( DECL_ENTITYDEF, LAYER_DIGEST_ENTITYDEFS, digests );
+	DeclLayerDigests( DECL_MATERIAL, LAYER_DIGEST_MATERIALS, digests );
+	DeclLayerDigests( DECL_SKIN, LAYER_DIGEST_SKINS, digests );
+	DeclLayerDigests( DECL_SOUND, LAYER_DIGEST_SOUNDS, digests );
+	DeclLayerDigests( DECL_FX, LAYER_DIGEST_FX, digests );
 	// entityDefs also cross in entityDefBits, a width InitAsyncNetwork takes from the explicit count and the table cap
-	idList<char> text;
-	digests[ CONTENT_DIGEST_ENTITYDEFS ]	= DeclNameDigest( DECL_ENTITYDEF, text ) ^ ( unsigned int )entityDefBits;
-	digests[ CONTENT_DIGEST_MATERIALS ]		= DeclNameDigest( DECL_MATERIAL, text );
-	digests[ CONTENT_DIGEST_SKINS ]			= DeclNameDigest( DECL_SKIN, text );
-	digests[ CONTENT_DIGEST_SOUNDS ]		= DeclNameDigest( DECL_SOUND, text );
-	digests[ CONTENT_DIGEST_FX ]			= DeclNameDigest( DECL_FX, text );
-	digests[ CONTENT_DIGEST_SCRIPT ]		= program.CalculateChecksum( false );
-	digests[ CONTENT_DIGEST_MAP_GEOMETRY ]	= ( mapFile != NULL ) ? mapFile->GetGeometryCRC() : 0;
-	digests[ CONTENT_DIGEST_MAP_ENTITIES ]	= ( mapFile != NULL ) ? mapFile->GetEntitiesCRC() : 0;	//puncho - content check (P1-A3a, K37)
+	digests.layers[0][ LAYER_DIGEST_ENTITYDEFS ] ^= ( unsigned int )entityDefBits;
+
+	unsigned int crcs[ MAX_MOD_LAYERS + 1 ];
+	program.GetLayerChecksums( crcs, digests.numLayers );
+	for( int layer = 0; layer < digests.numLayers; layer++ )
+	{
+		digests.layers[layer][ LAYER_DIGEST_SCRIPT ]		= crcs[layer];
+		digests.layers[layer][ LAYER_DIGEST_MAP_ENTITIES ]	= ( mapFile != NULL ) ? mapFile->GetLayerEntitiesCRC( layer ) : 0;
+	}
+
+	Printf( "content digests: %d layers in %.2f ms\n", digests.numLayers, ( Sys_Microseconds() - startTime ) * 0.001f );
 }
 //puncho end
 

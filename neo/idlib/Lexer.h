@@ -61,7 +61,8 @@ typedef enum
 	LEXFL_ALLOWFLOATEXCEPTIONS			= BIT( 10 ),	// allow float exceptions like 1.#INF or 1.#IND to be parsed
 	LEXFL_ALLOWMULTICHARLITERALS		= BIT( 11 ),	// allow multi character literals
 	LEXFL_ALLOWBACKSLASHSTRINGCONCAT	= BIT( 12 ),	// allow multiple strings separated by '\' to be concatenated
-	LEXFL_ONLYSTRINGS					= BIT( 13 )	// parse as whitespace deliminated strings (quoted strings keep quotes)
+	LEXFL_ONLYSTRINGS					= BIT( 13 ),	// parse as whitespace deliminated strings (quoted strings keep quotes)
+	LEXFL_INCLUDETHROUGHLAYERS			= BIT( 14 )	//puncho - P1-A3b: #include "x" opens x through the file system, never next to the including file's OS path
 } lexerFlags_t;
 
 typedef enum

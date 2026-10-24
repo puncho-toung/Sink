@@ -187,3 +187,21 @@ unsigned int CRC32_BlockChecksum( const void* data, int length )
 	return crc;
 }
 // RB end
+
+//puncho start - content check (P1-A3a, P1-A3b): the runs between '\r's, found with memchr
+void CRC32_UpdateChecksumNoCR( unsigned int& crcvalue, const char* text, int length )
+{
+	const char* end = text + length;
+	while( text < end )
+	{
+		const char* cr = ( const char* )memchr( text, '\r', end - text );
+		if( cr == NULL )
+		{
+			CRC32_UpdateChecksum( crcvalue, text, end - text );
+			break;
+		}
+		CRC32_UpdateChecksum( crcvalue, text, cr - text );
+		text = cr + 1;
+	}
+}
+//puncho end

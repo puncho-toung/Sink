@@ -2165,7 +2165,8 @@ bool idProgram::CompileText( const char* source, const char* text, bool console 
 {
 	// use a full os path for GetFilenum since it calls OSPathToRelativePath to convert filenames from the parser
 	idStr ospath = fileSystem->RelativePathToOSPath( source );
-	return CompileSource( ospath, text, console );
+	//puncho - content check (P1-A3b, K38): the text of a file comes through ReadFile, from the layer that serves it
+	return CompileSource( ospath, text, console, console ? -1 : fileSystem->GetFileLayer( source ) );
 }
 
 /*
@@ -2174,16 +2175,17 @@ idProgram::CompileSource
 
 MP-A5 (K42): CompileText's body, under the file name given. A mod's mod_main.script compiles under the relative name
 <moddir>/script/mod_main.script, which GetFilenum keeps as it is: every layer's copy shares the relative path that
-OSPathToRelativePath would map them all to, and each needs its own file number in errors and digests.
+OSPathToRelativePath would map them all to, and each needs its own file number in errors and digests. layer is the
+content layer text was read from, -1 for text no file holds (P1-A3b, K38).
 ================
 */
-bool idProgram::CompileSource( const char* fileName, const char* text, bool console )
+bool idProgram::CompileSource( const char* fileName, const char* text, bool console, int layer )
 {
 	idCompiler	compiler;
 	int			i;
 	idVarDef*	def;
 
-	filenum = GetFilenum( fileName );
+	filenum = GetFilenum( fileName, text, layer );
 
 #if defined(USE_EXCEPTIONS)
 	try
@@ -2320,6 +2322,7 @@ void idProgram::FreeData()
 
 	filename.Clear();
 	fileList.Clear();
+	fileSources.Clear();	//puncho - content check (P1-A3b)
 	statements.Clear();
 	functions.Clear();
 
@@ -2372,7 +2375,7 @@ void idProgram::Startup( const char* defaultScript )
 
 		idStr sourceName = va( "%s/script/mod_main.script", fileSystem->GetLayerName( layer ) );
 		gameLocal.Printf( "compiling %s\n", sourceName.c_str() );
-		if( !CompileSource( sourceName, text.Ptr(), false ) )
+		if( !CompileSource( sourceName, text.Ptr(), false, layer ) )
 		{
 			gameLocal.Error( "Compile failed in file %s.", sourceName.c_str() );
 		}
@@ -2600,6 +2603,7 @@ void idProgram::Restart()
 
 	statements.SetNum( top_statements );
 	fileList.SetNum( top_files );
+	fileSources.SetNum( top_files );	//puncho - content check (P1-A3b)
 	filename.Clear();
 
 	// reset the variables to their default values
@@ -2613,17 +2617,25 @@ void idProgram::Restart()
 /*
 ================
 idProgram::GetFilenum
+
+P1-A3b (K38): a file the compiler meets for the first time is recorded with the content layer it was read from and a
+CRC32 of its text, '\r' dropped, for the per-layer SCRIPT digest (GetLayerChecksums). CompileSource passes the text and
+layer of the file it compiles. An #include is opened by idParser, which keeps no text, so it is read again as the parser
+found it: a name that is an OS path is a loose file in one layer's game dir, or an entry of a .pk4 there, named
+<pak>/<relative path>; any other name came through the layers out of a .resources file.
 ================
 */
-int idProgram::GetFilenum( const char* name )
+int idProgram::GetFilenum( const char* name, const char* text, int layer )
 {
 	if( filename == name )
 	{
 		return filenum;
 	}
 
+	const char* relativeName = fileSystem->OSPathToRelativePath( name );	//puncho - kept to find the layer below
+	const int numFiles = fileList.Num();								//puncho
 	idStr strippedName;
-	strippedName = fileSystem->OSPathToRelativePath( name );
+	strippedName = relativeName;
 	if( !strippedName.Length() )
 	{
 		// not off the base path so just use the full path
@@ -2634,11 +2646,107 @@ int idProgram::GetFilenum( const char* name )
 		filenum = fileList.AddUnique( strippedName );
 	}
 
+	//puncho start - content check (P1-A3b, K38)
+	if( fileList.Num() > numFiles )
+	{
+		unsigned int crc;
+		CRC32_InitChecksum( crc );
+		if( text != NULL )
+		{
+			CRC32_UpdateChecksumNoCR( crc, text, idStr::Length( text ) );
+		}
+		else
+		{
+			idFile* f = NULL;
+			layer = -1;
+			if( relativeName != name )
+			{
+				// the game dir just before the relative path names the layer
+				const char* dirEnd = relativeName - 1;
+				const char* dir = dirEnd;
+				while( dir > name && dir[-1] != '/' && dir[-1] != '\\' )
+				{
+					dir--;
+				}
+				for( int i = 0; i < fileSystem->GetNumLayers() && layer < 0; i++ )
+				{
+					const char* layerName = fileSystem->GetLayerName( i );
+					if( idStr::Length( layerName ) == dirEnd - dir && idStr::Icmpn( layerName, dir, dirEnd - dir ) == 0 )
+					{
+						layer = i;
+					}
+				}
+				f = fileSystem->OpenExplicitFileRead( name );
+				const int pak = idStr::FindText( relativeName, ".pk4/", false );
+				if( f == NULL && layer >= 0 && pak >= 0 )
+				{
+					f = fileSystem->OpenFileReadFromLayer( relativeName + pak + 5, layer );
+				}
+			}
+			else
+			{
+				layer = fileSystem->GetFileLayer( name );
+				f = ( layer >= 0 ) ? fileSystem->OpenFileReadFromLayer( name, layer ) : NULL;
+			}
+			if( f != NULL )
+			{
+				const int length = f->Length();
+				idTempArray<char> buffer( length );
+				f->Read( buffer.Ptr(), length );
+				fileSystem->CloseFile( f );
+				CRC32_UpdateChecksumNoCR( crc, buffer.Ptr(), length );
+			}
+			else if( layer >= 0 )
+			{
+				gameLocal.Warning( "GetFilenum: '%s' cannot be read again for the content digest; its text is left out", name );
+			}
+		}
+		CRC32_FinishChecksum( crc );
+		sourceFile_t& source = fileSources.Alloc();
+		source.layer = layer;
+		source.crc = crc;
+	}
+	//puncho end
+
 	// save the unstripped name so that we don't have to strip the incoming name every time we call GetFilenum
 	filename = name;
 
 	return filenum;
 }
+
+//puncho start - content check (P1-A3b, K38)
+/*
+================
+idProgram::GetLayerChecksums
+
+Per content layer, a CRC32 over the name and text CRC of each source file the compiler read from it, in the order it met
+them: doom_main and its includes, each layer's mod_main.script, then the map script. crcs holds numLayers values.
+================
+*/
+void idProgram::GetLayerChecksums( unsigned int* crcs, int numLayers ) const
+{
+	for( int layer = 0; layer < numLayers; layer++ )
+	{
+		CRC32_InitChecksum( crcs[layer] );
+	}
+	assert( fileSources.Num() == fileList.Num() );
+	for( int i = 0; i < fileSources.Num(); i++ )
+	{
+		const int layer = fileSources[i].layer;
+		if( layer < 0 || layer >= numLayers )
+		{
+			continue;
+		}
+		CRC32_UpdateChecksum( crcs[layer], fileList[i].c_str(), fileList[i].Length() + 1 );
+		const unsigned int crc = LittleLong( fileSources[i].crc );
+		CRC32_UpdateChecksum( crcs[layer], &crc, sizeof( crc ) );
+	}
+	for( int layer = 0; layer < numLayers; layer++ )
+	{
+		CRC32_FinishChecksum( crcs[layer] );
+	}
+}
+//puncho end
 
 /*
 ================

@@ -1614,6 +1614,114 @@ void idLobby::SendConnectionLess( const lobbyAddress_t& remoteAddress, byte type
 	sessionCB->SendRawPacket( remoteAddress, processedMsg.GetReadData(), processedMsg.GetSize(), useDirectPort );
 }
 
+//puncho start - content check (P1-A3b, K39)
+static const int MAX_MOD_LIST_LENGTH	= 512;		// the mod list as the connect message carries it, terminator included
+static const int MAX_MOD_LIST_REASON	= 230;		// the refusal dialog shows 234 characters after its "Refused by the host: "
+
+/*
+========================
+GetModList
+
+The mod list as the connect message carries it: the content layer names after base, in load order, comma-separated
+(fs_game_base, each fs_mods entry, fs_game; idFileSystem::GetLayerName)
+========================
+*/
+static void GetModList( idStr& list )
+{
+	list.Clear();
+	for( int layer = 1; layer < fileSystem->GetNumLayers(); layer++ )
+	{
+		list += ( layer > 1 ) ? "," : "";
+		list += fileSystem->GetLayerName( layer );
+	}
+}
+
+/*
+========================
+SplitModList
+========================
+*/
+static void SplitModList( const char* list, idStrList& mods )
+{
+	mods.Clear();
+	while( *list != '\0' )
+	{
+		const char* comma = strchr( list, ',' );
+		const int length = ( comma != NULL ) ? ( int )( comma - list ) : idStr::Length( list );
+		mods.Append( idStr( list, 0, length ) );
+		list += ( comma != NULL ) ? length + 1 : length;
+	}
+}
+
+/*
+========================
+ModListDiffers
+
+The host's side of K39: whether a joiner's mod list differs from this machine's, and the refusal's reason when it does.
+The lists compare ignoring case, as game dirs do on Windows, and as CheckSaveLayers compares a save's. The mods the
+joiner lacks or adds are named first, or the order when both hold the same mods; the host's list goes last, cut with
+"..." to keep the reason inside the dialog.
+========================
+*/
+static bool ModListDiffers( const char* peerList, idStr& reason )
+{
+	idStr hostList;
+	GetModList( hostList );
+	if( hostList.Icmp( peerList ) == 0 )
+	{
+		return false;
+	}
+
+	idStrList hostMods;
+	idStrList peerMods;
+	SplitModList( hostList, hostMods );
+	SplitModList( peerList, peerMods );
+	idStr missing;
+	idStr extra;
+	for( int i = 0; i < hostMods.Num(); i++ )
+	{
+		if( peerMods.FindIndex( hostMods[i] ) < 0 )
+		{
+			missing += missing.IsEmpty() ? "" : ",";
+			missing += hostMods[i];
+		}
+	}
+	for( int i = 0; i < peerMods.Num(); i++ )
+	{
+		if( hostMods.FindIndex( peerMods[i] ) < 0 )
+		{
+			extra += extra.IsEmpty() ? "" : ",";
+			extra += peerMods[i];
+		}
+	}
+
+	reason = "mods differ:";
+	if( !missing.IsEmpty() )
+	{
+		reason += " missing ";
+		reason += missing;
+	}
+	if( !extra.IsEmpty() )
+	{
+		reason += missing.IsEmpty() ? " extra " : ", extra ";
+		reason += extra;
+	}
+	if( missing.IsEmpty() && extra.IsEmpty() )
+	{
+		reason += " order ";
+		reason += peerList;
+	}
+	reason += "; host has ";
+	reason += hostList.IsEmpty() ? "none" : hostList.c_str();
+	if( reason.Length() > MAX_MOD_LIST_REASON )
+	{
+		reason.CapLength( MAX_MOD_LIST_REASON - 3 );
+		reason += "...";
+	}
+	return true;
+}
+//puncho end
+
 /*
 ========================
 idLobby::SendConnectionRequest
@@ -1636,6 +1744,12 @@ void idLobby::SendConnectionRequest()
 	NET_VERBOSE_PRINT( "NET: version = %u\n", localChecksum );
 
 	msg.WriteLong( localChecksum );
+	//puncho start - content check (P1-A3b, K39): the mod list, which the host compares before anything loads. Clients
+	// cannot switch mods in a session, since fs_game and fs_mods are init cvars
+	idStr modList;
+	GetModList( modList );
+	msg.WriteString( modList, MAX_MOD_LIST_LENGTH, false );
+	//puncho end
 	msg.WriteUShort( peers[host].sessionID );
 	msg.WriteBool( connectIsFromInvite );
 
@@ -1837,8 +1951,10 @@ needs them (single player never does), and kept until the next load starts or th
 */
 void idLobby::VerifyPeerContent( int p )
 {
-	static const char* const digestNames[] = { "classes", "entityDefs", "materials", "skins", "sounds", "fx", "script", "mapGeometry", "map entities" };	//puncho - "map entities": P1-A3a, K37
-	compile_time_assert( sizeof( digestNames ) / sizeof( digestNames[0] ) == CONTENT_DIGEST_COUNT );
+	static const char* const globalNames[] = { "classes", "mapGeometry", "map entities", "script image" };	//puncho - "map entities": P1-A3a, K37; "script image": P1-A3b
+	compile_time_assert( sizeof( globalNames ) / sizeof( globalNames[0] ) == CONTENT_DIGEST_COUNT );
+	static const char* const layerNames[] = { "entityDefs", "materials", "skins", "sounds", "fx", "script", "map entities" };	//puncho - P1-A3b, K38
+	compile_time_assert( sizeof( layerNames ) / sizeof( layerNames[0] ) == LAYER_DIGEST_COUNT );
 
 	assert( IsHost() && loaded );
 	if( !localContentDigestsValid )
@@ -1846,18 +1962,43 @@ void idLobby::VerifyPeerContent( int p )
 		game->GetContentDigests( localContentDigests );
 		localContentDigestsValid = true;
 	}
-	const unsigned int* localDigests = localContentDigests;
+	const contentDigests_t& localDigests = localContentDigests;
 
 	peer_t& peer = peers[p];
 
+	//puncho start - content check (P1-A3b, K38): the global rows, then each layer's, named "mod '<dir>': <row>". The
+	// layer counts agree: RELIABLE_LOADING_DONE refused any other
 	idStr differs;
 	for( int i = 0; i < CONTENT_DIGEST_COUNT; i++ )
 	{
-		if( peer.contentDigests[i] != localDigests[i] )
+		if( peer.contentDigests.global[i] != localDigests.global[i] )
 		{
-			differs += va( " %s (host %08x, peer %08x)", digestNames[i], localDigests[i], peer.contentDigests[i] );
+			differs += differs.IsEmpty() ? "" : "; ";
+			differs += va( "%s differ (host %08x, peer %08x)", globalNames[i], localDigests.global[i], peer.contentDigests.global[i] );
 		}
 	}
+	for( int layer = 0; layer < localDigests.numLayers; layer++ )
+	{
+		for( int i = 0; i < LAYER_DIGEST_COUNT; i++ )
+		{
+			if( peer.contentDigests.layers[layer][i] != localDigests.layers[layer][i] )
+			{
+				differs += differs.IsEmpty() ? "" : "; ";
+				if( layer == 0 )
+				{
+					differs += "base";
+				}
+				else
+				{
+					differs += "mod '";
+					differs += fileSystem->GetLayerName( layer );
+					differs += "'";
+				}
+				differs += va( ": %s differ (host %08x, peer %08x)", layerNames[i], localDigests.layers[layer][i], peer.contentDigests.layers[layer][i] );
+			}
+		}
+	}
+	//puncho end
 
 	if( differs.IsEmpty() )
 	{
@@ -1865,7 +2006,7 @@ void idLobby::VerifyPeerContent( int p )
 		return;
 	}
 
-	idStr reason = "content differs:";
+	idStr reason = "content differs: ";
 	reason += differs;
 	RefusePeer( p, reason.c_str() );
 }
@@ -2062,7 +2203,26 @@ int idLobby::HandleInitialPeerConnection( idBitMsg& msg, const lobbyAddress_t& p
 		return -1;
 	}
 
+	char peerModList[ MAX_MOD_LIST_LENGTH ];			//puncho - content check (P1-A3b, K39)
+	msg.ReadString( peerModList, sizeof( peerModList ) );	//puncho
+
 	idPacketProcessor::sessionId_t sessionID = msg.ReadUShort();
+
+	//puncho start - content check (P1-A3b, K39): a joiner with other mods is refused here, before it loads anything. A
+	// joiner has no peer index yet, so this is RefusePeer's goodbye without one: the session id the joiner sent is what
+	// makes it honour the refusal (idLobby::HandlePacket)
+	idStr modReason;
+	if( ModListDiffers( peerModList, modReason ) )
+	{
+		idLib::Printf( "NET: Refusing %s at connect, %s\n", peerAddress.ToString(), modReason.c_str() );
+		byte refusalBuffer[ 512 ];
+		idBitMsg refusal( refusalBuffer, sizeof( refusalBuffer ) );
+		refusal.WriteUShort( sessionID );
+		refusal.WriteString( modReason, sizeof( refusalBuffer ) - 2 );
+		SendGoodbye( peerAddress, false, &refusal );
+		return -1;
+	}
+	//puncho end
 
 	// Check to see if this is a peer trying to connect with a different sessionID
 	// If the peer got abruptly disconnected, the peer could be trying to reconnect from a non clean disconnect
@@ -3033,8 +3193,8 @@ void idLobby::HandleReliableMsg( int p, idBitMsg& msg, const lobbyAddress_t* rem
 		//puncho start - content check (P1-A3a, K17): the message leads with the load id the peer latched when it started
 		// loading. One from another load is a leftover (ENDMATCH and a quick restart can overtake it): dropped, never
 		// refused, and the peer's real one follows. Then the rest must have the exact size of this host's own layout:
-		// the global digests today, rows per mod layer once P1-A3b adds them. Any other size is a different build (an
-		// older one sends nothing), refused without reading past the end
+		// the global digests and a row per content layer (P1-A3b). Any other size is a different build (an older one
+		// sends nothing), refused without reading past the end
 		if( msg.GetRemainingData() < 4 )
 		{
 			RefusePeer( p, "RELIABLE_LOADING_DONE carries no load id: a different build" );
@@ -3046,19 +3206,37 @@ void idLobby::HandleReliableMsg( int p, idBitMsg& msg, const lobbyAddress_t* rem
 			NET_VERBOSE_PRINT( "NET: RELIABLE_LOADING_DONE from %s is for load %u, not the current load %u: a leftover, dropped\n", peer.address.ToString(), peerLoadId, loadId );
 			return;
 		}
-		const int expectedSize = ( int )sizeof( peer.contentDigests );
+		// P1-A3b (K38): the global rows, the layer count, then a row per layer. The connect message proved the mod lists
+		// equal (K39), so a size for another layer count is a different build too
+		const int numLayers = Min( fileSystem->GetNumLayers(), MAX_MOD_LAYERS + 1 );
+		const int expectedSize = CONTENT_DIGESTS_WIRE_SIZE( numLayers );
 		if( msg.GetRemainingData() != expectedSize )
 		{
 			char reason[ 128 ];
-			idStr::snPrintf( reason, sizeof( reason ), "RELIABLE_LOADING_DONE carries %i bytes of digests instead of %i: a different build", msg.GetRemainingData(), expectedSize );
+			idStr::snPrintf( reason, sizeof( reason ), "RELIABLE_LOADING_DONE carries %i bytes of digests instead of the %i of %i content layers: a different build", msg.GetRemainingData(), expectedSize, numLayers );
 			RefusePeer( p, reason );
 			return;
 		}
-		//puncho end
 		for( int i = 0; i < CONTENT_DIGEST_COUNT; i++ )
 		{
-			peer.contentDigests[i] = msg.ReadLong();
+			peer.contentDigests.global[i] = msg.ReadLong();
 		}
+		peer.contentDigests.numLayers = msg.ReadByte();
+		if( peer.contentDigests.numLayers != numLayers )
+		{
+			char reason[ 128 ];
+			idStr::snPrintf( reason, sizeof( reason ), "RELIABLE_LOADING_DONE counts %i content layers instead of %i: a different build", peer.contentDigests.numLayers, numLayers );
+			RefusePeer( p, reason );
+			return;
+		}
+		for( int layer = 0; layer < numLayers; layer++ )
+		{
+			for( int i = 0; i < LAYER_DIGEST_COUNT; i++ )
+			{
+				peer.contentDigests.layers[layer][i] = msg.ReadLong();
+			}
+		}
+		//puncho end
 		peer.loaded = true;
 
 		// a host still loading has no digests of its own yet; idSessionLocal::LoadingFinished checks this peer then
