@@ -1717,74 +1717,16 @@ idPhysics_Player::idPhysics_Player()
 
 /*
 ================
-idPhysics_Player_SavePState
-================
-*/
-void idPhysics_Player_SavePState( idSaveGame* savefile, const playerPState_t& state )
-{
-	savefile->WriteVec3( state.origin );
-	savefile->WriteVec3( state.velocity );
-	savefile->WriteVec3( state.localOrigin );
-	savefile->WriteVec3( state.pushVelocity );
-	savefile->WriteFloat( state.stepUp );
-	savefile->WriteInt( state.movementType );
-	savefile->WriteInt( state.movementFlags );
-	savefile->WriteInt( state.movementTime );
-}
-
-/*
-================
-idPhysics_Player_RestorePState
-================
-*/
-void idPhysics_Player_RestorePState( idRestoreGame* savefile, playerPState_t& state )
-{
-	savefile->ReadVec3( state.origin );
-	savefile->ReadVec3( state.velocity );
-	savefile->ReadVec3( state.localOrigin );
-	savefile->ReadVec3( state.pushVelocity );
-	savefile->ReadFloat( state.stepUp );
-	savefile->ReadInt( state.movementType );
-	savefile->ReadInt( state.movementFlags );
-	savefile->ReadInt( state.movementTime );
-}
-
-/*
-================
 idPhysics_Player::Save
 ================
 */
 void idPhysics_Player::Save( idSaveGame* savefile ) const
 {
-
-	idPhysics_Player_SavePState( savefile, current );
-	idPhysics_Player_SavePState( savefile, saved );
-
-	savefile->WriteFloat( walkSpeed );
-	savefile->WriteFloat( crouchSpeed );
-	savefile->WriteFloat( maxStepHeight );
-	savefile->WriteFloat( maxJumpHeight );
-	savefile->WriteInt( debugLevel );
-
-	savefile->WriteUsercmd( command );
-	savefile->WriteVec3( commandForward );
-
-	savefile->WriteInt( framemsec );
-	savefile->WriteFloat( frametime );
-	savefile->WriteFloat( playerSpeed );
-	savefile->WriteVec3( viewForward );
-	savefile->WriteVec3( viewRight );
-
-	savefile->WriteBool( walking );
-	savefile->WriteBool( groundPlane );
-	savefile->WriteTrace( groundTrace );
-	savefile->WriteMaterial( groundMaterial );
-
-	savefile->WriteBool( ladder );
-	savefile->WriteVec3( ladderNormal );
-
-	savefile->WriteInt( ( int )waterLevel );
-	savefile->WriteInt( waterType );
+	//puncho start - schema (P1-A1a): the lists are in Physics_Player.h
+	PLAYER_PSTATE_SCHEMA( SCHEMA_SAVE, current )
+	PLAYER_PSTATE_SCHEMA( SCHEMA_SAVE, saved )
+	PHYSICS_PLAYER_SCHEMA( SCHEMA_SAVE, ( *this ) )
+	//puncho end
 }
 
 /*
@@ -1794,35 +1736,11 @@ idPhysics_Player::Restore
 */
 void idPhysics_Player::Restore( idRestoreGame* savefile )
 {
-
-	idPhysics_Player_RestorePState( savefile, current );
-	idPhysics_Player_RestorePState( savefile, saved );
-
-	savefile->ReadFloat( walkSpeed );
-	savefile->ReadFloat( crouchSpeed );
-	savefile->ReadFloat( maxStepHeight );
-	savefile->ReadFloat( maxJumpHeight );
-	savefile->ReadInt( debugLevel );
-
-	savefile->ReadUsercmd( command );
-	savefile->ReadVec3( commandForward );
-
-	savefile->ReadInt( framemsec );
-	savefile->ReadFloat( frametime );
-	savefile->ReadFloat( playerSpeed );
-	savefile->ReadVec3( viewForward );
-	savefile->ReadVec3( viewRight );
-
-	savefile->ReadBool( walking );
-	savefile->ReadBool( groundPlane );
-	savefile->ReadTrace( groundTrace );
-	savefile->ReadMaterial( groundMaterial );
-
-	savefile->ReadBool( ladder );
-	savefile->ReadVec3( ladderNormal );
-
-	savefile->ReadInt( ( int& )waterLevel );
-	savefile->ReadInt( waterType );
+	//puncho start - schema (P1-A1a)
+	PLAYER_PSTATE_SCHEMA( SCHEMA_RESTORE, current )
+	PLAYER_PSTATE_SCHEMA( SCHEMA_RESTORE, saved )
+	PHYSICS_PLAYER_SCHEMA( SCHEMA_RESTORE, ( *this ) )
+	//puncho end
 }
 
 /*
@@ -2408,16 +2326,7 @@ idPhysics_Player::WriteToSnapshot
 */
 void idPhysics_Player::WriteToSnapshot( idBitMsg& msg ) const
 {
-	msg.WriteFloat( current.origin[0] );
-	msg.WriteFloat( current.origin[1] );
-	msg.WriteFloat( current.origin[2] );
-	msg.WriteFloat( current.velocity[0], PLAYER_VELOCITY_EXPONENT_BITS, PLAYER_VELOCITY_MANTISSA_BITS );
-	msg.WriteFloat( current.velocity[1], PLAYER_VELOCITY_EXPONENT_BITS, PLAYER_VELOCITY_MANTISSA_BITS );
-	msg.WriteFloat( current.velocity[2], PLAYER_VELOCITY_EXPONENT_BITS, PLAYER_VELOCITY_MANTISSA_BITS );
-	//idLib::Printf("Writing Velocity: x %2f, y %2f, z %2f \n", current.velocity[0], current.velocity[1], current.velocity[2] );
-	msg.WriteDeltaFloat( current.origin[0], current.localOrigin[0] );
-	msg.WriteDeltaFloat( current.origin[1], current.localOrigin[1] );
-	msg.WriteDeltaFloat( current.origin[2], current.localOrigin[2] );
+	PLAYER_PSTATE_SCHEMA( SCHEMA_WRITE, current )	//puncho - schema (P1-A1a): from current
 }
 
 /*
@@ -2430,12 +2339,7 @@ void idPhysics_Player::ReadFromSnapshot( const idBitMsg& msg )
 
 	previous = next;
 
-	next.origin = ReadFloatArray< idVec3 >( msg );
-	next.velocity[0] = msg.ReadFloat( PLAYER_VELOCITY_EXPONENT_BITS, PLAYER_VELOCITY_MANTISSA_BITS );
-	next.velocity[1] = msg.ReadFloat( PLAYER_VELOCITY_EXPONENT_BITS, PLAYER_VELOCITY_MANTISSA_BITS );
-	next.velocity[2] = msg.ReadFloat( PLAYER_VELOCITY_EXPONENT_BITS, PLAYER_VELOCITY_MANTISSA_BITS );
-	//idLib::Printf("Reading Velocity: x %2f, y %2f, z %2f \n", next.velocity[0], next.velocity[1], next.velocity[2] );
-	next.localOrigin = ReadDeltaFloatArray( msg, next.origin );
+	PLAYER_PSTATE_SCHEMA( SCHEMA_READ, next )	//puncho - schema (P1-A1a): into next
 
 	if( clipModel )
 	{

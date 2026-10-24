@@ -850,11 +850,7 @@ void idEntity::Save( idSaveGame* savefile ) const
 	savefile->WriteInt( modelDefHandle );
 	savefile->WriteRefSound( refSound );
 
-	savefile->WriteObject( bindMaster );
-	savefile->WriteJoint( bindJoint );
-	savefile->WriteInt( bindBody );
-	savefile->WriteObject( teamMaster );
-	savefile->WriteObject( teamChain );
+	ENTITY_BIND_SCHEMA( SCHEMA_SAVE, ( *this ) )	//puncho - schema (P1-A1a): the bind branch (Entity.h)
 
 	savefile->WriteStaticObject( defaultPhysicsObj );
 
@@ -939,11 +935,7 @@ void idEntity::Restore( idRestoreGame* savefile )
 	savefile->ReadInt( modelDefHandle );
 	savefile->ReadRefSound( refSound );
 
-	savefile->ReadObject( reinterpret_cast<idClass*&>( bindMaster ) );
-	savefile->ReadJoint( bindJoint );
-	savefile->ReadInt( bindBody );
-	savefile->ReadObject( reinterpret_cast<idClass*&>( teamMaster ) );
-	savefile->ReadObject( reinterpret_cast<idClass*&>( teamChain ) );
+	ENTITY_BIND_SCHEMA( SCHEMA_RESTORE, ( *this ) )	//puncho - schema (P1-A1a)
 
 	savefile->ReadStaticObject( defaultPhysicsObj );
 	RestorePhysics( &defaultPhysicsObj );

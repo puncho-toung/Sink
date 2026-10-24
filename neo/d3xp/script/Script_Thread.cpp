@@ -415,21 +415,7 @@ void idThread::Save( idSaveGame* savefile ) const
 
 	// We will check on restore that threadNum is still the same,
 	//  threads should have been restored in the same order.
-	savefile->WriteInt( threadNum );
-
-	savefile->WriteObject( waitingForThread );
-	savefile->WriteInt( waitingFor );
-	savefile->WriteInt( waitingUntil );
-
-	interpreter.Save( savefile );
-
-	savefile->WriteDict( &spawnArgs );
-	savefile->WriteString( threadName );
-
-	savefile->WriteInt( lastExecuteTime );
-	savefile->WriteInt( creationTime );
-
-	savefile->WriteBool( manualControl );
+	THREAD_SCHEMA( SCHEMA_SAVE, ( *this ) )	//puncho - schema (P1-A1a): the list is in Script_Thread.h
 }
 
 /*
@@ -439,21 +425,7 @@ idThread::Restore
 */
 void idThread::Restore( idRestoreGame* savefile )
 {
-	savefile->ReadInt( threadNum );
-
-	savefile->ReadObject( reinterpret_cast<idClass*&>( waitingForThread ) );
-	savefile->ReadInt( waitingFor );
-	savefile->ReadInt( waitingUntil );
-
-	interpreter.Restore( savefile );
-
-	savefile->ReadDict( &spawnArgs );
-	savefile->ReadString( threadName );
-
-	savefile->ReadInt( lastExecuteTime );
-	savefile->ReadInt( creationTime );
-
-	savefile->ReadBool( manualControl );
+	THREAD_SCHEMA( SCHEMA_RESTORE, ( *this ) )	//puncho - schema (P1-A1a)
 }
 
 /*

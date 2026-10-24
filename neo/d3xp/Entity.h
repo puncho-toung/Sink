@@ -173,6 +173,16 @@ inline void	ReadFromBitMsg( netBoolEvent_t& netEvent, const idBitMsg& msg )
 	assert( netEvent.count <= netBoolEvent_t::Maximum );
 }
 
+//puncho start - schema (P1-A1a): idEntity's bind branch, saved in the middle of idEntity::Save. The wire form is not
+// here: WriteBindToSnapshot packs master, orientation, joint or body into one word and ReadBindFromSnapshot applies it
+// through Bind calls, so a subclass's snapshot list would carry it as a HAND entry named Bind (K8)
+#define ENTITY_BIND_SCHEMA( X, s ) \
+	X( s, bindMaster,	OBJECT,	S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, bindJoint,	JOINT,	S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, bindBody,		INT,	S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, teamMaster,	OBJECT,	S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, teamChain,	OBJECT,	S,	RAW,	0,	SCHEMA_STOCK )
+//puncho end
 
 class idEntity : public idClass
 {
@@ -551,6 +561,7 @@ protected:
 private:
 	idPhysics_Static		defaultPhysicsObj;					// default physics object
 	idPhysics* 				physics;							// physics used for this entity
+	enum bindSchemaField_t { ENTITY_BIND_SCHEMA( SCHEMA_INDEX, _ ) SF_NUM_BIND_FIELDS };	//puncho - schema (P1-A1a)
 	idEntity* 				bindMaster;							// entity bound to if unequal NULL
 	jointHandle_t			bindJoint;							// joint bound to if unequal INVALID_JOINT
 	int						bindBody;							// body bound to if unequal -1

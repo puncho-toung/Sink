@@ -4036,6 +4036,18 @@ size_t idAnimator::Allocated() const
 	return size;
 }
 
+//puncho start - schema (P1-A1a): the element lists of idAnimator's two struct lists, and their element functions
+#define AFPOSEJOINTMOD_SCHEMA( X, s ) \
+	X( s, mod,		ENUM,	S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, axis,		MAT3,	S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, origin,	VEC3,	S,	RAW,	0,	SCHEMA_STOCK )
+#define JOINTQUAT_SCHEMA( X, s ) \
+	X( s, q,		QUAT,	S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, t,		VEC3,	S,	RAW,	0,	SCHEMA_STOCK )
+SCHEMA_STRUCT_FUNCTIONS( AFPoseJointMod, idAFPoseJointMod, AFPOSEJOINTMOD_SCHEMA )
+SCHEMA_STRUCT_FUNCTIONS( JointQuat, idJointQuat, JOINTQUAT_SCHEMA )
+//puncho end
+
 /*
 =====================
 idAnimator::Save
@@ -4045,75 +4057,7 @@ archives object for save game file
 */
 void idAnimator::Save( idSaveGame* savefile ) const
 {
-	int i;
-	int j;
-
-	savefile->WriteModelDef( modelDef );
-	savefile->WriteObject( entity );
-
-	savefile->WriteInt( jointMods.Num() );
-	for( i = 0; i < jointMods.Num(); i++ )
-	{
-		savefile->WriteInt( jointMods[ i ]->jointnum );
-		savefile->WriteMat3( jointMods[ i ]->mat );
-		savefile->WriteVec3( jointMods[ i ]->pos );
-		savefile->WriteInt( ( int& )jointMods[ i ]->transform_pos );
-		savefile->WriteInt( ( int& )jointMods[ i ]->transform_axis );
-	}
-
-	savefile->WriteInt( numJoints );
-	for( i = 0; i < numJoints; i++ )
-	{
-		float* data = joints[i].ToFloatPtr();
-		for( j = 0; j < 12; j++ )
-		{
-			savefile->WriteFloat( data[j] );
-		}
-	}
-
-	savefile->WriteInt( lastTransformTime );
-	savefile->WriteBool( stoppedAnimatingUpdate );
-	savefile->WriteBool( forceUpdate );
-	savefile->WriteBounds( frameBounds );
-
-	savefile->WriteFloat( AFPoseBlendWeight );
-
-	savefile->WriteInt( AFPoseJoints.Num() );
-	for( i = 0; i < AFPoseJoints.Num(); i++ )
-	{
-		savefile->WriteInt( AFPoseJoints[i] );
-	}
-
-	savefile->WriteInt( AFPoseJointMods.Num() );
-	for( i = 0; i < AFPoseJointMods.Num(); i++ )
-	{
-		savefile->WriteInt( ( int& )AFPoseJointMods[i].mod );
-		savefile->WriteMat3( AFPoseJointMods[i].axis );
-		savefile->WriteVec3( AFPoseJointMods[i].origin );
-	}
-
-	savefile->WriteInt( AFPoseJointFrame.Num() );
-	for( i = 0; i < AFPoseJointFrame.Num(); i++ )
-	{
-		savefile->WriteFloat( AFPoseJointFrame[i].q.x );
-		savefile->WriteFloat( AFPoseJointFrame[i].q.y );
-		savefile->WriteFloat( AFPoseJointFrame[i].q.z );
-		savefile->WriteFloat( AFPoseJointFrame[i].q.w );
-		savefile->WriteVec3( AFPoseJointFrame[i].t );
-	}
-
-	savefile->WriteBounds( AFPoseBounds );
-	savefile->WriteInt( AFPoseTime );
-
-	savefile->WriteBool( removeOriginOffset );
-
-	for( i = ANIMCHANNEL_ALL; i < ANIM_NumAnimChannels; i++ )
-	{
-		for( j = 0; j < ANIM_MaxAnimsPerChannel; j++ )
-		{
-			channels[ i ][ j ].Save( savefile );
-		}
-	}
+	ANIMATOR_SCHEMA( SCHEMA_SAVE, ( *this ) )	//puncho - schema (P1-A1a): the list is in Anim.h
 }
 
 /*
@@ -4125,16 +4069,41 @@ unarchives object from save game file
 */
 void idAnimator::Restore( idRestoreGame* savefile )
 {
-	int i;
-	int j;
-	int num;
+	//puncho - schema (P1-A1a): the stock restore set the AF pose lists' granularity of 1 again; the constructor has
+	ANIMATOR_SCHEMA( SCHEMA_RESTORE, ( *this ) )
+}
 
-	savefile->ReadModelDef( modelDef );
-	savefile->ReadObject( reinterpret_cast<idClass*&>( entity ) );
+//puncho start - schema (P1-A1a): the hatches (K8), the stock code at its place in the list
+/*
+=====================
+idAnimator::SaveJointMods
+=====================
+*/
+void idAnimator::SaveJointMods( idSaveGame* savefile ) const
+{
+	savefile->WriteInt( jointMods.Num() );
+	for( int i = 0; i < jointMods.Num(); i++ )
+	{
+		savefile->WriteInt( jointMods[ i ]->jointnum );
+		savefile->WriteMat3( jointMods[ i ]->mat );
+		savefile->WriteVec3( jointMods[ i ]->pos );
+		savefile->WriteInt( ( int& )jointMods[ i ]->transform_pos );
+		savefile->WriteInt( ( int& )jointMods[ i ]->transform_axis );
+	}
+}
+
+/*
+=====================
+idAnimator::RestoreJointMods
+=====================
+*/
+void idAnimator::RestoreJointMods( idRestoreGame* savefile )
+{
+	int num;
 
 	savefile->ReadInt( num );
 	jointMods.SetNum( num );
-	for( i = 0; i < num; i++ )
+	for( int i = 0; i < num; i++ )
 	{
 		jointMods[ i ] = new( TAG_ANIM ) jointMod_t;
 		savefile->ReadInt( ( int& )jointMods[ i ]->jointnum );
@@ -4143,69 +4112,76 @@ void idAnimator::Restore( idRestoreGame* savefile )
 		savefile->ReadInt( ( int& )jointMods[ i ]->transform_pos );
 		savefile->ReadInt( ( int& )jointMods[ i ]->transform_axis );
 	}
+}
 
-	savefile->ReadInt( numJoints );
-	joints = ( idJointMat* ) Mem_Alloc16( SIMD_ROUND_JOINTS( numJoints ) * sizeof( joints[0] ), TAG_JOINTMAT );
-	for( i = 0; i < numJoints; i++ )
+/*
+=====================
+idAnimator::SaveJoints
+=====================
+*/
+void idAnimator::SaveJoints( idSaveGame* savefile ) const
+{
+	for( int i = 0; i < numJoints; i++ )
 	{
 		float* data = joints[i].ToFloatPtr();
-		for( j = 0; j < 12; j++ )
+		for( int j = 0; j < 12; j++ )
+		{
+			savefile->WriteFloat( data[j] );
+		}
+	}
+}
+
+/*
+=====================
+idAnimator::RestoreJoints
+=====================
+*/
+void idAnimator::RestoreJoints( idRestoreGame* savefile )
+{
+	joints = ( idJointMat* ) Mem_Alloc16( SIMD_ROUND_JOINTS( numJoints ) * sizeof( joints[0] ), TAG_JOINTMAT );
+	for( int i = 0; i < numJoints; i++ )
+	{
+		float* data = joints[i].ToFloatPtr();
+		for( int j = 0; j < 12; j++ )
 		{
 			savefile->ReadFloat( data[j] );
 		}
 	}
 	SIMD_INIT_LAST_JOINT( joints, numJoints );
+}
 
-	savefile->ReadInt( lastTransformTime );
-	savefile->ReadBool( stoppedAnimatingUpdate );
-	savefile->ReadBool( forceUpdate );
-	savefile->ReadBounds( frameBounds );
-
-	savefile->ReadFloat( AFPoseBlendWeight );
-
-	savefile->ReadInt( num );
-	AFPoseJoints.SetGranularity( 1 );
-	AFPoseJoints.SetNum( num );
-	for( i = 0; i < AFPoseJoints.Num(); i++ )
+/*
+=====================
+idAnimator::SaveChannels
+=====================
+*/
+void idAnimator::SaveChannels( idSaveGame* savefile ) const
+{
+	for( int i = ANIMCHANNEL_ALL; i < ANIM_NumAnimChannels; i++ )
 	{
-		savefile->ReadInt( AFPoseJoints[i] );
+		for( int j = 0; j < ANIM_MaxAnimsPerChannel; j++ )
+		{
+			channels[ i ][ j ].Save( savefile );
+		}
 	}
+}
 
-	savefile->ReadInt( num );
-	AFPoseJointMods.SetGranularity( 1 );
-	AFPoseJointMods.SetNum( num );
-	for( i = 0; i < AFPoseJointMods.Num(); i++ )
+/*
+=====================
+idAnimator::RestoreChannels
+=====================
+*/
+void idAnimator::RestoreChannels( idRestoreGame* savefile )
+{
+	for( int i = ANIMCHANNEL_ALL; i < ANIM_NumAnimChannels; i++ )
 	{
-		savefile->ReadInt( ( int& )AFPoseJointMods[i].mod );
-		savefile->ReadMat3( AFPoseJointMods[i].axis );
-		savefile->ReadVec3( AFPoseJointMods[i].origin );
-	}
-
-	savefile->ReadInt( num );
-	AFPoseJointFrame.SetGranularity( 1 );
-	AFPoseJointFrame.SetNum( num );
-	for( i = 0; i < AFPoseJointFrame.Num(); i++ )
-	{
-		savefile->ReadFloat( AFPoseJointFrame[i].q.x );
-		savefile->ReadFloat( AFPoseJointFrame[i].q.y );
-		savefile->ReadFloat( AFPoseJointFrame[i].q.z );
-		savefile->ReadFloat( AFPoseJointFrame[i].q.w );
-		savefile->ReadVec3( AFPoseJointFrame[i].t );
-	}
-
-	savefile->ReadBounds( AFPoseBounds );
-	savefile->ReadInt( AFPoseTime );
-
-	savefile->ReadBool( removeOriginOffset );
-
-	for( i = ANIMCHANNEL_ALL; i < ANIM_NumAnimChannels; i++ )
-	{
-		for( j = 0; j < ANIM_MaxAnimsPerChannel; j++ )
+		for( int j = 0; j < ANIM_MaxAnimsPerChannel; j++ )
 		{
 			channels[ i ][ j ].Restore( savefile, modelDef );
 		}
 	}
 }
+//puncho end
 
 /*
 =====================
