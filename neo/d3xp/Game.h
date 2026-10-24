@@ -200,6 +200,24 @@ struct aiHudStats_t
 };
 //puncho end
 
+//puncho start - version rule (MP-A0, MD13): what a joiner sends in RELIABLE_LOADING_DONE and the host compares
+// (idLobby::VerifyPeerContent). Each category covers a table the network code addresses by number, and is its own
+// CRC32 so a refusal names what differs. The message is CONTENT_DIGEST_COUNT longs in this order: changing the list
+// changes the wire format and bumps BUILD_NUMBER.
+enum contentDigest_t
+{
+	CONTENT_DIGEST_CLASSES,			// idClass type names in typeNum order: snapshot entities cross as a typeNum
+	CONTENT_DIGEST_ENTITYDEFS,		// the explicit decls, index and name, of each decl type that crosses as an index
+	CONTENT_DIGEST_MATERIALS,
+	CONTENT_DIGEST_SKINS,
+	CONTENT_DIGEST_SOUNDS,
+	CONTENT_DIGEST_FX,
+	CONTENT_DIGEST_SCRIPT,			// idProgram::CalculateChecksum
+	CONTENT_DIGEST_MAP_GEOMETRY,	// idMapFile::GetGeometryCRC, the value the .cm and .aas files are validated against
+	CONTENT_DIGEST_COUNT
+};
+//puncho end
+
 class idGame
 {
 public:
@@ -277,6 +295,11 @@ public:
 
 	// Runs prediction on entities at the client.
 	virtual void				ClientRunFrame( idUserCmdMgr& cmdMgr, bool lastPredictFrame, gameReturn_t& ret ) = 0;
+
+	//puncho start - version rule (MP-A0): fills every contentDigest_t for the loaded map. The session calls it once a
+	// map load has finished: on a joiner to send them, on the host to compare them
+	virtual void				GetContentDigests( unsigned int digests[ CONTENT_DIGEST_COUNT ] ) const = 0;
+	//puncho end
 
 	// Used to manage divergent time-lines
 	virtual int					GetTimeGroupTime( int timeGroup ) = 0;

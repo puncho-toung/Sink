@@ -2478,10 +2478,37 @@ void idSessionLocal::LoadingFinished()
 	{
 		byte buffer[ idPacketProcessor::MAX_PACKET_SIZE ];
 		idBitMsg msg( buffer, sizeof( buffer ) );
+		//puncho start - version rule (MP-A0, MD13): the host compares these with its own and refuses this peer on any difference
+		unsigned int digests[ CONTENT_DIGEST_COUNT ];
+		game->GetContentDigests( digests );
+		for( int i = 0; i < CONTENT_DIGEST_COUNT; i++ )
+		{
+			msg.WriteLong( digests[i] );
+		}
+		//puncho end
 		GetActingGameStateLobby().QueueReliableMessage( GetActingGameStateLobby().host, idLobby::RELIABLE_LOADING_DONE, msg.GetReadData(), msg.GetSize() );
 	}
 	else
 	{
+		//puncho start - version rule (MP-A0, MD13): peers whose RELIABLE_LOADING_DONE arrived while this host was
+		// still loading were not checked in idLobby::HandleReliableMsg; check them now, against one set of digests,
+		// computed only when such a peer exists
+		idLobby& lobby = GetActingGameStateLobby();
+		unsigned int localDigests[ CONTENT_DIGEST_COUNT ];
+		bool haveDigests = false;
+		for( int p = 0; p < lobby.peers.Num(); p++ )
+		{
+			if( lobby.peers[p].IsConnected() && lobby.peers[p].loaded )
+			{
+				if( !haveDigests )
+				{
+					game->GetContentDigests( localDigests );
+					haveDigests = true;
+				}
+				lobby.VerifyPeerContent( p, localDigests );
+			}
+		}
+		//puncho end
 		SetState( STATE_INGAME );
 	}
 

@@ -82,6 +82,10 @@ with anything below, the surrounding code wins. **Never reformat existing code.*
   `common->Error` / `common->FatalError`. `assert` guards programmer errors in debug only.
 - **Restrained templates/RTTI; shallow call stacks; C-style where clearer** (C casts, raw loops,
   `memset`/`memcpy` on POD). A profiler trace should map directly to what's happening.
+- **Version rule (MD13).** Every save or wire format change adds a `BUILD_NUMBER_SAVE_VERSION_*` constant
+  in `framework/BuildVersion.h` and sets `BUILD_NUMBER` to it. `net_checkVersion 1` (the default) refuses a
+  different build at connect; the content digests (`idGame::GetContentDigests`, sent in
+  `RELIABLE_LOADING_DONE`) refuse different content at load.
 
 ## Formatting & naming essentials
 

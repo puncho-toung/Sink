@@ -207,7 +207,7 @@ public:
 		{
 			loaded					= false;
 			inGame					= false;
-			networkChecksum			= 0;
+			memset( contentDigests, 0, sizeof( contentDigests ) );
 			lastSnapTime			= 0;
 			snapHz					= 0.0f;
 			numResources			= 0;
@@ -288,7 +288,7 @@ public:
 		void ResetMatchData()
 		{
 			loaded					= false;
-			networkChecksum			= 0;
+			memset( contentDigests, 0, sizeof( contentDigests ) );
 			inGame					= false;
 			numResources			= 0;
 			needToSubmitPendingSnap	= false;
@@ -335,9 +335,7 @@ public:
 		int					lastProcTime;				// Used to determine when a packet was processed for sending to this peer
 		int					lastInBandProcTime;			// Last time a in-band packet was processed for sending
 		int					lastFragmentSendTime;		// Last time a fragment was sent out (fragments are processed msg's, waiting to be fully sent)
-		// DG: use int instead of long for 64bit compatibility
-		unsigned int		networkChecksum;			// Checksum used to determine if a peer loaded the network resources the EXACT same as the server did
-		// DG end
+		unsigned int		contentDigests[ CONTENT_DIGEST_COUNT ];	// the peer's idGame::GetContentDigests from RELIABLE_LOADING_DONE, valid while loaded (MP-A0)
 		int					pauseSnapshots;
 
 		lobbyAddress_t	address;
@@ -553,6 +551,7 @@ public:		// Turning this on for now, for the sake of getting this up and running
 	void								HandleConnectionAttemptFailed();
 	bool								ConnectToNextSearchResult();
 	bool								CheckVersion( idBitMsg& msg, lobbyAddress_t peerAddress );
+	void								VerifyPeerContent( int p, const unsigned int localDigests[ CONTENT_DIGEST_COUNT ] );	//puncho - version rule (MP-A0)
 	bool								VerifyNumConnectingUsers( idBitMsg& msg );
 	bool								VerifyLobbyUserIDs( idBitMsg& msg );
 	int									HandleInitialPeerConnection( idBitMsg& msg, const lobbyAddress_t& peerAddress, int peerNum );

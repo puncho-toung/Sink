@@ -115,6 +115,75 @@ int idGameLocal::ClientRemapDecl( declType_t type, int index )
 	return index;
 }
 
+//puncho start - version rule (MP-A0, MD13)
+/*
+================
+DeclNameDigest
+
+CRC32 of the explicit decls of one type, each as its index and its canonical name. Implicit decls (FindType with
+makeDefault and no definition in any file) are left out: a machine appends them in the order it first asks for
+them, which follows its own rendering, UI and map history, so two identical builds would disagree on them, and
+DeclManager.h promises consistent indices only for the explicit ones. The index is hashed with the name so a pair
+whose explicit decls landed at different indices is still refused. An implicit decl sent as an index is not
+covered here; that needs the decl remap by name (MP-A3).
+================
+*/
+static unsigned int DeclNameDigest( declType_t type )
+{
+	unsigned int crc;
+	CRC32_InitChecksum( crc );
+	const int numDecls = declManager->GetNumDecls( type );
+	for( int i = 0; i < numDecls; i++ )
+	{
+		// no parse and no media; the bare decl object is allocated, as idSaveGame::WriteDecls does
+		const idDecl* decl = declManager->DeclByIndex( type, i, false );
+		if( decl->IsImplicit() )
+		{
+			continue;
+		}
+		const int index = LittleLong( i );
+		const char* name = decl->GetName();
+		CRC32_UpdateChecksum( crc, &index, sizeof( index ) );
+		CRC32_UpdateChecksum( crc, name, idStr::Length( name ) + 1 );
+	}
+	CRC32_FinishChecksum( crc );
+	return crc;
+}
+
+/*
+================
+idGameLocal::GetContentDigests
+
+The content half of the version rule: net_checkVersion refuses a different build at connect, these refuse
+different content once the map is loaded. Each category hashes what stands behind a number the network code
+sends, from names and ids as stored (no pointers, no locale), so a Linux and a Windows build of one source agree.
+The decl types are the ones sent as indices, through ServerRemapDecl / ClientRemapDecl or a raw Index():
+entityDefs (snapshot spawns, damage defs), materials (collision surfaces), skins (weapons), sounds and FX.
+================
+*/
+void idGameLocal::GetContentDigests( unsigned int digests[ CONTENT_DIGEST_COUNT ] ) const
+{
+	unsigned int crc;
+	CRC32_InitChecksum( crc );
+	for( int i = 0; i < idClass::GetNumTypes(); i++ )
+	{
+		const char* name = idClass::GetType( i )->classname;
+		CRC32_UpdateChecksum( crc, name, idStr::Length( name ) + 1 );
+	}
+	CRC32_FinishChecksum( crc );
+	digests[ CONTENT_DIGEST_CLASSES ] = crc;
+
+	// entityDefs also cross in entityDefBits, a width InitAsyncNetwork takes from the count with the implicit ones
+	digests[ CONTENT_DIGEST_ENTITYDEFS ]	= DeclNameDigest( DECL_ENTITYDEF ) ^ ( unsigned int )entityDefBits;
+	digests[ CONTENT_DIGEST_MATERIALS ]		= DeclNameDigest( DECL_MATERIAL );
+	digests[ CONTENT_DIGEST_SKINS ]			= DeclNameDigest( DECL_SKIN );
+	digests[ CONTENT_DIGEST_SOUNDS ]		= DeclNameDigest( DECL_SOUND );
+	digests[ CONTENT_DIGEST_FX ]			= DeclNameDigest( DECL_FX );
+	digests[ CONTENT_DIGEST_SCRIPT ]		= program.CalculateChecksum( false );
+	digests[ CONTENT_DIGEST_MAP_GEOMETRY ]	= ( mapFile != NULL ) ? mapFile->GetGeometryCRC() : 0;
+}
+//puncho end
+
 /*
 ================
 idGameLocal::SyncPlayersWithLobbyUsers

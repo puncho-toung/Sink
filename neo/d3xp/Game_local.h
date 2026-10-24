@@ -587,6 +587,7 @@ public:
 	virtual void			ProcessReliableMessage( int clientNum, int type, const idBitMsg& msg );
 	virtual void			ClientReadSnapshot( const idSnapShot& ss );
 	virtual void			ClientRunFrame( idUserCmdMgr& cmdMgr, bool lastPredictFrame, gameReturn_t& ret );
+	virtual void			GetContentDigests( unsigned int digests[ CONTENT_DIGEST_COUNT ] ) const;	//puncho - version rule (MP-A0), Game_network.cpp
 	void					BuildReturnValue( gameReturn_t& ret );
 
 	virtual int				GetMPGameModes( const char** * gameModes, const char** * gameModesDisplay );

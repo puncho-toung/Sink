@@ -32,7 +32,7 @@ If you have questions concerning this license or the applicable additional terms
 extern idCVar net_connectTimeoutInSeconds;
 extern idCVar net_headlessServer;
 
-idCVar net_checkVersion( "net_checkVersion", "0", CVAR_INTEGER, "Check for matching version when clients connect. 0: normal rules, 1: force check, otherwise no check (pass always)" );
+idCVar net_checkVersion( "net_checkVersion", "1", CVAR_INTEGER, "Check for matching version when clients connect. 0: normal rules, 1: force check, otherwise no check (pass always)" );	//puncho - version rule (MP-A0, MD13): on by default
 idCVar net_peerTimeoutInSeconds( "net_peerTimeoutInSeconds", "30", CVAR_INTEGER, "If the host hasn't received a response from a peer in this amount of time (in seconds), the peer will be disconnected." );
 idCVar net_peerTimeoutInSeconds_Lobby( "net_peerTimeoutInSeconds_Lobby", "20", CVAR_INTEGER, "If the host hasn't received a response from a peer in this amount of time (in seconds), the peer will be disconnected." );
 
@@ -1780,6 +1780,41 @@ bool idLobby::CheckVersion( idBitMsg& msg, lobbyAddress_t peerAddress )
 	return true;
 }
 
+//puncho start - version rule (MP-A0, MD13)
+/*
+========================
+idLobby::VerifyPeerContent
+
+CheckVersion refuses a different build at connect; this refuses different content once both ends have loaded the
+map. Host only: compares a loaded peer's digests with the host's own and drops the peer on any difference.
+========================
+*/
+void idLobby::VerifyPeerContent( int p, const unsigned int localDigests[ CONTENT_DIGEST_COUNT ] )
+{
+	static const char* const digestNames[] = { "classes", "entityDefs", "materials", "skins", "sounds", "fx", "script", "mapGeometry" };
+	compile_time_assert( sizeof( digestNames ) / sizeof( digestNames[0] ) == CONTENT_DIGEST_COUNT );
+
+	peer_t& peer = peers[p];
+
+	idStr differs;
+	for( int i = 0; i < CONTENT_DIGEST_COUNT; i++ )
+	{
+		if( peer.contentDigests[i] != localDigests[i] )
+		{
+			differs += va( " %s (host %08x, peer %08x)", digestNames[i], localDigests[i], peer.contentDigests[i] );
+		}
+	}
+
+	if( differs.IsEmpty() )
+	{
+		return;
+	}
+
+	idLib::Printf( "NET: Refusing peer %i (%s), content differs:%s\n", p, peer.address.ToString(), differs.c_str() );
+	DisconnectPeerFromSession( p );
+}
+//puncho end
+
 /*
 ========================
 idLobby::VerifyNumConnectingUsers
@@ -2881,11 +2916,28 @@ void idLobby::HandleReliableMsg( int p, idBitMsg& msg, const lobbyAddress_t* rem
 		// This message is sent from the peers to state they are done loading the map
 		VERIFY_CONNECTED_PEER( p, actingGameStateLobbyType, RELIABLE_LOADING_DONE );
 
-		unsigned int networkChecksum = 0; // DG: use int instead of long for 64bit compatibility
-		networkChecksum = msg.ReadLong();
-
-		peer.networkChecksum = networkChecksum;
+		//puncho start - version rule (MP-A0, MD13): the message is the peer's content digests. Any other size is a
+		// different build (an older one sends nothing): refused without reading past the end
+		if( msg.GetRemainingData() != ( int )sizeof( peer.contentDigests ) )
+		{
+			idLib::Printf( "NET: Refusing peer %i (%s), RELIABLE_LOADING_DONE carries %i bytes instead of the %i of the content digests: a different build\n", p, peer.address.ToString(), msg.GetRemainingData(), ( int )sizeof( peer.contentDigests ) );
+			DisconnectPeerFromSession( p );
+			return;
+		}
+		for( int i = 0; i < CONTENT_DIGEST_COUNT; i++ )
+		{
+			peer.contentDigests[i] = msg.ReadLong();
+		}
 		peer.loaded = true;
+
+		// a host still loading has no digests of its own yet; idSessionLocal::LoadingFinished checks this peer then
+		if( loaded )
+		{
+			unsigned int localDigests[ CONTENT_DIGEST_COUNT ];
+			game->GetContentDigests( localDigests );
+			VerifyPeerContent( p, localDigests );
+		}
+		//puncho end
 	}
 	else if( reliableType == RELIABLE_IN_GAME )
 	{
