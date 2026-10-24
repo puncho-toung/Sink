@@ -537,6 +537,10 @@ public:
 	void										Startup( const char* defaultScript );
 	void										Restart();
 	bool										CompileText( const char* source, const char* text, bool console );
+	//puncho start - MP-A5 (K42)
+	bool										CompileSource( const char* fileName, const char* text, bool console );
+	void										PrintCapacity() const;
+	//puncho end
 	const function_t*							CompileFunction( const char* functionName, const char* text );
 	void										CompileFile( const char* filename );
 	void										BeginCompilation();

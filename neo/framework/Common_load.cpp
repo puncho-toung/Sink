@@ -1110,6 +1110,117 @@ bool idCommonLocal::SaveGame( const char* saveName )
 	return true;
 }
 
+//puncho start - MP-A5 (K44)
+/*
+===============
+SplitModList
+===============
+*/
+static void SplitModList( const char* modList, idStrList& mods )
+{
+	mods.Clear();
+	while( *modList != '\0' )
+	{
+		const char* comma = strchr( modList, ',' );
+		const int len = ( comma != NULL ) ? ( int )( comma - modList ) : idStr::Length( modList );
+		mods.Append( idStr( modList, 0, len ) );
+		modList += ( comma != NULL ) ? len + 1 : len;
+	}
+}
+
+/*
+===============
+CheckSaveLayers
+
+The save's mod list and per-layer decl names against this session's (idDeclManager::GetLayerSaveHeader). Saves store
+some decl indices raw, so a new or removed decl in any layer, base content included, would restore them wrong: the
+save is refused, naming the lowest layer and the type that differ. Overrides and text edits define no new name and
+pass. A save older than the header is refused by its version.
+===============
+*/
+static bool CheckSaveLayers( const idDict& saved, idStr& refusal )
+{
+	const int saveVersion = saved.GetInt( SAVEGAME_DETAIL_FIELD_SAVE_VERSION, 0 );
+	if( saveVersion < BUILD_NUMBER_SAVE_VERSION_MOD_LAYERS )
+	{
+		refusal.Format( "save version %d predates the mod list in the save header (version %d)", saveVersion, BUILD_NUMBER_SAVE_VERSION_MOD_LAYERS );
+		return false;
+	}
+
+	const idDict& current = declManager->GetLayerSaveHeader();
+	const char* savedMods = saved.GetString( "modList" );
+	const char* currentMods = current.GetString( "modList" );
+	if( idStr::Icmp( savedMods, currentMods ) != 0 )
+	{
+		idStrList savedList;
+		idStrList currentList;
+		SplitModList( savedMods, savedList );
+		SplitModList( currentMods, currentList );
+		idStr missing;
+		idStr extra;
+		for( int i = 0; i < savedList.Num(); i++ )
+		{
+			if( currentList.FindIndex( savedList[i] ) < 0 )
+			{
+				missing += missing.IsEmpty() ? "" : ", ";
+				missing += savedList[i];
+			}
+		}
+		for( int i = 0; i < currentList.Num(); i++ )
+		{
+			if( savedList.FindIndex( currentList[i] ) < 0 )
+			{
+				extra += extra.IsEmpty() ? "" : ", ";
+				extra += currentList[i];
+			}
+		}
+		refusal.Format( "the save was made with mods '%s', these are '%s'", savedMods, currentMods );
+		if( !missing.IsEmpty() )
+		{
+			refusal += va( "; missing %s", missing.c_str() );
+		}
+		if( !extra.IsEmpty() )
+		{
+			refusal += va( "; extra %s", extra.c_str() );
+		}
+		if( missing.IsEmpty() && extra.IsEmpty() )
+		{
+			refusal += "; reordered";
+		}
+		return false;
+	}
+
+	// every key either dict holds; the lowest layer that differs is named
+	const char* prefix = "layerDecls_";
+	int worstLayer = MAX_MOD_LAYERS + 1;
+	idStr worstKey;
+	for( int pass = 0; pass < 2; pass++ )
+	{
+		const idDict& from = ( pass == 0 ) ? saved : current;
+		const idDict& other = ( pass == 0 ) ? current : saved;
+		for( const idKeyValue* kv = from.MatchPrefix( prefix ); kv != NULL; kv = from.MatchPrefix( prefix, kv ) )
+		{
+			const int layer = atoi( kv->GetKey().c_str() + idStr::Length( prefix ) );
+			if( layer < worstLayer && kv->GetValue().Cmp( other.GetString( kv->GetKey(), "0 0" ) ) != 0 )
+			{
+				worstLayer = layer;
+				worstKey = kv->GetKey();
+			}
+		}
+	}
+	if( !worstKey.IsEmpty() )
+	{
+		const char* typeName = strchr( worstKey.c_str() + idStr::Length( prefix ), '_' );
+		const char* layerName = ( worstLayer < fileSystem->GetNumLayers() ) ? fileSystem->GetLayerName( worstLayer ) : "?";
+		refusal.Format( "layer %s (%s): the %s names it defines differ, save '%s' against now '%s' (count, digest); a new or removed decl shifts the indices saves store",
+						layerName, ( worstLayer == 0 ) ? "base" : "mod", ( typeName != NULL ) ? typeName + 1 : worstKey.c_str(),
+						saved.GetString( worstKey, "0 0" ), current.GetString( worstKey, "0 0" ) );
+		return false;
+	}
+	return true;
+}
+//puncho end
+
 /*
 ===============
 idCommonLocal::LoadGame
@@ -1166,6 +1277,18 @@ bool idCommonLocal::LoadGame( const char* saveName )
 				}
 				return false;
 			}
+			//puncho start - MP-A5 (K44): the mods and the names each layer defines, before any map loads
+			idStr refusal;
+			if( !CheckSaveLayers( sgdl[i].descriptors, refusal ) )
+			{
+				common->Warning( "Save '%s' is refused: %s", saveName, refusal.c_str() );
+				if( wipeForced )
+				{
+					ClearWipe();
+				}
+				return false;
+			}
+			//puncho end
 			found = true;
 			break;
 		}

@@ -335,6 +335,7 @@ void idGameLocal::Init()
 	declManager->RegisterDeclFolder( "particles",		".prt",				DECL_PARTICLE );
 	declManager->RegisterDeclFolder( "af",				".af",				DECL_AF );
 	declManager->RegisterDeclFolder( "newpdas",			".pda",				DECL_PDA );
+	declManager->FinishDeclRegistration();	//puncho - MP-A5 (K23, K44): the save header, then the decl conflict report
 
 	cmdSystem->AddCommand( "listModelDefs", idListDecls_f<DECL_MODELDEF>, CMD_FL_SYSTEM | CMD_FL_GAME, "lists model defs" );
 	cmdSystem->AddCommand( "printModelDefs", idPrintDecls_f<DECL_MODELDEF>, CMD_FL_SYSTEM | CMD_FL_GAME, "prints a model def", idCmdSystem::ArgCompletion_Decl<DECL_MODELDEF> );
@@ -739,6 +740,9 @@ void idGameLocal::GetSaveGameDetails( idSaveGameDetails& gameDetails )
 	gameDetails.descriptors.SetInt( SAVEGAME_DETAIL_FIELD_SAVE_VERSION, BUILD_NUMBER );
 	gameDetails.descriptors.SetInt( SAVEGAME_DETAIL_FIELD_DIFFICULTY, g_skill.GetInteger() );
 	gameDetails.descriptors.SetInt( SAVEGAME_DETAIL_FIELD_PLAYTIME, playTime );
+	//puncho - MP-A5 (K44): the mod list in order and, per layer, the decl name counts and digests; the load check refuses a
+	// save whose mods or first-defined names differ, before any map loads
+	gameDetails.descriptors.Copy( declManager->GetLayerSaveHeader() );
 
 	// PS3 only strings that use the dict just set
 
@@ -1290,6 +1294,7 @@ void idGameLocal::MapPopulate()
 	}
 	// parse the key/value pairs and spawn entities
 	SpawnMapEntities();
+	program.PrintCapacity();	//puncho - MP-A5 (K42): the script image against its caps at every load, map script included
 
 	// mark location entities in all connected areas
 	SpreadLocations();

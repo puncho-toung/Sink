@@ -2098,7 +2098,7 @@ static void Cmd_SaveSelected_f( const idCmdArgs& args )
 	}
 
 	// write out the map file
-	mapFile->Write( mapName, ".map" );
+	mapFile->WriteLevelEdits( mapName );	//puncho - MP-A5 (K41a): a patch into the write target, or the map whole
 }
 
 /*
@@ -2216,7 +2216,7 @@ static void Cmd_SaveMoveables_f( const idCmdArgs& args )
 	}
 
 	// write out the map file
-	mapFile->Write( mapName, ".map" );
+	mapFile->WriteLevelEdits( mapName );	//puncho - MP-A5 (K41a): a patch into the write target, or the map whole
 }
 
 /*
@@ -2300,7 +2300,7 @@ static void Cmd_SaveRagdolls_f( const idCmdArgs& args )
 	}
 
 	// write out the map file
-	mapFile->Write( mapName, ".map" );
+	mapFile->WriteLevelEdits( mapName );	//puncho - MP-A5 (K41a): a patch into the write target, or the map whole
 }
 
 /*
@@ -2421,7 +2421,7 @@ static void Cmd_SaveLights_f( const idCmdArgs& args )
 	}
 
 	// write out the map file
-	mapFile->Write( mapName, ".map" );
+	mapFile->WriteLevelEdits( mapName );	//puncho - MP-A5 (K41a): a patch into the write target, or the map whole
 }
 
 
@@ -2456,6 +2456,14 @@ static void Cmd_SaveEnvprobes_f( const idCmdArgs& args )
 	{
 		mapName = mapFile->GetName();
 	}
+
+	//puncho start - MP-A5 (K41a): this writes the write target's patch whole with every live probe, so a probe that a
+	// lower layer's patch or the map file already holds would load twice: refused while a lower layer holds a patch
+	if( idMapFile::RefuseWholeMapWrite( mapName, fileSystem->GetWriteLayer() ) )
+	{
+		return;
+	}
+	//puncho end
 
 	mapName += "_extra_ents.map";
 
@@ -2546,7 +2554,7 @@ static void Cmd_SaveParticles_f( const idCmdArgs& args )
 	}
 
 	// write out the map file
-	mapFile->Write( mapName, ".map" );
+	mapFile->WriteLevelEdits( mapName );	//puncho - MP-A5 (K41a): a patch into the write target, or the map whole
 }
 
 

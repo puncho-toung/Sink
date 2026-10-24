@@ -1279,22 +1279,10 @@ void idGameEdit::MapSave( const char* path ) const
 	idMapFile* mapFile = gameLocal.GetLevelMap();
 	if( mapFile )
 	{
-		if( mapFile->IsGLTF() )
-		{
-			// RB: can't write .glb so we write a _extra_ents.map which acts like a patch
-			idMapFile* origFile = new( TAG_GAME ) idMapFile;
-			if( origFile->Parse( mapFile->GetName(), true, false, true ) )
-			{
-				idStr filename = mapFile->GetName();
-				filename += "_extra_ents";
-
-				origFile->WriteDiff( mapFile, filename, ".map" );
-			}
-		}
-		else
-		{
-			mapFile->Write( ( path ) ? path : mapFile->GetName(), ".map" );
-		}
+		//puncho - MP-A5 (K41a): a glTF map, which can't be written, or a map below the write target gets its edits as a
+		// patch in the write target's <map>_extra_ents.map, diffed against the map merged through the layers below it;
+		// the write target's own map is written whole, refused while a patch exists
+		mapFile->WriteLevelEdits( ( path ) ? path : mapFile->GetName() );
 	}
 }
 

@@ -2654,7 +2654,8 @@ void idCompiler::ParseFunctionDef( idTypeDef* returnType, const char* name )
 		assert( func );
 		if( func->firstStatement )
 		{
-			Error( "%s redeclared", def->GlobalName().c_str() );
+			//puncho - MP-A5 (K42): names the first definer too, so two mods' mod_main.script are both named
+			Error( "%s redeclared, first defined in %s", def->GlobalName().c_str(), gameLocal.program.GetFilename( func->filenum ) );
 		}
 	}
 

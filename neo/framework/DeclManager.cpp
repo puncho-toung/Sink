@@ -163,6 +163,7 @@ private:
 	bool						redefinedInReload;		// used during file reloading to make sure a decl that has
 	// its source removed will be defaulted
 	idDeclLocal* 				nextInFile;				// next decl in the decl file
+	int							definedLayer;			//puncho - MP-A5 (K44): the layer whose file created the decl, -1 implicit
 };
 
 class idDeclFile
@@ -182,9 +183,22 @@ public:
 	int							checksum;
 	int							fileSize;
 	int							numLines;
+	int							layer;					//puncho - MP-A5 (K22, K23): the rank of the layer that serves the file
 
 	idDeclLocal* 				decls;
 };
+
+//puncho start - MP-A5 (K22, K23): one decl defined again in another file. The winner is the decl's current file, read
+// when the report prints; the loser's file:line and layer are kept as found.
+struct declConflict_t
+{
+	declType_t					type;
+	int							index;
+	idStr						loserFile;
+	int							loserLine;
+	int							loserLayer;
+};
+//puncho end
 
 class idDeclManagerLocal : public idDeclManager
 {
@@ -200,6 +214,11 @@ public:
 	virtual void				EndLevelLoad();
 	virtual void				RegisterDeclType( const char* typeName, declType_t type, idDecl * ( *allocator )() );
 	virtual void				RegisterDeclFolder( const char* folder, const char* extension, declType_t defaultType );
+	virtual void				FinishDeclRegistration();	//puncho - MP-A5 (K23, K44)
+	virtual const idDict&		GetLayerSaveHeader() const	//puncho - MP-A5 (K44)
+	{
+		return layerSaveHeader;
+	}
 	virtual int					GetChecksum() const;
 	virtual int					GetNumDeclTypes() const;
 	virtual int					GetNumDecls( declType_t type );
@@ -250,6 +269,12 @@ public:
 
 	void						ConvertPDAsToStrings( const idCmdArgs& args );
 
+	//puncho start - MP-A5 (K22, K23)
+	void						AddConflict( const idDeclLocal* decl, const char* loserFile, int loserLine, int loserLayer );
+	void						RemoveConflicts( const char* loserFile );
+	void						PrintConflicts() const;
+	//puncho end
+
 private:
 	idSysMutex					mutex;
 
@@ -265,11 +290,16 @@ private:
 	int							checksum;		// checksum of all loaded decl text
 	int							indent;			// for MediaPrint
 	bool						insideLevelLoad;
+	//puncho start - MP-A5 (K23, K44)
+	idList<declConflict_t>		conflicts;		// every decl defined in more than one file, rebuilt per file on reload
+	idDict						layerSaveHeader;	// computed once after registration
+	//puncho end
 
 	static idCVar				decl_show;
 
 private:
 	static void					ListDecls_f( const idCmdArgs& args );
+	static void					ListDeclConflicts_f( const idCmdArgs& args );	//puncho - MP-A5 (K23)
 	static void					ReloadDecls_f( const idCmdArgs& args );
 	static void					TouchDecl_f( const idCmdArgs& args );
 	// RB begin
@@ -632,6 +662,7 @@ idDeclFile::idDeclFile( const char* fileName, declType_t defaultType )
 	this->checksum = 0;
 	this->fileSize = 0;
 	this->numLines = 0;
+	this->layer = 0;
 	this->decls = NULL;
 }
 
@@ -648,6 +679,7 @@ idDeclFile::idDeclFile()
 	this->checksum = 0;
 	this->fileSize = 0;
 	this->numLines = 0;
+	this->layer = -1;		//puncho - MP-A5 (K24): an implicit decl sits below every layer, yet wins
 	this->decls = NULL;
 }
 
@@ -719,6 +751,12 @@ int idDeclFile::LoadAndParse()
 	{
 		decl->redefinedInReload = false;
 	}
+
+	//puncho start - MP-A5 (K22, K23): the serving layer is read on every parse, not only at registration, and this
+	// file's conflicts are found again rather than appended twice. One layer needs no lookup.
+	layer = ( fileSystem->GetNumLayers() > 1 ) ? fileSystem->GetFileLayer( fileName ) : 0;
+	declManagerLocal.RemoveConflicts( fileName );
+	//puncho end
 
 	src.SetFlags( DECL_LEXER_FLAGS );
 
@@ -828,9 +866,29 @@ int idDeclFile::LoadAndParse()
 			// update the existing copy
 			if( newDecl->sourceFile != this || newDecl->redefinedInReload )
 			{
-				src.Warning( "%s '%s' previously defined at %s:%i", declManagerLocal.GetDeclNameFromType( identifiedType ),
-							 name.c_str(), newDecl->sourceFile->fileName.c_str(), newDecl->sourceLine );
-				continue;
+				//puncho start - MP-A5 (K22): a higher layer takes an explicit decl over and keeps its index. It leaves
+				// the old file's list, so a reload of the losing file cannot default it, and gets the new text below.
+				// An implicit decl and a definition in the same or a lower layer keep today's first-wins.
+				idDeclFile* oldFile = newDecl->sourceFile;
+				if( oldFile == this || oldFile == declManagerLocal.GetImplicitDeclFile() || layer <= oldFile->layer )
+				{
+					src.Warning( "%s '%s' previously defined at %s:%i", declManagerLocal.GetDeclNameFromType( identifiedType ),
+								 name.c_str(), newDecl->sourceFile->fileName.c_str(), newDecl->sourceLine );
+					declManagerLocal.AddConflict( newDecl, fileName, sourceLine, layer );
+					continue;
+				}
+				declManagerLocal.AddConflict( newDecl, oldFile->fileName, newDecl->sourceLine, oldFile->layer );
+				for( idDeclLocal** link = &oldFile->decls; *link != NULL; link = &( *link )->nextInFile )
+				{
+					if( *link == newDecl )
+					{
+						*link = newDecl->nextInFile;
+						break;
+					}
+				}
+				newDecl->nextInFile = this->decls;
+				this->decls = newDecl;
+				//puncho end
 			}
 			if( newDecl->declState != DS_UNPARSED )
 			{
@@ -843,6 +901,7 @@ int idDeclFile::LoadAndParse()
 			newDecl = declManagerLocal.FindTypeWithoutParsing( identifiedType, name, true );
 			newDecl->nextInFile = this->decls;
 			this->decls = newDecl;
+			newDecl->definedLayer = layer;	//puncho - MP-A5 (K44)
 		}
 
 		newDecl->redefinedInReload = true;
@@ -938,6 +997,7 @@ void idDeclManagerLocal::Init()
 #if !defined( DMAP )
 	// add console commands
 	cmdSystem->AddCommand( "listDecls", ListDecls_f, CMD_FL_SYSTEM, "lists all decls" );
+	cmdSystem->AddCommand( "listDeclConflicts", ListDeclConflicts_f, CMD_FL_SYSTEM, "lists every decl defined in more than one file, with the winner first" );	//puncho - MP-A5 (K23)
 
 	cmdSystem->AddCommand( "reloadDecls", ReloadDecls_f, CMD_FL_SYSTEM, "reloads decls" );
 	cmdSystem->AddCommand( "touch", TouchDecl_f, CMD_FL_SYSTEM, "touches a decl" );
@@ -1070,6 +1130,8 @@ void idDeclManagerLocal::Shutdown()
 
 	// free decl files
 	loadedFiles.DeleteContents( true );
+	conflicts.Clear();			//puncho - MP-A5 (K23)
+	layerSaveHeader.Clear();	//puncho - MP-A5 (K44)
 
 	// free the decl types and folders
 	declTypes.DeleteContents( true );
@@ -1192,30 +1254,55 @@ void idDeclManagerLocal::RegisterDeclFolder( const char* folder, const char* ext
 	// scan for decl files
 	fileList = fileSystem->ListFiles( declFolder->folder, declFolder->extension, true );
 
-	// load and parse decl files
+	//puncho start - MP-A5 (K22a): an index is the creation order, so the folder loads layer by layer: first the sorted
+	// files whose lowest holding layer is base, then those first held by layer 1, and so on. A decl's index then depends
+	// only on the layers at or below the one that first defines it, an override always meets the decl it replaces, and
+	// a mod's new decls follow every lower layer's. With one layer the order is the sorted list, as before.
+	const int numLayers = fileSystem->GetNumLayers();
+	idList<int> fileLayers;
+	idList<int> holders;
+	fileLayers.SetNum( fileList->GetNumFiles() );
 	for( i = 0; i < fileList->GetNumFiles(); i++ )
 	{
-		fileName = declFolder->folder + "/" + fileList->GetFile( i );
-
-		// check whether this file has already been loaded
-		for( j = 0; j < loadedFiles.Num(); j++ )
+		if( numLayers > 1 )
 		{
-			if( fileName.Icmp( loadedFiles[j]->fileName ) == 0 )
-			{
-				break;
-			}
+			fileSystem->GetFileLayers( declFolder->folder + "/" + fileList->GetFile( i ), holders );
 		}
-		if( j < loadedFiles.Num() )
-		{
-			df = loadedFiles[j];
-		}
-		else
-		{
-			df = new( TAG_DECL ) idDeclFile( fileName, defaultType );
-			loadedFiles.Append( df );
-		}
-		df->LoadAndParse();
+		fileLayers[i] = ( numLayers > 1 && holders.Num() > 0 ) ? holders[0] : 0;
 	}
+
+	// load and parse decl files
+	for( int layer = 0; layer < numLayers; layer++ )
+	{
+		for( i = 0; i < fileList->GetNumFiles(); i++ )
+		{
+			if( fileLayers[i] != layer )
+			{
+				continue;
+			}
+			fileName = declFolder->folder + "/" + fileList->GetFile( i );
+
+			// check whether this file has already been loaded
+			for( j = 0; j < loadedFiles.Num(); j++ )
+			{
+				if( fileName.Icmp( loadedFiles[j]->fileName ) == 0 )
+				{
+					break;
+				}
+			}
+			if( j < loadedFiles.Num() )
+			{
+				df = loadedFiles[j];
+			}
+			else
+			{
+				df = new( TAG_DECL ) idDeclFile( fileName, defaultType );
+				loadedFiles.Append( df );
+			}
+			df->LoadAndParse();
+		}
+	}
+	//puncho end
 
 	fileSystem->FreeFileList( fileList );
 }
@@ -1665,6 +1752,7 @@ idDecl* idDeclManagerLocal::CreateNewDecl( declType_t type, const char* name, co
 	else
 	{
 		sourceFile = new( TAG_DECL ) idDeclFile( fileName, type );
+		sourceFile->layer = fileSystem->GetWriteLayer();	//puncho - MP-A5 (K23): a new file is written to gameFolder
 		loadedFiles.Append( sourceFile );
 	}
 
@@ -1672,6 +1760,7 @@ idDecl* idDeclManagerLocal::CreateNewDecl( declType_t type, const char* name, co
 	decl->name = canonicalName;
 	decl->type = type;
 	decl->declState = DS_UNPARSED;
+	decl->definedLayer = sourceFile->layer;	//puncho - MP-A5 (K44)
 	decl->AllocateSelf();
 	idStr header = declTypes[typeIndex]->typeName;
 	idStr defaultText = decl->self->DefaultDefinition();
@@ -1959,6 +2048,149 @@ void idDeclManagerLocal::ListDecls_f( const idCmdArgs& args )
 	common->Printf( "%i total decls is %i decl files\n", totalDecls, declManagerLocal.loadedFiles.Num() );
 	common->Printf( "%iKB in text, %iKB in structures\n", totalText >> 10, totalStructs >> 10 );
 }
+
+//puncho start - MP-A5 (K22, K23, K44)
+/*
+===================
+idDeclManagerLocal::AddConflict
+
+One entry per decl and losing file, so a file parsed again replaces its entry instead of appending a second one
+===================
+*/
+void idDeclManagerLocal::AddConflict( const idDeclLocal* decl, const char* loserFile, int loserLine, int loserLayer )
+{
+	for( int i = 0; i < conflicts.Num(); i++ )
+	{
+		if( conflicts[i].type == decl->type && conflicts[i].index == decl->index && conflicts[i].loserFile.Icmp( loserFile ) == 0 )
+		{
+			conflicts.RemoveIndex( i );
+			break;
+		}
+	}
+	declConflict_t& conflict = conflicts.Alloc();
+	conflict.type = decl->type;
+	conflict.index = decl->index;
+	conflict.loserFile = loserFile;
+	conflict.loserLine = loserLine;
+	conflict.loserLayer = loserLayer;
+}
+
+/*
+===================
+idDeclManagerLocal::RemoveConflicts
+
+A file about to be parsed again finds its losing definitions again
+===================
+*/
+void idDeclManagerLocal::RemoveConflicts( const char* loserFile )
+{
+	for( int i = conflicts.Num() - 1; i >= 0; i-- )
+	{
+		if( conflicts[i].loserFile.Icmp( loserFile ) == 0 )
+		{
+			conflicts.RemoveIndex( i );
+		}
+	}
+}
+
+/*
+===================
+idDeclManagerLocal::PrintConflicts
+
+The decl conflict report: every decl defined in more than one file, the winner first. A higher layer takes a decl over
+and keeps its index (K22); inside one layer the first definition wins. listModConflicts is the per-file view.
+
+Limits of the layers, reported rather than solved (K24):
+- a file of the same relative path in two layers still shadows whole; listModConflicts reports every such shadow;
+- an implicit decl created before its folder registers still wins over every layer's definition;
+- when a reload of the winning file drops the decl, it defaults rather than restoring the loser.
+===================
+*/
+void idDeclManagerLocal::PrintConflicts() const
+{
+	common->Printf( "%d decl conflicts (a decl defined in more than one file; the first file named wins):\n", conflicts.Num() );
+	for( int i = 0; i < conflicts.Num(); i++ )
+	{
+		const declConflict_t& conflict = conflicts[i];
+		const idDeclLocal* decl = linearLists[conflict.type][conflict.index];
+		const int winnerLayer = decl->sourceFile->layer;
+		common->Printf( "  %s '%s': %s %s:%d over %s %s:%d\n", declTypes[conflict.type]->typeName.c_str(), decl->name.c_str(),
+						( winnerLayer >= 0 ) ? fileSystem->GetLayerName( winnerLayer ) : "implicit", decl->sourceFile->fileName.c_str(), decl->sourceLine,
+						( conflict.loserLayer >= 0 ) ? fileSystem->GetLayerName( conflict.loserLayer ) : "implicit", conflict.loserFile.c_str(), conflict.loserLine );
+	}
+	common->Printf( "Limits: a same-path file shadows whole (listModConflicts); an implicit decl made before its folder registers wins over\n"
+					"every layer; a reload that drops a winning decl defaults it rather than restoring the loser.\n" );
+}
+
+/*
+===================
+idDeclManagerLocal::ListDeclConflicts_f
+===================
+*/
+void idDeclManagerLocal::ListDeclConflicts_f( const idCmdArgs& args )
+{
+	declManagerLocal.PrintConflicts();
+}
+
+/*
+===================
+idDeclManagerLocal::FinishDeclRegistration
+
+The save header (K44), computed once the game has registered its folders, over explicit decls only: per layer and decl
+type, the count and a CRC of the names that layer first defines, in index order, beside the mod list. An override
+defines nothing new and a text edit names nothing new, so both keep a save loading; a new or removed decl shifts the
+indices that saves store raw (entityDefNumber, lastDamageDef), so it changes the header and the save is refused by name.
+===================
+*/
+void idDeclManagerLocal::FinishDeclRegistration()
+{
+	const int numLayers = fileSystem->GetNumLayers();
+
+	layerSaveHeader.Clear();
+	idStr modList;
+	for( int layer = 1; layer < numLayers; layer++ )
+	{
+		modList += ( layer > 1 ) ? "," : "";
+		modList += fileSystem->GetLayerName( layer );
+	}
+	layerSaveHeader.Set( "modList", modList );
+
+	int counts[ MAX_MOD_LAYERS + 1 ];
+	unsigned int crcs[ MAX_MOD_LAYERS + 1 ];
+	for( int type = 0; type < declTypes.Num(); type++ )
+	{
+		if( declTypes[type] == NULL )
+		{
+			continue;
+		}
+		for( int layer = 0; layer < numLayers; layer++ )
+		{
+			counts[layer] = 0;
+			CRC32_InitChecksum( crcs[layer] );
+		}
+		for( int i = 0; i < linearLists[type].Num(); i++ )
+		{
+			const idDeclLocal* decl = linearLists[type][i];
+			if( decl->sourceFile == &implicitDecls || decl->definedLayer < 0 || decl->definedLayer >= numLayers )
+			{
+				continue;
+			}
+			counts[decl->definedLayer]++;
+			CRC32_UpdateChecksum( crcs[decl->definedLayer], decl->name.c_str(), decl->name.Length() + 1 );
+		}
+		for( int layer = 0; layer < numLayers; layer++ )
+		{
+			if( counts[layer] > 0 )
+			{
+				CRC32_FinishChecksum( crcs[layer] );
+				layerSaveHeader.Set( va( "layerDecls_%d_%s", layer, declTypes[type]->typeName.c_str() ), va( "%d %08x", counts[layer], crcs[layer] ) );
+			}
+		}
+	}
+
+	PrintConflicts();
+}
+//puncho end
 
 /*
 ===================
@@ -4951,6 +5183,7 @@ idDeclLocal::idDeclLocal()
 	everReferenced = false;
 	redefinedInReload = false;
 	nextInFile = NULL;
+	definedLayer = -1;
 }
 
 /*
@@ -5205,6 +5438,7 @@ bool idDeclLocal::ReplaceSourceFileText()
 	sourceFile->fileSize = newFileLength;
 	sourceFile->checksum = MD5_BlockChecksum( buffer.Ptr(), newFileLength );
 	fileSystem->ReadFile( GetFileName(), NULL, &sourceFile->timestamp );
+	sourceFile->layer = fileSystem->GetWriteLayer();	//puncho - MP-A5 (K23): the whole-file copy went to gameFolder
 
 	// move all decls in the same file
 	for( idDeclLocal* decl = sourceFile->decls; decl; decl = decl->nextInFile )

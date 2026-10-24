@@ -466,7 +466,9 @@ CONSOLE_COMMAND( exportMapToOBJ, "Convert .map file to .obj/.mtl ", idCmdSystem:
 	sprintf( mapName, "maps/%s.map", filename.c_str() );
 
 	idMapFile map;
-	if( map.Parse( mapName, false, false ) )
+	//puncho - MP-A5 (K41a): a converted map is written whole, so it reads the map file alone and is refused while a
+	// layer holds a patch for it
+	if( !idMapFile::RefuseWholeMapWrite( mapName ) && map.Parse( mapName, false, false, true ) )
 	{
 		OBJExporter exporter;
 
@@ -628,7 +630,9 @@ CONSOLE_COMMAND( convertMap, "Convert .map file to new map format with polygons 
 	sprintf( mapName, "maps/%s.map", filename.c_str() );
 
 	idMapFile map;
-	if( map.Parse( mapName, true, false ) )
+	//puncho - MP-A5 (K41a): a converted map is written whole, so it reads the map file alone and is refused while a
+	// layer holds a patch for it
+	if( !idMapFile::RefuseWholeMapWrite( mapName ) && map.Parse( mapName, true, false, true ) )
 	{
 		map.ConvertToPolygonMeshFormat();
 
@@ -671,7 +675,9 @@ CONSOLE_COMMAND( convertMapToJSON, "Convert .map file to new .json map format wi
 	sprintf( mapName, "maps/%s.map", filename.c_str() );
 
 	idMapFile map;
-	if( map.Parse( mapName, true, false ) )
+	//puncho - MP-A5 (K41a): a converted map is written whole, so it reads the map file alone and is refused while a
+	// layer holds a patch for it
+	if( !idMapFile::RefuseWholeMapWrite( mapName ) && map.Parse( mapName, true, false, true ) )
 	{
 		map.ConvertToPolygonMeshFormat();
 
@@ -713,7 +719,9 @@ CONSOLE_COMMAND_SHIP( convertMapToValve220, "Convert .map file to the Valve 220 
 	sprintf( mapName, "maps/%s.map", filename.c_str() );
 
 	idMapFile map;
-	if( map.Parse( mapName, true, false ) )
+	//puncho - MP-A5 (K41a): a converted map is written whole, so it reads the map file alone and is refused while a
+	// layer holds a patch for it
+	if( !idMapFile::RefuseWholeMapWrite( mapName ) && map.Parse( mapName, true, false, true ) )
 	{
 		// make sure we have access to all .bimage files for that map
 		fileSystem->BeginLevelLoad( filename, NULL, 0 );
@@ -820,7 +828,9 @@ CONSOLE_COMMAND_SHIP( convertMapQuakeToDoom, "Convert Quake .map in Valve 220 ma
 	sprintf( mapName, "maps/%s.map", filename.c_str() );
 
 	idMapFile map;
-	if( map.Parse( mapName, true, false ) )
+	//puncho - MP-A5 (K41a): a converted map is written whole, so it reads the map file alone and is refused while a
+	// layer holds a patch for it
+	if( !idMapFile::RefuseWholeMapWrite( mapName ) && map.Parse( mapName, true, false, true ) )
 	{
 		map.ConvertQuakeToDoom();
 

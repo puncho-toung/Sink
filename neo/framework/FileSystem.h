@@ -60,6 +60,10 @@ static const ID_TIME_T	FILE_NOT_FOUND_TIMESTAMP	= ( ID_TIME_T ) - 1;
 static const int		MAX_OSPATH					= 1024;		// was 256 in BFG
 // RB end
 
+//puncho - MP-A5 (K40): the highest content layer rank. Base is rank 0, then fs_game_base, each fs_mods entry in order,
+// then fs_game; a higher rank is an error at startup
+static const int		MAX_MOD_LAYERS				= 16;
+
 // modes for OpenFileByMode
 typedef enum
 {
@@ -243,7 +247,7 @@ public:
 	virtual int				ReadFromBGL( idFile* _resourceFile, void* _buffer, int _offset, int _len ) = 0;
 	virtual bool			IsBinaryModel( const idStr& resName ) const = 0;
 	virtual bool			IsSoundSample( const idStr& resName ) const = 0;
-	virtual bool			GetResourceCacheEntry( const char* fileName, idResourceCacheEntry& rc ) = 0;
+	virtual bool			GetResourceCacheEntry( const char* fileName, idResourceCacheEntry& rc, int layer = -1 ) = 0;
 	virtual void			FreeResourceBuffer() = 0;
 	virtual void			AddImagePreload( const char* resName, int filter, int repeat, int usage, int cube ) = 0;
 	virtual void			AddSamplePreload( const char* resName ) = 0;
@@ -251,6 +255,21 @@ public:
 	virtual void			AddAnimPreload( const char* resName ) = 0;
 	virtual void			AddParticlePreload( const char* resName ) = 0;
 	virtual void			AddCollisionPreload( const char* resName ) = 0;
+
+	//puncho start - MP-A5 (K21): the content layers, ranked in load order: base 0, fs_game_base, each fs_mods
+	// entry, then fs_game. A file is served by the highest layer that holds it (K21a); inside one layer loose files,
+	// .pk4 and .resources keep their order under fs_resourceLoadPriority.
+	virtual int				GetNumLayers() const = 0;
+	virtual const char*		GetLayerName( int layer ) const = 0;
+	// the rank of the write target (gameFolder): fs_game, else fs_game_base, else base, never a mod
+	virtual int				GetWriteLayer() const = 0;
+	// the rank of the layer that serves relativePath, -1 when no layer holds it
+	virtual int				GetFileLayer( const char* relativePath ) = 0;
+	// every rank that holds a copy of relativePath, lowest first
+	virtual void			GetFileLayers( const char* relativePath, idList<int>& layers ) = 0;
+	// one layer's copy of relativePath, NULL when that layer holds none
+	virtual idFile*			OpenFileReadFromLayer( const char* relativePath, int layer ) = 0;
+	//puncho end
 
 	// RB begin
 
