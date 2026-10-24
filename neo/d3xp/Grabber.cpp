@@ -134,8 +134,8 @@ idGrabber::Restore
 */
 void idGrabber::Restore( idRestoreGame* savefile )
 {
-	//Spawn the beams
-	Initialize();
+	//puncho - stream-trace (P1-A1c): no Initialize() here: the beams it spawned were orphaned when the saved pointers
+	// below overwrote them, two leaked idBeams per grabber per load; they are spawned after the reads, only if missing
 
 	dragEnt.Restore( savefile );
 	savefile->ReadStaticObject( drag );
@@ -168,6 +168,18 @@ void idGrabber::Restore( idRestoreGame* savefile )
 	savefile->ReadObject( reinterpret_cast<idClass*&>( beamTarget ) );
 
 	savefile->ReadInt( warpId );
+
+	//puncho start - stream-trace (P1-A1c): the beams come back by pointer as saved objects; Initialize spawns only one a
+	// save lacks, and the endTime and dragTraceDist it resets keep their restored values
+	if( beam == NULL || beamTarget == NULL )
+	{
+		const int restoredEndTime = endTime;
+		const float restoredDragTraceDist = dragTraceDist;
+		Initialize();
+		endTime = restoredEndTime;
+		dragTraceDist = restoredDragTraceDist;
+	}
+	//puncho end
 }
 
 /*

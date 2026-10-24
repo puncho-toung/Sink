@@ -727,6 +727,7 @@ set(GAMED3XP_GAMESYS_SOURCES
 	#d3xp/gamesys/DebugGraph.cpp
 	d3xp/gamesys/Event.cpp
 	d3xp/gamesys/SaveGame.cpp
+	d3xp/gamesys/StreamTrace.cpp
 	d3xp/gamesys/SysCmds.cpp
 	d3xp/gamesys/SysCvar.cpp
 	#d3xp/gamesys/TypeInfo.cpp

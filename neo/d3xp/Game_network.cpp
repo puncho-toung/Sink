@@ -33,6 +33,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "Game_local.h"
 #include "../framework/Common_local.h"
+#include "gamesys/StreamTrace.h"	//puncho - stream-trace (P1-A1c)
 
 static const int SNAP_GAMESTATE = 0;
 static const int SNAP_SHADERPARMS = 1;
@@ -418,16 +419,27 @@ void idGameLocal::ServerWriteSnapshot( idSnapShot& ss )
 
 	ss.SetTime( fast.time );
 
+	//puncho - stream-trace (P1-A1c, K4): NULL unless net_snapTrace is set; the marks below scope each object's writes
+	idSnapshotTrace* const snapTrace = snapshotTrace.Start( true, ss.GetTime() );
+
 	byte buffer[ MAX_ENTITY_STATE_SIZE ];
 	idBitMsg msg;
 
 	// First write the generic game state to the snapshot
 	msg.InitWrite( buffer, sizeof( buffer ) );
+	if( snapTrace != NULL )	//puncho - stream-trace
+	{
+		snapTrace->Object( SNAP_GAMESTATE, "<gamestate>", msg, false );
+	}
 	mpGame.WriteToSnapshot( msg );
 	ss.S_AddObject( SNAP_GAMESTATE, ~0U, msg, "Game State" );
 
 	// Update global shader parameters
 	msg.InitWrite( buffer, sizeof( buffer ) );
+	if( snapTrace != NULL )	//puncho - stream-trace
+	{
+		snapTrace->Object( SNAP_SHADERPARMS, "<shaderparms>", msg, false );
+	}
 	for( int i = 0; i < MAX_GLOBAL_SHADER_PARMS; i++ )
 	{
 		msg.WriteFloat( globalShaderParms[i] );
@@ -436,6 +448,10 @@ void idGameLocal::ServerWriteSnapshot( idSnapShot& ss )
 
 	// update portals for opened doors
 	msg.InitWrite( buffer, sizeof( buffer ) );
+	if( snapTrace != NULL )	//puncho - stream-trace
+	{
+		snapTrace->Object( SNAP_PORTALS, "<portals>", msg, false );
+	}
 	int numPortals = gameRenderWorld->NumPortals();
 	msg.WriteLong( numPortals );
 	for( int i = 0; i < numPortals; i++ )
@@ -469,6 +485,10 @@ void idGameLocal::ServerWriteSnapshot( idSnapShot& ss )
 		}
 
 		msg.InitWrite( buffer, sizeof( buffer ) );
+		if( snapTrace != NULL )	//puncho - stream-trace
+		{
+			snapTrace->Object( SNAP_PLAYERSTATE + i, "<playerstate>", msg, false );
+		}
 		spectated->WritePlayerStateToSnapshot( msg );
 		ss.S_AddObject( SNAP_PLAYERSTATE + i, ~0U, msg, "Player State" );
 
@@ -485,6 +505,10 @@ void idGameLocal::ServerWriteSnapshot( idSnapShot& ss )
 		// Write the last usercmd processed by the server so that clients know
 		// when to stop predicting.
 		msg.BeginWriting();
+		if( snapTrace != NULL )	//puncho - stream-trace
+		{
+			snapTrace->Object( SNAP_LAST_CLIENT_FRAME + i, "<lastclientframe>", msg, false );
+		}
 		msg.WriteLong( usercmdLastClientMilliseconds[i] );
 		ss.S_AddObject( SNAP_LAST_CLIENT_FRAME + i, ~0U, msg, "Last client frame" );
 	}
@@ -526,6 +550,10 @@ void idGameLocal::ServerWriteSnapshot( idSnapShot& ss )
 		//puncho end
 
 		msg.InitWrite( buffer, sizeof( buffer ) );
+		if( snapTrace != NULL )	//puncho - stream-trace
+		{
+			snapTrace->Object( SNAP_ENTITIES + ent->entityNumber, ent->GetClassname(), msg, false );
+		}
 		msg.WriteBits( spawnIds[ ent->entityNumber ], 32 - GENTITYNUM_BITS );
 		msg.WriteBits( ent->GetType()->typeNum, idClass::GetTypeNumBits() );
 		msg.WriteBits( ServerRemapDecl( -1, DECL_ENTITYDEF, ent->entityDefNumber ), entityDefBits );
@@ -578,6 +606,11 @@ void idGameLocal::ServerWriteSnapshot( idSnapShot& ss )
 			continue;
 		}
 		pvs.FreeCurrentPVS( pvsHandles[i] );
+	}
+
+	if( snapTrace != NULL )	//puncho - stream-trace
+	{
+		snapTrace->End();
 	}
 }
 
@@ -898,6 +931,9 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 	// clear the snapshot entity list
 	snapshotEntities.Clear();
 
+	//puncho - stream-trace (P1-A1c, K4): NULL unless net_snapTrace is set; each object's reads are scoped below
+	idSnapshotTrace* const snapTrace = snapshotTrace.Start( false, ss.GetTime() );
+
 	// read all entities from the snapshot
 	for( int o = 0; o < ss.NumObjects(); o++ )
 	{
@@ -907,6 +943,10 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 		{
 			assert( false );
 			continue;
+		}
+		if( snapTrace != NULL )	//puncho - stream-trace: the class is known only once the header is read
+		{
+			snapTrace->Object( snapObjectNum, NULL, msg, ss.ObjectIsStaleByIndex( o ) );
 		}
 		if( snapObjectNum == SNAP_GAMESTATE )
 		{
@@ -1062,9 +1102,18 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 		// if there is no entity or an entity of the wrong type
 		if( !ent || ent->GetType()->typeNum != typeNum || ent->entityDefNumber != entityDefNumber || spawnId != spawnIds[ entityNumber ] )
 		{
+			// K14a: a log for phase 12; the content check proves the map text equal, not the slot layout
+			if( ent != NULL && entityNumber >= MAX_CLIENTS && entityNumber < mapSpawnCount )
+			{
+				Warning( "ClientReadSnapshot: the host's %s of generation %d replaces map-range entity %d '%s' (%s, generation %d)", typeInfo->classname, spawnId, entityNumber, ent->name.c_str(), ent->GetClassname(), spawnIds[ entityNumber ] );
+			}
+
 			delete ent;
 
-			spawnCount = spawnId;
+			// K10: a one-shot that only the registration of this slot takes; the children the new entity
+			// spawns advance their own slots
+			forcedGenEntityNum = entityNumber;
+			forcedGen = spawnId;
 
 			if( entityNumber < MAX_CLIENTS )
 			{
@@ -1156,6 +1205,11 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 			// Set after ReadFromSnapshot so we can detect coming unstale
 			ent->snapshotStale = false;
 		}
+	}
+
+	if( snapTrace != NULL )	//puncho - stream-trace
+	{
+		snapTrace->End();
 	}
 
 	// process entity events

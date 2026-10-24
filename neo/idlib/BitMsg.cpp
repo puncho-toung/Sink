@@ -100,13 +100,20 @@ static uint64 maskForNumBits64[33] = {	NBM( 0x00 ), NBM( 0x01 ), NBM( 0x02 ), NB
 
 /*
 ========================
-idBitMsg::WriteBits
+idBitMsg::WriteBitsAs
 
 If the number of bits is negative a sign is included.
 ========================
 */
-void idBitMsg::WriteBits( int value, int numBits )
+void idBitMsg::WriteBitsAs( int value, int numBits, bitMsgPrimitive_t type )
 {
+	//puncho start - stream-trace (P1-A1c, K2): the one test an untraced message pays
+	if( trace != NULL )
+	{
+		trace->BitMsgPrimitive( type, numBits, 0 );
+	}
+	//puncho end
+
 	if( !writeData )
 	{
 		idLib::FatalError( "idBitMsg::WriteBits: cannot write to message" );
@@ -193,7 +200,7 @@ void idBitMsg::WriteString( const char* s, int maxLength, bool make7Bit )
 {
 	if( !s )
 	{
-		WriteData( "", 1 );
+		WriteString( "" );	//puncho - stream-trace (P1-A1c): the zero byte WriteData( "", 1 ) wrote, as the STRING ReadString reports
 	}
 	else
 	{
@@ -230,6 +237,13 @@ void idBitMsg::WriteString( const char* s, int maxLength, bool make7Bit )
 			}
 		}
 		dataPtr[i] = '\0';
+
+		//puncho start - stream-trace (P1-A1c): the text as it went out, after the 7-bit fold
+		if( trace != NULL )
+		{
+			trace->BitMsgPrimitive( BITMSG_STRING, ( l + 1 ) * 8, CRC32_BlockChecksum( dataPtr, ( l > 0 ) ? l : 0 ) );
+		}
+		//puncho end
 	}
 }
 
@@ -240,6 +254,12 @@ idBitMsg::WriteData
 */
 void idBitMsg::WriteData( const void* data, int length )
 {
+	//puncho start - stream-trace (P1-A1c)
+	if( trace != NULL )
+	{
+		trace->BitMsgPrimitive( BITMSG_DATA, length * 8, 0 );
+	}
+	//puncho end
 	memcpy( GetByteSpace( length ), data, length );
 }
 
@@ -318,18 +338,25 @@ bool idBitMsg::WriteDeltaDict( const idDict& dict, const idDict* base )
 
 /*
 ========================
-idBitMsg::ReadBits
+idBitMsg::ReadBitsAs
 
 If the number of bits is negative a sign is included.
 ========================
 */
-int idBitMsg::ReadBits( int numBits ) const
+int idBitMsg::ReadBitsAs( int numBits, bitMsgPrimitive_t type ) const
 {
 	int		value;
 	int		valueBits;
 	int		get;
 	int		fraction;
 	bool	sgn;
+
+	//puncho start - stream-trace (P1-A1c, K2): the one test an untraced message pays
+	if( trace != NULL )
+	{
+		trace->BitMsgPrimitive( type, numBits, 0 );
+	}
+	//puncho end
 
 	if( !readData )
 	{
@@ -402,7 +429,13 @@ int idBitMsg::ReadString( char* buffer, int bufferSize ) const
 {
 	int	l, c;
 
+	//puncho start - stream-trace (P1-A1c): the ReadByte calls below are one STRING primitive, so the sink waits
+	idBitMsgTrace* const sink = trace;
+	trace = NULL;
+	//puncho end
+
 	ReadByteAlign();
+	const int start = readCount;	//puncho - stream-trace
 	l = 0;
 	while( 1 )
 	{
@@ -428,6 +461,15 @@ int idBitMsg::ReadString( char* buffer, int bufferSize ) const
 	}
 
 	buffer[l] = 0;
+
+	//puncho start - stream-trace (P1-A1c): the bytes consumed, which the buffer may have truncated
+	trace = sink;
+	if( sink != NULL )
+	{
+		const int consumed = readCount - start;
+		sink->BitMsgPrimitive( BITMSG_STRING, consumed * 8, CRC32_BlockChecksum( readData + start, ( consumed > 0 ) ? consumed - 1 : 0 ) );
+	}
+	//puncho end
 	return l;
 }
 
@@ -454,6 +496,13 @@ int idBitMsg::ReadString( idStr& str ) const
 	str.Append( ( const char* )readData + readCount, cnt );
 	readCount += cnt + 1;
 
+	//puncho start - stream-trace (P1-A1c)
+	if( trace != NULL )
+	{
+		trace->BitMsgPrimitive( BITMSG_STRING, ( cnt + 1 ) * 8, CRC32_BlockChecksum( str.c_str(), cnt ) );
+	}
+	//puncho end
+
 	return str.Length();
 }
 
@@ -465,6 +514,13 @@ idBitMsg::ReadData
 int idBitMsg::ReadData( void* data, int length ) const
 {
 	int cnt;
+
+	//puncho start - stream-trace (P1-A1c)
+	if( trace != NULL )
+	{
+		trace->BitMsgPrimitive( BITMSG_DATA, length * 8, 0 );
+	}
+	//puncho end
 
 	ReadByteAlign();
 	cnt = readCount;
