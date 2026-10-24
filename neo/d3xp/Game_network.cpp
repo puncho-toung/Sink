@@ -769,6 +769,17 @@ void idGameLocal::ServerProcessReliableMessage( int clientNum, int type, const i
 			// may be the attacker, both ends must be players before the casts below, and every index is checked
 			// before it is used: a bad damageDefIndex reaches DeclByIndex's common->Error and drops the host.
 			// INVALID_JOINT stays a silent refusal further down, since splash on a player sends it legitimately
+			//
+			// A claim that can be applied (any joint but INVALID_JOINT) also has its scale and direction bounded. Such a
+			// claim comes from idProjectile::Collide or its beam (melee runs on the server, splash sends INVALID_JOINT):
+			// damagePower, 1.0 from every stock weapon script but the BFG, whose power ammo caps it at its clip
+			// (idWeapon::Event_LaunchProjectiles, weapon_bfg "clipSize" 4), times berserk's PROJECTILE_DAMAGE 2.0
+			// (idPlayer::PowerUpModifier): 8 at most in stock data. The bound sits well above that on purpose: it only
+			// stops garbage, since any scale in range can still kill in one shot (tying the scale to the weapon is
+			// MP-C7'), and a weapon def edited past stock values must not have its hits refused. The direction is the
+			// projectile's normalized velocity
+			const float maxDamageScale = 64.0f;
+			const float dirLengthSqr = dir.LengthSqr();
 			const char* refused = NULL;
 			if( attackerNum != clientNum )
 			{
@@ -790,9 +801,17 @@ void idGameLocal::ServerProcessReliableMessage( int clientNum, int type, const i
 			{
 				refused = "damage def out of range";
 			}
+			else if( location != INVALID_JOINT && ( IEEE_FLT_IS_INF_NAN( damageScale ) || damageScale < 0.0f || damageScale > maxDamageScale ) )
+			{
+				refused = "damage scale out of range";
+			}
+			else if( location != INVALID_JOINT && ( IEEE_FLT_IS_INF_NAN( dirLengthSqr ) || dirLengthSqr < 1e-6f ) )
+			{
+				refused = "direction not finite or zero";
+			}
 			if( refused != NULL )
 			{
-				common->Warning( "CLIENT_HITSCAN_HIT from client %d refused, %s (attacker %d, victim %d, joint %d, damage def %d)", clientNum, refused, attackerNum, victimNum, location, damageDefIndex );
+				common->Warning( "CLIENT_HITSCAN_HIT from client %d refused, %s (attacker %d, victim %d, joint %d, damage def %d, scale %g, dir %g %g %g)", clientNum, refused, attackerNum, victimNum, location, damageDefIndex, damageScale, dir.x, dir.y, dir.z );
 				break;
 			}
 			//puncho end
@@ -837,6 +856,7 @@ void idGameLocal::ServerProcessReliableMessage( int clientNum, int type, const i
 
 			if( damageDef != NULL )
 			{
+				dir *= idMath::InvSqrt( dirLengthSqr );	//puncho - MP-C7: knockback normalizes its copy, but Killed hands dir to Gib as it is
 				victim.Damage( NULL, gameLocal.entities[attackerNum], dir, damageDef->GetName(), damageScale, location );
 			}
 			break;
