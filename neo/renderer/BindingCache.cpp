@@ -56,7 +56,9 @@ nvrhi::BindingSetHandle BindingCache::GetCachedBindingSet( const nvrhi::BindingS
 	for( int i = bindingHash.First( hash ); i != -1; i = bindingHash.Next( i ) )
 	{
 		nvrhi::BindingSetHandle bindingSet = bindingSets[i];
-		if( *bindingSet->getDesc() == desc )
+		// the bucket holds every entry whose low hash bits match, and with push constants two layout types can share
+		// one desc: a set built for the other layout fails NVRHI's validation ("does not match the layout")
+		if( bindingSet->getLayout() == layout && *bindingSet->getDesc() == desc )
 		{
 			result = bindingSet;
 			break;
@@ -67,7 +69,7 @@ nvrhi::BindingSetHandle BindingCache::GetCachedBindingSet( const nvrhi::BindingS
 
 	if( result )
 	{
-		assert( result->getDesc() && *result->getDesc() == desc );
+		assert( result->getDesc() && *result->getDesc() == desc && result->getLayout() == layout );
 	}
 
 	return result;
@@ -85,7 +87,9 @@ nvrhi::BindingSetHandle BindingCache::GetOrCreateBindingSet( const nvrhi::Bindin
 	for( int i = bindingHash.First( hash ); i != -1; i = bindingHash.Next( i ) )
 	{
 		nvrhi::BindingSetHandle bindingSet = bindingSets[i];
-		if( *bindingSet->getDesc() == desc )
+		// the bucket holds every entry whose low hash bits match, and with push constants two layout types can share
+		// one desc: a set built for the other layout fails NVRHI's validation ("does not match the layout")
+		if( bindingSet->getLayout() == layout && *bindingSet->getDesc() == desc )
 		{
 			result = bindingSet;
 			break;
@@ -108,7 +112,7 @@ nvrhi::BindingSetHandle BindingCache::GetOrCreateBindingSet( const nvrhi::Bindin
 
 	if( result )
 	{
-		assert( result->getDesc() && *result->getDesc() == desc );
+		assert( result->getDesc() && *result->getDesc() == desc && result->getLayout() == layout );
 	}
 
 	return result;
