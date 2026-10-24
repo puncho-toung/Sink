@@ -1209,10 +1209,12 @@ void idAnim::CallFrameCommands( idEntity* ent, int from, int to ) const
 					target = gameLocal.FindEntity( command.string->c_str() );
 					if( target )
 					{
+						//puncho start - map scripts on clients (P1-I2)
 						if( g_scriptCensus.GetBool() )
 						{
 							gameLocal.Printf( "census %c frametrigger %s from %s\n", common->IsClient() ? 'C' : 'S', target->name.c_str(), ent->name.c_str() );
 						}
+						//puncho end
 						SetTimeState ts( target->timeGroup );
 						target->Signal( SIG_TRIGGER );
 						target->ProcessEvent( &EV_Activate, ent );

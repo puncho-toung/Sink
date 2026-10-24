@@ -100,6 +100,7 @@ void Cmd_EntityList_f( const idCmdArgs& args )
 	gameLocal.Printf( "...%d entities\n...%d bytes of spawnargs\n", count, size );
 }
 
+//puncho start - identity (P1-A2)
 /*
 ===================
 Cmd_ListSpawnIds_f
@@ -115,7 +116,8 @@ static void Cmd_ListSpawnIds_f( const idCmdArgs& args )
 	const int first = ( args.Argc() > 1 ) ? idMath::ClampInt( 0, MAX_GENTITIES, atoi( args.Argv( 1 ) ) ) : MAX_CLIENTS;
 	const int last = ( args.Argc() > 2 ) ? idMath::ClampInt( first, MAX_GENTITIES, atoi( args.Argv( 2 ) ) ) : Max( first, mapSpawnCount );
 
-	unsigned int digest = 2166136261u;	// FNV-1a over the pairs
+	unsigned int digest;
+	CRC32_InitChecksum( digest );
 	int count = 0;
 	for( int i = first; i < last; i++ )
 	{
@@ -126,12 +128,14 @@ static void Cmd_ListSpawnIds_f( const idCmdArgs& args )
 		}
 		const int gen = gameLocal.spawnIds[ i ];
 		gameLocal.Printf( "%5d %6d %-24s %s\n", i, gen, ent->GetClassname(), ent->name.c_str() );
-		digest = ( digest ^ ( unsigned int )i ) * 16777619u;
-		digest = ( digest ^ ( unsigned int )gen ) * 16777619u;
+		CRC32_UpdateChecksum( digest, &i, sizeof( i ) );
+		CRC32_UpdateChecksum( digest, &gen, sizeof( gen ) );
 		count++;
 	}
+	CRC32_FinishChecksum( digest );
 	gameLocal.Printf( "listSpawnIds [%d, %d): %d entities, mapSpawnCount %d, digest %08x\n", first, last, count, mapSpawnCount, digest );
 }
+//puncho end
 
 /*
 ===================
@@ -1435,8 +1439,8 @@ void Cmd_PopLight_f( const idCmdArgs& args )
 
 	bool removeFromMap = ( args.Argc() > 1 );
 
-	// K12: generations count per slot and say nothing about age; spawnedEntities is in spawn order
-	// (RegisterEntity appends, a save keeps the order), so its last light is the newest
+	//puncho start - identity (P1-A2, K12): generations count per slot and say nothing about age; spawnedEntities is in
+	// spawn order (RegisterEntity appends, a save keeps the order), so its last light is the newest
 	lastLight = NULL;
 	for( ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
 	{
@@ -1445,6 +1449,7 @@ void Cmd_PopLight_f( const idCmdArgs& args )
 			lastLight = static_cast<idLight*>( ent );
 		}
 	}
+	//puncho end
 
 	if( lastLight )
 	{
@@ -2673,7 +2678,7 @@ static bool CanTraceSave( const char* command )
 ==================
 LoadTraced
 
-The load idCommonLocal::ExecuteMapChange makes (Common_load.cpp:546), on the render and sound worlds already up: a
+The load idCommonLocal::ExecuteMapChange makes, on the render and sound worlds already up: a
 load through the session would run frames first, and no frame may run before the next save.
 ==================
 */
@@ -2749,7 +2754,7 @@ static void Cmd_TestSaveRoundTrip_f( const idCmdArgs& args )
 	}
 	if( !loaded )
 	{
-		// as after a refused load through the session, the map is gone (Common_load.cpp:549 quits to the title)
+		// the map is gone, as idCommonLocal::ExecuteMapChange quits to the title after a refused load
 		gameLocal.Printf( "testSaveRoundTrip: FAIL: the load refused the save (the script changed?); restart the map\n" );
 		return;
 	}
@@ -2847,6 +2852,7 @@ static void Cmd_TestSnapTraceCompare_f( const idCmdArgs& args )
 }
 //puncho end
 
+//puncho start - identity (P1-A2)
 /*
 ==================
 Cmd_TestSpawnChurn_f
@@ -2937,6 +2943,7 @@ static void Cmd_TestSpawnChurn_f( const idCmdArgs& args )
 	gameLocal.Printf( "testSpawnChurn: %d spawns, %d alive, slots %d-%d, highest generation %d, %d wraps seen, %d live pointers missed, %d stale pointers resolved, %d ms\n",
 					  spawns, alive, lowSlot, highSlot, maxGen, wraps, liveMisses, staleHits, Sys_Milliseconds() - startMs );
 }
+//puncho end
 
 /*
 ==================
@@ -3395,7 +3402,7 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "listActiveEntities",	Cmd_ActiveEntityList_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"lists active game entities" );
 	cmdSystem->AddCommand( "listMonsters",			idAI::List_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"lists monsters" );
 	cmdSystem->AddCommand( "listSpawnArgs",			Cmd_ListSpawnArgs_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"list the spawn args of an entity", idGameLocal::ArgCompletion_EntityName );
-	cmdSystem->AddCommand( "listSpawnIds",			Cmd_ListSpawnIds_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"lists the spawn-id generations of the map's entities, with a digest" );
+	cmdSystem->AddCommand( "listSpawnIds",			Cmd_ListSpawnIds_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"lists the spawn-id generations of the map's entities, with a digest" );	//puncho - identity (P1-A2)
 	cmdSystem->AddCommand( "say",					Cmd_Say_f,					CMD_FL_GAME,				"text chat" );
 	cmdSystem->AddCommand( "sayTeam",				Cmd_SayTeam_f,				CMD_FL_GAME,				"team text chat" );
 	cmdSystem->AddCommand( "addChatLine",			Cmd_AddChatLine_f,			CMD_FL_GAME,				"internal use - core to game chat lines" );
@@ -3439,7 +3446,7 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "testSaveTraceCompare",	Cmd_TestSaveTraceCompare_f,	CMD_FL_GAME | CMD_FL_CHEAT,	"testSaveTraceCompare <file>: compares the current save trace with one an earlier build wrote" );
 	cmdSystem->AddCommand( "testSnapTraceCompare",	Cmd_TestSnapTraceCompare_f,	CMD_FL_GAME,				"testSnapTraceCompare <host file> <client file>: matches a client's net_snapTrace reads with the host's writes" );
 	//puncho end
-	cmdSystem->AddCommand( "testSpawnChurn",		Cmd_TestSpawnChurn_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"spawns and deletes entities to test the per-slot spawn-id generation" );
+	cmdSystem->AddCommand( "testSpawnChurn",		Cmd_TestSpawnChurn_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"spawns and deletes entities to test the per-slot spawn-id generation" );	//puncho - identity (P1-A2)
 	cmdSystem->AddCommand( "testModel",				idTestModel::TestModel_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"tests a model", idTestModel::ArgCompletion_TestModel );
 	cmdSystem->AddCommand( "testSkin",				idTestModel::TestSkin_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"tests a skin on an existing testModel", idCmdSystem::ArgCompletion_Decl<DECL_SKIN> );
 	cmdSystem->AddCommand( "testShaderParm",		idTestModel::TestShaderParm_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"sets a shaderParm on an existing testModel" );

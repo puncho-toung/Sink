@@ -603,6 +603,7 @@ ID_INLINE int idBitMsg::GetNumBitsWritten() const
 	return ( curSize << 3 ) + writeBit;
 }
 
+//puncho start - stream-trace (P1-A1c)
 /*
 ========================
 idBitMsg::SetTrace
@@ -612,6 +613,7 @@ ID_INLINE void idBitMsg::SetTrace( idBitMsgTrace* sink ) const
 {
 	trace = sink;
 }
+//puncho end
 
 /*
 ========================
@@ -788,6 +790,7 @@ ID_INLINE void idBitMsg::WriteByteAlign()
 	tempValue = 0;
 }
 
+//puncho start - stream-trace (P1-A1c): the body moved to WriteBitsAs
 /*
 ========================
 idBitMsg::WriteBits
@@ -797,8 +800,9 @@ If the number of bits is negative a sign is included.
 */
 ID_INLINE void idBitMsg::WriteBits( int value, int numBits )
 {
-	WriteBitsAs( value, numBits, BITMSG_BITS );	//puncho - stream-trace (P1-A1c): the body moved to WriteBitsAs
+	WriteBitsAs( value, numBits, BITMSG_BITS );
 }
+//puncho end
 
 /*
 ========================
@@ -807,7 +811,7 @@ idBitMsg::WriteBool
 */
 ID_INLINE void idBitMsg::WriteBool( bool c )
 {
-	WriteBitsAs( c, 1, BITMSG_BOOL );
+	WriteBitsAs( c, 1, BITMSG_BOOL );	//puncho - stream-trace (P1-A1c)
 }
 
 /*
@@ -817,7 +821,7 @@ idBitMsg::WriteChar
 */
 ID_INLINE void idBitMsg::WriteChar( int8 c )
 {
-	WriteBitsAs( c, -8, BITMSG_CHAR );
+	WriteBitsAs( c, -8, BITMSG_CHAR );	//puncho - stream-trace (P1-A1c)
 }
 
 /*
@@ -827,7 +831,7 @@ idBitMsg::WriteByte
 */
 ID_INLINE void idBitMsg::WriteByte( uint8 c )
 {
-	WriteBitsAs( c, 8, BITMSG_BYTE );
+	WriteBitsAs( c, 8, BITMSG_BYTE );	//puncho - stream-trace (P1-A1c)
 }
 
 /*
@@ -837,7 +841,7 @@ idBitMsg::WriteShort
 */
 ID_INLINE void idBitMsg::WriteShort( int16 c )
 {
-	WriteBitsAs( c, -16, BITMSG_SHORT );
+	WriteBitsAs( c, -16, BITMSG_SHORT );	//puncho - stream-trace (P1-A1c)
 }
 
 /*
@@ -847,7 +851,7 @@ idBitMsg::WriteUShort
 */
 ID_INLINE void idBitMsg::WriteUShort( uint16 c )
 {
-	WriteBitsAs( c, 16, BITMSG_USHORT );
+	WriteBitsAs( c, 16, BITMSG_USHORT );	//puncho - stream-trace (P1-A1c)
 }
 
 /*
@@ -857,7 +861,7 @@ idBitMsg::WriteLong
 */
 ID_INLINE void idBitMsg::WriteLong( int32 c )
 {
-	WriteBitsAs( c, 32, BITMSG_LONG );
+	WriteBitsAs( c, 32, BITMSG_LONG );	//puncho - stream-trace (P1-A1c)
 }
 
 /*
@@ -869,8 +873,8 @@ ID_INLINE void idBitMsg::WriteLongLong( int64 c )
 {
 	int a = c;
 	int b = c >> 32;
-	WriteBitsAs( a, 32, BITMSG_LONGLONG );
-	WriteBitsAs( b, 32, BITMSG_LONGLONG );
+	WriteBitsAs( a, 32, BITMSG_LONGLONG );	//puncho - stream-trace (P1-A1c)
+	WriteBitsAs( b, 32, BITMSG_LONGLONG );	//puncho - stream-trace (P1-A1c)
 }
 
 /*
@@ -880,7 +884,7 @@ idBitMsg::WriteFloat
 */
 ID_INLINE void idBitMsg::WriteFloat( float f )
 {
-	WriteBitsAs( *reinterpret_cast<int*>( &f ), 32, BITMSG_FLOAT );
+	WriteBitsAs( *reinterpret_cast<int*>( &f ), 32, BITMSG_FLOAT );	//puncho - stream-trace (P1-A1c)
 }
 
 /*
@@ -891,7 +895,7 @@ idBitMsg::WriteFloat
 ID_INLINE void idBitMsg::WriteFloat( float f, int exponentBits, int mantissaBits )
 {
 	int bits = idMath::FloatToBits( f, exponentBits, mantissaBits );
-	WriteBitsAs( bits, 1 + exponentBits + mantissaBits, BITMSG_FLOATBITS );
+	WriteBitsAs( bits, 1 + exponentBits + mantissaBits, BITMSG_FLOATBITS );	//puncho - stream-trace (P1-A1c)
 }
 
 /*
@@ -901,7 +905,7 @@ idBitMsg::WriteAngle8
 */
 ID_INLINE void idBitMsg::WriteAngle8( float f )
 {
-	WriteBitsAs( ( uint8 )ANGLE2BYTE( f ), 8, BITMSG_ANGLE8 );
+	WriteBitsAs( ( uint8 )ANGLE2BYTE( f ), 8, BITMSG_ANGLE8 );	//puncho - stream-trace (P1-A1c)
 }
 
 /*
@@ -911,7 +915,7 @@ idBitMsg::WriteAngle16
 */
 ID_INLINE void idBitMsg::WriteAngle16( float f )
 {
-	WriteBitsAs( ( int16 )ANGLE2SHORT( f ), -16, BITMSG_ANGLE16 );
+	WriteBitsAs( ( int16 )ANGLE2SHORT( f ), -16, BITMSG_ANGLE16 );	//puncho - stream-trace (P1-A1c)
 }
 
 /*
@@ -921,7 +925,7 @@ idBitMsg::WriteDir
 */
 ID_INLINE void idBitMsg::WriteDir( const idVec3& dir, int numBits )
 {
-	WriteBitsAs( DirToBits( dir, numBits ), numBits, BITMSG_DIR );
+	WriteBitsAs( DirToBits( dir, numBits ), numBits, BITMSG_DIR );	//puncho - stream-trace (P1-A1c)
 }
 
 /*
@@ -948,6 +952,7 @@ ID_INLINE void idBitMsg::ReadByteAlign() const
 	readBit = 0;
 }
 
+//puncho start - stream-trace (P1-A1c): the body moved to ReadBitsAs
 /*
 ========================
 idBitMsg::ReadBits
@@ -957,8 +962,9 @@ If the number of bits is negative a sign is included.
 */
 ID_INLINE int idBitMsg::ReadBits( int numBits ) const
 {
-	return ReadBitsAs( numBits, BITMSG_BITS );	//puncho - stream-trace (P1-A1c): the body moved to ReadBitsAs
+	return ReadBitsAs( numBits, BITMSG_BITS );
 }
+//puncho end
 
 /*
 ========================
@@ -967,7 +973,7 @@ idBitMsg::ReadBool
 */
 ID_INLINE bool idBitMsg::ReadBool() const
 {
-	return ( ReadBitsAs( 1, BITMSG_BOOL ) == 1 ) ? true : false;
+	return ( ReadBitsAs( 1, BITMSG_BOOL ) == 1 ) ? true : false;	//puncho - stream-trace (P1-A1c)
 }
 
 /*
@@ -977,7 +983,7 @@ idBitMsg::ReadChar
 */
 ID_INLINE int idBitMsg::ReadChar() const
 {
-	return ( signed char )ReadBitsAs( -8, BITMSG_CHAR );
+	return ( signed char )ReadBitsAs( -8, BITMSG_CHAR );	//puncho - stream-trace (P1-A1c)
 }
 
 /*
@@ -987,7 +993,7 @@ idBitMsg::ReadByte
 */
 ID_INLINE int idBitMsg::ReadByte() const
 {
-	return ( unsigned char )ReadBitsAs( 8, BITMSG_BYTE );
+	return ( unsigned char )ReadBitsAs( 8, BITMSG_BYTE );	//puncho - stream-trace (P1-A1c)
 }
 
 /*
@@ -997,7 +1003,7 @@ idBitMsg::ReadShort
 */
 ID_INLINE int idBitMsg::ReadShort() const
 {
-	return ( short )ReadBitsAs( -16, BITMSG_SHORT );
+	return ( short )ReadBitsAs( -16, BITMSG_SHORT );	//puncho - stream-trace (P1-A1c)
 }
 
 /*
@@ -1007,7 +1013,7 @@ idBitMsg::ReadUShort
 */
 ID_INLINE int idBitMsg::ReadUShort() const
 {
-	return ( unsigned short )ReadBitsAs( 16, BITMSG_USHORT );
+	return ( unsigned short )ReadBitsAs( 16, BITMSG_USHORT );	//puncho - stream-trace (P1-A1c)
 }
 
 /*
@@ -1017,7 +1023,7 @@ idBitMsg::ReadLong
 */
 ID_INLINE int idBitMsg::ReadLong() const
 {
-	return ReadBitsAs( 32, BITMSG_LONG );
+	return ReadBitsAs( 32, BITMSG_LONG );	//puncho - stream-trace (P1-A1c)
 }
 
 /*
@@ -1027,8 +1033,8 @@ idBitMsg::ReadLongLong
 */
 ID_INLINE int64 idBitMsg::ReadLongLong() const
 {
-	int64 a = ReadBitsAs( 32, BITMSG_LONGLONG );
-	int64 b = ReadBitsAs( 32, BITMSG_LONGLONG );
+	int64 a = ReadBitsAs( 32, BITMSG_LONGLONG );	//puncho - stream-trace (P1-A1c)
+	int64 b = ReadBitsAs( 32, BITMSG_LONGLONG );	//puncho - stream-trace (P1-A1c)
 	int64 c = ( 0x00000000ffffffff & a ) | ( b << 32 );
 	return c;
 }
@@ -1041,7 +1047,7 @@ idBitMsg::ReadFloat
 ID_INLINE float idBitMsg::ReadFloat() const
 {
 	float value;
-	*reinterpret_cast<int*>( &value ) = ReadBitsAs( 32, BITMSG_FLOAT );
+	*reinterpret_cast<int*>( &value ) = ReadBitsAs( 32, BITMSG_FLOAT );	//puncho - stream-trace (P1-A1c)
 	return value;
 }
 
@@ -1052,7 +1058,7 @@ idBitMsg::ReadFloat
 */
 ID_INLINE float idBitMsg::ReadFloat( int exponentBits, int mantissaBits ) const
 {
-	int bits = ReadBitsAs( 1 + exponentBits + mantissaBits, BITMSG_FLOATBITS );
+	int bits = ReadBitsAs( 1 + exponentBits + mantissaBits, BITMSG_FLOATBITS );	//puncho - stream-trace (P1-A1c)
 	return idMath::BitsToFloat( bits, exponentBits, mantissaBits );
 }
 
@@ -1063,7 +1069,7 @@ idBitMsg::ReadAngle8
 */
 ID_INLINE float idBitMsg::ReadAngle8() const
 {
-	return BYTE2ANGLE( ( unsigned char )ReadBitsAs( 8, BITMSG_ANGLE8 ) );
+	return BYTE2ANGLE( ( unsigned char )ReadBitsAs( 8, BITMSG_ANGLE8 ) );	//puncho - stream-trace (P1-A1c)
 }
 
 /*
@@ -1073,7 +1079,7 @@ idBitMsg::ReadAngle16
 */
 ID_INLINE float idBitMsg::ReadAngle16() const
 {
-	return SHORT2ANGLE( ( short )ReadBitsAs( -16, BITMSG_ANGLE16 ) );
+	return SHORT2ANGLE( ( short )ReadBitsAs( -16, BITMSG_ANGLE16 ) );	//puncho - stream-trace (P1-A1c)
 }
 
 /*
@@ -1083,7 +1089,7 @@ idBitMsg::ReadDir
 */
 ID_INLINE idVec3 idBitMsg::ReadDir( int numBits ) const
 {
-	return BitsToDir( ReadBitsAs( numBits, BITMSG_DIR ), numBits );
+	return BitsToDir( ReadBitsAs( numBits, BITMSG_DIR ), numBits );	//puncho - stream-trace (P1-A1c)
 }
 
 /*

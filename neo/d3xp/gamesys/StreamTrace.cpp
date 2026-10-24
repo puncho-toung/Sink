@@ -72,12 +72,12 @@ typedef struct streamTraceAllow_s
 
 static const streamTraceAllow_t allowRules[] =
 {
-	{ "idEntity",			"renderEntity_t",	0,	1,	1,	"idEntity xrayEntityHandle, modelDefHandle (Entity.cpp:846/850)" },
-	{ "idExplodingBarrel",	"renderEntity_t",	0,	-2,	2,	"idExplodingBarrel particleModelDefHandle, lightDefHandle (Moveable.cpp:956-957)" },
-	{ "idProjectile",		"renderLight_t",	0,	1,	1,	"idProjectile lightDefHandle (Projectile.cpp:141)" },
-	{ "idBFGProjectile",	"renderEntity_t",	0,	1,	1,	"idBFGProjectile beam and second model handles (Projectile.cpp:2373/2377)" },
-	{ "idWeapon",			"renderLight_t",	0,	-1,	1,	"idWeapon light and flash handles (Weapon.cpp:371-477)" },
-	{ "idClipModel",		NULL,				0,	12,	2,	"idClipModel renderModelHandle and link flag (Clip.cpp:542-543)" },
+	{ "idEntity",			"renderEntity_t",	0,	1,	1,	"idEntity xrayEntityHandle, modelDefHandle (idEntity::Save)" },
+	{ "idExplodingBarrel",	"renderEntity_t",	0,	-2,	2,	"idExplodingBarrel particleModelDefHandle, lightDefHandle (idExplodingBarrel::Save)" },
+	{ "idProjectile",		"renderLight_t",	0,	1,	1,	"idProjectile lightDefHandle (idProjectile::Save)" },
+	{ "idBFGProjectile",	"renderEntity_t",	0,	1,	1,	"idBFGProjectile beam and second model handles (idBFGProjectile::Save)" },
+	{ "idWeapon",			"renderLight_t",	0,	-1,	1,	"idWeapon light and flash handles (idWeapon::Save)" },
+	{ "idClipModel",		NULL,				0,	12,	2,	"idClipModel renderModelHandle and link flag (idClipModel::Save)" },
 	{ "<globals>",			"usercmd_t",		0,	0,	0,	"the dummy usercmd" },
 	{ "<globals>",			"idDict",			1,	1,	4,	"playerPVS, playerConnectedAreas" },
 	{ "<globals>",			"idDict",			2,	MAX_GLOBAL_SHADER_PARMS + 15,	2,	"GetLocalClientNum, realClientTime" },
@@ -880,14 +880,7 @@ int idStreamTrace::CompareBytes( const idStreamTrace& a, const idStreamTrace& b,
 	return failures;
 }
 
-/*
-================
-idStreamTrace::CompareClasses
-
-K5: a trace saved by an earlier build against this one. Scopes pair by (object, name, n-th such scope of the
-object); each pair compares type and size per position, never values, and the findings add up per class.
-================
-*/
+// one class's findings in CompareClasses
 typedef struct streamTraceClassStats_s
 {
 	int					paired;
@@ -900,11 +893,26 @@ typedef struct streamTraceClassStats_s
 	idStr				now;
 } streamTraceClassStats_t;
 
+/*
+================
+ScopeKey
+
+The key of a scope in a hash of scopes; a hit is confirmed by object and name.
+================
+*/
 static int ScopeKey( const char* name, int object )
 {
 	return idStr::Hash( name ) + object * 31;
 }
 
+/*
+================
+idStreamTrace::CompareClasses
+
+K5: a trace saved by an earlier build against this one. Scopes pair by (object, name, n-th such scope of the
+object); each pair compares type and size per position, never values, and the findings add up per class.
+================
+*/
 int idStreamTrace::CompareClasses( const idStreamTrace& before, const idStreamTrace& now )
 {
 	idList<int> beforeFirst, beforeOrder, nowFirst, nowOrder;
@@ -1197,7 +1205,7 @@ bool idStreamTrace::ReadFile( const char* fileName )
 ===============================================================================
 */
 
-static idCVar net_snapTrace( "net_snapTrace", "", CVAR_GAME | CVAR_NOCHEAT, "P1-A1c: a file under fs_savepath that records each snapshot object this peer writes (the host) or reads (a client), for testSnapTraceCompare; empty is off" );
+static idCVar net_snapTrace( "net_snapTrace", "", CVAR_GAME | CVAR_NOCHEAT, "file under fs_savepath that records each snapshot object this peer writes (the host) or reads (a client), for testSnapTraceCompare; empty is off" );
 
 idSnapshotTrace snapshotTrace;
 
@@ -1427,6 +1435,14 @@ typedef struct snapTraceFile_s
 	idList<snapTraceObject_t>	objects;
 } snapTraceFile_t;
 
+/*
+================
+ReadSnapTrace
+
+Reads a trace file whole. A damaged record, such as the one a killed run cuts short, ends the read but does not fail
+it: the objects before it are used.
+================
+*/
 static bool ReadSnapTrace( const char* fileName, snapTraceFile_t& out )
 {
 	idFile* f = OpenTraceFile( fileName );
@@ -1501,6 +1517,13 @@ static bool ReadSnapTrace( const char* fileName, snapTraceFile_t& out )
 	return true;
 }
 
+/*
+================
+CountSnapshots
+
+The snapshots in t: the objects are in file order, so each change of time starts one.
+================
+*/
 static int CountSnapshots( const snapTraceFile_t& t )
 {
 	int count = 0;

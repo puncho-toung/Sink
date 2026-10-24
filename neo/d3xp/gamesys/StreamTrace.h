@@ -156,7 +156,7 @@ public:
 
 	// the checks; each prints what it finds and returns the number of failures
 	static int				CompareShapes( const idStreamTrace& write, const idStreamTrace& read );
-	static int				CompareBytes( const idStreamTrace& first, const idStreamTrace& second, const idFile_Memory& firstStrings, const idFile_Memory& secondStrings );
+	static int				CompareBytes( const idStreamTrace& a, const idStreamTrace& b, const idFile_Memory& aStrings, const idFile_Memory& bStrings );
 	static int				CompareClasses( const idStreamTrace& before, const idStreamTrace& now );
 
 	int						CheckCoverage() const;			// every byte of the stream in exactly one entry
@@ -227,9 +227,9 @@ public:
 							idSnapshotTrace();
 
 	// NULL unless net_snapTrace names a file; opens or reopens it as the cvar asks
-	idSnapshotTrace* 		Start( bool writes, int snapshotTime );
-	// ends the open object and starts objectNum's on msg; className may be NULL where the reader cannot know it yet
-	void					Object( int objectNum, const char* className, const idBitMsg& msg, bool stale );
+	idSnapshotTrace* 		Start( bool isWriter, int snapshotTime );
+	// ends the open object and opens object number on msg; name is its class, NULL where the reader cannot know it yet
+	void					Object( int number, const char* name, const idBitMsg& msg, bool isStale );
 	void					End();								// the end of the snapshot: flushes
 	void					Close();
 

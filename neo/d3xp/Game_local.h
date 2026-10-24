@@ -84,11 +84,12 @@ const int ENTITYNUM_NONE		= MAX_GENTITIES - 1;
 const int ENTITYNUM_WORLD		= MAX_GENTITIES - 2;
 const int ENTITYNUM_MAX_NORMAL	= MAX_GENTITIES - 2;
 const int ENTITYNUM_FIRST_NON_REPLICATED	= ENTITYNUM_MAX_NORMAL - 256;
-// P1-A2 (K9): each slot counts its own spawn-id generations, 1 to this and around again; 0 is the null
-// spawn id. The wire carries 32 - GENTITYNUM_BITS bits of it, but idEntityPtr packs generation <<
-// GENTITYNUM_BITS into a signed int, where 1 << ( 31 - GENTITYNUM_BITS ) would take the sign bit and
-// never resolve: 2^17 - 1 at 14 index bits.
+//puncho start - identity (P1-A2, K9): each slot counts its own spawn-id generations, 1 to this and around again; 0 is
+// the null spawn id. The wire carries 32 - GENTITYNUM_BITS bits of it, but idEntityPtr packs generation <<
+// GENTITYNUM_BITS into a signed int, where 1 << ( 31 - GENTITYNUM_BITS ) would take the sign bit and never resolve:
+// 2^17 - 1 at 14 index bits.
 const int MAX_SPAWN_GENERATION	= ( 1 << ( 31 - GENTITYNUM_BITS ) ) - 1;
+//puncho end
 
 // Admer: brush origin offsets for better TrenchBroom support
 constexpr const char* BRUSH_ORIGIN_KEY = "__brushOrigin";
@@ -101,8 +102,8 @@ void gameError( const char* fmt, ... );
 #include "gamesys/Class.h"
 #include "gamesys/SysCvar.h"
 #include "gamesys/SysCmds.h"
-#include "gamesys/SaveGame.h"
 #include "gamesys/Schema.h"		//puncho - schema (P1-A1a): the X-macro field lists
+#include "gamesys/SaveGame.h"
 
 #include "script/Script_Program.h"
 
@@ -654,10 +655,12 @@ public:
 	idEntity* 				SpawnEntityType( const idTypeInfo& classdef, const idDict* args = NULL, bool bIsClientReadSnapshot = false );
 	bool					SpawnEntityDef( const idDict& args, idEntity** ent = NULL, bool setDefaults = true );
 	int						GetSpawnId( const idEntity* ent ) const;
+	//puncho start - identity (P1-A2)
 	int						GetMapSpawnCount() const
 	{
 		return mapSpawnCount;
 	}
+	//puncho end
 
 	const idDeclEntityDef* 	FindEntityDef( const char* name, bool makeDefault = true ) const;
 	const idDict* 			FindEntityDefDict( const char* name, bool makeDefault = true ) const;
@@ -846,11 +849,13 @@ private:
 	idMapFile* 				mapFile;				// will be NULL during the game unless in-game editing is used
 	bool					mapCycleLoaded;
 
+	//puncho start - identity (P1-A2)
 	int						slotGen[MAX_GENTITIES];	// K9: the last generation each slot gave out; spawnIds[n] is the live entity's, or -1
 	int						forcedGenEntityNum;		// K10: a client's one-shot, the next registration of this slot takes forcedGen; -1 for none
 	int						forcedGen;
 	int						mapSpawnCount;			// K11: one past the highest slot the map's entities took below ENTITYNUM_FIRST_NON_REPLICATED
 	idList<int>				clientSpawnCensus;		// K14a: a client's own spawns in play, three index ranges per type number (g_clientSpawnCensus)
+	//puncho end
 
 	//puncho start - content check (P1-A3a, K19): the implicit decl announce table, cleared by every load (InitAsyncNetwork).
 	// The host fills it from ServerRemapDecl and broadcasts each new slot; a client fills it from the broadcasts, resolving
@@ -936,7 +941,7 @@ private:
 	// spawn entities from the map file
 	void					SpawnMapEntities();
 	// commons used by init, shutdown, and restart; a restart passes the generations its slots had (K11)
-	void					MapPopulate( const int* slotGenBeforeRestart );
+	void					MapPopulate( const int* slotGenBeforeRestart );	//puncho - identity (P1-A2)
 	void					MapClear( bool clearClients );
 
 	// RB: spawn environment probes if there aren't any by default

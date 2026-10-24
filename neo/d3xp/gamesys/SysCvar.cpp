@@ -89,7 +89,11 @@ idCVar g_debugMove(					"g_debugMove",				"0",			CVAR_GAME | CVAR_BOOL, "" );
 idCVar g_debugDamage(				"g_debugDamage",			"0",			CVAR_GAME | CVAR_BOOL, "" );
 idCVar g_debugWeapon(				"g_debugWeapon",			"0",			CVAR_GAME | CVAR_BOOL, "" );
 idCVar g_debugScript(				"g_debugScript",			"0",			CVAR_GAME | CVAR_BOOL, "" );
-idCVar g_scriptCensus(				"g_scriptCensus",			"0",			CVAR_GAME | CVAR_BOOL | CVAR_NOCHEAT, "prints script thread starts, client refusals, target activations, script triggers, spawns and radius damage, tagged S (server or single player) or C (client)" );
+idCVar g_scriptCensus(				"g_scriptCensus",			"0",			CVAR_GAME | CVAR_BOOL | CVAR_NOCHEAT, "prints script thread starts, client refusals, target activations, script triggers, spawns and radius damage, tagged S (server or single player) or C (client)" );	//puncho - map scripts on clients (P1-I2)
+//puncho start - identity (P1-A2)
+idCVar g_slotGenFastForward(		"g_slotGenFastForward",		"-1",			CVAR_GAME | CVAR_INTEGER | CVAR_CHEAT, "entity slot whose next spawn takes the last spawn-id generation, so the spawn after it wraps; resets to -1 once used, -1 = off" );
+idCVar g_clientSpawnCensus(			"g_clientSpawnCensus",		"0",			CVAR_GAME | CVAR_BOOL | CVAR_NOCHEAT, "on a client, counts its own spawns in play by class and index range (map, replicated, non-replicated) and prints them at map shutdown" );
+//puncho end
 idCVar g_debugMover(				"g_debugMover",				"0",			CVAR_GAME | CVAR_BOOL, "" );
 idCVar g_debugTriggers(				"g_debugTriggers",			"0",			CVAR_GAME | CVAR_BOOL, "" );
 idCVar g_debugCinematic(			"g_debugCinematic",			"0",			CVAR_GAME | CVAR_BOOL, "" );

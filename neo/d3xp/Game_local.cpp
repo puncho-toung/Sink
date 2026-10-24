@@ -246,11 +246,13 @@ void idGameLocal::Clear()
 	vacuumAreaNum = 0;
 	mapFileName.Clear();
 	mapFile = NULL;
+	//puncho start - identity (P1-A2)
 	memset( slotGen, 0, sizeof( slotGen ) );
 	forcedGenEntityNum = -1;
 	forcedGen = 0;
 	mapSpawnCount = 0;
 	clientSpawnCensus.Clear();
+	//puncho end
 	camera = NULL;
 	aasList.Clear();
 	aasNames.Clear();
@@ -648,11 +650,13 @@ void idGameLocal::SaveGame( idFile* f, idFile* strings )
 	savegame.WriteBool( quickSlowmoReset );
 
 	savegame.WriteBool( mapCycleLoaded );
-	// K13: the per-slot generations where the global spawnCount was (BUILD_NUMBER_SAVE_VERSION_SLOT_GENERATION)
+	//puncho start - identity (P1-A2, K13): the per-slot generations where the global spawnCount was
+	// (BUILD_NUMBER_SAVE_VERSION_SLOT_GENERATION)
 	for( i = 0; i < MAX_GENTITIES; i++ )
 	{
 		savegame.WriteInt( slotGen[ i ] );
 	}
+	//puncho end
 
 	if( !locationEntities )
 	{
@@ -1036,9 +1040,11 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	// initialize all entities for this game
 	memset( entities, 0, sizeof( entities ) );
 	memset( spawnIds, -1, sizeof( spawnIds ) );
+	//puncho start - identity (P1-A2)
 	memset( slotGen, 0, sizeof( slotGen ) );
 	forcedGenEntityNum = -1;
 	clientSpawnCensus.Clear();
+	//puncho end
 
 	spawnedEntities.Clear();
 	activeEntities.Clear();
@@ -1063,7 +1069,7 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	// range are NEVER anything but clients
 	num_entities			= MAX_CLIENTS;
 	firstFreeEntityIndex[0]	= MAX_CLIENTS;
-	firstFreeEntityIndex[1]	= ENTITYNUM_FIRST_NON_REPLICATED;
+	firstFreeEntityIndex[1]	= ENTITYNUM_FIRST_NON_REPLICATED;	//puncho - identity (P1-A2)
 
 	// reset the random number generator.
 	random.SetSeed( common->IsMultiplayer() ? randseed : ai_benchSeed.GetInteger() );	//puncho - ai-combat (plans/ai-combat/00-PLAN.md §2.7, WP-C3): 0 is the stock seed; multiplayer keeps the server's
@@ -1180,7 +1186,7 @@ idGameLocal::LocalMapRestart
 */
 void idGameLocal::LocalMapRestart()
 {
-	int i;
+	int i;	//puncho - identity (P1-A2)
 
 	Printf( "----------- Game Map Restart ------------\n" );
 
@@ -1213,14 +1219,15 @@ void idGameLocal::LocalMapRestart()
 		gameSoundWorld->SetSlowmoSpeed( 1.0f );
 	}
 
-	// K11: the map entities and their spawn-time children take generation 1 again, so a client's map
-	// entities keep the host's spawn ids; the surviving players' idEntityPtrs must not resolve to the new
-	// occupants of their old targets' slots, so MapPopulate raises each slot back to its old generation
-	// before any later spawn
+	//puncho start - identity (P1-A2, K11): the map entities and their spawn-time children take generation 1 again, so a
+	// client's map entities keep the host's spawn ids; the surviving players' idEntityPtrs must not resolve to the new
+	// occupants of their old targets' slots, so MapPopulate raises each slot back to its old generation before any
+	// later spawn
 	idScratchScope scratch( "idGameLocal::LocalMapRestart" );
 	int* slotGenBeforeRestart = scratch.Alloc< int >( MAX_GENTITIES );
 	memcpy( slotGenBeforeRestart, slotGen, sizeof( slotGen ) );
 	memset( slotGen + MAX_CLIENTS, 0, ( MAX_GENTITIES - MAX_CLIENTS ) * sizeof( slotGen[0] ) );
+	//puncho end
 
 	gamestate = GAMESTATE_STARTUP;
 
@@ -1235,7 +1242,7 @@ void idGameLocal::LocalMapRestart()
 	shooterTokenTic = -1;	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md, WP-T3): nor are the tokens of the old incarnations
 	//puncho end
 
-	MapPopulate( slotGenBeforeRestart );
+	MapPopulate( slotGenBeforeRestart );	//puncho - identity (P1-A2)
 
 	// setup the client entities again
 	for( i = 0; i < MAX_CLIENTS; i++ )
@@ -1299,7 +1306,7 @@ void idGameLocal::MapRestart_f( const idCmdArgs& args )
 idGameLocal::MapPopulate
 ===================
 */
-void idGameLocal::MapPopulate( const int* slotGenBeforeRestart )
+void idGameLocal::MapPopulate( const int* slotGenBeforeRestart )	//puncho - identity (P1-A2)
 {
 
 	if( common->IsMultiplayer() )
@@ -1316,8 +1323,9 @@ void idGameLocal::MapPopulate( const int* slotGenBeforeRestart )
 	// prepare the list of randomized initial spawn spots
 	RandomizeInitialSpawns();
 
-	// K11: mapSpawnCount bounds the indices of map entities (ClientReadSnapshot's stale rule): one past the
-	// highest slot that SpawnMapEntities filled below the non-replicated range, so the world never counts
+	//puncho start - identity (P1-A2, K11): mapSpawnCount bounds the indices of map entities (ClientReadSnapshot's stale
+	// rule): one past the highest slot that SpawnMapEntities filled below the non-replicated range, so the world never
+	// counts
 	mapSpawnCount = MAX_CLIENTS;
 	for( int i = ENTITYNUM_FIRST_NON_REPLICATED - 1; i >= MAX_CLIENTS; i-- )
 	{
@@ -1336,6 +1344,7 @@ void idGameLocal::MapPopulate( const int* slotGenBeforeRestart )
 			slotGen[ i ] = Max( slotGen[ i ], slotGenBeforeRestart[ i ] );
 		}
 	}
+	//puncho end
 
 	// execute pending events before the very first game frame
 	// this makes sure the map script main() function is called
@@ -1452,7 +1461,7 @@ void idGameLocal::InitFromNewMap( const char* mapName, idRenderWorld* renderWorl
 
 	InitScriptForMap();
 
-	MapPopulate( NULL );
+	MapPopulate( NULL );	//puncho - identity (P1-A2)
 
 	// RB
 	PopulateEnvironmentProbes();
@@ -1503,6 +1512,7 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 	pipelineFile->OpenForReading( saveGameFile );
 	idRestoreGame savegame( pipelineFile, stringTableFile, saveGameVersion );
 
+	//puncho start - identity (P1-A2)
 	// spawn ids are stored packed with GENTITYNUM_BITS index bits, and a save written with the old 12-bit
 	// index would restore every entity reference wrong (1407); a save before the per-slot generation holds
 	// one spawnCount where slotGen is read (K13, 1410)
@@ -1510,6 +1520,7 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 	{
 		savegame.Error( "idGameLocal::InitFromSaveGame: save game version %i predates the per-slot spawn-id generation (version %i) and cannot be restored.", saveGameVersion, BUILD_NUMBER_SAVE_VERSION_SLOT_GENERATION );
 	}
+	//puncho end
 
 	// Create the list of all objects in the game
 	savegame.CreateObjects();
@@ -1687,10 +1698,12 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 	}
 
 	savegame.ReadBool( mapCycleLoaded );
+	//puncho start - identity (P1-A2, K13)
 	for( i = 0; i < MAX_GENTITIES; i++ )
 	{
 		savegame.ReadInt( slotGen[ i ] );
 	}
+	//puncho end
 
 	savegame.ReadInt( num );
 	if( num )
@@ -1785,7 +1798,7 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 	animationLib.FlushUnusedAnims();
 
 	//puncho start - stream-trace (P1-A1c): a load leaves the game RNG where the save had it. The restores above draw from
-	// it: idAF::Restore re-runs Load, whose animator->GetAnim (AF.cpp:966) picks a random variant (Anim_Blend.cpp:3825),
+	// it: idAF::Restore re-runs idAF::Load, whose animator->GetAnim picks a random variant (idDeclModelDef::GetAnim),
 	// and so does the walk IK's restore; without this, every load moved the seed and a loaded game drew differently
 	random.SetSeed( savedRandomSeed );
 	//puncho end
@@ -1863,7 +1876,8 @@ void idGameLocal::MapShutdown()
 	ClearAIStats();
 	//puncho end
 
-	// K14a: a log for phase 12, the client's own spawns in play per class and index range
+	//puncho start - identity (P1-A2, K14a): the client's own spawns in play (g_clientSpawnCensus), per class and index
+	// range; those in the map and replicated ranges hold slots the host's snapshots can name
 	if( clientSpawnCensus.Num() > 0 )
 	{
 		Printf( "client spawn census of %s, class: map slots (below %d), replicated, non-replicated\n", mapFileName.c_str(), mapSpawnCount );
@@ -1876,6 +1890,7 @@ void idGameLocal::MapShutdown()
 		}
 		clientSpawnCensus.Clear();
 	}
+	//puncho end
 
 	if( gameRenderWorld )
 	{
@@ -4264,9 +4279,6 @@ bool idGameLocal::CheatsOk( bool requirePlayer )
 	return false;
 }
 
-idCVar g_slotGenFastForward( "g_slotGenFastForward", "-1", CVAR_GAME | CVAR_INTEGER | CVAR_CHEAT, "the wrap test (P1-A2): the next spawn into this entity slot takes the last generation, so the one after it wraps; resets to -1" );
-idCVar g_clientSpawnCensus( "g_clientSpawnCensus", "0", CVAR_GAME | CVAR_BOOL | CVAR_NOCHEAT, "on a client, counts its own spawns in play by class and index range (map, replicated, non-replicated) and prints them at map shutdown" );
-
 /*
 ===================
 idGameLocal::RegisterEntity
@@ -4299,9 +4311,9 @@ void idGameLocal::RegisterEntity( idEntity* ent, int forceSpawnId, const idDict&
 		firstFreeEntityIndex[ freeListType ] = freeIndex;
 	}
 
-	// K9: each slot counts its own generations, so a stale idEntityPtr aliases only after
-	// MAX_SPAWN_GENERATION reuses of its one slot. K10: a client takes the host's generation for the slot
-	// a snapshot names; the children that entity spawns advance their own slots.
+	//puncho start - identity (P1-A2, K9): each slot counts its own generations, so a stale idEntityPtr aliases only
+	// after MAX_SPAWN_GENERATION reuses of its one slot. K10: a client takes the host's generation for the slot a
+	// snapshot names; the children that entity spawns advance their own slots.
 	int gen;
 	if( forceSpawnId >= 0 )
 	{
@@ -4321,7 +4333,8 @@ void idGameLocal::RegisterEntity( idEntity* ent, int forceSpawnId, const idDict&
 		}
 		if( slotGen[ spawn_entnum ] >= MAX_SPAWN_GENERATION )
 		{
-			// K14a: a log for phase 12; any of these says the generation should grow
+			// past here a stale idEntityPtr into this slot can alias a new occupant; any of these says the generation
+			// needs more bits
 			Warning( "idGameLocal::RegisterEntity: the generation of entity slot %d wrapped past %d", spawn_entnum, MAX_SPAWN_GENERATION );
 		}
 		gen = slotGen[ spawn_entnum ] % MAX_SPAWN_GENERATION + 1;
@@ -4338,6 +4351,7 @@ void idGameLocal::RegisterEntity( idEntity* ent, int forceSpawnId, const idDict&
 
 	entities[ spawn_entnum ] = ent;
 	spawnIds[ spawn_entnum ] = gen;
+	//puncho end
 	ent->entityNumber = spawn_entnum;
 	ent->spawnNode.AddToEnd( spawnedEntities );
 
@@ -4345,13 +4359,14 @@ void idGameLocal::RegisterEntity( idEntity* ent, int forceSpawnId, const idDict&
 	idDict copiedArgs = spawnArgsToCopy;
 	ent->spawnArgs.TransferKeyValues( copiedArgs );
 
-	// K14: the world and ENTITYNUM_NONE never raise it, or the world alone would stretch every
-	// [0, num_entities) walk to MAX_GENTITIES; nor does multiplayer's non-replicated range. Single player
+	//puncho start - identity (P1-A2, K14): the world and ENTITYNUM_NONE never raise it, or the world alone would
+	// stretch every [0, num_entities) walk to MAX_GENTITIES; nor does multiplayer's non-replicated range. Single player
 	// fills list 0 up to ENTITYNUM_MAX_NORMAL, so its slots up there still count.
 	if( spawn_entnum < ( common->IsMultiplayer() ? ENTITYNUM_FIRST_NON_REPLICATED : ENTITYNUM_MAX_NORMAL ) )
 	{
 		num_entities = Max( num_entities, spawn_entnum + 1 );
 	}
+	//puncho end
 }
 
 /*
@@ -4611,8 +4626,8 @@ bool idGameLocal::InhibitEntitySpawn( idDict& spawnArgs )
 		}
 	}
 
-	// K15: multiplayer sets g_skill 1 before the map loads, but a console change before a restart would
-	// make the peers' map indices differ
+	//puncho - identity (P1-A2, K15): multiplayer sets g_skill 1 before the map loads, but a console change before a
+	// restart would make the peers' map indices differ
 	if( !common->IsMultiplayer() && g_skill.GetInteger() == 3 )
 	{
 		const char* name = spawnArgs.GetString( "classname" );
