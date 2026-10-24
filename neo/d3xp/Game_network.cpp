@@ -61,6 +61,7 @@ extern idCVar net_clientMaxPrediction;
 
 idCVar cg_predictedSpawn_debug( "cg_predictedSpawn_debug", "0", CVAR_BOOL, "Debug predictive spawning of presentables" );
 idCVar g_clientFire_checkLineOfSightDebug( "g_clientFire_checkLineOfSightDebug", "0", CVAR_BOOL, "" );
+idCVar net_debugDeclRemap( "net_debugDeclRemap", "0", CVAR_INTEGER | CVAR_NOCHEAT, "P1-A3a: 1 prints every slot of the implicit decl announce table the host announces or a client resolves, 2 also every implicit index a client decodes", 0, 2 );	//puncho - content check (P1-A3a, K19)
 
 
 /*
@@ -73,7 +74,43 @@ void idGameLocal::InitAsyncNetwork()
 	eventQueue.Init();
 	savedEventQueue.Init();
 
-	entityDefBits = -( idMath::BitsForInteger( declManager->GetNumDecls( DECL_ENTITYDEF ) ) + 1 );
+	//puncho start - content check (P1-A3a, K19): one load, one announce table. The width of an entityDef on the wire is
+	// the same on every peer: it comes from the explicit entityDefs, which MP-A0's digests prove equal, and from the
+	// table's cap, since an implicit one crosses as -2 - k. The count with the implicit decls, used before, follows each
+	// machine's history. The headroom covers explicit indices above the explicit count (an implicit decl made before
+	// its folder registered keeps a low index) and decls a reload adds; GetContentDigests also hashes the width
+	numDeclRemap = 0;
+	numDeclRemapSent = 0;
+	declRemapBytes = 0;
+	declRemapDeferred = false;
+	declRemapWarned = false;
+	declRemapHash.Clear();
+	for( int k = 0; k < MAX_DECL_REMAP; k++ )
+	{
+		declRemap[k].index = -1;
+		declRemap[k].type = -1;
+		declRemap[k].warned = false;
+	}
+
+	const int entityDefBitsHeadroom = 256;
+	int numExplicitEntityDefs = 0;
+	int explicitEntityDefBound = 0;
+	const int numEntityDefs = declManager->GetNumDecls( DECL_ENTITYDEF );
+	for( int i = 0; i < numEntityDefs; i++ )
+	{
+		if( !declManager->DeclByIndex( DECL_ENTITYDEF, i, false )->IsImplicit() )
+		{
+			numExplicitEntityDefs++;
+			explicitEntityDefBound = i + 1;
+		}
+	}
+	entityDefBits = -( idMath::BitsForInteger( Max( numExplicitEntityDefs, MAX_DECL_REMAP + 1 ) + entityDefBitsHeadroom ) + 1 );
+	if( explicitEntityDefBound > ( 1 << ( -entityDefBits - 1 ) ) )
+	{
+		// WriteBits would stop the host with a fatal error on the first entity of such a def
+		Warning( "InitAsyncNetwork: an explicit entityDef sits at index %d, past the %d signed bits the network gives entityDefs (%d explicit)", explicitEntityDefBound - 1, -entityDefBits, numExplicitEntityDefs );
+	}
+	//puncho end
 	realClientTime = 0;
 	fast.Set( 0, 0, 0 );
 	slow.Set( 0, 0, 0 );
@@ -103,7 +140,63 @@ idGameLocal::ServerRemapDecl
 */
 int idGameLocal::ServerRemapDecl( int clientNum, declType_t type, int index )
 {
-	return index;
+	//puncho start - content check (P1-A3a, K19): an explicit decl crosses as its index, which MP-A0's digests prove the
+	// same on every peer, and -1 stays null. An implicit decl is numbered in the order each machine first asked for it,
+	// so it crosses as -2 - k, k its slot in the announce table. The test is IsImplicit, never an index bound: an
+	// implicit decl made before its folder registered keeps a low index. clientNum stays unused: every caller passes
+	// -1 and the host writes one snapshot for all its peers, so the table is the session's, not a client's
+	if( index < 0 )
+	{
+		return index;
+	}
+	const idDecl* decl = declManager->DeclByIndex( type, index, false );
+	if( !decl->IsImplicit() )
+	{
+		return index;
+	}
+
+	for( int k = declRemapHash.First( index ); k != -1; k = declRemapHash.Next( k ) )
+	{
+		if( declRemap[k].index == index && declRemap[k].type == type )
+		{
+			return -2 - k;
+		}
+	}
+
+	// a new slot, unless the table is full: a joiner takes the whole table at once in its initial reliables
+	const int nameLength = idStr::Length( decl->GetName() );
+	const int slotBytes = 1 + nameLength + 1;
+	if( numDeclRemap >= MAX_DECL_REMAP || declRemapBytes + slotBytes > MAX_DECL_REMAP_BYTES || nameLength > MAX_DECL_REMAP_NAME )
+	{
+		if( !declRemapWarned )
+		{
+			declRemapWarned = true;
+			Warning( "ServerRemapDecl: the implicit decl announce table is full (%d of %d slots, %d of %d bytes) or '%s' is too long: implicit decls not announced yet cross as null", numDeclRemap, MAX_DECL_REMAP, declRemapBytes, MAX_DECL_REMAP_BYTES, decl->GetName() );
+		}
+		return -1;
+	}
+
+	const int k = numDeclRemap++;
+	declRemap[k].index = index;
+	declRemap[k].type = type;
+	declRemap[k].warned = false;
+	declRemapBytes += slotBytes;
+	declRemapHash.Add( index, k );
+
+	if( net_debugDeclRemap.GetInteger() > 0 )
+	{
+		Printf( "DECL_REMAP: announce slot %d: %s '%s' (host index %d)\n", k, declManager->GetDeclNameFromType( type ), decl->GetName(), index );
+	}
+
+	// The slot must reach every peer before any message that uses it. A snapshot broadcasts its new slots once it is
+	// written, before the session submits it; anything else (an entity event, a sound) is sent right after this returns
+	if( !declRemapDeferred )
+	{
+		ServerSendDeclRemap( numDeclRemapSent, numDeclRemap, NULL );
+		numDeclRemapSent = numDeclRemap;
+	}
+	return -2 - k;
+	//puncho end
 }
 
 /*
@@ -113,23 +206,144 @@ idGameLocal::ClientRemapDecl
 */
 int idGameLocal::ClientRemapDecl( declType_t type, int index )
 {
-	return index;
+	//puncho start - content check (P1-A3a, K19): explicit indices and -1 cross as they are. -2 - k is slot k of the host's
+	// announce table, which ClientReadDeclRemap resolved by name to this machine's decl; a slot not announced yet (or of
+	// another type) resolves to NULL with one warning per slot, never to a raw index
+	if( index >= -1 )
+	{
+		return index;
+	}
+	const int k = -2 - index;
+	if( k < MAX_DECL_REMAP && declRemap[k].index >= 0 && declRemap[k].type == type )
+	{
+		if( net_debugDeclRemap.GetInteger() > 1 )
+		{
+			Printf( "DECL_REMAP: %s %d is slot %d, '%s' (local index %d)\n", declManager->GetDeclNameFromType( type ), index, k, declManager->DeclByIndex( type, declRemap[k].index, false )->GetName(), declRemap[k].index );
+		}
+		return declRemap[k].index;
+	}
+	if( k < MAX_DECL_REMAP )
+	{
+		if( !declRemap[k].warned )
+		{
+			declRemap[k].warned = true;
+			Warning( "ClientRemapDecl: %s %d is slot %d of the implicit decl table, which the host has not announced as one: null", declManager->GetDeclNameFromType( type ), index, k );
+		}
+	}
+	else if( !declRemapWarned )
+	{
+		declRemapWarned = true;
+		Warning( "ClientRemapDecl: %s %d is past the %d slots of the implicit decl table: null", declManager->GetDeclNameFromType( type ), index, MAX_DECL_REMAP );
+	}
+	return -1;
+	//puncho end
 }
+
+//puncho start - content check (P1-A3a, K19)
+/*
+================
+idGameLocal::ServerSendDeclRemap
+
+Sends slots [first, last) of the announce table as GAME_RELIABLE_MESSAGE_DECL_REMAP batches of at most 1 KB: to one
+lobby user (a joiner's whole table), or to every peer when lobbyUserID is NULL. A batch is the first slot's number, then
+a type byte and the decl's name per slot, to the end of the message. Every batch says where its slots go, so a peer that
+takes a slot twice (a broadcast during its load and its whole table after) sets it twice to the same decl.
+================
+*/
+void idGameLocal::ServerSendDeclRemap( int first, int last, const lobbyUserID_t* lobbyUserID )
+{
+	if( first >= last || !common->IsServer() )
+	{
+		return;		// nothing to send, or single player's dry-run snapshots, which announce to nobody
+	}
+
+	idLobbyBase& lobby = session->GetActingGameStateLobbyBase();
+	byte msgBuf[ MAX_DECL_REMAP_BATCH ];
+	idBitMsg outMsg;
+
+	if( net_debugDeclRemap.GetInteger() > 0 )
+	{
+		Printf( "DECL_REMAP: sending slots %d to %d %s\n", first, last - 1, ( lobbyUserID != NULL ) ? "to a joiner" : "to every peer" );
+	}
+
+	int k = first;
+	while( k < last )
+	{
+		outMsg.InitWrite( msgBuf, sizeof( msgBuf ) );
+		outMsg.BeginWriting();
+		outMsg.WriteShort( k );
+		for( ; k < last; k++ )
+		{
+			// every slot fits an empty batch: MAX_DECL_REMAP_NAME keeps it under MAX_DECL_REMAP_BATCH - 2
+			const char* name = declManager->DeclByIndex( ( declType_t )declRemap[k].type, declRemap[k].index, false )->GetName();
+			if( outMsg.GetSize() + 1 + idStr::Length( name ) + 1 > MAX_DECL_REMAP_BATCH )
+			{
+				break;
+			}
+			outMsg.WriteByte( declRemap[k].type );
+			outMsg.WriteString( name, -1, false );
+		}
+
+		if( lobbyUserID != NULL )
+		{
+			lobby.SendReliableToLobbyUser( *lobbyUserID, GAME_RELIABLE_MESSAGE_DECL_REMAP, outMsg );
+		}
+		else
+		{
+			lobby.SendReliable( GAME_RELIABLE_MESSAGE_DECL_REMAP, outMsg, false );
+		}
+	}
+}
+
+/*
+================
+idGameLocal::ClientReadDeclRemap
+
+Takes one GAME_RELIABLE_MESSAGE_DECL_REMAP: each slot's name becomes this machine's decl of that type, made implicit
+here too if it is not known yet. Only the five types that cross as indices are taken, since FindType stops the game on
+an unregistered type.
+================
+*/
+void idGameLocal::ClientReadDeclRemap( const idBitMsg& msg )
+{
+	char name[ MAX_DECL_REMAP_NAME + 1 ];
+	const int first = msg.ReadShort();
+	for( int k = first; msg.GetRemainingData() > 0; k++ )
+	{
+		const int type = msg.ReadByte();
+		msg.ReadString( name, sizeof( name ) );
+		if( k < 0 || k >= MAX_DECL_REMAP || ( type != DECL_ENTITYDEF && type != DECL_MATERIAL && type != DECL_SKIN && type != DECL_SOUND && type != DECL_FX ) )
+		{
+			Warning( "ClientReadDeclRemap: slot %d of type %d ('%s') is not one this build takes, the rest of the batch dropped", k, type, name );
+			return;
+		}
+		const idDecl* decl = declManager->FindType( ( declType_t )type, name, true );
+		declRemap[k].index = decl->Index();
+		declRemap[k].type = type;
+		numDeclRemap = Max( numDeclRemap, k + 1 );
+		if( net_debugDeclRemap.GetInteger() > 0 )
+		{
+			Printf( "DECL_REMAP: slot %d: %s '%s' (local index %d%s)\n", k, declManager->GetDeclNameFromType( ( declType_t )type ), name, decl->Index(), decl->IsImplicit() ? ", implicit" : "" );
+		}
+	}
+}
+//puncho end
 
 //puncho start - version rule (MP-A0, MD13)
 /*
 ================
 DeclNameDigest
 
-CRC32 of the explicit decls of one type, each as its index and its canonical name. Implicit decls (FindType with
-makeDefault and no definition in any file) are left out: a machine appends them in the order it first asks for
-them, which follows its own rendering, UI and map history, so two identical builds would disagree on them, and
-DeclManager.h promises consistent indices only for the explicit ones. The index is hashed with the name so a pair
-whose explicit decls landed at different indices is still refused. An implicit decl sent as an index is not
-covered here; that needs the decl remap by name (MP-A3).
+CRC32 of the explicit decls of one type, each as its index, its canonical name and a CRC32 of its text. Implicit
+decls (FindType with makeDefault and no definition in any file) are left out: a machine appends them in the order it
+first asks for them, which follows its own rendering, UI and map history, so two identical builds would disagree on
+them, and DeclManager.h promises consistent indices only for the explicit ones. They cross through the announce table
+instead (P1-A3a, K19). The index is hashed with the name so a pair whose explicit decls landed at different indices is
+still refused, and the text (K18) so a decl of the same name with other text is too: an fs_game override, or the same
+file served from a .resources on one peer and loose on the other. text is scratch, kept across calls.
 ================
 */
-static unsigned int DeclNameDigest( declType_t type )
+static unsigned int DeclNameDigest( declType_t type, idList<char>& text )
 {
 	unsigned int crc;
 	CRC32_InitChecksum( crc );
@@ -146,6 +360,27 @@ static unsigned int DeclNameDigest( declType_t type )
 		const char* name = decl->GetName();
 		CRC32_UpdateChecksum( crc, &index, sizeof( index ) );
 		CRC32_UpdateChecksum( crc, name, idStr::Length( name ) + 1 );
+
+		//puncho start - content check (P1-A3a, K18): the decl's source text as the file held it, every '\r' dropped so
+		// a CRLF and an LF copy agree. idDeclLocal::checksum, an MD5 of the same text with its '\r's, stays as it is
+		const int textLength = decl->GetTextLength();
+		text.SetNum( textLength + 1 );
+		decl->GetText( text.Ptr() );
+		int length = 0;
+		for( int c = 0; c < textLength; c++ )
+		{
+			if( text[c] != '\r' )
+			{
+				text[length++] = text[c];
+			}
+		}
+		unsigned int textCrc;
+		CRC32_InitChecksum( textCrc );
+		CRC32_UpdateChecksum( textCrc, text.Ptr(), length );
+		CRC32_FinishChecksum( textCrc );
+		textCrc = LittleLong( textCrc );
+		CRC32_UpdateChecksum( crc, &textCrc, sizeof( textCrc ) );
+		//puncho end
 	}
 	CRC32_FinishChecksum( crc );
 	return crc;
@@ -174,14 +409,16 @@ void idGameLocal::GetContentDigests( unsigned int digests[ CONTENT_DIGEST_COUNT 
 	CRC32_FinishChecksum( crc );
 	digests[ CONTENT_DIGEST_CLASSES ] = crc;
 
-	// entityDefs also cross in entityDefBits, a width InitAsyncNetwork takes from the count with the implicit ones
-	digests[ CONTENT_DIGEST_ENTITYDEFS ]	= DeclNameDigest( DECL_ENTITYDEF ) ^ ( unsigned int )entityDefBits;
-	digests[ CONTENT_DIGEST_MATERIALS ]		= DeclNameDigest( DECL_MATERIAL );
-	digests[ CONTENT_DIGEST_SKINS ]			= DeclNameDigest( DECL_SKIN );
-	digests[ CONTENT_DIGEST_SOUNDS ]		= DeclNameDigest( DECL_SOUND );
-	digests[ CONTENT_DIGEST_FX ]			= DeclNameDigest( DECL_FX );
+	// entityDefs also cross in entityDefBits, a width InitAsyncNetwork takes from the explicit count and the table cap
+	idList<char> text;
+	digests[ CONTENT_DIGEST_ENTITYDEFS ]	= DeclNameDigest( DECL_ENTITYDEF, text ) ^ ( unsigned int )entityDefBits;
+	digests[ CONTENT_DIGEST_MATERIALS ]		= DeclNameDigest( DECL_MATERIAL, text );
+	digests[ CONTENT_DIGEST_SKINS ]			= DeclNameDigest( DECL_SKIN, text );
+	digests[ CONTENT_DIGEST_SOUNDS ]		= DeclNameDigest( DECL_SOUND, text );
+	digests[ CONTENT_DIGEST_FX ]			= DeclNameDigest( DECL_FX, text );
 	digests[ CONTENT_DIGEST_SCRIPT ]		= program.CalculateChecksum( false );
 	digests[ CONTENT_DIGEST_MAP_GEOMETRY ]	= ( mapFile != NULL ) ? mapFile->GetGeometryCRC() : 0;
+	digests[ CONTENT_DIGEST_MAP_ENTITIES ]	= ( mapFile != NULL ) ? mapFile->GetEntitiesCRC() : 0;	//puncho - content check (P1-A3a, K37)
 }
 //puncho end
 
@@ -364,6 +601,11 @@ void idGameLocal::ServerWriteInitialReliableMessages( int clientNum, lobbyUserID
 	idLib::Printf( "Sending initial networkSync cvars:\n" );
 	syncedCvars.Print();
 
+	//puncho start - content check (P1-A3a, K19): the whole implicit decl announce table, before the saved events, which
+	// were stored with their indices already encoded. MAX_DECL_REMAP_BYTES keeps it inside the reliable queue
+	ServerSendDeclRemap( 0, numDeclRemap, &lobbyUserID );
+	//puncho end
+
 	// send all saved events
 	for( entityNetEvent_t* event = savedEventQueue.Start(); event; event = event->next )
 	{
@@ -421,6 +663,8 @@ void idGameLocal::ServerWriteSnapshot( idSnapShot& ss )
 
 	//puncho - stream-trace (P1-A1c, K4): NULL unless net_snapTrace is set; the marks below scope each object's writes
 	idSnapshotTrace* const snapTrace = snapshotTrace.Start( true, ss.GetTime() );
+
+	declRemapDeferred = true;	//puncho - content check (P1-A3a, K19): the slots this snapshot announces go out at its end
 
 	byte buffer[ MAX_ENTITY_STATE_SIZE ];
 	idBitMsg msg;
@@ -612,6 +856,16 @@ void idGameLocal::ServerWriteSnapshot( idSnapShot& ss )
 	{
 		snapTrace->End();
 	}
+
+	//puncho start - content check (P1-A3a, K19): broadcast the slots this snapshot announced. The reliables are queued
+	// before the session submits the snapshot, so every packet that carries it carries them too, ahead of it, until acked
+	declRemapDeferred = false;
+	if( numDeclRemapSent < numDeclRemap )
+	{
+		ServerSendDeclRemap( numDeclRemapSent, numDeclRemap, NULL );
+		numDeclRemapSent = numDeclRemap;
+	}
+	//puncho end
 }
 
 /*
@@ -834,6 +1088,14 @@ void idGameLocal::ServerProcessReliableMessage( int clientNum, int type, const i
 			{
 				refused = "damage def out of range";
 			}
+			//puncho start - content check (P1-A3a, K20): the claim names its damage def by explicit index, the one
+			// numbering MP-A0's digests prove shared. An implicit index on this host is no decl the client meant
+			// (idPlayer::Damage sends -1 for an implicit damage def)
+			else if( declManager->DeclByIndex( DECL_ENTITYDEF, damageDefIndex, false )->IsImplicit() )
+			{
+				refused = "damage def is implicit";
+			}
+			//puncho end
 			else if( location != INVALID_JOINT && ( IEEE_FLT_IS_INF_NAN( damageScale ) || damageScale < 0.0f || damageScale > maxDamageScale ) )
 			{
 				refused = "damage scale out of range";
@@ -913,6 +1175,11 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 	{
 		return;
 	}
+
+	//puncho start - content check (P1-A3a, K19): the announce table's slots this snapshot may use came in as reliables,
+	// ahead of it in the same or an earlier packet, but game reliables otherwise run after the snapshots of the frame
+	commonLocal.ExecuteReliableMessagesOfType( GAME_RELIABLE_MESSAGE_DECL_REMAP );
+	//puncho end
 
 	// if prediction is off, enable local client smoothing
 	//localPlayer->SetSelfSmooth( dupeUsercmds > 2 );
@@ -1393,6 +1660,13 @@ void idGameLocal::ClientProcessReliableMessage( int type, const idBitMsg& msg )
 			mpGame.ClientReadAchievementUnlock( msg );
 			break;
 		}
+		//puncho start - content check (P1-A3a, K19)
+		case GAME_RELIABLE_MESSAGE_DECL_REMAP:
+		{
+			ClientReadDeclRemap( msg );
+			break;
+		}
+		//puncho end
 		default:
 		{
 			Error( "Unknown reliable message (%d) from host", type );
@@ -1766,3 +2040,141 @@ void idEventQueue::Enqueue( entityNetEvent_t* event, outOfOrderBehaviour_t behav
 	}
 	end = event;
 }
+
+//puncho start - content check (P1-A3a): the gate's tool for implicit decls
+static idEntityPtr<idProjectile> testDeclRemapRocket;
+
+/*
+================
+testDeclRemap
+
+A test command, like testSnapTraceCompare. Each use drives a real path of the implicit decl remap (K19):
+  make <prefix> <count> [reverse]	makes <count> implicit materials <prefix>/mtr_<i> and sounds <prefix>/snd_<i>, first
+									to last or last to first, so two peers number them differently
+  decode <type> <index>				a client decodes an index as a snapshot would (ClientRemapDecl), so an unannounced
+									slot shows its one warning; type is a decl type name
+  sound <name>						the host plays a sound to everyone by name: GAME_RELIABLE_MESSAGE_SOUND_INDEX
+									(idMultiplayerGame::PlayGlobalSound) and EVENT_STARTSOUNDSHADER from its player
+  rocket							the host spawns a still rocket over its player, launched so it detonates on impact
+  impact <material>					the host's rocket hits the world on a surface of that material: EVENT_DAMAGE_EFFECT
+									(idProjectile::AddDefaultDamageEffect)
+  fx <prefix> <count>				the host spawns <count> func_fx whose effect <prefix>/fx_<i> is an implicit decl, so
+									every snapshot carries them (idEntityFx::WriteToSnapshot), and announces each effect at
+									once, as an event would: a host with no peers writes no snapshots, and a joiner must find
+									the slots already taken
+net_debugDeclRemap prints the slots as the host announces them and as a client resolves them.
+================
+*/
+CONSOLE_COMMAND( testDeclRemap, "P1-A3a gate: make <prefix> <count> [reverse] | decode <type> <index> | sound <name> | rocket | impact <material> | fx <prefix> <count>", NULL )
+{
+	const char* what = args.Argv( 1 );
+	if( idStr::Icmp( what, "make" ) == 0 && args.Argc() >= 4 )
+	{
+		const int count = atoi( args.Argv( 3 ) );
+		const bool reverse = ( idStr::Icmp( args.Argv( 4 ), "reverse" ) == 0 );
+		for( int n = 0; n < count; n++ )
+		{
+			const int i = reverse ? count - 1 - n : n;
+			const idMaterial* material = declManager->FindMaterial( va( "%s/mtr_%03d", args.Argv( 2 ), i ) );
+			const idSoundShader* sound = declManager->FindSound( va( "%s/snd_%03d", args.Argv( 2 ), i ) );
+			gameLocal.Printf( "testDeclRemap: material '%s' index %d%s, sound '%s' index %d%s\n", material->GetName(), material->Index(), material->IsImplicit() ? " implicit" : "", sound->GetName(), sound->Index(), sound->IsImplicit() ? " implicit" : "" );
+		}
+		return;
+	}
+	if( idStr::Icmp( what, "decode" ) == 0 && args.Argc() >= 4 && common->IsClient() )
+	{
+		const declType_t type = declManager->GetDeclTypeFromName( args.Argv( 2 ) );
+		if( type == DECL_MAX_TYPES )
+		{
+			gameLocal.Printf( "testDeclRemap: no decl type '%s'\n", args.Argv( 2 ) );
+			return;
+		}
+		const int index = atoi( args.Argv( 3 ) );
+		gameLocal.Printf( "testDeclRemap: %s %d decodes to %d\n", args.Argv( 2 ), index, gameLocal.ClientRemapDecl( type, index ) );
+		return;
+	}
+
+	if( !common->IsServer() )
+	{
+		gameLocal.Printf( "testDeclRemap: %s runs on a multiplayer host\n", what );
+		return;
+	}
+	idPlayer* player = gameLocal.GetLocalPlayer();
+	if( player == NULL )
+	{
+		gameLocal.Printf( "testDeclRemap: no local player\n" );
+		return;
+	}
+
+	if( idStr::Icmp( what, "sound" ) == 0 && args.Argc() >= 3 )
+	{
+		const idSoundShader* sound = declManager->FindSound( args.Argv( 2 ) );
+		gameLocal.Printf( "testDeclRemap: sound '%s' index %d%s\n", sound->GetName(), sound->Index(), sound->IsImplicit() ? " implicit" : "" );
+		gameLocal.mpGame.PlayGlobalSound( -1, SND_COUNT, sound->GetName() );
+		player->StartSoundShader( sound, SND_CHANNEL_ANY, 0, true, NULL );
+	}
+	else if( idStr::Icmp( what, "rocket" ) == 0 )
+	{
+		// no speed and no gravity: it hangs where it is, replicated, until impact or its fuse removes it
+		const idVec3 origin = player->GetPhysics()->GetOrigin() + idVec3( 0.0f, 0.0f, 120.0f );
+		idDict spawnArgs;
+		spawnArgs.Set( "classname", "projectile_rocket" );
+		spawnArgs.SetVector( "origin", origin );
+		spawnArgs.Set( "velocity", "0 0 0" );
+		spawnArgs.Set( "angular_velocity", "0 0 0" );
+		spawnArgs.Set( "gravity", "0" );
+		spawnArgs.Set( "thrust", "0" );
+		spawnArgs.Set( "fuse", "60" );
+		idEntity* ent = NULL;
+		if( !gameLocal.SpawnEntityDef( spawnArgs, &ent ) || ent == NULL || !ent->IsType( idProjectile::Type ) )
+		{
+			gameLocal.Printf( "testDeclRemap: no rocket\n" );
+			return;
+		}
+		idProjectile* rocket = static_cast<idProjectile*>( ent );
+		rocket->Launch( origin, idVec3( 0.0f, 0.0f, -1.0f ), vec3_origin );
+		testDeclRemapRocket = rocket;
+		gameLocal.Printf( "testDeclRemap: rocket %d at %s\n", rocket->entityNumber, origin.ToString() );
+	}
+	else if( idStr::Icmp( what, "impact" ) == 0 && args.Argc() >= 3 )
+	{
+		idProjectile* rocket = testDeclRemapRocket.GetEntity();
+		if( rocket == NULL )
+		{
+			gameLocal.Printf( "testDeclRemap: no rocket, run testDeclRemap rocket first\n" );
+			return;
+		}
+		trace_t collision;
+		memset( &collision, 0, sizeof( collision ) );
+		collision.endpos = rocket->GetPhysics()->GetOrigin();
+		collision.endAxis = rocket->GetPhysics()->GetAxis();
+		collision.c.point = collision.endpos;
+		collision.c.normal.Set( 0.0f, 0.0f, 1.0f );
+		collision.c.material = declManager->FindMaterial( args.Argv( 2 ) );
+		collision.c.entityNum = ENTITYNUM_WORLD;
+		gameLocal.Printf( "testDeclRemap: rocket %d hits '%s' index %d%s\n", rocket->entityNumber, collision.c.material->GetName(), collision.c.material->Index(), collision.c.material->IsImplicit() ? " implicit" : "" );
+		rocket->Collide( collision, idVec3( 0.0f, 0.0f, -300.0f ) );
+		testDeclRemapRocket = ( idProjectile* )NULL;
+	}
+	else if( idStr::Icmp( what, "fx" ) == 0 && args.Argc() >= 4 )
+	{
+		const int count = atoi( args.Argv( 3 ) );
+		const idVec3 origin = player->GetPhysics()->GetOrigin();
+		for( int i = 0; i < count; i++ )
+		{
+			idDict spawnArgs;
+			spawnArgs.Set( "classname", "func_fx" );
+			spawnArgs.Set( "fx", va( "%s/fx_%03d", args.Argv( 2 ), i ) );
+			spawnArgs.SetVector( "origin", origin + idVec3( 0.0f, 0.0f, 8.0f + i ) );
+			gameLocal.SpawnEntityDef( spawnArgs );
+			const idDecl* fx = declManager->FindType( DECL_FX, spawnArgs.GetString( "fx" ) );
+			gameLocal.ServerRemapDecl( -1, DECL_FX, fx->Index() );
+		}
+		gameLocal.Printf( "testDeclRemap: %d func_fx spawned\n", count );
+	}
+	else
+	{
+		gameLocal.Printf( "usage: testDeclRemap make <prefix> <count> [reverse] | decode <type> <index> | sound <name> | rocket | impact <material> | fx <prefix> <count>\n" );
+	}
+}
+//puncho end

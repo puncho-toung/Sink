@@ -2445,6 +2445,59 @@ void idMapFile::SetGeometryCRC()
 	}
 }
 
+//puncho start - content check (P1-A3a, K37)
+/*
+===============
+CRC32_UpdateChecksumNoCR
+
+Hashes the text as if every '\r' were removed, so a CRLF and an LF copy of one file agree.
+===============
+*/
+static void CRC32_UpdateChecksumNoCR( unsigned int& crc, const char* text, int length )
+{
+	int start = 0;
+	for( int i = 0; i < length; i++ )
+	{
+		if( text[i] == '\r' )
+		{
+			CRC32_UpdateChecksum( crc, text + start, i - start );
+			start = i + 1;
+		}
+	}
+	CRC32_UpdateChecksum( crc, text + start, length - start );
+}
+
+/*
+===============
+idMapFile::GetEntitiesCRC
+
+CRC32 of every entity's key/values, entities in map order and pairs in dict order, as they stand after Parse has
+merged <map>_extra_ents.map. GetGeometryCRC hashes brushes, patches and meshes only, so this is what proves two peers
+spawned the same entities with the same spawn args. Each entity hashes its pair count, then each key and value with
+its terminator, which keeps the boundaries unambiguous. Computed on demand: it walks every pair.
+===============
+*/
+unsigned int idMapFile::GetEntitiesCRC() const
+{
+	unsigned int crc;
+	CRC32_InitChecksum( crc );
+	for( int i = 0; i < entities.Num(); i++ )
+	{
+		const idDict& epairs = entities[i]->epairs;
+		const int numPairs = LittleLong( epairs.GetNumKeyVals() );
+		CRC32_UpdateChecksum( crc, &numPairs, sizeof( numPairs ) );
+		for( int j = 0; j < epairs.GetNumKeyVals(); j++ )
+		{
+			const idKeyValue* kv = epairs.GetKeyVal( j );
+			CRC32_UpdateChecksumNoCR( crc, kv->GetKey().c_str(), kv->GetKey().Length() + 1 );
+			CRC32_UpdateChecksumNoCR( crc, kv->GetValue().c_str(), kv->GetValue().Length() + 1 );
+		}
+	}
+	CRC32_FinishChecksum( crc );
+	return crc;
+}
+//puncho end
+
 /*
 ===============
 idMapFile::AddEntity

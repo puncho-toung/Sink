@@ -38,6 +38,7 @@ const int BUILD_NUMBER_SAVE_VERSION_NET_CONTENT_CHECKSUM        = 1408;	// versi
 const int BUILD_NUMBER_SAVE_VERSION_NET_REFUSAL_REASON          = 1409;	// version rule (MP-A0): OOB_GOODBYE_REFUSED tells a refused peer why (idLobby::RefusePeer)
 const int BUILD_NUMBER_SAVE_VERSION_SLOT_GENERATION             = 1410;	// identity (P1-A2, K13): the save holds slotGen, the per-slot spawn-id generation, where spawnCount was; older saves are refused
 const int BUILD_NUMBER_SAVE_VERSION_MOD_LAYERS                  = 1411;	// MP-A5 (K44): the save details hold the mod list and per-layer decl name counts and digests; older saves are refused
+const int BUILD_NUMBER_SAVE_VERSION_NET_CONTENT_GLOBAL          = 1412;	// content check, global half (P1-A3a): RELIABLE_LOADING_DONE leads with the load id and adds MAP_ENTITIES, the decl digests hash decl text, implicit decls cross through GAME_RELIABLE_MESSAGE_DECL_REMAP
 
-const int BUILD_NUMBER = BUILD_NUMBER_SAVE_VERSION_MOD_LAYERS;
+const int BUILD_NUMBER = BUILD_NUMBER_SAVE_VERSION_NET_CONTENT_GLOBAL;
 const int BUILD_NUMBER_MINOR = 0;

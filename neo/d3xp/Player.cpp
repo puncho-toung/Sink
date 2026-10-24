@@ -10233,7 +10233,9 @@ void idPlayer::Damage( idEntity* inflictor, idEntity* attacker, const idVec3& di
 		msg.WriteShort( attacker->GetEntityNumber() );
 		msg.WriteShort( GetEntityNumber() );		// victim
 		msg.WriteVectorFloat( dir );
-		msg.WriteLong( damageDef->Index() );
+		//puncho - content check (P1-A3a, K20): by explicit index only, the numbering the host shares; an implicit def's
+		// index is this machine's own, so it goes as -1 and the host refuses the claim
+		msg.WriteLong( damageDef->IsImplicit() ? -1 : damageDef->Index() );
 		msg.WriteFloat( damageScale );
 		msg.WriteLong( location );
 
@@ -12072,7 +12074,9 @@ void idPlayer::ReadFromSnapshot( const idBitMsg& msg )
 		else
 		{
 			// damage feedback
-			const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->DeclByIndex( DECL_ENTITYDEF, lastDamageDef, false ) );
+			//puncho - content check (P1-A3a, K19): an implicit def the host has not announced arrives as -1, which DeclByIndex
+			// would turn into a fatal error: it takes the "no damage def" branch below instead
+			const idDeclEntityDef* def = ( lastDamageDef >= 0 ) ? static_cast<const idDeclEntityDef*>( declManager->DeclByIndex( DECL_ENTITYDEF, lastDamageDef, false ) ) : NULL;
 			if( def )
 			{
 				if( IsLocallyControlled() )

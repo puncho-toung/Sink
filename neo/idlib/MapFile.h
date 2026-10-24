@@ -542,6 +542,7 @@ public:
 	{
 		return geometryCRC;
 	}
+	unsigned int			GetEntitiesCRC() const;	//puncho - content check (P1-A3a, K37): CRC of every entity's key/values, '\r' dropped
 	// returns true if the file on disk changed
 	bool					NeedsReload();
 

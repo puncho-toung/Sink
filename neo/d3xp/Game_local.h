@@ -129,6 +129,16 @@ const int NUM_RENDER_PORTAL_BITS	= idMath::BitsForInteger( PS_BLOCK_ALL );
 
 const int MAX_EVENT_PARAM_SIZE		= 128;
 
+//puncho start - content check (P1-A3a, K19): an implicit decl crosses the wire as -2 - k, k its slot in the host's
+// announce table, one table per load shared by every peer. A joiner gets the whole table among its initial reliables,
+// so the table is bounded in bytes as well as in slots: half of the 8000-byte reliable queue
+// (idPacketProcessor::MAX_MSG_SIZE), sent in GAME_RELIABLE_MESSAGE_DECL_REMAP batches of at most 1 KB
+const int MAX_DECL_REMAP			= 256;		// slots per load; an implicit decl past the cap crosses as -1 (null)
+const int MAX_DECL_REMAP_BYTES		= 4000;		// the whole table as sent: a type byte and the name with its terminator per slot
+const int MAX_DECL_REMAP_BATCH		= 1024;		// one GAME_RELIABLE_MESSAGE_DECL_REMAP
+const int MAX_DECL_REMAP_NAME		= 255;		// a longer name is not announced
+//puncho end
+
 typedef struct entityNetEvent_s
 {
 	int						spawnId;
@@ -161,7 +171,8 @@ enum
 	GAME_RELIABLE_MESSAGE_RESPAWN_AVAILABLE,			// Used just to show clients the respawn text on the hud.
 	GAME_RELIABLE_MESSAGE_MATCH_STARTED_TIME,
 	GAME_RELIABLE_MESSAGE_ACHIEVEMENT_UNLOCK,
-	GAME_RELIABLE_MESSAGE_CLIENT_HITSCAN_HIT
+	GAME_RELIABLE_MESSAGE_CLIENT_HITSCAN_HIT,
+	GAME_RELIABLE_MESSAGE_DECL_REMAP					//puncho - content check (P1-A3a, K19): host to peers, slots of the implicit decl announce table
 };
 
 typedef enum
@@ -527,7 +538,7 @@ public:
 	int						realClientTime;			// real client time
 	bool					isNewFrame;				// true if this is a new game frame, not a rerun due to prediction
 	float					clientSmoothing;		// smoothing of other clients in the view
-	int						entityDefBits;			// bits required to store an entity def number
+	int						entityDefBits;			// bits required to store an entity def number (signed: K19's implicit decls cross negative)
 
 	static const char* 		sufaceTypeNames[ MAX_SURFACE_TYPES ];	// text names for surface types
 
@@ -742,6 +753,10 @@ public:
 	void					SaveEntityNetworkEvent( const idEntity* ent, int event, const idBitMsg* msg );
 	int						ServerRemapDecl( int clientNum, declType_t type, int index );
 	int						ClientRemapDecl( declType_t type, int index );
+	//puncho start - content check (P1-A3a, K19): the implicit decl announce table, Game_network.cpp
+	void					ServerSendDeclRemap( int first, int last, const lobbyUserID_t* lobbyUserID );
+	void					ClientReadDeclRemap( const idBitMsg& msg );
+	//puncho end
 	void					SyncPlayersWithLobbyUsers( bool initial );
 	void					ServerWriteInitialReliableMessages( int clientNum, lobbyUserID_t lobbyUserID );
 	void					ServerSendNetworkSyncCvars();
@@ -836,6 +851,24 @@ private:
 	int						forcedGen;
 	int						mapSpawnCount;			// K11: one past the highest slot the map's entities took below ENTITYNUM_FIRST_NON_REPLICATED
 	idList<int>				clientSpawnCensus;		// K14a: a client's own spawns in play, three index ranges per type number (g_clientSpawnCensus)
+
+	//puncho start - content check (P1-A3a, K19): the implicit decl announce table, cleared by every load (InitAsyncNetwork).
+	// The host fills it from ServerRemapDecl and broadcasts each new slot; a client fills it from the broadcasts, resolving
+	// each name to its own decl
+	struct declRemap_t
+	{
+		int					index;					// this machine's decl index; -1 for a client slot not announced yet
+		short				type;					// declType_t
+		bool				warned;					// a client: an index of this slot already resolved to NULL with a warning
+	};
+	declRemap_t				declRemap[ MAX_DECL_REMAP ];
+	int						numDeclRemap;			// the host: slots in use; a client: one past the highest slot announced
+	int						numDeclRemapSent;		// the host: slots already broadcast
+	int						declRemapBytes;			// the host: the table's size as ServerSendDeclRemap writes it
+	bool					declRemapDeferred;		// the host, inside ServerWriteSnapshot: new slots are broadcast at its end
+	bool					declRemapWarned;		// the host: the table is full; a client: an index past the cap arrived
+	idHashIndex				declRemapHash;			// the host: decl index -> slot, confirmed against the slot's type
+	//puncho end
 
 	idLocationEntity** 		locationEntities;		// for location names, etc
 
