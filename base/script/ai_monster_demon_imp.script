@@ -18,6 +18,9 @@ monster_demon_imp_crawler
 #define IMP_LEAP_RANGE_MAX	480
 #define IMP_NOFOVTIME		4
 
+//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part D): the keep-distance move, an attack flag like the lost soul's retreat
+#define ATTACK_IMP_KITE		ATTACK_SPECIAL1
+
 object monster_demon_imp : monster_base {
 	float		nextDodge;
 	float		nextAttack;
@@ -27,6 +30,26 @@ object monster_demon_imp : monster_base {
 	entity		combat_node;
 
 	string		range_attack_anim;
+
+	//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part A): the attack rates and ranges per monster,
+	// read once in init through getCombatKey (part C): the squad's override, else the def key, else the IMP_* constant
+	float		attack_rate;
+	float		dodge_rate;
+	float		leap_rate;
+	float		leap_range_min;
+	float		leap_range_max;
+	float		nofov_time;
+	//puncho end
+
+	//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part D): the dodge roll and the keep-distance move,
+	// five levers read once in init through getCombatKey and the kite timer; the defaults dodge_chance 1, kite_chance 0 are stock
+	float		dodge_chance;
+	float		range_min;
+	float		range_max;
+	float		kite_chance;
+	float		kite_rate;
+	float		nextKite;
+	//puncho end
 	
 	// States
 	void		state_Begin();
@@ -40,6 +63,10 @@ object monster_demon_imp : monster_base {
 	void		combat_melee();
 	void		combat_dodge_left();
 	void		combat_dodge_right();
+	//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part D): the keep-distance move
+	float		check_kite( float currentTime );
+	void		combat_kite();
+	//puncho end
 	void		path_jump();
 
 	void		init();
@@ -243,6 +270,31 @@ monster_demon_imp::init
 void monster_demon_imp::init() {
 	run_distance	= IMP_RUNDISTANCE;
 	walk_turn		= IMP_WALKTURN;
+
+	//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part A): the def keys, with the stock constants as
+	// the defaults; part C reads them through getCombatKey: the ai_squad marker's override, else the def key, else the constant
+	attack_rate = getCombatKey( "attack_rate", IMP_ATTACK_RATE );
+	dodge_rate = getCombatKey( "dodge_rate", IMP_DODGE_RATE );
+	leap_rate = getCombatKey( "leap_rate", IMP_LEAP_RATE );
+	leap_range_min = getCombatKey( "leap_range_min", IMP_LEAP_RANGE_MIN );
+	leap_range_max = getCombatKey( "leap_range_max", IMP_LEAP_RANGE_MAX );
+	nofov_time = getCombatKey( "nofov_time", IMP_NOFOVTIME );
+	//puncho end
+
+	//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part D): the dodge roll and the keep-distance levers,
+	// the marker's override, else the def key, else the defaults: always dodge, never kite (kite_rate has no marker key)
+	dodge_chance = getCombatKey( "dodge_chance", 1 );
+	range_min = getCombatKey( "range_min", 0 );
+	range_max = getCombatKey( "range_max", 512 );
+	kite_chance = getCombatKey( "kite_chance", 0 );
+	kite_rate = getCombatKey( "kite_rate", 3 );
+	//puncho end
+	//puncho start - ai-combat (plans/ai-combat/07-REVIEW-c8.md m2): DelayTime adds -1 to +1 s, so a kite_rate below 1
+	// could put nextKite in the past and run moveOutOfRange's AAS search every frame
+	if ( kite_rate < 1 ) {
+		kite_rate = 1;
+	}
+	//puncho end
 	
 	setState( "state_Begin" );
 }
@@ -274,10 +326,16 @@ monster_demon_imp::state_Idle
 void monster_demon_imp::state_Idle() {
 	wait_for_enemy();
 
-	nextLeap		= RandomTime( IMP_LEAP_RATE );
+	nextLeap		= RandomTime( leap_rate );	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part A): was IMP_LEAP_RATE
 	nextAttack		= 0;
-	nextDodge		= RandomTime( IMP_DODGE_RATE );
+	nextDodge		= RandomTime( dodge_rate );	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part A): was IMP_DODGE_RATE
 	nextNoFOVAttack = 0;
+	//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part D): the kite timer, set like nextDodge; drawn only
+	// when the imp kites, so kite_chance 0 (default) leaves the shared random stream the stock one
+	if ( kite_chance > 0 ) {
+		nextKite = RandomTime( kite_rate );
+	}
+	//puncho end
 	
 	setState( "state_Combat" );
 }
@@ -294,7 +352,14 @@ monster_demon_imp::do_attack
 =====================
 */
 void monster_demon_imp::do_attack( float attack_flags ) {
-	nextNoFOVAttack = sys.getTime() + IMP_NOFOVTIME;
+	//puncho start - ai-combat (plans/ai-combat/07-REVIEW-c8.md M5): the kite starts before the no-FOV reset, so a
+	// kiting imp keeps the no-FOV path the last attack left it; check_attacks gives the kite flag only when no other is set
+	if ( attack_flags == ATTACK_IMP_KITE ) {
+		combat_kite();
+		return;
+	}
+	//puncho end
+	nextNoFOVAttack = sys.getTime() + nofov_time;	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part A): was IMP_NOFOVTIME
 	if ( attack_flags & ATTACK_DODGE_LEFT ) {
 		combat_dodge_left();
 	} else if ( attack_flags & ATTACK_DODGE_RIGHT ) {
@@ -307,7 +372,7 @@ void monster_demon_imp::do_attack( float attack_flags ) {
 		combat_leap();
 	} else if ( attack_flags & ATTACK_MISSILE ) {
 		combat_range();
-	}
+	}	//puncho - ai-combat (plans/ai-combat/07-REVIEW-c8.md M5): the kite branch moved to the top
 }
 
 /*
@@ -325,6 +390,7 @@ float monster_demon_imp::check_attacks() {
 	float t;
 	string anim;
 	vector jumpTarget;
+	float dodgeRoll;	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part D): the dodge roll
 	
 	attack_flags = 0;
 	
@@ -332,21 +398,30 @@ float monster_demon_imp::check_attacks() {
 	currentTime = sys.getTime();
 	if ( !canMelee ) {
 		if ( AI_PAIN && ( currentTime >= nextDodge ) ) {
-			if ( testAnimMove( "evade_left" ) ) {
-				attack_flags |= ATTACK_DODGE_LEFT;
+			//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part D): the dodge roll, nested (&& does not
+			// short-circuit); at dodge_chance 1 (default) it passes without a draw, so the shared random stream stays the stock one
+			dodgeRoll = 0;
+			if ( dodge_chance < 1 ) {
+				dodgeRoll = sys.random( 1 );
 			}
-			if ( testAnimMove( "evade_right" ) ) {
-				attack_flags |= ATTACK_DODGE_RIGHT;
-				
-				// if we can dodge either direction, pick one
-				if ( attack_flags & ATTACK_DODGE_LEFT ) {
-					if ( sys.random( 100 ) < 50 ) {
-						attack_flags &= ~ATTACK_DODGE_RIGHT;
-					} else {
-						attack_flags &= ~ATTACK_DODGE_LEFT;
+			if ( dodgeRoll < dodge_chance ) {
+				if ( testAnimMove( "evade_left" ) ) {
+					attack_flags |= ATTACK_DODGE_LEFT;
+				}
+				if ( testAnimMove( "evade_right" ) ) {
+					attack_flags |= ATTACK_DODGE_RIGHT;
+					
+					// if we can dodge either direction, pick one
+					if ( attack_flags & ATTACK_DODGE_LEFT ) {
+						if ( sys.random( 100 ) < 50 ) {
+							attack_flags &= ~ATTACK_DODGE_RIGHT;
+						} else {
+							attack_flags &= ~ATTACK_DODGE_LEFT;
+						}
 					}
 				}
 			}
+			//puncho end
 		}
 	
 		combat_node = getCombatNode();
@@ -361,7 +436,7 @@ float monster_demon_imp::check_attacks() {
 
 	if ( ( ( sys.getTime() > nextNoFOVAttack ) && AI_ENEMY_VISIBLE ) || AI_ENEMY_IN_FOV ) {
 		range = enemyRange();
-		if ( ( range >= IMP_LEAP_RANGE_MIN ) && ( range < IMP_LEAP_RANGE_MAX ) && ( currentTime >= nextLeap ) ) {
+		if ( ( range >= leap_range_min ) && ( range < leap_range_max ) && ( currentTime >= nextLeap ) ) {	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part A): was IMP_LEAP_RANGE_MIN, _MAX
 			if ( canHitEnemy() ) {
 				t = animLength( ANIMCHANNEL_TORSO, "jump_start" );
 				jumpTarget = predictEnemyPos( t );
@@ -390,6 +465,12 @@ float monster_demon_imp::check_attacks() {
 			}
 		}
 	}
+
+	//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part D): the keep-distance move, off at kite_chance 0
+	if ( kite_chance > 0 ) {
+		attack_flags |= check_kite( currentTime );
+	}
+	//puncho end
 	
 	return attack_flags;
 }
@@ -405,8 +486,8 @@ void monster_demon_imp::combat_range() {
 	waitAction( "range_attack" );
 
 	// don't attack for a bit
-	nextAttack = DelayTime( IMP_ATTACK_RATE );
-	nextNoFOVAttack = sys.getTime() + IMP_NOFOVTIME;
+	nextAttack = DelayTime( attack_rate );	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part A): was IMP_ATTACK_RATE
+	nextNoFOVAttack = sys.getTime() + nofov_time;	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part A): was IMP_NOFOVTIME
 }
 
 /*
@@ -419,7 +500,7 @@ void monster_demon_imp::combat_leap() {
 	turnToPos( getOrigin() + jumpVelocity );
 	animState( ANIMCHANNEL_TORSO, "Torso_LeapAttack", 4 );	
 	waitAction( "leap_attack" );
-	nextLeap = DelayTime( IMP_LEAP_RATE );
+	nextLeap = DelayTime( leap_rate );	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part A): was IMP_LEAP_RATE
 }
 
 /*
@@ -446,7 +527,7 @@ void monster_demon_imp::combat_dodge_left() {
 	stopMove();
 	animState( ANIMCHANNEL_LEGS, "Legs_DodgeLeft", 2 );
 	waitAction( "strafe" );
-	nextDodge = DelayTime( IMP_DODGE_RATE );
+	nextDodge = DelayTime( dodge_rate );	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part A): was IMP_DODGE_RATE
 }
 
 /*
@@ -459,8 +540,81 @@ void monster_demon_imp::combat_dodge_right() {
 	stopMove();
 	animState( ANIMCHANNEL_LEGS, "Legs_DodgeRight", 2 );	
 	waitAction( "strafe" );
-	nextDodge = DelayTime( IMP_DODGE_RATE );
+	nextDodge = DelayTime( dodge_rate );	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part A): was IMP_DODGE_RATE
 }
+
+//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md, part D)
+/*
+=====================
+monster_demon_imp::check_kite
+
+ATTACK_IMP_KITE when the enemy is visible and closer than range_min (range_min 0: never), the kite timer has run
+out and the kite_chance roll passes; a failed roll waits for the timer again, as a failed leap does, so kite_chance
+is a chance per kite_rate, not per frame. The caller tests kite_chance > 0. A method and not inline in check_attacks
+so the arena scripts' monster_demon_imp_melee, its own compile unit without this file's #defines, gets the flag.
+=====================
+*/
+float monster_demon_imp::check_kite( float currentTime ) {
+	if ( AI_ENEMY_VISIBLE ) {
+		if ( currentTime >= nextKite ) {
+			if ( enemyRange() < range_min ) {
+				if ( sys.random( 1 ) < kite_chance ) {
+					return ATTACK_IMP_KITE;
+				}
+				nextKite = DelayTime( kite_rate );
+			}
+		}
+	}
+	return 0;
+}
+
+/*
+=====================
+monster_demon_imp::combat_kite
+
+Runs out of range_max of the enemy (one AAS search per kite timer) and keeps the attack check going. Back to the
+stock chase when the move ends, when the enemy is range_min away again or when the timer runs out, so a blocked
+move holds the state thread no longer than the timer. Any attack check_attacks gives ends the kite through do_attack,
+as in the stock chase (plans/ai-combat/07-REVIEW-c8.md m5). do_attack starts the kite before its no-FOV reset, so the
+no-FOV path is as the last attack left it (M5); run is restored on the way out, as check_blocked does (m6).
+=====================
+*/
+void monster_demon_imp::combat_kite() {
+	float attack_flags;
+	boolean oldrun;	//puncho - ai-combat (plans/ai-combat/07-REVIEW-c8.md m6)
+
+	oldrun = run;	//puncho - ai-combat (plans/ai-combat/07-REVIEW-c8.md m6)
+	run = true;	// away at a run, as the stock lost-combat move is; the chase sets run again
+	moveOutOfRange( getEnemy(), range_max );
+	nextKite = DelayTime( kite_rate );
+	while( !AI_MOVE_DONE && !AI_DEST_UNREACHABLE ) {
+		if ( AI_ENEMY_DEAD ) {
+			enemy_dead();
+		}
+		if ( sys.influenceActive() ) {
+			break;
+		}
+		if ( enemyRange() >= range_min ) {
+			break;
+		}
+		if ( sys.getTime() >= nextKite ) {
+			break;
+		}
+
+		// the decision clock of part A gates the cost of the test; the melee imp's check_attacks has no missile
+		attack_flags = check_attacks();
+		//puncho start - ai-combat (plans/ai-combat/07-REVIEW-c8.md m5, m6): any attack ends the kite, as in combat_chase
+		if ( attack_flags ) {
+			run = oldrun;
+			do_attack( attack_flags );
+			return;
+		}
+		//puncho end
+		waitFrame();
+	}
+	run = oldrun;	//puncho - ai-combat (plans/ai-combat/07-REVIEW-c8.md m6)
+}
+//puncho end
 
 /*
 =====================

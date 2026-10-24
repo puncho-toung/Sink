@@ -119,6 +119,32 @@ typedef enum
 
 #define	DI_NODIR	-1
 
+//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md §3.1, WP-A1): the tier of a body against every player
+typedef enum
+{
+	AVOID_TIER_CLOSE,			// flat distance < 256 of any player
+	AVOID_TIER_SEEN,			// in the merged player PVS and < 1024
+	AVOID_TIER_UNSEEN			// otherwise
+} avoidTier_t;
+
+// (§3.6, WP-A6/A7): the role byte, from the def's minion_class or the ai_squad marker; a follower walks the flow field
+typedef enum
+{
+	MINION_ROLE_ELITE,			// permanent minions, bosses: the stock path and planner
+	MINION_ROLE_LEADER,			// a squad leader: as elite
+	MINION_ROLE_FOLLOWER		// trash, squad members: the flow field toward the squad's goal, separation, the planner only when stuck
+} minionRole_t;
+
+// the avoidance class a squad marker or sys.aiSetAvoid forces; BY_ROLE lets the role decide
+typedef enum
+{
+	AVOID_CLASS_BY_ROLE,
+	AVOID_CLASS_FULL,			// the stock planner whatever the role
+	AVOID_CLASS_LIGHT,			// the follower rules whatever the role
+	AVOID_CLASS_OFF				// ignore_obstacles
+} avoidClass_t;
+//puncho end
+
 // obstacle avoidance
 typedef struct obstaclePath_s
 {
@@ -291,12 +317,29 @@ public:
 	void					TalkTo( idActor* actor );
 	talkState_t				GetTalkState() const;
 
-	bool					GetAimDir( const idVec3& firePos, idEntity* aimAtEnt, const idEntity* ignore, idVec3& aimDir ) const;
+	//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §B): clipMask is MASK_SHOT_RENDERMODEL for every
+	// launch and the test mask for canHitEnemyFromAnim, so the test can trace boxes while the shot aims at meshes
+	bool					GetAimDir( const idVec3& firePos, idEntity* aimAtEnt, const idEntity* ignore, int clipMask, idVec3& aimDir ) const;
+	//puncho end
 
 	void					TouchedByFlashlight( idActor* flashlight_owner );
 
 	// Outputs a list of all monsters to the console.
 	static void				List_f( const idCmdArgs& args );
+
+	//puncho start - ai-avoidance (WP-A1): the tier of this tic, AVOID_TIER_CLOSE..UNSEEN, for the rate classes that key off it
+	int						GetAvoidTier();
+	//puncho start - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md §3.3, WP-T3)
+	// once per tic after the think loop: the shooter tokens the next tic's canHitEnemyFromAnim calls read (AI_crowd.cpp);
+	// static so it reads every monster's protected state
+	static void				AssignShooterTokens();
+	//puncho end
+	// WP-A5: a monster without a move order holds its ground: infinite mass to the separation of the ones walking into it
+	bool					IsHoldingPosition() const
+	{
+		return move.moveCommand < NUM_NONMOVING_COMMANDS || !allowMove;
+	}
+	//puncho end
 
 	// Finds a path around dynamic obstacles.
 	static bool				FindPathAroundObstacles( const idPhysics* physics, const idAAS* aas, const idEntity* ignore, const idVec3& startPos, const idVec3& seekPos, obstaclePath_t& path );
@@ -324,6 +367,37 @@ protected:
 	float					blockedRadius;
 	int						blockedMoveTime;
 	int						blockedAttackTime;
+	//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md): the cached avoidance plan that ai_avoidPeriod and
+	// ai_avoidTiers reuse between full plans. Host-side, rebuilt by the next plan: not saved, not in Save/Restore order
+	int						avoidPlanTic;		// gameLocal.framenum of the last full plan, -1 none
+	int						avoidMoveStart;		// move.startTime at that plan: a new order plans at once
+	idVec3					avoidDir;			// flat unit direction that plan steered along
+	bool					avoidDetour;		// that plan steered off the line to the goal (false: the goal itself is the answer)
+	bool					avoidBlocked;		// that plan, or the physics step after it, reported blocked: plan again next tic
+	bool					avoidPlanWasBlocked;	// the previous plan was blocked too (ai_avoidBlockedReplan 1 re-plans on the edge only)
+	bool					avoidStepWasBlocked;	// the previous physics step was MM_BLOCKED too: same edge rule
+	// WP-A1: the tier scheduler. One tier per body per tic, the source of every per-body rate (the avoidance period here,
+	// the brain deadline and the snapshot class when those land); a skipped tic holds the whole last plan, its move status
+	// included, so a script polling moveStatus() sees what the plan tic saw (plan Q5: the stock check_blocked contract)
+	byte					avoidTier;			// avoidTier_t of avoidTierTic
+	bool					avoidHeldInPath;	// AI_OBSTACLE_IN_PATH as the last plan left it
+	int						avoidTierTic;		// gameLocal.framenum avoidTier was computed for, -1 none
+	moveStatus_t			avoidHeldStatus;	// move.moveStatus as the last plan left it
+	idEntityPtr<idEntity>	avoidHeldObstacle;	// move.obstacle as the last plan left it
+	// WP-A5: separation steering (plan §3.3, D4: it bends the heading and rides the move delta, never the origin)
+	idVec3					sepLastDir;			// last tic's smoothed heading, zero when no neighbour pushed last tic
+	idVec3					sepCorrection;		// this tic's overlap correction, added to the move delta so StepMove clips it
+	float					sepDeltaScale;		// this tic's scale on the animation delta: below 1 when the push opposes the heading
+	// WP-A6/A7: the flow field follower. Role and class are map data (the def, the ai_squad marker, sys.aiSetAvoid), the
+	// rest is tier-scheduler state, one byte each, never a script decision (plan D6); nothing of it is saved
+	byte					minionRole;			// minionRole_t
+	byte					avoidClass;			// avoidClass_t forced on this body; the squad's class wins when it is pinned
+	byte					flowStuckTics;		// tics running with a step asked for and under 0.5 units gained
+	bool					flowOnField;		// this tic's seek point came from the field: no plan, walls and separation bend it
+	short					aiSquad;			// index into gameLocal.aiSquads from the key 'squad', -1 none (WP-A7)
+	int						flowAreaNum;		// the area GetMovePos found this tic, for the wall repulsion
+	int						flowPromotedUntil;	// gameLocal.framenum until which a stuck follower runs the stock path and planner
+	//puncho end
 
 	// turning
 	float					ideal_yaw;
@@ -359,7 +433,31 @@ protected:
 
 	// weapon/attack vars
 	bool					lastHitCheckResult;
+	//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §B): the def key fire_near_friends, read in Spawn,
+	// not saved. 0 tests the shot against boxes (a friend in the arc blocks it), 1 against meshes as stock
+	bool					fireNearFriends;
+	//puncho end
+	//puncho start - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md §3.1): the lever sniper (squad, def, 0), set
+	// with fireNearFriends by ReadCombatLevers; not saved. A sniper tests its shots without a shooter token
+	bool					shooterSniper;
+	//puncho end
+	//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §C): the accuracy lever, the squad's over the def's
+	// over 1, set with fireNearFriends by ReadCombatLevers at spawn and after restore; not saved. ai_accuracyScale times
+	// this scales both spreads of LaunchProjectile, above 1 is less accurate
+	float					accuracyScale;
+	//puncho end
 	int						lastHitCheckTime;
+	//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §A): the decision clock. Host-side, not saved: a
+	// restore costs at most one extra test
+	int						canHitFailTime;				// gameLocal.time of the last canHitEnemyFromAnim that said no; -1 none (ai_canHitRetryMs)
+	//puncho end
+	//puncho start - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md §3.5): the shooter token. Host-side derived
+	// state, not saved: a restore starts without a token and the next pass ranks the monster again
+	int						shooterAskTime;			// gameLocal.time of the last canHitEnemyFromAnim that met the token gate; -1 never
+	int						shooterPassTime;		// gameLocal.time of the last canHitEnemyFromAnim test that said yes; -1 never
+	int						shooterTokenGen;		// gameLocal.shooterTokenGen of the pass that gave the token; -1 none
+	int						shooterTokenTime;		// gameLocal.time that token was first given: the hold runs from here
+	//puncho end
 	int						lastAttackTime;
 	float					melee_range;
 	float					projectile_height_to_distance_ratio;	// calculates the maximum height a projectile can be thrown
@@ -484,6 +582,25 @@ protected:
 	virtual void			ApplyImpulse( idEntity* ent, int id, const idVec3& point, const idVec3& impulse );
 	void					GetMoveDelta( const idMat3& oldaxis, const idMat3& axis, idVec3& delta );
 	void					CheckObstacleAvoidance( const idVec3& goalPos, idVec3& newPos );
+	//puncho start - ai-avoidance
+	int						AvoidPeriod();
+	void					UpdateAvoidTier();	// WP-A1: this tic's tier from the players' positions and the merged PVS, once per tic
+	void					SetCollisionGroup();	// WP-A3: the clip model's group from the team, at spawn and after restore
+	void					Separation( idVec3& seekPos );	// WP-A5: bend seekPos away from the neighbours of the grid (AI_crowd.cpp)
+	bool					FlowFollower() const;	// WP-A6: this move walks the flow field
+	void					WallRepulsion( idVec3& seekPos );	// WP-A6: bend seekPos away from the wall quads of the area (AI_crowd.cpp)
+	void					ReadSquadRole();		// WP-A7: role and class from the def and the squad marker, at spawn and after restore
+	int						EffectiveAvoidClass() const;	// WP-A7: the squad's pinned class, else this body's
+	//puncho end
+	//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §C): the combat levers, squad over def over default
+	float					GetCombatKey( const char* key, float def ) const;	// at spawn, restore and script init, never per tic
+	void					ReadCombatLevers();		// fireNearFriends, accuracyScale and shooterSniper, at spawn and after restore
+	//puncho end
+	//puncho start - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md §3.4): the token gate and the decision clock
+	int						CanHitRetryMs();		// the decision clock's interval this tic: ai_canHitRetryMs times the tier factor (07 §A)
+	int						ShooterPool() const;	// the enemy's token pool: a player's entity number, else MAX_CLIENTS + team; -1 no enemy
+	bool					ShooterMayTest();		// the token gate of canHitEnemyFromAnim; records the ask (AI_crowd.cpp)
+	//puncho end
 	void					DeadMove();
 	void					AnimMove();
 	void					SlideMove();
@@ -651,6 +768,7 @@ protected:
 	void					Event_CanHitEnemy();
 	void					Event_CanHitEnemyFromAnim( const char* animname );
 	void					Event_CanHitEnemyFromJoint( const char* jointname );
+	void					Event_GetCombatKey( const char* key, float def );	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §C)
 	void					Event_EnemyPositionValid();
 	void					Event_ChargeAttack( const char* damageDef );
 	void					Event_TestChargeAttack();

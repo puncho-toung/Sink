@@ -1697,7 +1697,13 @@ bool idActor::CanSee( idEntity* ent, bool useFov ) const
 	eye = GetEyePosition();
 
 	gameLocal.aiStats.losTraces++;	//puncho - ai-harness: one line-of-sight trace per CanSee that gets this far (00-PLAN.md §2.1)
-	gameLocal.clip.TracePoint( tr, eye, toPos, MASK_OPAQUE, this );
+	//puncho start - ai-combat (plans/ai-combat/00-PLAN.md §2.4): the trace share of perception, timed with ai_profile only
+	{
+		PROFILE_STATIC_DESC( descCombatTraces, "Minions::Decide::CombatTraces", ::Optick::Category::AI );
+		idAIProfileScope scopeTraces( gameLocal.aiStats.usCombatTraces, descCombatTraces );
+		gameLocal.clip.TracePoint( tr, eye, toPos, MASK_OPAQUE, this );
+	}
+	//puncho end
 	if( tr.fraction >= 1.0f || ( gameLocal.GetTraceEntity( tr ) == ent ) )
 	{
 		return true;
@@ -2534,6 +2540,18 @@ void idActor::Damage( idEntity* inflictor, idEntity* attacker, const idVec3& dir
 	}
 	if( damage > 0 )
 	{
+		//puncho start - ai-combat (plans/ai-combat/00-PLAN.md §2.4): hits landed on live monsters, and the ones from a team mate;
+		// paid at the damage event only. attacker is never NULL here (the world stands in); the monster's own splash is not
+		// friendly; a corpse (takedamage stays set after Killed) is not a hit
+		if( health > 0 && IsType( idAI::Type ) )
+		{
+			gameLocal.aiStats.damageEvents++;
+			if( attacker != this && attacker->IsType( idActor::Type ) && static_cast<idActor*>( attacker )->team == team )
+			{
+				gameLocal.aiStats.friendlyDamage++;
+			}
+		}
+		//puncho end
 		int oldHealth = health;
 		health -= damage;
 

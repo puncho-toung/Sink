@@ -345,6 +345,76 @@ ID_INLINE idAIProfileScope::~idAIProfileScope()
 }
 //puncho end
 
+//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md §3.3, WP-A5): one live actor in the neighbour grid, as physics
+// left it at the end of the tic the grid was built in. POD, copied by value; the chain through nextInCell is per bucket
+const int	MAX_AI_NEIGHBORS		= 1024;
+const int	AI_NEIGHBOR_CELLS		= 1024;			// hash buckets, a power of two
+const float	AI_NEIGHBOR_CELL_SIZE	= 64.0f;
+
+enum
+{
+	AIN_HOLDING	= BIT( 0 ),		// a monster without a move order: infinite mass to the separation (R03.24)
+	AIN_PLAYER	= BIT( 1 )		// a player: infinite mass too, never pushed
+};
+
+struct aiNeighbor_t
+{
+	idVec3		origin;
+	idVec3		velocity;		// for the obstacle gather's same-direction filter
+	float		radius;			// flat half extent of the clip bounds: separation keeps 1.2 ( r + r_j )
+	float		zMin;			// absolute bounds along z
+	float		zMax;
+	float		mass;
+	int			entityNumber;
+	int			nextInCell;		// the next body in the same bucket, -1 end
+	short		cellX;			// the cell the body is in, so a bucket collision is not a neighbour
+	short		cellY;
+	short		group;			// the clip model's collision group (WP-A3), 0 none
+	byte		flags;			// AIN_*
+	byte		pad;
+};
+
+// (plan §3.6, WP-A7): an ai_squad marker's role keys, read from the .map at load like the band layer's loader will read
+// the rest of the marker (no entityDef, no entity at run time); monsters join with the key 'squad'
+const int	MAX_AI_SQUADS			= 64;
+const byte	AI_SQUAD_ROLE_UNSET		= 255;			// the marker gave no role: the monster's def decides
+
+// (plans/ai-combat/07-DESIGN-c8-levers.md §C): the bits of aiSquadDef_t::overrides, one per combat lever the marker set
+enum
+{
+	AI_SQUAD_SET_ACCURACY			= BIT( 0 ),
+	AI_SQUAD_SET_ATTACK_RATE		= BIT( 1 ),
+	AI_SQUAD_SET_DODGE_RATE			= BIT( 2 ),
+	AI_SQUAD_SET_DODGE_CHANCE		= BIT( 3 ),
+	AI_SQUAD_SET_RANGE_MIN			= BIT( 4 ),
+	AI_SQUAD_SET_RANGE_MAX			= BIT( 5 ),
+	AI_SQUAD_SET_KITE_CHANCE		= BIT( 6 ),
+	AI_SQUAD_SET_FIRE_NEAR_FRIENDS	= BIT( 7 ),
+	AI_SQUAD_SET_SNIPER				= BIT( 8 )	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md §3.1)
+};
+
+struct aiSquadDef_t
+{
+	char		name[32];
+	byte		role;			// minionRole_t, or AI_SQUAD_ROLE_UNSET
+	byte		avoid;			// avoidClass_t forced on the members, AVOID_CLASS_BY_ROLE when not given
+	byte		formation;		// 0 none, 1 line, 2 column: read and kept, the slot layout is not built (plan Q3: none)
+	byte		pinned;			// sys.aiSetAvoid set avoid: it wins over the marker's key and the member's own class
+	// (plans/ai-combat/07-DESIGN-c8-levers.md §C): the marker's combat levers, each valid only while its bit is set in
+	// overrides; idAI::GetCombatKey returns it before the member's def key
+	float		accuracy;		// accuracy: scales attack_accuracy and projectile_spread at launch, above 0
+	float		attackRate;		// attack_rate, seconds, above 0
+	float		dodgeRate;		// dodge_rate, seconds, above 0
+	float		dodgeChance;	// dodge_chance, 0..1
+	float		rangeMin;		// range_min
+	float		rangeMax;		// range_max
+	float		kiteChance;		// kite_chance, 0..1
+	float		fireNearFriends;	// fire_near_friends, 0 or 1
+	float		sniper;			// sniper, 0 or 1: members test without a shooter token //puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md)
+	short		overrides;		// AI_SQUAD_SET_*: the levers the marker gave
+};
+//puncho end
+
 //============================================================================
 
 class idGameLocal : public idGame
@@ -380,6 +450,28 @@ public:
 	idThread* 				frameCommandThread;
 
 	idClip					clip;					// collision detection
+	float					maxObstacleRadius;		// ai-avoidance (WP-A4): the largest flat clip radius of any idActor or idMoveable spawned on this map; sizes the obstacle gather box with ai_avoidHorizon. Not saved: rebuilt on restore
+	//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md §3.3, WP-A5): the neighbour grid. Every live actor is hashed
+	// into 64-unit cells once per tic after the think loop (BuildNeighborGrid, from the positions physics just produced) and
+	// read only by the next tic's thinks: separation, the k nearest actors of the obstacle gather, later the perception
+	// candidates. Host state rebuilt every tic, never saved or replicated; valid only for the tic after it was built
+	aiNeighbor_t			aiNeighbors[MAX_AI_NEIGHBORS];
+	int						aiNeighborCells[AI_NEIGHBOR_CELLS];	// index of the first body in the bucket, -1 none
+	int						numAINeighbors;
+	int						aiNeighborTic;			// framenum the grid was built in, -1 none
+	float					aiNeighborMaxRadius;	// the largest flat radius in the grid, bounds every gather range
+	int						sepCorrectionsLeft;		// overlap corrections this tic may still apply (ai_sepBudget, reset with the grid)
+	// (WP-A7) the ai_squad markers of this map, read from the map file in LoadMap and LocalMapRestart before the entities
+	// spawn; the table is not saved, only the pins sys.aiSetAvoid set are, by squad name, and re-applied on restore (audit M2)
+	aiSquadDef_t			aiSquads[MAX_AI_SQUADS];
+	int						numAISquads;
+	//puncho end
+	//puncho start - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): the shooter tokens. idAI::AssignShooterTokens
+	// bumps the generation once per tic after the think loop; a monster holds a token while its shooterTokenGen is the
+	// current one and the pass ran in the previous tic. Host state, never saved or replicated
+	int						shooterTokenGen;		// generation of the last pass, 0 before the first
+	int						shooterTokenTic;		// framenum of the last pass, -1 none
+	//puncho end
 	//puncho start - ai-harness (plans/ai-harness/00-PLAN.md §2.2, §2.5): host-side debug state, never saved or replicated
 	aiTicStats_t			aiStats;				// the live tic census, zeroed after SortActiveEntityList
 	snapStats_t				snapStats;				// written by ServerWriteSnapshot on the main thread between game frames
@@ -391,7 +483,7 @@ public:
 	int						aiSecNextTime;			// game time of the next aistats: line and CSV flush
 	idFile*					aiProfileFile;			// the ai_profileLog CSV, NULL while the cvar is empty
 	int						aiProfileLen;			// bytes waiting in aiProfileBuf
-	char					aiProfileBuf[ 32 * 1024 ];	// CSV rows between the per-second flushes: one Write per second, not per tic
+	char					aiProfileBuf[ 64 * 1024 ];	// CSV rows between the per-second flushes: one Write per second, not per tic (a row is about 250 B since ai-combat: 120 of them need 30 KB)
 	//puncho end
 	idPush					push;					// geometric pushing
 	idPVS					pvs;					// potential visible set
@@ -555,6 +647,24 @@ public:
 	idActor* 				GetAlertEntity();
 
 	bool					InPlayerPVS( idEntity* ent ) const;
+	//puncho start - ai-avoidance (WP-A5): the grid is for the tic after the one it was built in
+	bool					NeighborGridValid() const
+	{
+		return aiNeighborTic == framenum - 1;
+	}
+	//puncho start - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md §3.3)
+	// the tokens are for the tic after the pass, like the grid
+	bool					ShooterTokensValid() const
+	{
+		return shooterTokenTic == framenum - 1;
+	}
+	//puncho end
+	// the bodies within range (flat, centre to centre) of origin: indices into aiNeighbors, the caller filters
+	int						GatherNeighbors( const idVec3& origin, float range, int* indices, int maxIndices ) const;
+	// (WP-A7) the squad table: index by name, -1 none; sys.aiSetAvoid pins a class on a squad, false when either is unknown
+	int						FindAISquad( const char* name ) const;
+	bool					SetAISquadAvoid( const char* name, const char* avoid );
+	//puncho end
 	bool					InPlayerConnectedArea( idEntity* ent ) const;
 	pvsHandle_t				GetPlayerPVS()
 	{
@@ -791,6 +901,9 @@ private:
 	void					RunAIStats( int numEnts, int usTic );
 	void					FlushAIProfileLog();
 	void					ClearAIStats();			// the census, ring and aggregates; not the CSV file
+	void					GrowMaxObstacleRadius( const idEntity* ent );	// ai-avoidance (WP-A4): an actor or moveable spawned or restored
+	void					BuildNeighborGrid();	// ai-avoidance (WP-A5): after the think loop (AI_crowd.cpp)
+	void					ReadAISquads();			// ai-avoidance (WP-A7): the ai_squad markers of mapFile (AI_crowd.cpp)
 	//puncho end
 
 	void					RunSharedThink();

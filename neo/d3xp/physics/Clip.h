@@ -83,6 +83,12 @@ public:
 	const idMaterial* 		GetMaterial() const;
 	void					SetContents( int newContents );		// override contents
 	int						GetContents() const;
+	//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md §3.2, WP-A3): the collision group, 0 = none. A moving
+	// model with a group never clips against a candidate of the same group (idClip::GetTraceClipModels); point traces
+	// have no moving model and see everything. Set by the owner at spawn and after restore, never saved
+	void					SetGroup( short newGroup );
+	short					GetGroup() const;
+	//puncho end
 	void					SetEntity( idEntity* newEntity );
 	idEntity* 				GetEntity() const;
 	void					SetId( int newId );
@@ -111,6 +117,7 @@ public:
 
 private:
 	bool					enabled;				// true if this clip model is used for clipping
+	short					group;					// ai-avoidance (WP-A3): collision group, 0 = none; in the padding after enabled
 	idEntity* 				entity;					// entity using this clip model
 	int						id;						// id for entities that use multiple clip models
 	idEntity* 				owner;					// owner of the entity that owns this clip model
@@ -180,6 +187,18 @@ ID_INLINE int idClipModel::GetContents() const
 {
 	return contents;
 }
+
+//puncho start - ai-avoidance (WP-A3)
+ID_INLINE void idClipModel::SetGroup( short newGroup )
+{
+	group = newGroup;
+}
+
+ID_INLINE short idClipModel::GetGroup() const
+{
+	return group;
+}
+//puncho end
 
 ID_INLINE void idClipModel::SetEntity( idEntity* newEntity )
 {
@@ -379,7 +398,7 @@ private:
 	struct clipSector_s* 	CreateClipSectors_r( const int depth, const idBounds& bounds, idVec3& maxSector );
 	void					ClipModelsTouchingBounds_r( const struct clipSector_s* node, struct listParms_s& parms ) const;
 	const idTraceModel* 	TraceModelForClipModel( const idClipModel* mdl ) const;
-	int						GetTraceClipModels( const idBounds& bounds, int contentMask, const idEntity* passEntity, idClipModel** clipModelList ) const;
+	int						GetTraceClipModels( const idBounds& bounds, int contentMask, const idEntity* passEntity, const idClipModel* mdl, idClipModel** clipModelList ) const;	//puncho - ai-avoidance (WP-A3): mdl is the moving model, its group skips candidates
 	void					TraceRenderModel( trace_t& trace, const idVec3& start, const idVec3& end, const float radius, const idMat3& axis, idClipModel* touch ) const;
 };
 

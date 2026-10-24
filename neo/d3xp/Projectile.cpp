@@ -512,6 +512,7 @@ idProjectile::Think
 */
 void idProjectile::Think()
 {
+	gameLocal.aiStats.projectilesAlive++;	//puncho - ai-combat (plans/ai-combat/00-PLAN.md §2.4): one per live projectile per tic, the entity load of the fight
 
 	if( thinkFlags & TH_THINK )
 	{
