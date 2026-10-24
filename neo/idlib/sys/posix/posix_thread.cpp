@@ -42,6 +42,11 @@ If you have questions concerning this license or the applicable additional terms
 	#include <pthread_np.h> // for pthread_set_name_np
 #endif
 
+#ifdef __GLIBC__
+	#include <link.h>	//puncho - MP-A4: dl_iterate_phdr, for Sys_StaticTLSSize
+	#include <unistd.h>
+#endif
+
 // DG: Note: On Linux you need at least (e)glibc 2.12 to be able to set the threadname
 //#define DEBUG_THREADS
 
@@ -111,7 +116,38 @@ static int Sys_GetThreadName( pthread_t handle, char* namebuf, size_t buflen )
 
 #endif // DEBUG_THREADS
 
+//puncho start - MP-A4 (plans/phase1/00-PLAN.md Q3)
+#ifdef __GLIBC__
+/*
+========================
+Sys_StaticTLSSize
 
+glibc places a thread's static TLS (idStr's va buffers alone are 192 KB) and its TCB
+at the top of the stack it is given, so Sys_CreateThread adds this to the requested
+size. It is the PT_TLS segments of the loaded objects, rounded up to the page size.
+========================
+*/
+static int AddTLSSegment( struct dl_phdr_info* info, size_t size, void* data )
+{
+	for( int i = 0; i < info->dlpi_phnum; i++ )
+	{
+		if( info->dlpi_phdr[i].p_type == PT_TLS )
+		{
+			*( size_t* )data += info->dlpi_phdr[i].p_memsz;
+		}
+	}
+	return 0;
+}
+
+static size_t Sys_StaticTLSSize()
+{
+	size_t tls = 0;
+	dl_iterate_phdr( AddTLSSegment, &tls );
+	const size_t page = ( size_t )sysconf( _SC_PAGESIZE );
+	return ( tls + page - 1 ) & ~( page - 1 );
+}
+#endif
+//puncho end
 
 /*
 ========================
@@ -130,12 +166,20 @@ uintptr_t Sys_CreateThread( xthread_t function, void* parms, xthreadPriority pri
 	}
 
 	//puncho start - MP-A4 (plans/phase1/00-PLAN.md Q3): the requested size, as on Windows, instead of glibc's
-	// 8 MB default, so a Linux run shows a stack the game would overflow on Windows. glibc carves the
-	// thread's static TLS (idStr's va buffers, about 192 KB) out of this size, so less of it is usable
-	if( stackSize > 0 && pthread_attr_setstacksize( &attr, stackSize ) != 0 )
+	// 8 MB default, so a Linux run shows a stack the game would overflow on Windows. With glibc the static TLS
+	// is added, since it takes its room out of the size given: the usable stack then matches Windows'
+	if( stackSize > 0 )
 	{
-		idLib::common->FatalError( "ERROR: pthread_attr_setstacksize %s %d failed\n", name, stackSize );
-		return ( uintptr_t )0;
+		size_t size = stackSize;
+#ifdef __GLIBC__
+		static const size_t staticTLS = Sys_StaticTLSSize();	// measured once, at the first thread
+		size += staticTLS;
+#endif
+		if( pthread_attr_setstacksize( &attr, size ) != 0 )
+		{
+			idLib::common->FatalError( "ERROR: pthread_attr_setstacksize %s %d failed\n", name, ( int )size );
+			return ( uintptr_t )0;
+		}
 	}
 	//puncho end
 

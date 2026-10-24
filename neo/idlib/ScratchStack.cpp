@@ -51,6 +51,7 @@ idScratchStack::idScratchStack()
 	numScopes = 0;
 	mapDeepest = 0;
 	warned = false;
+	leakWarned = false;
 }
 
 /*
@@ -124,15 +125,34 @@ void* idScratchStack::AllocBytes( int bytes )
 
 /*
 ========================
-idScratchStack::EndTic
+idScratchStack::CheckClosed
 
-K28: every scope of the tic is closed. A leak is a bug to find, so the check is
-an assert and never a reset.
+K28: every scope is closed. A leak is a bug to find, so it is never reset: the
+assert stops a debug build, and a release build, which compiles the assert out,
+pays one compare and warns once per map with the scope stack (phase 12's rule
+that a stopgap lands with its log).
+========================
+*/
+void idScratchStack::CheckClosed( const char* where )
+{
+	assert( used == 0 && numScopes == 0 );
+
+	if( ( used | numScopes ) != 0 && !leakWarned )
+	{
+		leakWarned = true;
+		idLib::Warning( "idScratchStack: %d bytes and %d scopes still open at %s: a scope was not closed", used, numScopes, where );
+		PrintScopes();
+	}
+}
+
+/*
+========================
+idScratchStack::EndTic
 ========================
 */
 void idScratchStack::EndTic()
 {
-	assert( used == 0 && numScopes == 0 );
+	CheckClosed( "tic end" );
 
 	lastTicHighWater = ticHighWater;
 	mapHighWater = Max( mapHighWater, ticHighWater );
@@ -160,6 +180,7 @@ void idScratchStack::EndMap()
 	mapHighWater = 0;
 	mapDeepest = 0;
 	warned = false;
+	leakWarned = false;
 }
 
 /*

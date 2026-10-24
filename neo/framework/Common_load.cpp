@@ -239,7 +239,10 @@ void idCommonLocal::UnloadMap()
 	// exception unwinds the open scratch scopes, so the arena is only checked when no error is in progress
 	if( mapSpawned )
 	{
-		assert( com_errorEntered != ERP_NONE || gameScratchStack.Mark() == 0 );
+		if( com_errorEntered == ERP_NONE )
+		{
+			gameScratchStack.CheckClosed( "map unload" );
+		}
 		gameScratchStack.EndMap();
 	}
 	//puncho end

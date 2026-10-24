@@ -100,7 +100,9 @@ public:
 		used = end;
 	}
 
-	// asserts that every scope is closed, then keeps the tic's high-water
+	// K28: asserts that every scope is closed, and in a release build warns once per map with the scope stack
+	void				CheckClosed( const char* where );
+	// CheckClosed, then keeps the tic's high-water
 	void				EndTic();
 	// prints the map's peak and deepest scope stack and the session's peak, and re-arms the 75% warning
 	void				EndMap();
@@ -125,6 +127,7 @@ private:
 	int					numScopes;			// may pass MAX_SCRATCH_SCOPES; only the outer ones are named
 	int					mapDeepest;			// most scopes open at once on this map: a damage chain's depth
 	bool				warned;				// the 75% warning printed on this map
+	bool				leakWarned;			// CheckClosed's warning printed on this map
 	const char* 		scopeNames[MAX_SCRATCH_SCOPES];
 	int					scopeMarks[MAX_SCRATCH_SCOPES];
 
