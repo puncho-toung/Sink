@@ -2520,6 +2520,7 @@ void idMultiplayerGame::PlayGlobalSound( int toPlayerNum, snd_evt_t evt, const c
 			}
 			outMsg.WriteLong( gameLocal.ServerRemapDecl( -1, DECL_SOUND, shaderDecl->Index() ) );
 			type = GAME_RELIABLE_MESSAGE_SOUND_INDEX;
+			gameLocal.ServerFlushDeclRemap();	//puncho - content check: decoded on arrival, so a slot this frame deferred goes first
 		}
 		else
 		{

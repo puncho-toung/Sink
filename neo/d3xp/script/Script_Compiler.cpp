@@ -3207,6 +3207,18 @@ void idCompiler::ParseNamespace( idVarDef* newScope )
 	scope = oldscope;
 }
 
+//puncho start - content check
+/*
+============
+CompilerIncludeCallback
+============
+*/
+static void CompilerIncludeCallback( void* program, const char* fileName, const char* text, int length )
+{
+	static_cast<idProgram*>( program )->RecordInclude( fileName, text, length );
+}
+//puncho end
+
 /*
 ============
 idCompiler::CompileFile
@@ -3238,6 +3250,8 @@ void idCompiler::CompileFile( const char* text, const char* filename, bool toCon
 	//puncho start - P1-A3b (K21a): with content layers an #include is served layer by layer like any other file, so a
 	// mod's copy of an included script is the one compiled. One layer keeps today's resolution, byte for byte
 	parser.SetFlags( LEXFL_ALLOWMULTICHARLITERALS | ( ( fileSystem->GetNumLayers() > 1 ) ? LEXFL_INCLUDETHROUGHLAYERS : 0 ) );
+	// each #include's text is checksummed as idParser loads it, for the content digests, so no file is read twice
+	parser.SetIncludeCallback( CompilerIncludeCallback, &gameLocal.program );
 	//puncho end
 	parser.LoadMemory( text, strlen( text ), filename );
 	parserPtr = &parser;

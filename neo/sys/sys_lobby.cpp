@@ -1657,10 +1657,10 @@ static void SplitModList( const char* list, idStrList& mods )
 ========================
 ModListDiffers
 
-The host's side of K39: whether a joiner's mod list differs from this machine's, and the refusal's reason when it does.
-The lists compare ignoring case, as game dirs do on Windows, and as CheckSaveLayers compares a save's. The mods the
-joiner lacks or adds are named first, or the order when both hold the same mods; the host's list goes last, cut with
-"..." to keep the reason inside the dialog.
+The host's side of the connect-time mod check: whether a joiner's mod list differs from this machine's, and the
+refusal's reason when it does. The lists compare ignoring case, as game dirs do on Windows, and as CheckSaveLayers
+compares a save's. The mods the joiner lacks or adds are named first, or only that the order differs when both hold the
+same mods; the host's list goes last, cut with "..." to keep the reason inside the dialog.
 ========================
 */
 static bool ModListDiffers( const char* peerList, idStr& reason )
@@ -1708,8 +1708,7 @@ static bool ModListDiffers( const char* peerList, idStr& reason )
 	}
 	if( missing.IsEmpty() && extra.IsEmpty() )
 	{
-		reason += " order ";
-		reason += peerList;
+		reason += " another order";
 	}
 	reason += "; host has ";
 	reason += hostList.IsEmpty() ? "none" : hostList.c_str();
@@ -2209,8 +2208,9 @@ int idLobby::HandleInitialPeerConnection( idBitMsg& msg, const lobbyAddress_t& p
 	idPacketProcessor::sessionId_t sessionID = msg.ReadUShort();
 
 	//puncho start - content check (P1-A3b, K39): a joiner with other mods is refused here, before it loads anything. A
-	// joiner has no peer index yet, so this is RefusePeer's goodbye without one: the session id the joiner sent is what
-	// makes it honour the refusal (idLobby::HandlePacket)
+	// joiner has no peer index yet, so this is RefusePeer's refusal without one: the session id the joiner sent is what
+	// makes it honour it (idLobby::HandlePacket). The connect is not authenticated, so the answer is one packet, not
+	// SendGoodbye's redundant copies: a lost one costs only the joiner's next connect attempt, which is refused again
 	idStr modReason;
 	if( ModListDiffers( peerModList, modReason ) )
 	{
@@ -2219,7 +2219,7 @@ int idLobby::HandleInitialPeerConnection( idBitMsg& msg, const lobbyAddress_t& p
 		idBitMsg refusal( refusalBuffer, sizeof( refusalBuffer ) );
 		refusal.WriteUShort( sessionID );
 		refusal.WriteString( modReason, sizeof( refusalBuffer ) - 2 );
-		SendGoodbye( peerAddress, false, &refusal );
+		SendConnectionLess( peerAddress, OOB_GOODBYE_REFUSED, refusal.GetReadData(), refusal.GetSize() );
 		return -1;
 	}
 	//puncho end
@@ -3193,7 +3193,7 @@ void idLobby::HandleReliableMsg( int p, idBitMsg& msg, const lobbyAddress_t* rem
 		//puncho start - content check (P1-A3a, K17): the message leads with the load id the peer latched when it started
 		// loading. One from another load is a leftover (ENDMATCH and a quick restart can overtake it): dropped, never
 		// refused, and the peer's real one follows. Then the rest must have the exact size of this host's own layout:
-		// the global digests and a row per content layer (P1-A3b). Any other size is a different build (an older one
+		// the global digests and a row per content layer. Any other size is a different build (an older one
 		// sends nothing), refused without reading past the end
 		if( msg.GetRemainingData() < 4 )
 		{
@@ -3206,8 +3206,8 @@ void idLobby::HandleReliableMsg( int p, idBitMsg& msg, const lobbyAddress_t* rem
 			NET_VERBOSE_PRINT( "NET: RELIABLE_LOADING_DONE from %s is for load %u, not the current load %u: a leftover, dropped\n", peer.address.ToString(), peerLoadId, loadId );
 			return;
 		}
-		// P1-A3b (K38): the global rows, the layer count, then a row per layer. The connect message proved the mod lists
-		// equal (K39), so a size for another layer count is a different build too
+		// the global rows, the layer count, then a row per layer. The connect message proved the mod lists equal, so a
+		// size for another layer count is a different build too
 		const int numLayers = Min( fileSystem->GetNumLayers(), MAX_MOD_LAYERS + 1 );
 		const int expectedSize = CONTENT_DIGESTS_WIRE_SIZE( numLayers );
 		if( msg.GetRemainingData() != expectedSize )

@@ -1231,6 +1231,11 @@ int idParser::Directive_include( idToken* token, bool supressWarning )
 	}
 	script->SetFlags( idParser::flags );
 	script->SetPunctuations( idParser::punctuations );
+	//puncho - content check: the text as it was read, once, before its tokens (idParser is idLexer's friend)
+	if( includeCallback != NULL )
+	{
+		includeCallback( includeContext, script->GetFileName(), script->buffer, script->length );
+	}
 	idParser::PushScript( script );
 	return true;
 }
@@ -3968,6 +3973,19 @@ int idParser::GetPunctuationId( const char* p )
 	return 0;
 }
 
+//puncho start - content check
+/*
+================
+idParser::SetIncludeCallback
+================
+*/
+void idParser::SetIncludeCallback( includeCallback_t callback, void* context )
+{
+	includeCallback = callback;
+	includeContext = context;
+}
+//puncho end
+
 /*
 ================
 idParser::idParser
@@ -3985,6 +4003,8 @@ idParser::idParser()
 	this->defines = NULL;
 	this->tokens = NULL;
 	this->marker_p = NULL;
+	this->includeCallback = NULL;	//puncho - content check
+	this->includeContext = NULL;	//puncho
 }
 
 /*
@@ -4004,6 +4024,8 @@ idParser::idParser( int flags )
 	this->defines = NULL;
 	this->tokens = NULL;
 	this->marker_p = NULL;
+	this->includeCallback = NULL;	//puncho - content check
+	this->includeContext = NULL;	//puncho
 }
 
 /*
@@ -4023,6 +4045,8 @@ idParser::idParser( const char* filename, int flags, bool OSPath )
 	this->defines = NULL;
 	this->tokens = NULL;
 	this->marker_p = NULL;
+	this->includeCallback = NULL;	//puncho - content check
+	this->includeContext = NULL;	//puncho
 	LoadFile( filename, OSPath );
 }
 
@@ -4043,6 +4067,8 @@ idParser::idParser( const char* ptr, int length, const char* name, int flags )
 	this->defines = NULL;
 	this->tokens = NULL;
 	this->marker_p = NULL;
+	this->includeCallback = NULL;	//puncho - content check
+	this->includeContext = NULL;	//puncho
 	LoadMemory( ptr, length, name );
 }
 

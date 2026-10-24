@@ -325,6 +325,16 @@ private:
 
 	static void                 MakeZooMapForModels_f( const idCmdArgs& args );
 	// RB end
+
+	//puncho start - content check: implicit decls by index (idDeclManager::GetImplicitDeclBits)
+public:
+	virtual const unsigned int*	GetImplicitDeclBits( declType_t type, int& numDecls );
+	virtual void				GetExplicitDeclRange( declType_t type, int& numExplicit, int& explicitBound );
+
+private:
+	idList<unsigned int, TAG_IDLIB_LIST_DECL>		implicitBits[DECL_MAX_TYPES];
+	int							implicitBitsDecls[DECL_MAX_TYPES];	// decls the bits cover; zeroed with the class's static storage
+	//puncho end
 };
 
 idCVar idDeclManagerLocal::decl_show( "decl_show", "0", CVAR_SYSTEM, "set to 1 to print parses, 2 to also print references", 0, 2, idCmdSystem::ArgCompletion_Integer<0, 2> );
@@ -5766,3 +5776,69 @@ bool idDeclLocal::EverReferenced() const
 {
 	return everReferenced;
 }
+
+//puncho start - content check: implicit decls by index
+/*
+===================
+idDeclManagerLocal::GetImplicitDeclBits
+
+The bits grow with the decl list: each decl appended since the last call takes one bit, read from its file, so the
+network's test for an implicit decl is one bit, with no AllocateSelf and no virtual call per decl. A decl is appended as
+it is created, implicit or about to take its file's text; one implicit when first seen may later be defined by a file,
+so a set bit only says "maybe"; a clear bit is final, since no decl is ever moved to the implicit list.
+===================
+*/
+const unsigned int* idDeclManagerLocal::GetImplicitDeclBits( declType_t type, int& numDecls )
+{
+	const int typeIndex = ( int )type;
+	const idList<idDeclLocal*, TAG_IDLIB_LIST_DECL>& decls = linearLists[typeIndex];
+	idList<unsigned int, TAG_IDLIB_LIST_DECL>& bits = implicitBits[typeIndex];
+	if( implicitBitsDecls[typeIndex] > decls.Num() )
+	{
+		// the lists were cleared by Shutdown: start over
+		implicitBitsDecls[typeIndex] = 0;
+		bits.Clear();
+	}
+	if( implicitBitsDecls[typeIndex] < decls.Num() )
+	{
+		const int oldWords = bits.Num();
+		bits.SetNum( ( decls.Num() + 31 ) >> 5 );
+		for( int w = oldWords; w < bits.Num(); w++ )
+		{
+			bits[w] = 0;
+		}
+		for( int i = implicitBitsDecls[typeIndex]; i < decls.Num(); i++ )
+		{
+			if( decls[i]->sourceFile == &implicitDecls )
+			{
+				bits[i >> 5] |= 1u << ( i & 31 );
+			}
+		}
+		implicitBitsDecls[typeIndex] = decls.Num();
+	}
+	numDecls = implicitBitsDecls[typeIndex];
+	return bits.Ptr();
+}
+
+/*
+===================
+idDeclManagerLocal::GetExplicitDeclRange
+
+Read from each decl's file pointer, so no decl object is allocated (DeclByIndex would AllocateSelf every one)
+===================
+*/
+void idDeclManagerLocal::GetExplicitDeclRange( declType_t type, int& numExplicit, int& explicitBound )
+{
+	const idList<idDeclLocal*, TAG_IDLIB_LIST_DECL>& decls = linearLists[( int )type];
+	numExplicit = 0;
+	explicitBound = 0;
+	for( int i = 0; i < decls.Num(); i++ )
+	{
+		if( decls[i]->sourceFile != &implicitDecls )
+		{
+			numExplicit++;
+			explicitBound = i + 1;
+		}
+	}
+}
+//puncho end
