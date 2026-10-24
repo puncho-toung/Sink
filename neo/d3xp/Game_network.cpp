@@ -1062,9 +1062,18 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 		// if there is no entity or an entity of the wrong type
 		if( !ent || ent->GetType()->typeNum != typeNum || ent->entityDefNumber != entityDefNumber || spawnId != spawnIds[ entityNumber ] )
 		{
+			// K14a: a log for phase 12; the content check proves the map text equal, not the slot layout
+			if( ent != NULL && entityNumber >= MAX_CLIENTS && entityNumber < mapSpawnCount )
+			{
+				Warning( "ClientReadSnapshot: the host's %s of generation %d replaces map-range entity %d '%s' (%s, generation %d)", typeInfo->classname, spawnId, entityNumber, ent->name.c_str(), ent->GetClassname(), spawnIds[ entityNumber ] );
+			}
+
 			delete ent;
 
-			spawnCount = spawnId;
+			// K10: a one-shot that only the registration of this slot takes; the children the new entity
+			// spawns advance their own slots
+			forcedGenEntityNum = entityNumber;
+			forcedGen = spawnId;
 
 			if( entityNumber < MAX_CLIENTS )
 			{
