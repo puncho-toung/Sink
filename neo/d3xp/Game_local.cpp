@@ -246,8 +246,11 @@ void idGameLocal::Clear()
 	vacuumAreaNum = 0;
 	mapFileName.Clear();
 	mapFile = NULL;
-	spawnCount = INITIAL_SPAWN_COUNT;
+	memset( slotGen, 0, sizeof( slotGen ) );
+	forcedGenEntityNum = -1;
+	forcedGen = 0;
 	mapSpawnCount = 0;
+	clientSpawnCensus.Clear();
 	camera = NULL;
 	aasList.Clear();
 	aasNames.Clear();
@@ -644,7 +647,11 @@ void idGameLocal::SaveGame( idFile* f, idFile* strings )
 	savegame.WriteBool( quickSlowmoReset );
 
 	savegame.WriteBool( mapCycleLoaded );
-	savegame.WriteInt( spawnCount );
+	// K13: the per-slot generations where the global spawnCount was (BUILD_NUMBER_SAVE_VERSION_SLOT_GENERATION)
+	for( i = 0; i < MAX_GENTITIES; i++ )
+	{
+		savegame.WriteInt( slotGen[ i ] );
+	}
 
 	if( !locationEntities )
 	{
@@ -1025,7 +1032,9 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	// initialize all entities for this game
 	memset( entities, 0, sizeof( entities ) );
 	memset( spawnIds, -1, sizeof( spawnIds ) );
-	spawnCount = INITIAL_SPAWN_COUNT;
+	memset( slotGen, 0, sizeof( slotGen ) );
+	forcedGenEntityNum = -1;
+	clientSpawnCensus.Clear();
 
 	spawnedEntities.Clear();
 	activeEntities.Clear();
@@ -1050,6 +1059,7 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	// range are NEVER anything but clients
 	num_entities			= MAX_CLIENTS;
 	firstFreeEntityIndex[0]	= MAX_CLIENTS;
+	firstFreeEntityIndex[1]	= ENTITYNUM_FIRST_NON_REPLICATED;
 
 	// reset the random number generator.
 	random.SetSeed( common->IsMultiplayer() ? randseed : ai_benchSeed.GetInteger() );	//puncho - ai-combat (plans/ai-combat/00-PLAN.md §2.7, WP-C3): 0 is the stock seed; multiplayer keeps the server's
@@ -1166,7 +1176,7 @@ idGameLocal::LocalMapRestart
 */
 void idGameLocal::LocalMapRestart()
 {
-	int i, latchSpawnCount;
+	int i;
 
 	Printf( "----------- Game Map Restart ------------\n" );
 
@@ -1199,10 +1209,14 @@ void idGameLocal::LocalMapRestart()
 		gameSoundWorld->SetSlowmoSpeed( 1.0f );
 	}
 
-	// the spawnCount is reset to zero temporarily to spawn the map entities with the same spawnId
-	// if we don't do that, network clients are confused and don't show any map entities
-	latchSpawnCount = spawnCount;
-	spawnCount = INITIAL_SPAWN_COUNT;
+	// K11: the map entities and their spawn-time children take generation 1 again, so a client's map
+	// entities keep the host's spawn ids; the surviving players' idEntityPtrs must not resolve to the new
+	// occupants of their old targets' slots, so MapPopulate raises each slot back to its old generation
+	// before any later spawn
+	idScratchScope scratch( "idGameLocal::LocalMapRestart" );
+	int* slotGenBeforeRestart = scratch.Alloc< int >( MAX_GENTITIES );
+	memcpy( slotGenBeforeRestart, slotGen, sizeof( slotGen ) );
+	memset( slotGen + MAX_CLIENTS, 0, ( MAX_GENTITIES - MAX_CLIENTS ) * sizeof( slotGen[0] ) );
 
 	gamestate = GAMESTATE_STARTUP;
 
@@ -1217,11 +1231,7 @@ void idGameLocal::LocalMapRestart()
 	shooterTokenTic = -1;	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md, WP-T3): nor are the tokens of the old incarnations
 	//puncho end
 
-	MapPopulate();
-
-	// once the map is populated, set the spawnCount back to where it was so we don't risk any collision
-	// (note that if there are no players in the game, we could just leave it at it's current value)
-	spawnCount = latchSpawnCount;
+	MapPopulate( slotGenBeforeRestart );
 
 	// setup the client entities again
 	for( i = 0; i < MAX_CLIENTS; i++ )
@@ -1285,7 +1295,7 @@ void idGameLocal::MapRestart_f( const idCmdArgs& args )
 idGameLocal::MapPopulate
 ===================
 */
-void idGameLocal::MapPopulate()
+void idGameLocal::MapPopulate( const int* slotGenBeforeRestart )
 {
 
 	if( common->IsMultiplayer() )
@@ -1301,9 +1311,26 @@ void idGameLocal::MapPopulate()
 	// prepare the list of randomized initial spawn spots
 	RandomizeInitialSpawns();
 
-	// spawnCount - 1 is the number of entities spawned into the map, their indexes started at MAX_CLIENTS (included)
-	// mapSpawnCount is used as the max index of map entities, it's the first index of non-map entities
-	mapSpawnCount = MAX_CLIENTS + spawnCount - 1;
+	// K11: mapSpawnCount bounds the indices of map entities (ClientReadSnapshot's stale rule): one past the
+	// highest slot that SpawnMapEntities filled below the non-replicated range, so the world never counts
+	mapSpawnCount = MAX_CLIENTS;
+	for( int i = ENTITYNUM_FIRST_NON_REPLICATED - 1; i >= MAX_CLIENTS; i-- )
+	{
+		if( entities[ i ] != NULL )
+		{
+			mapSpawnCount = i + 1;
+			break;
+		}
+	}
+
+	// K11: after a restart every later occupant of a slot gets a generation above any the slot had before
+	if( slotGenBeforeRestart != NULL )
+	{
+		for( int i = MAX_CLIENTS; i < MAX_GENTITIES; i++ )
+		{
+			slotGen[ i ] = Max( slotGen[ i ], slotGenBeforeRestart[ i ] );
+		}
+	}
 
 	// execute pending events before the very first game frame
 	// this makes sure the map script main() function is called
@@ -1420,7 +1447,7 @@ void idGameLocal::InitFromNewMap( const char* mapName, idRenderWorld* renderWorl
 
 	InitScriptForMap();
 
-	MapPopulate();
+	MapPopulate( NULL );
 
 	// RB
 	PopulateEnvironmentProbes();
@@ -1471,11 +1498,12 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 	pipelineFile->OpenForReading( saveGameFile );
 	idRestoreGame savegame( pipelineFile, stringTableFile, saveGameVersion );
 
-	// spawn ids are stored packed with GENTITYNUM_BITS index bits; a save written with the old
-	// 12-bit index would restore every entity reference wrong
-	if( saveGameVersion < BUILD_NUMBER_SAVE_VERSION_ENTITY_BITS_14 )
+	// spawn ids are stored packed with GENTITYNUM_BITS index bits, and a save written with the old 12-bit
+	// index would restore every entity reference wrong (1407); a save before the per-slot generation holds
+	// one spawnCount where slotGen is read (K13, 1410)
+	if( saveGameVersion < BUILD_NUMBER_SAVE_VERSION_SLOT_GENERATION )
 	{
-		savegame.Error( "idGameLocal::InitFromSaveGame: save game version %i predates the 14-bit entity index (version %i) and cannot be restored.", saveGameVersion, BUILD_NUMBER_SAVE_VERSION_ENTITY_BITS_14 );
+		savegame.Error( "idGameLocal::InitFromSaveGame: save game version %i predates the per-slot spawn-id generation (version %i) and cannot be restored.", saveGameVersion, BUILD_NUMBER_SAVE_VERSION_SLOT_GENERATION );
 	}
 
 	// Create the list of all objects in the game
@@ -1654,7 +1682,10 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 	}
 
 	savegame.ReadBool( mapCycleLoaded );
-	savegame.ReadInt( spawnCount );
+	for( i = 0; i < MAX_GENTITIES; i++ )
+	{
+		savegame.ReadInt( slotGen[ i ] );
+	}
 
 	savegame.ReadInt( num );
 	if( num )
@@ -1826,6 +1857,20 @@ void idGameLocal::MapShutdown()
 	FlushAIProfileLog();
 	ClearAIStats();
 	//puncho end
+
+	// K14a: a log for phase 12, the client's own spawns in play per class and index range
+	if( clientSpawnCensus.Num() > 0 )
+	{
+		Printf( "client spawn census of %s, class: map slots (below %d), replicated, non-replicated\n", mapFileName.c_str(), mapSpawnCount );
+		for( int i = 0; i < clientSpawnCensus.Num(); i += 3 )
+		{
+			if( clientSpawnCensus[ i ] + clientSpawnCensus[ i + 1 ] + clientSpawnCensus[ i + 2 ] > 0 )
+			{
+				Printf( "  %-32s %6d %6d %6d\n", idClass::GetType( i / 3 )->classname, clientSpawnCensus[ i ], clientSpawnCensus[ i + 1 ], clientSpawnCensus[ i + 2 ] );
+			}
+		}
+		clientSpawnCensus.Clear();
+	}
 
 	if( gameRenderWorld )
 	{
@@ -4214,9 +4259,14 @@ bool idGameLocal::CheatsOk( bool requirePlayer )
 	return false;
 }
 
+idCVar g_slotGenFastForward( "g_slotGenFastForward", "-1", CVAR_GAME | CVAR_INTEGER | CVAR_CHEAT, "the wrap test (P1-A2): the next spawn into this entity slot takes the last generation, so the one after it wraps; resets to -1" );
+idCVar g_clientSpawnCensus( "g_clientSpawnCensus", "0", CVAR_GAME | CVAR_BOOL | CVAR_NOCHEAT, "on a client, counts its own spawns in play by class and index range (map, replicated, non-replicated) and prints them at map shutdown" );
+
 /*
 ===================
 idGameLocal::RegisterEntity
+
+forceSpawnId >= 0 forces the generation, as does a client's one-shot from a snapshot (K10).
 ===================
 */
 void idGameLocal::RegisterEntity( idEntity* ent, int forceSpawnId, const idDict& spawnArgsToCopy )
@@ -4224,16 +4274,6 @@ void idGameLocal::RegisterEntity( idEntity* ent, int forceSpawnId, const idDict&
 	int spawn_entnum;
 
 	ent->fl.skipReplication = spawnArgsToCopy.GetBool( "net_skip_replication", false );
-
-	// the generation part of a spawn id has 32 - GENTITYNUM_BITS bits (18 since the index grew
-	// to 14): instead of a fatal error after that many spawns on one map, the generation wraps
-	// like any generational handle; a stale idEntityPtr would have to survive a whole cycle of
-	// spawns to alias. Zero stays the null spawn id.
-	if( spawnCount >= ( 1 << ( 32 - GENTITYNUM_BITS ) ) )
-	{
-		Warning( "idGameLocal::RegisterEntity: spawn count wrapped after %i spawns", spawnCount );
-		spawnCount = 1;
-	}
 
 	if( !spawnArgsToCopy.GetInt( "spawn_entnum", "0", spawn_entnum ) )
 	{
@@ -4254,8 +4294,45 @@ void idGameLocal::RegisterEntity( idEntity* ent, int forceSpawnId, const idDict&
 		firstFreeEntityIndex[ freeListType ] = freeIndex;
 	}
 
+	// K9: each slot counts its own generations, so a stale idEntityPtr aliases only after
+	// MAX_SPAWN_GENERATION reuses of its one slot. K10: a client takes the host's generation for the slot
+	// a snapshot names; the children that entity spawns advance their own slots.
+	int gen;
+	if( forceSpawnId >= 0 )
+	{
+		gen = forceSpawnId;
+	}
+	else if( spawn_entnum == forcedGenEntityNum )
+	{
+		gen = forcedGen;
+		forcedGenEntityNum = -1;
+	}
+	else
+	{
+		if( spawn_entnum == g_slotGenFastForward.GetInteger() )
+		{
+			slotGen[ spawn_entnum ] = MAX_SPAWN_GENERATION - 1;
+			g_slotGenFastForward.SetInteger( -1 );
+		}
+		if( slotGen[ spawn_entnum ] >= MAX_SPAWN_GENERATION )
+		{
+			// K14a: a log for phase 12; any of these says the generation should grow
+			Warning( "idGameLocal::RegisterEntity: the generation of entity slot %d wrapped past %d", spawn_entnum, MAX_SPAWN_GENERATION );
+		}
+		gen = slotGen[ spawn_entnum ] % MAX_SPAWN_GENERATION + 1;
+
+		// K14a: the client's own spawns in play (fx, debris) take free slots, the replicated range included
+		if( g_clientSpawnCensus.GetBool() && common->IsClient() && gamestate == GAMESTATE_ACTIVE )
+		{
+			const int range = ( spawn_entnum < mapSpawnCount ) ? 0 : ( spawn_entnum < ENTITYNUM_FIRST_NON_REPLICATED ) ? 1 : 2;
+			clientSpawnCensus.AssureSize( idClass::GetNumTypes() * 3, 0 );
+			clientSpawnCensus[ ent->GetType()->typeNum * 3 + range ]++;
+		}
+	}
+	slotGen[ spawn_entnum ] = gen;
+
 	entities[ spawn_entnum ] = ent;
-	spawnIds[ spawn_entnum ] = ( forceSpawnId >= 0 ) ? forceSpawnId : spawnCount++;
+	spawnIds[ spawn_entnum ] = gen;
 	ent->entityNumber = spawn_entnum;
 	ent->spawnNode.AddToEnd( spawnedEntities );
 
@@ -4263,9 +4340,12 @@ void idGameLocal::RegisterEntity( idEntity* ent, int forceSpawnId, const idDict&
 	idDict copiedArgs = spawnArgsToCopy;
 	ent->spawnArgs.TransferKeyValues( copiedArgs );
 
-	if( spawn_entnum >= num_entities )
+	// K14: the world and ENTITYNUM_NONE never raise it, or the world alone would stretch every
+	// [0, num_entities) walk to MAX_GENTITIES; nor does multiplayer's non-replicated range. Single player
+	// fills list 0 up to ENTITYNUM_MAX_NORMAL, so its slots up there still count.
+	if( spawn_entnum < ( common->IsMultiplayer() ? ENTITYNUM_FIRST_NON_REPLICATED : ENTITYNUM_MAX_NORMAL ) )
 	{
-		num_entities++;
+		num_entities = Max( num_entities, spawn_entnum + 1 );
 	}
 }
 
@@ -4526,7 +4606,9 @@ bool idGameLocal::InhibitEntitySpawn( idDict& spawnArgs )
 		}
 	}
 
-	if( g_skill.GetInteger() == 3 )
+	// K15: multiplayer sets g_skill 1 before the map loads, but a console change before a restart would
+	// make the peers' map indices differ
+	if( !common->IsMultiplayer() && g_skill.GetInteger() == 3 )
 	{
 		const char* name = spawnArgs.GetString( "classname" );
 		// _D3XP :: remove moveable medkit packs also

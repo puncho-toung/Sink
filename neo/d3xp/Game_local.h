@@ -73,7 +73,7 @@ class EnvironmentProbe; // RB
 const int MAX_CLIENTS			= MAX_PLAYERS;
 const int MAX_CLIENTS_IN_PVS	= MAX_CLIENTS >> 3;
 // 14 bits since 2026-10-23: 16384 entity slots. The width is baked into spawn ids (the other
-// 18 bits are the generation, which wraps in RegisterEntity), idEntityPtr, saves (gated by
+// 18 bits carry the slot's generation, MAX_SPAWN_GENERATION below), idEntityPtr, saves (gated by
 // BUILD_NUMBER_SAVE_VERSION_ENTITY_BITS_14), snapshots and bind packing; the snapshot layer's
 // MAX_OBJ_PARMS (sys/SnapshotProcessor.h) is sized to match, and the query lists of this many
 // entries live in the scratch arena (com_gameScratchKB), not on the stack. Client and server must
@@ -84,6 +84,11 @@ const int ENTITYNUM_NONE		= MAX_GENTITIES - 1;
 const int ENTITYNUM_WORLD		= MAX_GENTITIES - 2;
 const int ENTITYNUM_MAX_NORMAL	= MAX_GENTITIES - 2;
 const int ENTITYNUM_FIRST_NON_REPLICATED	= ENTITYNUM_MAX_NORMAL - 256;
+// P1-A2 (K9): each slot counts its own spawn-id generations, 1 to this and around again; 0 is the null
+// spawn id. The wire carries 32 - GENTITYNUM_BITS bits of it, but idEntityPtr packs generation <<
+// GENTITYNUM_BITS into a signed int, where 1 << ( 31 - GENTITYNUM_BITS ) would take the sign bit and
+// never resolve: 2^17 - 1 at 14 index bits.
+const int MAX_SPAWN_GENERATION	= ( 1 << ( 31 - GENTITYNUM_BITS ) ) - 1;
 
 // Admer: brush origin offsets for better TrenchBroom support
 constexpr const char* BRUSH_ORIGIN_KEY = "__brushOrigin";
@@ -637,6 +642,10 @@ public:
 	idEntity* 				SpawnEntityType( const idTypeInfo& classdef, const idDict* args = NULL, bool bIsClientReadSnapshot = false );
 	bool					SpawnEntityDef( const idDict& args, idEntity** ent = NULL, bool setDefaults = true );
 	int						GetSpawnId( const idEntity* ent ) const;
+	int						GetMapSpawnCount() const
+	{
+		return mapSpawnCount;
+	}
 
 	const idDeclEntityDef* 	FindEntityDef( const char* name, bool makeDefault = true ) const;
 	const idDict* 			FindEntityDefDict( const char* name, bool makeDefault = true ) const;
@@ -817,14 +826,15 @@ public:
 	const char* 			GetMPPlayerDefName() const;
 
 private:
-	const static int		INITIAL_SPAWN_COUNT = 1;
-
 	idStr					mapFileName;			// name of the map, empty string if no map loaded
 	idMapFile* 				mapFile;				// will be NULL during the game unless in-game editing is used
 	bool					mapCycleLoaded;
 
-	int						spawnCount;
-	int						mapSpawnCount;			// it's handy to know which entities are part of the map
+	int						slotGen[MAX_GENTITIES];	// K9: the last generation each slot gave out; spawnIds[n] is the live entity's, or -1
+	int						forcedGenEntityNum;		// K10: a client's one-shot, the next registration of this slot takes forcedGen; -1 for none
+	int						forcedGen;
+	int						mapSpawnCount;			// K11: one past the highest slot the map's entities took below ENTITYNUM_FIRST_NON_REPLICATED
+	idList<int>				clientSpawnCensus;		// K14a: a client's own spawns in play, three index ranges per type number (g_clientSpawnCensus)
 
 	idLocationEntity** 		locationEntities;		// for location names, etc
 
@@ -890,8 +900,8 @@ private:
 	bool					InhibitEntitySpawn( idDict& spawnArgs );
 	// spawn entities from the map file
 	void					SpawnMapEntities();
-	// commons used by init, shutdown, and restart
-	void					MapPopulate();
+	// commons used by init, shutdown, and restart; a restart passes the generations its slots had (K11)
+	void					MapPopulate( const int* slotGenBeforeRestart );
 	void					MapClear( bool clearClients );
 
 	// RB: spawn environment probes if there aren't any by default

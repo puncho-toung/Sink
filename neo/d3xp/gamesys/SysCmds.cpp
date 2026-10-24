@@ -102,6 +102,39 @@ void Cmd_EntityList_f( const idCmdArgs& args )
 
 /*
 ===================
+Cmd_ListSpawnIds_f
+
+listSpawnIds [first] [last]: the spawn-id generation of every live entity in [first, last), by default
+the map's range [MAX_CLIENTS, mapSpawnCount), then a digest of the (index, generation) pairs, so two
+peers compare in one line (P1-A2's loopback gate).
+===================
+*/
+static void Cmd_ListSpawnIds_f( const idCmdArgs& args )
+{
+	const int mapSpawnCount = gameLocal.GetMapSpawnCount();
+	const int first = ( args.Argc() > 1 ) ? idMath::ClampInt( 0, MAX_GENTITIES, atoi( args.Argv( 1 ) ) ) : MAX_CLIENTS;
+	const int last = ( args.Argc() > 2 ) ? idMath::ClampInt( first, MAX_GENTITIES, atoi( args.Argv( 2 ) ) ) : Max( first, mapSpawnCount );
+
+	unsigned int digest = 2166136261u;	// FNV-1a over the pairs
+	int count = 0;
+	for( int i = first; i < last; i++ )
+	{
+		const idEntity* ent = gameLocal.entities[ i ];
+		if( ent == NULL )
+		{
+			continue;
+		}
+		const int gen = gameLocal.spawnIds[ i ];
+		gameLocal.Printf( "%5d %6d %-24s %s\n", i, gen, ent->GetClassname(), ent->name.c_str() );
+		digest = ( digest ^ ( unsigned int )i ) * 16777619u;
+		digest = ( digest ^ ( unsigned int )gen ) * 16777619u;
+		count++;
+	}
+	gameLocal.Printf( "listSpawnIds [%d, %d): %d entities, mapSpawnCount %d, digest %08x\n", first, last, count, mapSpawnCount, digest );
+}
+
+/*
+===================
 Cmd_ActiveEntityList_f
 ===================
 */
@@ -1394,7 +1427,6 @@ void Cmd_PopLight_f( const idCmdArgs& args )
 	idMapEntity* mapEnt;
 	idMapFile*	mapFile = gameLocal.GetLevelMap();
 	idLight*		lastLight;
-	int			last;
 
 	if( !gameLocal.CheatsOk() )
 	{
@@ -1403,18 +1435,13 @@ void Cmd_PopLight_f( const idCmdArgs& args )
 
 	bool removeFromMap = ( args.Argc() > 1 );
 
+	// K12: generations count per slot and say nothing about age; spawnedEntities is in spawn order
+	// (RegisterEntity appends, a save keeps the order), so its last light is the newest
 	lastLight = NULL;
-	last = -1;
 	for( ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
 	{
-		if( !ent->IsType( idLight::Type ) )
+		if( ent->IsType( idLight::Type ) )
 		{
-			continue;
-		}
-
-		if( gameLocal.spawnIds[ ent->entityNumber ] > last )
-		{
-			last = gameLocal.spawnIds[ ent->entityNumber ];
 			lastLight = static_cast<idLight*>( ent );
 		}
 	}
@@ -2814,6 +2841,97 @@ static void Cmd_TestSnapTraceCompare_f( const idCmdArgs& args )
 
 /*
 ==================
+Cmd_TestSpawnChurn_f
+
+testSpawnChurn [spawns] [alive]: P1-A2's churn gate. Spawns and deletes idTarget, `alive` of them
+live at once, so the freed slots go round instead of one slot coming straight back. After every spawn
+each live idEntityPtr must resolve to its entity, and the pointer to the entity just deleted must
+resolve to nothing, the new occupant of its slot included. With g_slotGenFastForward on one of the
+slots it uses, the same checks cover generation MAX_SPAWN_GENERATION and the wrap.
+==================
+*/
+static void Cmd_TestSpawnChurn_f( const idCmdArgs& args )
+{
+	if( !gameLocal.CheatsOk( false ) )
+	{
+		return;
+	}
+	if( common->IsMultiplayer() )
+	{
+		gameLocal.Printf( "testSpawnChurn: single player only\n" );
+		return;
+	}
+
+	const int spawns = ( args.Argc() > 1 ) ? atoi( args.Argv( 1 ) ) : 300000;
+	const int alive = idMath::ClampInt( 1, 4096, ( args.Argc() > 2 ) ? atoi( args.Argv( 2 ) ) : 256 );
+
+	idList< idEntity* > live;
+	idList< idEntityPtr< idEntity > > livePtrs;
+	live.AssureSize( alive, NULL );
+	livePtrs.SetNum( alive );
+
+	idDict dict;
+	dict.Set( "classname", "testSpawnChurn" );	// no such entityDef: an idTarget is an idEntity with nothing added
+
+	int liveMisses = 0;
+	int staleHits = 0;
+	int wraps = 0;
+	int maxGen = 0;
+	int lowSlot = MAX_GENTITIES;
+	int highSlot = -1;
+	const int startMs = Sys_Milliseconds();
+	for( int i = 0; i < spawns; i++ )
+	{
+		const int k = i % alive;
+		idEntityPtr< idEntity > stale;
+		int staleSlot = -1;
+		int staleGen = 0;
+		if( live[ k ] != NULL )
+		{
+			stale = livePtrs[ k ];
+			staleSlot = live[ k ]->entityNumber;
+			staleGen = gameLocal.spawnIds[ staleSlot ];
+			delete live[ k ];
+		}
+
+		idEntity* ent = gameLocal.SpawnEntityType( idTarget::Type, &dict );
+		live[ k ] = ent;
+		livePtrs[ k ] = ent;
+
+		const int slot = ent->entityNumber;
+		const int gen = gameLocal.spawnIds[ slot ];
+		if( slot == staleSlot && gen <= staleGen )
+		{
+			wraps++;
+		}
+		maxGen = Max( maxGen, gen );
+		lowSlot = Min( lowSlot, slot );
+		highSlot = Max( highSlot, slot );
+
+		if( stale.GetEntity() != NULL )
+		{
+			staleHits++;
+		}
+		for( int j = 0; j < alive; j++ )
+		{
+			if( live[ j ] != NULL && livePtrs[ j ].GetEntity() != live[ j ] )
+			{
+				liveMisses++;
+			}
+		}
+	}
+
+	for( int j = 0; j < alive; j++ )
+	{
+		delete live[ j ];
+	}
+
+	gameLocal.Printf( "testSpawnChurn: %d spawns, %d alive, slots %d-%d, highest generation %d, %d wraps seen, %d live pointers missed, %d stale pointers resolved, %d ms\n",
+					  spawns, alive, lowSlot, highSlot, maxGen, wraps, liveMisses, staleHits, Sys_Milliseconds() - startMs );
+}
+
+/*
+==================
 Cmd_RecordViewNotes_f
 ==================
 */
@@ -3269,6 +3387,7 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "listActiveEntities",	Cmd_ActiveEntityList_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"lists active game entities" );
 	cmdSystem->AddCommand( "listMonsters",			idAI::List_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"lists monsters" );
 	cmdSystem->AddCommand( "listSpawnArgs",			Cmd_ListSpawnArgs_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"list the spawn args of an entity", idGameLocal::ArgCompletion_EntityName );
+	cmdSystem->AddCommand( "listSpawnIds",			Cmd_ListSpawnIds_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"lists the spawn-id generations of the map's entities, with a digest" );
 	cmdSystem->AddCommand( "say",					Cmd_Say_f,					CMD_FL_GAME,				"text chat" );
 	cmdSystem->AddCommand( "sayTeam",				Cmd_SayTeam_f,				CMD_FL_GAME,				"team text chat" );
 	cmdSystem->AddCommand( "addChatLine",			Cmd_AddChatLine_f,			CMD_FL_GAME,				"internal use - core to game chat lines" );
@@ -3312,6 +3431,7 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "testSaveTraceCompare",	Cmd_TestSaveTraceCompare_f,	CMD_FL_GAME | CMD_FL_CHEAT,	"testSaveTraceCompare <file>: compares the current save trace with one an earlier build wrote" );
 	cmdSystem->AddCommand( "testSnapTraceCompare",	Cmd_TestSnapTraceCompare_f,	CMD_FL_GAME,				"testSnapTraceCompare <host file> <client file>: matches a client's net_snapTrace reads with the host's writes" );
 	//puncho end
+	cmdSystem->AddCommand( "testSpawnChurn",		Cmd_TestSpawnChurn_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"spawns and deletes entities to test the per-slot spawn-id generation" );
 	cmdSystem->AddCommand( "testModel",				idTestModel::TestModel_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"tests a model", idTestModel::ArgCompletion_TestModel );
 	cmdSystem->AddCommand( "testSkin",				idTestModel::TestSkin_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"tests a skin on an existing testModel", idCmdSystem::ArgCompletion_Decl<DECL_SKIN> );
 	cmdSystem->AddCommand( "testShaderParm",		idTestModel::TestShaderParm_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"sets a shaderParm on an existing testModel" );
