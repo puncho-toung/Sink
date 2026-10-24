@@ -83,6 +83,7 @@ idLobby::idLobby()
 
 	partyToken				= 0;		// will be initialized later
 	loaded					= false;
+	localContentDigestsValid	= false;	//puncho - version rule (MP-A0)
 	respondToArbitrate		= false;
 	waitForPartyOk			= false;
 	startLoadingFromHost	= false;
@@ -330,6 +331,7 @@ void idLobby::Shutdown( bool retainMigrationInfo, bool skipGoodbye )
 
 		partyToken				= 0;		// Reset our party token so we recompute
 		loaded					= false;
+		localContentDigestsValid	= false;	//puncho - version rule (MP-A0)
 		respondToArbitrate		= false;
 		waitForPartyOk			= false;
 		startLoadingFromHost	= false;
@@ -510,11 +512,28 @@ void idLobby::HandlePacket( lobbyAddress_t& remoteAddress, idBitMsg fragMsg, idP
 		else if( userData == OOB_GOODBYE || userData == OOB_GOODBYE_W_PARTY || userData == OOB_GOODBYE_FULL || userData == OOB_GOODBYE_REFUSED )	//puncho - OOB_GOODBYE_REFUSED: version rule (MP-A0)
 		{
 			//puncho start - version rule (MP-A0): our host refused us; say why before the goodbye ends the session
-			// (idSessionLocal::GoodbyeFromHost). Only the first copy finds a connected host, the redundant ones do not
-			if( userData == OOB_GOODBYE_REFUSED && !IsHost() && peerNum >= 0 && peerNum == host && peers[peerNum].GetConnectionState() != CONNECTION_FREE )
+			// (idSessionLocal::GoodbyeFromHost). A connectionless packet finds its peer by IP alone, so anyone on the
+			// host's machine could send one: it counts only from our host and with the session id of our connection to
+			// it (idLobby::RefusePeer). Anything else, a redundant copy after the first included, says nothing about
+			// this connection and is dropped like a goodbye from an unknown peer, with no text shown and no disconnect
+			if( userData == OOB_GOODBYE_REFUSED )
 			{
+				const idPacketProcessor::sessionId_t refusedSessionID = msg.ReadUShort();
+				if( IsHost() || peerNum < 0 || peerNum != host || refusedSessionID != peers[peerNum].sessionID )
+				{
+					NET_VERBOSE_PRINT( "NET: Refusal from %s that is not for our session %s, ignored\n", remoteAddress.ToString(), GetLobbyName() );
+					return;
+				}
+
 				char reason[ 512 ];
 				msg.ReadString( reason, sizeof( reason ) );
+				for( int i = 0; reason[i] != '\0'; i++ )
+				{
+					if( reason[i] < ' ' || reason[i] > '~' )
+					{
+						reason[i] = '.';		// printable ASCII only: the dialog reads its text as UTF-8
+					}
+				}
 				idLib::Printf( "NET: Refused by host %s: %s\n", remoteAddress.ToString(), reason );
 
 				char text[ 256 ];	// the dialog's override message is an idStrStatic< 256 >
@@ -1261,7 +1280,7 @@ void idLobby::DisconnectAllPeers()
 idLobby::SendGoodbye
 ========================
 */
-void idLobby::SendGoodbye( const lobbyAddress_t& remoteAddress, bool wasFull, const char* refusedReason )
+void idLobby::SendGoodbye( const lobbyAddress_t& remoteAddress, bool wasFull, const idBitMsg* refusal )
 {
 
 	if( net_skipGoodbye.GetBool() )
@@ -1275,13 +1294,10 @@ void idLobby::SendGoodbye( const lobbyAddress_t& remoteAddress, bool wasFull, co
 
 	int msgType = OOB_GOODBYE;
 
-	//puncho start - version rule (MP-A0): a refusal carries its reason to the peer, in every redundant copy
-	byte buffer[ 512 ];
-	idBitMsg msg( buffer, sizeof( buffer ) );
-	if( refusedReason != NULL )
+	//puncho start - version rule (MP-A0): a refusal (idLobby::RefusePeer) goes out in every redundant copy
+	if( refusal != NULL )
 	{
 		msgType = OOB_GOODBYE_REFUSED;
-		msg.WriteString( refusedReason, sizeof( buffer ) );
 	}
 	//puncho end
 	else if( wasFull )
@@ -1295,7 +1311,8 @@ void idLobby::SendGoodbye( const lobbyAddress_t& remoteAddress, bool wasFull, co
 
 	for( int i = 0; i < NUM_REDUNDANT_GOODBYES; i++ )
 	{
-		SendConnectionLess( remoteAddress, msgType, msg.GetReadData(), msg.GetSize() );	//puncho - with the refusal's reason, empty otherwise
+		//puncho - a refusal's payload, empty otherwise
+		SendConnectionLess( remoteAddress, msgType, ( refusal != NULL ) ? refusal->GetReadData() : NULL, ( refusal != NULL ) ? refusal->GetSize() : 0 );
 	}
 }
 
@@ -1811,13 +1828,23 @@ bool idLobby::CheckVersion( idBitMsg& msg, lobbyAddress_t peerAddress )
 idLobby::VerifyPeerContent
 
 CheckVersion refuses a different build at connect; this refuses different content once both ends have loaded the
-map. Host only: compares a loaded peer's digests with the host's own and drops the peer on any difference.
+map. Host only, once loaded: compares a loaded peer's digests with the host's own and drops the peer on any difference.
+The host's digests walk five decl lists and hash the script, so they are computed once per load, on the first peer that
+needs them (single player never does), and kept until the next load starts or the match ends.
 ========================
 */
-void idLobby::VerifyPeerContent( int p, const unsigned int localDigests[ CONTENT_DIGEST_COUNT ] )
+void idLobby::VerifyPeerContent( int p )
 {
 	static const char* const digestNames[] = { "classes", "entityDefs", "materials", "skins", "sounds", "fx", "script", "mapGeometry" };
 	compile_time_assert( sizeof( digestNames ) / sizeof( digestNames[0] ) == CONTENT_DIGEST_COUNT );
+
+	assert( IsHost() && loaded );
+	if( !localContentDigestsValid )
+	{
+		game->GetContentDigests( localContentDigests );
+		localContentDigestsValid = true;
+	}
+	const unsigned int* localDigests = localContentDigests;
 
 	peer_t& peer = peers[p];
 
@@ -1858,7 +1885,13 @@ void idLobby::RefusePeer( int p, const char* reason )
 	peer_t& peer = peers[p];
 
 	idLib::Printf( "NET: Refusing peer %i (%s), %s\n", p, peer.address.ToString(), reason );
-	SendGoodbye( peer.address, false, reason );
+
+	// the peer honours a refusal only with the session id of its connection to us (idLobby::HandlePacket)
+	byte buffer[ 512 ];
+	idBitMsg msg( buffer, sizeof( buffer ) );
+	msg.WriteUShort( peer.sessionID );
+	msg.WriteString( reason, sizeof( buffer ) - 2 );
+	SendGoodbye( peer.address, false, &msg );
 	SetPeerConnectionState( p, CONNECTION_FREE, true );
 }
 //puncho end
@@ -2964,8 +2997,28 @@ void idLobby::HandleReliableMsg( int p, idBitMsg& msg, const lobbyAddress_t* rem
 		// This message is sent from the peers to state they are done loading the map
 		VERIFY_CONNECTED_PEER( p, actingGameStateLobbyType, RELIABLE_LOADING_DONE );
 
-		//puncho start - version rule (MP-A0, MD13): the message is the peer's content digests. Any other size is a
-		// different build (an older one sends nothing): refused without reading past the end
+		//puncho start - version rule (MP-A0, MD13): only a host takes it, only for the current load, and once. A
+		// message that arrives outside a load or a match is left over from an ended one (ENDMATCH can overtake it), and
+		// a second one from a loaded peer would only repeat the comparison. idSessionLocal::StartLoading clears the
+		// peers' loaded flags, so every load takes one fresh message per peer
+		if( !IsHost() )
+		{
+			NET_VERBOSE_PRINT( "NET: RELIABLE_LOADING_DONE from %s, but we are not the host\n", peer.address.ToString() );
+			return;
+		}
+		if( sessionCB->GetState() != idSession::LOADING && sessionCB->GetState() != idSession::INGAME )
+		{
+			NET_VERBOSE_PRINT( "NET: RELIABLE_LOADING_DONE from %s outside a load or a match, ignored\n", peer.address.ToString() );
+			return;
+		}
+		if( peer.loaded )
+		{
+			NET_VERBOSE_PRINT( "NET: RELIABLE_LOADING_DONE from %s, which has already loaded, ignored\n", peer.address.ToString() );
+			return;
+		}
+
+		// The message is the peer's content digests. Any other size is a different build (an older one sends
+		// nothing): refused without reading past the end
 		if( msg.GetRemainingData() != ( int )sizeof( peer.contentDigests ) )
 		{
 			char reason[ 128 ];
@@ -2982,9 +3035,7 @@ void idLobby::HandleReliableMsg( int p, idBitMsg& msg, const lobbyAddress_t* rem
 		// a host still loading has no digests of its own yet; idSessionLocal::LoadingFinished checks this peer then
 		if( loaded )
 		{
-			unsigned int localDigests[ CONTENT_DIGEST_COUNT ];
-			game->GetContentDigests( localDigests );
-			VerifyPeerContent( p, localDigests );
+			VerifyPeerContent( p );
 		}
 		//puncho end
 	}

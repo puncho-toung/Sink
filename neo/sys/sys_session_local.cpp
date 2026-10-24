@@ -412,6 +412,11 @@ void idSessionLocal::StartLoading()
 
 		for( int p = 0; p < GetActingGameStateLobby().peers.Num(); p++ )
 		{
+			//puncho start - version rule (MP-A0): this load takes one fresh RELIABLE_LOADING_DONE per peer, whatever an
+			// ended match left behind (idLobby::HandleReliableMsg)
+			GetActingGameStateLobby().peers[p].loaded = false;
+			memset( GetActingGameStateLobby().peers[p].contentDigests, 0, sizeof( GetActingGameStateLobby().peers[p].contentDigests ) );
+			//puncho end
 			if( GetActingGameStateLobby().peers[p].IsConnected() )
 			{
 				GetActingGameStateLobby().QueueReliableMessage( p, idLobby::RELIABLE_START_LOADING );
@@ -419,6 +424,8 @@ void idSessionLocal::StartLoading()
 			}
 		}
 	}
+
+	GetActingGameStateLobby().localContentDigestsValid = false;	//puncho - version rule (MP-A0): the host's digests belong to the map about to load
 
 	VerifySnapshotInitialState();
 
@@ -1896,6 +1903,7 @@ void idSessionLocal::EndMatchInternal( bool premature/*=false*/ )
 	GetActingGameStateLobby().snapDeltaAckQueue.Clear();
 
 	GetActingGameStateLobby().loaded	= false;
+	GetActingGameStateLobby().localContentDigestsValid = false;	//puncho - version rule (MP-A0)
 
 	gameLobbyWasCoalesced	= false;		// Reset this back to false.  We use this so the lobby code doesn't randomly choose a map when we coalesce
 	numFullSnapsReceived	= 0;
@@ -2491,21 +2499,14 @@ void idSessionLocal::LoadingFinished()
 	else
 	{
 		//puncho start - version rule (MP-A0, MD13): peers whose RELIABLE_LOADING_DONE arrived while this host was
-		// still loading were not checked in idLobby::HandleReliableMsg; check them now, against one set of digests,
-		// computed only when such a peer exists
+		// still loading were not checked in idLobby::HandleReliableMsg; check them now (the host's digests are computed
+		// on the first such peer and kept for this load)
 		idLobby& lobby = GetActingGameStateLobby();
-		unsigned int localDigests[ CONTENT_DIGEST_COUNT ];
-		bool haveDigests = false;
 		for( int p = 0; p < lobby.peers.Num(); p++ )
 		{
 			if( lobby.peers[p].IsConnected() && lobby.peers[p].loaded )
 			{
-				if( !haveDigests )
-				{
-					game->GetContentDigests( localDigests );
-					haveDigests = true;
-				}
-				lobby.VerifyPeerContent( p, localDigests );
+				lobby.VerifyPeerContent( p );
 			}
 		}
 		//puncho end
