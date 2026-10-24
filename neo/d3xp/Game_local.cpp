@@ -1582,6 +1582,7 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 
 	savegame.ReadInt( i );
 	random.SetSeed( i );
+	const int savedRandomSeed = i;	//puncho - stream-trace (P1-A1c): set again once every restore below has run
 
 	savegame.ReadObject( reinterpret_cast<idClass*&>( frameCommandThread ) );
 
@@ -1746,6 +1747,12 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 
 	// free up any unused animations
 	animationLib.FlushUnusedAnims();
+
+	//puncho start - stream-trace (P1-A1c): a load leaves the game RNG where the save had it. The restores above draw from
+	// it: idAF::Restore re-runs Load, whose animator->GetAnim (AF.cpp:966) picks a random variant (Anim_Blend.cpp:3825),
+	// and so does the walk IK's restore; without this, every load moved the seed and a loaded game drew differently
+	random.SetSeed( savedRandomSeed );
+	//puncho end
 
 	gamestate = GAMESTATE_ACTIVE;
 
