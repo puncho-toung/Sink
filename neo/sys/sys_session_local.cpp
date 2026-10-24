@@ -53,12 +53,13 @@ idCVar net_useGameStateLobby( "net_useGameStateLobby", "0", CVAR_BOOL, "" );
 
 idCVar net_maxLoadResourcesTimeInSeconds( "net_maxLoadResourcesTimeInSeconds", "0", CVAR_INTEGER, "How long, in seconds, clients have to load resources. Used for loose asset builds." );
 idCVar net_migrateHost( "net_migrateHost", "-1", CVAR_INTEGER, "Become host of session (0 = party, 1 = game) for testing purposes" );
-//puncho start - content check (P1-A3a, K17): the gate's stale RELIABLE_LOADING_DONE. A peer keeps a copy of the last one
+//puncho start - content check (P1-A3a, K17): a stale RELIABLE_LOADING_DONE on demand. A peer keeps a copy of the last one
 // it sent; with the cvar set it sends that copy again, carrying the previous load's id, as it starts the next load
-idCVar net_debugStaleLoadingDone( "net_debugStaleLoadingDone", "0", CVAR_BOOL | CVAR_NOCHEAT, "P1-A3a gate: a peer that starts a load first sends the host its RELIABLE_LOADING_DONE of the previous load again" );
-static byte		lastLoadingDone[ 4 + CONTENT_DIGESTS_WIRE_SIZE( MAX_MOD_LAYERS + 1 ) ];	// P1-A3b: the load id and every layer's rows
+idCVar net_debugStaleLoadingDone( "net_debugStaleLoadingDone", "0", CVAR_BOOL | CVAR_NOCHEAT, "a peer that starts a load first sends the host its RELIABLE_LOADING_DONE of the previous load again, to test that the host drops it" );
+static byte		lastLoadingDone[ 4 + CONTENT_DIGESTS_WIRE_SIZE( MAX_MOD_LAYERS + 1 ) ];	// the load id and every layer's rows
 static int		lastLoadingDoneSize = 0;
-compile_time_assert( sizeof( lastLoadingDone ) < 700 );	// P1-A3b (K38): RELIABLE_LOADING_DONE at MAX_MOD_LAYERS
+// the largest RELIABLE_LOADING_DONE, MAX_MOD_LAYERS mods' rows, still fits the buffer LoadingFinished writes it into
+compile_time_assert( sizeof( lastLoadingDone ) <= idPacketProcessor::MAX_PACKET_SIZE );
 //puncho end
 extern idCVar net_debugBaseStates;
 
@@ -2510,9 +2511,9 @@ void idSessionLocal::LoadingFinished()
 		byte buffer[ idPacketProcessor::MAX_PACKET_SIZE ];
 		idBitMsg msg( buffer, sizeof( buffer ) );
 		//puncho start - version rule (MP-A0, MD13): the host compares these with its own and refuses this peer on any difference.
-		// The load id leads (P1-A3a, K17): the host drops a message from another load instead of comparing it
+		// The load id leads: the host drops a message from another load instead of comparing it
 		msg.WriteLong( GetActingGameStateLobby().loadId );
-		// P1-A3b (K38): the global rows, the layer count, then a row per content layer, base first
+		// the global rows, the layer count, then a row per content layer, base first
 		contentDigests_t digests;
 		game->GetContentDigests( digests );
 		for( int i = 0; i < CONTENT_DIGEST_COUNT; i++ )
@@ -2529,9 +2530,10 @@ void idSessionLocal::LoadingFinished()
 		}
 		//puncho end
 		GetActingGameStateLobby().QueueReliableMessage( GetActingGameStateLobby().host, idLobby::RELIABLE_LOADING_DONE, msg.GetReadData(), msg.GetSize() );
-		//puncho - content check (P1-A3a): the copy net_debugStaleLoadingDone sends again
+		//puncho start - content check (P1-A3a): the copy net_debugStaleLoadingDone sends again
 		lastLoadingDoneSize = Min( msg.GetSize(), ( int )sizeof( lastLoadingDone ) );
 		memcpy( lastLoadingDone, msg.GetReadData(), lastLoadingDoneSize );
+		//puncho end
 	}
 	else
 	{
@@ -3605,11 +3607,11 @@ void idSessionLocal::ComputeNextGameCoalesceTime()
 	}
 }
 
-//puncho start - content check (P1-A3a): the gate's restart, the two steps the lobby menu takes. "end" takes the host and
-// its peers back to the game lobby (idSessionLocal::EndMatch), "start" begins the next match there, a new load
+//puncho start - content check (P1-A3a): a match restart on demand, the two steps the lobby menu takes. "end" takes the
+// host and its peers back to the game lobby (idSessionLocal::EndMatch), "start" begins the next match there, a new load
 // (idSessionLocal::StartLoading). A netmap session lacks MATCH_REQUIRE_PARTY_LOBBY, which a private match's flags have,
 // so its EndMatch sends everyone to the title: "end" sets the flag and sends the peers the parms ahead of the ENDMATCH
-CONSOLE_COMMAND( testMatch, "P1-A3a gate: testMatch end | start, on the host", 0 )
+CONSOLE_COMMAND( testMatch, "testMatch end | start, on the host: ends a netmap match into the game lobby with its peers, or starts the next match there", 0 )
 {
 	if( idStr::Icmp( args.Argv( 1 ), "end" ) == 0 )
 	{

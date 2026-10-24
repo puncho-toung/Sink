@@ -203,21 +203,21 @@ struct aiHudStats_t
 //puncho start - version rule (MP-A0, MD13): what a joiner sends in RELIABLE_LOADING_DONE and the host compares
 // (idLobby::VerifyPeerContent). Each category covers a table the network code addresses by number, and is its own
 // CRC32 so a refusal names what differs. The message is the load id, the CONTENT_DIGEST_COUNT global longs, the
-// layer count as a byte, then LAYER_DIGEST_COUNT longs per content layer, base first (P1-A3a, K17; P1-A3b, K38):
-// changing either list changes the wire format and bumps BUILD_NUMBER.
+// layer count as a byte, then LAYER_DIGEST_COUNT longs per content layer, base first: changing either list changes the
+// wire format and bumps BUILD_NUMBER.
 enum contentDigest_t
 {
 	CONTENT_DIGEST_CLASSES,			// idClass type names in typeNum order: snapshot entities cross as a typeNum
 	CONTENT_DIGEST_MAP_GEOMETRY,	// idMapFile::GetGeometryCRC, the value the .cm and .aas files are validated against
-	CONTENT_DIGEST_MAP_ENTITIES,	// idMapFile::GetEntitiesCRC: every map entity's key/values, _extra_ents.map merged (P1-A3a, K37)
+	CONTENT_DIGEST_MAP_ENTITIES,	// idMapFile::GetEntitiesCRC: every map entity's key/values, _extra_ents.map merged
 	CONTENT_DIGEST_SCRIPT_IMAGE,	// idProgram::CalculateChecksum: the compiled program, whatever compiled it (a console script included)
 	CONTENT_DIGEST_COUNT
 };
 
-// P1-A3b (K38): the rows of one content layer (idFileSystem::GetNumLayers), so a refusal names the layer too
+// the rows of one content layer (idFileSystem::GetNumLayers), so a refusal names the layer too
 enum layerDigest_t
 {
-	LAYER_DIGEST_ENTITYDEFS,		// the explicit decls whose winning file the layer serves: index, name and text CRC (K18, K45)
+	LAYER_DIGEST_ENTITYDEFS,		// the explicit decls whose winning file the layer serves: index, name and text CRC
 	LAYER_DIGEST_MATERIALS,
 	LAYER_DIGEST_SKINS,
 	LAYER_DIGEST_SOUNDS,
@@ -234,7 +234,7 @@ struct contentDigests_t
 	unsigned int	layers[ MAX_MOD_LAYERS + 1 ][ LAYER_DIGEST_COUNT ];
 };
 
-// the bytes after the load id for numLayers layers; at MAX_MOD_LAYERS + 1 layers the whole message stays under 700
+// the bytes after the load id for numLayers layers (sys_session_local.cpp asserts the largest fits a packet)
 #define CONTENT_DIGESTS_WIRE_SIZE( numLayers )	( CONTENT_DIGEST_COUNT * 4 + 1 + ( numLayers ) * LAYER_DIGEST_COUNT * 4 )
 //puncho end
 
@@ -316,9 +316,9 @@ public:
 	// Runs prediction on entities at the client.
 	virtual void				ClientRunFrame( idUserCmdMgr& cmdMgr, bool lastPredictFrame, gameReturn_t& ret ) = 0;
 
-	//puncho start - version rule (MP-A0): fills every contentDigest_t, and every layerDigest_t of each content layer
-	// (P1-A3b), for the loaded map. The session calls it once a map load has finished: on a joiner to send them, on the
-	// host to compare them
+	//puncho start - version rule (MP-A0): fills every contentDigest_t, and every layerDigest_t of each content layer, for
+	// the loaded map. The session calls it once a map load has finished: on a joiner to send them, on the host to compare
+	// them
 	virtual void				GetContentDigests( contentDigests_t& digests ) const = 0;
 	//puncho end
 

@@ -757,6 +757,7 @@ public:
 	int						ClientRemapDecl( declType_t type, int index );
 	//puncho start - content check (P1-A3a, K19): the implicit decl announce table, Game_network.cpp
 	void					ServerSendDeclRemap( int first, int last, const lobbyUserID_t* lobbyUserID );
+	void					ServerFlushDeclRemap();
 	void					ClientReadDeclRemap( const idBitMsg& msg );
 	//puncho end
 	void					SyncPlayersWithLobbyUsers( bool initial );
@@ -869,9 +870,9 @@ private:
 	int						numDeclRemap;			// the host: slots in use; a client: one past the highest slot announced
 	int						numDeclRemapSent;		// the host: slots already broadcast
 	int						declRemapBytes;			// the host: the table's size as ServerSendDeclRemap writes it
-	bool					declRemapDeferred;		// the host, inside ServerWriteSnapshot: new slots are broadcast at its end
+	bool					declRemapDeferred;		// the host, inside RunFrame or ServerWriteSnapshot: new slots are broadcast at its end
 	bool					declRemapWarned;		// the host: the table is full; a client: an index past the cap arrived
-	bool					declRemapHighWarned;	// the host: the table passed 75% of a cap this load (P1-A3b, K46)
+	bool					declRemapHighWarned;	// the host: the table passed 75% of a cap this load
 	idHashIndex				declRemapHash;			// the host: decl index -> slot, confirmed against the slot's type
 	//puncho end
 

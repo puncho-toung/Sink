@@ -452,6 +452,15 @@ public:
 	};
 
 	virtual void					Touch( const idDecl* decl ) = 0;
+
+	//puncho start - content check: which decls are implicit, read without allocating or parsing them. The network
+	// sends an explicit decl as its index and an implicit one through the remap table, so it asks this per decl it sends.
+	// One bit per decl of the type, set if the decl was implicit when first seen; numDecls receives how many decls the
+	// bits cover. An explicit decl never becomes implicit, so a clear bit is final; a set bit is confirmed by IsImplicit.
+	virtual const unsigned int*		GetImplicitDeclBits( declType_t type, int& numDecls ) = 0;
+	// how many decls of the type are explicit, and one past the highest explicit index
+	virtual void					GetExplicitDeclRange( declType_t type, int& numExplicit, int& explicitBound ) = 0;
+	//puncho end
 };
 
 extern idDeclManager* 		declManager;

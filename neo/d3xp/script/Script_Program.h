@@ -506,6 +506,14 @@ private:
 		unsigned int							crc;		// CRC32 of the text, '\r' dropped
 	};
 	idList<sourceFile_t, TAG_SCRIPT>			fileSources;
+	// an #include's layer and text CRC from RecordInclude, until GetFilenum meets the file (its name as the lexer gives it)
+	struct pendingInclude_t
+	{
+		idStr									name;
+		int										layer;
+		unsigned int							crc;
+	};
+	idList<pendingInclude_t, TAG_SCRIPT>		pendingIncludes;
 	//puncho end
 
 	int											numVariables;
@@ -552,6 +560,7 @@ public:
 	void										PrintCapacity() const;
 	//puncho end
 	void										GetLayerChecksums( unsigned int* crcs, int numLayers ) const;	//puncho - content check (P1-A3b, K38)
+	void										RecordInclude( const char* fileName, const char* text, int length );	//puncho - idCompiler's include callback
 	const function_t*							CompileFunction( const char* functionName, const char* text );
 	void										CompileFile( const char* filename );
 	void										BeginCompilation();

@@ -185,6 +185,11 @@ public:
 	static void		RemoveAllGlobalDefines();
 	// set the base folder to load files from
 	static void		SetBaseFolder( const char* path );
+	//puncho start - content check: called with each file an #include loads, its name as GetFileName will give it and its
+	// text, before any of its tokens are read; the script compiler checksums its sources from here
+	typedef void ( *includeCallback_t )( void* context, const char* fileName, const char* text, int length );
+	void			SetIncludeCallback( includeCallback_t callback, void* context );
+	//puncho end
 
 // RB: made protected to have custom #include behaviours for embedded resources
 protected:
@@ -202,6 +207,8 @@ protected:
 	indent_t* 		indentstack;				// stack with indents
 	int				skip;						// > 0 if skipping conditional code
 	const char*		marker_p;
+	includeCallback_t includeCallback;			//puncho - content check: SetIncludeCallback
+	void*			includeContext;				//puncho
 
 	static define_t* globaldefines;				// list with global defines added to every source loaded
 

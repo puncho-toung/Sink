@@ -2852,6 +2852,12 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 		return;
 	}
 
+	//puncho start - content check: the implicit decls this frame's events use first are announced in one batch at its
+	// end, not one reliable each: a frame of first uses would otherwise fill the 64-message reliable queue and drop peers.
+	// A client applies the batch before it decodes the queued events; PlayGlobalSound, which decodes on arrival, flushes
+	declRemapDeferred = true;
+	//puncho end
+
 	SyncPlayersWithLobbyUsers( false );
 	ServerSendNetworkSyncCvars();
 
@@ -3131,6 +3137,11 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 		EndTraceRecording();
 		g_recordTrace.SetBool( false );
 	}
+
+	//puncho start - content check: this frame's new announce slots, in one batch
+	declRemapDeferred = false;
+	ServerFlushDeclRemap();
+	//puncho end
 }
 
 //puncho start - ai-harness (plans/ai-harness/00-PLAN.md §2.5)
