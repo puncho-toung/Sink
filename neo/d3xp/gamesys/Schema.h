@@ -61,9 +61,9 @@ If you have questions concerning this license or the applicable additional terms
 			MOVEABLE_SCHEMA( SCHEMA_SAVE, ( *this ) )
 		}
 
-	SCHEMA_SAVE, SCHEMA_RESTORE, SCHEMA_WRITE and SCHEMA_READ, plus SCHEMA_INDEX inside the class, which numbers the
-	fields SF_<field> for the dirty mask (MD7). No generator, no build step, no registry walked at run time: the
-	precedent is CLASS_PROTOTYPE and the event tables (Class.h).
+	SCHEMA_SAVE, SCHEMA_RESTORE, SCHEMA_WRITE and SCHEMA_READ. No generator, no build step, no registry walked at run
+	time: the precedent is CLASS_PROTOTYPE and the event tables (Class.h). A list is a #define in the header of the
+	class it lists, inert until expanded, so only the .cpp files that expand one include this file.
 
 	K8: a field the schema cannot express is a HAND entry. It stays hand-written, at its position, in the member
 	functions Save<name> and Restore<name>, or Write<name>ToSnapshot and Read<name>FromSnapshot on the wire.
@@ -78,6 +78,7 @@ If you have questions concerning this license or the applicable additional terms
 #define SCHEMA_RESTORE( s, n, TYPE, CH, ENC, ARG, BUILD )	SCHEMA_S_##CH( if( ( BUILD ) == SCHEMA_STOCK || savefile->GetBuildNumber() >= ( BUILD ) ) { SCHEMA_RESTORE_##TYPE( savefile, s, n, ARG ) } )
 #define SCHEMA_WRITE( s, n, TYPE, CH, ENC, ARG, BUILD )		SCHEMA_W_##CH( SCHEMA_WRITE_##TYPE##_##ENC( msg, s, n, ARG ) )
 #define SCHEMA_READ( s, n, TYPE, CH, ENC, ARG, BUILD )		SCHEMA_W_##CH( SCHEMA_READ_##TYPE##_##ENC( msg, s, n, ARG ) )
+// numbers the fields SF_<field> in an enum inside the class; nothing expands it yet, MD7's dirty mask will
 #define SCHEMA_INDEX( s, n, TYPE, CH, ENC, ARG, BUILD )		SF_##n,
 
 // the channel gates

@@ -66,8 +66,6 @@ class idMoveable : public idEntity
 public:
 	CLASS_PROTOTYPE( idMoveable );
 
-	enum schemaField_t { MOVEABLE_SCHEMA( SCHEMA_INDEX, _ ) SF_NUM_FIELDS };	//puncho - schema (P1-A1a)
-
 	idMoveable();
 	~idMoveable();
 

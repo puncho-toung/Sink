@@ -30,6 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "../Game_local.h"
+#include "../gamesys/Schema.h"	//puncho - schema (P1-A1a): expands PLAYER_PSTATE_SCHEMA and PHYSICS_PLAYER_SCHEMA
 
 CLASS_DECLARATION( idPhysics_Actor, idPhysics_Player )
 END_CLASS

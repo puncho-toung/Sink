@@ -28,8 +28,6 @@ If you have questions concerning this license or the applicable additional terms
 #ifndef __ANIM_H__
 #define __ANIM_H__
 
-#include "../gamesys/Schema.h"	//puncho - schema (P1-A1a): the renderer and the decl manager include Anim.h alone
-
 //
 // animation channels
 // these can be changed by modmakers and licensees to be whatever they need.
@@ -513,8 +511,6 @@ class idAnimator
 public:
 	idAnimator();
 	~idAnimator();
-
-	enum schemaField_t { ANIMATOR_SCHEMA( SCHEMA_INDEX, _ ) SF_NUM_FIELDS };	//puncho - schema (P1-A1a)
 
 	size_t						Allocated() const;
 	size_t						Size() const;

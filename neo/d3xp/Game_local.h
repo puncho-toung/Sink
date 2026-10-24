@@ -102,7 +102,6 @@ void gameError( const char* fmt, ... );
 #include "gamesys/Class.h"
 #include "gamesys/SysCvar.h"
 #include "gamesys/SysCmds.h"
-#include "gamesys/Schema.h"		//puncho - schema (P1-A1a): the X-macro field lists
 #include "gamesys/SaveGame.h"
 
 #include "script/Script_Program.h"

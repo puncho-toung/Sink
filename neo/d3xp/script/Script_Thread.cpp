@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "../Game_local.h"
+#include "../gamesys/Schema.h"	//puncho - schema (P1-A1a): expands THREAD_SCHEMA
 
 const idEventDef EV_Thread_Execute( "<execute>", NULL );
 const idEventDef EV_Thread_SetCallback( "<script_setcallback>", NULL );

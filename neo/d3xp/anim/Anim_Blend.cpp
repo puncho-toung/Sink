@@ -35,6 +35,7 @@ If you have questions concerning this license or the applicable additional terms
 	idAnimManager				animationLib;
 #else
 	#include "../Game_local.h"
+	#include "../gamesys/Schema.h"	//puncho - schema (P1-A1a): expands ANIMATOR_SCHEMA and the AF pose element lists
 #endif
 
 static const char* channelNames[ ANIM_NumAnimChannels ] =

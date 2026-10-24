@@ -75,8 +75,6 @@ typedef enum
 
 typedef struct playerPState_s
 {
-	enum schemaField_t { PLAYER_PSTATE_SCHEMA( SCHEMA_INDEX, _ ) SF_NUM_FIELDS };	//puncho - schema (P1-A1a)
-
 	idVec3					origin;
 	idVec3					velocity;
 	idVec3					localOrigin;
@@ -128,8 +126,6 @@ class idPhysics_Player : public idPhysics_Actor
 
 public:
 	CLASS_PROTOTYPE( idPhysics_Player );
-
-	enum schemaField_t { PHYSICS_PLAYER_SCHEMA( SCHEMA_INDEX, _ ) SF_NUM_FIELDS };	//puncho - schema (P1-A1a)
 
 	idPhysics_Player();
 

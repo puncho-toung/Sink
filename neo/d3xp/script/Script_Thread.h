@@ -93,8 +93,6 @@ class idThread : public idClass
 private:
 	static idThread*				currentThread;
 
-	enum schemaField_t { THREAD_SCHEMA( SCHEMA_INDEX, _ ) SF_NUM_FIELDS };	//puncho - schema (P1-A1a)
-
 	idThread*					waitingForThread;
 	int							waitingFor;
 	int							waitingUntil;
