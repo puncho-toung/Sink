@@ -51,7 +51,11 @@ extern idCVar	g_debugMove;
 extern idCVar	g_debugDamage;
 extern idCVar	g_debugWeapon;
 extern idCVar	g_debugScript;
-extern idCVar	g_scriptCensus;
+extern idCVar	g_scriptCensus;	//puncho - map scripts on clients (P1-I2)
+//puncho start - identity (P1-A2)
+extern idCVar	g_slotGenFastForward;
+extern idCVar	g_clientSpawnCensus;
+//puncho end
 extern idCVar	g_debugMover;
 extern idCVar	g_debugTriggers;
 extern idCVar	g_debugCinematic;

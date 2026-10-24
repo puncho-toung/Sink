@@ -1196,7 +1196,7 @@ void idItemTeam::Event_TakeFlag( idPlayer* player )
 	if( scriptTaken )
 	{
 		idThread* thread = new idThread();
-		thread->CallFunction( scriptTaken, true );
+		thread->CallFunction( scriptTaken, true );	//puncho - map scripts on clients (P1-I2): clearStack, so the start passes idThread::GuardStart
 		thread->DelayedStart( 0 );
 	}
 
@@ -1289,7 +1289,7 @@ void idItemTeam::Event_DropFlag( bool death )
 	if( scriptDropped )
 	{
 		idThread* thread = new idThread();
-		thread->CallFunction( scriptDropped, true );
+		thread->CallFunction( scriptDropped, true );	//puncho - map scripts on clients (P1-I2): clearStack, so the start passes idThread::GuardStart
 		thread->DelayedStart( 0 );
 	}
 
@@ -1348,7 +1348,7 @@ void idItemTeam::Event_FlagReturn( idPlayer* player )
 	if( scriptReturned )
 	{
 		idThread* thread = new idThread();
-		thread->CallFunction( scriptReturned, true );
+		thread->CallFunction( scriptReturned, true );	//puncho - map scripts on clients (P1-I2): clearStack, so the start passes idThread::GuardStart
 		thread->DelayedStart( 0 );
 	}
 
@@ -1408,7 +1408,7 @@ void idItemTeam::Event_FlagCapture()
 	if( scriptCaptured )
 	{
 		idThread* thread = new idThread();
-		thread->CallFunction( scriptCaptured, true );
+		thread->CallFunction( scriptCaptured, true );	//puncho - map scripts on clients (P1-I2): clearStack, so the start passes idThread::GuardStart
 		thread->DelayedStart( 0 );
 	}
 

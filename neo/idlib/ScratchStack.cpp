@@ -129,8 +129,8 @@ idScratchStack::CheckClosed
 
 K28: every scope is closed. A leak is a bug to find, so it is never reset: the
 assert stops a debug build, and a release build, which compiles the assert out,
-pays one compare and warns once per map with the scope stack (phase 12's rule
-that a stopgap lands with its log).
+pays one compare and warns once per map with the scope stack, so a leak that
+only a release run hits still names its scope.
 ========================
 */
 void idScratchStack::CheckClosed( const char* where )

@@ -1604,8 +1604,10 @@ void idCommonLocal::Shutdown()
 	printf( "UnloadGameDLL();\n" );
 	UnloadGameDLL();
 
-	printf( "gameScratchStack.Shutdown();\n" );	//puncho - MP-A4
+	//puncho start - MP-A4
+	printf( "gameScratchStack.Shutdown();\n" );
 	gameScratchStack.Shutdown();
+	//puncho end
 
 	printf( "saveFile.Clear( true );\n" );
 	saveFile.Clear( true );

@@ -54,6 +54,7 @@ int idEventDef::numEventDefs = 0;
 static bool eventError = false;
 static char eventErrorMsg[ 128 ];
 
+//puncho start - map scripts on clients (P1-I2)
 // The events a client-side script thread may call (idThread::clientRestricted). Script binds events by name, and one
 // name can be defined in several files ("On" is a light, a speaker and an env probe), so the flag is kept by name in
 // this one list and every definition reads it in its constructor. Everything else is skipped on a restricted thread:
@@ -74,6 +75,7 @@ static const char* const clientSafeEvents[] =
 	"startSound", "startSoundShader", "stopSound",
 	"On", "Off",
 };
+//puncho end
 
 /*
 ================
@@ -100,6 +102,7 @@ idEventDef::idEventDef( const char* command, const char* formatspec, char return
 	this->formatspec = formatspec;
 	this->returnType = returnType;
 
+	//puncho start - map scripts on clients (P1-I2)
 	// the list is constant-initialized, so it is ready before any event definition is constructed
 	clientSafe = false;
 	for( i = 0; i < ( int )ARRAY_COUNT( clientSafeEvents ); i++ )
@@ -110,6 +113,7 @@ idEventDef::idEventDef( const char* command, const char* formatspec, char return
 			break;
 		}
 	}
+	//puncho end
 
 	numargs = strlen( formatspec );
 	assert( numargs <= D_EVENT_MAXARGS );
@@ -847,6 +851,7 @@ void idEvent::Init()
 
 	gameLocal.Printf( "...%i event definitions\n", idEventDef::NumEventCommands() );
 
+	//puncho start - map scripts on clients (P1-I2)
 	// a misspelled name in the client-safe list would silently leave its event skipped on clients
 	for( int i = 0; i < ( int )ARRAY_COUNT( clientSafeEvents ); i++ )
 	{
@@ -855,6 +860,7 @@ void idEvent::Init()
 			gameLocal.Warning( "client-safe event '%s' is not defined", clientSafeEvents[ i ] );
 		}
 	}
+	//puncho end
 
 	// the event system has started
 	initialized = true;

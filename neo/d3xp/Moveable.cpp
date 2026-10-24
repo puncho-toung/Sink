@@ -30,6 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "Game_local.h"
+#include "gamesys/Schema.h"	//puncho - schema (P1-A1a): expands MOVEABLE_SCHEMA
 
 /*
 ===============================================================================
@@ -214,8 +215,10 @@ idMoveable::Restore
 */
 void idMoveable::Restore( idRestoreGame* savefile )
 {
-	MOVEABLE_SCHEMA( SCHEMA_RESTORE, ( *this ) )	//puncho - schema (P1-A1a)
+	//puncho start - schema (P1-A1a)
+	MOVEABLE_SCHEMA( SCHEMA_RESTORE, ( *this ) )
 	RestorePhysics( &physicsObj );
+	//puncho end
 }
 
 //puncho start - schema (P1-A1a): the initial spline, hand-written at its place in the list (K8)

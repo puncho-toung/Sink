@@ -209,7 +209,7 @@ public:
 		{
 			loaded					= false;
 			inGame					= false;
-			memset( &contentDigests, 0, sizeof( contentDigests ) );
+			memset( &contentDigests, 0, sizeof( contentDigests ) );	//puncho - content check (P1-A3b): contentDigests_t is a struct
 			lastSnapTime			= 0;
 			snapHz					= 0.0f;
 			numResources			= 0;
@@ -290,7 +290,7 @@ public:
 		void ResetMatchData()
 		{
 			loaded					= false;
-			memset( &contentDigests, 0, sizeof( contentDigests ) );
+			memset( &contentDigests, 0, sizeof( contentDigests ) );	//puncho - content check (P1-A3b): contentDigests_t is a struct
 			inGame					= false;
 			numResources			= 0;
 			needToSubmitPendingSnap	= false;

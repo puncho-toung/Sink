@@ -1389,7 +1389,7 @@ void idTrigger_Touch::TouchEntities()
 		ActivateTargets( entity );
 
 		idThread* thread = new idThread();
-		thread->CallFunction( entity, scriptFunction, true );
+		thread->CallFunction( entity, scriptFunction, true );	//puncho - map scripts on clients (P1-I2): clearStack, so the start passes idThread::GuardStart
 		thread->DelayedStart( 0 );
 	}
 }

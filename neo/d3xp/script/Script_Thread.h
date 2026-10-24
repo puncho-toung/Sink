@@ -93,8 +93,6 @@ class idThread : public idClass
 private:
 	static idThread*				currentThread;
 
-	enum schemaField_t { THREAD_SCHEMA( SCHEMA_INDEX, _ ) SF_NUM_FIELDS };	//puncho - schema (P1-A1a)
-
 	idThread*					waitingForThread;
 	int							waitingFor;
 	int							waitingUntil;
@@ -109,7 +107,7 @@ private:
 	int							creationTime;
 
 	bool						manualControl;
-	bool						clientRestricted;	// a client-side function on a client: only client-safe events run
+	bool						clientRestricted;	//puncho - map scripts on clients (P1-I2): set for a client-side function on a client; only client-safe events run
 
 	static int					threadIndex;
 	static idList<idThread*, TAG_THREAD>	threadList;
@@ -118,7 +116,7 @@ private:
 
 	void						Init();
 	void						Pause();
-	bool						GuardStart( const function_t* func, bool inheritedRestriction );
+	bool						GuardStart( const function_t* func, bool inheritedRestriction );	//puncho - map scripts on clients (P1-I2)
 
 	void						Event_Execute();
 	void						Event_SetThreadName( const char* name );
@@ -256,7 +254,7 @@ public:
 
 	bool						IsDoneProcessing();
 	bool						IsDying();
-	bool						IsClientRestricted() const;
+	bool						IsClientRestricted() const;	//puncho - map scripts on clients (P1-I2)
 
 	void						End();
 	static void					KillThread( const char* name );
@@ -381,6 +379,7 @@ ID_INLINE bool idThread::IsDying()
 	return interpreter.threadDying;
 }
 
+//puncho start - map scripts on clients (P1-I2)
 /*
 ================
 idThread::IsClientRestricted
@@ -390,5 +389,6 @@ ID_INLINE bool idThread::IsClientRestricted() const
 {
 	return clientRestricted;
 }
+//puncho end
 
 #endif /* !__SCRIPT_THREAD_H__ */

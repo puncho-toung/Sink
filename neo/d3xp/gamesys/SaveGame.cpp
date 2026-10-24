@@ -128,10 +128,12 @@ void idSaveGame::Close()
 
 	for( int i = 1; i < objects.Num(); i++ )
 	{
-		if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c, K1): the object index of the scopes its Save chain opens
+		//puncho start - stream-trace (P1-A1c, K1): the object index of the scopes its Save chain opens
+		if( streamTrace != NULL )
 		{
 			streamTrace->SetObject( i );
 		}
+		//puncho end
 		CallSave_r( objects[ i ]->GetType(), objects[ i ] );
 	}
 
@@ -277,10 +279,12 @@ idSaveGame::Write
 void idSaveGame::Write( const void* buffer, int len )
 {
 	file->Write( buffer, len );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_RAW, len, 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -291,10 +295,12 @@ idSaveGame::WriteInt
 void idSaveGame::WriteInt( const int value )
 {
 	file->WriteBig( value );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_INT, sizeof( value ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -305,10 +311,12 @@ idSaveGame::WriteJoint
 void idSaveGame::WriteJoint( const jointHandle_t value )
 {
 	file->WriteBig( ( int& )value );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_JOINT, sizeof( int ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -319,10 +327,12 @@ idSaveGame::WriteShort
 void idSaveGame::WriteShort( const short value )
 {
 	file->WriteBig( value );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_SHORT, sizeof( value ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -333,10 +343,12 @@ idSaveGame::WriteByte
 void idSaveGame::WriteByte( const byte value )
 {
 	file->Write( &value, sizeof( value ) );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_BYTE, sizeof( value ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -347,10 +359,12 @@ idSaveGame::WriteSignedChar
 void idSaveGame::WriteSignedChar( const signed char value )
 {
 	file->Write( &value, sizeof( value ) );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_SIGNEDCHAR, sizeof( value ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -361,10 +375,12 @@ idSaveGame::WriteFloat
 void idSaveGame::WriteFloat( const float value )
 {
 	file->WriteBig( value );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_FLOAT, sizeof( value ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -375,10 +391,12 @@ idSaveGame::WriteBool
 void idSaveGame::WriteBool( const bool value )
 {
 	file->WriteBool( value );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_BOOL, sizeof( value ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -433,10 +451,12 @@ idSaveGame::WriteVec2
 void idSaveGame::WriteVec2( const idVec2& vec )
 {
 	file->WriteBig( vec );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_VEC2, sizeof( vec ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -447,10 +467,12 @@ idSaveGame::WriteVec3
 void idSaveGame::WriteVec3( const idVec3& vec )
 {
 	file->WriteBig( vec );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_VEC3, sizeof( vec ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -461,10 +483,12 @@ idSaveGame::WriteVec4
 void idSaveGame::WriteVec4( const idVec4& vec )
 {
 	file->WriteBig( vec );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_VEC4, sizeof( vec ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -475,10 +499,12 @@ idSaveGame::WriteVec6
 void idSaveGame::WriteVec6( const idVec6& vec )
 {
 	file->WriteBig( vec );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_VEC6, sizeof( vec ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -489,10 +515,12 @@ idSaveGame::WriteBounds
 void idSaveGame::WriteBounds( const idBounds& bounds )
 {
 	file->WriteBig( bounds );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_BOUNDS, sizeof( bounds ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -510,10 +538,12 @@ void idSaveGame::WriteWinding( const idWinding& w )
 		idVec5 v = w[i];
 		file->WriteBig( v );
 	}
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_WINDING, sizeof( num ) + num * sizeof( idVec5 ), 0 );
 	}
+	//puncho end
 }
 
 
@@ -525,10 +555,12 @@ idSaveGame::WriteMat3
 void idSaveGame::WriteMat3( const idMat3& mat )
 {
 	file->WriteBig( mat );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_MAT3, sizeof( mat ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -539,10 +571,12 @@ idSaveGame::WriteAngles
 void idSaveGame::WriteAngles( const idAngles& angles )
 {
 	file->WriteBig( angles );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_ANGLES, sizeof( angles ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -775,7 +809,7 @@ void idSaveGame::WriteUserInterface( const idUserInterface* ui, bool unique )
 			written = ui->WriteToSaveGame( file );
 		}
 		//puncho end
-		if( written == false )
+		if( written == false )	//puncho - stream-trace (P1-A1c)
 		{
 			gameLocal.Error( "idSaveGame::WriteUserInterface: ui failed to write properly\n" );
 		}
@@ -1102,10 +1136,12 @@ void idSaveGame::WriteTraceModel( const idTraceModel& trace )
 	char tmp[3];
 	memset( tmp, 0, sizeof( tmp ) );
 	file->Write( tmp, 3 );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c, K1): the padding bypasses the primitives, one OPAQUE entry
+	//puncho start - stream-trace (P1-A1c, K1): the padding bypasses the primitives, one OPAQUE entry
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_OPAQUE, sizeof( tmp ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -1279,10 +1315,12 @@ void idRestoreGame::RestoreObjects()
 	// restore all the objects
 	for( i = 1; i < objects.Num(); i++ )
 	{
-		if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c, K1): the object index of the scopes its Restore chain opens
+		//puncho start - stream-trace (P1-A1c, K1): the object index of the scopes its Restore chain opens
+		if( streamTrace != NULL )
 		{
 			streamTrace->SetObject( i );
 		}
+		//puncho end
 		CallRestore_r( objects[ i ]->GetType(), objects[ i ] );
 	}
 
@@ -1405,10 +1443,12 @@ idRestoreGame::Read
 void idRestoreGame::Read( void* buffer, int len )
 {
 	file->Read( buffer, len );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_RAW, len, 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -1419,10 +1459,12 @@ idRestoreGame::ReadInt
 void idRestoreGame::ReadInt( int& value )
 {
 	file->ReadBig( value );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_INT, sizeof( value ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -1433,10 +1475,12 @@ idRestoreGame::ReadJoint
 void idRestoreGame::ReadJoint( jointHandle_t& value )
 {
 	file->ReadBig( ( int& )value );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_JOINT, sizeof( int ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -1447,10 +1491,12 @@ idRestoreGame::ReadShort
 void idRestoreGame::ReadShort( short& value )
 {
 	file->ReadBig( value );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_SHORT, sizeof( value ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -1461,10 +1507,12 @@ idRestoreGame::ReadByte
 void idRestoreGame::ReadByte( byte& value )
 {
 	file->Read( &value, sizeof( value ) );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_BYTE, sizeof( value ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -1475,10 +1523,12 @@ idRestoreGame::ReadSignedChar
 void idRestoreGame::ReadSignedChar( signed char& value )
 {
 	file->Read( &value, sizeof( value ) );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_SIGNEDCHAR, sizeof( value ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -1489,10 +1539,12 @@ idRestoreGame::ReadFloat
 void idRestoreGame::ReadFloat( float& value )
 {
 	file->ReadBig( value );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_FLOAT, sizeof( value ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -1503,10 +1555,12 @@ idRestoreGame::ReadBool
 void idRestoreGame::ReadBool( bool& value )
 {
 	file->ReadBig( value );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_BOOL, sizeof( value ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -1544,10 +1598,12 @@ idRestoreGame::ReadVec2
 void idRestoreGame::ReadVec2( idVec2& vec )
 {
 	file->ReadBig( vec );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_VEC2, sizeof( vec ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -1558,10 +1614,12 @@ idRestoreGame::ReadVec3
 void idRestoreGame::ReadVec3( idVec3& vec )
 {
 	file->ReadBig( vec );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_VEC3, sizeof( vec ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -1572,10 +1630,12 @@ idRestoreGame::ReadVec4
 void idRestoreGame::ReadVec4( idVec4& vec )
 {
 	file->ReadBig( vec );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_VEC4, sizeof( vec ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -1586,10 +1646,12 @@ idRestoreGame::ReadVec6
 void idRestoreGame::ReadVec6( idVec6& vec )
 {
 	file->ReadBig( vec );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_VEC6, sizeof( vec ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -1600,10 +1662,12 @@ idRestoreGame::ReadBounds
 void idRestoreGame::ReadBounds( idBounds& bounds )
 {
 	file->ReadBig( bounds );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_BOUNDS, sizeof( bounds ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -1621,10 +1685,12 @@ void idRestoreGame::ReadWinding( idWinding& w )
 		idVec5& v = w[i];
 		file->ReadBig( v );
 	}
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_WINDING, sizeof( num ) + num * sizeof( idVec5 ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -1635,10 +1701,12 @@ idRestoreGame::ReadMat3
 void idRestoreGame::ReadMat3( idMat3& mat )
 {
 	file->ReadBig( mat );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_MAT3, sizeof( mat ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -1649,10 +1717,12 @@ idRestoreGame::ReadAngles
 void idRestoreGame::ReadAngles( idAngles& angles )
 {
 	file->ReadBig( angles );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c)
+	//puncho start - stream-trace (P1-A1c)
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_ANGLES, sizeof( angles ), 0 );
 	}
+	//puncho end
 }
 
 /*
@@ -1901,7 +1971,7 @@ void idRestoreGame::ReadUserInterface( idUserInterface*& ui )
 				restored = ui->ReadFromSaveGame( file );
 			}
 			//puncho end
-			if( restored == false )
+			if( restored == false )	//puncho - stream-trace (P1-A1c)
 			{
 				Error( "idSaveGame::ReadUserInterface: ui failed to read properly\n" );
 			}
@@ -2229,10 +2299,12 @@ void idRestoreGame::ReadTraceModel( idTraceModel& trace )
 	// padding win32 native structs
 	char tmp[3];
 	file->Read( tmp, 3 );
-	if( streamTrace != NULL )	//puncho - stream-trace (P1-A1c, K1): the padding bypasses the primitives, one OPAQUE entry
+	//puncho start - stream-trace (P1-A1c, K1): the padding bypasses the primitives, one OPAQUE entry
+	if( streamTrace != NULL )
 	{
 		streamTrace->Primitive( SP_OPAQUE, sizeof( tmp ), 0 );
 	}
+	//puncho end
 }
 
 /*

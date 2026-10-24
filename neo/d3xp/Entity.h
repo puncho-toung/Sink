@@ -561,7 +561,6 @@ protected:
 private:
 	idPhysics_Static		defaultPhysicsObj;					// default physics object
 	idPhysics* 				physics;							// physics used for this entity
-	enum bindSchemaField_t { ENTITY_BIND_SCHEMA( SCHEMA_INDEX, _ ) SF_NUM_BIND_FIELDS };	//puncho - schema (P1-A1a)
 	idEntity* 				bindMaster;							// entity bound to if unequal NULL
 	jointHandle_t			bindJoint;							// joint bound to if unequal INVALID_JOINT
 	int						bindBody;							// body bound to if unequal -1

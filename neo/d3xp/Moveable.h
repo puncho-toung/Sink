@@ -66,8 +66,6 @@ class idMoveable : public idEntity
 public:
 	CLASS_PROTOTYPE( idMoveable );
 
-	enum schemaField_t { MOVEABLE_SCHEMA( SCHEMA_INDEX, _ ) SF_NUM_FIELDS };	//puncho - schema (P1-A1a)
-
 	idMoveable();
 	~idMoveable();
 
@@ -117,8 +115,10 @@ protected:
 	void					BecomeNonSolid();
 	void					InitInitialSpline( int startTime );
 	bool					FollowInitialSplinePath();
-	void					SaveInitialSpline( idSaveGame* savefile ) const;	//puncho - schema (P1-A1a): the K8 hatch
+	//puncho start - schema (P1-A1a): the K8 hatch
+	void					SaveInitialSpline( idSaveGame* savefile ) const;
 	void					RestoreInitialSpline( idRestoreGame* savefile );
+	//puncho end
 
 	void					Event_Activate( idEntity* activator );
 	void					Event_BecomeNonSolid();

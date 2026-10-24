@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "../Game_local.h"
+#include "../gamesys/Schema.h"	//puncho - schema (P1-A1a): expands THREAD_SCHEMA
 
 const idEventDef EV_Thread_Execute( "<execute>", NULL );
 const idEventDef EV_Thread_SetCallback( "<script_setcallback>", NULL );
@@ -293,10 +294,12 @@ idThread::idThread( idEntity* self, const function_t* func )
 
 	Init();
 	SetThreadName( self->name );
+	//puncho start - map scripts on clients (P1-I2)
 	if( GuardStart( func, false ) )
 	{
 		interpreter.EnterObjectFunction( self, func, false );
 	}
+	//puncho end
 	if( g_debugScript.GetBool() )
 	{
 		gameLocal.Printf( "%d: create thread (%d) '%s'\n", gameLocal.time, threadNum, threadName.c_str() );
@@ -314,10 +317,12 @@ idThread::idThread( const function_t* func )
 
 	Init();
 	SetThreadName( func->Name() );
+	//puncho start - map scripts on clients (P1-I2)
 	if( GuardStart( func, false ) )
 	{
 		interpreter.EnterFunction( func, false );
 	}
+	//puncho end
 	if( g_debugScript.GetBool() )
 	{
 		gameLocal.Printf( "%d: create thread (%d) '%s'\n", gameLocal.time, threadNum, threadName.c_str() );
@@ -332,10 +337,12 @@ idThread::idThread
 idThread::idThread( idInterpreter* source, const function_t* func, int args )
 {
 	Init();
+	//puncho start - map scripts on clients (P1-I2)
 	if( GuardStart( func, source->GetThread()->clientRestricted ) )
 	{
 		interpreter.ThreadCall( source, func, args );
 	}
+	//puncho end
 	if( g_debugScript.GetBool() )
 	{
 		gameLocal.Printf( "%d: create thread (%d) '%s'\n", gameLocal.time, threadNum, threadName.c_str() );
@@ -353,10 +360,12 @@ idThread::idThread( idInterpreter* source, idEntity* self, const function_t* fun
 
 	Init();
 	SetThreadName( self->name );
+	//puncho start - map scripts on clients (P1-I2)
 	if( GuardStart( func, source->GetThread()->clientRestricted ) )
 	{
 		interpreter.ThreadCall( source, func, args );
 	}
+	//puncho end
 	if( g_debugScript.GetBool() )
 	{
 		gameLocal.Printf( "%d: create thread (%d) '%s'\n", gameLocal.time, threadNum, threadName.c_str() );
@@ -452,7 +461,7 @@ void idThread::Init()
 	creationTime = gameLocal.time;
 	lastExecuteTime = 0;
 	manualControl = false;
-	clientRestricted = false;
+	clientRestricted = false;	//puncho - map scripts on clients (P1-I2)
 
 	ClearWaitFor();
 
@@ -783,10 +792,12 @@ NOTE: If this is called from within a event called by this thread, the function 
 void idThread::CallFunction( const function_t* func, bool clearStack )
 {
 	ClearWaitFor();
+	//puncho start - map scripts on clients (P1-I2)
 	if( clearStack && !GuardStart( func, false ) )
 	{
 		return;
 	}
+	//puncho end
 	interpreter.EnterFunction( func, clearStack );
 }
 
@@ -801,13 +812,16 @@ void idThread::CallFunction( idEntity* self, const function_t* func, bool clearS
 {
 	assert( self );
 	ClearWaitFor();
+	//puncho start - map scripts on clients (P1-I2)
 	if( clearStack && !GuardStart( func, false ) )
 	{
 		return;
 	}
+	//puncho end
 	interpreter.EnterObjectFunction( self, func, clearStack );
 }
 
+//puncho start - map scripts on clients (P1-I2)
 /*
 ================
 idThread::GuardStart
@@ -845,6 +859,7 @@ bool idThread::GuardStart( const function_t* func, bool inheritedRestriction )
 	}
 	return !refused;
 }
+//puncho end
 
 /*
 ================
@@ -1200,10 +1215,12 @@ void idThread::Event_Trigger( idEntity* ent )
 {
 	if( ent )
 	{
+		//puncho start - map scripts on clients (P1-I2)
 		if( g_scriptCensus.GetBool() )
 		{
 			gameLocal.Printf( "census %c trigger %s thread %s\n", common->IsClient() ? 'C' : 'S', ent->name.c_str(), threadName.c_str() );
 		}
+		//puncho end
 		ent->Signal( SIG_TRIGGER );
 		ent->ProcessEvent( &EV_Activate, gameLocal.GetLocalPlayer() );
 		ent->TriggerGuis();
@@ -1319,10 +1336,12 @@ void idThread::Event_Spawn( const char* classname )
 {
 	idEntity* ent;
 
+	//puncho start - map scripts on clients (P1-I2)
 	if( g_scriptCensus.GetBool() )
 	{
 		gameLocal.Printf( "census %c spawn %s thread %s\n", common->IsClient() ? 'C' : 'S', classname, threadName.c_str() );
 	}
+	//puncho end
 	spawnArgs.Set( "classname", classname );
 	gameLocal.SpawnEntityDef( spawnArgs, &ent );
 	ReturnEntity( ent );
@@ -2072,10 +2091,12 @@ idThread::Event_RadiusDamage
 */
 void idThread::Event_RadiusDamage( const idVec3& origin, idEntity* inflictor, idEntity* attacker, idEntity* ignore, const char* damageDefName, float dmgPower )
 {
+	//puncho start - map scripts on clients (P1-I2)
 	if( g_scriptCensus.GetBool() )
 	{
 		gameLocal.Printf( "census %c damage %s thread %s\n", common->IsClient() ? 'C' : 'S', damageDefName, threadName.c_str() );
 	}
+	//puncho end
 	gameLocal.RadiusDamage( origin, inflictor, attacker, ignore, ignore, damageDefName, dmgPower );
 }
 

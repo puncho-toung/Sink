@@ -105,7 +105,7 @@ idBitMsg::WriteBitsAs
 If the number of bits is negative a sign is included.
 ========================
 */
-void idBitMsg::WriteBitsAs( int value, int numBits, bitMsgPrimitive_t type )
+void idBitMsg::WriteBitsAs( int value, int numBits, bitMsgPrimitive_t type )	//puncho - stream-trace (P1-A1c, K2)
 {
 	//puncho start - stream-trace (P1-A1c, K2): the one test an untraced message pays
 	if( trace != NULL )
@@ -343,7 +343,7 @@ idBitMsg::ReadBitsAs
 If the number of bits is negative a sign is included.
 ========================
 */
-int idBitMsg::ReadBitsAs( int numBits, bitMsgPrimitive_t type ) const
+int idBitMsg::ReadBitsAs( int numBits, bitMsgPrimitive_t type ) const	//puncho - stream-trace (P1-A1c, K2)
 {
 	int		value;
 	int		valueBits;

@@ -30,6 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "Game_local.h"
+#include "gamesys/Schema.h"	//puncho - schema (P1-A1a): expands ENTITY_BIND_SCHEMA
 
 /*
 ===============================================================================
@@ -4519,10 +4520,12 @@ void idEntity::ActivateTargets( idEntity* activator ) const
 	idEntity*	ent;
 	int			i, j;
 
+	//puncho start - map scripts on clients (P1-I2)
 	if( g_scriptCensus.GetBool() )
 	{
 		gameLocal.Printf( "census %c activate %s by %s targets %d\n", common->IsClient() ? 'C' : 'S', name.c_str(), activator != NULL ? activator->name.c_str() : "none", targets.Num() );
 	}
+	//puncho end
 
 	for( i = 0; i < targets.Num(); i++ )
 	{

@@ -830,6 +830,7 @@ void idInterpreter::LeaveFunction( idVarDef* returnDef )
 	}
 }
 
+//puncho start - map scripts on clients (P1-I2)
 /*
 ================
 ReturnEventDefault
@@ -889,6 +890,7 @@ static void SkipClientEvent( const function_t* current, const idEventDef* evdef 
 	}
 	ReturnEventDefault( evdef );
 }
+//puncho end
 
 /*
 ================
@@ -917,12 +919,14 @@ void idInterpreter::CallEvent( const function_t* func, int argsize )
 	assert( func->eventdef );
 	evdef = func->eventdef;
 
+	//puncho start - map scripts on clients (P1-I2)
 	if( thread->IsClientRestricted() && !evdef->IsClientSafe() )
 	{
 		SkipClientEvent( currentFunction, evdef );
 		PopParms( argsize );
 		return;
 	}
+	//puncho end
 
 	start = localstackUsed - argsize;
 	var.intPtr = ( int* )&localstack[ start ];
@@ -936,7 +940,7 @@ void idInterpreter::CallEvent( const function_t* func, int argsize )
 			Warning( "Function '%s' not supported on entity '%s'", evdef->GetName(), eventEntity->name.c_str() );
 		}
 		// always return a safe value when an object doesn't exist
-		ReturnEventDefault( evdef );
+		ReturnEventDefault( evdef );	//puncho - map scripts on clients (P1-I2): the switch moved to ReturnEventDefault
 		PopParms( argsize );
 		eventEntity = NULL;
 		return;
@@ -1093,12 +1097,14 @@ void idInterpreter::CallSysEvent( const function_t* func, int argsize )
 	assert( func->eventdef );
 	evdef = func->eventdef;
 
+	//puncho start - map scripts on clients (P1-I2)
 	if( thread->IsClientRestricted() && !evdef->IsClientSafe() )
 	{
 		SkipClientEvent( currentFunction, evdef );
 		PopParms( argsize );
 		return;
 	}
+	//puncho end
 
 	start = localstackUsed - argsize;
 

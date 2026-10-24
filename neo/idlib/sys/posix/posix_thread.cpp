@@ -42,10 +42,12 @@ If you have questions concerning this license or the applicable additional terms
 	#include <pthread_np.h> // for pthread_set_name_np
 #endif
 
+//puncho start - MP-A4: dl_iterate_phdr and sysconf, for Sys_StaticTLSSize
 #ifdef __GLIBC__
-	#include <link.h>	//puncho - MP-A4: dl_iterate_phdr, for Sys_StaticTLSSize
+	#include <link.h>
 	#include <unistd.h>
 #endif
+//puncho end
 
 // DG: Note: On Linux you need at least (e)glibc 2.12 to be able to set the threadname
 //#define DEBUG_THREADS
@@ -120,11 +122,9 @@ static int Sys_GetThreadName( pthread_t handle, char* namebuf, size_t buflen )
 #ifdef __GLIBC__
 /*
 ========================
-Sys_StaticTLSSize
+AddTLSSegment
 
-glibc places a thread's static TLS (idStr's va buffers alone are 192 KB) and its TCB
-at the top of the stack it is given, so Sys_CreateThread adds this to the requested
-size. It is the PT_TLS segments of the loaded objects, rounded up to the page size.
+dl_iterate_phdr's callback: adds each PT_TLS segment of one loaded object to the size_t at data.
 ========================
 */
 static int AddTLSSegment( struct dl_phdr_info* info, size_t size, void* data )
@@ -139,6 +139,15 @@ static int AddTLSSegment( struct dl_phdr_info* info, size_t size, void* data )
 	return 0;
 }
 
+/*
+========================
+Sys_StaticTLSSize
+
+glibc places a thread's static TLS (idStr's va buffers alone are 192 KB) and its TCB
+at the top of the stack it is given, so Sys_CreateThread adds this to the requested
+size. It is the PT_TLS segments of the loaded objects, rounded up to the page size.
+========================
+*/
 static size_t Sys_StaticTLSSize()
 {
 	size_t tls = 0;

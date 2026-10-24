@@ -67,7 +67,7 @@ private:
 	size_t						argsize;
 	int							argOffset[ D_EVENT_MAXARGS ];
 	int							eventnum;
-	bool						clientSafe;		// a client-side script thread may call it (idInterpreter::CallEvent)
+	bool						clientSafe;		//puncho - map scripts on clients (P1-I2): a client-side script thread may call it (idInterpreter::CallEvent)
 	const idEventDef* 			next;
 
 	static idEventDef* 			eventDefList[MAX_EVENTS];
@@ -84,7 +84,7 @@ public:
 	int							GetNumArgs() const;
 	size_t						GetArgSize() const;
 	int							GetArgOffset( int arg ) const;
-	bool						IsClientSafe() const;
+	bool						IsClientSafe() const;	//puncho - map scripts on clients (P1-I2)
 
 	static int					NumEventCommands();
 	static const idEventDef*		GetEventCommand( int eventnum );
@@ -228,6 +228,7 @@ ID_INLINE int idEventDef::GetEventNum() const
 	return eventnum;
 }
 
+//puncho start - map scripts on clients (P1-I2)
 /*
 ================
 idEventDef::IsClientSafe
@@ -237,5 +238,6 @@ ID_INLINE bool idEventDef::IsClientSafe() const
 {
 	return clientSafe;
 }
+//puncho end
 
 #endif /* !__SYS_EVENT_H__ */
