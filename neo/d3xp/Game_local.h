@@ -605,7 +605,7 @@ public:
 	virtual void			ProcessReliableMessage( int clientNum, int type, const idBitMsg& msg );
 	virtual void			ClientReadSnapshot( const idSnapShot& ss );
 	virtual void			ClientRunFrame( idUserCmdMgr& cmdMgr, bool lastPredictFrame, gameReturn_t& ret );
-	virtual void			GetContentDigests( unsigned int digests[ CONTENT_DIGEST_COUNT ] ) const;	//puncho - version rule (MP-A0), Game_network.cpp
+	virtual void			GetContentDigests( contentDigests_t& digests ) const;	//puncho - version rule (MP-A0), Game_network.cpp
 	void					BuildReturnValue( gameReturn_t& ret );
 
 	virtual int				GetMPGameModes( const char** * gameModes, const char** * gameModesDisplay );
@@ -867,6 +867,7 @@ private:
 	int						declRemapBytes;			// the host: the table's size as ServerSendDeclRemap writes it
 	bool					declRemapDeferred;		// the host, inside ServerWriteSnapshot: new slots are broadcast at its end
 	bool					declRemapWarned;		// the host: the table is full; a client: an index past the cap arrived
+	bool					declRemapHighWarned;	// the host: the table passed 75% of a cap this load (P1-A3b, K46)
 	idHashIndex				declRemapHash;			// the host: decl index -> slot, confirmed against the slot's type
 	//puncho end
 

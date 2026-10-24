@@ -209,7 +209,7 @@ public:
 		{
 			loaded					= false;
 			inGame					= false;
-			memset( contentDigests, 0, sizeof( contentDigests ) );
+			memset( &contentDigests, 0, sizeof( contentDigests ) );
 			lastSnapTime			= 0;
 			snapHz					= 0.0f;
 			numResources			= 0;
@@ -290,7 +290,7 @@ public:
 		void ResetMatchData()
 		{
 			loaded					= false;
-			memset( contentDigests, 0, sizeof( contentDigests ) );
+			memset( &contentDigests, 0, sizeof( contentDigests ) );
 			inGame					= false;
 			numResources			= 0;
 			needToSubmitPendingSnap	= false;
@@ -337,7 +337,7 @@ public:
 		int					lastProcTime;				// Used to determine when a packet was processed for sending to this peer
 		int					lastInBandProcTime;			// Last time a in-band packet was processed for sending
 		int					lastFragmentSendTime;		// Last time a fragment was sent out (fragments are processed msg's, waiting to be fully sent)
-		unsigned int		contentDigests[ CONTENT_DIGEST_COUNT ];	// the peer's idGame::GetContentDigests from RELIABLE_LOADING_DONE, valid while loaded (MP-A0)
+		contentDigests_t	contentDigests;		//puncho - the peer's idGame::GetContentDigests from RELIABLE_LOADING_DONE, valid while loaded (MP-A0; rows per layer, P1-A3b)
 		int					pauseSnapshots;
 
 		lobbyAddress_t	address;
@@ -919,7 +919,7 @@ public:		// Turning this on for now, for the sake of getting this up and running
 
 	bool								loaded;							// Used for game sessions, whether this machine is loaded or not
 	bool								localContentDigestsValid;		//puncho - version rule (MP-A0): localContentDigests are this host's for the current load
-	unsigned int						localContentDigests[ CONTENT_DIGEST_COUNT ];	//puncho - idGame::GetContentDigests, computed once per load by VerifyPeerContent
+	contentDigests_t					localContentDigests;			//puncho - idGame::GetContentDigests, computed once per load by VerifyPeerContent
 	bool								respondToArbitrate;				// true when the host has requested us to arbitrate our session (for TYPE_GAME only)
 	bool								everyoneArbitrated;
 	bool								waitForPartyOk;

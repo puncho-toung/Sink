@@ -202,21 +202,39 @@ struct aiHudStats_t
 
 //puncho start - version rule (MP-A0, MD13): what a joiner sends in RELIABLE_LOADING_DONE and the host compares
 // (idLobby::VerifyPeerContent). Each category covers a table the network code addresses by number, and is its own
-// CRC32 so a refusal names what differs. The message is the load id, then CONTENT_DIGEST_COUNT longs in this order
-// (P1-A3a, K17): changing the list changes the wire format and bumps BUILD_NUMBER.
+// CRC32 so a refusal names what differs. The message is the load id, the CONTENT_DIGEST_COUNT global longs, the
+// layer count as a byte, then LAYER_DIGEST_COUNT longs per content layer, base first (P1-A3a, K17; P1-A3b, K38):
+// changing either list changes the wire format and bumps BUILD_NUMBER.
 enum contentDigest_t
 {
 	CONTENT_DIGEST_CLASSES,			// idClass type names in typeNum order: snapshot entities cross as a typeNum
-	CONTENT_DIGEST_ENTITYDEFS,		// the explicit decls, index, name and text (K18), of each decl type that crosses as an index
-	CONTENT_DIGEST_MATERIALS,
-	CONTENT_DIGEST_SKINS,
-	CONTENT_DIGEST_SOUNDS,
-	CONTENT_DIGEST_FX,
-	CONTENT_DIGEST_SCRIPT,			// idProgram::CalculateChecksum
 	CONTENT_DIGEST_MAP_GEOMETRY,	// idMapFile::GetGeometryCRC, the value the .cm and .aas files are validated against
 	CONTENT_DIGEST_MAP_ENTITIES,	// idMapFile::GetEntitiesCRC: every map entity's key/values, _extra_ents.map merged (P1-A3a, K37)
 	CONTENT_DIGEST_COUNT
 };
+
+// P1-A3b (K38): the rows of one content layer (idFileSystem::GetNumLayers), so a refusal names the layer too
+enum layerDigest_t
+{
+	LAYER_DIGEST_ENTITYDEFS,		// the explicit decls whose winning file the layer serves: index, name and text CRC (K18, K45)
+	LAYER_DIGEST_MATERIALS,
+	LAYER_DIGEST_SKINS,
+	LAYER_DIGEST_SOUNDS,
+	LAYER_DIGEST_FX,
+	LAYER_DIGEST_SCRIPT,			// idProgram::GetLayerChecksums: the source files the compiler read from the layer
+	LAYER_DIGEST_MAP_ENTITIES,		// idMapFile::GetLayerEntitiesCRC: the map file the layer serves and its _extra_ents.map
+	LAYER_DIGEST_COUNT
+};
+
+struct contentDigests_t
+{
+	unsigned int	global[ CONTENT_DIGEST_COUNT ];
+	int				numLayers;
+	unsigned int	layers[ MAX_MOD_LAYERS + 1 ][ LAYER_DIGEST_COUNT ];
+};
+
+// the bytes after the load id for numLayers layers; at MAX_MOD_LAYERS + 1 layers the whole message stays under 700
+#define CONTENT_DIGESTS_WIRE_SIZE( numLayers )	( CONTENT_DIGEST_COUNT * 4 + 1 + ( numLayers ) * LAYER_DIGEST_COUNT * 4 )
 //puncho end
 
 class idGame
@@ -297,9 +315,10 @@ public:
 	// Runs prediction on entities at the client.
 	virtual void				ClientRunFrame( idUserCmdMgr& cmdMgr, bool lastPredictFrame, gameReturn_t& ret ) = 0;
 
-	//puncho start - version rule (MP-A0): fills every contentDigest_t for the loaded map. The session calls it once a
-	// map load has finished: on a joiner to send them, on the host to compare them
-	virtual void				GetContentDigests( unsigned int digests[ CONTENT_DIGEST_COUNT ] ) const = 0;
+	//puncho start - version rule (MP-A0): fills every contentDigest_t, and every layerDigest_t of each content layer
+	// (P1-A3b), for the loaded map. The session calls it once a map load has finished: on a joiner to send them, on the
+	// host to compare them
+	virtual void				GetContentDigests( contentDigests_t& digests ) const = 0;
 	//puncho end
 
 	// Used to manage divergent time-lines

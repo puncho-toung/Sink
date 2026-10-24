@@ -130,6 +130,10 @@ public:
 	virtual void			List() const = 0;
 	virtual void			Print() const = 0;
 	virtual ID_TIME_T		GetSourceFileTimestamp() const = 0; // RB
+	//puncho start - content check (P1-A3b, K45, K38)
+	virtual unsigned int	GetTextCRC() const = 0;
+	virtual int				GetLayer() const = 0;
+	//puncho end
 };
 
 
@@ -256,6 +260,22 @@ public:
 	{
 		return base->GetSourceFileTimestamp();
 	}
+
+	//puncho start - content check (P1-A3b)
+	// Returns a CRC32 of the decl text with every '\r' dropped, kept beside the text (K45): the content digests read it
+	// instead of decompressing the text, and CRLF and LF copies agree.
+	unsigned int			GetTextCRC() const
+	{
+		return base->GetTextCRC();
+	}
+
+	// Returns the rank of the content layer that serves the decl's file, the winner's when layers define it more than
+	// once (K38); -1 for an implicit decl.
+	int						GetLayer() const
+	{
+		return base->GetLayer();
+	}
+	//puncho end
 
 public:
 	// Sets textSource to a default text if necessary.

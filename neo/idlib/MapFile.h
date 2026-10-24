@@ -543,6 +543,9 @@ public:
 		return geometryCRC;
 	}
 	unsigned int			GetEntitiesCRC() const;	//puncho - content check (P1-A3a, K37): CRC of every entity's key/values, '\r' dropped
+	//puncho - content check (P1-A3b, K38): one layer's part of the merged entities, the GetEntitiesCRC of the map file the
+	// layer serves and of the layer's _extra_ents.map, each as parsed before the merge; 0 when Parse merged no patches
+	unsigned int			GetLayerEntitiesCRC( int layer ) const;
 	// returns true if the file on disk changed
 	bool					NeedsReload();
 
@@ -594,6 +597,7 @@ protected:
 	int						readLayer;			// a patch reads this layer's own copy; -1 reads the served copy
 	idList<int>				entityLines;		// a patch's entity start lines, for the merge log
 	//puncho end
+	idList<unsigned int>	layerEntitiesCRC;	//puncho - content check (P1-A3b, K38): GetLayerEntitiesCRC per layer rank
 
 private:
 	void					SetGeometryCRC();
