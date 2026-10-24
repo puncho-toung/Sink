@@ -1113,23 +1113,6 @@ bool idCommonLocal::SaveGame( const char* saveName )
 //puncho start - MP-A5 (K44)
 /*
 ===============
-SplitModList
-===============
-*/
-static void SplitModList( const char* modList, idStrList& mods )
-{
-	mods.Clear();
-	while( *modList != '\0' )
-	{
-		const char* comma = strchr( modList, ',' );
-		const int len = ( comma != NULL ) ? ( int )( comma - modList ) : idStr::Length( modList );
-		mods.Append( idStr( modList, 0, len ) );
-		modList += ( comma != NULL ) ? len + 1 : len;
-	}
-}
-
-/*
-===============
 CheckSaveLayers
 
 The save's mod list and per-layer decl names against this session's (idDeclManager::GetLayerSaveHeader). Saves store
@@ -1155,26 +1138,11 @@ static bool CheckSaveLayers( const idDict& saved, idStr& refusal )
 	{
 		idStrList savedList;
 		idStrList currentList;
-		SplitModList( savedMods, savedList );
-		SplitModList( currentMods, currentList );
+		idFileSystem::SplitModList( savedMods, savedList );
+		fileSystem->GetModList( currentList );
 		idStr missing;
 		idStr extra;
-		for( int i = 0; i < savedList.Num(); i++ )
-		{
-			if( currentList.FindIndex( savedList[i] ) < 0 )
-			{
-				missing += missing.IsEmpty() ? "" : ", ";
-				missing += savedList[i];
-			}
-		}
-		for( int i = 0; i < currentList.Num(); i++ )
-		{
-			if( savedList.FindIndex( currentList[i] ) < 0 )
-			{
-				extra += extra.IsEmpty() ? "" : ", ";
-				extra += currentList[i];
-			}
-		}
+		idFileSystem::DiffModLists( savedList, currentList, missing, extra );
 		refusal.Format( "the save was made with mods '%s', these are '%s'", savedMods, currentMods );
 		if( !missing.IsEmpty() )
 		{

@@ -1167,7 +1167,22 @@ int idParser::Directive_include( idToken* token, bool supressWarning )
 		{
 			// try from the token path
 			path = *token;
-			if( !script->LoadFile( path, OSPath ) )
+			bool loaded = ( script->LoadFile( path, OSPath ) != 0 );
+			//puncho start - MP-A5 (K42): through the layers, a file next to the including one is tried by its relative
+			// path, so whichever layer serves it is read
+			if( !loaded && ( idParser::flags & LEXFL_INCLUDETHROUGHLAYERS ) )
+			{
+				path = idLib::fileSystem->OSPathToRelativePath( scriptstack->GetFileName() );
+				path.StripFilename();
+				if( !path.StripTrailingOnce( token_path ) )
+				{
+					path += "/";
+				}
+				path += *token;
+				loaded = ( script->LoadFile( path, OSPath ) != 0 );
+			}
+			//puncho end
+			if( !loaded )
 			{
 				// try from the include path
 				path = includepath + *token;

@@ -1589,14 +1589,17 @@ void idMapEntity::CalculateBrushOrigin()
 	originOffset /= static_cast<float>( originBrushes.Num() );
 }
 
+//puncho start - MP-A5 (K41, K41b)
+static idStrList patchLog;		// the last merge's log; idMapFile::GetPatchLog
+static bool LayerHoldsPatch( const char* mapName, int layer );
+//puncho end
+
 /*
 ===============
 idMapFile::Parse
 ===============
 */
-static idStrList patchLog;		//puncho - MP-A5 (K41b): the last merge's log; idMapFile::GetPatchLog
-
-bool idMapFile::Parse( const char* filename, bool ignoreRegion, bool osPath, bool ignoreExtraEnts, int patchLayerLimit )
+bool idMapFile::Parse( const char* filename, bool ignoreRegion, bool osPath, bool ignoreExtraEnts, int patchLayerLimit, bool layerEntitiesCRCs )
 {
 	idList<char> layerText;		//puncho - MP-A5 (K41): a patch's text read from one layer; outlives src
 	// no string concatenation for epairs and allow path names for materials
@@ -1613,8 +1616,28 @@ bool idMapFile::Parse( const char* filename, bool ignoreRegion, bool osPath, boo
 	fullName = name;
 	hasPrimitiveData = false;
 
+	//puncho start - MP-A5 (K21a): with layers the form served from the highest layer is read, so a mod's .map replaces
+	// a lower layer's .json or glTF; the json > glb > gltf > map order breaks ties inside one layer only
+	const char* servedForm = NULL;
+	if( readLayer < 0 && !osPath && idLib::fileSystem->GetNumLayers() > 1 )
+	{
+		static const char* forms[] = { "json", "glb", "gltf", "map" };
+		int servedLayer = -1;
+		for( int form = ignoreRegion ? 1 : 0; form < 4; form++ )
+		{
+			fullName.SetFileExtension( forms[form] );
+			const int layer = idLib::fileSystem->GetFileLayer( fullName );
+			if( layer > servedLayer )
+			{
+				servedLayer = layer;
+				servedForm = forms[form];
+			}
+		}
+	}
+	//puncho end
+
 	bool isJSON = false;
-	if( !ignoreRegion )
+	if( !ignoreRegion && ( servedForm == NULL || idStr::Cmp( servedForm, "json" ) == 0 ) )	//puncho - MP-A5 (K21a)
 	{
 		// RB: try loading a .json file first
 		fullName.SetFileExtension( "json" );
@@ -1638,15 +1661,15 @@ bool idMapFile::Parse( const char* filename, bool ignoreRegion, bool osPath, boo
 	{
 		// HVG: try loading a .gltf/glb second
 		fullName.SetFileExtension( "glb" );
-		isGTLF = src.LoadFile( fullName, osPath );
+		isGTLF = ( servedForm == NULL || idStr::Cmp( servedForm, "glb" ) == 0 ) && src.LoadFile( fullName, osPath );	//puncho - MP-A5 (K21a)
 		if( !isGTLF )
 		{
 			fullName.SetFileExtension( "gltf" );
-			isGTLF = src.LoadFile( fullName, osPath );
+			isGTLF = ( servedForm == NULL || idStr::Cmp( servedForm, "gltf" ) == 0 ) && src.LoadFile( fullName, osPath );	//puncho - MP-A5 (K21a)
 		}
 	}
 
-	if( !src.IsLoaded() )
+	if( !src.IsLoaded() && ( servedForm == NULL || idStr::Cmp( servedForm, "map" ) == 0 ) )	//puncho - MP-A5 (K21a)
 	{
 		// now try a .map file
 		fullName.SetFileExtension( "map" );
@@ -1663,6 +1686,10 @@ bool idMapFile::Parse( const char* filename, bool ignoreRegion, bool osPath, boo
 			// didn't get anything at all
 			return false;
 		}
+	}
+	if( !src.IsLoaded() )	//puncho - MP-A5 (K21a): the served form could not be read after all
+	{
+		return false;
 	}
 	sourceName = fullName;	//puncho - MP-A5 (K41a)
 	entityLines.Clear();
@@ -1892,37 +1919,58 @@ bool idMapFile::Parse( const char* filename, bool ignoreRegion, bool osPath, boo
 		{
 			const int numLayers = idLib::fileSystem->GetNumLayers();
 			const int lastLayer = ( patchLayerLimit >= 0 && patchLayerLimit < numLayers ) ? patchLayerLimit : numLayers;
+			// patches apply from the layer that serves the map file up: a lower layer's patch was written against a map
+			// that a higher layer replaces whole, so it is skipped and logged
+			const int mapLayer = ( numLayers > 1 ) ? Max( idLib::fileSystem->GetFileLayer( sourceName ), 0 ) : 0;
 
 			// content check (P1-A3b, K38): each layer's part, taken before the merge: the served map file's entities
-			// count for the layer that serves it, and each patch for its own layer. A shadowed copy is never read
-			const int mapLayer = ( numLayers > 1 ) ? idLib::fileSystem->GetFileLayer( sourceName ) : 0;
-			const unsigned int mapEntitiesCRC = GetEntitiesCRC();
-			layerEntitiesCRC.SetNum( numLayers );
-			for( int layer = 0; layer < numLayers; layer++ )
+			// count for the layer that serves it, and each patch for its own layer. A shadowed copy is never read.
+			// Only multiplayer's content check reads them, so only a load that asks pays for the walk
+			if( layerEntitiesCRCs )
 			{
-				CRC32_InitChecksum( layerEntitiesCRC[layer] );
-				if( layer == mapLayer )
+				const unsigned int mapEntitiesCRC = GetEntitiesCRC();
+				layerEntitiesCRC.SetNum( numLayers );
+				for( int layer = 0; layer < numLayers; layer++ )
 				{
-					const unsigned int crc = LittleLong( mapEntitiesCRC );
-					CRC32_UpdateChecksum( layerEntitiesCRC[layer], &crc, sizeof( crc ) );
+					CRC32_InitChecksum( layerEntitiesCRC[layer] );
+					if( layer == mapLayer )
+					{
+						const unsigned int crc = LittleLong( mapEntitiesCRC );
+						CRC32_UpdateChecksum( layerEntitiesCRC[layer], &crc, sizeof( crc ) );
+					}
 				}
 			}
 
 			for( int layer = 0; layer < lastLayer; layer++ )
 			{
+				if( layer < mapLayer )
+				{
+					if( LayerHoldsPatch( name, layer ) )
+					{
+						patchLog.Append( va( "%s %s_extra_ents: skipped; %s serves %s whole above it", idLib::fileSystem->GetLayerName( layer ), name.c_str(), idLib::fileSystem->GetLayerName( mapLayer ), sourceName.c_str() ) );
+						idLib::Printf( "map patch: %s\n", patchLog[ patchLog.Num() - 1 ].c_str() );
+					}
+					continue;
+				}
 				idMapFile extrasMap;
 				extrasMap.readLayer = layer;
 				if( extrasMap.Parse( fullName, ignoreRegion, false, true ) )
 				{
-					const unsigned int crc = LittleLong( extrasMap.GetEntitiesCRC() );
-					CRC32_UpdateChecksum( layerEntitiesCRC[layer], &crc, sizeof( crc ) );
+					if( layerEntitiesCRCs )
+					{
+						const unsigned int crc = LittleLong( extrasMap.GetEntitiesCRC() );
+						CRC32_UpdateChecksum( layerEntitiesCRC[layer], &crc, sizeof( crc ) );
+					}
 					MergePatch( extrasMap, layer );
 				}
 			}
 
-			for( int layer = 0; layer < numLayers; layer++ )
+			if( layerEntitiesCRCs )
 			{
-				CRC32_FinishChecksum( layerEntitiesCRC[layer] );
+				for( int layer = 0; layer < numLayers; layer++ )
+				{
+					CRC32_FinishChecksum( layerEntitiesCRC[layer] );
+				}
 			}
 		}
 		//puncho end
@@ -1970,6 +2018,13 @@ void idMapFile::MergePatch( const idMapFile& patch, int layer )
 {
 	const char* layerName = ( layer >= 0 ) ? idLib::fileSystem->GetLayerName( layer ) : "os path";
 	const int firstLogLine = patchLog.Num();
+	// base's own patches (the retail env probes) merge silently unless developer is set; a mod's are logged entity by
+	// entity. dmap and the AAS compiler build the AAS files, so they do not report missing ones
+	const bool developer = idLib::cvarSystem->GetCVarBool( "developer" );
+	const bool logEntities = ( layer > 0 || developer );
+	const bool checkAAS = logEntities && ( com_editors & ( EDITOR_DMAP | EDITOR_AAS ) ) == 0;
+	idStrList checkedAAS;		// the use_aas sizes already looked up, each once per patch
+	idList<bool> foundAAS;
 	int numMerged = 0;
 	int numAppended = 0;
 	int numSkipped = 0;
@@ -2022,11 +2077,11 @@ void idMapFile::MergePatch( const idMapFile& patch, int layer )
 				// don't grab brushes or polys
 				mapEnt->epairs.Copy( extraEnt->epairs );
 				numAppended++;
-				if( kv && kv->GetValue().Length() )
+				if( logEntities && kv && kv->GetValue().Length() )
 				{
 					patchLog.Append( va( "%s %s:%d: appended '%s' (%s): %s has no entity of that name", layerName, patch.sourceName.c_str(), line, kv->GetValue().c_str(), classname, name.c_str() ) );
 				}
-				else
+				else if( logEntities )
 				{
 					patchLog.Append( va( "%s %s:%d: appended an unnamed %s", layerName, patch.sourceName.c_str(), line, classname ) );
 				}
@@ -2034,25 +2089,45 @@ void idMapFile::MergePatch( const idMapFile& patch, int layer )
 			else
 			{
 				numSkipped++;
-				patchLog.Append( va( "%s %s:%d: skipped a worldspawn patch; a patch cannot address worldspawn", layerName, patch.sourceName.c_str(), line ) );
+				if( logEntities )
+				{
+					patchLog.Append( va( "%s %s:%d: skipped a worldspawn patch; a patch cannot address worldspawn", layerName, patch.sourceName.c_str(), line ) );
+				}
 				continue;
 			}
 		}
 
 		// a monster needs the map's AAS file of its size, and the AAS compiler only builds a size the map uses
+		if( !checkAAS )
+		{
+			continue;
+		}
 		const char* useAAS = mapEnt->epairs.GetString( "use_aas" );
 		if( useAAS[0] == '\0' && declManager != NULL )
 		{
 			const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, mapEnt->epairs.GetString( "classname" ), false ) );
 			useAAS = ( def != NULL ) ? def->dict.GetString( "use_aas" ) : "";
 		}
-		if( useAAS[0] != '\0' && idLib::fileSystem->ReadFile( va( "%s.%s", name.c_str(), useAAS ), NULL, NULL ) <= 0 )
+		if( useAAS[0] == '\0' )
+		{
+			continue;
+		}
+		int checked = checkedAAS.FindIndex( useAAS );
+		if( checked < 0 )
+		{
+			checked = checkedAAS.Append( useAAS );
+			foundAAS.Append( idLib::fileSystem->ReadFile( va( "%s.%s", name.c_str(), useAAS ), NULL, NULL ) > 0 );
+		}
+		if( !foundAAS[checked] )
 		{
 			patchLog.Append( va( "%s %s:%d: '%s' (%s) uses %s, which %s has no AAS file for: run runAAS on the map", layerName, patch.sourceName.c_str(), line, mapEnt->epairs.GetString( "name" ), mapEnt->epairs.GetString( "classname" ), useAAS, name.c_str() ) );
 		}
 	}
 
-	idLib::Printf( "map patch %s from %s: %d merged, %d appended, %d skipped\n", patch.sourceName.c_str(), layerName, numMerged, numAppended, numSkipped );
+	if( idLib::fileSystem->GetNumLayers() > 1 || developer )
+	{
+		idLib::Printf( "map patch %s from %s: %d merged, %d appended, %d skipped\n", patch.sourceName.c_str(), layerName, numMerged, numAppended, numSkipped );
+	}
 	for( int i = firstLogLine; i < patchLog.Num(); i++ )
 	{
 		idLib::Printf( "  %s\n", patchLog[i].c_str() );
@@ -2248,6 +2323,22 @@ bool idMapFile::WriteDiff( const idMapFile* otherMap, const char* fileName, cons
 
 	static const char* DELETE_VAL = "";
 
+	//puncho start - MP-A5 (K41a): with layers, the edited map holds every unnamed entity of this one, which a patch can
+	// neither address nor append again without a second copy at every load. They are matched by their key/values, each
+	// once, so a removed entity cannot pair one of them with another. With one layer every unnamed entity is written.
+	idList<unsigned int> unnamedChecksums;
+	if( idLib::fileSystem->GetNumLayers() > 1 )
+	{
+		for( i = 1; i < entities.Num(); i++ )
+		{
+			if( entities[i]->epairs.GetString( "name" )[0] == '\0' )
+			{
+				unnamedChecksums.Append( entities[i]->epairs.Checksum() );
+			}
+		}
+	}
+	//puncho end
+
 	for( i = 1; i < otherMap->entities.Num(); i++ )
 	{
 		idMapEntity* otherEnt = otherMap->entities[i];
@@ -2350,18 +2441,11 @@ bool idMapFile::WriteDiff( const idMapFile* otherMap, const char* fileName, cons
 				epairs.Copy( otherEnt->epairs );
 			}
 		}
-		//puncho start - MP-A5 (K41a): the edited map is this map with entities appended, so an unnamed entity below this
-		// map's count is one of its own. A patch cannot address it, and writing it again would append a copy at
-		// every load: the lower layers' unnamed patch entities and the map's unnamed env probes among them.
-		else if( i < entities.Num() )
+		//puncho - MP-A5 (K41a): an unnamed entity this map already holds
+		else if( unnamedChecksums.Remove( otherEnt->epairs.Checksum() ) )
 		{
-			if( otherEnt->epairs.Checksum() != entities[i]->epairs.Checksum() )
-			{
-				idLib::common->Warning( "%s: entity %d has no name, so a patch cannot carry its changed keys", qpath.c_str(), i );
-			}
 			continue;
 		}
-		//puncho end
 		else
 		{
 			// it is a new entity
@@ -2392,14 +2476,15 @@ bool idMapFile::WriteDiff( const idMapFile* otherMap, const char* fileName, cons
 ===============
 idMapFile::WriteLevelEdits
 
-Today every in-engine writer wrote the merged level map whole; with mods loaded that baked every layer's patch into the
-write target, and the next load applied the patches again. So the map file keeps its text whenever a patch is in play:
-the edits go into the write target's own <map>_extra_ents.map as a diff against the raw map merged with the patches of
-the layers below the write target, which carries over that patch's earlier edits too. That holds for a map served below
-the write target (a base or mod map under fs_game), for a glTF map, which cannot be written, and for the write target's
-own map while it or a layer below it holds a patch. A patch above the write target (a mod over base with fs_game empty)
-applies after it, so its keys cannot be told apart from the edits: refused. With no patch anywhere the write target's own
-map is written whole, as today; a new map name is too, refused while that name has a patch.
+The level map is the map file merged with every layer's patch, so writing it whole would bake the patches into the
+write target, and they would apply again at the next load. With one layer the map is written whole, and a glTF map,
+which cannot be written, gets the edits as a patch diffed against the map file alone: the editors (TrenchBroom) read
+the .map, and a removal (popLight) has no patch form. With layers, while a patch is in play the edits go into the write
+target's own <map>_extra_ents.map as a diff against the map merged with the patches of the layers below the write
+target, which carries that patch's earlier edits over: for a map served below the write target (a base or mod map
+under fs_game), a glTF map, and the write target's own map while a patch at or below it applies. A patch above the
+write target (a mod over base with fs_game empty) applies after it, so its keys cannot be told apart from the edits:
+refused. With no patch the map is written whole; a new map name is too, refused while that name has a patch.
 ===============
 */
 bool idMapFile::WriteLevelEdits( const char* fileName )
@@ -2407,6 +2492,19 @@ bool idMapFile::WriteLevelEdits( const char* fileName )
 	idStr target = fileName;
 	target.StripFileExtension();
 	target.StripFileExtension();
+	if( idLib::fileSystem->GetNumLayers() == 1 )
+	{
+		if( gltfFormat )
+		{
+			idMapFile origFile;
+			if( !origFile.Parse( name, true, false, true ) )
+			{
+				return false;
+			}
+			return origFile.WriteDiff( this, va( "%s_extra_ents", name.c_str() ), ".map" );
+		}
+		return Write( target, ".map" );
+	}
 	if( target.Icmp( name ) != 0 )
 	{
 		if( RefuseWholeMapWrite( target ) )
@@ -2434,7 +2532,7 @@ bool idMapFile::WriteLevelEdits( const char* fileName )
 	}
 
 	bool patched = gltfFormat || mapLayer < writeLayer;
-	for( int layer = 0; layer <= writeLayer && !patched; layer++ )
+	for( int layer = Max( mapLayer, 0 ); layer <= writeLayer && !patched; layer++ )
 	{
 		patched = LayerHoldsPatch( name, layer );
 	}

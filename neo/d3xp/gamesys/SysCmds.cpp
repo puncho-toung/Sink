@@ -2490,10 +2490,46 @@ static void Cmd_SaveEnvprobes_f( const idCmdArgs& args )
 		mapName = mapFile->GetName();
 	}
 
-	//puncho start - MP-A5 (K41a): this writes the write target's patch whole with every live probe, so a probe that
-	// another layer's patch brought in would load twice: refused while another layer holds a patch for the map
-	if( idMapFile::RefuseWholeMapWrite( mapName, fileSystem->GetWriteLayer() ) )
+	//puncho start - MP-A5 (K41a): with layers the probes go into the level map, and WriteLevelEdits writes the edits as
+	// the write target's patch, which keeps that patch's other edits and leaves out the probes a lower layer holds. A
+	// probe whose name a map entity has updates it; an unnamed map probe at its origin stays as it is, since no patch can
+	// address it; any other probe, one the game placed itself, is added. One layer writes every probe into a new patch file.
+	if( fileSystem->GetNumLayers() > 1 )
 	{
+		for( e = 0; e < MAX_GENTITIES; e++ )
+		{
+			envProbe = static_cast<EnvironmentProbe*>( gameLocal.entities[ e ] );
+			if( !envProbe || !envProbe->IsType( EnvironmentProbe::Type ) )
+			{
+				continue;
+			}
+			dict.Clear();
+			envProbe->SaveState( &dict );
+
+			mapEnt = mapFile->FindEntity( envProbe->name );
+			if( mapEnt == NULL )
+			{
+				const idVec3 origin = dict.GetVector( "origin" );
+				int i;
+				for( i = 1; i < mapFile->GetNumEntities(); i++ )
+				{
+					const idDict& epairs = mapFile->GetEntity( i )->epairs;
+					if( epairs.GetString( "name" )[0] == '\0' && idStr::Icmp( epairs.GetString( "classname" ), envProbe->GetEntityDefName() ) == 0 && epairs.GetVector( "origin" ).Compare( origin, 0.1f ) )
+					{
+						break;
+					}
+				}
+				if( i < mapFile->GetNumEntities() )
+				{
+					continue;
+				}
+				mapEnt = new( TAG_SYSTEM ) idMapEntity();
+				mapFile->AddEntity( mapEnt );
+				mapEnt->epairs.Set( "classname", envProbe->GetEntityDefName() );
+			}
+			mapEnt->epairs.Copy( dict );
+		}
+		mapFile->WriteLevelEdits( mapName );
 		return;
 	}
 	//puncho end

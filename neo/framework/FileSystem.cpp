@@ -116,11 +116,13 @@ fs_game_base can be used to set an additional search path
 in search order, fs_game, fs_game_base, BASEGAME
 for instance to base a mod of D3 + D3XP assets, fs_game mymod, fs_game_base d3xp
 
-MP-A5 content layers (K40, K21a): fs_mods lists further game dirs, comma-separated, in load order.
+//puncho start - MP-A5 content layers (K40, K21a)
+fs_mods lists further game dirs, comma-separated, in load order.
 The layers rank base 0, fs_game_base, each fs_mods entry, then fs_game, which stays the top layer and
 the write target (gameFolder is never a mod). A file is served by the highest layer that holds it;
 inside one layer, loose files, .pk4 and .resources keep the order fs_resourceLoadPriority gives them.
 With fs_mods, fs_game_base and fs_game empty there is one layer and the search is the old one.
+//puncho end
 
 =============================================================================
 */
@@ -200,6 +202,7 @@ public:
 	virtual int				GetFileLayer( const char* relativePath );
 	virtual void			GetFileLayers( const char* relativePath, idList<int>& layers );
 	virtual idFile*			OpenFileReadFromLayer( const char* relativePath, int layer );
+	virtual void			GetModList( idStrList& mods ) const;
 	//puncho end
 	// resource tracking
 	virtual void			EnableBackgroundCache( bool enable );
@@ -294,6 +297,12 @@ private:
 	//puncho start - MP-A5 (K40)
 	idStrList				layerNames;			// the game dir of each layer, indexed by rank
 	int						writeLayer;			// gameFolder's rank
+	// MP-A5 (K21): the loose files of each layer, one directory listing at the first query into that directory and
+	// kept up by the writers, so a layer query is a hash probe; the containers have their own cacheHash
+	idStrList				layerPaths[ MAX_MOD_LAYERS + 1 ];
+	idHashIndex				layerPathHash[ MAX_MOD_LAYERS + 1 ];
+	idStrList				layerDirs[ MAX_MOD_LAYERS + 1 ];		// the directories listed so far
+	idHashIndex				layerDirHash[ MAX_MOD_LAYERS + 1 ];
 	//puncho end
 
 	static idCVar			fs_debug;
@@ -346,6 +355,8 @@ private:
 	void					GetLayerFileList( const char* relativePath, const idStrList& extensions, idStrList& list, idHashIndex& hashIndex, bool fullRelativePath, bool allowSubdirsForResourcePaks, const char* gamedir, int layer );
 	idFile*					OpenLayerFile( const char* relativePath, int searchFlags, bool allowCopyFiles, const char* gamedir, int layer );
 	bool					LayerHoldsFile( const char* relativePath, int layer );
+	void					AddLayerPath( int layer, const char* relativePath );
+	void					ListLayerDir( int layer, const char* relativeDir );
 	void					ListLayerFiles_r( const char* osPath, const char* relativePath, idStrList& list, idHashIndex& hashIndex );
 	int						FindLayerShadows( idStrList& paths, idList<int>& pathLayers );
 	//puncho end
@@ -500,7 +511,7 @@ int idFileSystemLocal::GetFileLength( const char* relativePath )
 	// RB: TODO this should probably be guarded by fs_resourceLoadPriority
 
 	//puncho - MP-A5 (K21a): only the serving layer's containers answer, so a loose mod file is not measured by a packed
-	// base copy; with one layer the lookup is skipped and every container answers as before
+	// base copy; with one layer the lookup is skipped and every container answers
 	const int layer = ( layerNames.Num() > 1 ) ? GetFileLayer( relativePath ) : -1;
 
 	// RB: .pk4 files have a higher priority than .resources because they are aimed for modding
@@ -1889,8 +1900,7 @@ const char* idFileSystemLocal::OSPathToRelativePath( const char* OSPath )
 		return OSPath;
 	}
 	// RB: bumped from 32 to 128
-	//puncho start - MP-A5 (K40): every layer's game dir, so a mod's files map back to relative paths too
-	idStaticList< idStrStatic< 128 >, 5 + MAX_MOD_LAYERS > basePaths;
+	idStaticList< idStrStatic< 128 >, 5 > basePaths;
 	basePaths.Append( "base" );
 	basePaths.Append( "d3xp" );
 	basePaths.Append( "d3le" );
@@ -1902,11 +1912,27 @@ const char* idFileSystemLocal::OSPathToRelativePath( const char* OSPath )
 	{
 		basePaths.Append( fs_game_base.GetString() );
 	}
-	for( int i = 0; i < layerNames.Num(); i++ )
+	//puncho start - MP-A5 (K40): a mod's game dir maps back only as the component right after fs_basepath or
+	// fs_savepath, since a mod may be named like any folder further down a path
+	for( int i = 0; i < 2 && layerNames.Num() > 1; i++ )
 	{
-		if( basePaths.FindIndex( layerNames[i].c_str() ) < 0 )
+		idStr root = ( i == 0 ) ? fs_basepath.GetString() : fs_savepath.GetString();
+		root.BackSlashesToSlashes();
+		root.StripTrailing( '/' );
+		idStr osPath = OSPath;
+		osPath.BackSlashesToSlashes();
+		if( root.IsEmpty() || osPath.Length() <= root.Length() || osPath.Icmpn( root, root.Length() ) != 0 || osPath[ root.Length() ] != '/' )
 		{
-			basePaths.Append( layerNames[i].c_str() );
+			continue;
+		}
+		const char* component = OSPath + root.Length() + 1;
+		for( int layer = 1; layer < layerNames.Num(); layer++ )
+		{
+			const int length = layerNames[layer].Length();
+			if( basePaths.FindIndex( layerNames[layer].c_str() ) < 0 && layerNames[layer].Icmpn( component, length ) == 0 && ( component[length] == '/' || component[length] == '\\' ) )
+			{
+				return component + length + 1;
+			}
 		}
 	}
 	//puncho end
@@ -2279,6 +2305,11 @@ bool idFileSystemLocal::RenameFile( const char* relativePath, const char* newNam
 #endif
 	// RB end
 
+	if( success && layerNames.Num() > 1 )	//puncho - MP-A5 (K21): the write target now holds the new name
+	{
+		AddLayerPath( writeLayer, newName );
+	}
+
 	return success;
 }
 
@@ -2356,7 +2387,7 @@ int idFileSystemLocal::GetFileList( const char* relativePath, const idStrList& e
 		return 0;
 	}
 
-	//puncho - MP-A5 (K21a): layer by layer, top down; inside a layer .resources, .pk4 and loose files as before
+	//puncho start - MP-A5 (K21a): layer by layer, top down; inside a layer .resources, then .pk4, then loose files
 	for( int layer = layerNames.Num() - 1; layer >= 0; layer-- )
 	{
 		GetLayerFileList( relativePath, extensions, list, hashIndex, fullRelativePath, allowSubdirsForResourcePaks, gamedir, layer );
@@ -2369,11 +2400,12 @@ int idFileSystemLocal::GetFileList( const char* relativePath, const idStrList& e
 ===============
 idFileSystemLocal::GetLayerFileList
 
-MP-A5 (K21a): one layer's part of GetFileList
+One layer's part of GetFileList
 ===============
 */
 void idFileSystemLocal::GetLayerFileList( const char* relativePath, const idStrList& extensions, idStrList& list, idHashIndex& hashIndex, bool fullRelativePath, bool allowSubdirsForResourcePaks, const char* gamedir, int layer )
 {
+	//puncho end
 	int pathLength = strlen( relativePath );
 	if( pathLength )
 	{
@@ -2386,7 +2418,7 @@ void idFileSystemLocal::GetLayerFileList( const char* relativePath, const idStrL
 		for( int sp = fileSystemLocal.searchPaths.Num() - 1; sp >= 0; sp-- )
 		{
 			const searchpath_t& searchpath = fileSystemLocal.searchPaths[sp];
-			if( searchpath.layer != layer )
+			if( searchpath.layer != layer )	//puncho - MP-A5 (K21a)
 			{
 				continue;
 			}
@@ -2475,7 +2507,7 @@ void idFileSystemLocal::GetLayerFileList( const char* relativePath, const idStrL
 		for( int sp = fileSystemLocal.searchPaths.Num() - 1; sp >= 0; sp-- )
 		{
 			const searchpath_t& searchpath = fileSystemLocal.searchPaths[sp];
-			if( searchpath.layer != layer )
+			if( searchpath.layer != layer )	//puncho - MP-A5 (K21a)
 			{
 				continue;
 			}
@@ -2562,7 +2594,7 @@ void idFileSystemLocal::GetLayerFileList( const char* relativePath, const idStrL
 	// search through the path, one element at a time, adding to list
 	for( int sp = searchPaths.Num() - 1; sp >= 0; sp-- )
 	{
-		if( searchPaths[sp].layer != layer )
+		if( searchPaths[sp].layer != layer )	//puncho - MP-A5 (K21a)
 		{
 			continue;
 		}
@@ -2944,13 +2976,70 @@ void idFileSystemLocal::Path_f( const idCmdArgs& args )
 	}
 }
 
-//puncho start - MP-A5 (K43)
+//puncho start - MP-A5 (K21, K43)
+/*
+============
+idFileSystemLocal::AddLayerPath
+
+One loose file of a layer, matched ignoring case as the containers' entries are
+============
+*/
+void idFileSystemLocal::AddLayerPath( int layer, const char* relativePath )
+{
+	idStrList& paths = layerPaths[layer];
+	idHashIndex& hash = layerPathHash[layer];
+	const int key = hash.GenerateKey( relativePath, false );
+	for( int i = hash.First( key ); i >= 0; i = hash.Next( i ) )
+	{
+		if( paths[i].Icmp( relativePath ) == 0 )
+		{
+			return;
+		}
+	}
+	hash.Add( key, paths.Append( relativePath ) );
+}
+
+/*
+============
+idFileSystemLocal::ListLayerDir
+
+Lists one directory of a layer, in each of its search paths, once; later queries into it are hash probes
+============
+*/
+void idFileSystemLocal::ListLayerDir( int layer, const char* relativeDir )
+{
+	const int key = layerDirHash[layer].GenerateKey( relativeDir, true );
+	for( int i = layerDirHash[layer].First( key ); i >= 0; i = layerDirHash[layer].Next( i ) )
+	{
+		if( layerDirs[layer][i].Cmp( relativeDir ) == 0 )
+		{
+			return;
+		}
+	}
+	layerDirHash[layer].Add( key, layerDirs[layer].Append( relativeDir ) );
+
+	idStrList files;
+	for( int sp = 0; sp < searchPaths.Num(); sp++ )
+	{
+		if( searchPaths[sp].layer != layer )
+		{
+			continue;
+		}
+		idStr osPath = BuildOSPath( searchPaths[sp].path, searchPaths[sp].gamedir, relativeDir );
+		osPath.StripTrailing( PATHSEPARATOR_CHAR );
+		ListOSFiles( osPath, "", files );
+		for( int i = 0; i < files.Num(); i++ )
+		{
+			AddLayerPath( layer, ( relativeDir[0] != '\0' ) ? va( "%s/%s", relativeDir, files[i].c_str() ) : files[i].c_str() );
+		}
+	}
+}
+
 /*
 ============
 idFileSystemLocal::ListLayerFiles_r
 
-Every loose file under one search path's game dir, as relative paths. The .pk4 and .resources containers are
-mounted, never served whole, so they are left out.
+Every loose file under one search path's game dir, as relative paths, for the shadow report
 ============
 */
 void idFileSystemLocal::ListLayerFiles_r( const char* osPath, const char* relativePath, idStrList& list, idHashIndex& hashIndex )
@@ -2959,12 +3048,6 @@ void idFileSystemLocal::ListLayerFiles_r( const char* osPath, const char* relati
 	ListOSFiles( osPath, "", files );
 	for( int i = 0; i < files.Num(); i++ )
 	{
-		idStr ext;
-		files[i].ExtractFileExtension( ext );
-		if( ext.Icmp( "pk4" ) == 0 || ext.Icmp( "resources" ) == 0 )
-		{
-			continue;
-		}
 		AddUnique( ( relativePath[0] != '\0' ) ? va( "%s/%s", relativePath, files[i].c_str() ) : files[i].c_str(), list, hashIndex );
 	}
 
@@ -2987,12 +3070,9 @@ void idFileSystemLocal::ListLayerFiles_r( const char* osPath, const char* relati
 
 /*
 ============
-idFileSystemLocal::FindLayerShadows
+IsMergedLayerPath
 
-Fills paths with every relative path that more than one layer holds, sorted, and returns how many of them are
-merged rather than shadowed: map patches (<map>_extra_ents.map or .json, K41) and script/mod_main.script (K42) apply
-from every layer. A merged path is listed even when one layer holds it. Only the layers above base are walked,
-since a path that two layers hold is held by one of them.
+Map patches (<map>_extra_ents.map or .json, K41) and script/mod_main.script (K42) apply from every layer
 ============
 */
 static bool IsMergedLayerPath( const char* path )
@@ -3002,6 +3082,16 @@ static bool IsMergedLayerPath( const char* path )
 	return ( name.IStripTrailingOnce( "_extra_ents" ) || idStr::Icmp( path, "script/mod_main.script" ) == 0 );
 }
 
+/*
+============
+idFileSystemLocal::FindLayerShadows
+
+Fills paths with every relative path that more than one layer holds, sorted, the shadowed ones first, and returns how
+many at the end are merged rather than shadowed (IsMergedLayerPath); a merged path is listed even when one layer holds
+it. pathLayers holds a bit per layer that holds each path. Only the layers above base are read, since a path two layers
+hold is held by one of them, and the .pk4 and .resources containers, mounted rather than served, are left out.
+============
+*/
 int idFileSystemLocal::FindLayerShadows( idStrList& paths, idList<int>& pathLayers )
 {
 	idStrList files;
@@ -3033,7 +3123,6 @@ int idFileSystemLocal::FindLayerShadows( idStrList& paths, idList<int>& pathLaye
 	}
 	files.SortWithTemplate( idSort_PathStr() );
 
-	// the shadowed paths first, then the merged ones; pathLayers holds a bit per layer that holds each path
 	idStrList merged;
 	idList<int> mergedLayers;
 	idList<int> layers;
@@ -3041,6 +3130,12 @@ int idFileSystemLocal::FindLayerShadows( idStrList& paths, idList<int>& pathLaye
 	pathLayers.Clear();
 	for( int i = 0; i < files.Num(); i++ )
 	{
+		idStr ext;
+		files[i].ExtractFileExtension( ext );
+		if( ext.Icmp( "pk4" ) == 0 || ext.Icmp( "resources" ) == 0 )
+		{
+			continue;
+		}
 		GetFileLayers( files[i], layers );
 		int bits = 0;
 		for( int j = 0; j < layers.Num(); j++ )
@@ -3094,7 +3189,7 @@ void idFileSystemLocal::ListModConflicts_f( const idCmdArgs& args )
 	{
 		if( i == numShadowed )
 		{
-			common->Printf( "%d paths merged across the layers (map patches apply lowest layer first; each mod_main.script compiles):\n", numMerged );
+			common->Printf( "%d paths merged across the layers (map patches apply from the layer that serves the map up; each mod_main.script compiles):\n", numMerged );
 		}
 		idStr line;
 		for( int layer = fileSystemLocal.layerNames.Num() - 1; layer >= 0; layer-- )
@@ -3592,21 +3687,14 @@ void idFileSystemLocal::Startup()
 	}
 
 	// the mods, in load order
-	const char* modList = fs_mods.GetString();
-	while( *modList != '\0' )
+	idStrList mods;
+	SplitModList( fs_mods.GetString(), mods );
+	for( int m = 0; m < mods.Num(); m++ )
 	{
-		const char* comma = strchr( modList, ',' );
-		const int len = ( comma != NULL ) ? ( int )( comma - modList ) : idStr::Length( modList );
-		idStr mod( modList, 0, len );
-		mod.Strip( ' ' );
-		modList += ( comma != NULL ) ? len + 1 : len;
-		if( mod.IsEmpty() )
+		const idStr& mod = mods[m];
+		if( mod.Find( '/' ) >= 0 || mod.Find( '\\' ) >= 0 || mod.Find( ':' ) >= 0 || mod[0] == '.' )
 		{
-			continue;
-		}
-		if( mod.Find( '/' ) >= 0 || mod.Find( '\\' ) >= 0 )
-		{
-			common->FatalError( "fs_mods: '%s' holds a path separator; name a game dir under fs_basepath", mod.c_str() );
+			common->FatalError( "fs_mods: '%s' is not a game dir name: no path separator, no ':', no leading '.'", mod.c_str() );
 		}
 		if( mod.Icmp( BASE_GAMEDIR ) == 0 || mod.Icmp( fs_game_base.GetString() ) == 0 || mod.Icmp( fs_game.GetString() ) == 0 )
 		{
@@ -3645,6 +3733,15 @@ void idFileSystemLocal::Startup()
 			writeLayer = i;
 		}
 	}
+
+	// K21: the layers' loose file sets start empty and fill a directory at a time as they are asked
+	for( int i = 0; i <= MAX_MOD_LAYERS; i++ )
+	{
+		layerPaths[i].Clear();
+		layerPathHash[i].Clear();
+		layerDirs[i].Clear();
+		layerDirHash[i].Clear();
+	}
 	//puncho end
 
 	// add our commands
@@ -3665,8 +3762,8 @@ void idFileSystemLocal::Startup()
 	// print the current search paths
 	Path_f( idCmdArgs() );
 
-	//puncho start - MP-A5 (K42, K43): the layer count against its cap (a phase 12 row), and the shadow counts only;
-	// listModConflicts lists them. One layer cannot shadow, so the walk is skipped.
+	//puncho start - MP-A5 (K42, K43): the layer list and its count against the cap (a phase 12 row); listModConflicts
+	// reports the shadows
 	idStr layerList;
 	for( int i = 0; i < layerNames.Num(); i++ )
 	{
@@ -3674,13 +3771,6 @@ void idFileSystemLocal::Startup()
 		layerList += layerNames[i];
 	}
 	common->Printf( "content layers: %d above base of MAX_MOD_LAYERS %d (%s), writing to %s\n", layerNames.Num() - 1, MAX_MOD_LAYERS, layerList.c_str(), gameFolder.c_str() );
-	if( layerNames.Num() > 1 )
-	{
-		idStrList paths;
-		idList<int> pathLayers;
-		const int numMerged = FindLayerShadows( paths, pathLayers );
-		common->Printf( "content layers: %d paths shadowed whole, %d merged (listModConflicts lists them)\n", paths.Num() - numMerged, numMerged );
-	}
 	//puncho end
 
 	common->Printf( "file system initialized.\n" );
@@ -4104,8 +4194,8 @@ idFile* idFileSystemLocal::OpenFileReadFlags( const char* relativePath, int sear
 		idLib::Printf( "FILE DEBUG: opening %s\n", relativePath );
 	}
 
-	//puncho start - MP-A5 (K21a): files are served layer by layer, top down, so a packed mod beats a loose base copy.
-	// Today's search went loose files in every layer, then every .pk4, then every .resources.
+	//puncho start - MP-A5 (K21a): files are served layer by layer, top down, so a packed file in a higher layer beats
+	// a loose copy in a lower one; with one layer this is the single search of every path
 	for( int layer = layerNames.Num() - 1; layer >= 0; layer-- )
 	{
 		idFile* f = OpenLayerFile( relativePath, searchFlags, allowCopyFiles, gamedir, layer );
@@ -4114,7 +4204,6 @@ idFile* idFileSystemLocal::OpenFileReadFlags( const char* relativePath, int sear
 			return f;
 		}
 	}
-	//puncho end
 
 	if( fs_debug.GetInteger() )
 	{
@@ -4128,12 +4217,13 @@ idFile* idFileSystemLocal::OpenFileReadFlags( const char* relativePath, int sear
 ===========
 idFileSystemLocal::OpenLayerFile
 
-MP-A5 (K21a): one layer's part of OpenFileReadFlags, in today's order inside the layer: .pk4 and .resources
-first under fs_resourceLoadPriority 1, then loose files, then .pk4 and .resources under 0
+One layer's part of OpenFileReadFlags: .pk4 and .resources first under fs_resourceLoadPriority 1, then loose files,
+then .pk4 and .resources under 0
 ===========
 */
 idFile* idFileSystemLocal::OpenLayerFile( const char* relativePath, int searchFlags, bool allowCopyFiles, const char* gamedir, int layer )
 {
+	//puncho end
 	// RB: .pk4 files have a higher priority than .resources because they are aimed for modding
 	if( UsingZipFiles() && fs_resourceLoadPriority.GetInteger() == 1 )
 	{
@@ -4161,7 +4251,7 @@ idFile* idFileSystemLocal::OpenLayerFile( const char* relativePath, int searchFl
 	{
 		for( int sp = searchPaths.Num() - 1; sp >= 0; sp-- )
 		{
-			if( searchPaths[sp].layer != layer )
+			if( searchPaths[sp].layer != layer )	//puncho - MP-A5 (K21a)
 			{
 				continue;
 			}
@@ -4332,7 +4422,9 @@ idFile* idFileSystemLocal::OpenFileReadFromLayer( const char* relativePath, int 
 ===========
 idFileSystemLocal::LayerHoldsFile
 
-Whether one layer holds a copy of relativePath, loose, in a .pk4 or in a .resources; nothing is read
+Whether one layer holds a copy of relativePath, loose, in a .pk4 or in a .resources. With more than one layer every
+probe is a hash lookup, after one listing of the file's directory per layer; with one, whose few callers predate the
+sets, a loose file is opened.
 ===========
 */
 bool idFileSystemLocal::LayerHoldsFile( const char* relativePath, int layer )
@@ -4353,16 +4445,34 @@ bool idFileSystemLocal::LayerHoldsFile( const char* relativePath, int layer )
 			return true;
 		}
 	}
-	for( int sp = searchPaths.Num() - 1; sp >= 0; sp-- )
+	if( layer < 0 || layer > MAX_MOD_LAYERS )
 	{
-		if( searchPaths[sp].layer != layer )
+		return false;
+	}
+	if( layerNames.Num() == 1 )
+	{
+		// no loose sets with one layer; the few who ask (the script's per-file layer) open the file
+		for( int sp = searchPaths.Num() - 1; sp >= 0; sp-- )
 		{
-			continue;
+			idFileHandle fp = OpenOSFile( BuildOSPath( searchPaths[sp].path, searchPaths[sp].gamedir, relativePath ), FS_READ );
+			if( fp )
+			{
+				CloseOSFile( fp );
+				return true;
+			}
 		}
-		idFileHandle fp = OpenOSFile( BuildOSPath( searchPaths[sp].path, searchPaths[sp].gamedir, relativePath ), FS_READ );
-		if( fp )
+		return false;
+	}
+	idStrStatic< MAX_OSPATH > path = relativePath;
+	path.BackSlashesToSlashes();
+	idStrStatic< MAX_OSPATH > dir = path;
+	dir.StripFilename();
+	ListLayerDir( layer, dir );
+	const int key = layerPathHash[layer].GenerateKey( path, false );
+	for( int i = layerPathHash[layer].First( key ); i >= 0; i = layerPathHash[layer].Next( i ) )
+	{
+		if( layerPaths[layer][i].Icmp( path ) == 0 )
 		{
-			CloseOSFile( fp );
 			return true;
 		}
 	}
@@ -4399,6 +4509,76 @@ void idFileSystemLocal::GetFileLayers( const char* relativePath, idList<int>& la
 		if( LayerHoldsFile( relativePath, layer ) )
 		{
 			layers.Append( layer );
+		}
+	}
+}
+
+/*
+===========
+idFileSystemLocal::GetModList
+===========
+*/
+void idFileSystemLocal::GetModList( idStrList& mods ) const
+{
+	mods.Clear();
+	for( int layer = 1; layer < layerNames.Num(); layer++ )
+	{
+		mods.Append( layerNames[layer] );
+	}
+}
+
+/*
+===========
+idFileSystem::SplitModList
+
+fs_mods, a save's mod list and a joiner's all split here
+===========
+*/
+void idFileSystem::SplitModList( const char* list, idStrList& mods )
+{
+	mods.Clear();
+	while( list != NULL && *list != '\0' )
+	{
+		const char* comma = strchr( list, ',' );
+		const int length = ( comma != NULL ) ? ( int )( comma - list ) : idStr::Length( list );
+		idStr mod( list, 0, length );
+		mod.Strip( ' ' );
+		if( !mod.IsEmpty() )
+		{
+			mods.Append( mod );
+		}
+		list += ( comma != NULL ) ? length + 1 : length;
+	}
+}
+
+/*
+===========
+idFileSystem::DiffModLists
+
+The save check and the connect check name a mod list's difference the same way
+===========
+*/
+void idFileSystem::DiffModLists( const idStrList& want, const idStrList& have, idStr& missing, idStr& extra )
+{
+	missing.Clear();
+	extra.Clear();
+	for( int pass = 0; pass < 2; pass++ )
+	{
+		const idStrList& from = ( pass == 0 ) ? want : have;
+		const idStrList& other = ( pass == 0 ) ? have : want;
+		idStr& out = ( pass == 0 ) ? missing : extra;
+		for( int i = 0; i < from.Num(); i++ )
+		{
+			int j = 0;
+			while( j < other.Num() && other[j].Icmp( from[i] ) != 0 )
+			{
+				j++;
+			}
+			if( j == other.Num() )
+			{
+				out += out.IsEmpty() ? "" : ",";
+				out += from[i];
+			}
 		}
 	}
 }
@@ -4469,6 +4649,11 @@ idFile* idFileSystemLocal::OpenFileWrite( const char* relativePath, const char* 
 	f->mode = ( 1 << FS_WRITE );
 	f->handleSync = false;
 	f->fileSize = 0;
+
+	if( layerNames.Num() > 1 )	//puncho - MP-A5 (K21): the write target now holds the file
+	{
+		AddLayerPath( writeLayer, relativePath );
+	}
 
 	return f;
 }
@@ -4627,6 +4812,11 @@ idFile* idFileSystemLocal::OpenFileAppend( const char* relativePath, bool sync, 
 	f->mode = ( 1 << FS_WRITE ) + ( 1 << FS_APPEND );
 	f->handleSync = sync;
 	f->fileSize = DirectFileLength( f->o );
+
+	if( layerNames.Num() > 1 )	//puncho - MP-A5 (K21): the write target now holds the file
+	{
+		AddLayerPath( writeLayer, relativePath );
+	}
 
 	return f;
 }

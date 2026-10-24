@@ -1628,11 +1628,13 @@ The mod list as the connect message carries it: the content layer names after ba
 */
 static void GetModList( idStr& list )
 {
+	idStrList mods;
+	fileSystem->GetModList( mods );
 	list.Clear();
-	for( int layer = 1; layer < fileSystem->GetNumLayers(); layer++ )
+	for( int i = 0; i < mods.Num(); i++ )
 	{
-		list += ( layer > 1 ) ? "," : "";
-		list += fileSystem->GetLayerName( layer );
+		list += ( i > 0 ) ? "," : "";
+		list += mods[i];
 	}
 }
 
@@ -1643,14 +1645,7 @@ SplitModList
 */
 static void SplitModList( const char* list, idStrList& mods )
 {
-	mods.Clear();
-	while( *list != '\0' )
-	{
-		const char* comma = strchr( list, ',' );
-		const int length = ( comma != NULL ) ? ( int )( comma - list ) : idStr::Length( list );
-		mods.Append( idStr( list, 0, length ) );
-		list += ( comma != NULL ) ? length + 1 : length;
-	}
+	idFileSystem::SplitModList( list, mods );
 }
 
 /*
@@ -1678,22 +1673,7 @@ static bool ModListDiffers( const char* peerList, idStr& reason )
 	SplitModList( peerList, peerMods );
 	idStr missing;
 	idStr extra;
-	for( int i = 0; i < hostMods.Num(); i++ )
-	{
-		if( peerMods.FindIndex( hostMods[i] ) < 0 )
-		{
-			missing += missing.IsEmpty() ? "" : ",";
-			missing += hostMods[i];
-		}
-	}
-	for( int i = 0; i < peerMods.Num(); i++ )
-	{
-		if( hostMods.FindIndex( peerMods[i] ) < 0 )
-		{
-			extra += extra.IsEmpty() ? "" : ",";
-			extra += peerMods[i];
-		}
-	}
+	idFileSystem::DiffModLists( hostMods, peerMods, missing, extra );
 
 	reason = "mods differ:";
 	if( !missing.IsEmpty() )
