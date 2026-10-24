@@ -1188,7 +1188,7 @@ float idPush::ClipTranslationalPush( trace_t& results, idEntity* pusher, const i
 									 const idVec3& newOrigin, const idVec3& translation )
 {
 	int			i, listedEntities, res;
-	idEntity*	check, *entityList[ MAX_GENTITIES ];
+	idEntity*	check;		//puncho - MP-A4: the list moved to the scratch arena
 	idBounds	bounds, pushBounds;
 	idVec3		clipMove, clipOrigin, oldOrigin, dir, impulse;
 	trace_t		pushResults;
@@ -1228,7 +1228,13 @@ float idPush::ClipTranslationalPush( trace_t& results, idEntity* pusher, const i
 	// make sure we don't get the pushing clip model in the list
 	clipModel->Disable();
 
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results; it stays live through the
+	// pushes below, which can damage, kill and explode what they push
+	idScratchScope scratch( "idPush::ClipTranslationalPush" );
+	idEntity** entityList = scratch.Alloc< idEntity* >( MAX_GENTITIES );
 	listedEntities = gameLocal.clip.EntitiesTouchingBounds( pushBounds, -1, entityList, MAX_GENTITIES );
+	scratch.Trim( entityList, listedEntities );
+	//puncho end
 
 	// discard entities we cannot or should not push
 	listedEntities = DiscardEntities( entityList, listedEntities, flags, pusher );
@@ -1390,7 +1396,7 @@ float idPush::ClipRotationalPush( trace_t& results, idEntity* pusher, const int 
 								  const idMat3& newAxis, const idRotation& rotation )
 {
 	int			i, listedEntities, res;
-	idEntity*	check, *entityList[ MAX_GENTITIES ];
+	idEntity*	check;		//puncho - MP-A4: the list moved to the scratch arena
 	idBounds	bounds, pushBounds;
 	idRotation	clipRotation;
 	idMat3		clipAxis, oldAxis;
@@ -1426,7 +1432,13 @@ float idPush::ClipRotationalPush( trace_t& results, idEntity* pusher, const int 
 	// make sure we don't get the pushing clip model in the list
 	clipModel->Disable();
 
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results; it stays live through the
+	// pushes below, which can damage, kill and explode what they push
+	idScratchScope scratch( "idPush::ClipRotationalPush" );
+	idEntity** entityList = scratch.Alloc< idEntity* >( MAX_GENTITIES );
 	listedEntities = gameLocal.clip.EntitiesTouchingBounds( pushBounds, -1, entityList, MAX_GENTITIES );
+	scratch.Trim( entityList, listedEntities );
+	//puncho end
 
 	// discard entities we cannot or should not push
 	listedEntities = DiscardEntities( entityList, listedEntities, flags, pusher );

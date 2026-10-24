@@ -481,6 +481,8 @@ public:
 	frameTiming_t		frameTiming;
 	frameTiming_t		mainFrameTiming;
 
+	idScratchStack		gameScratchStack;	//puncho - MP-A4: the game thread's and the main thread's (threadScratchStack)
+
 public:	// These are public because they are called directly by static functions in this file
 
 	const char* GetCurrentMapName()

@@ -90,6 +90,8 @@ int idGameThread::Run()
 {
 	commonLocal.frameTiming.startGameTime = Sys_Microseconds();
 
+	threadScratchStack = &commonLocal.gameScratchStack;	//puncho - MP-A4 (K27): the main thread's arena too; the two never run game code at once
+
 	// debugging tool to test frame dropping behavior
 	if( com_sleepGame.GetInteger() )
 	{
@@ -111,6 +113,7 @@ int idGameThread::Run()
 			if( userCmdMgr )
 			{
 				game->ClientRunFrame( *userCmdMgr, ( i == numGameFrames - 1 ), ret );
+				commonLocal.gameScratchStack.EndTic();	//puncho - MP-A4 (K28)
 			}
 			if( ret.syncNextGameFrame || ret.sessionCommand[0] != 0 )
 			{
@@ -127,6 +130,7 @@ int idGameThread::Run()
 			if( userCmdMgr )
 			{
 				game->RunFrame( *userCmdMgr, ret );
+				commonLocal.gameScratchStack.EndTic();	//puncho - MP-A4 (K28)
 			}
 			if( ret.syncNextGameFrame || ret.sessionCommand[0] != 0 )
 			{
@@ -979,7 +983,8 @@ void idCommonLocal::Frame()
 			int	nowTime = Sys_Milliseconds();
 			int	com_frameMsec = nowTime - lastTime;
 			lastTime = nowTime;
-			Printf( "frame:%d all:%3d gfr:%3d rf:%3lld bk:%3lld\n", idLib::frameNumber, com_frameMsec, time_gameFrame, time_frontend / 1000, time_backend / 1000 );
+			//puncho - MP-A4 (K26): scratch: the last tic's high-water in the game's scratch arena, read after WaitForThread
+			Printf( "frame:%d all:%3d gfr:%3d rf:%3lld bk:%3lld scratch:%4dKB\n", idLib::frameNumber, com_frameMsec, time_gameFrame, time_frontend / 1000, time_backend / 1000, gameScratchStack.GetTicHighWater() >> 10 );
 			time_gameFrame = 0;
 			time_gameDraw = 0;
 		}

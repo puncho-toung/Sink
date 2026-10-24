@@ -167,12 +167,17 @@ void idForce_Field::Evaluate( int time )
 	int numClipModels, i;
 	idBounds bounds;
 	idVec3 force, torque, angularVelocity;
-	idClipModel* cm, *clipModelList[ MAX_GENTITIES ];
+	idClipModel* cm;		//puncho - MP-A4: the list moved to the scratch arena
 
 	assert( clipModel );
 
 	bounds.FromTransformedBounds( clipModel->GetBounds(), clipModel->GetOrigin(), clipModel->GetAxis() );
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results
+	idScratchScope scratch( "idForce_Field::Evaluate" );
+	idClipModel** clipModelList = scratch.Alloc< idClipModel* >( MAX_GENTITIES );
 	numClipModels = gameLocal.clip.ClipModelsTouchingBounds( bounds, -1, clipModelList, MAX_GENTITIES );
+	scratch.Trim( clipModelList, numClipModels );
+	//puncho end
 
 	for( i = 0; i < numClipModels; i++ )
 	{

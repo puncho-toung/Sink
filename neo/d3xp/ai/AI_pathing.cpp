@@ -362,7 +362,6 @@ int GetObstacles( const idPhysics* physics, const idAAS* aas, const idEntity* ig
 	idBox box;
 	idEntity* obEnt;
 	idClipModel* clipModel;
-	idClipModel* clipModelList[ MAX_GENTITIES ];
 	//puncho start - ai-avoidance (WP-A2, WP-A4)
 	aasWallQuad_t wallQuads[MAX_AAS_WALL_EDGES];
 	int numWalls, numWallsFound, maxWalls;
@@ -407,7 +406,12 @@ int GetObstacles( const idPhysics* physics, const idAAS* aas, const idEntity* ig
 	clipMask = physics->GetClipMask();
 
 	// find all obstacles touching the clip bounds
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results
+	idScratchScope scratch( "GetObstacles" );
+	idClipModel** clipModelList = scratch.Alloc< idClipModel* >( MAX_GENTITIES );
 	numListedClipModels = gameLocal.clip.ClipModelsTouchingBounds( clipBounds, clipMask, clipModelList, MAX_GENTITIES );
+	scratch.Trim( clipModelList, numListedClipModels );
+	//puncho end
 
 	//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md): the loop only picks the clip models now; their outlines
 	// are built after it, so ai_avoidMaxActors can drop the actors beyond the k nearest before paying for them. An actor

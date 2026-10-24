@@ -4901,7 +4901,6 @@ void idGameLocal::KillBox( idEntity* ent, bool catch_teleport )
 	int			num;
 	idEntity* 	hit;
 	idClipModel* cm;
-	idClipModel* clipModels[ MAX_GENTITIES ];
 	idPhysics*	phys;
 
 	phys = ent->GetPhysics();
@@ -4910,7 +4909,12 @@ void idGameLocal::KillBox( idEntity* ent, bool catch_teleport )
 		return;
 	}
 
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results
+	idScratchScope scratch( "idGameLocal::KillBox" );
+	idClipModel** clipModels = scratch.Alloc< idClipModel* >( MAX_GENTITIES );
 	num = clip.ClipModelsTouchingBounds( phys->GetAbsBounds(), phys->GetClipMask(), clipModels, MAX_GENTITIES );
+	scratch.Trim( clipModels, num );
+	//puncho end
 	for( i = 0; i < num; i++ )
 	{
 		cm = clipModels[ i ];
@@ -5026,7 +5030,6 @@ void idGameLocal::RadiusDamage( const idVec3& origin, idEntity* inflictor, idEnt
 {
 	float		dist, damageScale, attackerDamageScale, attackerPushScale;
 	idEntity* 	ent;
-	idEntity* 	entityList[ MAX_GENTITIES ];
 	int			numListedEntities;
 	idBounds	bounds;
 	idVec3 		v, damagePoint, dir;
@@ -5053,7 +5056,13 @@ void idGameLocal::RadiusDamage( const idVec3& origin, idEntity* inflictor, idEnt
 	bounds = idBounds( origin ).Expand( radius );
 
 	// get all entities touching the bounds
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results; it stays live through Damage,
+	// Killed and a chained RadiusDamage, so a chain level costs its results, not MAX_GENTITIES
+	idScratchScope scratch( "idGameLocal::RadiusDamage" );
+	idEntity** entityList = scratch.Alloc< idEntity* >( MAX_GENTITIES );
 	numListedEntities = clip.EntitiesTouchingBounds( bounds, -1, entityList, MAX_GENTITIES );
+	scratch.Trim( entityList, numListedEntities );
+	//puncho end
 
 	if( inflictor && inflictor->IsType( idAFAttachment::Type ) )
 	{
@@ -5200,7 +5209,6 @@ void idGameLocal::RadiusPush( const idVec3& origin, const float radius, const fl
 {
 	int i, numListedClipModels;
 	idClipModel* clipModel;
-	idClipModel* clipModelList[ MAX_GENTITIES ];
 	idVec3 dir;
 	idBounds bounds;
 	modelTrace_t result;
@@ -5212,7 +5220,12 @@ void idGameLocal::RadiusPush( const idVec3& origin, const float radius, const fl
 	bounds = idBounds( origin ).Expand( radius );
 
 	// get all clip models touching the bounds
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results
+	idScratchScope scratch( "idGameLocal::RadiusPush" );
+	idClipModel** clipModelList = scratch.Alloc< idClipModel* >( MAX_GENTITIES );
 	numListedClipModels = clip.ClipModelsTouchingBounds( bounds, -1, clipModelList, MAX_GENTITIES );
+	scratch.Trim( clipModelList, numListedClipModels );
+	//puncho end
 
 	if( inflictor && inflictor->IsType( idAFAttachment::Type ) )
 	{

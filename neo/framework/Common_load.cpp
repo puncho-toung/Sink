@@ -235,6 +235,18 @@ void idCommonLocal::UnloadMap()
 		game->MapShutdown();
 	}
 
+	//puncho start - MP-A4 (plans/phase1/00-PLAN.md K26, K28): an error calls Stop, and so this, before its
+	// exception unwinds the open scratch scopes, so the arena is only checked when no error is in progress
+	if( mapSpawned )
+	{
+		if( com_errorEntered == ERP_NONE )
+		{
+			gameScratchStack.CheckClosed( "map unload" );
+		}
+		gameScratchStack.EndMap();
+	}
+	//puncho end
+
 	mapSpawned = false;
 }
 

@@ -1107,7 +1107,10 @@ idTarget_SetInfluence::Event_GatherEntities
 void idTarget_SetInfluence::Event_GatherEntities()
 {
 	int i, listedEntities;
-	idEntity* entityList[ MAX_GENTITIES ];
+	//puncho start - MP-A4: the list is in the scratch arena, sized by targets (K30) or cut to the radius query's results (K26a)
+	idScratchScope scratch( "idTarget_SetInfluence::Event_GatherEntities" );
+	idEntity** entityList;
+	//puncho end
 
 	//bool demonicOnly = spawnArgs.GetBool( "effect_demonic" );
 	bool lights = spawnArgs.GetBool( "effect_lights" );
@@ -1130,6 +1133,7 @@ void idTarget_SetInfluence::Event_GatherEntities()
 	if( targetsOnly )
 	{
 		listedEntities = targets.Num();
+		entityList = scratch.Alloc< idEntity* >( listedEntities );		//puncho - MP-A4 (K30)
 		for( i = 0; i < listedEntities; i++ )
 		{
 			entityList[i] = targets[i].GetEntity();
@@ -1138,7 +1142,9 @@ void idTarget_SetInfluence::Event_GatherEntities()
 	else
 	{
 		float radius = spawnArgs.GetFloat( "radius" );
+		entityList = scratch.Alloc< idEntity* >( MAX_GENTITIES );		//puncho - MP-A4 (K26a)
 		listedEntities = gameLocal.EntitiesWithinRadius( GetPhysics()->GetOrigin(), radius, entityList, MAX_GENTITIES );
+		scratch.Trim( entityList, listedEntities );						//puncho - MP-A4
 	}
 
 	for( i = 0; i < listedEntities; i++ )

@@ -360,5 +360,6 @@ public:
 #include "ParallelJobList.h"
 #include "SoftwareCache.h"
 #include "TileMap.h" // RB
+#include "ScratchStack.h"	//puncho - MP-A4
 
 #endif	/* !__LIB_H__ */

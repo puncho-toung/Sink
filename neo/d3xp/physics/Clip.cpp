@@ -1064,10 +1064,14 @@ idClip::EntitiesTouchingBounds
 */
 int idClip::EntitiesTouchingBounds( const idBounds& bounds, int contentMask, idEntity** entityList, int maxCount ) const
 {
-	idClipModel* clipModelList[MAX_GENTITIES];
 	int i, j, count, entCount;
 
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results
+	idScratchScope scratch( "idClip::EntitiesTouchingBounds" );
+	idClipModel** clipModelList = scratch.Alloc< idClipModel* >( MAX_GENTITIES );
 	count = idClip::ClipModelsTouchingBounds( bounds, contentMask, clipModelList, MAX_GENTITIES );
+	scratch.Trim( clipModelList, count );
+	//puncho end
 	entCount = 0;
 	for( i = 0; i < count; i++ )
 	{
@@ -1287,7 +1291,7 @@ void idClip::TranslationEntities( trace_t& results, const idVec3& start, const i
 								  const idClipModel* mdl, const idMat3& trmAxis, int contentMask, const idEntity* passEntity )
 {
 	int i, num;
-	idClipModel* touch, *clipModelList[MAX_GENTITIES];
+	idClipModel* touch;		//puncho - MP-A4: the list moved to the scratch arena
 	idBounds traceBounds;
 	float radius;
 	trace_t trace;
@@ -1315,7 +1319,12 @@ void idClip::TranslationEntities( trace_t& results, const idVec3& start, const i
 		radius = trm->bounds.GetRadius();
 	}
 
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results
+	idScratchScope scratch( "idClip::TranslationEntities" );
+	idClipModel** clipModelList = scratch.Alloc< idClipModel* >( MAX_GENTITIES );
 	num = GetTraceClipModels( traceBounds, contentMask, passEntity, mdl, clipModelList );
+	scratch.Trim( clipModelList, num );
+	//puncho end
 
 	for( i = 0; i < num; i++ )
 	{
@@ -1360,7 +1369,7 @@ bool idClip::Translation( trace_t& results, const idVec3& start, const idVec3& e
 						  const idClipModel* mdl, const idMat3& trmAxis, int contentMask, const idEntity* passEntity )
 {
 	int i, num;
-	idClipModel* touch, *clipModelList[MAX_GENTITIES];
+	idClipModel* touch;		//puncho - MP-A4: the list moved to the scratch arena
 	idBounds traceBounds;
 	float radius;
 	trace_t trace;
@@ -1403,7 +1412,12 @@ bool idClip::Translation( trace_t& results, const idVec3& start, const idVec3& e
 		radius = trm->bounds.GetRadius();
 	}
 
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results
+	idScratchScope scratch( "idClip::Translation" );
+	idClipModel** clipModelList = scratch.Alloc< idClipModel* >( MAX_GENTITIES );
 	num = GetTraceClipModels( traceBounds, contentMask, passEntity, mdl, clipModelList );
+	scratch.Trim( clipModelList, num );
+	//puncho end
 
 	unsigned int trmQueries = 0;		//puncho - ai-harness: counted in a local, added once after the loop (00-PLAN.md §2.2)
 	for( i = 0; i < num; i++ )
@@ -1459,7 +1473,7 @@ bool idClip::Rotation( trace_t& results, const idVec3& start, const idRotation& 
 					   const idClipModel* mdl, const idMat3& trmAxis, int contentMask, const idEntity* passEntity )
 {
 	int i, num;
-	idClipModel* touch, *clipModelList[MAX_GENTITIES];
+	idClipModel* touch;		//puncho - MP-A4: the list moved to the scratch arena
 	idBounds traceBounds;
 	trace_t trace;
 	const idTraceModel* trm;
@@ -1494,7 +1508,12 @@ bool idClip::Rotation( trace_t& results, const idVec3& start, const idRotation& 
 		traceBounds.FromBoundsRotation( trm->bounds, start, trmAxis, rotation );
 	}
 
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results
+	idScratchScope scratch( "idClip::Rotation" );
+	idClipModel** clipModelList = scratch.Alloc< idClipModel* >( MAX_GENTITIES );
 	num = GetTraceClipModels( traceBounds, contentMask, passEntity, mdl, clipModelList );
+	scratch.Trim( clipModelList, num );
+	//puncho end
 
 	unsigned int trmQueries = 0;		//puncho - ai-harness: counted in a local, added once after the loop (00-PLAN.md §2.2)
 	for( i = 0; i < num; i++ )
@@ -1548,7 +1567,7 @@ bool idClip::Motion( trace_t& results, const idVec3& start, const idVec3& end, c
 					 const idClipModel* mdl, const idMat3& trmAxis, int contentMask, const idEntity* passEntity )
 {
 	int i, num;
-	idClipModel* touch, *clipModelList[MAX_GENTITIES];
+	idClipModel* touch;		//puncho - MP-A4: the list moved to the scratch arena
 	idVec3 dir, endPosition;
 	idBounds traceBounds;
 	float radius;
@@ -1585,6 +1604,12 @@ bool idClip::Motion( trace_t& results, const idVec3& start, const idVec3& end, c
 		results.endAxis = trmAxis;
 		return false;
 	}
+
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, after the pure rotation and translation hand-offs,
+	// so neither nests under an unfilled list; one of the two fills below runs, and it trims
+	idScratchScope scratch( "idClip::Motion" );
+	idClipModel** clipModelList = scratch.Alloc< idClipModel* >( MAX_GENTITIES );
+	//puncho end
 
 	trm = TraceModelForClipModel( mdl );
 
@@ -1623,6 +1648,7 @@ bool idClip::Motion( trace_t& results, const idVec3& start, const idVec3& end, c
 		}
 
 		num = GetTraceClipModels( traceBounds, contentMask, passEntity, mdl, clipModelList );
+		scratch.Trim( clipModelList, num );		//puncho - MP-A4 (K26a)
 
 		for( i = 0; i < num; i++ )
 		{
@@ -1688,6 +1714,7 @@ bool idClip::Motion( trace_t& results, const idVec3& start, const idVec3& end, c
 		{
 			traceBounds.FromBoundsRotation( trm->bounds, endPosition, trmAxis, endRotation );
 			num = GetTraceClipModels( traceBounds, contentMask, passEntity, mdl, clipModelList );
+			scratch.Trim( clipModelList, num );		//puncho - MP-A4 (K26a)
 		}
 
 		for( i = 0; i < num; i++ )
@@ -1746,7 +1773,7 @@ int idClip::Contacts( contactInfo_t* contacts, const int maxContacts, const idVe
 					  const idClipModel* mdl, const idMat3& trmAxis, int contentMask, const idEntity* passEntity )
 {
 	int i, j, num, n, numContacts;
-	idClipModel* touch, *clipModelList[MAX_GENTITIES];
+	idClipModel* touch;		//puncho - MP-A4: the list moved to the scratch arena
 	idBounds traceBounds;
 	const idTraceModel* trm;
 
@@ -1784,7 +1811,12 @@ int idClip::Contacts( contactInfo_t* contacts, const int maxContacts, const idVe
 		traceBounds.ExpandSelf( depth );
 	}
 
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results
+	idScratchScope scratch( "idClip::Contacts" );
+	idClipModel** clipModelList = scratch.Alloc< idClipModel* >( MAX_GENTITIES );
 	num = GetTraceClipModels( traceBounds, contentMask, passEntity, mdl, clipModelList );
+	scratch.Trim( clipModelList, num );
+	//puncho end
 
 	unsigned int trmQueries = 0;		//puncho - ai-harness: counted in a local, added once after the loop (00-PLAN.md §2.2)
 	for( i = 0; i < num; i++ )
@@ -1839,7 +1871,7 @@ idClip::Contents
 int idClip::Contents( const idVec3& start, const idClipModel* mdl, const idMat3& trmAxis, int contentMask, const idEntity* passEntity )
 {
 	int i, num, contents;
-	idClipModel* touch, *clipModelList[MAX_GENTITIES];
+	idClipModel* touch;		//puncho - MP-A4: the list moved to the scratch arena
 	idBounds traceBounds;
 	const idTraceModel* trm;
 
@@ -1871,7 +1903,12 @@ int idClip::Contents( const idVec3& start, const idClipModel* mdl, const idMat3&
 		traceBounds[1] = trm->bounds[1] + start;
 	}
 
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results
+	idScratchScope scratch( "idClip::Contents" );
+	idClipModel** clipModelList = scratch.Alloc< idClipModel* >( MAX_GENTITIES );
 	num = GetTraceClipModels( traceBounds, -1, passEntity, mdl, clipModelList );
+	scratch.Trim( clipModelList, num );
+	//puncho end
 
 	for( i = 0; i < num; i++ )
 	{
@@ -2089,12 +2126,16 @@ void idClip::DrawClipModels( const idVec3& eye, const float radius, const idEnti
 {
 	int				i, num;
 	idBounds		bounds;
-	idClipModel*		clipModelList[MAX_GENTITIES];
 	idClipModel*		clipModel;
 
 	bounds = idBounds( eye ).Expand( radius );
 
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results
+	idScratchScope scratch( "idClip::DrawClipModels" );
+	idClipModel** clipModelList = scratch.Alloc< idClipModel* >( MAX_GENTITIES );
 	num = idClip::ClipModelsTouchingBounds( bounds, -1, clipModelList, MAX_GENTITIES );
+	scratch.Trim( clipModelList, num );
+	//puncho end
 
 	for( i = 0; i < num; i++ )
 	{
