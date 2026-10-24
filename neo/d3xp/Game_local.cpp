@@ -4325,9 +4325,10 @@ void idGameLocal::RegisterEntity( idEntity* ent, int forceSpawnId, const idDict&
 	idDict copiedArgs = spawnArgsToCopy;
 	ent->spawnArgs.TransferKeyValues( copiedArgs );
 
-	// K14: the world, ENTITYNUM_NONE and the non-replicated range never raise it, or the world alone would
-	// stretch every [0, num_entities) walk to MAX_GENTITIES
-	if( spawn_entnum < ENTITYNUM_FIRST_NON_REPLICATED )
+	// K14: the world and ENTITYNUM_NONE never raise it, or the world alone would stretch every
+	// [0, num_entities) walk to MAX_GENTITIES; nor does multiplayer's non-replicated range. Single player
+	// fills list 0 up to ENTITYNUM_MAX_NORMAL, so its slots up there still count.
+	if( spawn_entnum < ( common->IsMultiplayer() ? ENTITYNUM_FIRST_NON_REPLICATED : ENTITYNUM_MAX_NORMAL ) )
 	{
 		num_entities = Max( num_entities, spawn_entnum + 1 );
 	}
