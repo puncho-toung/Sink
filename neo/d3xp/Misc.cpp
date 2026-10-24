@@ -4421,7 +4421,9 @@ idPortalSky::idPortalSky
 */
 idPortalSky::idPortalSky()
 {
-
+	parallaxScale = 0.0f;
+	parallaxOrigin.Zero();
+	lastArea = -2;		// not -1: PointInArea returns -1 for a point outside every area, and that must print too
 }
 
 /*
@@ -4441,10 +4443,83 @@ idPortalSky::Spawn
 */
 void idPortalSky::Spawn()
 {
+	parallaxScale = spawnArgs.GetFloat( "parallax_scale", "0" );
+	parallaxOrigin = spawnArgs.GetVector( "parallax_origin", "0 0 0" );
+
 	if( !spawnArgs.GetBool( "triggered" ) )
 	{
 		PostEventMS( &EV_PostSpawn, 1 );
 	}
+}
+
+/*
+===============
+idPortalSky::Restore
+
+Spawn does not run on restore. Nothing is saved for this class: idEntity::Restore has already read
+spawnArgs back, so the parallax keys are re-read from there and the stream is left untouched.
+===============
+*/
+void idPortalSky::Restore( idRestoreGame* savefile )
+{
+	parallaxScale = spawnArgs.GetFloat( "parallax_scale", "0" );
+	parallaxOrigin = spawnArgs.GetVector( "parallax_origin", "0 0 0" );
+}
+
+/*
+===============
+idPortalSky::SkyViewOrigin
+
+The sky camera moves by ( eye - parallax_origin ) * parallax_scale from the entity's origin, and is
+kept in the entity's own area: the multiplayer snapshot merges the PVS of the entity's areas, and
+RenderScene finds the view's area from vieworg.
+===============
+*/
+idVec3 idPortalSky::SkyViewOrigin( const idVec3& eye ) const
+{
+	const idVec3& origin = GetPhysics()->GetOrigin();
+	if( parallaxScale == 0.0f )
+	{
+		return origin;
+	}
+
+	const int entityArea = gameRenderWorld->PointInArea( origin );
+	if( entityArea < 0 )
+	{
+		// an entity outside every area has no area to clamp to, so keep the stock fixed camera
+		return origin;
+	}
+
+	const idVec3 target = origin + ( eye - parallaxOrigin ) * parallaxScale;
+	const int targetArea = gameRenderWorld->PointInArea( target );
+	if( targetArea != lastArea )
+	{
+		gameLocal.DPrintf( "portal sky '%s': sky camera area %d, entity area %d%s\n", name.c_str(), targetArea, entityArea, ( targetArea != entityArea ) ? ", clamped" : "" );
+		lastArea = targetArea;
+	}
+
+	if( targetArea == entityArea )
+	{
+		return target;
+	}
+
+	// bisect toward the origin, which is in the area; inside is always the last point found in it
+	idVec3 inside = origin;
+	idVec3 outside = target;
+	for( int i = 0; i < 8; i++ )
+	{
+		const idVec3 mid = ( inside + outside ) * 0.5f;
+		if( gameRenderWorld->PointInArea( mid ) == entityArea )
+		{
+			inside = mid;
+		}
+		else
+		{
+			outside = mid;
+		}
+	}
+
+	return inside;
 }
 
 /*

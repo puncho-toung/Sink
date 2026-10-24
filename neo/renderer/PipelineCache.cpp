@@ -88,6 +88,13 @@ nvrhi::GraphicsPipelineHandle PipelineCache::GetOrCreatePipeline( const Pipeline
 	// Specialize the state with the state key.
 	GetRenderState( key.state, key, pipelineDesc.renderState );
 
+#if ID_REVERSED_Z
+	// the reversed build makes no D24S8 attachment, and the compare matches the attachment's convention
+	assert( key.framebuffer->GetDepthFormat() != nvrhi::Format::D24S8 );
+	assert( ( key.state & GLS_DEPTHFUNC_BITS ) != GLS_DEPTHFUNC_LESS || pipelineDesc.renderState.depthStencilState.depthFunc == ( R_IsReversedDepth( key.framebuffer ) ? nvrhi::ComparisonFunc::GreaterOrEqual : nvrhi::ComparisonFunc::LessOrEqual ) );
+	assert( ( key.state & GLS_DEPTHFUNC_BITS ) != GLS_DEPTHFUNC_GREATER || pipelineDesc.renderState.depthStencilState.depthFunc == ( R_IsReversedDepth( key.framebuffer ) ? nvrhi::ComparisonFunc::Less : nvrhi::ComparisonFunc::Greater ) );
+#endif
+
 	auto pipeline = device->createGraphicsPipeline( pipelineDesc, key.framebuffer->GetApiObject() );
 
 	pipelineHash.Add( h, pipelines.Append( { key, pipeline } ) );
@@ -326,6 +333,12 @@ void PipelineCache::GetRenderState( uint64 stateBits, PipelineKey key, nvrhi::Re
 	//
 	//if( diff & GLS_DEPTHFUNC_BITS )
 	{
+#if ID_REVERSED_Z
+		// LESS ( "nearer or equal" ) and GREATER ( "farther" ) flip on reversed attachments only:
+		// the shadow passes use the same state bits on forward D32 maps, so a global flip would
+		// silently turn every shadow all-lit or all-dark
+		const bool reversed = R_IsReversedDepth( key.framebuffer );
+#endif
 		switch( stateBits & GLS_DEPTHFUNC_BITS )
 		{
 			case GLS_DEPTHFUNC_EQUAL:
@@ -335,10 +348,18 @@ void PipelineCache::GetRenderState( uint64 stateBits, PipelineKey key, nvrhi::Re
 				depthStencilState.depthFunc = nvrhi::ComparisonFunc::Always;
 				break;
 			case GLS_DEPTHFUNC_LESS:
+#if ID_REVERSED_Z
+				depthStencilState.depthFunc = reversed ? nvrhi::ComparisonFunc::GreaterOrEqual : nvrhi::ComparisonFunc::LessOrEqual;
+#else
 				depthStencilState.depthFunc = nvrhi::ComparisonFunc::LessOrEqual;
+#endif
 				break;
 			case GLS_DEPTHFUNC_GREATER:
+#if ID_REVERSED_Z
+				depthStencilState.depthFunc = reversed ? nvrhi::ComparisonFunc::Less : nvrhi::ComparisonFunc::Greater;
+#else
 				depthStencilState.depthFunc = nvrhi::ComparisonFunc::Greater;
+#endif
 				break;
 		}
 	}

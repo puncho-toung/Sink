@@ -247,6 +247,11 @@ FONT-END RENDERING
 ==========================================================================================
 */
 
+//puncho start - camera-relative WP-CRV: dumpSortKeys (RenderVerify.cpp) sets this around one frame it builds on the main thread
+extern bool verifySortKeys;
+void R_VerifyPrintSortKeys( const viewDef_t* viewDef, drawSurf_t* const* drawSurfs, const uint64* keys, const int numDrawSurfs );
+//puncho end
+
 /*
 =================
 R_SortDrawSurfs
@@ -258,10 +263,12 @@ static void R_SortDrawSurfs( drawSurf_t** drawSurfs, const int numDrawSurfs )
 
 	uint64* indices = ( uint64* ) _alloca16( numDrawSurfs * sizeof( indices[0] ) );
 
-	// sort the draw surfs based on:
-	// 1. sort value (largest first)
-	// 2. depth (smallest first)
-	// 3. index (largest first)
+	// sort the draw surfs in descending key order ( the quicksort below puts larger keys first ), so:
+	// 1. sort value: SS_POST_PROCESS - sort, largest first, so the smallest material sort draws first
+	// 2. dist: the depth of the bounds' nearest point, largest first, so within one sort value the
+	//    surface whose nearest point is farthest draws first; under reversed-Z the key is built from
+	//    1 - that depth, so the same surfaces keep the same order in both conventions
+	// 3. index: numDrawSurfs - i, largest first, so equal keys keep their submission order
 	assert( numDrawSurfs <= 0xFFFF );
 	for( int i = 0; i < numDrawSurfs; i++ )
 	{
@@ -274,7 +281,12 @@ static void R_SortDrawSurfs( drawSurf_t** drawSurfs, const int numDrawSurfs )
 			float min = 0.0f;
 			float max = 1.0f;
 			idRenderMatrix::DepthBoundsForBounds( min, max, drawSurfs[i]->space->mvp, drawSurfs[i]->frontEndGeo->bounds );
+#if ID_REVERSED_Z
+			// the nearest point is the maximum depth; 1 - it keeps today's descending order
+			dist = idMath::Ftoui16( ( 1.0f - max ) * 0xFFFF );
+#else
 			dist = idMath::Ftoui16( min * 0xFFFF );
+#endif
 		}
 
 		indices[i] = ( ( numDrawSurfs - i ) & 0xFFFF ) | ( dist << 16 ) | ( ( uint64 )( *( uint32* )&sort ) << 32 );
@@ -351,6 +363,13 @@ static void R_SortDrawSurfs( drawSurf_t** drawSurfs, const int numDrawSurfs )
 		}
 	}
 
+	//puncho start - camera-relative WP-CRV: the keys exist only here, the loop below overwrites them with pointers
+	if( verifySortKeys )
+	{
+		R_VerifyPrintSortKeys( tr.viewDef, drawSurfs, indices, numDrawSurfs );
+	}
+	//puncho end
+
 	drawSurf_t** newDrawSurfs = ( drawSurf_t** ) indices;
 	for( int i = 0; i < numDrawSurfs; i++ )
 	{
@@ -399,7 +418,7 @@ static void R_SetupSplitFrustums( viewDef_t* viewDef )
 	idVec3			planeOrigin;
 
 	const float zNearStart = ( viewDef->renderView.cramZNear ) ? ( r_znear.GetFloat() * 0.25f ) : r_znear.GetFloat();
-	float zFarEnd = 10000;
+	float zFarEnd = r_shadowMapSplitFar.GetFloat();
 
 	float zNear = zNearStart;
 	float zFar = zFarEnd;
@@ -432,6 +451,9 @@ static void R_SetupSplitFrustums( viewDef_t* viewDef )
 		R_SetupProjectionMatrix2( tr.viewDef, zNear, zFar, projectionMatrix );
 
 		// setup render matrices for faster culling
+		// NOTE: built from the relative view ( the backend inverts them into cascade corners next
+		// to relative light data ), so the cascade planes below are relative too. Nothing reads
+		// those planes; never test absolute data against them
 		idRenderMatrix projectionRenderMatrix;
 		idRenderMatrix::Transpose( *( idRenderMatrix* )projectionMatrix, projectionRenderMatrix );
 		idRenderMatrix viewRenderMatrix;
@@ -453,6 +475,11 @@ static void R_SetupSplitFrustums( viewDef_t* viewDef )
 			tr.viewDef->frustums[i][4][3] -= r_znear.GetFloat();
 		}
 	}
+
+	// the last pass ( i == splits + 1 ) is the last real cascade, and its far is not one of the
+	// split distances above; keep it as frame data so the backend's cascade select matches
+	// these crops even when the cvar changes before the backend runs
+	tr.viewDef->shadowCascadeFar = zFar;
 }
 
 class idSort_CompareEnvprobe : public idSort_Quick< RenderEnvprobeLocal*, idSort_CompareEnvprobe >
@@ -487,7 +514,7 @@ public:
 static void R_FindClosestEnvironmentProbes()
 {
 	// set safe defaults
-	tr.viewDef->globalProbeBounds.Clear();
+	tr.viewDef->probeBoundsRel.Clear();
 
 	tr.viewDef->irradianceImage = globalImages->defaultUACIrradianceCube;
 	tr.viewDef->radianceImageBlends.Set( 1, 0, 0, 0 );
@@ -500,7 +527,7 @@ static void R_FindClosestEnvironmentProbes()
 	tr.viewDef->probeDepthImages[1] = globalImages->defaultUACRadianceCube;	
 	for (int i = 0; i < 3; i++)
 	{
-		tr.viewDef->probePositions[i].Set(0.0f, 0.0f, 0.0f, 0.0f);			
+		tr.viewDef->probePositionsRel[i].Set(0.0f, 0.0f, 0.0f, 0.0f);			
 	}
 
 	for (int i = 0; i < 9; i++)
@@ -542,7 +569,7 @@ static void R_FindClosestEnvironmentProbes()
 	viewEnvprobes.SortWithTemplate( idSort_CompareEnvprobe( testOrigin ) );
 
 	RenderEnvprobeLocal* nearest = viewEnvprobes[0];
-	tr.viewDef->globalProbeBounds = nearest->globalProbeBounds;
+	tr.viewDef->probeBoundsRel = nearest->globalProbeBounds;
 
 	if( nearest->irradianceImage->IsLoaded() && !nearest->irradianceImage->IsDefaulted() )
 	{
@@ -579,7 +606,7 @@ static void R_FindClosestEnvironmentProbes()
 		{
 			depthValid = 1.0f;
 		}
-		tr.viewDef->probePositions[i].Set( verts[i].x, verts[i].y, verts[i].z, depthValid );
+		tr.viewDef->probePositionsRel[i].Set( verts[i].x, verts[i].y, verts[i].z, depthValid );
 	}
 
 	// Distance-falloff blend weights. Anchoring the cutoff radius to the 4th-nearest
@@ -657,21 +684,41 @@ static void R_FindClosestEnvironmentProbes()
 			tr.viewDef->radianceImages[2] == globalImages->defaultUACRadianceCube )
 	{
 		// this didn't work so this is the way to tell the backend and avoid blood reflections
-		tr.viewDef->globalProbeBounds.Clear();
+		tr.viewDef->probeBoundsRel.Clear();
 	}
 
 	// no usable depth cube -> disable the march (placeholder is zeros and must never be marched)
 	if (tr.viewDef->depthImage == globalImages->defaultUACRadianceCube)
 	{
-		tr.viewDef->globalProbeBounds.Clear();
+		tr.viewDef->probeBoundsRel.Clear();
+	}
+
+	// the backend pairs the bounds and positions with relative shading positions, so they move to
+	// the render origin here, after their last write; the sort and the weights above stay absolute.
+	// Cleared bounds are the backend's "no probe" flag and are not converted: the shaders then read
+	// neither the bounds nor the positions ( the WOBBLESKY_X.w gate )
+	const idVec3d& renderOrigin = tr.viewDef->renderOrigin;
+	if( !renderOrigin.IsZero() && !tr.viewDef->probeBoundsRel.IsCleared() )
+	{
+		for( int i = 0; i < 2; i++ )
+		{
+			tr.viewDef->probeBoundsRel[i] = ( idVec3d( tr.viewDef->probeBoundsRel[i] ) - renderOrigin ).ToVec3();
+		}
+		for( int i = 0; i < 3; i++ )
+		{
+			// .w, the depth-cube valid flag, is kept
+			idVec3& position = tr.viewDef->probePositionsRel[i].ToVec3();
+			position = ( idVec3d( position ) - renderOrigin ).ToVec3();
+		}
 	}
 }
 
 // this one tries to interpolate between probes over time
+// uncalled; unlike R_FindClosestEnvironmentProbes it leaves the probe bounds and positions absolute
 static void R_FindClosestEnvironmentProbes2()
 {
 	// set safe defaults
-	tr.viewDef->globalProbeBounds.Clear();
+	tr.viewDef->probeBoundsRel.Clear();
 
 	tr.viewDef->irradianceImage = globalImages->defaultUACIrradianceCube;
 	tr.viewDef->radianceImageBlends.Set( 1, 0, 0, 0 );
@@ -714,7 +761,7 @@ static void R_FindClosestEnvironmentProbes2()
 	viewEnvprobes.SortWithTemplate( idSort_CompareEnvprobe( testOrigin ) );
 
 	RenderEnvprobeLocal* nearest = viewEnvprobes[0];
-	tr.viewDef->globalProbeBounds = nearest->globalProbeBounds;
+	tr.viewDef->probeBoundsRel = nearest->globalProbeBounds;
 
 	if( nearest->irradianceImage->IsLoaded() && !nearest->irradianceImage->IsDefaulted() )
 	{
@@ -753,7 +800,7 @@ static void R_FindClosestEnvironmentProbes2()
 		{
 			depthValid = 1.0f;
 		}
-		tr.viewDef->probePositions[i].Set(verts[i].x, verts[i].y, verts[i].z, depthValid);
+		tr.viewDef->probePositionsRel[i].Set(verts[i].x, verts[i].y, verts[i].z, depthValid);
 	}
 
 	// don't assume tri changed if we just moved inside a triangle and only the indixes switched
@@ -863,7 +910,7 @@ static void R_FindClosestEnvironmentProbes2()
 			tr.viewDef->radianceImages[2] == globalImages->defaultUACRadianceCube )
 	{
 		// this didn't work so this is the way to tell the backend and avoid blood reflections
-		tr.viewDef->globalProbeBounds.Clear();
+		tr.viewDef->probeBoundsRel.Clear();
 	}
 }
 // RB end
@@ -885,11 +932,33 @@ void R_RenderView( viewDef_t* parms )
 
 	tr.viewDef = parms;
 
+	// every view, subviews included, measures its relative quantities from its own eye; a subview
+	// is a copy of its parent, so these fields are set here and never inherited
+	tr.viewDef->renderOrigin = r_cameraRelative.GetInteger() ? idVec3d( parms->renderView.vieworg ) : idVec3d();
+
+	// the game marks the player's view; a subview keeps its parent's rdflags, so it is excluded here
+	tr.viewDef->isMainView = ( parms->renderView.rdflags & RDF_MAINVIEW ) != 0 && !parms->isSubview;
+
+	// the map-load flag stays set until a main view takes it, so the portal sky, a GUI world or a
+	// loading screen rendered first cannot swallow it; only the backend acts on it
+	tr.viewDef->invalidateHistory = tr.viewDef->isMainView && tr.invalidateViewHistory;
+	if( tr.viewDef->isMainView )
+	{
+		tr.invalidateViewHistory = false;
+	}
+
 	// use this same frame index for the projection matrix jittering here and in the backend!
 	tr.viewDef->taaFrameCount = tr.frameCount;
 
-	// setup the matrix for world space to eye space
-	R_SetupViewMatrix( tr.viewDef );
+	// setup the matrix for world space to eye space. The frontend culls keep this absolute view
+	// ( a zero origin ); worldSpace is then rebuilt relative to the render origin unless it is zero
+	R_SetupViewMatrix( tr.viewDef, idVec3d() );
+	float worldCullViewMatrix[16];
+	memcpy( worldCullViewMatrix, tr.viewDef->worldSpace.modelViewMatrix, sizeof( worldCullViewMatrix ) );
+	if( !tr.viewDef->renderOrigin.IsZero() )
+	{
+		R_SetupViewMatrix( tr.viewDef, tr.viewDef->renderOrigin );
+	}
 
 	// we need to set the projection matrix before doing
 	// portal-to-screen scissor calculations
@@ -909,8 +978,16 @@ void R_RenderView( viewDef_t* parms )
 	idRenderMatrix::Transpose( *( idRenderMatrix* )tr.viewDef->unjitteredProjectionMatrix, tr.viewDef->unjitteredProjectionRenderMatrix );
 	idRenderMatrix::Multiply( tr.viewDef->unjitteredProjectionRenderMatrix, viewRenderMatrix, tr.viewDef->worldSpace.unjitteredMVP );
 
-	// the planes of the view frustum are needed for portal visibility culling
-	idRenderMatrix::GetFrustumPlanes( tr.viewDef->frustums[FRUSTUM_PRIMARY], tr.viewDef->worldSpace.mvp, false, true );
+	// the same products with the absolute view, for everything culled against absolute data
+	// ( bit-identical to worldSpace.mvp / unjitteredMVP at a zero render origin )
+	idRenderMatrix worldCullViewRenderMatrix;
+	idRenderMatrix::Transpose( *( idRenderMatrix* )worldCullViewMatrix, worldCullViewRenderMatrix );
+	idRenderMatrix::Multiply( tr.viewDef->projectionRenderMatrix, worldCullViewRenderMatrix, tr.viewDef->worldCullMVP );
+	idRenderMatrix::Multiply( tr.viewDef->unjitteredProjectionRenderMatrix, worldCullViewRenderMatrix, tr.viewDef->worldCullUnjitteredMVP );
+
+	// the planes of the view frustum are needed for portal visibility culling; they stay
+	// absolute ( the portal flood and the subview cull test absolute windings against them )
+	idRenderMatrix::GetFrustumPlanes( tr.viewDef->frustums[FRUSTUM_PRIMARY], tr.viewDef->worldCullMVP, false, true );
 
 	// the DOOM 3 frustum planes point outside the frustum
 	for( int i = 0; i < 6; i++ )

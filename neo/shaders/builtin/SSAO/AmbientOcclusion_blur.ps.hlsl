@@ -125,7 +125,19 @@ float reconstructCSZ( float d )
 float3 reconstructCSPosition( float2 S, float z )
 {
 	float4 P;
+#if ID_REVERSED_Z
+	// the depth clear ( sky ) is at infinity, where the inverse projection divides by zero:
+	// report it at FAR_PLANE_Z, which keys as sky
+	if( z == DEPTH_CONVENTION_CLEAR )
+	{
+		return float3( 0.0, 0.0, FAR_PLANE_Z );
+	}
+	// D3D clip space: the depth buffer value is ndc z as it is ( the forward build keeps
+	// its GL remap, which was already wrong there )
+	P.z = z;
+#else
 	P.z = z * 2.0 - 1.0;
+#endif
 	P.xy = ( S * pc.rpWindowCoord.xy ) * 2.0 - 1.0;
 	P.w = 1.0;
 

@@ -1326,16 +1326,34 @@ void idRenderModelStatic::FinishSurfaces( bool useMikktspace )
 	}
 
 	// calculate the bounds
-	if( surfaces.Num() == 0 )
+	R_BoundModelSurfaces( surfaces.Ptr(), surfaces.Num(), bounds );
+}
+
+/*
+================
+R_BoundModelSurfaces
+
+The model bounds FinishSurfaces derives: the union of the surfaces' triangle bounds,
+which R_BoundTriSurf must already have set, after widening in place the bounds of
+every surface whose material deforms.
+
+idRenderWorldLocal::ParseModel runs it on the absolute vertices of a world area model
+before it moves them to the area's chunk origin, so the area's global bounds come from
+this one copy and stay what they were before the move.
+================
+*/
+void R_BoundModelSurfaces( const modelSurface_t* surfaces, int numSurfaces, idBounds& bounds )
+{
+	if( numSurfaces == 0 )
 	{
 		bounds.Zero();
 	}
 	else
 	{
 		bounds.Clear();
-		for( i = 0; i < surfaces.Num(); i++ )
+		for( int i = 0; i < numSurfaces; i++ )
 		{
-			modelSurface_t*	surf = &surfaces[i];
+			const modelSurface_t*	surf = &surfaces[i];
 
 			// if the surface has a deformation, increase the bounds
 			// the amount here is somewhat arbitrary, designed to handle

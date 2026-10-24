@@ -243,6 +243,8 @@ void main( PS_IN fragment, out PS_OUT result )
 	localNormal.z = sqrt( abs( dot( localNormal.xy, localNormal.xy ) - 0.25 ) );
 	localNormal = normalize( localNormal );
 
+	// globalPosition, rpGlobalEyePos and the probe parms (rpWobbleSky*, rpTexGen0*) are relative
+	// to the render origin (eye-centred world axes)
     float3 globalPosition = fragment.texcoord7.xyz;
     float3 globalView = normalize(pc.rpGlobalEyePos.xyz - globalPosition);
 
@@ -400,7 +402,8 @@ void main( PS_IN fragment, out PS_OUT result )
     {
         float3 bentN;
         float aoFarDist = length(pc.rpWobbleSkyY.xyz - pc.rpWobbleSkyZ.xyz);
-        float largeAO = LargeScaleDepthAO(fragment.texcoord7.xyz, globalNormal, pc.rpWobbleSkyZ.xyz, aoFarDist, bentN);
+		// the depth cube was captured at the nearest probe's origin (rpTexGen0S), not at the box centre
+        float largeAO = LargeScaleDepthAO(fragment.texcoord7.xyz, globalNormal, pc.rpTexGen0S.xyz, aoFarDist, bentN);
         diffuseLight *= lerp(1.0, largeAO, 0.50); //third is tunable
     }
 
@@ -421,8 +424,9 @@ void main( PS_IN fragment, out PS_OUT result )
     {
         float probeFarDist = length( pc.rpWobbleSkyY.xyz - pc.rpWobbleSkyZ.xyz );
         float reflHitDist;
+		// march the depth cube from its capture origin (rpTexGen0S); the box only sizes the march
         reflDir = ParallaxCorrectAndOcclude( fragment.texcoord7.xyz, reflectionVector,
-											 pc.rpWobbleSkyZ.xyz, probeFarDist, roughness, reflOcclusion, reflHitDist );
+											 pc.rpTexGen0S.xyz, probeFarDist, roughness, reflOcclusion, reflHitDist );
 
 		// distant reflected geometry blurs with roughness (optional)
         mip = min( MAX_REFLECTION_LOD, mip + roughness * saturate( reflHitDist / probeFarDist ) * 2.0 );

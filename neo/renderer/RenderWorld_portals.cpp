@@ -436,7 +436,8 @@ idScreenRect idRenderWorldLocal::ScreenRectFromWinding( const idWinding* w, cons
 	{
 		idVec3 v;
 		idVec3 ndc;
-		R_LocalPointToGlobal( space->modelMatrix, ( *w )[i].ToVec3(), v );
+		// absolute, as R_GlobalToNormalizedDeviceCoordinates expects
+		R_LocalPointToGlobal( space->modelMatrixAbs, ( *w )[i].ToVec3(), v );
 		R_GlobalToNormalizedDeviceCoordinates( v, ndc );
 
 		float windowX = ( ndc[0] * 0.5f + 0.5f ) * viewWidth;
@@ -491,7 +492,19 @@ bool idRenderWorldLocal::PortalIsFoggedOut( const portal_t* p )
 	forward[0] = a * tr.viewDef->worldSpace.modelViewMatrix[0 * 4 + 2];
 	forward[1] = a * tr.viewDef->worldSpace.modelViewMatrix[1 * 4 + 2];
 	forward[2] = a * tr.viewDef->worldSpace.modelViewMatrix[2 * 4 + 2];
-	forward[3] = a * tr.viewDef->worldSpace.modelViewMatrix[3 * 4 + 2];
+	const idVec3d& renderOrigin = tr.viewDef->renderOrigin;
+	if( renderOrigin.IsZero() )
+	{
+		forward[3] = a * tr.viewDef->worldSpace.modelViewMatrix[3 * 4 + 2];
+	}
+	else
+	{
+		// the view is relative to the render origin and the windings are absolute: restore the
+		// view's absolute translation along the forward axis in double, rounding once
+		const float* mv = tr.viewDef->worldSpace.modelViewMatrix;
+		const double dist = double( mv[3 * 4 + 2] ) - ( double( mv[0 * 4 + 2] ) * renderOrigin.x + double( mv[1 * 4 + 2] ) * renderOrigin.y + double( mv[2 * 4 + 2] ) * renderOrigin.z );
+		forward[3] = float( double( a ) * dist );
+	}
 
 	const idWinding*	 w = p->w;
 	for( int i = 0; i < w->GetNumPoints(); i++ )

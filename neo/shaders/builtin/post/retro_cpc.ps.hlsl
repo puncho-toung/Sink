@@ -137,7 +137,8 @@ float3 ReconstructPosition( float2 S, float depth )
 {
 	// derive clip space from the depth buffer and screen position
 	float2 uv = S * pc.rpWindowCoord.xy;
-	float3 ndc = float3( uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth );
+	// the sky test comes before the division
+	float3 ndc = float3( uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, SkyGuardedDepth( depth, pc.rpProjectionMatrixZ ) );
 	float clipW = -pc.rpProjectionMatrixZ.w / ( -pc.rpProjectionMatrixZ.z - ndc.z );
 
 	float4 clip = float4( ndc * clipW, clipW );
@@ -531,23 +532,21 @@ void main( PS_IN fragment, out PS_OUT result )
 	//return;
 
 	// triplanar UVs
-	float3 worldPos = C;
+	// C comes from unprojectionToWorld, which is relative to renderOrigin under r_cameraRelative 1;
+	// rpWorldOffset adds the origin back wrapped to [0, 1024), so the pattern stays world-fixed
+	float3 worldPos = C + pc.rpWorldOffset.xyz;
 
-	float2 uvX = worldPos.zy; // x facing plane
-	float2 uvY = worldPos.xz; // y facing plane
-	float2 uvZ = worldPos.xy; // z facing plane
+	// whole dither cells, kept in 0..7 by floor and & 7 so the 8x8 pattern repeats through zero.
+	// The scale is the old one: uv * 4, then ditherRGB's / ( RESOLUTION_DIVISOR / rpJitterTexScale.x ),
+	// one cell per unit ( two in the HIGHRES modes ), so the 8 or 4 unit period divides the 1024 wrap.
+	// This replaces abs() plus the uint cast in DitherArray8x8, which mirrored the pattern around
+	// its origin and would add a seam at every wrap; the pattern therefore changes at
+	// r_cameraRelative 0 too, which is intended ( camera-relative plan P19 )
+	int3 cell = int3( floor( worldPos * ( 4.0 * pc.rpJitterTexScale.x / RESOLUTION_DIVISOR ) ) ) & 7;
 
-#if 1
-	uvX = abs( uvX );// + 1.0;
-	uvY = abs( uvY );// + 1.0;
-	uvZ = abs( uvZ );// + 1.0;
-#endif
-
-#if 1
-	uvX *= 4.0;
-	uvY *= 4.0;
-	uvZ *= 4.0;
-#endif
+	float2 uvX = float2( cell.zy ); // x facing plane
+	float2 uvY = float2( cell.xz ); // y facing plane
+	float2 uvZ = float2( cell.xy ); // z facing plane
 
 #if 0
 	uvX = round( float2( uvX.x, uvX.y ) );
@@ -609,9 +608,10 @@ void main( PS_IN fragment, out PS_OUT result )
 	color.rgb = t_BaseColor.Sample( s_LinearClamp, uvPixelated * pc.rpWindowCoord.xy ).rgb;
 	//color = t_BaseColor.Sample( s_LinearClamp, uv ).rgb;
 
-	float3 colX = ditherRGB( uvX, quantDeviation ) * 1.0;
-	float3 colY = ditherRGB( uvY, quantDeviation ) * 1.0;
-	float3 colZ = ditherRGB( uvZ, quantDeviation ) * 1.0;
+	// uvX/Y/Z are whole cells already, so they skip ditherRGB's screen-space scale
+	float3 colX = _float3( DitherArray8x8( uvX ) - 0.5 ) * quantDeviation * pc.rpJitterTexScale.y;
+	float3 colY = _float3( DitherArray8x8( uvY ) - 0.5 ) * quantDeviation * pc.rpJitterTexScale.y;
+	float3 colZ = _float3( DitherArray8x8( uvZ ) - 0.5 ) * quantDeviation * pc.rpJitterTexScale.y;
 
 	float3 dither3D = colX * triblend.x + colY * triblend.y + colZ * triblend.z;
 	color.rgb += dither3D;

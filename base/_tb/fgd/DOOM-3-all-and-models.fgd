@@ -17824,6 +17824,8 @@ When triggered, toggles between visible and hidden (see hide).  Entity is non-so
 	spawnclass(string) readonly : "" : "idPortalSky"
 	hide(string) : "" : "1"
 	triggered(string) : "This portal sky will be inactive at start, and must be triggered to become active.  All additional portalsky areas must have this flag set."
+	parallax_scale(float) : "Sky view parallax scale (0 = fixed sky camera; 0.001 moves the sky camera 1 unit per 1000 units of player movement)" : 0
+	parallax_origin(string) : "Player-space reference point for the parallax" : "0 0 0"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
 ]

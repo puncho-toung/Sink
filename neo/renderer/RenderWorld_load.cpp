@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "RenderCommon.h"
+#include "Model_local.h"
 
 
 /*
@@ -101,6 +102,9 @@ void idRenderWorldLocal::FreeWorld()
 	}
 	localModels.Clear();
 
+	// the chunk origins outlive FreeDefs, which the retain path runs, but not the map
+	areaChunks.Clear();
+
 	areaReferenceAllocator.Shutdown();
 	interactionAllocator.Shutdown();
 
@@ -141,6 +145,64 @@ idRenderModel* idRenderWorldLocal::ReadBinaryModel( idFile* fileIn )
 }
 
 extern idCVar binaryLoadRenderModels;
+
+/*
+================
+R_AreaNumForModelName
+
+Returns N for a model named exactly "_area<N>", the name dmap writes and
+AddWorldModelEntities looks up, else -1. The "_area" prefix test in
+idRenderModelStatic::InitEmpty also takes an inline model a mapper named "_area...",
+and only world area models may move to a chunk origin.
+================
+*/
+static int R_AreaNumForModelName( const char* name )
+{
+	if( idStr::Cmpn( name, "_area", 5 ) != 0 )
+	{
+		return -1;
+	}
+
+	// only what va( "_area%i", N ) prints for N >= 0: digits, no sign, no leading zero,
+	// and at most nine of them so the number fits an int
+	const char* digits = name + 5;
+	const int numDigits = idStr::Length( digits );
+	if( numDigits < 1 || numDigits > 9 || ( digits[0] == '0' && numDigits > 1 ) )
+	{
+		return -1;
+	}
+
+	int areaNum = 0;
+	for( int i = 0; i < numDigits; i++ )
+	{
+		if( digits[i] < '0' || digits[i] > '9' )
+		{
+			return -1;
+		}
+		areaNum = areaNum * 10 + ( digits[i] - '0' );
+	}
+	return areaNum;
+}
+
+/*
+================
+idRenderWorldLocal::SetAreaChunk
+
+Areas the list grows past get origin 0 and cleared bounds until their own model
+arrives; AddWorldModelEntities reads only areas whose model it found.
+================
+*/
+void idRenderWorldLocal::SetAreaChunk( int areaNum, const idVec3& origin, const idBounds& absBounds )
+{
+	while( areaChunks.Num() <= areaNum )
+	{
+		areaChunk_t& chunk = areaChunks.Alloc();
+		chunk.origin.Zero();
+		chunk.absBounds.Clear();
+	}
+	areaChunks[areaNum].origin = origin;
+	areaChunks[areaNum].absBounds = absBounds;
+}
 
 /*
 ================
@@ -334,12 +396,60 @@ idRenderModel* idRenderWorldLocal::ParseModel( idLexer* src, const char* mapName
 
 	src->ExpectTokenString( "}" );
 
+	// a world area model moves to its chunk origin here, before FinishSurfaces derives
+	// the bounds, the MOC triangles and the .bproc blob from its vertices
+	idVec3 chunkOrigin = vec3_origin;
+	idBounds absBounds;
+	absBounds.Clear();
+	const int areaNum = R_AreaNumForModelName( model->Name() );
+	if( areaNum >= 0 )
+	{
+		// the bounds FinishSurfaces would give the absolute vertices: R_BoundTriSurf as
+		// R_CleanupTriangles runs it, then the shared pass. The back-side copies and mirrored
+		// vertices FinishSurfaces adds repeat existing positions and cannot change the result
+		const int numAreaSurfaces = model->NumSurfaces();
+		idTempArray<modelSurface_t> areaSurfaces( numAreaSurfaces );
+		for( int i = 0; i < numAreaSurfaces; i++ )
+		{
+			areaSurfaces[i] = *model->Surface( i );
+			R_BoundTriSurf( areaSurfaces[i].geometry );
+		}
+		R_BoundModelSurfaces( areaSurfaces.Ptr(), numAreaSurfaces, absBounds );
+
+		// snap the centre to 1024 in double: an integer origin comes off dmap's 1/32 grid
+		// exactly, and 1024 is a multiple of every light grid size
+		if( !absBounds.IsCleared() )
+		{
+			for( int i = 0; i < 3; i++ )
+			{
+				const double center = ( ( double )absBounds[0][i] + ( double )absBounds[1][i] ) * 0.5;
+				chunkOrigin[i] = ( float )( 1024.0 * floor( center / 1024.0 + 0.5 ) );
+			}
+		}
+
+		for( int i = 0; i < numAreaSurfaces; i++ )
+		{
+			srfTriangles_t* tri = areaSurfaces[i].geometry;
+			for( int j = 0; j < tri->numVerts; j++ )
+			{
+				tri->verts[j].xyz -= chunkOrigin;
+			}
+		}
+
+		SetAreaChunk( areaNum, chunkOrigin, absBounds );
+	}
+
 	// RB: FIXME add check for mikktspace
 	model->FinishSurfaces( false );
 
 	if( fileOut != NULL && model->SupportsBinaryModel() && binaryLoadRenderModels.GetBool() )
 	{
 		model->WriteBinaryModel( fileOut, &mapTimeStamp );
+
+		// .bproc v3: every model blob is followed by its chunk origin and absolute bounds,
+		// zero and cleared for a model that is not a world area, so read and write mirror
+		fileOut->WriteVec3( chunkOrigin );
+		fileOut->WriteBigArray( absBounds.ToFloatPtr(), 6 );
 	}
 
 	return model;
@@ -799,6 +909,9 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 			AddWorldModelEntities();
 			ClearPortalStates();
 			SetupLightGrid();
+
+			// a map restart is a camera cut too: the next main view drops the TAA history
+			tr.invalidateViewHistory = true;
 			return true;
 		}
 		common->Printf( "idRenderWorldLocal::InitFromMap: timestamp has changed, reloading.\n" );
@@ -807,10 +920,14 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 	FreeWorld();
 
 	// see if we have a generated version of this
+	// versions: 1 BFG, 2 MOC data, 3 vertex colour (opaque white for a surface without), 4 the same
+	// plus a chunk origin and absolute bounds after every model blob. Camera-relative builds made
+	// before the vertex colour change wrote their chunk data as a 3 too, so a 3 is never read: it
+	// falls through to the .proc parse, which rewrites it
 	static const byte BPROC_VERSION_BFG = 1;
 	static const byte BPROC_VERSION_MOC_DATA = 2;
-	static const byte BPROC_VERSION_VERTEX_COLOR = 3;
-	static const byte BPROC_VERSION = BPROC_VERSION_VERTEX_COLOR;
+	static const byte BPROC_VERSION_AREA_CHUNKS = 4;
+	static const byte BPROC_VERSION = BPROC_VERSION_AREA_CHUNKS;
 
 
 	static const unsigned int BPROC_MAGIC_BFG = ( 'P' << 24 ) | ( 'R' << 16 ) | ( 'O' << 8 ) | BPROC_VERSION_BFG;
@@ -850,6 +967,25 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 					}
 					renderModelManager->AddModel( lastModel );
 					localModels.Append( lastModel );
+
+					// the chunk origin and absolute bounds ParseModel wrote after the blob; an old cache has none
+					if( magic == BPROC_MAGIC )
+					{
+						idVec3 chunkOrigin;
+						idBounds absBounds;
+						const int originBytes = file->ReadVec3( chunkOrigin );
+						const size_t boundsBytes = file->ReadBigArray( absBounds.ToFloatPtr(), 6 );
+						if( originBytes != ( int )sizeof( idVec3 ) || boundsBytes != 6 * sizeof( float ) )
+						{
+							loaded = false;
+							break;
+						}
+						const int areaNum = R_AreaNumForModelName( lastModel->Name() );
+						if( areaNum >= 0 )
+						{
+							SetAreaChunk( areaNum, chunkOrigin, absBounds );
+						}
+					}
 				}
 				else if( type == "shadowmodel" && magic == BPROC_MAGIC_BFG )
 				{
@@ -876,11 +1012,37 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 					idLib::Error( "Binary proc file failed, unexpected type %s\n", type.c_str() );
 				}
 			}
+
+			// an old cache's area models kept their absolute vertices: chunk origin 0, and the absolute
+			// bounds are the model's own, as before chunk origins
+			if( loaded && magic != BPROC_MAGIC )
+			{
+				for( int i = 0; i < localModels.Num(); i++ )
+				{
+					const int areaNum = R_AreaNumForModelName( localModels[i]->Name() );
+					if( areaNum >= 0 )
+					{
+						SetAreaChunk( areaNum, vec3_origin, localModels[i]->Bounds() );
+					}
+				}
+			}
+
+			if( loaded )
+			{
+				common->Printf( "idRenderWorldLocal::InitFromMap: loaded %s\n", generatedFileName.c_str() );
+			}
+		}
+		else
+		{
+			common->Printf( "idRenderWorldLocal::InitFromMap: %s is not a version %i .bproc, parsing %s\n", generatedFileName.c_str(), BPROC_VERSION, filename.c_str() );
 		}
 	}
 
 	if( !loaded )
 	{
+		// a .bproc that failed part way may have recorded some areas; the parse records them all
+		areaChunks.Clear();
+
 		src = new( TAG_RENDER ) idLexer( filename, LEXFL_NOSTRINGCONCAT | LEXFL_NODOLLARPRECOMPILE );
 		if( !src->IsLoaded() )
 		{
@@ -993,6 +1155,10 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 	ClearPortalStates();
 	SetupLightGrid();
 
+	// the next main view drops the previous map's motion vector and TAA history; the loader never
+	// writes backend state, so this frontend flag rides to the backend on that view's viewDef
+	tr.invalidateViewHistory = true;
+
 	// done!
 	return true;
 }
@@ -1070,10 +1236,17 @@ void idRenderWorldLocal::AddWorldModelEntities()
 			}
 		}
 
-		// the local and global reference bounds are the same for area models
-		def->localReferenceBounds = def->parms.hModel->Bounds();
-		def->globalReferenceBounds = def->parms.hModel->Bounds();
+		if( i >= areaChunks.Num() )
+		{
+			common->Error( "idRenderWorldLocal::InitFromMap: no chunk origin for area %i", i );
+		}
+		const areaChunk_t& chunk = areaChunks[i];
 
+		// ParseModel moved the area model to its chunk origin, so the model bounds are local
+		// to it; R_DeriveEntityData derives the global ones from them and the origin
+		def->localReferenceBounds = def->parms.hModel->Bounds();
+
+		def->parms.origin = chunk.origin;
 		def->parms.axis[0][0] = 1.0f;
 		def->parms.axis[1][1] = 1.0f;
 		def->parms.axis[2][2] = 1.0f;
@@ -1091,7 +1264,14 @@ void idRenderWorldLocal::AddWorldModelEntities()
 		AddEntityRefToArea( def, area );
 
 		// RB: remember BSP area AABB for quick lookup later
-		area->globalBounds = def->globalReferenceBounds;
+		// derived as R_DeriveEntityData did it when area models sat at origin 0, from the absolute
+		// bounds and never from the relocated def: the light grid origin and the auto-placed probe
+		// bake keys come from globalBounds, so it must not move by an ulp
+		idRenderMatrix areaModelMatrix;
+		idRenderMatrix::CreateFromOriginAxis( vec3_origin, mat3_identity, areaModelMatrix );
+		idRenderMatrix areaInverseBaseModelProject;
+		idRenderMatrix::OffsetScaleForBounds( areaModelMatrix, chunk.absBounds, areaInverseBaseModelProject );
+		idRenderMatrix::ProjectedBounds( area->globalBounds, areaInverseBaseModelProject, bounds_unitCube, false );
 	}
 }
 

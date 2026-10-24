@@ -169,6 +169,10 @@ protected:
 	static idCVar				r_slopNormal;			// merge normals that dot less than this
 };
 
+// the bounds FinishSurfaces gives a static model; also run by idRenderWorldLocal::ParseModel
+// on a world area model's absolute vertices, before it moves them to the area's chunk origin
+void R_BoundModelSurfaces( const modelSurface_t* surfaces, int numSurfaces, idBounds& bounds );
+
 
 #if !defined( DMAP )
 

@@ -84,6 +84,8 @@ struct renderParmSet11_t
     float4 rpUser0; // (enabled, type, falloff, pattern)
     float4 rpUser1; // (falloffExp, innerRadius, shapeExp, penumbra)
     float4 rpUser2; // (patternStrength, patternScale, patternPhase, energyClamp)
+
+	float4 rpShadowCascadeFar; // .x = view-space far of the last sun cascade ( viewDef_t::shadowCascadeFar ), lit beyond it; .yzw = 0
 };
 
 #if USE_PUSH_CONSTANTS

@@ -64,6 +64,7 @@ idBrittleFracture::idBrittleFracture()
 	fxFracture.Clear();
 
 	bounds.Clear();
+	fractureAnchor.Zero();
 	disableFracture = false;
 
 	lastRenderEntityUpdate = -1;
@@ -400,7 +401,8 @@ bool idBrittleFracture::UpdateRenderEntity( renderEntity_s* renderEntity, const 
 
 	for( i = 0; i < shards.Num(); i++ )
 	{
-		const idVec3& origin = shards[i]->clipModel->GetOrigin();
+		// relative to the anchor the entity is placed at (its axis is the identity)
+		const idVec3 origin = shards[i]->clipModel->GetOrigin() - renderEntity->origin;
 		const idMat3& axis = shards[i]->clipModel->GetAxis();
 
 		fade = 1.0f;
@@ -570,8 +572,9 @@ void idBrittleFracture::Present()
 	}
 	BecomeInactive( TH_UPDATEVISUALS );
 
-	renderEntity.bounds = bounds;
-	renderEntity.origin.Zero();
+	// the shard vertices are relative to the anchor; the member bounds stay absolute
+	renderEntity.bounds = bounds.Translate( -fractureAnchor );
+	renderEntity.origin = fractureAnchor;
 	renderEntity.axis.Identity();
 
 	// force an update because the bounds/origin/axis may stay the same while the model changes
@@ -1244,6 +1247,11 @@ void idBrittleFracture::CreateFractures( const idRenderModel* renderModel )
 	{
 		return;
 	}
+
+	// Fracture_r places every shard at this origin plus the shard's centre, so the render
+	// vertices relative to it stay as small as the model; Restore calls this again with the
+	// same origin, so the anchor needs no saved field
+	fractureAnchor = GetPhysics()->GetOrigin();
 
 	physicsObj.SetSelf( this );
 	physicsObj.SetOrigin( GetPhysics()->GetOrigin(), 0 );

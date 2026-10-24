@@ -108,6 +108,7 @@ struct DeviceCreationParameters
 #endif
 
 	// SRS - Used by idImage::AllocImage() to determine if format D24S8 is supported by device (default = true)
+	// ( ignored by the reversed-Z build, ID_REVERSED_Z, which always uses D32S8 )
 	bool enableImageFormatD24S8 = true;
 
 	// SRS - Used by RenderProgs to determine maximum push constant size (default = off, override during device init)

@@ -55,6 +55,7 @@ idCVar r_useStencilShadowPreload( "r_useStencilShadowPreload", "0", CVAR_RENDERE
 idCVar r_skipShaderPasses( "r_skipShaderPasses", "0", CVAR_RENDERER | CVAR_BOOL, "" );
 idCVar r_skipInteractionFastPath( "r_skipInteractionFastPath", "1", CVAR_RENDERER | CVAR_BOOL, "" );
 idCVar r_useLightStencilSelect( "r_useLightStencilSelect", "0", CVAR_RENDERER | CVAR_BOOL, "use stencil select pass" );
+static idCVar r_logCameraCuts( "r_logCameraCuts", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "print a line for every camera cut that drops the motion vectors and the TAA history" );
 
 extern idCVar stereoRender_swapEyes;
 
@@ -392,28 +393,30 @@ void idRenderBackend::PrepareStageTexturing( const shaderStage_t* pStage,  const
 	}
 	else if( pStage->texture.texgen == TG_REFLECT_CUBE2 )
 	{
+		// the bounds, their centre and the positions are relative to the render origin; cleared
+		// bounds ( .w = 0 ) were never converted, and the shaders then read none of them
 		idVec4 probeMins, probeMaxs, probeCenter;
 
-		probeMins[0] = viewDef->globalProbeBounds[0][0];
-		probeMins[1] = viewDef->globalProbeBounds[0][1];
-		probeMins[2] = viewDef->globalProbeBounds[0][2];
-		probeMins[3] = viewDef->globalProbeBounds.IsCleared() ? 0.0f : 1.0f;
+		probeMins[0] = viewDef->probeBoundsRel[0][0];
+		probeMins[1] = viewDef->probeBoundsRel[0][1];
+		probeMins[2] = viewDef->probeBoundsRel[0][2];
+		probeMins[3] = viewDef->probeBoundsRel.IsCleared() ? 0.0f : 1.0f;
 
-		probeMaxs[0] = viewDef->globalProbeBounds[1][0];
-		probeMaxs[1] = viewDef->globalProbeBounds[1][1];
-		probeMaxs[2] = viewDef->globalProbeBounds[1][2];
+		probeMaxs[0] = viewDef->probeBoundsRel[1][0];
+		probeMaxs[1] = viewDef->probeBoundsRel[1][1];
+		probeMaxs[2] = viewDef->probeBoundsRel[1][2];
 		probeMaxs[3] = 0.0f;
 
-		idVec3 center = viewDef->globalProbeBounds.GetCenter();
+		idVec3 center = viewDef->probeBoundsRel.GetCenter();
 		probeCenter.Set( center.x, center.y, center.z, 1.0f );
 
 		SetVertexParm( RENDERPARM_WOBBLESKY_X, probeMins.ToFloatPtr() );
 		SetVertexParm( RENDERPARM_WOBBLESKY_Y, probeMaxs.ToFloatPtr() );
 		SetVertexParm( RENDERPARM_WOBBLESKY_Z, probeCenter.ToFloatPtr() );
 
-		SetVertexParm( RENDERPARM_TEXGEN_0_S, viewDef->probePositions[0].ToFloatPtr() );
-		SetVertexParm( RENDERPARM_TEXGEN_0_T, viewDef->probePositions[1].ToFloatPtr() );
-		SetVertexParm( RENDERPARM_TEXGEN_0_Q, viewDef->probePositions[2].ToFloatPtr() );
+		SetVertexParm( RENDERPARM_TEXGEN_0_S, viewDef->probePositionsRel[0].ToFloatPtr() );
+		SetVertexParm( RENDERPARM_TEXGEN_0_T, viewDef->probePositionsRel[1].ToFloatPtr() );
+		SetVertexParm( RENDERPARM_TEXGEN_0_Q, viewDef->probePositionsRel[2].ToFloatPtr() );
 
 		// specular cubemap blend weights
 		renderProgManager.SetUniformValue( RENDERPARM_LOCALLIGHTORIGIN, viewDef->radianceImageBlends.ToFloatPtr() );
@@ -1195,33 +1198,43 @@ void idRenderBackend::DrawSingleInteraction( drawInteraction_t* din, bool useFas
 	// RB begin
 	if( useIBL && din->surf->area != NULL && r_useLightGrid.GetBool() )
 	{
+		// the bounds, their centre and the positions are relative to the render origin; cleared
+		// bounds ( .w = 0 ) were never converted, and the shaders then read none of them
 		idVec4 probeMins, probeMaxs, probeCenter;
 
-		probeMins[0] = viewDef->globalProbeBounds[0][0];
-		probeMins[1] = viewDef->globalProbeBounds[0][1];
-		probeMins[2] = viewDef->globalProbeBounds[0][2];
-		probeMins[3] = viewDef->globalProbeBounds.IsCleared() ? 0.0f : 1.0f;
+		probeMins[0] = viewDef->probeBoundsRel[0][0];
+		probeMins[1] = viewDef->probeBoundsRel[0][1];
+		probeMins[2] = viewDef->probeBoundsRel[0][2];
+		probeMins[3] = viewDef->probeBoundsRel.IsCleared() ? 0.0f : 1.0f;
 
-		probeMaxs[0] = viewDef->globalProbeBounds[1][0];
-		probeMaxs[1] = viewDef->globalProbeBounds[1][1];
-		probeMaxs[2] = viewDef->globalProbeBounds[1][2];
+		probeMaxs[0] = viewDef->probeBoundsRel[1][0];
+		probeMaxs[1] = viewDef->probeBoundsRel[1][1];
+		probeMaxs[2] = viewDef->probeBoundsRel[1][2];
 		probeMaxs[3] = 0.0f;
 
-		idVec3 center = viewDef->globalProbeBounds.GetCenter();
+		idVec3 center = viewDef->probeBoundsRel.GetCenter();
 		probeCenter.Set( center.x, center.y, center.z, 1.0f );
 
 		SetVertexParm( RENDERPARM_WOBBLESKY_X, probeMins.ToFloatPtr() );
 		SetVertexParm( RENDERPARM_WOBBLESKY_Y, probeMaxs.ToFloatPtr() );
 		SetVertexParm( RENDERPARM_WOBBLESKY_Z, probeCenter.ToFloatPtr() );
 
-		SetVertexParm( RENDERPARM_TEXGEN_0_S, viewDef->probePositions[0].ToFloatPtr() );	
-		SetVertexParm( RENDERPARM_TEXGEN_0_T, viewDef->probePositions[1].ToFloatPtr() );	
-		SetVertexParm( RENDERPARM_TEXGEN_0_Q, viewDef->probePositions[2].ToFloatPtr() );	
+		SetVertexParm( RENDERPARM_TEXGEN_0_S, viewDef->probePositionsRel[0].ToFloatPtr() );	
+		SetVertexParm( RENDERPARM_TEXGEN_0_T, viewDef->probePositionsRel[1].ToFloatPtr() );	
+		SetVertexParm( RENDERPARM_TEXGEN_0_Q, viewDef->probePositionsRel[2].ToFloatPtr() );	
 
 		// use rpGlobalLightOrigin for lightGrid center
 		const LightGrid& lightGrid = din->surf->area->lightGrid;
 
-		idVec4 lightGridOrigin( lightGrid.lightGridOrigin.x, lightGrid.lightGridOrigin.y, lightGrid.lightGridOrigin.z, 1.0f );
+		// the grid origin is relative to the render origin, as the shading position is; the cell
+		// size and counts below are not positions
+		idVec3 gridOrigin = lightGrid.lightGridOrigin;
+		if( !viewDef->renderOrigin.IsZero() )
+		{
+			gridOrigin = ( idVec3d( lightGrid.lightGridOrigin ) - viewDef->renderOrigin ).ToVec3();
+		}
+
+		idVec4 lightGridOrigin( gridOrigin.x, gridOrigin.y, gridOrigin.z, 1.0f );
 		idVec4 lightGridSize( lightGrid.lightGridSize.x, lightGrid.lightGridSize.y, lightGrid.lightGridSize.z, 1.0f );
 		idVec4 lightGridBounds( lightGrid.lightGridBounds[0], lightGrid.lightGridBounds[1], lightGrid.lightGridBounds[2], 1.0f );
 
@@ -1305,28 +1318,30 @@ void idRenderBackend::DrawSingleInteraction( drawInteraction_t* din, bool useFas
 	}
 	else if( useIBL )
 	{
+		// the bounds, their centre and the positions are relative to the render origin; cleared
+		// bounds ( .w = 0 ) were never converted, and the shaders then read none of them
 		idVec4 probeMins, probeMaxs, probeCenter;
 
-		probeMins[0] = viewDef->globalProbeBounds[0][0];
-		probeMins[1] = viewDef->globalProbeBounds[0][1];
-		probeMins[2] = viewDef->globalProbeBounds[0][2];
-		probeMins[3] = viewDef->globalProbeBounds.IsCleared() ? 0.0f : 1.0f;
+		probeMins[0] = viewDef->probeBoundsRel[0][0];
+		probeMins[1] = viewDef->probeBoundsRel[0][1];
+		probeMins[2] = viewDef->probeBoundsRel[0][2];
+		probeMins[3] = viewDef->probeBoundsRel.IsCleared() ? 0.0f : 1.0f;
 
-		probeMaxs[0] = viewDef->globalProbeBounds[1][0];
-		probeMaxs[1] = viewDef->globalProbeBounds[1][1];
-		probeMaxs[2] = viewDef->globalProbeBounds[1][2];
+		probeMaxs[0] = viewDef->probeBoundsRel[1][0];
+		probeMaxs[1] = viewDef->probeBoundsRel[1][1];
+		probeMaxs[2] = viewDef->probeBoundsRel[1][2];
 		probeMaxs[3] = 0.0f;
 
-		idVec3 center = viewDef->globalProbeBounds.GetCenter();
+		idVec3 center = viewDef->probeBoundsRel.GetCenter();
 		probeCenter.Set( center.x, center.y, center.z, 1.0f );
 
 		SetVertexParm( RENDERPARM_WOBBLESKY_X, probeMins.ToFloatPtr() );
 		SetVertexParm( RENDERPARM_WOBBLESKY_Y, probeMaxs.ToFloatPtr() );
 		SetVertexParm( RENDERPARM_WOBBLESKY_Z, probeCenter.ToFloatPtr() );
 
-		SetVertexParm( RENDERPARM_TEXGEN_0_S, viewDef->probePositions[0].ToFloatPtr() );	
-		SetVertexParm( RENDERPARM_TEXGEN_0_T, viewDef->probePositions[1].ToFloatPtr() );	
-		SetVertexParm( RENDERPARM_TEXGEN_0_Q, viewDef->probePositions[2].ToFloatPtr() );	
+		SetVertexParm( RENDERPARM_TEXGEN_0_S, viewDef->probePositionsRel[0].ToFloatPtr() );	
+		SetVertexParm( RENDERPARM_TEXGEN_0_T, viewDef->probePositionsRel[1].ToFloatPtr() );	
+		SetVertexParm( RENDERPARM_TEXGEN_0_Q, viewDef->probePositionsRel[2].ToFloatPtr() );	
 
 		// specular cubemap blend weights
 		renderProgManager.SetUniformValue( RENDERPARM_LOCALLIGHTORIGIN, viewDef->radianceImageBlends.ToFloatPtr() );
@@ -1813,6 +1828,15 @@ void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const view
 			cascadeDistances[2] = viewDef->frustumSplitDistances[2];
 			cascadeDistances[3] = viewDef->frustumSplitDistances[3];
 			SetFragmentParm( RENDERPARM_CASCADEDISTANCES, cascadeDistances ); // rpCascadeDistances
+
+			// the frontend's far of the last cascade, not the cvar: view depth beyond it has no
+			// cascade texels and the shader lights it without a lookup
+			float cascadeFar[4];
+			cascadeFar[0] = viewDef->shadowCascadeFar;
+			cascadeFar[1] = 0.0f;
+			cascadeFar[2] = 0.0f;
+			cascadeFar[3] = 0.0f;
+			SetFragmentParm( RENDERPARM_SHADOWCASCADEFAR, cascadeFar ); // rpShadowCascadeFar
 		}
 
 		if( r_useShadowAtlas.GetBool() && vLight->ImageAtlasPlaced() )
@@ -2034,7 +2058,7 @@ void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const view
 
 				// RB begin
 				idRenderMatrix modelMatrix;
-				idRenderMatrix::Transpose( *( idRenderMatrix* )surf->space->modelMatrix, modelMatrix );
+				idRenderMatrix::Transpose( *( idRenderMatrix* )surf->space->modelMatrixRel, modelMatrix );
 
 				SetVertexParms( RENDERPARM_MODELMATRIX_X, modelMatrix[0], 4 );
 
@@ -2050,8 +2074,8 @@ void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const view
 				// tranform the light/view origin into model local space
 				idVec4 localLightOrigin( 0.0f );
 				idVec4 localViewOrigin( 1.0f );
-				R_GlobalPointToLocal( surf->space->modelMatrix, vLight->globalLightOrigin, localLightOrigin.ToVec3() );
-				R_GlobalPointToLocal( surf->space->modelMatrix, viewDef->renderView.vieworg, localViewOrigin.ToVec3() );
+				R_GlobalPointToLocal( surf->space->modelMatrixRel, vLight->globalLightOrigin, localLightOrigin.ToVec3() );
+				localViewOrigin.ToVec3() = surf->space->localViewOrigin;
 
 				// set the local light/view origin
 				SetVertexParm( RENDERPARM_LOCALLIGHTORIGIN, localLightOrigin.ToFloatPtr() );
@@ -2061,7 +2085,7 @@ void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const view
 				idPlane lightProjection[4];
 				for( int i = 0; i < 4; i++ )
 				{
-					R_GlobalPlaneToLocal( surf->space->modelMatrix, vLight->lightProject[i], lightProjection[i] );
+					R_GlobalPlaneToLocal( surf->space->modelMatrixRel, vLight->lightProject[i], lightProjection[i] );
 				}
 
 				// optionally multiply the local light projection by the light texture matrix
@@ -2486,12 +2510,12 @@ void idRenderBackend::AmbientPass( const drawSurf_t* const* drawSurfs, int numDr
 
 			// tranform the view origin into model local space
 			idVec4 localViewOrigin( 1.0f );
-			R_GlobalPointToLocal( drawSurf->space->modelMatrix, viewDef->renderView.vieworg, localViewOrigin.ToVec3() );
+			localViewOrigin.ToVec3() = drawSurf->space->localViewOrigin;
 			SetVertexParm( RENDERPARM_LOCALVIEWORIGIN, localViewOrigin.ToFloatPtr() );
 
 			// RB: if we want to store the normals in world space so we need the model -> world matrix
 			idRenderMatrix modelMatrix;
-			idRenderMatrix::Transpose( *( idRenderMatrix* )drawSurf->space->modelMatrix, modelMatrix );
+			idRenderMatrix::Transpose( *( idRenderMatrix* )drawSurf->space->modelMatrixRel, modelMatrix );
 
 			SetVertexParms( RENDERPARM_MODELMATRIX_X, modelMatrix[0], 4 );
 
@@ -2854,10 +2878,12 @@ void idRenderBackend::SetupShadowMapMatrices( viewLight_t* vLight, int side, idR
 		//idMat3 rotation = angles.ToMat3();
 
 		const idVec3 viewDir = viewDef->renderView.viewaxis[0];
-		const idVec3 viewPos = viewDef->renderView.vieworg;
+		// relative eye: the light volume ( inverseBaseLightProject ) and the cascade corners
+		// ( frustumMVPs ) below are both relative to the view's renderOrigin
+		const idVec3 viewPos = R_RelativeEye( viewDef );
 
 #if 1
-		idRenderMatrix::CreateViewMatrix( viewDef->renderView.vieworg, rotation, lightViewRenderMatrix );
+		idRenderMatrix::CreateViewMatrix( viewPos, rotation, lightViewRenderMatrix );
 #else
 		float lightViewMatrix[16];
 		MatrixLookAtRH( lightViewMatrix, viewPos, lightDir, viewDir );
@@ -3230,7 +3256,7 @@ void idRenderBackend::ShadowMapPassPerforated( const drawSurf_t** drawSurfs, int
 		{
 			// model -> world
 			idRenderMatrix modelRenderMatrix;
-			idRenderMatrix::Transpose( *( idRenderMatrix* )drawSurf->space->modelMatrix, modelRenderMatrix );
+			idRenderMatrix::Transpose( *( idRenderMatrix* )drawSurf->space->modelMatrixRel, modelRenderMatrix );
 
 			// world -> light = light camera view of model in Doom
 			idRenderMatrix modelToLightRenderMatrix;
@@ -3520,7 +3546,7 @@ void idRenderBackend::ShadowMapPassFast( const drawSurf_t* drawSurfs, viewLight_
 		{
 			// model -> world
 			idRenderMatrix modelRenderMatrix;
-			idRenderMatrix::Transpose( *( idRenderMatrix* )drawSurf->space->modelMatrix, modelRenderMatrix );
+			idRenderMatrix::Transpose( *( idRenderMatrix* )drawSurf->space->modelMatrixRel, modelRenderMatrix );
 
 			// world -> light = light camera view of model in Doom
 			idRenderMatrix modelToLightRenderMatrix;
@@ -4367,12 +4393,12 @@ int idRenderBackend::DrawShaderPasses( const drawSurf_t* const* const drawSurfs,
 
 			// set eye position in local space
 			idVec4 localViewOrigin( 1.0f );
-			R_GlobalPointToLocal( space->modelMatrix, viewDef->renderView.vieworg, localViewOrigin.ToVec3() );
+			localViewOrigin.ToVec3() = space->localViewOrigin;
 			SetVertexParm( RENDERPARM_LOCALVIEWORIGIN, localViewOrigin.ToFloatPtr() );
 
 			// set model Matrix
 			float modelMatrixTranspose[16];
-			R_MatrixTranspose( space->modelMatrix, modelMatrixTranspose );
+			R_MatrixTranspose( space->modelMatrixRel, modelMatrixTranspose );
 			SetVertexParms( RENDERPARM_MODELMATRIX_X, modelMatrixTranspose, 4 );
 
 			// Set ModelView Matrix
@@ -4761,7 +4787,7 @@ void idRenderBackend::T_BlendLight( const drawSurf_t* drawSurfs, const viewLight
 			idPlane	lightProjectInCurrentSpace[4];
 			for( int i = 0; i < 4; i++ )
 			{
-				R_GlobalPlaneToLocal( drawSurf->space->modelMatrix, vLight->lightProject[i], lightProjectInCurrentSpace[i] );
+				R_GlobalPlaneToLocal( drawSurf->space->modelMatrixRel, vLight->lightProject[i], lightProjectInCurrentSpace[i] );
 			}
 
 			SetVertexParm( RENDERPARM_TEXGEN_0_S, lightProjectInCurrentSpace[0].ToFloatPtr() );
@@ -4897,7 +4923,7 @@ void idRenderBackend::T_BasicFog( const drawSurf_t* drawSurfs, const idPlane fog
 				RB_SetMVP( drawSurf->space->mvp );
 				for( int i = 0; i < 4; i++ )
 				{
-					R_GlobalPlaneToLocal( drawSurf->space->modelMatrix, fogPlanes[i], localFogPlanes[i] );
+					R_GlobalPlaneToLocal( drawSurf->space->modelMatrixRel, fogPlanes[i], localFogPlanes[i] );
 				}
 			}
 			else
@@ -4977,8 +5003,8 @@ void idRenderBackend::FogPass( const drawSurf_t* drawSurfs,  const drawSurf_t* d
 	GL_SelectTexture( 1 );
 	globalImages->fogEnterImage->Bind();
 
-	// S is based on the view origin
-	const float s = vLight->fogPlane.Distance( viewDef->renderView.vieworg );
+	// S is based on the view origin, in the fog plane's relative frame
+	const float s = vLight->fogPlane.Distance( R_RelativeEye( viewDef ) );
 
 	const float FOG_SCALE = 0.001f;
 
@@ -5184,20 +5210,63 @@ void idRenderBackend::DrawMotionVectors()
 	int mvpIndex = ( viewDef->renderView.viewEyeBuffer == 1 ) ? 1 : 0;
 
 	// derive the matrix to go from current pixels to previous frame pixels
+	// motionMatrix is written only where cameraMoved is set, and read only when it is
 	bool cameraMoved = false;
 	idRenderMatrix	motionMatrix;
 
-	if( memcmp( &viewDef->worldSpace.unjitteredMVP[0][0], &prevMVP[mvpIndex][0][0], sizeof( idRenderMatrix ) ) != 0 )
+	// only the player's main view keeps previous-frame state: the portal sky and GUI-world views
+	// look through other cameras and would make every main view a cut
+	if( viewDef->isMainView )
 	{
-		idRenderMatrix	inverseMVP;
-		idRenderMatrix::Inverse( viewDef->worldSpace.unjitteredMVP, inverseMVP );
+		// the eye's translation since the previous frame, in double; with a relative MVP a pure
+		// strafe leaves unjitteredMVP bit-identical and the whole motion is in d
+		const idVec3d d = viewDef->renderOrigin - prevRenderOrigin[mvpIndex];
 
-		idRenderMatrix::Multiply( prevMVP[mvpIndex], inverseMVP, motionMatrix );
+		// a jump this far along one axis in one frame is a teleport or a camera change, not motion
+		const double cutDistance = 4096.0;
 
-		cameraMoved = true;
+		if( viewDef->invalidateHistory || fabs( d.x ) > cutDistance || fabs( d.y ) > cutDistance || fabs( d.z ) > cutDistance )
+		{
+			// a camera cut or the first main view after a map load: the draw below is skipped and
+			// TemporalAAPass resolves without history, then sets prevViewsValid again
+			prevViewsValid = false;
+
+			if( r_logCameraCuts.GetBool() )
+			{
+				common->Printf( "camera cut: |d| = %.1f%s\n", sqrt( d.x * d.x + d.y * d.y + d.z * d.z ), viewDef->invalidateHistory ? " ( map load )" : "" );
+			}
+		}
+		else if( memcmp( &viewDef->worldSpace.unjitteredMVP[0][0], &prevMVP[mvpIndex][0][0], sizeof( idRenderMatrix ) ) != 0 || !d.IsZero() )
+		{
+			idRenderMatrix	inverseMVP;
+			idRenderMatrix::Inverse( viewDef->worldSpace.unjitteredMVP, inverseMVP );
+
+			if( d.IsZero() )
+			{
+				// every frame at r_cameraRelative 0 ( both origins zero ): today's product, bit for bit
+				idRenderMatrix::Multiply( prevMVP[mvpIndex], inverseMVP, motionMatrix );
+			}
+			else
+			{
+				// prevMVP takes points relative to the previous origin; T( d ) first moves a point relative
+				// to this frame's origin there, so it sits on the right of prevMVP
+				idRenderMatrix	translation;
+				translation.Identity();
+				translation[0][3] = float( d.x );
+				translation[1][3] = float( d.y );
+				translation[2][3] = float( d.z );
+
+				idRenderMatrix	prevTranslatedMVP;
+				idRenderMatrix::Multiply( prevMVP[mvpIndex], translation, prevTranslatedMVP );
+				idRenderMatrix::Multiply( prevTranslatedMVP, inverseMVP, motionMatrix );
+			}
+
+			cameraMoved = true;
+		}
+
+		prevMVP[mvpIndex] = viewDef->worldSpace.unjitteredMVP;
+		prevRenderOrigin[mvpIndex] = viewDef->renderOrigin;
 	}
-
-	prevMVP[mvpIndex] = viewDef->worldSpace.unjitteredMVP;
 
 	// make sure rpWindowCoord is set even without post processing surfaces in the view
 	int x = viewDef->viewport.x1;
@@ -5935,12 +6004,14 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 	//------------------------------------
 	{
 		//
-		// set eye position in global space
+		// set eye position relative to the render origin ( eye-centred world axes ):
+		// vieworg itself at r_cameraRelative 0, about zero otherwise
 		//
+		const idVec3 relativeEye = R_RelativeEye( viewDef );
 		float parm[4];
-		parm[0] = viewDef->renderView.vieworg[0];
-		parm[1] = viewDef->renderView.vieworg[1];
-		parm[2] = viewDef->renderView.vieworg[2];
+		parm[0] = relativeEye[0];
+		parm[1] = relativeEye[1];
+		parm[2] = relativeEye[2];
 		parm[3] = 1.0f;
 
 		SetVertexParm( RENDERPARM_GLOBALEYEPOS, parm ); // rpGlobalEyePos
@@ -6012,7 +6083,9 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 		renderLog.OpenMainBlock( MRB_FILL_HIZ_BUFFER );
 		renderLog.OpenBlock( "Render_HiZ" );
 
-		commandList->clearTextureFloat( globalImages->hierarchicalZbufferImage->GetTextureHandle(), nvrhi::AllSubresources, nvrhi::Color( 1.f ) );
+		// cleared to the far plane; the mip reduction keeps the farthest depth ( MODE_MAX, or
+		// MODE_MIN under reversed-Z, picked in the BUILTIN_MIPMAPGEN_CS table entry )
+		commandList->clearTextureFloat( globalImages->hierarchicalZbufferImage->GetTextureHandle(), nvrhi::AllSubresources, nvrhi::Color( DEPTH_CONVENTION_CLEAR ) );
 
 		commonPasses.BlitTexture(
 			commandList,
@@ -6344,6 +6417,7 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 idRenderBackend::MotionBlur
 
 Experimental feature
+Dead ( compiled out, its call in DrawView is commented out ); reviving it needs DrawMotionVectors' T( d ) and main-view handling
 ==================
 */
 void idRenderBackend::MotionBlur()
@@ -6901,6 +6975,17 @@ void idRenderBackend::PostProcess( const void* data )
 
 		//SetVertexParms( RENDERPARM_MODELMATRIX_X, viewDef->unprojectionToCameraRenderMatrix[0], 4 );
 		SetVertexParms( RENDERPARM_MODELMATRIX_X, viewDef->unprojectionToWorldRenderMatrix[0], 4 );
+
+		// unprojectionToWorld is relative to renderOrigin, so a world-fixed pattern adds the origin
+		// back; only its remainder modulo 1024, a whole number of dither periods, matters. Wrapping
+		// in double before the float conversion keeps the value small at any distance; it is
+		// exactly zero at a zero origin ( r_cameraRelative 0 )
+		float worldOffset[4];
+		worldOffset[0] = ( float )( viewDef->renderOrigin.x - 1024.0 * floor( viewDef->renderOrigin.x / 1024.0 ) );
+		worldOffset[1] = ( float )( viewDef->renderOrigin.y - 1024.0 * floor( viewDef->renderOrigin.y / 1024.0 ) );
+		worldOffset[2] = ( float )( viewDef->renderOrigin.z - 1024.0 * floor( viewDef->renderOrigin.z / 1024.0 ) );
+		worldOffset[3] = 0.0f;
+		SetFragmentParm( RENDERPARM_WORLDOFFSET, worldOffset ); // rpWorldOffset
 
 		// Draw
 		DrawElementsWithCounters( &unitSquareSurface );

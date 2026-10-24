@@ -170,8 +170,18 @@ void R_RenderSingleModel( viewEntity_t* vEntity )
 	vEntity->weaponDepthHack = renderEntity->weaponDepthHack;
 	vEntity->skipMotionBlur = renderEntity->skipMotionBlur;
 
-	memcpy( vEntity->modelMatrix, entityDef->modelMatrix, sizeof( vEntity->modelMatrix ) );
-	R_MatrixMultiply( entityDef->modelMatrix, viewDef->worldSpace.modelViewMatrix, vEntity->modelViewMatrix );
+	// the same two frames as R_AddSingleModel builds
+	const idVec3d& renderOrigin = viewDef->renderOrigin;
+	memcpy( vEntity->modelMatrixAbs, entityDef->modelMatrix, sizeof( vEntity->modelMatrixAbs ) );
+	memcpy( vEntity->modelMatrixRel, vEntity->modelMatrixAbs, sizeof( vEntity->modelMatrixRel ) );
+	if( !renderOrigin.IsZero() )
+	{
+		// only the translation moves, subtracted in double from the def's own matrix
+		vEntity->modelMatrixRel[3 * 4 + 0] = float( double( vEntity->modelMatrixAbs[3 * 4 + 0] ) - renderOrigin.x );
+		vEntity->modelMatrixRel[3 * 4 + 1] = float( double( vEntity->modelMatrixAbs[3 * 4 + 1] ) - renderOrigin.y );
+		vEntity->modelMatrixRel[3 * 4 + 2] = float( double( vEntity->modelMatrixAbs[3 * 4 + 2] ) - renderOrigin.z );
+	}
+	R_MatrixMultiply( vEntity->modelMatrixRel, viewDef->worldSpace.modelViewMatrix, vEntity->modelViewMatrix );
 
 	idRenderMatrix viewMat;
 	idRenderMatrix::Transpose( *( idRenderMatrix* )vEntity->modelViewMatrix, viewMat );
@@ -187,9 +197,11 @@ void R_RenderSingleModel( viewEntity_t* vEntity )
 	}
 
 	// local light and view origins are used to determine if the view is definitely outside
-	// an extruded shadow volume, which means we can skip drawing the end caps
-	idVec3 localViewOrigin;
-	R_GlobalPointToLocal( vEntity->modelMatrix, viewDef->renderView.vieworg, localViewOrigin );
+	// an extruded shadow volume, which means we can skip drawing the end caps.
+	// Computed as R_AddSingleModel does, so both paths pick the same LOD
+	const idVec3 eye = renderOrigin.IsZero() ? viewDef->renderView.vieworg : ( idVec3d( viewDef->renderView.vieworg ) - renderOrigin ).ToVec3();
+	R_GlobalPointToLocal( vEntity->modelMatrixRel, eye, vEntity->localViewOrigin );
+	const idVec3& localViewOrigin = vEntity->localViewOrigin;
 
 	extern idCVar r_lodMaterialDistance;
 
@@ -248,7 +260,8 @@ void R_RenderSingleModel( viewEntity_t* vEntity )
 		if( shader->IsLOD() )
 		{
 			// foresthale 2014-11-24: calculate the bounds and get the distance from camera to bounds
-			idBounds& localBounds = tri->bounds;
+			// ( a copy: tri->bounds is shared by every view and job that draws this model )
+			idBounds localBounds = tri->bounds;
 			if( tri->staticModelWithJoints )
 			{
 				// skeletal models have difficult to compute bounds for surfaces, so use the whole entity
@@ -402,7 +415,7 @@ void R_RenderSingleModel( viewEntity_t* vEntity )
 				idRenderMatrix::OffsetScaleForBounds( modelRenderMatrix, surfaceBounds, inverseBaseModelProject );
 
 				idRenderMatrix invProjectMVPMatrix;
-				idRenderMatrix::Multiply( viewDef->worldSpace.unjitteredMVP, inverseBaseModelProject, invProjectMVPMatrix );
+				idRenderMatrix::Multiply( viewDef->worldCullUnjitteredMVP, inverseBaseModelProject, invProjectMVPMatrix );
 
 				// NOTE: unit cube instead of zeroToOne cube
 				idVec4* verts = tr.maskedUnitCubeVerts;

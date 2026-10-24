@@ -89,15 +89,22 @@ EmitSurfaces
 For full screen GUIs, we can add in per-surface stereoscopic depth effects
 ================
 */
-void idGuiModel::EmitSurfaces( float modelMatrix[16], float modelViewMatrix[16],
+void idGuiModel::EmitSurfaces( float modelMatrixAbs[16], float modelMatrixRel[16], float modelViewMatrix[16],
 							   bool depthHack, bool allowFullScreenStereoDepth, bool linkAsEntity )
 {
 
 	viewEntity_t* guiSpace = ( viewEntity_t* )R_ClearedFrameAlloc( sizeof( *guiSpace ), FRAME_ALLOC_VIEW_ENTITY );
-	memcpy( guiSpace->modelMatrix, modelMatrix, sizeof( guiSpace->modelMatrix ) );
+	memcpy( guiSpace->modelMatrixAbs, modelMatrixAbs, sizeof( guiSpace->modelMatrixAbs ) );
+	memcpy( guiSpace->modelMatrixRel, modelMatrixRel, sizeof( guiSpace->modelMatrixRel ) );
 	memcpy( guiSpace->modelViewMatrix, modelViewMatrix, sizeof( guiSpace->modelViewMatrix ) );
 	guiSpace->weaponDepthHack = depthHack;
 	guiSpace->isGuiSurface = true;
+
+	// the eye relative to the render origin, in local coords ( the cleared alloc would leave a
+	// silent zero that the backend uploads as LOCALVIEWORIGIN )
+	const idVec3d& renderOrigin = tr.viewDef->renderOrigin;
+	const idVec3 eye = renderOrigin.IsZero() ? tr.viewDef->renderView.vieworg : ( idVec3d( tr.viewDef->renderView.vieworg ) - renderOrigin ).ToVec3();
+	R_GlobalPointToLocal( guiSpace->modelMatrixRel, eye, guiSpace->localViewOrigin );
 
 	// If this is an in-game gui, we need to be able to find the matrix again for head mounted
 	// display bypass matrix fixup.
@@ -198,13 +205,13 @@ void idGuiModel::EmitSurfaces( float modelMatrix[16], float modelViewMatrix[16],
 EmitToCurrentView
 ====================
 */
-void idGuiModel::EmitToCurrentView( float modelMatrix[16], bool depthHack )
+void idGuiModel::EmitToCurrentView( float modelMatrixAbs[16], float modelMatrixRel[16], bool depthHack )
 {
 	float	modelViewMatrix[16];
 
-	R_MatrixMultiply( modelMatrix, tr.viewDef->worldSpace.modelViewMatrix, modelViewMatrix );
+	R_MatrixMultiply( modelMatrixRel, tr.viewDef->worldSpace.modelViewMatrix, modelViewMatrix );
 
-	EmitSurfaces( modelMatrix, modelViewMatrix, depthHack, false /* stereoDepthSort */, true /* link as entity */ );
+	EmitSurfaces( modelMatrixAbs, modelMatrixRel, modelViewMatrix, depthHack, false /* stereoDepthSort */, true /* link as entity */ );
 }
 
 // DG: move function declaration here (=> out of EmitFullScreen() method) because it confused clang
@@ -272,6 +279,10 @@ void idGuiModel::EmitFullScreen( Framebuffer* renderTarget )
 	float xScale = 1.0f / screenSize.x;
 	float yScale = -1.0f / screenSize.y;  // RB: flip y for DX12 & Vulkan
 
+	// GUI vertices have z = 0, so they land on depth 0: the near plane with forward-Z, the far
+	// plane ( and the depth clear ) under reversed-Z. Every 2D view clears its depth first
+	// ( DrawViewInternal ), and the GUI states test GLS_DEPTHFUNC_LESS, which maps to
+	// GREATER_EQUAL on the reversed D32S8 attachments, so 0 against the cleared 0 still passes
 	float zScale = -1.0f;
 
 	viewDef->scissor.x1 = 0;
@@ -303,15 +314,23 @@ void idGuiModel::EmitFullScreen( Framebuffer* renderTarget )
 	// make a tech5 renderMatrix for faster culling
 	idRenderMatrix::Transpose( *( idRenderMatrix* )viewDef->projectionMatrix, viewDef->projectionRenderMatrix );
 
-	viewDef->worldSpace.modelMatrix[0 * 4 + 0] = 1.0f;
-	viewDef->worldSpace.modelMatrix[1 * 4 + 1] = 1.0f;
-	viewDef->worldSpace.modelMatrix[2 * 4 + 2] = 1.0f;
-	viewDef->worldSpace.modelMatrix[3 * 4 + 3] = 1.0f;
+	// the 2D view has a zero render origin, so both frames are the same identity
+	viewDef->worldSpace.modelMatrixAbs[0 * 4 + 0] = 1.0f;
+	viewDef->worldSpace.modelMatrixAbs[1 * 4 + 1] = 1.0f;
+	viewDef->worldSpace.modelMatrixAbs[2 * 4 + 2] = 1.0f;
+	viewDef->worldSpace.modelMatrixAbs[3 * 4 + 3] = 1.0f;
+
+	viewDef->worldSpace.modelMatrixRel[0 * 4 + 0] = 1.0f;
+	viewDef->worldSpace.modelMatrixRel[1 * 4 + 1] = 1.0f;
+	viewDef->worldSpace.modelMatrixRel[2 * 4 + 2] = 1.0f;
+	viewDef->worldSpace.modelMatrixRel[3 * 4 + 3] = 1.0f;
 
 	viewDef->worldSpace.modelViewMatrix[0 * 4 + 0] = 1.0f;
 	viewDef->worldSpace.modelViewMatrix[1 * 4 + 1] = 1.0f;
 	viewDef->worldSpace.modelViewMatrix[2 * 4 + 2] = 1.0f;
 	viewDef->worldSpace.modelViewMatrix[3 * 4 + 3] = 1.0f;
+
+	R_GlobalPointToLocal( viewDef->worldSpace.modelMatrixRel, viewDef->renderView.vieworg, viewDef->worldSpace.localViewOrigin );
 
 	viewDef->maxDrawSurfs = surfaces.Num();
 	viewDef->drawSurfs = ( drawSurf_t** )R_FrameAlloc( viewDef->maxDrawSurfs * sizeof( viewDef->drawSurfs[0] ), FRAME_ALLOC_DRAW_SURFACE_POINTER );
@@ -330,7 +349,7 @@ void idGuiModel::EmitFullScreen( Framebuffer* renderTarget )
 
 	tr.viewDef = viewDef;
 
-	EmitSurfaces( viewDef->worldSpace.modelMatrix, viewDef->worldSpace.modelViewMatrix,
+	EmitSurfaces( viewDef->worldSpace.modelMatrixAbs, viewDef->worldSpace.modelMatrixRel, viewDef->worldSpace.modelViewMatrix,
 				  false /* depthHack */ , stereoEnabled /* stereoDepthSort */, false /* link as entity */ );
 
 	tr.viewDef = oldViewDef;

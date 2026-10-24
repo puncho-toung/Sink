@@ -953,8 +953,17 @@ public:
 	~idPortalSky();
 
 	void				Spawn();
+	void				Restore( idRestoreGame* savefile );
+
+	idVec3				SkyViewOrigin( const idVec3& eye ) const;
+
 	void				Event_PostSpawn();
 	void				Event_Activate( idEntity* activator );
+
+private:
+	float				parallaxScale;		// 0 = stock fixed sky camera
+	idVec3				parallaxOrigin;		// player-space reference point for the parallax
+	mutable int			lastArea;			// developer print only, not saved
 };
 
 

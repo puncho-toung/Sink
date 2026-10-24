@@ -1918,7 +1918,8 @@ bool LightEditor::SetupToolView( viewDef_t& vd ) const
 	vd.viewport.x2 = renderSystem->GetWidth() - 1;
 	vd.viewport.y2 = renderSystem->GetHeight() - 1;
 
-	R_SetupViewMatrix( &vd );
+	// absolute ( a zero origin ): the gizmo and the reticle pair this view with absolute points
+	R_SetupViewMatrix( &vd, idVec3d() );
 	R_SetupProjectionMatrix( &vd, false );
 
 	return true;
@@ -2550,6 +2551,19 @@ void LightEditor::Draw()
 			{
 				float* cameraView = viewDef.worldSpace.modelViewMatrix;
 				float* cameraProjection = viewDef.unjitteredProjectionMatrix;
+#if ID_REVERSED_Z
+				// ImGuizmo unprojects ndc z = 0 for one end of its mouse ray ( ComputeCameraRay ), which
+				// is w = 0 with the exactly infinite reversed projection. The gizmo gets a reversed
+				// projection with a finite far plane instead; only the z row differs, so it draws where
+				// it did, and its ray runs from the far plane to the near plane
+				float gizmoProjection[16];
+				memcpy( gizmoProjection, viewDef.unjitteredProjectionMatrix, sizeof( gizmoProjection ) );
+				const float gizmoNear = gizmoProjection[3 * 4 + 2];
+				const float gizmoFar = 65536.0f;
+				gizmoProjection[2 * 4 + 2] = gizmoNear / ( gizmoFar - gizmoNear );
+				gizmoProjection[3 * 4 + 2] = gizmoFar * gizmoNear / ( gizmoFar - gizmoNear );
+				cameraProjection = gizmoProjection;
+#endif
 
 				idMat3 rotateMatrix = cur.angles.ToMat3();
 				idMat3 scaleMatrix = mat3_identity;

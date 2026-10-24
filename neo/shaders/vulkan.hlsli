@@ -23,6 +23,10 @@
 #ifndef VULKAN_HLSLI
 #define VULKAN_HLSLI
 
+// ID_REVERSED_Z and the depth convention, shared with the C++ side; every shader reaches it
+// through here ( the compute shaders include only this file )
+#include "../idlib/DepthConvention.h"
+
 #ifdef SPIRV
 #define VK_PUSH_CONSTANT [[vk::push_constant]]
 #define VK_BINDING(reg,dset) [[vk::binding(reg,dset)]]
