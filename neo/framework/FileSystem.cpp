@@ -297,10 +297,12 @@ private:
 	//puncho start - MP-A5 (K40)
 	idStrList				layerNames;			// the game dir of each layer, indexed by rank
 	int						writeLayer;			// gameFolder's rank
-	// MP-A5 (K21): the loose files each layer holds, walked once at a multi-layer startup and kept up by OpenFileWrite,
-	// so a layer query is a hash probe; the containers have their own cacheHash
+	// MP-A5 (K21): the loose files of each layer, one directory listing at the first query into that directory and
+	// kept up by the writers, so a layer query is a hash probe; the containers have their own cacheHash
 	idStrList				layerPaths[ MAX_MOD_LAYERS + 1 ];
 	idHashIndex				layerPathHash[ MAX_MOD_LAYERS + 1 ];
+	idStrList				layerDirs[ MAX_MOD_LAYERS + 1 ];		// the directories listed so far
+	idHashIndex				layerDirHash[ MAX_MOD_LAYERS + 1 ];
 	//puncho end
 
 	static idCVar			fs_debug;
@@ -354,7 +356,8 @@ private:
 	idFile*					OpenLayerFile( const char* relativePath, int searchFlags, bool allowCopyFiles, const char* gamedir, int layer );
 	bool					LayerHoldsFile( const char* relativePath, int layer );
 	void					AddLayerPath( int layer, const char* relativePath );
-	void					ListLayerFiles_r( const char* osPath, const char* relativePath, int layer );
+	void					ListLayerDir( int layer, const char* relativeDir );
+	void					ListLayerFiles_r( const char* osPath, const char* relativePath, idStrList& list, idHashIndex& hashIndex );
 	int						FindLayerShadows( idStrList& paths, idList<int>& pathLayers );
 	//puncho end
 
@@ -2998,18 +3001,54 @@ void idFileSystemLocal::AddLayerPath( int layer, const char* relativePath )
 
 /*
 ============
-idFileSystemLocal::ListLayerFiles_r
+idFileSystemLocal::ListLayerDir
 
-Every loose file under one search path's game dir, into its layer's path set
+Lists one directory of a layer, in each of its search paths, once; later queries into it are hash probes
 ============
 */
-void idFileSystemLocal::ListLayerFiles_r( const char* osPath, const char* relativePath, int layer )
+void idFileSystemLocal::ListLayerDir( int layer, const char* relativeDir )
+{
+	const int key = layerDirHash[layer].GenerateKey( relativeDir, true );
+	for( int i = layerDirHash[layer].First( key ); i >= 0; i = layerDirHash[layer].Next( i ) )
+	{
+		if( layerDirs[layer][i].Cmp( relativeDir ) == 0 )
+		{
+			return;
+		}
+	}
+	layerDirHash[layer].Add( key, layerDirs[layer].Append( relativeDir ) );
+
+	idStrList files;
+	for( int sp = 0; sp < searchPaths.Num(); sp++ )
+	{
+		if( searchPaths[sp].layer != layer )
+		{
+			continue;
+		}
+		idStr osPath = BuildOSPath( searchPaths[sp].path, searchPaths[sp].gamedir, relativeDir );
+		osPath.StripTrailing( PATHSEPARATOR_CHAR );
+		ListOSFiles( osPath, "", files );
+		for( int i = 0; i < files.Num(); i++ )
+		{
+			AddLayerPath( layer, ( relativeDir[0] != '\0' ) ? va( "%s/%s", relativeDir, files[i].c_str() ) : files[i].c_str() );
+		}
+	}
+}
+
+/*
+============
+idFileSystemLocal::ListLayerFiles_r
+
+Every loose file under one search path's game dir, as relative paths, for the shadow report
+============
+*/
+void idFileSystemLocal::ListLayerFiles_r( const char* osPath, const char* relativePath, idStrList& list, idHashIndex& hashIndex )
 {
 	idStrList files;
 	ListOSFiles( osPath, "", files );
 	for( int i = 0; i < files.Num(); i++ )
 	{
-		AddLayerPath( layer, ( relativePath[0] != '\0' ) ? va( "%s/%s", relativePath, files[i].c_str() ) : files[i].c_str() );
+		AddUnique( ( relativePath[0] != '\0' ) ? va( "%s/%s", relativePath, files[i].c_str() ) : files[i].c_str(), list, hashIndex );
 	}
 
 	idStrList dirs;
@@ -3025,7 +3064,7 @@ void idFileSystemLocal::ListLayerFiles_r( const char* osPath, const char* relati
 		idStr subPath = osPath;
 		subPath += "/";
 		subPath += dirs[i];
-		ListLayerFiles_r( subPath, subRelative, layer );
+		ListLayerFiles_r( subPath, subRelative, list, hashIndex );
 	}
 }
 
@@ -3057,13 +3096,6 @@ int idFileSystemLocal::FindLayerShadows( idStrList& paths, idList<int>& pathLaye
 {
 	idStrList files;
 	idHashIndex hashIndex( 4096, 4096 );
-	for( int layer = 1; layer < layerNames.Num(); layer++ )
-	{
-		for( int i = 0; i < layerPaths[layer].Num(); i++ )
-		{
-			AddUnique( layerPaths[layer][i], files, hashIndex );
-		}
-	}
 	for( int sp = 0; sp < searchPaths.Num(); sp++ )
 	{
 		const searchpath_t& search = searchPaths[sp];
@@ -3071,6 +3103,9 @@ int idFileSystemLocal::FindLayerShadows( idStrList& paths, idList<int>& pathLaye
 		{
 			continue;
 		}
+		idStr osPath = BuildOSPath( search.path, search.gamedir, "" );
+		osPath.StripTrailing( PATHSEPARATOR_CHAR );
+		ListLayerFiles_r( osPath, "", files, hashIndex );
 		for( int i = 0; i < search.zipFiles.Num(); i++ )
 		{
 			for( int j = 0; j < search.zipFiles[i]->cacheTable.Num(); j++ )
@@ -3699,20 +3734,13 @@ void idFileSystemLocal::Startup()
 		}
 	}
 
-	// K21: every layer's loose files, once, so GetFileLayer and its kin probe a hash; one layer needs no layer queries
+	// K21: the layers' loose file sets start empty and fill a directory at a time as they are asked
 	for( int i = 0; i <= MAX_MOD_LAYERS; i++ )
 	{
 		layerPaths[i].Clear();
 		layerPathHash[i].Clear();
-	}
-	if( layerNames.Num() > 1 )
-	{
-		for( int sp = 0; sp < searchPaths.Num(); sp++ )
-		{
-			idStr osPath = BuildOSPath( searchPaths[sp].path, searchPaths[sp].gamedir, "" );
-			osPath.StripTrailing( PATHSEPARATOR_CHAR );
-			ListLayerFiles_r( osPath, "", searchPaths[sp].layer );
-		}
+		layerDirs[i].Clear();
+		layerDirHash[i].Clear();
 	}
 	//puncho end
 
@@ -4395,7 +4423,8 @@ idFile* idFileSystemLocal::OpenFileReadFromLayer( const char* relativePath, int 
 idFileSystemLocal::LayerHoldsFile
 
 Whether one layer holds a copy of relativePath, loose, in a .pk4 or in a .resources. With more than one layer every
-probe is a hash lookup; with one, whose few callers predate the sets, a loose file is opened.
+probe is a hash lookup, after one listing of the file's directory per layer; with one, whose few callers predate the
+sets, a loose file is opened.
 ===========
 */
 bool idFileSystemLocal::LayerHoldsFile( const char* relativePath, int layer )
@@ -4436,6 +4465,9 @@ bool idFileSystemLocal::LayerHoldsFile( const char* relativePath, int layer )
 	}
 	idStrStatic< MAX_OSPATH > path = relativePath;
 	path.BackSlashesToSlashes();
+	idStrStatic< MAX_OSPATH > dir = path;
+	dir.StripFilename();
+	ListLayerDir( layer, dir );
 	const int key = layerPathHash[layer].GenerateKey( path, false );
 	for( int i = layerPathHash[layer].First( key ); i >= 0; i = layerPathHash[layer].Next( i ) )
 	{
