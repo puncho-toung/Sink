@@ -53,6 +53,12 @@ idCVar net_useGameStateLobby( "net_useGameStateLobby", "0", CVAR_BOOL, "" );
 
 idCVar net_maxLoadResourcesTimeInSeconds( "net_maxLoadResourcesTimeInSeconds", "0", CVAR_INTEGER, "How long, in seconds, clients have to load resources. Used for loose asset builds." );
 idCVar net_migrateHost( "net_migrateHost", "-1", CVAR_INTEGER, "Become host of session (0 = party, 1 = game) for testing purposes" );
+//puncho start - content check (P1-A3a, K17): the gate's stale RELIABLE_LOADING_DONE. A peer keeps a copy of the last one
+// it sent; with the cvar set it sends that copy again, carrying the previous load's id, as it starts the next load
+idCVar net_debugStaleLoadingDone( "net_debugStaleLoadingDone", "0", CVAR_BOOL | CVAR_NOCHEAT, "P1-A3a gate: a peer that starts a load first sends the host its RELIABLE_LOADING_DONE of the previous load again" );
+static byte		lastLoadingDone[ 128 ];
+static int		lastLoadingDoneSize = 0;
+//puncho end
 extern idCVar net_debugBaseStates;
 
 idCVar net_testPartyMemberConnectFail( "net_testPartyMemberConnectFail", "-1", CVAR_INTEGER, "Force this party member index to fail to connect to games." );
@@ -1594,7 +1600,14 @@ bool idSessionLocal::State_Game_Lobby_Peer()
 
 		// Set loading flag back to false
 		GetActingGameStateLobby().startLoadingFromHost = false;
-		GetActingGameStateLobby().loadId = GetActingGameStateLobby().startLoadingId;	//puncho - content check (P1-A3a, K17): the load this peer now starts
+		//puncho start - content check (P1-A3a, K17): the load this peer now starts
+		if( net_debugStaleLoadingDone.GetBool() && lastLoadingDoneSize > 0 )
+		{
+			idLib::Printf( "NET: net_debugStaleLoadingDone: sending the RELIABLE_LOADING_DONE of load %u again as load %u starts\n", GetActingGameStateLobby().loadId, GetActingGameStateLobby().startLoadingId );
+			GetActingGameStateLobby().QueueReliableMessage( GetActingGameStateLobby().host, idLobby::RELIABLE_LOADING_DONE, lastLoadingDone, lastLoadingDoneSize );
+		}
+		GetActingGameStateLobby().loadId = GetActingGameStateLobby().startLoadingId;
+		//puncho end
 
 		// Set state to loading
 		SetState( STATE_LOADING );
@@ -2506,6 +2519,9 @@ void idSessionLocal::LoadingFinished()
 		}
 		//puncho end
 		GetActingGameStateLobby().QueueReliableMessage( GetActingGameStateLobby().host, idLobby::RELIABLE_LOADING_DONE, msg.GetReadData(), msg.GetSize() );
+		//puncho - content check (P1-A3a): the copy net_debugStaleLoadingDone sends again
+		lastLoadingDoneSize = Min( msg.GetSize(), ( int )sizeof( lastLoadingDone ) );
+		memcpy( lastLoadingDone, msg.GetReadData(), lastLoadingDoneSize );
 	}
 	else
 	{
@@ -3578,6 +3594,30 @@ void idSessionLocal::ComputeNextGameCoalesceTime()
 		nextGameCoalesceTime = 0;
 	}
 }
+
+//puncho start - content check (P1-A3a): the gate's restart, the two steps the lobby menu takes. "end" takes the host and
+// its peers back to the game lobby (idSessionLocal::EndMatch), "start" begins the next match there, a new load
+// (idSessionLocal::StartLoading). A netmap session lacks MATCH_REQUIRE_PARTY_LOBBY, which a private match's flags have,
+// so its EndMatch sends everyone to the title: "end" sets the flag and sends the peers the parms ahead of the ENDMATCH
+CONSOLE_COMMAND( testMatch, "P1-A3a gate: testMatch end | start, on the host", 0 )
+{
+	if( idStr::Icmp( args.Argv( 1 ), "end" ) == 0 )
+	{
+		idLobby& lobby = static_cast< idLobby& >( session->GetActingGameStateLobbyBase() );
+		lobby.parms.matchFlags |= MATCH_REQUIRE_PARTY_LOBBY;
+		lobby.SendMatchParmsToPeers();
+		session->EndMatch();
+	}
+	else if( idStr::Icmp( args.Argv( 1 ), "start" ) == 0 )
+	{
+		session->StartMatch();
+	}
+	else
+	{
+		idLib::Printf( "usage: testMatch end | start\n" );
+	}
+}
+//puncho end
 
 /*
 ========================

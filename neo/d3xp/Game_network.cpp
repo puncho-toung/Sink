@@ -2040,3 +2040,141 @@ void idEventQueue::Enqueue( entityNetEvent_t* event, outOfOrderBehaviour_t behav
 	}
 	end = event;
 }
+
+//puncho start - content check (P1-A3a): the gate's tool for implicit decls
+static idEntityPtr<idProjectile> testDeclRemapRocket;
+
+/*
+================
+testDeclRemap
+
+A test command, like testSnapTraceCompare. Each use drives a real path of the implicit decl remap (K19):
+  make <prefix> <count> [reverse]	makes <count> implicit materials <prefix>/mtr_<i> and sounds <prefix>/snd_<i>, first
+									to last or last to first, so two peers number them differently
+  decode <type> <index>				a client decodes an index as a snapshot would (ClientRemapDecl), so an unannounced
+									slot shows its one warning; type is a decl type name
+  sound <name>						the host plays a sound to everyone by name: GAME_RELIABLE_MESSAGE_SOUND_INDEX
+									(idMultiplayerGame::PlayGlobalSound) and EVENT_STARTSOUNDSHADER from its player
+  rocket							the host spawns a still rocket over its player, launched so it detonates on impact
+  impact <material>					the host's rocket hits the world on a surface of that material: EVENT_DAMAGE_EFFECT
+									(idProjectile::AddDefaultDamageEffect)
+  fx <prefix> <count>				the host spawns <count> func_fx whose effect <prefix>/fx_<i> is an implicit decl, so
+									every snapshot carries them (idEntityFx::WriteToSnapshot), and announces each effect at
+									once, as an event would: a host with no peers writes no snapshots, and a joiner must find
+									the slots already taken
+net_debugDeclRemap prints the slots as the host announces them and as a client resolves them.
+================
+*/
+CONSOLE_COMMAND( testDeclRemap, "P1-A3a gate: make <prefix> <count> [reverse] | decode <type> <index> | sound <name> | rocket | impact <material> | fx <prefix> <count>", NULL )
+{
+	const char* what = args.Argv( 1 );
+	if( idStr::Icmp( what, "make" ) == 0 && args.Argc() >= 4 )
+	{
+		const int count = atoi( args.Argv( 3 ) );
+		const bool reverse = ( idStr::Icmp( args.Argv( 4 ), "reverse" ) == 0 );
+		for( int n = 0; n < count; n++ )
+		{
+			const int i = reverse ? count - 1 - n : n;
+			const idMaterial* material = declManager->FindMaterial( va( "%s/mtr_%03d", args.Argv( 2 ), i ) );
+			const idSoundShader* sound = declManager->FindSound( va( "%s/snd_%03d", args.Argv( 2 ), i ) );
+			gameLocal.Printf( "testDeclRemap: material '%s' index %d%s, sound '%s' index %d%s\n", material->GetName(), material->Index(), material->IsImplicit() ? " implicit" : "", sound->GetName(), sound->Index(), sound->IsImplicit() ? " implicit" : "" );
+		}
+		return;
+	}
+	if( idStr::Icmp( what, "decode" ) == 0 && args.Argc() >= 4 && common->IsClient() )
+	{
+		const declType_t type = declManager->GetDeclTypeFromName( args.Argv( 2 ) );
+		if( type == DECL_MAX_TYPES )
+		{
+			gameLocal.Printf( "testDeclRemap: no decl type '%s'\n", args.Argv( 2 ) );
+			return;
+		}
+		const int index = atoi( args.Argv( 3 ) );
+		gameLocal.Printf( "testDeclRemap: %s %d decodes to %d\n", args.Argv( 2 ), index, gameLocal.ClientRemapDecl( type, index ) );
+		return;
+	}
+
+	if( !common->IsServer() )
+	{
+		gameLocal.Printf( "testDeclRemap: %s runs on a multiplayer host\n", what );
+		return;
+	}
+	idPlayer* player = gameLocal.GetLocalPlayer();
+	if( player == NULL )
+	{
+		gameLocal.Printf( "testDeclRemap: no local player\n" );
+		return;
+	}
+
+	if( idStr::Icmp( what, "sound" ) == 0 && args.Argc() >= 3 )
+	{
+		const idSoundShader* sound = declManager->FindSound( args.Argv( 2 ) );
+		gameLocal.Printf( "testDeclRemap: sound '%s' index %d%s\n", sound->GetName(), sound->Index(), sound->IsImplicit() ? " implicit" : "" );
+		gameLocal.mpGame.PlayGlobalSound( -1, SND_COUNT, sound->GetName() );
+		player->StartSoundShader( sound, SND_CHANNEL_ANY, 0, true, NULL );
+	}
+	else if( idStr::Icmp( what, "rocket" ) == 0 )
+	{
+		// no speed and no gravity: it hangs where it is, replicated, until impact or its fuse removes it
+		const idVec3 origin = player->GetPhysics()->GetOrigin() + idVec3( 0.0f, 0.0f, 120.0f );
+		idDict spawnArgs;
+		spawnArgs.Set( "classname", "projectile_rocket" );
+		spawnArgs.SetVector( "origin", origin );
+		spawnArgs.Set( "velocity", "0 0 0" );
+		spawnArgs.Set( "angular_velocity", "0 0 0" );
+		spawnArgs.Set( "gravity", "0" );
+		spawnArgs.Set( "thrust", "0" );
+		spawnArgs.Set( "fuse", "60" );
+		idEntity* ent = NULL;
+		if( !gameLocal.SpawnEntityDef( spawnArgs, &ent ) || ent == NULL || !ent->IsType( idProjectile::Type ) )
+		{
+			gameLocal.Printf( "testDeclRemap: no rocket\n" );
+			return;
+		}
+		idProjectile* rocket = static_cast<idProjectile*>( ent );
+		rocket->Launch( origin, idVec3( 0.0f, 0.0f, -1.0f ), vec3_origin );
+		testDeclRemapRocket = rocket;
+		gameLocal.Printf( "testDeclRemap: rocket %d at %s\n", rocket->entityNumber, origin.ToString() );
+	}
+	else if( idStr::Icmp( what, "impact" ) == 0 && args.Argc() >= 3 )
+	{
+		idProjectile* rocket = testDeclRemapRocket.GetEntity();
+		if( rocket == NULL )
+		{
+			gameLocal.Printf( "testDeclRemap: no rocket, run testDeclRemap rocket first\n" );
+			return;
+		}
+		trace_t collision;
+		memset( &collision, 0, sizeof( collision ) );
+		collision.endpos = rocket->GetPhysics()->GetOrigin();
+		collision.endAxis = rocket->GetPhysics()->GetAxis();
+		collision.c.point = collision.endpos;
+		collision.c.normal.Set( 0.0f, 0.0f, 1.0f );
+		collision.c.material = declManager->FindMaterial( args.Argv( 2 ) );
+		collision.c.entityNum = ENTITYNUM_WORLD;
+		gameLocal.Printf( "testDeclRemap: rocket %d hits '%s' index %d%s\n", rocket->entityNumber, collision.c.material->GetName(), collision.c.material->Index(), collision.c.material->IsImplicit() ? " implicit" : "" );
+		rocket->Collide( collision, idVec3( 0.0f, 0.0f, -300.0f ) );
+		testDeclRemapRocket = ( idProjectile* )NULL;
+	}
+	else if( idStr::Icmp( what, "fx" ) == 0 && args.Argc() >= 4 )
+	{
+		const int count = atoi( args.Argv( 3 ) );
+		const idVec3 origin = player->GetPhysics()->GetOrigin();
+		for( int i = 0; i < count; i++ )
+		{
+			idDict spawnArgs;
+			spawnArgs.Set( "classname", "func_fx" );
+			spawnArgs.Set( "fx", va( "%s/fx_%03d", args.Argv( 2 ), i ) );
+			spawnArgs.SetVector( "origin", origin + idVec3( 0.0f, 0.0f, 8.0f + i ) );
+			gameLocal.SpawnEntityDef( spawnArgs );
+			const idDecl* fx = declManager->FindType( DECL_FX, spawnArgs.GetString( "fx" ) );
+			gameLocal.ServerRemapDecl( -1, DECL_FX, fx->Index() );
+		}
+		gameLocal.Printf( "testDeclRemap: %d func_fx spawned\n", count );
+	}
+	else
+	{
+		gameLocal.Printf( "usage: testDeclRemap make <prefix> <count> [reverse] | decode <type> <index> | sound <name> | rocket | impact <material> | fx <prefix> <count>\n" );
+	}
+}
+//puncho end
