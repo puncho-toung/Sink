@@ -677,6 +677,37 @@ void idCommonLocal::ExecuteReliableMessages()
 
 }
 
+//puncho start - content check (P1-A3a, K19)
+/*
+========================
+idCommonLocal::ExecuteReliableMessagesOfType
+
+Game reliables wait in reliableQueue until the next ExecuteReliableMessages, but a client reads its first two snapshots
+of a map, and any snapshot that would overflow the receive buffer, the moment they arrive (NetReceiveSnapshot), inside
+the session's Pump. A reliable that a snapshot depends on, like a slot of the implicit decl announce table, must be
+applied first: idGameLocal::ClientReadSnapshot calls this for that type. Only that type runs early. The rest keep their
+order and their place after the snapshot, as before: the joiner's GAME_RELIABLE_MESSAGE_STARTSTATE, for one, expects
+the players the first snapshot spawns (idMultiplayerGame::ClientReadStartState).
+========================
+*/
+void idCommonLocal::ExecuteReliableMessagesOfType( int type )
+{
+	int numKept = 0;
+	for( int i = 0; i < reliableQueue.Num(); i++ )
+	{
+		const reliableMsg_t reliable = reliableQueue[i];
+		if( reliable.type != type )
+		{
+			reliableQueue[ numKept++ ] = reliable;
+			continue;
+		}
+		game->ProcessReliableMessage( reliable.client, reliable.type, idBitMsg( ( const byte* )reliable.data, reliable.dataSize ) );
+		Mem_Free( reliable.data );
+	}
+	reliableQueue.SetNum( numKept );
+}
+//puncho end
+
 /*
 ========================
 idCommonLocal::ResetNetworkingState

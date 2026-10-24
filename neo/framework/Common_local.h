@@ -505,6 +505,9 @@ public:	// These are public because they are called directly by static functions
 		return userCmdMgr;
 	}
 
+	//puncho - content check (P1-A3a, K19): runs the queued game reliables of one type now, the rest stay queued in order
+	void	ExecuteReliableMessagesOfType( int type );
+
 private:
 	bool						com_fullyInitialized;
 	bool						com_refreshOnPrint;		// update the screen every print for dmap

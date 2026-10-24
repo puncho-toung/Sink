@@ -1176,6 +1176,11 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 		return;
 	}
 
+	//puncho start - content check (P1-A3a, K19): the announce table's slots this snapshot may use came in as reliables,
+	// ahead of it in the same or an earlier packet, but game reliables otherwise run after the snapshots of the frame
+	commonLocal.ExecuteReliableMessagesOfType( GAME_RELIABLE_MESSAGE_DECL_REMAP );
+	//puncho end
+
 	// if prediction is off, enable local client smoothing
 	//localPlayer->SetSelfSmooth( dupeUsercmds > 2 );
 
