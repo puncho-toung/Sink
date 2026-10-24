@@ -1007,7 +1007,8 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 			delete mapFile;
 		}
 		mapFile = new( TAG_GAME ) idMapFile;
-		if( !mapFile->Parse( idStr( mapName ) + ".map" ) )
+		//puncho - MP-A5 (K41): only multiplayer's content check reads the per-layer entity CRCs
+		if( !mapFile->Parse( idStr( mapName ) + ".map", false, false, false, -1, common->IsMultiplayer() ) )
 		{
 			delete mapFile;
 			mapFile = NULL;

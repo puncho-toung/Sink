@@ -189,6 +189,7 @@ public:
 	int							fileSize;
 	int							numLines;
 	int							layer;					//puncho - MP-A5 (K22, K23): the rank of the layer that serves the file
+	int							firstLayer;				//puncho - MP-A5 (K44): the lowest layer that holds the file
 
 	idDeclLocal* 				decls;
 };
@@ -676,7 +677,8 @@ idDeclFile::idDeclFile( const char* fileName, declType_t defaultType )
 	this->checksum = 0;
 	this->fileSize = 0;
 	this->numLines = 0;
-	this->layer = 0;
+	this->layer = 0;			//puncho - MP-A5 (K22)
+	this->firstLayer = 0;		//puncho - MP-A5 (K44)
 	this->decls = NULL;
 }
 
@@ -694,6 +696,7 @@ idDeclFile::idDeclFile()
 	this->fileSize = 0;
 	this->numLines = 0;
 	this->layer = -1;		//puncho - MP-A5 (K24): an implicit decl sits below every layer, yet wins
+	this->firstLayer = -1;	//puncho - MP-A5 (K44)
 	this->decls = NULL;
 }
 
@@ -766,10 +769,26 @@ int idDeclFile::LoadAndParse()
 		decl->redefinedInReload = false;
 	}
 
-	//puncho start - MP-A5 (K22, K23): the serving layer is read on every parse, not only at registration, and this
-	// file's conflicts are found again rather than appended twice. One layer needs no lookup.
-	layer = ( fileSystem->GetNumLayers() > 1 ) ? fileSystem->GetFileLayer( fileName ) : 0;
-	declManagerLocal.RemoveConflicts( fileName );
+	//puncho start - MP-A5 (K22, K23, K44): the layers are read on every parse, not only at registration: the one that
+	// serves the file decides takeovers, and the lowest that holds it, the bucket RegisterDeclFolder loads it in, is where
+	// its new names are first defined, so a whole-file copy into gameFolder (ReplaceSourceFileText) moves no name. A file
+	// parsed before finds its conflicts again rather than appending them twice. One layer needs no lookup.
+	layer = 0;
+	firstLayer = 0;
+	if( fileSystem->GetNumLayers() > 1 )
+	{
+		idList<int> holders;
+		fileSystem->GetFileLayers( fileName, holders );
+		if( holders.Num() > 0 )
+		{
+			firstLayer = holders[0];
+			layer = holders[ holders.Num() - 1 ];
+		}
+	}
+	if( numLines > 0 )
+	{
+		declManagerLocal.RemoveConflicts( fileName );
+	}
 	//puncho end
 
 	src.SetFlags( DECL_LEXER_FLAGS );
@@ -882,7 +901,7 @@ int idDeclFile::LoadAndParse()
 			{
 				//puncho start - MP-A5 (K22): a higher layer takes an explicit decl over and keeps its index. It leaves
 				// the old file's list, so a reload of the losing file cannot default it, and gets the new text below.
-				// An implicit decl and a definition in the same or a lower layer keep today's first-wins.
+				// Against an implicit decl, or within the same or a lower layer, the first definition wins.
 				idDeclFile* oldFile = newDecl->sourceFile;
 				if( oldFile == this || oldFile == declManagerLocal.GetImplicitDeclFile() || layer <= oldFile->layer )
 				{
@@ -915,7 +934,7 @@ int idDeclFile::LoadAndParse()
 			newDecl = declManagerLocal.FindTypeWithoutParsing( identifiedType, name, true );
 			newDecl->nextInFile = this->decls;
 			this->decls = newDecl;
-			newDecl->definedLayer = layer;	//puncho - MP-A5 (K44)
+			newDecl->definedLayer = firstLayer;	//puncho - MP-A5 (K44)
 		}
 
 		newDecl->redefinedInReload = true;
@@ -1272,7 +1291,7 @@ void idDeclManagerLocal::RegisterDeclFolder( const char* folder, const char* ext
 	//puncho start - MP-A5 (K22a): an index is the creation order, so the folder loads layer by layer: first the sorted
 	// files whose lowest holding layer is base, then those first held by layer 1, and so on. A decl's index then depends
 	// only on the layers at or below the one that first defines it, an override always meets the decl it replaces, and
-	// a mod's new decls follow every lower layer's. With one layer the order is the sorted list, as before.
+	// a mod's new decls follow every lower layer's. With one layer the order is the sorted list.
 	const int numLayers = fileSystem->GetNumLayers();
 	idList<int> fileLayers;
 	idList<int> holders;
@@ -2113,12 +2132,8 @@ void idDeclManagerLocal::RemoveConflicts( const char* loserFile )
 idDeclManagerLocal::PrintConflicts
 
 The decl conflict report: every decl defined in more than one file, the winner first. A higher layer takes a decl over
-and keeps its index (K22); inside one layer the first definition wins. listModConflicts is the per-file view.
-
-Limits of the layers, reported rather than solved (K24):
-- a file of the same relative path in two layers still shadows whole; listModConflicts reports every such shadow;
-- an implicit decl created before its folder registers still wins over every layer's definition;
-- when a reload of the winning file drops the decl, it defaults rather than restoring the loser.
+and keeps its index (K22); inside one layer the first definition wins. listModConflicts is the per-file view and prints
+the layers' limits (K24).
 ===================
 */
 void idDeclManagerLocal::PrintConflicts() const
@@ -2133,8 +2148,6 @@ void idDeclManagerLocal::PrintConflicts() const
 						( winnerLayer >= 0 ) ? fileSystem->GetLayerName( winnerLayer ) : "implicit", decl->sourceFile->fileName.c_str(), decl->sourceLine,
 						( conflict.loserLayer >= 0 ) ? fileSystem->GetLayerName( conflict.loserLayer ) : "implicit", conflict.loserFile.c_str(), conflict.loserLine );
 	}
-	common->Printf( "Limits: a same-path file shadows whole (listModConflicts); an implicit decl made before its folder registers wins over\n"
-					"every layer; a reload that drops a winning decl defaults it rather than restoring the loser.\n" );
 }
 
 /*
@@ -2163,10 +2176,12 @@ void idDeclManagerLocal::FinishDeclRegistration()
 
 	layerModList.Clear();
 	layerDigests.Clear();
-	for( int layer = 1; layer < numLayers; layer++ )
+	idStrList mods;
+	fileSystem->GetModList( mods );
+	for( int i = 0; i < mods.Num(); i++ )
 	{
-		layerModList += ( layer > 1 ) ? "," : "";
-		layerModList += fileSystem->GetLayerName( layer );
+		layerModList += ( i > 0 ) ? "," : "";
+		layerModList += mods[i];
 	}
 
 	int counts[ MAX_MOD_LAYERS + 1 ];
@@ -2206,7 +2221,10 @@ void idDeclManagerLocal::FinishDeclRegistration()
 		}
 	}
 
-	PrintConflicts();
+	if( conflicts.Num() > 0 )
+	{
+		PrintConflicts();
+	}
 }
 
 /*
@@ -5217,7 +5235,7 @@ idDeclLocal::idDeclLocal()
 	everReferenced = false;
 	redefinedInReload = false;
 	nextInFile = NULL;
-	definedLayer = -1;
+	definedLayer = -1;	//puncho - MP-A5 (K44)
 }
 
 /*
@@ -5402,10 +5420,15 @@ void idDeclLocal::SetTextLocal( const char* text, const int length )
 	checksum = MD5_BlockChecksum( text, length );
 
 	//puncho start - content check (P1-A3b, K45): the content digests hash every explicit decl's text; reading this value
-	// spares them a Huffman decode of every text at each load, and dropping '\r' makes CRLF and LF copies agree (K18)
-	CRC32_InitChecksum( textCRC );
-	CRC32_UpdateChecksumNoCR( textCRC, text, length );
-	CRC32_FinishChecksum( textCRC );
+	// spares them a Huffman decode of every text at each load, and dropping '\r' makes CRLF and LF copies agree (K18).
+	// Only the five types the digests read (idGameLocal::GetContentDigests) pay for it
+	textCRC = 0;
+	if( type == DECL_ENTITYDEF || type == DECL_MATERIAL || type == DECL_SKIN || type == DECL_SOUND || type == DECL_FX )
+	{
+		CRC32_InitChecksum( textCRC );
+		CRC32_UpdateChecksumNoCR( textCRC, text, length );
+		CRC32_FinishChecksum( textCRC );
+	}
 	//puncho end
 
 #ifdef GET_HUFFMAN_FREQUENCIES

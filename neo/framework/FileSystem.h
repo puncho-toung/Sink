@@ -269,6 +269,12 @@ public:
 	virtual void			GetFileLayers( const char* relativePath, idList<int>& layers ) = 0;
 	// one layer's copy of relativePath, NULL when that layer holds none
 	virtual idFile*			OpenFileReadFromLayer( const char* relativePath, int layer ) = 0;
+	// the mod list: the layer names after base, in load order (fs_game_base, each fs_mods entry, fs_game)
+	virtual void			GetModList( idStrList& mods ) const = 0;
+	// a comma-separated mod list split into names, spaces trimmed and empty entries dropped
+	static void				SplitModList( const char* list, idStrList& mods );
+	// the names of want that have lacks (missing) and of have that want lacks (extra), comma-separated, ignoring case
+	static void				DiffModLists( const idStrList& want, const idStrList& have, idStr& missing, idStr& extra );
 	//puncho end
 
 	// RB begin
