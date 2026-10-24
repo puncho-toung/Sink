@@ -6539,7 +6539,6 @@ the focus and sending it a mouse move event
 */
 void idPlayer::UpdateFocus()
 {
-	idClipModel* clipModelList[ MAX_GENTITIES ];
 	idClipModel* clip;
 	int			listedClipModels;
 	idEntity*	oldFocus;
@@ -6615,7 +6614,12 @@ void idPlayer::UpdateFocus()
 	idBounds bounds( start );
 	bounds.AddPoint( end );
 
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results
+	idScratchScope scratch( "idPlayer::UpdateFocus" );
+	idClipModel** clipModelList = scratch.Alloc< idClipModel* >( MAX_GENTITIES );
 	listedClipModels = gameLocal.clip.ClipModelsTouchingBounds( bounds, -1, clipModelList, MAX_GENTITIES );
+	scratch.Trim( clipModelList, listedClipModels );
+	//puncho end
 
 	// no pretense at sorting here, just assume that there will only be one active
 	// gui within range along the trace

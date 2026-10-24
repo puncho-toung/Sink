@@ -4579,7 +4579,6 @@ bool idEntity::TouchTriggers() const
 {
 	int				i, numClipModels, numEntities;
 	idClipModel* 	cm;
-	idClipModel* 	clipModels[ MAX_GENTITIES ];
 	idEntity* 		ent;
 	trace_t			trace;
 
@@ -4587,7 +4586,12 @@ bool idEntity::TouchTriggers() const
 	trace.endpos = GetPhysics()->GetOrigin();
 	trace.endAxis = GetPhysics()->GetAxis();
 
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results
+	idScratchScope scratch( "idEntity::TouchTriggers" );
+	idClipModel** clipModels = scratch.Alloc< idClipModel* >( MAX_GENTITIES );
 	numClipModels = gameLocal.clip.ClipModelsTouchingBounds( GetPhysics()->GetAbsBounds(), CONTENTS_TRIGGER, clipModels, MAX_GENTITIES );
+	scratch.Trim( clipModels, numClipModels );
+	//puncho end
 	numEntities = 0;
 
 	for( i = 0; i < numClipModels; i++ )

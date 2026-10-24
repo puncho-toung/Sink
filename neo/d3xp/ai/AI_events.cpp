@@ -941,9 +941,13 @@ void idAI::Event_CanBecomeSolid()
 	bool		returnValue = true;
 	idEntity* 	hit;
 	idClipModel* cm;
-	idClipModel* clipModels[ MAX_GENTITIES ];
 
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results
+	idScratchScope scratch( "idAI::Event_CanBecomeSolid" );
+	idClipModel** clipModels = scratch.Alloc< idClipModel* >( MAX_GENTITIES );
 	num = gameLocal.clip.ClipModelsTouchingBounds( physicsObj.GetAbsBounds(), MASK_MONSTERSOLID, clipModels, MAX_GENTITIES );
+	scratch.Trim( clipModels, num );
+	//puncho end
 	for( i = 0; i < num; i++ )
 	{
 		cm = clipModels[ i ];
@@ -2719,7 +2723,11 @@ void idAI::Event_GetRandomTarget( const char* type )
 	int	num;
 	int which;
 	idEntity* ent;
-	idEntity* ents[ MAX_GENTITIES ];
+
+	//puncho start - MP-A4 (K30): filled from targets, so it takes targets.Num() entries and needs no cap check
+	idScratchScope scratch( "idAI::Event_GetRandomTarget" );
+	idEntity** ents = scratch.Alloc< idEntity* >( targets.Num() );
+	//puncho end
 
 	num = 0;
 	for( i = 0; i < targets.Num(); i++ )
@@ -2728,10 +2736,6 @@ void idAI::Event_GetRandomTarget( const char* type )
 		if( ent != NULL && idStr::Cmp( ent->GetEntityDefName(), type ) == 0 )
 		{
 			ents[ num++ ] = ent;
-			if( num >= MAX_GENTITIES )
-			{
-				break;
-			}
 		}
 	}
 
@@ -3190,11 +3194,15 @@ idAI::Event_FindActorsInBounds
 void idAI::Event_FindActorsInBounds( const idVec3& mins, const idVec3& maxs )
 {
 	idEntity* 	ent;
-	idEntity* 	entityList[ MAX_GENTITIES ];
 	int			numListedEntities;
 	int			i;
 
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results
+	idScratchScope scratch( "idAI::Event_FindActorsInBounds" );
+	idEntity** entityList = scratch.Alloc< idEntity* >( MAX_GENTITIES );
 	numListedEntities = gameLocal.clip.EntitiesTouchingBounds( idBounds( mins, maxs ), CONTENTS_BODY, entityList, MAX_GENTITIES );
+	scratch.Trim( entityList, numListedEntities );
+	//puncho end
 	for( i = 0; i < numListedEntities; i++ )
 	{
 		ent = entityList[ i ];

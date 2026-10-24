@@ -371,7 +371,6 @@ int idAF::EntitiesTouchingAF( afTouch_t touchList[ MAX_GENTITIES ] ) const
 	int i, j, numClipModels;
 	idAFBody* body;
 	idClipModel* cm;
-	idClipModel* clipModels[ MAX_GENTITIES ];
 	int numTouching;
 
 	if( !IsLoaded() )
@@ -380,7 +379,12 @@ int idAF::EntitiesTouchingAF( afTouch_t touchList[ MAX_GENTITIES ] ) const
 	}
 
 	numTouching = 0;
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results
+	idScratchScope scratch( "idAF::EntitiesTouchingAF" );
+	idClipModel** clipModels = scratch.Alloc< idClipModel* >( MAX_GENTITIES );
 	numClipModels = gameLocal.clip.ClipModelsTouchingBounds( physicsObj.GetAbsBounds(), -1, clipModels, MAX_GENTITIES );
+	scratch.Trim( clipModels, numClipModels );
+	//puncho end
 
 	for( i = 0; i < jointMods.Num(); i++ )
 	{

@@ -425,7 +425,11 @@ idPathCorner* idPathCorner::RandomPath( const idEntity* source, const idEntity* 
 	int	num;
 	int which;
 	idEntity* ent;
-	idPathCorner* path[ MAX_GENTITIES ];
+
+	//puncho start - MP-A4 (K30): filled from targets, so it takes targets.Num() entries and needs no cap check
+	idScratchScope scratch( "idPathCorner::RandomPath" );
+	idPathCorner** path = scratch.Alloc< idPathCorner* >( source->targets.Num() );
+	//puncho end
 
 	num = 0;
 	for( i = 0; i < source->targets.Num(); i++ )
@@ -434,10 +438,6 @@ idPathCorner* idPathCorner::RandomPath( const idEntity* source, const idEntity* 
 		if( ent != NULL && ( ent != ignore ) && ent->IsType( idPathCorner::Type ) )
 		{
 			path[ num++ ] = static_cast<idPathCorner*>( ent );
-			if( num >= MAX_GENTITIES )
-			{
-				break;
-			}
 		}
 	}
 
@@ -3993,7 +3993,6 @@ void idShockwave::Think()
 
 		// Find all clipmodels between currentSize and newSize
 		idVec3		pos, end;
-		idClipModel* clipModelList[ MAX_GENTITIES ];
 		idClipModel* clip;
 		idEntity*	ent;
 		int			i, listedClipModels;
@@ -4022,7 +4021,12 @@ void idShockwave::Think()
 			gameRenderWorld->DebugBounds( colorRed,  bounds, vec3_origin );
 		}
 
+		//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results
+		idScratchScope scratch( "idShockwave::Think" );
+		idClipModel** clipModelList = scratch.Alloc< idClipModel* >( MAX_GENTITIES );
 		listedClipModels = gameLocal.clip.ClipModelsTouchingBounds( bounds, -1, clipModelList, MAX_GENTITIES );
+		scratch.Trim( clipModelList, listedClipModels );
+		//puncho end
 
 		for( i = 0; i < listedClipModels; i++ )
 		{

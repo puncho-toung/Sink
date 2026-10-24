@@ -1547,7 +1547,6 @@ void idAI::KickObstacles( const idVec3& dir, float force, idEntity* alwaysKick )
 	idBounds clipBounds;
 	idEntity* obEnt;
 	idClipModel* clipModel;
-	idClipModel* clipModelList[ MAX_GENTITIES ];
 	int clipmask;
 	idVec3 org;
 	idVec3 forceVec;
@@ -1562,7 +1561,12 @@ void idAI::KickObstacles( const idVec3& dir, float force, idEntity* alwaysKick )
 	clipBounds.ExpandSelf( 8.0f );
 	clipBounds.AddPoint( org );
 	clipmask = physicsObj.GetClipMask();
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results
+	idScratchScope scratch( "idAI::KickObstacles" );
+	idClipModel** clipModelList = scratch.Alloc< idClipModel* >( MAX_GENTITIES );
 	numListedClipModels = gameLocal.clip.ClipModelsTouchingBounds( clipBounds, clipmask, clipModelList, MAX_GENTITIES );
+	scratch.Trim( clipModelList, numListedClipModels );
+	//puncho end
 	for( i = 0; i < numListedClipModels; i++ )
 	{
 		clipModel = clipModelList[i];
@@ -5799,15 +5803,20 @@ idAI::PushWithAF
 void idAI::PushWithAF()
 {
 	int i, j;
-	afTouch_t touchList[ MAX_GENTITIES ];
-	idEntity* pushed_ents[ MAX_GENTITIES ];
 	idEntity* ent;
 	idVec3 vel;
 	int num_pushed;
 
 	num_pushed = 0;
 	af.ChangePose( this, gameLocal.time );
+	//puncho start - MP-A4 (K26a): both lists are in the scratch arena. touchList is cut to its results; pushed_ents
+	// holds each touched entity once at most, so it takes num entries, not MAX_GENTITIES held through the Damage below
+	idScratchScope scratch( "idAI::PushWithAF" );
+	afTouch_t* touchList = scratch.Alloc< afTouch_t >( MAX_GENTITIES );
 	int num = af.EntitiesTouchingAF( touchList );
+	scratch.Trim( touchList, num );
+	idEntity** pushed_ents = scratch.Alloc< idEntity* >( num );
+	//puncho end
 	for( i = 0; i < num; i++ )
 	{
 		if( touchList[ i ].touchedEnt->IsType( idProjectile::Type ) )

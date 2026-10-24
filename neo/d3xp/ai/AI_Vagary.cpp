@@ -65,7 +65,6 @@ idAI_Vagary::Event_ChooseObjectToThrow
 void idAI_Vagary::Event_ChooseObjectToThrow( const idVec3& mins, const idVec3& maxs, float speed, float minDist, float offset )
 {
 	idEntity* 	ent;
-	idEntity* 	entityList[ MAX_GENTITIES ];
 	int			numListedEntities;
 	int			i, index;
 	float		dist;
@@ -83,7 +82,12 @@ void idAI_Vagary::Event_ChooseObjectToThrow( const idVec3& mins, const idVec3& m
 	const idBounds& myBounds = physicsObj.GetAbsBounds();
 	idBounds checkBounds( mins, maxs );
 	checkBounds.TranslateSelf( physicsObj.GetOrigin() );
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results
+	idScratchScope scratch( "idAI_Vagary::Event_ChooseObjectToThrow" );
+	idEntity** entityList = scratch.Alloc< idEntity* >( MAX_GENTITIES );
 	numListedEntities = gameLocal.clip.EntitiesTouchingBounds( checkBounds, -1, entityList, MAX_GENTITIES );
+	scratch.Trim( entityList, numListedEntities );
+	//puncho end
 
 	index = gameLocal.random.RandomInt( numListedEntities );
 	for( i = 0; i < numListedEntities; i++, index++ )

@@ -98,6 +98,8 @@ idCVar net_inviteOnly( "net_inviteOnly", "1", CVAR_BOOL | CVAR_ARCHIVE, "whether
 idCVar com_pause( "com_pause", "0", CVAR_BOOL | CVAR_SYSTEM | CVAR_NOCHEAT, "set to 1 to pause game, to 0 to unpause again" );
 // DG end
 idCVar com_activeApp( "com_activeApp", "1", CVAR_BOOL | CVAR_SYSTEM | CVAR_NOCHEAT, "this is set to 0 if running in background" );
+//puncho - MP-A4 (plans/phase1/00-PLAN.md K26): fixed at startup, an overflow names it; the map-end line shows the peaks
+idCVar com_gameScratchKB( "com_gameScratchKB", "4096", CVAR_INTEGER | CVAR_SYSTEM | CVAR_INIT, "size in KB of the game's scratch arena for query lists, set at startup", 256, 262144 );
 
 extern idCVar g_demoMode;
 
@@ -1347,12 +1349,17 @@ void idCommonLocal::Init( int argc, const char* const* argv, const char* cmdline
 		// initialize string database so we can use it for loading messages
 		InitLanguageDict();
 
+		//puncho start - MP-A4 (plans/phase1/00-PLAN.md K26, K27): the game's clip and radius queries take their
+		// MAX_GENTITIES lists from this arena, not the stack. The main thread runs game code too (com_smp 0, map
+		// loads, console commands), never at the same time as the game thread, so both use this one arena
+		gameScratchStack.Init( com_gameScratchKB.GetInteger() * 1024, com_gameScratchKB.GetName() );
+		threadScratchStack = &gameScratchStack;
+		//puncho end
+
 		// spawn the game thread, even if we are going to run without SMP
 		// one meg stack, because it can parse decls from gui surfaces (unfortunately)
 		// use a lower priority so job threads can run on the same core
-		// 4 MB: the game's clip and radius queries keep lists of MAX_GENTITIES (16384) pointers on
-		// the stack, 128 KB each and several deep inside one AI think (D3-Sink 2026-10-23)
-		gameThread.StartWorkerThread( "Game/Draw", CORE_1B, THREAD_BELOW_NORMAL, 0x400000 );
+		gameThread.StartWorkerThread( "Game/Draw", CORE_1B, THREAD_BELOW_NORMAL, 0x100000 );
 		// boost this thread's priority, so it will prevent job threads from running while
 		// the render back end still has work to do
 
@@ -1596,6 +1603,9 @@ void idCommonLocal::Shutdown()
 	// unload the game dll
 	printf( "UnloadGameDLL();\n" );
 	UnloadGameDLL();
+
+	printf( "gameScratchStack.Shutdown();\n" );	//puncho - MP-A4
+	gameScratchStack.Shutdown();
 
 	printf( "saveFile.Clear( true );\n" );
 	saveFile.Clear( true );

@@ -2549,7 +2549,6 @@ void idBFGProjectile::Launch( const idVec3& start, const idVec3& dir, const idVe
 	// damage is not applied until the projectile explodes
 
 	idEntity* 	ent;
-	idEntity* 	entityList[ MAX_GENTITIES ];
 	int			numListedEntities;
 	idBounds	bounds;
 	idVec3		damagePoint;
@@ -2583,7 +2582,12 @@ void idBFGProjectile::Launch( const idVec3& start, const idVec3& dir, const idVe
 	//physicsObj.SetAngularExtrapolation( extrapolation_t(EXTRAPOLATION_LINEAR|EXTRAPOLATION_NOSTOP), gameLocal.time, 0, physicsObj.GetAxis().ToAngles(), delta, ang_zero );
 
 	// get all entities touching the bounds
+	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results
+	idScratchScope scratch( "idBFGProjectile::Launch" );
+	idEntity** entityList = scratch.Alloc< idEntity* >( MAX_GENTITIES );
 	numListedEntities = gameLocal.clip.EntitiesTouchingBounds( bounds, CONTENTS_BODY, entityList, MAX_GENTITIES );
+	scratch.Trim( entityList, numListedEntities );
+	//puncho end
 	for( int e = 0; e < numListedEntities; e++ )
 	{
 		ent = entityList[ e ];

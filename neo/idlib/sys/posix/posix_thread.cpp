@@ -129,6 +129,16 @@ uintptr_t Sys_CreateThread( xthread_t function, void* parms, xthreadPriority pri
 		return ( uintptr_t )0;
 	}
 
+	//puncho start - MP-A4 (plans/phase1/00-PLAN.md Q3): the requested size, as on Windows, instead of glibc's
+	// 8 MB default, so a Linux run shows a stack the game would overflow on Windows. glibc carves the
+	// thread's static TLS (idStr's va buffers, about 192 KB) out of this size, so less of it is usable
+	if( stackSize > 0 && pthread_attr_setstacksize( &attr, stackSize ) != 0 )
+	{
+		idLib::common->FatalError( "ERROR: pthread_attr_setstacksize %s %d failed\n", name, stackSize );
+		return ( uintptr_t )0;
+	}
+	//puncho end
+
 	pthread_t handle;
 	if( pthread_create( ( pthread_t* )&handle, &attr, ( pthread_function_t )function, parms ) != 0 )
 	{
