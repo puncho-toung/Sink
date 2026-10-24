@@ -1594,8 +1594,11 @@ void idMapEntity::CalculateBrushOrigin()
 idMapFile::Parse
 ===============
 */
-bool idMapFile::Parse( const char* filename, bool ignoreRegion, bool osPath, bool ignoreExtraEnts )
+static idStrList patchLog;		//puncho - MP-A5 (K41b): the last merge's log; idMapFile::GetPatchLog
+
+bool idMapFile::Parse( const char* filename, bool ignoreRegion, bool osPath, bool ignoreExtraEnts, int patchLayerLimit )
 {
+	idList<char> layerText;		//puncho - MP-A5 (K41): a patch's text read from one layer; outlives src
 	// no string concatenation for epairs and allow path names for materials
 	idLexer src( LEXFL_NOSTRINGCONCAT | LEXFL_NOSTRINGESCAPECHARS | LEXFL_ALLOWPATHNAMES );
 	idToken token;
@@ -1615,7 +1618,14 @@ bool idMapFile::Parse( const char* filename, bool ignoreRegion, bool osPath, boo
 	{
 		// RB: try loading a .json file first
 		fullName.SetFileExtension( "json" );
-		src.LoadFile( fullName, osPath );
+		if( readLayer >= 0 )	//puncho - MP-A5 (K41): a patch reads its own layer's copy, never the served one
+		{
+			LoadLayerSource( src, fullName, layerText );
+		}
+		else
+		{
+			src.LoadFile( fullName, osPath );
+		}
 
 		if( src.IsLoaded() )
 		{
@@ -1624,7 +1634,7 @@ bool idMapFile::Parse( const char* filename, bool ignoreRegion, bool osPath, boo
 	}
 
 	bool isGTLF = false;
-	if( !src.IsLoaded() )
+	if( !src.IsLoaded() && readLayer < 0 )	//puncho - MP-A5 (K41): a patch is a .map or a .json
 	{
 		// HVG: try loading a .gltf/glb second
 		fullName.SetFileExtension( "glb" );
@@ -1640,13 +1650,22 @@ bool idMapFile::Parse( const char* filename, bool ignoreRegion, bool osPath, boo
 	{
 		// now try a .map file
 		fullName.SetFileExtension( "map" );
-		src.LoadFile( fullName, osPath );
+		if( readLayer >= 0 )	//puncho - MP-A5 (K41)
+		{
+			LoadLayerSource( src, fullName, layerText );
+		}
+		else
+		{
+			src.LoadFile( fullName, osPath );
+		}
 		if( !src.IsLoaded() )
 		{
 			// didn't get anything at all
 			return false;
 		}
 	}
+	sourceName = fullName;	//puncho - MP-A5 (K41a)
+	entityLines.Clear();
 
 	version = OLD_MAP_VERSION;
 	fileTime = src.GetFileTime();
@@ -1692,12 +1711,21 @@ bool idMapFile::Parse( const char* filename, bool ignoreRegion, bool osPath, boo
 
 				while( true )
 				{
+					//puncho start - MP-A5 (K41b): a patch keeps each entity's line for the merge log
+					int line = 0;
+					if( readLayer >= 0 && src.ReadToken( &token ) )
+					{
+						line = src.GetLineNum();
+						src.UnreadToken( &token );
+					}
+					//puncho end
 					mapEnt = idMapEntity::ParseJSON( src );
 					if( !mapEnt )
 					{
 						break;
 					}
 					entities.Append( mapEnt );
+					entityLines.Append( line );	//puncho - MP-A5 (K41b)
 				}
 			}
 		}
@@ -1742,12 +1770,21 @@ bool idMapFile::Parse( const char* filename, bool ignoreRegion, bool osPath, boo
 
 		while( 1 )
 		{
+			//puncho start - MP-A5 (K41b): a patch keeps each entity's line for the merge log
+			int line = 0;
+			if( readLayer >= 0 && src.ReadToken( &token ) )
+			{
+				line = src.GetLineNum();
+				src.UnreadToken( &token );
+			}
+			//puncho end
 			mapEnt = idMapEntity::Parse( src, ( entities.Num() == 0 ), version );
 			if( !mapEnt )
 			{
 				break;
 			}
 			entities.Append( mapEnt );
+			entityLines.Append( line );	//puncho - MP-A5 (K41b)
 		}
 	}
 
@@ -1836,65 +1873,225 @@ bool idMapFile::Parse( const char* filename, bool ignoreRegion, bool osPath, boo
 	// RB: <name>_extra_ents.map allows to add and override existing entities
 	if( !ignoreExtraEnts )
 	{
-		idMapFile extrasMap;
+		//puncho start - MP-A5 (K41): every layer's patch applies, lowest layer first, so a later layer's keys override
+		// and its unmatched entities append. Each patch is parsed with ignoreExtraEnts. An os path keeps the old single
+		// file. The game, dmap and the AAS compiler all get the merged map, since all three parse through here.
 		fullName = name;
-		//fullName.StripFileExtension();
-		fullName += "_extra_ents.map";
-
-		if( extrasMap.Parse( fullName, ignoreRegion, osPath ) )
+		fullName += "_extra_ents";
+		patchLog.Clear();
+		if( osPath )
 		{
-			for( i = 0; i < extrasMap.entities.Num(); i++ )
+			idMapFile extrasMap;
+			if( extrasMap.Parse( fullName, ignoreRegion, osPath, true ) )
 			{
-				idMapEntity* extraEnt = extrasMap.entities[i];
-
-				const idKeyValue* kv = extraEnt->epairs.FindKey( "name" );
-				if( kv && kv->GetValue().Length() )
+				MergePatch( extrasMap, -1 );
+			}
+		}
+		else
+		{
+			const int numLayers = idLib::fileSystem->GetNumLayers();
+			const int lastLayer = ( patchLayerLimit >= 0 && patchLayerLimit < numLayers ) ? patchLayerLimit : numLayers;
+			for( int layer = 0; layer < lastLayer; layer++ )
+			{
+				idMapFile extrasMap;
+				extrasMap.readLayer = layer;
+				if( extrasMap.Parse( fullName, ignoreRegion, false, true ) )
 				{
-					mapEnt = FindEntity( kv->GetValue().c_str() );
-					if( mapEnt )
-					{
-						// allow override old settings
-						for( int j = 0; j < extraEnt->epairs.GetNumKeyVals(); j++ )
-						{
-							const idKeyValue* kv2 = extraEnt->epairs.GetKeyVal( j );
-							const char* key = kv2->GetKey();
-							const char* val = kv2->GetValue();
-
-							if( idStr::Icmp( key, "name" ) != 0 )
-							{
-								// DG: if val is "", delete key from the entity
-								//     => same behavior as EntityChangeSpawnArgs()
-								if( val[0] == '\0' )
-								{
-									mapEnt->epairs.Delete( key );
-								}
-								else
-								{
-									mapEnt->epairs.Set( key, val );
-								}
-							}
-						}
-
-						continue;
-					}
-				}
-
-				// entity wasn't found so add new one
-				if( idStr::Icmp( extraEnt->epairs.GetString( "classname" ), "worldspawn" ) != 0 )
-				{
-					mapEnt = new( TAG_SYSTEM ) idMapEntity();
-					entities.Append( mapEnt );
-
-					// don't grab brushes or polys
-					mapEnt->epairs.Copy( extraEnt->epairs );
+					MergePatch( extrasMap, layer );
 				}
 			}
 		}
+		//puncho end
 	}
 
 	hasPrimitiveData = true;
 	return true;
 }
+
+//puncho start - MP-A5 (K41, K41a, K41b)
+/*
+===============
+idMapFile::LoadLayerSource
+
+Loads readLayer's own copy of fileName into src; text holds it for as long as src reads it
+===============
+*/
+bool idMapFile::LoadLayerSource( idLexer& src, const char* fileName, idList<char>& text )
+{
+	idFile* f = idLib::fileSystem->OpenFileReadFromLayer( fileName, readLayer );
+	if( f == NULL )
+	{
+		return false;
+	}
+	const int length = f->Length();
+	text.SetNum( length + 1 );
+	f->Read( text.Ptr(), length );
+	text[length] = '\0';
+	fileTime = f->Timestamp();
+	idLib::fileSystem->CloseFile( f );
+	return src.LoadMemory( text.Ptr(), length, fileName ) != 0;
+}
+
+/*
+===============
+idMapFile::MergePatch
+
+Applies one layer's patch: a named entity overrides keys on the map entity of that name (an empty value deletes the
+key), anything else appends, and a worldspawn patch is skipped. The merge log keeps each appended or skipped entity
+with its file:line, since a misspelled name appends a second entity silently, and each patch entity whose use_aas
+size the map has no AAS file for: such a monster stands still until the map gets runAAS.
+===============
+*/
+void idMapFile::MergePatch( const idMapFile& patch, int layer )
+{
+	const char* layerName = ( layer >= 0 ) ? idLib::fileSystem->GetLayerName( layer ) : "os path";
+	const int firstLogLine = patchLog.Num();
+	int numMerged = 0;
+	int numAppended = 0;
+	int numSkipped = 0;
+	for( int i = 0; i < patch.entities.Num(); i++ )
+	{
+		const idMapEntity* extraEnt = patch.entities[i];
+		const int line = ( i < patch.entityLines.Num() ) ? patch.entityLines[i] : 0;
+		const char* classname = extraEnt->epairs.GetString( "classname", "no classname" );
+		idMapEntity* mapEnt = NULL;
+
+		const idKeyValue* kv = extraEnt->epairs.FindKey( "name" );
+		if( kv && kv->GetValue().Length() )
+		{
+			mapEnt = FindEntity( kv->GetValue().c_str() );
+			if( mapEnt )
+			{
+				// allow override old settings
+				for( int j = 0; j < extraEnt->epairs.GetNumKeyVals(); j++ )
+				{
+					const idKeyValue* kv2 = extraEnt->epairs.GetKeyVal( j );
+					const char* key = kv2->GetKey();
+					const char* val = kv2->GetValue();
+
+					if( idStr::Icmp( key, "name" ) != 0 )
+					{
+						// DG: if val is "", delete key from the entity
+						//     => same behavior as EntityChangeSpawnArgs()
+						if( val[0] == '\0' )
+						{
+							mapEnt->epairs.Delete( key );
+						}
+						else
+						{
+							mapEnt->epairs.Set( key, val );
+						}
+					}
+				}
+				numMerged++;
+			}
+		}
+
+		if( mapEnt == NULL )
+		{
+			// entity wasn't found so add new one
+			if( idStr::Icmp( classname, "worldspawn" ) != 0 )
+			{
+				mapEnt = new( TAG_SYSTEM ) idMapEntity();
+				entities.Append( mapEnt );
+
+				// don't grab brushes or polys
+				mapEnt->epairs.Copy( extraEnt->epairs );
+				numAppended++;
+				if( kv && kv->GetValue().Length() )
+				{
+					patchLog.Append( va( "%s %s:%d: appended '%s' (%s): %s has no entity of that name", layerName, patch.sourceName.c_str(), line, kv->GetValue().c_str(), classname, name.c_str() ) );
+				}
+				else
+				{
+					patchLog.Append( va( "%s %s:%d: appended an unnamed %s", layerName, patch.sourceName.c_str(), line, classname ) );
+				}
+			}
+			else
+			{
+				numSkipped++;
+				patchLog.Append( va( "%s %s:%d: skipped a worldspawn patch; a patch cannot address worldspawn", layerName, patch.sourceName.c_str(), line ) );
+				continue;
+			}
+		}
+
+		// a monster needs the map's AAS file of its size, and the AAS compiler only builds a size the map uses
+		const char* useAAS = mapEnt->epairs.GetString( "use_aas" );
+		if( useAAS[0] == '\0' && declManager != NULL )
+		{
+			const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, mapEnt->epairs.GetString( "classname" ), false ) );
+			useAAS = ( def != NULL ) ? def->dict.GetString( "use_aas" ) : "";
+		}
+		if( useAAS[0] != '\0' && idLib::fileSystem->ReadFile( va( "%s.%s", name.c_str(), useAAS ), NULL, NULL ) <= 0 )
+		{
+			patchLog.Append( va( "%s %s:%d: '%s' (%s) uses %s, which %s has no AAS file for: run runAAS on the map", layerName, patch.sourceName.c_str(), line, mapEnt->epairs.GetString( "name" ), mapEnt->epairs.GetString( "classname" ), useAAS, name.c_str() ) );
+		}
+	}
+
+	idLib::Printf( "map patch %s from %s: %d merged, %d appended, %d skipped\n", patch.sourceName.c_str(), layerName, numMerged, numAppended, numSkipped );
+	for( int i = firstLogLine; i < patchLog.Num(); i++ )
+	{
+		idLib::Printf( "  %s\n", patchLog[i].c_str() );
+	}
+}
+
+/*
+===============
+idMapFile::GetPatchLog
+===============
+*/
+const idStrList& idMapFile::GetPatchLog()
+{
+	return patchLog;
+}
+
+/*
+===============
+LayerHoldsPatch
+===============
+*/
+static bool LayerHoldsPatch( const char* mapName, int layer )
+{
+	idFile* f = idLib::fileSystem->OpenFileReadFromLayer( va( "%s_extra_ents.map", mapName ), layer );
+	if( f == NULL )
+	{
+		f = idLib::fileSystem->OpenFileReadFromLayer( va( "%s_extra_ents.json", mapName ), layer );
+	}
+	if( f == NULL )
+	{
+		return false;
+	}
+	idLib::fileSystem->CloseFile( f );
+	return true;
+}
+
+/*
+===============
+idMapFile::RefuseWholeMapWrite
+===============
+*/
+bool idMapFile::RefuseWholeMapWrite( const char* mapName, int exceptLayer )
+{
+	idStr patchName = mapName;
+	patchName.StripFileExtension();
+	patchName.StripFileExtension();
+	idStr layers;
+	for( int layer = 0; layer < idLib::fileSystem->GetNumLayers(); layer++ )
+	{
+		if( layer != exceptLayer && LayerHoldsPatch( patchName, layer ) )
+		{
+			layers += layers.IsEmpty() ? "" : ", ";
+			layers += idLib::fileSystem->GetLayerName( layer );
+		}
+	}
+	if( layers.IsEmpty() )
+	{
+		return false;
+	}
+	idLib::common->Warning( "%s is not written whole: it would bake in the map patches (%s_extra_ents) that %s hold, which then apply twice", patchName.c_str(), patchName.c_str(), layers.c_str() );
+	return true;
+}
+//puncho end
 
 /*
 ============
@@ -2129,6 +2326,18 @@ bool idMapFile::WriteDiff( const idMapFile* otherMap, const char* fileName, cons
 				epairs.Copy( otherEnt->epairs );
 			}
 		}
+		//puncho start - MP-A5 (K41a): the edited map is this map with entities appended, so an unnamed entity below this
+		// map's count is one of its own. A patch cannot address it, and writing it again would append a copy at
+		// every load: the lower layers' unnamed patch entities and the map's unnamed env probes among them.
+		else if( i < entities.Num() )
+		{
+			if( otherEnt->epairs.Checksum() != entities[i]->epairs.Checksum() )
+			{
+				idLib::common->Warning( "%s: entity %d has no name, so a patch cannot carry its changed keys", qpath.c_str(), i );
+			}
+			continue;
+		}
+		//puncho end
 		else
 		{
 			// it is a new entity
@@ -2153,6 +2362,72 @@ bool idMapFile::WriteDiff( const idMapFile* otherMap, const char* fileName, cons
 	return true;
 }
 // RB end
+
+//puncho start - MP-A5 (K41a)
+/*
+===============
+idMapFile::WriteLevelEdits
+
+Today every in-engine writer wrote the merged level map whole; with mods loaded that baked every layer's patch into the
+write target, and the next load applied the patches again. So the map file keeps its text whenever a patch is in play:
+the edits go into the write target's own <map>_extra_ents.map as a diff against the raw map merged with the patches of
+the layers below the write target, which carries over that patch's earlier edits too. That holds for a map served below
+the write target (a base or mod map under fs_game), for a glTF map, which cannot be written, and for the write target's
+own map while it or a layer below it holds a patch. A patch above the write target (a mod over base with fs_game empty)
+applies after it, so its keys cannot be told apart from the edits: refused. With no patch anywhere the write target's own
+map is written whole, as today; a new map name is too, refused while that name has a patch.
+===============
+*/
+bool idMapFile::WriteLevelEdits( const char* fileName )
+{
+	idStr target = fileName;
+	target.StripFileExtension();
+	target.StripFileExtension();
+	if( target.Icmp( name ) != 0 )
+	{
+		if( RefuseWholeMapWrite( target ) )
+		{
+			return false;
+		}
+		return Write( target, ".map" );
+	}
+
+	const int numLayers = idLib::fileSystem->GetNumLayers();
+	const int writeLayer = idLib::fileSystem->GetWriteLayer();
+	const int mapLayer = idLib::fileSystem->GetFileLayer( sourceName );
+	if( mapLayer > writeLayer )
+	{
+		idLib::common->Warning( "%s is served by %s, above the write target %s: set fs_game to keep the edits as a patch", sourceName.c_str(), idLib::fileSystem->GetLayerName( mapLayer ), idLib::fileSystem->GetLayerName( writeLayer ) );
+		return false;
+	}
+	for( int layer = writeLayer + 1; layer < numLayers; layer++ )
+	{
+		if( LayerHoldsPatch( name, layer ) )
+		{
+			idLib::common->Warning( "%s: %s, above the write target %s, patches it too: set fs_game to keep the edits as a patch", name.c_str(), idLib::fileSystem->GetLayerName( layer ), idLib::fileSystem->GetLayerName( writeLayer ) );
+			return false;
+		}
+	}
+
+	bool patched = gltfFormat || mapLayer < writeLayer;
+	for( int layer = 0; layer <= writeLayer && !patched; layer++ )
+	{
+		patched = LayerHoldsPatch( name, layer );
+	}
+	if( !patched )
+	{
+		return Write( target, ".map" );
+	}
+
+	idMapFile below;
+	if( !below.Parse( name, false, false, false, writeLayer ) )
+	{
+		idLib::common->Warning( "%s: couldn't parse %s to diff the edits against", fileName, sourceName.c_str() );
+		return false;
+	}
+	return below.WriteDiff( this, va( "%s_extra_ents", name.c_str() ), ".map" );
+}
+//puncho end
 
 /*
 ===============

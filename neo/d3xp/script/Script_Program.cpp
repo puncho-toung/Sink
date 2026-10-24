@@ -2138,26 +2138,58 @@ void idProgram::CompileStats()
 }
 
 /*
+==============
+idProgram::PrintCapacity
+
+MP-A5 (K42): doom_main, every mod's mod_main and the map script share one image with fixed caps; a phase 12 row
+revisits them from this line, never from a guess. The counts print at every load, the warning once per session.
+==============
+*/
+void idProgram::PrintCapacity() const
+{
+	static bool warned = false;
+	gameLocal.Printf( "script image: %d of %d functions, %d of %d statements, %d of %d global bytes\n", functions.Num(), MAX_FUNCS, statements.Num(), MAX_STATEMENTS, numVariables, MAX_GLOBALS );
+	if( !warned && ( functions.Num() * 5 > MAX_FUNCS * 4 || statements.Num() * 5 > MAX_STATEMENTS * 4 || numVariables * 5 > MAX_GLOBALS * 4 ) )
+	{
+		warned = true;
+		gameLocal.Warning( "script image: under 20%% headroom against a cap (functions %d of %d, statements %d of %d, global bytes %d of %d)", functions.Num(), MAX_FUNCS, statements.Num(), MAX_STATEMENTS, numVariables, MAX_GLOBALS );
+	}
+}
+
+/*
 ================
 idProgram::CompileText
 ================
 */
 bool idProgram::CompileText( const char* source, const char* text, bool console )
 {
+	// use a full os path for GetFilenum since it calls OSPathToRelativePath to convert filenames from the parser
+	idStr ospath = fileSystem->RelativePathToOSPath( source );
+	return CompileSource( ospath, text, console );
+}
+
+/*
+================
+idProgram::CompileSource
+
+MP-A5 (K42): CompileText's body, under the file name given. A mod's mod_main.script compiles under the relative name
+<moddir>/script/mod_main.script, which GetFilenum keeps as it is: every layer's copy shares the relative path that
+OSPathToRelativePath would map them all to, and each needs its own file number in errors and digests.
+================
+*/
+bool idProgram::CompileSource( const char* fileName, const char* text, bool console )
+{
 	idCompiler	compiler;
 	int			i;
 	idVarDef*	def;
-	idStr		ospath;
 
-	// use a full os path for GetFilenum since it calls OSPathToRelativePath to convert filenames from the parser
-	ospath = fileSystem->RelativePathToOSPath( source );
-	filenum = GetFilenum( ospath );
+	filenum = GetFilenum( fileName );
 
 #if defined(USE_EXCEPTIONS)
 	try
 #endif
 	{
-		compiler.CompileFile( text, ospath.c_str(), console );
+		compiler.CompileFile( text, fileName, console );
 
 		// check to make sure all functions prototyped have code
 		for( i = 0; i < varDefs.Num(); i++ )
@@ -2321,7 +2353,34 @@ void idProgram::Startup( const char* defaultScript )
 		CompileFile( defaultScript );
 	}
 
+	//puncho start - MP-A5 (K42): each layer's script/mod_main.script, read from that layer, compiles after doom_main in
+	// layer order into the one image. Its #includes resolve through the normal order, so a mod keeps its helpers under
+	// script/<moddir>/. A function two layers define is the compiler's "redeclared" error, naming both files. Being
+	// compiled here, below top_files, the mod scripts survive Restart and are not written into saves.
+	for( int layer = 0; layer < fileSystem->GetNumLayers(); layer++ )
+	{
+		idFile* f = fileSystem->OpenFileReadFromLayer( "script/mod_main.script", layer );
+		if( f == NULL )
+		{
+			continue;
+		}
+		const int length = f->Length();
+		idTempArray<char> text( length + 1 );
+		f->Read( text.Ptr(), length );
+		text[length] = '\0';
+		fileSystem->CloseFile( f );
+
+		idStr sourceName = va( "%s/script/mod_main.script", fileSystem->GetLayerName( layer ) );
+		gameLocal.Printf( "compiling %s\n", sourceName.c_str() );
+		if( !CompileSource( sourceName, text.Ptr(), false ) )
+		{
+			gameLocal.Error( "Compile failed in file %s.", sourceName.c_str() );
+		}
+	}
+
 	FinishCompilation();
+	PrintCapacity();
+	//puncho end
 }
 
 /*

@@ -354,6 +354,15 @@ public:
 	// Registers a new folder with decl files.
 	virtual void			RegisterDeclFolder( const char* folder, const char* extension, declType_t defaultType ) = 0;
 
+	//puncho start - MP-A5 (K23, K44)
+	// Called once the game has registered its folders: computes the save header and prints the decl conflict report.
+	virtual void			FinishDeclRegistration() = 0;
+	// Sets the save header's keys into header: the mod list (the layer names after base, in order) and, per layer and
+	// decl type, the count and a digest of the explicit decl names that layer first defines, in index order. Overrides
+	// and text edits leave it unchanged; a new or removed decl, which shifts the indices saves store raw, changes it.
+	virtual void			GetLayerSaveHeader( idDict& header ) const = 0;
+	//puncho end
+
 	// Returns a checksum for all loaded decl text.
 	virtual int				GetChecksum() const = 0;
 

@@ -185,8 +185,15 @@ int LocalizeMap( const char* mapName, idLangDict& langDict, ListHash& listHash, 
 
 	int strCount = 0;
 
+	//puncho - MP-A5 (K41a): a map localized in place is written whole, so it reads the map file alone and is refused
+	// while a layer holds a patch for it
+	if( writeFile && idMapFile::RefuseWholeMapWrite( mapName ) )
+	{
+		return 0;
+	}
+
 	idMapFile map;
-	if( map.Parse( mapName, false, false ) )
+	if( map.Parse( mapName, false, false, writeFile ) )
 	{
 		int count = map.GetNumEntities();
 		for( int j = 0; j < count; j++ )
@@ -609,7 +616,8 @@ void idCommonLocal::LocalizeSpecificMapData( const char* fileName, idLangDict& l
 	idStr out, ws, work;
 
 	idMapFile map;
-	if( map.Parse( fileName, false, false ) )
+	//puncho - MP-A5 (K41a): written whole, so it reads the map file alone and is refused while a layer holds a patch
+	if( !idMapFile::RefuseWholeMapWrite( fileName ) && map.Parse( fileName, false, false, true ) )
 	{
 		int count = map.GetNumEntities();
 		for( int i = 0; i < count; i++ )

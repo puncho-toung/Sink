@@ -1279,22 +1279,9 @@ void idGameEdit::MapSave( const char* path ) const
 	idMapFile* mapFile = gameLocal.GetLevelMap();
 	if( mapFile )
 	{
-		if( mapFile->IsGLTF() )
-		{
-			// RB: can't write .glb so we write a _extra_ents.map which acts like a patch
-			idMapFile* origFile = new( TAG_GAME ) idMapFile;
-			if( origFile->Parse( mapFile->GetName(), true, false, true ) )
-			{
-				idStr filename = mapFile->GetName();
-				filename += "_extra_ents";
-
-				origFile->WriteDiff( mapFile, filename, ".map" );
-			}
-		}
-		else
-		{
-			mapFile->Write( ( path ) ? path : mapFile->GetName(), ".map" );
-		}
+		//puncho - MP-A5 (K41a): while a patch is in play (a map below the write target, a glTF map, or a patch at or below
+		// the write target) the edits go into the write target's <map>_extra_ents.map; otherwise the map is written whole
+		mapFile->WriteLevelEdits( ( path ) ? path : mapFile->GetName() );
 	}
 }
 

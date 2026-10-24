@@ -498,7 +498,9 @@ public:
 	// normally this will use a .reg file instead of a .map file if it exists,
 	// which is what the game and dmap want, but the editor will want to always
 	// load a .map file
-	bool					Parse( const char* filename, bool ignoreRegion = false, bool osPath = false, bool ignoreExtraEnts = false );
+	//puncho - MP-A5 (K41): unless ignoreExtraEnts, every layer's <map>_extra_ents.map (or .json) merges in, lowest layer
+	// first; patchLayerLimit stops below that rank (-1 for every layer), which K41a's writers diff against
+	bool					Parse( const char* filename, bool ignoreRegion = false, bool osPath = false, bool ignoreExtraEnts = false, int patchLayerLimit = -1 );
 	bool					Write( const char* fileName, const char* ext, bool fromBasePath = true );
 
 	// RB begin
@@ -563,6 +565,20 @@ public:
 	static void				AddMaterialToCollection( const char* material, idStrList& textureCollections );
 	static void				WadTextureToMaterial( const char* material, idStr& matName );
 
+	//puncho start - MP-A5 (K41a, K41b)
+	// the in-engine writers of the level map: while a patch is in play (the map is served below the write target, is
+	// glTF, or the write target or a layer below holds a patch) the edits go into the write target's
+	// <map>_extra_ents.map as a diff against the map merged through the layers below it; with no patch the write
+	// target's own map is written whole, and fileName other than the map's own name writes a new map whole
+	bool					WriteLevelEdits( const char* fileName );
+	// a whole-map write bakes no patch in: it is refused while any layer other than exceptLayer holds a patch for
+	// mapName, naming the layers
+	static bool				RefuseWholeMapWrite( const char* mapName, int exceptLayer = -1 );
+	// the last merge's log: each patch entity appended or skipped, with file:line, and each brought-in monster whose
+	// AAS size the map lacks
+	static const idStrList&	GetPatchLog();
+	//puncho end
+
 protected:
 	int						version;
 	ID_TIME_T					fileTime;
@@ -572,9 +588,16 @@ protected:
 	bool					hasPrimitiveData;
 	bool					valve220Format;	// RB: for TrenchBroom support
 	bool					gltfFormat;
+	//puncho start - MP-A5 (K41, K41b)
+	idStr					sourceName;			// the file Parse loaded, with its extension
+	int						readLayer;			// a patch reads this layer's own copy; -1 reads the served copy
+	idList<int>				entityLines;		// a patch's entity start lines, for the merge log
+	//puncho end
 
 private:
 	void					SetGeometryCRC();
+	bool					LoadLayerSource( idLexer& src, const char* fileName, idList<char>& text );	//puncho - MP-A5 (K41)
+	void					MergePatch( const idMapFile& patch, int layer );						//puncho - MP-A5 (K41, K41b)
 	const char*				GetUniqueEntityName( const char* classname ) const; // RB
 };
 
@@ -587,6 +610,7 @@ ID_INLINE idMapFile::idMapFile()
 	hasPrimitiveData = false;
 	valve220Format = false;
 	gltfFormat = false;
+	readLayer = -1;		//puncho - MP-A5 (K41)
 }
 
 #endif /* !__MAPFILE_H__ */
