@@ -396,8 +396,8 @@ sends, from names and ids as stored (no pointers, no locale), so a Linux and a W
 The decl types are the ones sent as indices, through ServerRemapDecl / ClientRemapDecl or a raw Index():
 entityDefs (snapshot spawns, damage defs), materials (collision surfaces), skins (weapons), sounds and FX.
 P1-A3b (K38): the decls, the script and the map's entities are split by content layer, so a refusal names the mod;
-classes and the map's geometry, and the merged entities that spawn, stay global. The time it takes is printed, a
-phase 12 row (K45): the host pays it once per load, at the first peer's RELIABLE_LOADING_DONE.
+classes, the map's geometry, the merged entities that spawn and the compiled script image stay global. The time it
+takes is printed, a phase 12 row (K45): the host pays it once per load, at the first peer's RELIABLE_LOADING_DONE.
 ================
 */
 void idGameLocal::GetContentDigests( contentDigests_t& digests ) const
@@ -418,6 +418,8 @@ void idGameLocal::GetContentDigests( contentDigests_t& digests ) const
 	digests.global[ CONTENT_DIGEST_CLASSES ]		= crc;
 	digests.global[ CONTENT_DIGEST_MAP_GEOMETRY ]	= ( mapFile != NULL ) ? mapFile->GetGeometryCRC() : 0;
 	digests.global[ CONTENT_DIGEST_MAP_ENTITIES ]	= ( mapFile != NULL ) ? mapFile->GetEntitiesCRC() : 0;	// P1-A3a, K37
+	// the per-layer SCRIPT rows say which files were read; this proves both peers compiled the same image from them
+	digests.global[ CONTENT_DIGEST_SCRIPT_IMAGE ]	= program.CalculateChecksum( false );
 
 	DeclLayerDigests( DECL_ENTITYDEF, LAYER_DIGEST_ENTITYDEFS, digests );
 	DeclLayerDigests( DECL_MATERIAL, LAYER_DIGEST_MATERIALS, digests );

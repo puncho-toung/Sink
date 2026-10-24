@@ -1951,7 +1951,7 @@ needs them (single player never does), and kept until the next load starts or th
 */
 void idLobby::VerifyPeerContent( int p )
 {
-	static const char* const globalNames[] = { "classes", "mapGeometry", "map entities" };	//puncho - "map entities": P1-A3a, K37
+	static const char* const globalNames[] = { "classes", "mapGeometry", "map entities", "script image" };	//puncho - "map entities": P1-A3a, K37; "script image": P1-A3b
 	compile_time_assert( sizeof( globalNames ) / sizeof( globalNames[0] ) == CONTENT_DIGEST_COUNT );
 	static const char* const layerNames[] = { "entityDefs", "materials", "skins", "sounds", "fx", "script", "map entities" };	//puncho - P1-A3b, K38
 	compile_time_assert( sizeof( layerNames ) / sizeof( layerNames[0] ) == LAYER_DIGEST_COUNT );

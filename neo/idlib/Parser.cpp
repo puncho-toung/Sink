@@ -1161,7 +1161,9 @@ int idParser::Directive_include( idToken* token, bool supressWarning )
 		path += *token;
 
 		// try assuming a full os path from GetFileName()
-		if( !script->LoadFile( path, true ) )
+		//puncho - P1-A3b: not with LEXFL_INCLUDETHROUGHLAYERS. That path is the including file's directory in the layer
+		// that served it, so a higher layer's copy of the included file would be passed over (the script compiler, K21a)
+		if( ( idParser::flags & LEXFL_INCLUDETHROUGHLAYERS ) || !script->LoadFile( path, true ) )
 		{
 			// try from the token path
 			path = *token;

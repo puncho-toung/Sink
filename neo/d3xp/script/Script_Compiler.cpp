@@ -3235,7 +3235,10 @@ void idCompiler::CompileFile( const char* text, const char* filename, bool toCon
 
 	memset( &immediate, 0, sizeof( immediate ) );
 
-	parser.SetFlags( LEXFL_ALLOWMULTICHARLITERALS );
+	//puncho start - P1-A3b (K21a): with content layers an #include is served layer by layer like any other file, so a
+	// mod's copy of an included script is the one compiled. One layer keeps today's resolution, byte for byte
+	parser.SetFlags( LEXFL_ALLOWMULTICHARLITERALS | ( ( fileSystem->GetNumLayers() > 1 ) ? LEXFL_INCLUDETHROUGHLAYERS : 0 ) );
+	//puncho end
 	parser.LoadMemory( text, strlen( text ), filename );
 	parserPtr = &parser;
 

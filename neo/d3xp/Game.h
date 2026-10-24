@@ -210,6 +210,7 @@ enum contentDigest_t
 	CONTENT_DIGEST_CLASSES,			// idClass type names in typeNum order: snapshot entities cross as a typeNum
 	CONTENT_DIGEST_MAP_GEOMETRY,	// idMapFile::GetGeometryCRC, the value the .cm and .aas files are validated against
 	CONTENT_DIGEST_MAP_ENTITIES,	// idMapFile::GetEntitiesCRC: every map entity's key/values, _extra_ents.map merged (P1-A3a, K37)
+	CONTENT_DIGEST_SCRIPT_IMAGE,	// idProgram::CalculateChecksum: the compiled program, whatever compiled it (a console script included)
 	CONTENT_DIGEST_COUNT
 };
 
