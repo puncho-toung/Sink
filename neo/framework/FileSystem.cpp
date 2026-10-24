@@ -2976,8 +2976,12 @@ void idFileSystemLocal::ListLayerFiles_r( const char* osPath, const char* relati
 		{
 			continue;
 		}
+		// copies, since va's ring of buffers turns over inside the recursion
 		idStr subRelative = ( relativePath[0] != '\0' ) ? va( "%s/%s", relativePath, dirs[i].c_str() ) : dirs[i].c_str();
-		ListLayerFiles_r( va( "%s/%s", osPath, dirs[i].c_str() ), subRelative, list, hashIndex );
+		idStr subPath = osPath;
+		subPath += "/";
+		subPath += dirs[i];
+		ListLayerFiles_r( subPath, subRelative, list, hashIndex );
 	}
 }
 
@@ -3701,6 +3705,7 @@ void idFileSystemLocal::Init()
 	common->StartupVariable( "fs_savepath" );
 	common->StartupVariable( "fs_game" );
 	common->StartupVariable( "fs_game_base" );
+	common->StartupVariable( "fs_mods" );	//puncho - MP-A5 (K40): or +set fs_mods is ignored when the filesystem starts
 	common->StartupVariable( "fs_copyfiles" );
 
 	if( fs_basepath.GetString()[0] == '\0' )
@@ -4310,7 +4315,8 @@ idFile* idFileSystemLocal::OpenLayerFile( const char* relativePath, int searchFl
 ===========
 idFileSystemLocal::OpenFileReadFromLayer
 
-One layer's copy of a file, whichever layer serves it; the map patches and mod scripts read every layer's own copy
+One layer's copy of a file, whichever layer serves it; the map patches and mod scripts read every layer's own copy.
+Copies are allowed as for OpenFileRead, so fs_buildResources still lists a patch it opens.
 ===========
 */
 idFile* idFileSystemLocal::OpenFileReadFromLayer( const char* relativePath, int layer )
@@ -4319,7 +4325,7 @@ idFile* idFileSystemLocal::OpenFileReadFromLayer( const char* relativePath, int 
 	{
 		return NULL;
 	}
-	return OpenLayerFile( relativePath, FSFLAG_SEARCH_DIRS, false, NULL, layer );
+	return OpenLayerFile( relativePath, FSFLAG_SEARCH_DIRS, true, NULL, layer );
 }
 
 /*

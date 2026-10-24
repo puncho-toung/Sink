@@ -2047,6 +2047,26 @@ const idStrList& idMapFile::GetPatchLog()
 
 /*
 ===============
+LayerHoldsPatch
+===============
+*/
+static bool LayerHoldsPatch( const char* mapName, int layer )
+{
+	idFile* f = idLib::fileSystem->OpenFileReadFromLayer( va( "%s_extra_ents.map", mapName ), layer );
+	if( f == NULL )
+	{
+		f = idLib::fileSystem->OpenFileReadFromLayer( va( "%s_extra_ents.json", mapName ), layer );
+	}
+	if( f == NULL )
+	{
+		return false;
+	}
+	idLib::fileSystem->CloseFile( f );
+	return true;
+}
+
+/*
+===============
 idMapFile::RefuseWholeMapWrite
 ===============
 */
@@ -2058,18 +2078,8 @@ bool idMapFile::RefuseWholeMapWrite( const char* mapName, int exceptLayer )
 	idStr layers;
 	for( int layer = 0; layer < idLib::fileSystem->GetNumLayers(); layer++ )
 	{
-		if( layer == exceptLayer )
+		if( layer != exceptLayer && LayerHoldsPatch( patchName, layer ) )
 		{
-			continue;
-		}
-		idFile* f = idLib::fileSystem->OpenFileReadFromLayer( va( "%s_extra_ents.map", patchName.c_str() ), layer );
-		if( f == NULL )
-		{
-			f = idLib::fileSystem->OpenFileReadFromLayer( va( "%s_extra_ents.json", patchName.c_str() ), layer );
-		}
-		if( f != NULL )
-		{
-			idLib::fileSystem->CloseFile( f );
 			layers += layers.IsEmpty() ? "" : ", ";
 			layers += idLib::fileSystem->GetLayerName( layer );
 		}
@@ -2361,9 +2371,9 @@ idMapFile::WriteLevelEdits
 Today every in-engine writer wrote the merged level map whole; with mods loaded that baked every layer's patch into the
 write target, and the next load applied the patches again. A map served below the write target (a base or mod map
 under fs_game) keeps its file: the edits go into the write target's own <map>_extra_ents.map as a diff against the map
-merged through the layers below it, which also carries over that patch's earlier edits. glTF maps cannot be written,
-so they always take the patch. The write target's own map, or a new map name, is written whole as today, refused while
-any layer holds a patch for it.
+merged through the layers below it, which also carries over that patch's earlier edits; refused while a mod above the
+write target (fs_game empty) patches the map too. glTF maps cannot be written, so they always take the patch. The write
+target's own map, or a new map name, is written whole as today, refused while any layer holds a patch for it.
 ===============
 */
 bool idMapFile::WriteLevelEdits( const char* fileName )
@@ -2376,6 +2386,16 @@ bool idMapFile::WriteLevelEdits( const char* fileName )
 	const int mapLayer = idLib::fileSystem->GetFileLayer( sourceName );
 	if( target.Icmp( name ) == 0 && ( gltfFormat || mapLayer < writeLayer ) )
 	{
+		// a mod above the write target (fs_game empty) patches after it, so its keys are in the level map yet cannot
+		// be told apart from the edits
+		for( int layer = writeLayer + 1; layer < idLib::fileSystem->GetNumLayers(); layer++ )
+		{
+			if( LayerHoldsPatch( name, layer ) )
+			{
+				idLib::common->Warning( "%s: %s, above the write target %s, patches it too: set fs_game to keep the edits as a patch", name.c_str(), idLib::fileSystem->GetLayerName( layer ), idLib::fileSystem->GetLayerName( writeLayer ) );
+				return false;
+			}
+		}
 		idMapFile below;
 		if( !below.Parse( name, false, false, false, writeLayer ) )
 		{

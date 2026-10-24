@@ -2457,8 +2457,8 @@ static void Cmd_SaveEnvprobes_f( const idCmdArgs& args )
 		mapName = mapFile->GetName();
 	}
 
-	//puncho start - MP-A5 (K41a): this writes the write target's patch whole with every live probe, so a probe that a
-	// lower layer's patch or the map file already holds would load twice: refused while a lower layer holds a patch
+	//puncho start - MP-A5 (K41a): this writes the write target's patch whole with every live probe, so a probe that
+	// another layer's patch brought in would load twice: refused while another layer holds a patch for the map
 	if( idMapFile::RefuseWholeMapWrite( mapName, fileSystem->GetWriteLayer() ) )
 	{
 		return;
