@@ -60,8 +60,23 @@ typedef enum
 
 #define	MAXTOUCH					32
 
+//puncho start - schema (P1-A1a): playerPState_t's fields; the wire sends origin, velocity in exponent and mantissa bits
+// (the constants are Physics_Player.cpp's) and localOrigin as a delta on origin
+#define PLAYER_PSTATE_SCHEMA( X, s ) \
+	X( s, origin,			VEC3,	SW,	RAW,	0,			SCHEMA_STOCK ) \
+	X( s, velocity,			VEC3,	SW,	BITS,	( PLAYER_VELOCITY_EXPONENT_BITS, PLAYER_VELOCITY_MANTISSA_BITS ),	SCHEMA_STOCK ) \
+	X( s, localOrigin,		VEC3,	SW,	DELTA,	origin,		SCHEMA_STOCK ) \
+	X( s, pushVelocity,		VEC3,	S,	RAW,	0,			SCHEMA_STOCK ) \
+	X( s, stepUp,			FLOAT,	S,	RAW,	0,			SCHEMA_STOCK ) \
+	X( s, movementType,		INT,	S,	RAW,	0,			SCHEMA_STOCK ) \
+	X( s, movementFlags,	INT,	S,	RAW,	0,			SCHEMA_STOCK ) \
+	X( s, movementTime,		INT,	S,	RAW,	0,			SCHEMA_STOCK )
+//puncho end
+
 typedef struct playerPState_s
 {
+	enum schemaField_t { PLAYER_PSTATE_SCHEMA( SCHEMA_INDEX, _ ) SF_NUM_FIELDS };	//puncho - schema (P1-A1a)
+
 	idVec3					origin;
 	idVec3					velocity;
 	idVec3					localOrigin;
@@ -84,11 +99,37 @@ typedef struct playerPState_s
 	}
 } playerPState_t;
 
+//puncho start - schema (P1-A1a): idPhysics_Player's own fields, saved after current and saved
+#define PHYSICS_PLAYER_SCHEMA( X, s ) \
+	X( s, walkSpeed,		FLOAT,		S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, crouchSpeed,		FLOAT,		S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, maxStepHeight,	FLOAT,		S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, maxJumpHeight,	FLOAT,		S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, debugLevel,		INT,		S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, command,			USERCMD,	S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, commandForward,	VEC3,		S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, framemsec,		INT,		S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, frametime,		FLOAT,		S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, playerSpeed,		FLOAT,		S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, viewForward,		VEC3,		S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, viewRight,		VEC3,		S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, walking,			BOOL,		S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, groundPlane,		BOOL,		S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, groundTrace,		TRACE,		S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, groundMaterial,	MATERIAL,	S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, ladder,			BOOL,		S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, ladderNormal,		VEC3,		S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, waterLevel,		ENUM,		S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, waterType,		INT,		S,	RAW,	0,	SCHEMA_STOCK )
+//puncho end
+
 class idPhysics_Player : public idPhysics_Actor
 {
 
 public:
 	CLASS_PROTOTYPE( idPhysics_Player );
+
+	enum schemaField_t { PHYSICS_PLAYER_SCHEMA( SCHEMA_INDEX, _ ) SF_NUM_FIELDS };	//puncho - schema (P1-A1a)
 
 	idPhysics_Player();
 

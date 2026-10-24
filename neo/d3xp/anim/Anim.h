@@ -28,6 +28,8 @@ If you have questions concerning this license or the applicable additional terms
 #ifndef __ANIM_H__
 #define __ANIM_H__
 
+#include "../gamesys/Schema.h"	//puncho - schema (P1-A1a): the renderer and the decl manager include Anim.h alone
+
 //
 // animation channels
 // these can be changed by modmakers and licensees to be whatever they need.
@@ -483,11 +485,36 @@ ID_INLINE idAFPoseJointMod::idAFPoseJointMod()
 ==============================================================================================
 */
 
+//puncho start - schema (P1-A1a): the AF pose lists are idLists of an int and of two plain structs (their element lists
+// are in Anim_Blend.cpp); hatches (K8): jointMods owns its elements, joints is a SIMD block sized by numJoints, and
+// each channel's idAnimBlend restores against the restored modelDef
+#define ANIMATOR_SCHEMA( X, s ) \
+	X( s, modelDef,					MODELDEF,	S,	RAW,	0,					SCHEMA_STOCK ) \
+	X( s, entity,					OBJECT,		S,	RAW,	0,					SCHEMA_STOCK ) \
+	X( s, JointMods,				HAND,		S,	RAW,	0,					SCHEMA_STOCK ) \
+	X( s, numJoints,				INT,		S,	RAW,	0,					SCHEMA_STOCK ) \
+	X( s, Joints,					HAND,		S,	RAW,	0,					SCHEMA_STOCK ) \
+	X( s, lastTransformTime,		INT,		S,	RAW,	0,					SCHEMA_STOCK ) \
+	X( s, stoppedAnimatingUpdate,	BOOL,		S,	RAW,	0,					SCHEMA_STOCK ) \
+	X( s, forceUpdate,				BOOL,		S,	RAW,	0,					SCHEMA_STOCK ) \
+	X( s, frameBounds,				BOUNDS,		S,	RAW,	0,					SCHEMA_STOCK ) \
+	X( s, AFPoseBlendWeight,		FLOAT,		S,	RAW,	0,					SCHEMA_STOCK ) \
+	X( s, AFPoseJoints,				LIST,		S,	RAW,	INT,				SCHEMA_STOCK ) \
+	X( s, AFPoseJointMods,			STRUCTLIST,	S,	RAW,	AFPoseJointMod,		SCHEMA_STOCK ) \
+	X( s, AFPoseJointFrame,			STRUCTLIST,	S,	RAW,	JointQuat,			SCHEMA_STOCK ) \
+	X( s, AFPoseBounds,				BOUNDS,		S,	RAW,	0,					SCHEMA_STOCK ) \
+	X( s, AFPoseTime,				INT,		S,	RAW,	0,					SCHEMA_STOCK ) \
+	X( s, removeOriginOffset,		BOOL,		S,	RAW,	0,					SCHEMA_STOCK ) \
+	X( s, Channels,					HAND,		S,	RAW,	0,					SCHEMA_STOCK )
+//puncho end
+
 class idAnimator
 {
 public:
 	idAnimator();
 	~idAnimator();
+
+	enum schemaField_t { ANIMATOR_SCHEMA( SCHEMA_INDEX, _ ) SF_NUM_FIELDS };	//puncho - schema (P1-A1a)
 
 	size_t						Allocated() const;
 	size_t						Size() const;
@@ -569,6 +596,15 @@ public:
 private:
 	void						FreeData();
 	void						PushAnims( int channel, int currentTime, int blendTime );
+
+	//puncho start - schema (P1-A1a): the K8 hatches of ANIMATOR_SCHEMA
+	void						SaveJointMods( idSaveGame* savefile ) const;
+	void						RestoreJointMods( idRestoreGame* savefile );
+	void						SaveJoints( idSaveGame* savefile ) const;
+	void						RestoreJoints( idRestoreGame* savefile );
+	void						SaveChannels( idSaveGame* savefile ) const;
+	void						RestoreChannels( idRestoreGame* savefile );
+	//puncho end
 
 private:
 	const idDeclModelDef* 		modelDef;
