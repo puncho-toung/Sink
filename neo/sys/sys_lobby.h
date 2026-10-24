@@ -924,6 +924,8 @@ public:		// Turning this on for now, for the sake of getting this up and running
 	bool								everyoneArbitrated;
 	bool								waitForPartyOk;
 	bool								startLoadingFromHost;
+	uint32								loadId;							//puncho - content check (P1-A3a, K17): the host: the current load, counted up by StartLoading; a peer: the host's id for the load it is in (RELIABLE_LOADING_DONE echoes it)
+	uint32								startLoadingId;					//puncho - a peer: the id the last RELIABLE_START_LOADING carried, latched into loadId when the load starts
 
 	//------------------------
 	// Snapshot jobs

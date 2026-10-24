@@ -410,6 +410,14 @@ void idSessionLocal::StartLoading()
 			return;
 		}
 
+		//puncho start - content check (P1-A3a, K17): a new load id, which each peer echoes in its RELIABLE_LOADING_DONE so
+		// one left over from an earlier load is told apart
+		GetActingGameStateLobby().loadId++;
+		byte loadIdBuffer[ 4 ];
+		idBitMsg loadIdMsg( loadIdBuffer, sizeof( loadIdBuffer ) );
+		loadIdMsg.WriteLong( GetActingGameStateLobby().loadId );
+		//puncho end
+
 		for( int p = 0; p < GetActingGameStateLobby().peers.Num(); p++ )
 		{
 			//puncho start - version rule (MP-A0): this load takes one fresh RELIABLE_LOADING_DONE per peer, whatever an
@@ -419,7 +427,7 @@ void idSessionLocal::StartLoading()
 			//puncho end
 			if( GetActingGameStateLobby().peers[p].IsConnected() )
 			{
-				GetActingGameStateLobby().QueueReliableMessage( p, idLobby::RELIABLE_START_LOADING );
+				GetActingGameStateLobby().QueueReliableMessage( p, idLobby::RELIABLE_START_LOADING, loadIdMsg.GetReadData(), loadIdMsg.GetSize() );	//puncho - with the load id (K17)
 				GetActingGameStateLobby().peers[p].startResourceLoadTime = Sys_Milliseconds();
 			}
 		}
@@ -1586,6 +1594,7 @@ bool idSessionLocal::State_Game_Lobby_Peer()
 
 		// Set loading flag back to false
 		GetActingGameStateLobby().startLoadingFromHost = false;
+		GetActingGameStateLobby().loadId = GetActingGameStateLobby().startLoadingId;	//puncho - content check (P1-A3a, K17): the load this peer now starts
 
 		// Set state to loading
 		SetState( STATE_LOADING );
@@ -2486,7 +2495,9 @@ void idSessionLocal::LoadingFinished()
 	{
 		byte buffer[ idPacketProcessor::MAX_PACKET_SIZE ];
 		idBitMsg msg( buffer, sizeof( buffer ) );
-		//puncho start - version rule (MP-A0, MD13): the host compares these with its own and refuses this peer on any difference
+		//puncho start - version rule (MP-A0, MD13): the host compares these with its own and refuses this peer on any difference.
+		// The load id leads (P1-A3a, K17): the host drops a message from another load instead of comparing it
+		msg.WriteLong( GetActingGameStateLobby().loadId );
 		unsigned int digests[ CONTENT_DIGEST_COUNT ];
 		game->GetContentDigests( digests );
 		for( int i = 0; i < CONTENT_DIGEST_COUNT; i++ )

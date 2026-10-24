@@ -87,6 +87,8 @@ idLobby::idLobby()
 	respondToArbitrate		= false;
 	waitForPartyOk			= false;
 	startLoadingFromHost	= false;
+	loadId					= 0;		//puncho - content check (P1-A3a, K17)
+	startLoadingId			= 0;		//puncho
 
 	nextSendPingValuesTime	= 0;
 	lastPingValuesRecvTime	= 0;
@@ -1835,7 +1837,7 @@ needs them (single player never does), and kept until the next load starts or th
 */
 void idLobby::VerifyPeerContent( int p )
 {
-	static const char* const digestNames[] = { "classes", "entityDefs", "materials", "skins", "sounds", "fx", "script", "mapGeometry" };
+	static const char* const digestNames[] = { "classes", "entityDefs", "materials", "skins", "sounds", "fx", "script", "mapGeometry", "map entities" };	//puncho - "map entities": P1-A3a, K37
 	compile_time_assert( sizeof( digestNames ) / sizeof( digestNames[0] ) == CONTENT_DIGEST_COUNT );
 
 	assert( IsHost() && loaded );
@@ -1859,6 +1861,7 @@ void idLobby::VerifyPeerContent( int p )
 
 	if( differs.IsEmpty() )
 	{
+		NET_VERBOSE_PRINT( "NET: Peer %i (%s) has the host's content (load %u)\n", p, peer.address.ToString(), loadId );	//puncho - content check (P1-A3a)
 		return;
 	}
 
@@ -2200,7 +2203,12 @@ int idLobby::HandleInitialPeerConnection( idBitMsg& msg, const lobbyAddress_t& p
 			{
 				newPeer.pauseSnapshots = true;		// Since this player joined in progress, let game dictate when to start sending snaps
 			}
-			QueueReliableMessage( peerNum, idLobby::RELIABLE_START_LOADING );
+			//puncho start - content check (P1-A3a, K17): the load the joiner joins, echoed in its RELIABLE_LOADING_DONE
+			byte loadIdBuffer[ 4 ];
+			idBitMsg loadIdMsg( loadIdBuffer, sizeof( loadIdBuffer ) );
+			loadIdMsg.WriteLong( loadId );
+			QueueReliableMessage( peerNum, idLobby::RELIABLE_START_LOADING, loadIdMsg.GetReadData(), loadIdMsg.GetSize() );
+			//puncho end
 		}
 	}
 	else
@@ -2990,6 +2998,11 @@ void idLobby::HandleReliableMsg( int p, idBitMsg& msg, const lobbyAddress_t* rem
 
 		NET_VERBOSE_PRINT( "NET: RELIABLE_START_LOADING from %s\n", peer.address.ToString() );
 
+		//puncho start - content check (P1-A3a, K17): the host's load id. It is latched into loadId only when the session
+		// acts on startLoadingFromHost (idSessionLocal::State_Game_Lobby_Peer), so a second START_LOADING that arrives
+		// during a load cannot relabel the RELIABLE_LOADING_DONE of the load in progress
+		startLoadingId = ( msg.GetRemainingData() >= 4 ) ? ( uint32 )msg.ReadLong() : 0;
+		//puncho end
 		startLoadingFromHost = true;
 	}
 	else if( reliableType == RELIABLE_LOADING_DONE )
@@ -3017,15 +3030,31 @@ void idLobby::HandleReliableMsg( int p, idBitMsg& msg, const lobbyAddress_t* rem
 			return;
 		}
 
-		// The message is the peer's content digests. Any other size is a different build (an older one sends
-		// nothing): refused without reading past the end
-		if( msg.GetRemainingData() != ( int )sizeof( peer.contentDigests ) )
+		//puncho start - content check (P1-A3a, K17): the message leads with the load id the peer latched when it started
+		// loading. One from another load is a leftover (ENDMATCH and a quick restart can overtake it): dropped, never
+		// refused, and the peer's real one follows. Then the rest must have the exact size of this host's own layout:
+		// the global digests today, rows per mod layer once P1-A3b adds them. Any other size is a different build (an
+		// older one sends nothing), refused without reading past the end
+		if( msg.GetRemainingData() < 4 )
+		{
+			RefusePeer( p, "RELIABLE_LOADING_DONE carries no load id: a different build" );
+			return;
+		}
+		const uint32 peerLoadId = ( uint32 )msg.ReadLong();
+		if( peerLoadId != loadId )
+		{
+			NET_VERBOSE_PRINT( "NET: RELIABLE_LOADING_DONE from %s is for load %u, not the current load %u: a leftover, dropped\n", peer.address.ToString(), peerLoadId, loadId );
+			return;
+		}
+		const int expectedSize = ( int )sizeof( peer.contentDigests );
+		if( msg.GetRemainingData() != expectedSize )
 		{
 			char reason[ 128 ];
-			idStr::snPrintf( reason, sizeof( reason ), "RELIABLE_LOADING_DONE carries %i bytes instead of the %i of the content digests: a different build", msg.GetRemainingData(), ( int )sizeof( peer.contentDigests ) );
+			idStr::snPrintf( reason, sizeof( reason ), "RELIABLE_LOADING_DONE carries %i bytes of digests instead of %i: a different build", msg.GetRemainingData(), expectedSize );
 			RefusePeer( p, reason );
 			return;
 		}
+		//puncho end
 		for( int i = 0; i < CONTENT_DIGEST_COUNT; i++ )
 		{
 			peer.contentDigests[i] = msg.ReadLong();
