@@ -204,25 +204,7 @@ idMoveable::Save
 */
 void idMoveable::Save( idSaveGame* savefile ) const
 {
-
-	savefile->WriteString( brokenModel );
-	savefile->WriteString( damage );
-	savefile->WriteString( monsterDamage );
-	savefile->WriteObject( attacker );
-	savefile->WriteString( fxCollide );
-	savefile->WriteInt( nextCollideFxTime );
-	savefile->WriteFloat( minDamageVelocity );
-	savefile->WriteFloat( maxDamageVelocity );
-	savefile->WriteBool( explode );
-	savefile->WriteBool( unbindOnDeath );
-	savefile->WriteBool( allowStep );
-	savefile->WriteBool( canDamage );
-	savefile->WriteInt( nextDamageTime );
-	savefile->WriteInt( nextSoundTime );
-	savefile->WriteInt( initialSpline != NULL ? initialSpline->GetTime( 0 ) : -1 );
-	savefile->WriteVec3( initialSplineDir );
-
-	savefile->WriteStaticObject( physicsObj );
+	MOVEABLE_SCHEMA( SCHEMA_SAVE, ( *this ) )	//puncho - schema (P1-A1a): the list is in Moveable.h
 }
 
 /*
@@ -232,22 +214,34 @@ idMoveable::Restore
 */
 void idMoveable::Restore( idRestoreGame* savefile )
 {
+	MOVEABLE_SCHEMA( SCHEMA_RESTORE, ( *this ) )	//puncho - schema (P1-A1a)
+	RestorePhysics( &physicsObj );
+}
+
+//puncho start - schema (P1-A1a): the initial spline, hand-written at its place in the list (K8)
+/*
+================
+idMoveable::SaveInitialSpline
+================
+*/
+void idMoveable::SaveInitialSpline( idSaveGame* savefile ) const
+{
+	savefile->WriteInt( initialSpline != NULL ? initialSpline->GetTime( 0 ) : -1 );
+	savefile->WriteVec3( initialSplineDir );
+}
+
+/*
+================
+idMoveable::RestoreInitialSpline
+
+The spline is rebuilt after the direction is read, as the stock restore did: InitInitialSpline overwrites the
+direction from the physics axis, which is not restored yet.
+================
+*/
+void idMoveable::RestoreInitialSpline( idRestoreGame* savefile )
+{
 	int initialSplineTime;
 
-	savefile->ReadString( brokenModel );
-	savefile->ReadString( damage );
-	savefile->ReadString( monsterDamage );
-	savefile->ReadObject( reinterpret_cast<idClass*&>( attacker ) );
-	savefile->ReadString( fxCollide );
-	savefile->ReadInt( nextCollideFxTime );
-	savefile->ReadFloat( minDamageVelocity );
-	savefile->ReadFloat( maxDamageVelocity );
-	savefile->ReadBool( explode );
-	savefile->ReadBool( unbindOnDeath );
-	savefile->ReadBool( allowStep );
-	savefile->ReadBool( canDamage );
-	savefile->ReadInt( nextDamageTime );
-	savefile->ReadInt( nextSoundTime );
 	savefile->ReadInt( initialSplineTime );
 	savefile->ReadVec3( initialSplineDir );
 
@@ -259,10 +253,8 @@ void idMoveable::Restore( idRestoreGame* savefile )
 	{
 		initialSpline = NULL;
 	}
-
-	savefile->ReadStaticObject( physicsObj );
-	RestorePhysics( &physicsObj );
 }
+//puncho end
 
 /*
 ================
@@ -564,7 +556,7 @@ idMoveable::WriteToSnapshot
 */
 void idMoveable::WriteToSnapshot( idBitMsg& msg ) const
 {
-	physicsObj.WriteToSnapshot( msg );
+	MOVEABLE_SCHEMA( SCHEMA_WRITE, ( *this ) )	//puncho - schema (P1-A1a): physicsObj alone
 }
 
 /*
@@ -574,7 +566,7 @@ idMoveable::ReadFromSnapshot
 */
 void idMoveable::ReadFromSnapshot( const idBitMsg& msg )
 {
-	physicsObj.ReadFromSnapshot( msg );
+	MOVEABLE_SCHEMA( SCHEMA_READ, ( *this ) )	//puncho - schema (P1-A1a)
 	if( msg.HasChanged() )
 	{
 		UpdateVisuals();

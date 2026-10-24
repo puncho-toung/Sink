@@ -74,10 +74,26 @@ extern const idEventDef EV_Thread_FadeOut;
 extern const idEventDef EV_Thread_FadeTo;
 extern const idEventDef EV_Thread_Restart;
 
+//puncho start - schema (P1-A1a): the interpreter is a nested struct with its own Save and Restore
+#define THREAD_SCHEMA( X, s ) \
+	X( s, threadNum,			INT,	S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, waitingForThread,		OBJECT,	S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, waitingFor,			INT,	S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, waitingUntil,			INT,	S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, interpreter,			STRUCT,	S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, spawnArgs,			DICT,	S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, threadName,			STRING,	S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, lastExecuteTime,		INT,	S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, creationTime,			INT,	S,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, manualControl,		BOOL,	S,	RAW,	0,	SCHEMA_STOCK )
+//puncho end
+
 class idThread : public idClass
 {
 private:
 	static idThread*				currentThread;
+
+	enum schemaField_t { THREAD_SCHEMA( SCHEMA_INDEX, _ ) SF_NUM_FIELDS };	//puncho - schema (P1-A1a)
 
 	idThread*					waitingForThread;
 	int							waitingFor;
