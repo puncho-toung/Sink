@@ -33,6 +33,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "../Game_local.h"
 
 #include "../tools/imgui/afeditor/AfEditor.h"
+#include "StreamTrace.h"	//puncho - stream-trace (P1-A1c)
 
 /*
 ==================
@@ -2575,6 +2576,217 @@ static void Cmd_TestSave_f( const idCmdArgs& args )
 	fileSystem->CloseFile( f );
 }
 
+//puncho start - stream-trace (P1-A1c, K3-K5): the stream-trace checker's commands (StreamTrace.h)
+/*
+==================
+idStreamTraceArm
+
+Arms the next save or load and disarms it however the call ends: a load that fails calls gameLocal.Error, whose
+idException unwinds past the caller, and an armed pointer left behind would trace the next real save into a dead
+stack object.
+==================
+*/
+class idStreamTraceArm
+{
+public:
+	idStreamTraceArm( idStreamTrace* trace )
+	{
+		idStreamTrace::armed = trace;
+	}
+	~idStreamTraceArm()
+	{
+		idStreamTrace::armed = NULL;
+	}
+};
+
+/*
+==================
+SaveTraced
+
+Saves the game into memory through the compressing pipeline a real save uses (idCommonLocal::SaveGame), traced.
+==================
+*/
+static void SaveTraced( idStreamTrace& trace, idFile_Memory& saveFile, idFile_Memory& stringsFile )
+{
+	idFile_SaveGamePipelined* pipeline = new( TAG_SAVEGAMES ) idFile_SaveGamePipelined();
+	pipeline->OpenForWriting( &saveFile );
+	{
+		idStreamTraceArm arm( &trace );
+		gameLocal.SaveGame( pipeline, &stringsFile );
+	}
+	pipeline->Finish();
+	delete pipeline;
+	trace.Finish();
+}
+
+/*
+==================
+CanTraceSave
+==================
+*/
+static bool CanTraceSave( const char* command )
+{
+	if( common->IsMultiplayer() || gameLocal.GameState() != GAMESTATE_ACTIVE || gameLocal.GetLocalPlayer() == NULL )
+	{
+		gameLocal.Printf( "%s: needs a single-player map running\n", command );
+		return false;
+	}
+	return true;
+}
+
+/*
+==================
+Cmd_TestSaveRoundTrip_f
+
+K3: save to memory, load that, and save again before any frame runs, the second save taken right after
+InitFromSaveGame returns. The load is the one idCommonLocal::ExecuteMapChange makes (Common_load.cpp:546), on the
+render and sound worlds already up: a load through the session would run frames first. Then each scope's read
+trace is held against its write trace, and the two saves are compared byte for byte apart from the allowlist.
+The game goes on from the reloaded state.
+==================
+*/
+static void Cmd_TestSaveRoundTrip_f( const idCmdArgs& args )
+{
+	if( !CanTraceSave( "testSaveRoundTrip" ) )
+	{
+		return;
+	}
+
+	idStreamTrace firstSave, load, secondSave;
+	firstSave.SetCapture( true );
+	secondSave.SetCapture( true );
+	idFile_Memory firstFile( "testSaveRoundTrip_1" ), firstStrings( "testSaveRoundTrip_1_strings" );
+	idFile_Memory secondFile( "testSaveRoundTrip_2" ), secondStrings( "testSaveRoundTrip_2_strings" );
+
+	// the sound world saves its clock and the load shifts every channel by how far it moved, so it holds still
+	idRenderWorld* renderWorld = gameRenderWorld;
+	idSoundWorld* soundWorld = gameSoundWorld;
+	const bool soundWasPaused = soundWorld->IsPaused();
+	soundWorld->Pause();
+
+	SaveTraced( firstSave, firstFile, firstStrings );
+
+	idStr mapName = gameLocal.GetMapName();
+	mapName += ".map";
+	firstFile.MakeReadOnly();
+	firstStrings.MakeReadOnly();
+	bool loaded;
+	{
+		idStreamTraceArm arm( &load );
+		loaded = gameLocal.InitFromSaveGame( mapName, renderWorld, soundWorld, &firstFile, &firstStrings, BUILD_NUMBER );
+	}
+	load.Finish();
+	if( !loaded )
+	{
+		// as after a refused load through the session, the map is gone (Common_load.cpp:549 quits to the title)
+		if( !soundWasPaused )
+		{
+			soundWorld->UnPause();
+		}
+		gameLocal.Printf( "testSaveRoundTrip: FAIL: the load refused the save (the script changed?); restart the map\n" );
+		return;
+	}
+
+	SaveTraced( secondSave, secondFile, secondStrings );
+
+	if( !soundWasPaused )
+	{
+		soundWorld->UnPause();
+	}
+
+	gameLocal.Printf( "testSaveRoundTrip: %s, %d scopes, %d entries, %d bytes uncompressed (%d and %d compressed), string tables %d and %d bytes\n",
+					  mapName.c_str(), firstSave.NumScopes(), firstSave.NumEntries(), firstSave.NumBytes(), firstFile.Length(), secondFile.Length(), firstStrings.Length(), secondStrings.Length() );
+
+	gameLocal.Printf( "testSaveRoundTrip: each scope's read trace against its write trace:\n" );
+	int traceFailures = firstSave.CheckCoverage() + load.CheckCoverage() + secondSave.CheckCoverage();
+	traceFailures += idStreamTrace::CompareShapes( firstSave, load );
+
+	gameLocal.Printf( "testSaveRoundTrip: the second save against the first, byte for byte:\n" );
+	const int byteFailures = idStreamTrace::CompareBytes( firstSave, secondSave, firstStrings, secondStrings );
+
+	gameLocal.Printf( "testSaveRoundTrip: %s: %d trace mismatches, %d byte differences outside the allowlist\n",
+					  ( traceFailures == 0 && byteFailures == 0 ) ? "PASS" : "FAIL", traceFailures, byteFailures );
+}
+
+/*
+==================
+Cmd_TestSaveTraceWrite_f
+
+K5: each class's write trace of the current state, into a file a later build compares against.
+==================
+*/
+static void Cmd_TestSaveTraceWrite_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 2 )
+	{
+		gameLocal.Printf( "usage: testSaveTraceWrite <file under fs_savepath>\n" );
+		return;
+	}
+	if( !CanTraceSave( "testSaveTraceWrite" ) )
+	{
+		return;
+	}
+
+	idStreamTrace trace;
+	idFile_Memory saveFile( "testSaveTrace" ), stringsFile( "testSaveTrace_strings" );
+	SaveTraced( trace, saveFile, stringsFile );
+	gameLocal.Printf( "testSaveTraceWrite: %s\n", trace.WriteFile( args.Argv( 1 ) ) ? "done" : "FAIL: can't write the file" );
+}
+
+/*
+==================
+Cmd_TestSaveTraceCompare_f
+
+K5: the current state's write trace against one an earlier build wrote; an order or type change shows per class and
+position. Both should come from the same map at the same moment, or state differences show as well.
+==================
+*/
+static void Cmd_TestSaveTraceCompare_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 2 )
+	{
+		gameLocal.Printf( "usage: testSaveTraceCompare <file written by testSaveTraceWrite> (under fs_savepath, or an absolute path in quotes)\n" );
+		return;
+	}
+	if( !CanTraceSave( "testSaveTraceCompare" ) )
+	{
+		return;
+	}
+
+	idStreamTrace before;
+	if( !before.ReadFile( args.Argv( 1 ) ) )
+	{
+		gameLocal.Printf( "testSaveTraceCompare: FAIL: no trace to compare against\n" );
+		return;
+	}
+	idStreamTrace now;
+	idFile_Memory saveFile( "testSaveTrace" ), stringsFile( "testSaveTrace_strings" );
+	SaveTraced( now, saveFile, stringsFile );
+	const int classesDiffer = idStreamTrace::CompareClasses( before, now );
+	gameLocal.Printf( "testSaveTraceCompare: %s: %d classes differ\n", ( classesDiffer == 0 ) ? "PASS" : "FAIL", classesDiffer );
+}
+
+/*
+==================
+Cmd_TestSnapTraceCompare_f
+
+K4: a host's net_snapTrace file against a client's. This peer's own trace stops first, since it may be one of them.
+==================
+*/
+static void Cmd_TestSnapTraceCompare_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 3 )
+	{
+		gameLocal.Printf( "usage: testSnapTraceCompare <host trace> <client trace> (under fs_savepath, or absolute paths in quotes)\n" );
+		return;
+	}
+	cvarSystem->SetCVarString( "net_snapTrace", "" );
+	snapshotTrace.Close();
+	const int failures = idSnapshotTrace::Compare( args.Argv( 1 ), args.Argv( 2 ) );
+	gameLocal.Printf( "testSnapTraceCompare: %s: %d client reads failed\n", ( failures == 0 ) ? "PASS" : "FAIL", failures );
+}
+//puncho end
+
 /*
 ==================
 Cmd_RecordViewNotes_f
@@ -3069,6 +3281,12 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "popLight",				Cmd_PopLight_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"removes the last created light" );
 	cmdSystem->AddCommand( "testDeath",				Cmd_TestDeath_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"tests death" );
 	cmdSystem->AddCommand( "testSave",				Cmd_TestSave_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"writes out a test savegame" );
+	//puncho start - stream-trace (P1-A1c)
+	cmdSystem->AddCommand( "testSaveRoundTrip",		Cmd_TestSaveRoundTrip_f,	CMD_FL_GAME | CMD_FL_CHEAT,	"saves to memory, reloads, saves again, and checks the traces and the bytes of the two saves" );
+	cmdSystem->AddCommand( "testSaveTraceWrite",	Cmd_TestSaveTraceWrite_f,	CMD_FL_GAME | CMD_FL_CHEAT,	"testSaveTraceWrite <file>: writes each class's save trace of the current state" );
+	cmdSystem->AddCommand( "testSaveTraceCompare",	Cmd_TestSaveTraceCompare_f,	CMD_FL_GAME | CMD_FL_CHEAT,	"testSaveTraceCompare <file>: compares the current save trace with one an earlier build wrote" );
+	cmdSystem->AddCommand( "testSnapTraceCompare",	Cmd_TestSnapTraceCompare_f,	CMD_FL_GAME,				"testSnapTraceCompare <host file> <client file>: matches a client's net_snapTrace reads with the host's writes" );
+	//puncho end
 	cmdSystem->AddCommand( "testModel",				idTestModel::TestModel_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"tests a model", idTestModel::ArgCompletion_TestModel );
 	cmdSystem->AddCommand( "testSkin",				idTestModel::TestSkin_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"tests a skin on an existing testModel", idCmdSystem::ArgCompletion_Decl<DECL_SKIN> );
 	cmdSystem->AddCommand( "testShaderParm",		idTestModel::TestShaderParm_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"sets a shaderParm on an existing testModel" );

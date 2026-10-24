@@ -536,7 +536,9 @@ void idGameLocal::SaveGame( idFile* f, idFile* strings )
 	// write out complete object list
 	savegame.WriteObjectList();
 
+	savegame.BeginTraceScope( "<program>" );	//puncho - stream-trace (P1-A1c, K1): nothing unless the checker armed the save
 	program.Save( &savegame );
+	savegame.EndTraceScope();	//puncho - stream-trace
 
 	savegame.WriteInt( g_skill.GetInteger() );
 
@@ -698,7 +700,9 @@ void idGameLocal::SaveGame( idFile* f, idFile* strings )
 	// shakeSounds
 
 	// write out pending events
+	savegame.BeginTraceScope( "<events>" );	//puncho - stream-trace (P1-A1c, K1)
 	idEvent::Save( &savegame );
+	savegame.EndTraceScope();	//puncho - stream-trace
 
 	savegame.Close();
 
@@ -1478,6 +1482,7 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 	savegame.CreateObjects();
 
 	// Load the idProgram, also checking to make sure scripting hasn't changed since the savegame
+	savegame.BeginTraceScope( "<program>" );	//puncho - stream-trace (P1-A1c, K1): nothing unless the checker armed the load
 	if( program.Restore( &savegame ) == false )
 	{
 
@@ -1487,6 +1492,7 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 		program.Restart();
 		return false;
 	}
+	savegame.EndTraceScope();	//puncho - stream-trace
 
 	savegame.ReadInt( i );
 	g_skill.SetInteger( i );
@@ -1722,7 +1728,9 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 	// shakeSounds
 
 	// Read out pending events
+	savegame.BeginTraceScope( "<events>" );	//puncho - stream-trace (P1-A1c, K1)
 	idEvent::Restore( &savegame );
+	savegame.EndTraceScope();	//puncho - stream-trace
 
 	savegame.RestoreObjects();
 

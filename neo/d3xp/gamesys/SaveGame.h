@@ -36,6 +36,8 @@ Save game related helper classes.
 
 */
 
+class idStreamTrace;	//puncho - stream-trace (P1-A1c)
+
 class idSaveGame
 {
 public:
@@ -105,6 +107,12 @@ public:
 		return file->Length();
 	}
 
+	//puncho start - stream-trace (P1-A1c, K1): the save driver's pseudo-scopes (<program>, <events>); nothing unless the
+	// stream-trace checker armed this save
+	void					BeginTraceScope( const char* name );
+	void					EndTraceScope();
+	//puncho end
+
 private:
 	idFile* 				file;
 	idFile* 				stringFile;
@@ -112,6 +120,8 @@ private:
 
 	idList<const idClass*>	objects;
 	int						version;
+
+	idStreamTrace* 			streamTrace;	//puncho - stream-trace (P1-A1c): NULL unless the checker armed this save
 
 	void					CallSave_r( const idTypeInfo* cls, const idClass* obj );
 
@@ -187,12 +197,19 @@ public:
 		return version;
 	}
 
+	//puncho start - stream-trace (P1-A1c, K1): the restore driver's pseudo-scopes (<program>, <events>)
+	void					BeginTraceScope( const char* name );
+	void					EndTraceScope();
+	//puncho end
+
 private:
 	idFile* 		file;
 	idFile* 		stringFile;
 	idList<idClass*, TAG_SAVEGAMES>		objects;
 	int						version;
 	int						stringTableOffset;
+
+	idStreamTrace* 			streamTrace;	//puncho - stream-trace (P1-A1c): NULL unless the checker armed this restore
 
 	void					CallRestore_r( const idTypeInfo* cls, idClass* obj );
 };
