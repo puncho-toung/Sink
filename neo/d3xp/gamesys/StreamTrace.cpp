@@ -55,10 +55,10 @@ static const char* bitMsgPrimitiveNames[ BITMSG_NUM_PRIMITIVES ] =
 
 /*
 The byte allowlist of the save round trip (K3). A Restore re-acquires render handles through Add*Def, which hands
-them out with FindNull in restore order, so every int it overwrites that way differs between the two saves; so do
-six named fields. A rule names the scope it applies to and the positions in it: counted from the scope's start, or
-from the child scopes it anchors on (each one, or only the n-th from the last), delta entries after the anchor
-(negative: before it), count entries. A delta of 0 on an anchor allows the whole child.
+them out with FindNull in restore order, so every int it overwrites that way may differ between the two saves; so
+may six named fields and numEntitiesToDeactivate. A rule names the scope it applies to and the positions in it,
+counted from the scope's start or from the child scopes it anchors on (each one, or only the n-th from the last):
+delta entries after the anchor (negative: before it), count entries. A delta of 0 on an anchor allows the child.
 */
 typedef struct streamTraceAllow_s
 {
@@ -81,6 +81,7 @@ static const streamTraceAllow_t allowRules[] =
 	{ "<globals>",			"usercmd_t",		0,	0,	0,	"the dummy usercmd" },
 	{ "<globals>",			"idDict",			1,	1,	4,	"playerPVS, playerConnectedAreas" },
 	{ "<globals>",			"idDict",			2,	MAX_GLOBAL_SHADER_PARMS + 15,	2,	"GetLocalClientNum, realClientTime" },
+	{ "<globals>",			"idDict",			2,	-3,	1,	"numEntitiesToDeactivate (Game_local.cpp:586/1567)" },
 };
 static const int NUM_ALLOW_RULES = sizeof( allowRules ) / sizeof( allowRules[ 0 ] );
 

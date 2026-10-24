@@ -2636,13 +2636,34 @@ static bool CanTraceSave( const char* command )
 
 /*
 ==================
+LoadTraced
+
+The load idCommonLocal::ExecuteMapChange makes (Common_load.cpp:546), on the render and sound worlds already up: a
+load through the session would run frames first, and no frame may run before the next save.
+==================
+*/
+static bool LoadTraced( idStreamTrace& trace, idFile_Memory& saveFile, idFile_Memory& stringsFile, const char* mapName, idRenderWorld* renderWorld, idSoundWorld* soundWorld )
+{
+	saveFile.MakeReadOnly();
+	stringsFile.MakeReadOnly();
+	bool loaded;
+	{
+		idStreamTraceArm arm( &trace );
+		loaded = gameLocal.InitFromSaveGame( mapName, renderWorld, soundWorld, &saveFile, &stringsFile, BUILD_NUMBER );
+	}
+	trace.Finish();
+	return loaded;
+}
+
+/*
+==================
 Cmd_TestSaveRoundTrip_f
 
-K3: save to memory, load that, and save again before any frame runs, the second save taken right after
-InitFromSaveGame returns. The load is the one idCommonLocal::ExecuteMapChange makes (Common_load.cpp:546), on the
-render and sound worlds already up: a load through the session would run frames first. Then each scope's read
-trace is held against its write trace, and the two saves are compared byte for byte apart from the allowlist.
-The game goes on from the reloaded state.
+K3: save to memory, load that and save again, each save taken right after InitFromSaveGame returns, then load the
+second save and take a third. The first trip holds each scope's read trace against its write trace. The second and
+third saves are compared byte for byte apart from the allowlist: a restore's one-time fix-ups (UpdateVisuals and
+Present on every entity, a GUI's StateChanged, idClipModel's touchCount) have run before both of them, so they
+must agree. The game goes on from the reloaded state.
 ==================
 */
 static void Cmd_TestSaveRoundTrip_f( const idCmdArgs& args )
@@ -2652,11 +2673,12 @@ static void Cmd_TestSaveRoundTrip_f( const idCmdArgs& args )
 		return;
 	}
 
-	idStreamTrace firstSave, load, secondSave;
-	firstSave.SetCapture( true );
+	idStreamTrace firstSave, firstLoad, secondSave, secondLoad, thirdSave;
 	secondSave.SetCapture( true );
+	thirdSave.SetCapture( true );
 	idFile_Memory firstFile( "testSaveRoundTrip_1" ), firstStrings( "testSaveRoundTrip_1_strings" );
 	idFile_Memory secondFile( "testSaveRoundTrip_2" ), secondStrings( "testSaveRoundTrip_2_strings" );
+	idFile_Memory thirdFile( "testSaveRoundTrip_3" ), thirdStrings( "testSaveRoundTrip_3_strings" );
 
 	// the sound world saves its clock and the load shifts every channel by how far it moved, so it holds still
 	idRenderWorld* renderWorld = gameRenderWorld;
@@ -2664,48 +2686,51 @@ static void Cmd_TestSaveRoundTrip_f( const idCmdArgs& args )
 	const bool soundWasPaused = soundWorld->IsPaused();
 	soundWorld->Pause();
 
-	SaveTraced( firstSave, firstFile, firstStrings );
-
 	idStr mapName = gameLocal.GetMapName();
 	mapName += ".map";
-	firstFile.MakeReadOnly();
-	firstStrings.MakeReadOnly();
-	bool loaded;
-	{
-		idStreamTraceArm arm( &load );
-		loaded = gameLocal.InitFromSaveGame( mapName, renderWorld, soundWorld, &firstFile, &firstStrings, BUILD_NUMBER );
-	}
-	load.Finish();
-	if( !loaded )
-	{
-		// as after a refused load through the session, the map is gone (Common_load.cpp:549 quits to the title)
-		if( !soundWasPaused )
-		{
-			soundWorld->UnPause();
-		}
-		gameLocal.Printf( "testSaveRoundTrip: FAIL: the load refused the save (the script changed?); restart the map\n" );
-		return;
-	}
 
-	SaveTraced( secondSave, secondFile, secondStrings );
+	// a load that spawns what the save already holds leaves the count higher
+	const int entitiesBefore = gameLocal.spawnedEntities.Num();
+	int entitiesFirstLoad = -1;
+	int entitiesSecondLoad = -1;
+
+	SaveTraced( firstSave, firstFile, firstStrings );
+	bool loaded = LoadTraced( firstLoad, firstFile, firstStrings, mapName, renderWorld, soundWorld );
+	if( loaded )
+	{
+		entitiesFirstLoad = gameLocal.spawnedEntities.Num();
+		SaveTraced( secondSave, secondFile, secondStrings );
+		loaded = LoadTraced( secondLoad, secondFile, secondStrings, mapName, renderWorld, soundWorld );
+	}
+	if( loaded )
+	{
+		entitiesSecondLoad = gameLocal.spawnedEntities.Num();
+		SaveTraced( thirdSave, thirdFile, thirdStrings );
+	}
 
 	if( !soundWasPaused )
 	{
 		soundWorld->UnPause();
 	}
+	if( !loaded )
+	{
+		// as after a refused load through the session, the map is gone (Common_load.cpp:549 quits to the title)
+		gameLocal.Printf( "testSaveRoundTrip: FAIL: the load refused the save (the script changed?); restart the map\n" );
+		return;
+	}
 
-	gameLocal.Printf( "testSaveRoundTrip: %s, %d scopes, %d entries, %d bytes uncompressed (%d and %d compressed), string tables %d and %d bytes\n",
-					  mapName.c_str(), firstSave.NumScopes(), firstSave.NumEntries(), firstSave.NumBytes(), firstFile.Length(), secondFile.Length(), firstStrings.Length(), secondStrings.Length() );
+	gameLocal.Printf( "testSaveRoundTrip: %s, %d scopes, %d entries, %d bytes uncompressed (%d, %d and %d compressed)\n",
+					  mapName.c_str(), firstSave.NumScopes(), firstSave.NumEntries(), firstSave.NumBytes(), firstFile.Length(), secondFile.Length(), thirdFile.Length() );
 
-	gameLocal.Printf( "testSaveRoundTrip: each scope's read trace against its write trace:\n" );
-	int traceFailures = firstSave.CheckCoverage() + load.CheckCoverage() + secondSave.CheckCoverage();
-	traceFailures += idStreamTrace::CompareShapes( firstSave, load );
+	gameLocal.Printf( "testSaveRoundTrip: the first trip, each scope's read trace against its write trace:\n" );
+	int traceFailures = firstSave.CheckCoverage() + firstLoad.CheckCoverage() + secondSave.CheckCoverage() + secondLoad.CheckCoverage() + thirdSave.CheckCoverage();
+	traceFailures += idStreamTrace::CompareShapes( firstSave, firstLoad );
 
-	gameLocal.Printf( "testSaveRoundTrip: the second save against the first, byte for byte:\n" );
-	const int byteFailures = idStreamTrace::CompareBytes( firstSave, secondSave, firstStrings, secondStrings );
+	gameLocal.Printf( "testSaveRoundTrip: the third save against the second, byte for byte:\n" );
+	const int byteFailures = idStreamTrace::CompareBytes( secondSave, thirdSave, secondStrings, thirdStrings );
 
-	gameLocal.Printf( "testSaveRoundTrip: %s: %d trace mismatches, %d byte differences outside the allowlist\n",
-					  ( traceFailures == 0 && byteFailures == 0 ) ? "PASS" : "FAIL", traceFailures, byteFailures );
+	gameLocal.Printf( "testSaveRoundTrip: %s: %d trace mismatches, %d byte differences outside the allowlist; entities %d before, %d and %d after the loads\n",
+					  ( traceFailures == 0 && byteFailures == 0 ) ? "PASS" : "FAIL", traceFailures, byteFailures, entitiesBefore, entitiesFirstLoad, entitiesSecondLoad );
 }
 
 /*
@@ -3282,7 +3307,7 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "testDeath",				Cmd_TestDeath_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"tests death" );
 	cmdSystem->AddCommand( "testSave",				Cmd_TestSave_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"writes out a test savegame" );
 	//puncho start - stream-trace (P1-A1c)
-	cmdSystem->AddCommand( "testSaveRoundTrip",		Cmd_TestSaveRoundTrip_f,	CMD_FL_GAME | CMD_FL_CHEAT,	"saves to memory, reloads, saves again, and checks the traces and the bytes of the two saves" );
+	cmdSystem->AddCommand( "testSaveRoundTrip",		Cmd_TestSaveRoundTrip_f,	CMD_FL_GAME | CMD_FL_CHEAT,	"saves to memory and reloads twice; checks the first trip by trace and the last two saves byte for byte" );
 	cmdSystem->AddCommand( "testSaveTraceWrite",	Cmd_TestSaveTraceWrite_f,	CMD_FL_GAME | CMD_FL_CHEAT,	"testSaveTraceWrite <file>: writes each class's save trace of the current state" );
 	cmdSystem->AddCommand( "testSaveTraceCompare",	Cmd_TestSaveTraceCompare_f,	CMD_FL_GAME | CMD_FL_CHEAT,	"testSaveTraceCompare <file>: compares the current save trace with one an earlier build wrote" );
 	cmdSystem->AddCommand( "testSnapTraceCompare",	Cmd_TestSnapTraceCompare_f,	CMD_FL_GAME,				"testSnapTraceCompare <host file> <client file>: matches a client's net_snapTrace reads with the host's writes" );

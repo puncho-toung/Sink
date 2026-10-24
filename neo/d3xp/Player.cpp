@@ -11887,12 +11887,15 @@ void idPlayer::WriteToSnapshot( idBitMsg& msg ) const
 	msg.WriteBits( carryingFlag, 1 );
 	msg.WriteBits( enviroSuitLight.GetSpawnId(), 32 );
 
-	msg.WriteBits( AI_CROUCH, 1 );
-	msg.WriteBits( AI_ONGROUND, 1 );
-	msg.WriteBits( AI_ONLADDER, 1 );
-	msg.WriteBits( AI_JUMP, 1 );
-	msg.WriteBits( AI_WEAPON_FIRED, 1 );
-	msg.WriteBits( AI_ATTACK_HELD, 1 );
+	//puncho start - stream-trace (P1-A1c): written as ReadFromSnapshot reads them; WriteBool is WriteBits( c, 1 ), the same bit
+	// for the 0 or 1 a script bool holds (WriteBits refused anything else)
+	msg.WriteBool( AI_CROUCH );
+	msg.WriteBool( AI_ONGROUND );
+	msg.WriteBool( AI_ONLADDER );
+	msg.WriteBool( AI_JUMP );
+	msg.WriteBool( AI_WEAPON_FIRED );
+	msg.WriteBool( AI_ATTACK_HELD );
+	//puncho end
 
 	msg.WriteByte( usercmd.buttons );
 	msg.WriteBits( usercmd.forwardmove, -8 );
