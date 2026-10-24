@@ -764,9 +764,21 @@ bool idProjectile::Collide( const trace_t& collision, const idVec3& velocity )
 				killedByImpact = false;
 			}
 
+			//puncho start - MP-C7 (plans/00-MASTER-PLAN.md stream C): a client damages players only, whose
+			// idPlayer::Damage sends the hit claim to the server (a head attachment passes it on to its body).
+			// Everything else is the server's to damage: a client that ran Damage on its own copy of a monster
+			// would kill it and fire its targets (idAI::Killed) where the server never did
+			const idEntity* victim = ent;
+			if( ent->IsType( idAFAttachment::Type ) && static_cast<const idAFAttachment*>( ent )->GetBody() != NULL )
+			{
+				victim = static_cast<const idAFAttachment*>( ent )->GetBody();
+			}
+			const bool clientHitPlayer = common->IsClient() && victim->IsType( idPlayer::Type );
+			//puncho end
+
 			// Only handle the server's own attacks here. Attacks by other players on the server occur through
 			// reliable messages.
-			if( !common->IsMultiplayer() || common->IsClient() || ( common->IsServer() && owner.GetEntityNum() == gameLocal.GetLocalClientNum() ) || ( common->IsServer() && !isHitscan ) )
+			if( !common->IsMultiplayer() || clientHitPlayer || ( common->IsServer() && owner.GetEntityNum() == gameLocal.GetLocalClientNum() ) || ( common->IsServer() && !isHitscan ) )
 			{
 				ent->Damage( this, owner.GetEntity(), dir, damageDefName, damageScale, CLIPMODEL_ID_TO_JOINT_HANDLE( collision.c.id ) );
 			}

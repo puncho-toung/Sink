@@ -696,15 +696,37 @@ void idGameLocal::ServerProcessReliableMessage( int clientNum, int type, const i
 			const float damageScale = msg.ReadFloat();
 			const int location = msg.ReadLong();
 
-			if( gameLocal.entities[victimNum] == NULL )
+			//puncho start - MP-C7 (plans/00-MASTER-PLAN.md stream C): the claim is client data. Only the sender
+			// may be the attacker, both ends must be players before the casts below, and every index is checked
+			// before it is used: a bad damageDefIndex reaches DeclByIndex's common->Error and drops the host.
+			// INVALID_JOINT stays a silent refusal further down, since splash on a player sends it legitimately
+			const char* refused = NULL;
+			if( attackerNum != clientNum )
 			{
+				refused = "attacker is not the sender";
+			}
+			else if( victimNum < 0 || victimNum >= MAX_CLIENTS || gameLocal.entities[victimNum] == NULL || !gameLocal.entities[victimNum]->IsType( idPlayer::Type ) )
+			{
+				refused = "victim is not a player";
+			}
+			else if( gameLocal.entities[attackerNum] == NULL || !gameLocal.entities[attackerNum]->IsType( idPlayer::Type ) )
+			{
+				refused = "attacker is not a player";
+			}
+			else if( location != INVALID_JOINT && ( location < 0 || location >= gameLocal.entities[victimNum]->GetRenderEntity()->numJoints ) )
+			{
+				refused = "joint out of range";
+			}
+			else if( damageDefIndex < 0 || damageDefIndex >= declManager->GetNumDecls( DECL_ENTITYDEF ) )
+			{
+				refused = "damage def out of range";
+			}
+			if( refused != NULL )
+			{
+				common->Warning( "CLIENT_HITSCAN_HIT from client %d refused, %s (attacker %d, victim %d, joint %d, damage def %d)", clientNum, refused, attackerNum, victimNum, location, damageDefIndex );
 				break;
 			}
-
-			if( gameLocal.entities[attackerNum] == NULL )
-			{
-				break;
-			}
+			//puncho end
 
 			idPlayer& victim = static_cast< idPlayer& >( *gameLocal.entities[victimNum] );
 			idPlayer& attacker = static_cast< idPlayer& >( *gameLocal.entities[attackerNum] );
