@@ -832,6 +832,66 @@ void idInterpreter::LeaveFunction( idVarDef* returnDef )
 
 /*
 ================
+ReturnEventDefault
+
+The safe return value of an event that does not run.
+================
+*/
+static void ReturnEventDefault( const idEventDef* evdef )
+{
+	switch( evdef->GetReturnType() )
+	{
+		case D_EVENT_INTEGER :
+			gameLocal.program.ReturnInteger( 0 );
+			break;
+
+		case D_EVENT_FLOAT :
+			gameLocal.program.ReturnFloat( 0 );
+			break;
+
+		case D_EVENT_VECTOR :
+			gameLocal.program.ReturnVector( vec3_zero );
+			break;
+
+		case D_EVENT_STRING :
+			gameLocal.program.ReturnString( "" );
+			break;
+
+		case D_EVENT_ENTITY :
+		case D_EVENT_ENTITY_NULL :
+			gameLocal.program.ReturnEntity( ( idEntity* )NULL );
+			break;
+
+		case D_EVENT_TRACE :
+		default:
+			// unsupported data type
+			break;
+	}
+}
+
+/*
+================
+SkipClientEvent
+
+A client-side thread on a client (idThread::IsClientRestricted) runs only the events flagged client-safe, so a map
+function cannot change the world the server owns. Each skipped name is printed once per process, so a map author
+learns which call did nothing on clients.
+================
+*/
+static void SkipClientEvent( const function_t* current, const idEventDef* evdef )
+{
+	static bool logged[ MAX_EVENTS ];
+
+	if( !logged[ evdef->GetEventNum() ] )
+	{
+		logged[ evdef->GetEventNum() ] = true;
+		gameLocal.Printf( "client script '%s' skipped event '%s': not client-safe\n", current->Name(), evdef->GetName() );
+	}
+	ReturnEventDefault( evdef );
+}
+
+/*
+================
 idInterpreter::CallEvent
 ================
 */
@@ -857,6 +917,13 @@ void idInterpreter::CallEvent( const function_t* func, int argsize )
 	assert( func->eventdef );
 	evdef = func->eventdef;
 
+	if( thread->IsClientRestricted() && !evdef->IsClientSafe() )
+	{
+		SkipClientEvent( currentFunction, evdef );
+		PopParms( argsize );
+		return;
+	}
+
 	start = localstackUsed - argsize;
 	var.intPtr = ( int* )&localstack[ start ];
 	eventEntity = GetEntity( *var.entityNumberPtr );
@@ -869,35 +936,7 @@ void idInterpreter::CallEvent( const function_t* func, int argsize )
 			Warning( "Function '%s' not supported on entity '%s'", evdef->GetName(), eventEntity->name.c_str() );
 		}
 		// always return a safe value when an object doesn't exist
-		switch( evdef->GetReturnType() )
-		{
-			case D_EVENT_INTEGER :
-				gameLocal.program.ReturnInteger( 0 );
-				break;
-
-			case D_EVENT_FLOAT :
-				gameLocal.program.ReturnFloat( 0 );
-				break;
-
-			case D_EVENT_VECTOR :
-				gameLocal.program.ReturnVector( vec3_zero );
-				break;
-
-			case D_EVENT_STRING :
-				gameLocal.program.ReturnString( "" );
-				break;
-
-			case D_EVENT_ENTITY :
-			case D_EVENT_ENTITY_NULL :
-				gameLocal.program.ReturnEntity( ( idEntity* )NULL );
-				break;
-
-			case D_EVENT_TRACE :
-			default:
-				// unsupported data type
-				break;
-		}
-
+		ReturnEventDefault( evdef );
 		PopParms( argsize );
 		eventEntity = NULL;
 		return;
@@ -1053,6 +1092,13 @@ void idInterpreter::CallSysEvent( const function_t* func, int argsize )
 
 	assert( func->eventdef );
 	evdef = func->eventdef;
+
+	if( thread->IsClientRestricted() && !evdef->IsClientSafe() )
+	{
+		SkipClientEvent( currentFunction, evdef );
+		PopParms( argsize );
+		return;
+	}
 
 	start = localstackUsed - argsize;
 

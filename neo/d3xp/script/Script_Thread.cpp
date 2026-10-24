@@ -293,7 +293,10 @@ idThread::idThread( idEntity* self, const function_t* func )
 
 	Init();
 	SetThreadName( self->name );
-	interpreter.EnterObjectFunction( self, func, false );
+	if( GuardStart( func, false ) )
+	{
+		interpreter.EnterObjectFunction( self, func, false );
+	}
 	if( g_debugScript.GetBool() )
 	{
 		gameLocal.Printf( "%d: create thread (%d) '%s'\n", gameLocal.time, threadNum, threadName.c_str() );
@@ -311,7 +314,10 @@ idThread::idThread( const function_t* func )
 
 	Init();
 	SetThreadName( func->Name() );
-	interpreter.EnterFunction( func, false );
+	if( GuardStart( func, false ) )
+	{
+		interpreter.EnterFunction( func, false );
+	}
 	if( g_debugScript.GetBool() )
 	{
 		gameLocal.Printf( "%d: create thread (%d) '%s'\n", gameLocal.time, threadNum, threadName.c_str() );
@@ -326,7 +332,10 @@ idThread::idThread
 idThread::idThread( idInterpreter* source, const function_t* func, int args )
 {
 	Init();
-	interpreter.ThreadCall( source, func, args );
+	if( GuardStart( func, source->GetThread()->clientRestricted ) )
+	{
+		interpreter.ThreadCall( source, func, args );
+	}
 	if( g_debugScript.GetBool() )
 	{
 		gameLocal.Printf( "%d: create thread (%d) '%s'\n", gameLocal.time, threadNum, threadName.c_str() );
@@ -344,7 +353,10 @@ idThread::idThread( idInterpreter* source, idEntity* self, const function_t* fun
 
 	Init();
 	SetThreadName( self->name );
-	interpreter.ThreadCall( source, func, args );
+	if( GuardStart( func, source->GetThread()->clientRestricted ) )
+	{
+		interpreter.ThreadCall( source, func, args );
+	}
 	if( g_debugScript.GetBool() )
 	{
 		gameLocal.Printf( "%d: create thread (%d) '%s'\n", gameLocal.time, threadNum, threadName.c_str() );
@@ -468,6 +480,7 @@ void idThread::Init()
 	creationTime = gameLocal.time;
 	lastExecuteTime = 0;
 	manualControl = false;
+	clientRestricted = false;
 
 	ClearWaitFor();
 
@@ -798,6 +811,10 @@ NOTE: If this is called from within a event called by this thread, the function 
 void idThread::CallFunction( const function_t* func, bool clearStack )
 {
 	ClearWaitFor();
+	if( clearStack && !GuardStart( func, false ) )
+	{
+		return;
+	}
 	interpreter.EnterFunction( func, clearStack );
 }
 
@@ -812,7 +829,49 @@ void idThread::CallFunction( idEntity* self, const function_t* func, bool clearS
 {
 	assert( self );
 	ClearWaitFor();
+	if( clearStack && !GuardStart( func, false ) )
+	{
+		return;
+	}
 	interpreter.EnterObjectFunction( self, func, clearStack );
+}
+
+/*
+================
+idThread::GuardStart
+
+Map scripts on clients. Every thread start passes here: the function constructors (a new thread, or a script's
+"thread" and "objthread" calls, which inherit their caller's restriction) and CallFunction( clearStack = true ).
+A client refuses a map function that is not client-side, and the thread ends at once. A client-side function runs on
+a client restricted to client-safe events (idInterpreter::CallEvent). Single player and the server run everything.
+Starts that bypass both points, a new thread given CallFunction( clearStack = false ), are not seen here.
+================
+*/
+bool idThread::GuardStart( const function_t* func, bool inheritedRestriction )
+{
+	if( func == NULL )
+	{
+		// EnterFunction reports it
+		return true;
+	}
+
+	const bool isClient = common->IsClient();
+	const bool refused = isClient && func->mapScript && !func->clientSide;
+
+	clientRestricted = inheritedRestriction || ( isClient && func->clientSide );
+
+	if( g_scriptCensus.GetBool() )
+	{
+		gameLocal.Printf( "census %c %s %s map %d\n", isClient ? 'C' : 'S', refused ? "skip" : "start", func->Name(), func->mapScript ? 1 : 0 );
+	}
+
+	if( refused )
+	{
+		// drop a reused thread's old stack too, as the start it replaces would have
+		interpreter.Reset();
+		End();
+	}
+	return !refused;
 }
 
 /*
@@ -1169,6 +1228,10 @@ void idThread::Event_Trigger( idEntity* ent )
 {
 	if( ent )
 	{
+		if( g_scriptCensus.GetBool() )
+		{
+			gameLocal.Printf( "census %c trigger %s thread %s\n", common->IsClient() ? 'C' : 'S', ent->name.c_str(), threadName.c_str() );
+		}
 		ent->Signal( SIG_TRIGGER );
 		ent->ProcessEvent( &EV_Activate, gameLocal.GetLocalPlayer() );
 		ent->TriggerGuis();
@@ -1284,6 +1347,10 @@ void idThread::Event_Spawn( const char* classname )
 {
 	idEntity* ent;
 
+	if( g_scriptCensus.GetBool() )
+	{
+		gameLocal.Printf( "census %c spawn %s thread %s\n", common->IsClient() ? 'C' : 'S', classname, threadName.c_str() );
+	}
 	spawnArgs.Set( "classname", classname );
 	gameLocal.SpawnEntityDef( spawnArgs, &ent );
 	ReturnEntity( ent );
@@ -2033,6 +2100,10 @@ idThread::Event_RadiusDamage
 */
 void idThread::Event_RadiusDamage( const idVec3& origin, idEntity* inflictor, idEntity* attacker, idEntity* ignore, const char* damageDefName, float dmgPower )
 {
+	if( g_scriptCensus.GetBool() )
+	{
+		gameLocal.Printf( "census %c damage %s thread %s\n", common->IsClient() ? 'C' : 'S', damageDefName, threadName.c_str() );
+	}
 	gameLocal.RadiusDamage( origin, inflictor, attacker, ignore, ignore, damageDefName, dmgPower );
 }
 

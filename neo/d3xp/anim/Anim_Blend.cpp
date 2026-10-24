@@ -1209,6 +1209,10 @@ void idAnim::CallFrameCommands( idEntity* ent, int from, int to ) const
 					target = gameLocal.FindEntity( command.string->c_str() );
 					if( target )
 					{
+						if( g_scriptCensus.GetBool() )
+						{
+							gameLocal.Printf( "census %c frametrigger %s from %s\n", common->IsClient() ? 'C' : 'S', target->name.c_str(), ent->name.c_str() );
+						}
 						SetTimeState ts( target->timeGroup );
 						target->Signal( SIG_TRIGGER );
 						target->ProcessEvent( &EV_Activate, ent );

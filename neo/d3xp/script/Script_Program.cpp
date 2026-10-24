@@ -130,6 +130,8 @@ void function_t::Clear()
 	parmTotal		= 0;
 	locals			= 0;
 	filenum			= 0;
+	clientSide		= false;
+	mapScript		= false;
 	name.Clear();
 	parmSize.Clear();
 }
@@ -1866,6 +1868,17 @@ function_t& idProgram::AllocFunction( idVarDef* def )
 	func.filenum		= filenum;
 	func.parmSize.SetGranularity( 1 );
 	func.SetName( def->GlobalName() );
+
+	// the client marks are read once here and never saved: idThread refuses a map function on a client unless it is
+	// client-side. Map functions are maps/<map>.script, the SP namespaces in script/map_*.script, and, by convention,
+	// any function inside a namespace whose name starts with map_. The global namespace has no name to compare.
+	const char* fileName = fileList[ filenum ].c_str();
+	func.clientSide		= ( idStr::Cmpn( def->Name(), "client_", 7 ) == 0 ) || ( def->scope != &def_namespace && def->scope->Type() == ev_namespace && idStr::Cmp( def->scope->Name(), "client" ) == 0 );
+	func.mapScript		= ( idStr::IcmpnPath( fileName, "maps/", 5 ) == 0 ) || ( idStr::IcmpnPath( fileName, "script/map_", 11 ) == 0 );
+	for( const idVarDef* scope = def->scope; !func.mapScript && scope != &def_namespace; scope = scope->scope )
+	{
+		func.mapScript = ( scope->Type() == ev_namespace ) && ( idStr::Cmpn( scope->Name(), "map_", 4 ) == 0 );
+	}
 
 	def->SetFunction( &func );
 

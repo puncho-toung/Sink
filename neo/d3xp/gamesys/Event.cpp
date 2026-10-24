@@ -54,6 +54,27 @@ int idEventDef::numEventDefs = 0;
 static bool eventError = false;
 static char eventErrorMsg[ 128 ];
 
+// The events a client-side script thread may call (idThread::clientRestricted). Script binds events by name, and one
+// name can be defined in several files ("On" is a light, a speaker and an env probe), so the flag is kept by name in
+// this one list and every definition reads it in its constructor. Everything else is skipped on a restricted thread:
+// entity events and the sys events that change the world (trigger, spawn, remove, radiusDamage, setcvar).
+static const char* const clientSafeEvents[] =
+{
+	// sys events that touch only their own thread or return a value
+	"wait", "waitFrame", "waitFor", "waitForThread", "terminate", "killthread", "pause", "threadname",
+	"getTime", "random", "randomInt", "getcvar", "getEntity", "isClient", "isMultiplayer", "getFrameTime", "getTicsPerSecond",
+	"sin", "cos", "asin", "acos", "sqrt",
+	"angToForward", "angToRight", "angToUp", "vecNormalize", "vecLength", "DotProduct", "CrossProduct",
+	"VecToAngles", "VecToOrthoBasisAngles", "rotateVector",
+	"strLength", "strLeft", "strRight", "strSkip", "strMid", "strToFloat",
+	// presentation: shader parms, GUI parms, sound start and stop, light on and off
+	"setShaderParm", "setShaderParms", "setColor", "getShaderParm", "getColor",
+	"setLightParm", "setLightParms", "getLightParm",
+	"setGuiParm", "setGuiFloat", "getGuiParm", "getGuiParmFloat",
+	"startSound", "startSoundShader", "stopSound",
+	"On", "Off",
+};
+
 /*
 ================
 idEventDef::idEventDef
@@ -78,6 +99,17 @@ idEventDef::idEventDef( const char* command, const char* formatspec, char return
 	this->name = command;
 	this->formatspec = formatspec;
 	this->returnType = returnType;
+
+	// the list is constant-initialized, so it is ready before any event definition is constructed
+	clientSafe = false;
+	for( i = 0; i < ( int )ARRAY_COUNT( clientSafeEvents ); i++ )
+	{
+		if( strcmp( command, clientSafeEvents[ i ] ) == 0 )
+		{
+			clientSafe = true;
+			break;
+		}
+	}
 
 	numargs = strlen( formatspec );
 	assert( numargs <= D_EVENT_MAXARGS );
@@ -814,6 +846,15 @@ void idEvent::Init()
 	eventDataAllocator.Init();
 
 	gameLocal.Printf( "...%i event definitions\n", idEventDef::NumEventCommands() );
+
+	// a misspelled name in the client-safe list would silently leave its event skipped on clients
+	for( int i = 0; i < ( int )ARRAY_COUNT( clientSafeEvents ); i++ )
+	{
+		if( idEventDef::FindEvent( clientSafeEvents[ i ] ) == NULL )
+		{
+			gameLocal.Warning( "client-safe event '%s' is not defined", clientSafeEvents[ i ] );
+		}
+	}
 
 	// the event system has started
 	initialized = true;

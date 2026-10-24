@@ -71,6 +71,8 @@ public:
 	int 				parmTotal;
 	int 				locals; 			// total ints of parms + locals
 	int					filenum; 			// source file defined in
+	bool				clientSide;			// "client_" name or "client" namespace: runs on clients, client-safe events only
+	bool				mapScript;			// from a map script: a client refuses to start it unless clientSide
 	idList<int, TAG_SCRIPT>			parmSize;
 };
 

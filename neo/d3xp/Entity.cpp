@@ -4527,6 +4527,11 @@ void idEntity::ActivateTargets( idEntity* activator ) const
 	idEntity*	ent;
 	int			i, j;
 
+	if( g_scriptCensus.GetBool() )
+	{
+		gameLocal.Printf( "census %c activate %s by %s targets %d\n", common->IsClient() ? 'C' : 'S', name.c_str(), activator != NULL ? activator->name.c_str() : "none", targets.Num() );
+	}
+
 	for( i = 0; i < targets.Num(); i++ )
 	{
 		ent = targets[ i ].GetEntity();
