@@ -178,7 +178,11 @@ public:
 	idDeclFile( const char* fileName, declType_t defaultType );
 
 	void						Reload( bool force );
-	int							LoadAndParse();
+	//puncho start - P1-m4, P1-m5: the lowest and the serving layer that hold the file, as RegisterDeclFolder found them;
+	// -1 looks them up (a reload, a new file)
+	int							LoadAndParse( int lowestLayer = -1, int servingLayer = -1 );
+	void						LoadLowestNames( int lowestLayer, int servingLayer );
+	//puncho end
 
 public:
 	idStr						fileName;
@@ -744,7 +748,7 @@ This is used during both the initial load, and any reloads
 */
 int c_savedMemory = 0;
 
-int idDeclFile::LoadAndParse()
+int idDeclFile::LoadAndParse( int lowestLayer, int servingLayer )	//puncho - P1-m4
 {
 	int			i, numTypes;
 	idLexer		src;
@@ -780,12 +784,19 @@ int idDeclFile::LoadAndParse()
 	}
 
 	//puncho start - MP-A5 (K22, K23, K44): the layers are read on every parse, not only at registration: the one that
-	// serves the file decides takeovers, and the lowest that holds it, the bucket RegisterDeclFolder loads it in, is where
-	// its new names are first defined, so a whole-file copy into gameFolder (ReplaceSourceFileText) moves no name. A file
-	// parsed before finds its conflicts again rather than appending them twice. One layer needs no lookup.
+	// serves the file decides takeovers and is credited with the names only the served copy defines; the lowest copy's
+	// own names were created in the lowest holder's bucket (LoadLowestNames, P1-m5), and a decl keeps the layer it was
+	// created in, so a whole-file copy into gameFolder (ReplaceSourceFileText) moves no name. A file parsed before finds
+	// its conflicts again rather than appending them twice. One layer needs no lookup, and RegisterDeclFolder passes the
+	// layers it found (P1-m4).
 	layer = 0;
 	firstLayer = 0;
-	if( fileSystem->GetNumLayers() > 1 )
+	if( servingLayer >= 0 )
+	{
+		firstLayer = lowestLayer;
+		layer = servingLayer;
+	}
+	else if( fileSystem->GetNumLayers() > 1 )
 	{
 		idList<int> holders;
 		fileSystem->GetFileLayers( fileName, holders );
@@ -944,7 +955,7 @@ int idDeclFile::LoadAndParse()
 			newDecl = declManagerLocal.FindTypeWithoutParsing( identifiedType, name, true );
 			newDecl->nextInFile = this->decls;
 			this->decls = newDecl;
-			newDecl->definedLayer = firstLayer;	//puncho - MP-A5 (K44)
+			newDecl->definedLayer = layer;	//puncho - MP-A5 (K44), P1-m5: a name only the served copy defines is the serving layer's
 		}
 
 		newDecl->redefinedInReload = true;
@@ -978,6 +989,13 @@ int idDeclFile::LoadAndParse()
 	{
 		if( decl->redefinedInReload == false )
 		{
+			//puncho start - P1-m5: a name a lower copy defines and the served copy drops keeps its index, defaulted
+			if( firstLayer < layer )
+			{
+				common->Warning( "%s '%s': the copy of %s that %s serves drops it; it keeps its index, defaulted", declManagerLocal.GetDeclNameFromType( decl->type ),
+								 decl->name.c_str(), fileName.c_str(), fileSystem->GetLayerName( layer ) );
+			}
+			//puncho end
 			decl->MakeDefault();
 			decl->sourceTextOffset = decl->sourceFile->fileSize;
 			decl->sourceTextLength = 0;
@@ -987,6 +1005,121 @@ int idDeclFile::LoadAndParse()
 
 	return checksum;
 }
+
+//puncho start - P1-m5
+/*
+================
+idDeclFile::LoadLowestNames
+
+The first of two passes over a file that more than one layer holds, run in the lowest holder's bucket of
+RegisterDeclFolder. It creates only the names that layer's own copy defines, in its order, linked into this file and
+credited to that layer, so names a higher copy adds cannot number themselves among a lower layer's decls. The served
+copy then loads in the serving layer's bucket (LoadAndParse): these decls get its text there, and the names it alone
+defines are created there. A name an earlier file already holds is left to that pass, which decides as for any
+duplicate. The text is skimmed for type and name only; the served copy's pass reports its faults.
+================
+*/
+void idDeclFile::LoadLowestNames( int lowestLayer, int servingLayer )
+{
+	// a later file of a lower bucket that defines one of these names meets the serving layer, as when the served copy
+	// loaded here whole
+	firstLayer = lowestLayer;
+	layer = servingLayer;
+
+	idFile* f = fileSystem->OpenFileReadFromLayer( fileName, lowestLayer );
+	if( f == NULL )
+	{
+		return;
+	}
+	const int length = f->Length();
+	idTempArray<char> text( length + 1 );
+	f->Read( text.Ptr(), length );
+	text[length] = '\0';
+	fileSystem->CloseFile( f );
+
+	idLexer src;
+	if( !src.LoadMemory( text.Ptr(), length, fileName ) )
+	{
+		return;
+	}
+	src.SetFlags( DECL_LEXER_FLAGS | LEXFL_NOERRORS | LEXFL_NOWARNINGS );
+
+	idToken token;
+	const int numTypes = declManagerLocal.GetNumDeclTypes();
+	while( 1 )
+	{
+		const int sourceLine = src.GetLineNum();
+
+		// the type name, or the folder's default type
+		if( !src.ReadToken( &token ) )
+		{
+			break;
+		}
+		declType_t identifiedType = DECL_MAX_TYPES;
+		for( int i = 0; i < numTypes; i++ )
+		{
+			idDeclType* typeInfo = declManagerLocal.GetDeclType( i );
+			if( typeInfo != NULL && typeInfo->typeName.Icmp( token ) == 0 )
+			{
+				identifiedType = ( declType_t ) typeInfo->type;
+				break;
+			}
+		}
+		if( identifiedType == DECL_MAX_TYPES )
+		{
+			if( token.Icmp( "{" ) == 0 )
+			{
+				src.SkipBracedSection( false );
+				continue;
+			}
+			if( defaultType == DECL_MAX_TYPES )
+			{
+				continue;
+			}
+			src.UnreadToken( &token );
+			identifiedType = defaultType;
+		}
+
+		// the name, then everything up to the matched closing brace, as LoadAndParse reads them
+		if( !src.ReadToken( &token ) )
+		{
+			break;
+		}
+		if( token.Icmp( "{" ) == 0 )
+		{
+			src.SkipBracedSection( false );
+			continue;
+		}
+		if( identifiedType == DECL_MODELEXPORT )
+		{
+			src.SkipBracedSection();
+			continue;
+		}
+		const idStr name = token;
+		if( !src.ReadToken( &token ) )
+		{
+			break;
+		}
+		if( token != "{" )
+		{
+			continue;
+		}
+		src.UnreadToken( &token );
+		src.SkipBracedSection();
+
+		if( declManagerLocal.FindTypeWithoutParsing( identifiedType, name, false ) != NULL )
+		{
+			continue;
+		}
+		idDeclLocal* newDecl = declManagerLocal.FindTypeWithoutParsing( identifiedType, name, true );
+		newDecl->nextInFile = decls;
+		decls = newDecl;
+		newDecl->sourceFile = this;
+		newDecl->sourceLine = sourceLine;
+		newDecl->definedLayer = lowestLayer;
+	}
+}
+//puncho end
 
 /*
 ====================================================================================
@@ -1303,17 +1436,28 @@ void idDeclManagerLocal::RegisterDeclFolder( const char* folder, const char* ext
 	// files whose lowest holding layer is base, then those first held by layer 1, and so on. A decl's index then depends
 	// only on the layers at or below the one that first defines it, an override always meets the decl it replaces, and
 	// a mod's new decls follow every lower layer's. With one layer the order is the sorted list.
+	// P1-m5: a file more than one layer holds loads in two passes, the lowest copy's names in the lowest holder's bucket
+	// (LoadLowestNames), then the served copy in the serving layer's, which credits its new names to that layer. So a
+	// shadow copy that adds a decl renumbers nothing below it. P1-m4: the layers found here are passed down.
 	const int numLayers = fileSystem->GetNumLayers();
-	idList<int> fileLayers;
+	idList<int> fileLayers;		// the lowest layer that holds each file
+	idList<int> fileServing;	// the layer that serves it
 	idList<int> holders;
 	fileLayers.SetNum( fileList->GetNumFiles() );
+	fileServing.SetNum( fileList->GetNumFiles() );
 	for( i = 0; i < fileList->GetNumFiles(); i++ )
 	{
+		fileLayers[i] = 0;
+		fileServing[i] = 0;
 		if( numLayers > 1 )
 		{
 			fileSystem->GetFileLayers( declFolder->folder + "/" + fileList->GetFile( i ), holders );
+			if( holders.Num() > 0 )
+			{
+				fileLayers[i] = holders[0];
+				fileServing[i] = holders[ holders.Num() - 1 ];
+			}
 		}
-		fileLayers[i] = ( numLayers > 1 && holders.Num() > 0 ) ? holders[0] : 0;
 	}
 
 	// load and parse decl files
@@ -1321,7 +1465,8 @@ void idDeclManagerLocal::RegisterDeclFolder( const char* folder, const char* ext
 	{
 		for( i = 0; i < fileList->GetNumFiles(); i++ )
 		{
-			if( fileLayers[i] != layer )
+			const bool lowestPass = ( fileLayers[i] == layer && fileServing[i] != layer );
+			if( !lowestPass && fileServing[i] != layer )
 			{
 				continue;
 			}
@@ -1344,7 +1489,14 @@ void idDeclManagerLocal::RegisterDeclFolder( const char* folder, const char* ext
 				df = new( TAG_DECL ) idDeclFile( fileName, defaultType );
 				loadedFiles.Append( df );
 			}
-			df->LoadAndParse();
+			if( lowestPass )
+			{
+				df->LoadLowestNames( fileLayers[i], fileServing[i] );
+			}
+			else
+			{
+				df->LoadAndParse( fileLayers[i], fileServing[i] );
+			}
 		}
 	}
 	//puncho end
