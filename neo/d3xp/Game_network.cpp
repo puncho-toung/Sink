@@ -1440,8 +1440,10 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 		if( !ent || ent->GetType()->typeNum != typeNum || ent->entityDefNumber != entityDefNumber || spawnId != spawnIds[ entityNumber ] )
 		{
 			//puncho start - identity (P1-A2): the content check proves the map text equal, not the slot layout: a map-range
-			// slot the host fills with something else is logged, so a drift between the peers' map spawns shows
-			if( ent != NULL && entityNumber >= MAX_CLIENTS && entityNumber < mapSpawnCount )
+			// slot the host fills with something else is logged, so a drift between the peers' map spawns shows. A
+			// networkSync entity's slot is the host's to free and refill (a broken light, a removed item), so its
+			// replacement is legitimate (P1-m7)
+			if( ent != NULL && entityNumber >= MAX_CLIENTS && entityNumber < mapSpawnCount && !ent->fl.networkSync )
 			{
 				Warning( "ClientReadSnapshot: the host's %s of generation %d replaces map-range entity %d '%s' (%s, generation %d)", typeInfo->classname, spawnId, entityNumber, ent->name.c_str(), ent->GetClassname(), spawnIds[ entityNumber ] );
 			}
