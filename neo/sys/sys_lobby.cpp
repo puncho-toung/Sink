@@ -2192,7 +2192,18 @@ int idLobby::HandleInitialPeerConnection( idBitMsg& msg, const lobbyAddress_t& p
 	idStr modReason;
 	if( ModListDiffers( peerModList, modReason ) )
 	{
-		idLib::Printf( "NET: Refusing %s at connect, %s\n", peerAddress.ToString(), modReason.c_str() );
+		//puncho start - P0-m8: a joiner retries its connect, and anyone can send one in a loop, so the line prints once
+		// per address in 10 s; every attempt is still refused
+		static lobbyAddress_t lastRefusedAddress;
+		static int lastRefusedTime = 0;
+		const int now = Sys_Milliseconds();
+		if( !peerAddress.Compare( lastRefusedAddress, true ) || now - lastRefusedTime >= 10000 )
+		{
+			idLib::Printf( "NET: Refusing %s at connect, %s\n", peerAddress.ToString(), modReason.c_str() );
+			lastRefusedAddress = peerAddress;
+			lastRefusedTime = now;
+		}
+		//puncho end
 		byte refusalBuffer[ 512 ];
 		idBitMsg refusal( refusalBuffer, sizeof( refusalBuffer ) );
 		refusal.WriteUShort( sessionID );

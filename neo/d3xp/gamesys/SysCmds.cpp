@@ -3250,6 +3250,54 @@ static void Cmd_TestEntState_f( const idCmdArgs& args )
 
 /*
 ==================
+Cmd_TestHitClaim_f
+
+testHitClaim <count> <victim> <joint> [damageDef]: a client sends <count> hit claims (32 at most, inside the reliable
+queue) against <victim> at <joint>, a joint name or number, with the local player as the attacker, in the layout
+idPlayer::Damage sends. A joint out of range is a bad claim; a real joint in the attacker's view is a legitimate one.
+==================
+*/
+static void Cmd_TestHitClaim_f( const idCmdArgs& args )
+{
+	idPlayer* player = gameLocal.GetLocalPlayer();
+	if( !common->IsClient() || player == NULL || args.Argc() < 4 )
+	{
+		gameLocal.Printf( "usage: testHitClaim <count> <victim> <joint> [damageDef], on a client\n" );
+		return;
+	}
+	const int count = idMath::ClampInt( 1, 32, atoi( args.Argv( 1 ) ) );
+	idEntity* victim = gameLocal.FindEntity( args.Argv( 2 ) );
+	const idDeclEntityDef* damageDef = gameLocal.FindEntityDef( ( args.Argc() > 4 ) ? args.Argv( 4 ) : "damage_bullet_machinegun_mp", false );
+	if( victim == NULL || damageDef == NULL )
+	{
+		gameLocal.Printf( "testHitClaim: no entity '%s' or no damage def\n", args.Argv( 2 ) );
+		return;
+	}
+	const jointHandle_t joint = ( victim->GetAnimator() != NULL ) ? victim->GetAnimator()->GetJointHandle( args.Argv( 3 ) ) : INVALID_JOINT;
+	const int location = ( joint != INVALID_JOINT ) ? joint : atoi( args.Argv( 3 ) );
+	idVec3 dir = victim->GetPhysics()->GetAbsBounds().GetCenter() - player->GetEyePosition();
+	dir.Normalize();
+
+	idLobbyBase& lobby = session->GetActingGameStateLobbyBase();
+	for( int i = 0; i < count; i++ )
+	{
+		byte		msgBuffer[ MAX_GAME_MESSAGE_SIZE ];
+		idBitMsg	msg;
+		msg.InitWrite( msgBuffer, sizeof( msgBuffer ) );
+		msg.BeginWriting();
+		msg.WriteShort( player->entityNumber );
+		msg.WriteShort( victim->entityNumber );
+		msg.WriteVectorFloat( dir );
+		msg.WriteLong( damageDef->Index() );
+		msg.WriteFloat( 1.0f );
+		msg.WriteLong( location );
+		lobby.SendReliableToHost( GAME_RELIABLE_MESSAGE_CLIENT_HITSCAN_HIT, msg );
+	}
+	gameLocal.Printf( "testHitClaim: %d claims sent against '%s' (entity %d), joint %d, damage def %s\n", count, victim->name.c_str(), victim->entityNumber, location, damageDef->GetName() );
+}
+
+/*
+==================
 Cmd_TestSnapSubmit_f
 
 testSnapSubmit <objects> <bytes>: one synthetic snapshot of <objects> objects of <bytes> random bytes each, through the
@@ -3800,6 +3848,7 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "testLaunch",			Cmd_TestLaunch_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"testLaunch <projectileDef> <target> [dmgPower]: launches a projectile at an entity as this peer's weapon would" );
 	cmdSystem->AddCommand( "testUnspectate",		Cmd_TestUnspectate_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"on a multiplayer host, makes every player want to play, so warmup can end" );
 	cmdSystem->AddCommand( "testEntState",			Cmd_TestEntState_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"testEntState <entity>...: prints this peer's view of each entity" );
+	cmdSystem->AddCommand( "testHitClaim",			Cmd_TestHitClaim_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"testHitClaim <count> <victim> <joint> [damageDef]: a client sends hit claims to the host" );
 	cmdSystem->AddCommand( "testSnapSubmit",		Cmd_TestSnapSubmit_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"testSnapSubmit <objects> <bytes>: submits one synthetic snapshot through the snapshot jobs" );
 	//puncho end
 	cmdSystem->AddCommand( "testDeclRemap",			Cmd_TestDeclRemap_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"drives the implicit decl announce table: make, decode, sound, rocket, impact, fx, speakers" );	//puncho - content check (P1-A3a)

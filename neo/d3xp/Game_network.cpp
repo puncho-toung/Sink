@@ -528,6 +528,13 @@ void idGameLocal::SyncPlayersWithLobbyUsers( bool initial )
 
 		if( !lobby.IsLobbyUserValid( lobbyUserID ) )
 		{
+			//puncho start - P0-m8: the count behind the one warning, then a clean slate for the next client in this slot
+			if( hitClaimRefusals[ i ] > 1 )
+			{
+				Printf( "CLIENT_HITSCAN_HIT: %d claims from client %d refused on this map, the first one printed\n", hitClaimRefusals[ i ], i );
+			}
+			hitClaimRefusals[ i ] = 0;
+			//puncho end
 			delete entities[ i ];
 			mpGame.DisconnectClient( i );
 			lobbyUserIDs[i] = lobbyUserID_t();
@@ -560,6 +567,7 @@ void idGameLocal::SyncPlayersWithLobbyUsers( bool initial )
 
 		mpGame.ServerClientConnect( freePlayerDataIndex );
 		Printf( "client %d connected.\n", freePlayerDataIndex );
+		hitClaimRefusals[ freePlayerDataIndex ] = 0;	//puncho - P0-m8: counted per connect
 
 		lobbyUserIDs[ freePlayerDataIndex ] = lobbyUserID;
 
@@ -1157,7 +1165,14 @@ void idGameLocal::ServerProcessReliableMessage( int clientNum, int type, const i
 			}
 			if( refused != NULL )
 			{
-				common->Warning( "CLIENT_HITSCAN_HIT from client %d refused, %s (attacker %d, victim %d, joint %d, damage def %d, scale %g, dir %g %g %g)", clientNum, refused, attackerNum, victimNum, location, damageDefIndex, damageScale, dir.x, dir.y, dir.z );
+				//puncho start - P0-m8: a peer can send these in a loop, so its first refusal warns and the rest are counted
+				// (printed when it disconnects or the map ends)
+				const int refusals = ( clientNum < MAX_CLIENTS ) ? ++hitClaimRefusals[ clientNum ] : 1;
+				if( refusals == 1 )
+				{
+					common->Warning( "CLIENT_HITSCAN_HIT from client %d refused, %s (attacker %d, victim %d, joint %d, damage def %d, scale %g, dir %g %g %g); further refusals are counted", clientNum, refused, attackerNum, victimNum, location, damageDefIndex, damageScale, dir.x, dir.y, dir.z );
+				}
+				//puncho end
 				break;
 			}
 			//puncho end

@@ -253,6 +253,7 @@ void idGameLocal::Clear()
 	mapSpawnCount = 0;
 	clientSpawnCensus.Clear();
 	//puncho end
+	memset( hitClaimRefusals, 0, sizeof( hitClaimRefusals ) );	//puncho - P0-m8
 	camera = NULL;
 	aasList.Clear();
 	aasNames.Clear();
@@ -1046,6 +1047,7 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	forcedGenEntityNum = -1;
 	clientSpawnCensus.Clear();
 	//puncho end
+	memset( hitClaimRefusals, 0, sizeof( hitClaimRefusals ) );	//puncho - P0-m8: counted per map
 
 	spawnedEntities.Clear();
 	activeEntities.Clear();
@@ -1890,6 +1892,16 @@ void idGameLocal::MapShutdown()
 			}
 		}
 		clientSpawnCensus.Clear();
+	}
+	//puncho end
+
+	//puncho start - P0-m8: the count behind the one warning, for the clients still here at map end
+	for( int i = 0; i < MAX_CLIENTS; i++ )
+	{
+		if( hitClaimRefusals[ i ] > 1 )
+		{
+			Printf( "CLIENT_HITSCAN_HIT: %d claims from client %d refused on this map, the first one printed\n", hitClaimRefusals[ i ], i );
+		}
 	}
 	//puncho end
 

@@ -857,6 +857,10 @@ private:
 	int						mapSpawnCount;			// K11: one past the highest slot the map's entities took below ENTITYNUM_FIRST_NON_REPLICATED
 	idList<int>				clientSpawnCensus;		// K14a: a client's own spawns in play, three index ranges per type number (g_clientSpawnCensus)
 	//puncho end
+	//puncho start - P0-m8 (plans/phase1/02-FIXES.md): a host's refused CLIENT_HITSCAN_HIT claims per client on this map
+	// since its connect. A peer can send them in a loop, so only the first warns and the count prints when it leaves
+	int						hitClaimRefusals[ MAX_CLIENTS ];
+	//puncho end
 
 	//puncho start - content check (P1-A3a, K19): the implicit decl announce table, cleared by every load (InitAsyncNetwork).
 	// The host fills it from ServerRemapDecl and broadcasts each new slot; a client fills it from the broadcasts, resolving
