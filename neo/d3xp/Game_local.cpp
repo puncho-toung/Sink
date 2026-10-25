@@ -631,11 +631,11 @@ void idGameLocal::SaveGame( idFile* f, idFile* strings )
 
 	savegame.WriteInt( entityDefBits );
 
-	savegame.WriteInt( GetLocalClientNum() );
+	savegame.WriteRenderHandle( GetLocalClientNum(), "idGameLocal::GetLocalClientNum" );	//puncho - saves (P1-m10b)
 
 	// snapshotEntities is used for multiplayer only
 
-	savegame.WriteInt( realClientTime );
+	savegame.WriteRenderHandle( realClientTime, "idGameLocal::realClientTime" );	//puncho - saves (P1-m10b)
 	savegame.WriteBool( isNewFrame );
 	savegame.WriteFloat( clientSmoothing );
 
@@ -680,10 +680,12 @@ void idGameLocal::SaveGame( idFile* f, idFile* strings )
 
 	savegame.WriteDict( &spawnArgs );
 
-	savegame.WriteInt( playerPVS.i );
-	savegame.WriteInt( playerPVS.h );
-	savegame.WriteInt( playerConnectedAreas.i );
-	savegame.WriteInt( playerConnectedAreas.h );
+	//puncho start - saves (P1-m10b)
+	savegame.WriteRenderHandle( playerPVS.i, "idGameLocal::playerPVS.i" );
+	savegame.WriteRenderHandle( playerPVS.h, "idGameLocal::playerPVS.h" );
+	savegame.WriteRenderHandle( playerConnectedAreas.i, "idGameLocal::playerConnectedAreas.i" );
+	savegame.WriteRenderHandle( playerConnectedAreas.h, "idGameLocal::playerConnectedAreas.h" );
+	//puncho end
 
 	savegame.WriteVec3( gravity );
 
@@ -1689,11 +1691,11 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 	// but to preserve savegame compatibility, we still need
 	// to read an int here even though it's not used.
 	int dummyLocalClientNum = 0;
-	savegame.ReadInt( dummyLocalClientNum );
+	savegame.ReadRenderHandle( dummyLocalClientNum, "idGameLocal::GetLocalClientNum" );	//puncho - saves (P1-m10b)
 
 	// snapshotEntities is used for multiplayer only
 
-	savegame.ReadInt( realClientTime );
+	savegame.ReadRenderHandle( realClientTime, "idGameLocal::realClientTime" );	//puncho - saves (P1-m10b)
 	savegame.ReadBool( isNewFrame );
 	savegame.ReadFloat( clientSmoothing );
 
@@ -1749,10 +1751,12 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 
 	savegame.ReadDict( &spawnArgs );
 
-	savegame.ReadInt( playerPVS.i );
-	savegame.ReadInt( ( int& )playerPVS.h );
-	savegame.ReadInt( playerConnectedAreas.i );
-	savegame.ReadInt( ( int& )playerConnectedAreas.h );
+	//puncho start - saves (P1-m10b)
+	savegame.ReadRenderHandle( playerPVS.i, "idGameLocal::playerPVS.i" );
+	savegame.ReadRenderHandle( ( int& )playerPVS.h, "idGameLocal::playerPVS.h" );
+	savegame.ReadRenderHandle( playerConnectedAreas.i, "idGameLocal::playerConnectedAreas.i" );
+	savegame.ReadRenderHandle( ( int& )playerConnectedAreas.h, "idGameLocal::playerConnectedAreas.h" );
+	//puncho end
 
 	savegame.ReadVec3( gravity );
 

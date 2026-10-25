@@ -37,14 +37,15 @@ If you have questions concerning this license or the applicable additional terms
 static const int	MAX_REPORTED = 16;		// findings printed in full per check; the rest are counted
 
 static const int	STREAMTRACE_FILE_ID			= ( 'S' << 24 ) | ( 'T' << 16 ) | ( 'R' << 8 ) | 'C';
-static const int	STREAMTRACE_FILE_VERSION	= 1;
+static const int	STREAMTRACE_FILE_VERSION	= 2;		// 2: SP_HANDLE entries, child naming the field; 1 had none
+static const int	STREAMTRACE_FILE_OLDEST		= 1;		// a version 1 trace is version 2 without the handles
 static const int	SNAPTRACE_FILE_ID			= ( 'S' << 24 ) | ( 'N' << 16 ) | ( 'T' << 8 ) | 'R';
 static const int	SNAPTRACE_FILE_VERSION		= 1;
 
 static const char* streamPrimitiveNames[ SP_NUM_PRIMITIVES ] =
 {
 	"SCOPE", "OPAQUE", "RAW", "INT", "JOINT", "SHORT", "BYTE", "SIGNEDCHAR", "FLOAT", "BOOL", "STRING",
-	"VEC2", "VEC3", "VEC4", "VEC6", "WINDING", "BOUNDS", "MAT3", "ANGLES", "OBJECT"
+	"VEC2", "VEC3", "VEC4", "VEC6", "WINDING", "BOUNDS", "MAT3", "ANGLES", "OBJECT", "HANDLE"
 };
 
 static const char* bitMsgPrimitiveNames[ BITMSG_NUM_PRIMITIVES ] =
@@ -54,35 +55,11 @@ static const char* bitMsgPrimitiveNames[ BITMSG_NUM_PRIMITIVES ] =
 };
 
 /*
-The byte allowlist of the save round trip (K3). A Restore re-acquires render handles through Add*Def, which hands
-them out with FindNull in restore order, so every int it overwrites that way may differ between the two saves; so
-may six named fields. A rule names the scope it applies to and the positions in it,
-counted from the scope's start or from the child scopes it anchors on (each one, or only the n-th from the last):
-delta entries after the anchor (negative: before it), count entries. A delta of 0 on an anchor allows the child.
+The byte allowlist of the save round trip (K3) is the write sites themselves: a Restore re-acquires its render handles
+through Add*Def, which hands them out with FindNull in restore order, so each int a Save writes with WriteRenderHandle
+is an SP_HANDLE entry named by its field, and that is the one entry whose bytes may differ between the two saves. A
+drifting value anywhere else fails however close to a handle it sits, since no position decides.
 */
-typedef struct streamTraceAllow_s
-{
-	const char* 		scope;
-	const char* 		anchor;		// NULL: count from the scope's start
-	int					fromEnd;	// 0: every anchor; n: the n-th anchor from the last
-	int					delta;
-	int					count;
-	const char* 		what;
-} streamTraceAllow_t;
-
-static const streamTraceAllow_t allowRules[] =
-{
-	{ "idEntity",			"renderEntity_t",	0,	1,	1,	"idEntity xrayEntityHandle, modelDefHandle (idEntity::Save)" },
-	{ "idExplodingBarrel",	"renderEntity_t",	0,	-2,	2,	"idExplodingBarrel particleModelDefHandle, lightDefHandle (idExplodingBarrel::Save)" },
-	{ "idProjectile",		"renderLight_t",	0,	1,	1,	"idProjectile lightDefHandle (idProjectile::Save)" },
-	{ "idBFGProjectile",	"renderEntity_t",	0,	1,	1,	"idBFGProjectile beam and second model handles (idBFGProjectile::Save)" },
-	{ "idWeapon",			"renderLight_t",	0,	-1,	1,	"idWeapon light and flash handles (idWeapon::Save)" },
-	{ "idClipModel",		NULL,				0,	12,	2,	"idClipModel renderModelHandle and link flag (idClipModel::Save)" },
-	{ "<globals>",			"usercmd_t",		0,	0,	0,	"the dummy usercmd" },
-	{ "<globals>",			"idDict",			1,	1,	4,	"playerPVS, playerConnectedAreas" },
-	{ "<globals>",			"idDict",			2,	MAX_GLOBAL_SHADER_PARMS + 15,	2,	"GetLocalClientNum, realClientTime" },
-};
-static const int NUM_ALLOW_RULES = sizeof( allowRules ) / sizeof( allowRules[ 0 ] );
 
 /*
 ===============================================================================
@@ -238,7 +215,7 @@ idStreamTrace::idStreamTrace()
 	scopes.SetGranularity( 4096 );
 	entries.SetGranularity( 65536 );
 	object = -1;
-	structEntered = false;
+	structEntered = NULL;
 }
 
 /*
@@ -257,7 +234,7 @@ void idStreamTrace::Clear()
 	counter.file = NULL;
 	counter.count = 0;
 	object = -1;
-	structEntered = false;
+	structEntered = NULL;
 }
 
 /*
@@ -295,7 +272,7 @@ void idStreamTrace::Finish()
 	stack.Clear();
 	counter.file = NULL;
 	object = -1;
-	structEntered = false;
+	structEntered = NULL;
 }
 
 /*
@@ -376,19 +353,21 @@ void idStreamTrace::EndScope()
 ================
 idStreamTrace::EnterStruct
 
-A struct writer opens its scope and calls itself, which runs its body with the scope open; the flag tells the inner
-call it is the inner one. An untraced stream never gets here, so the writer still costs one pointer test.
+A struct writer opens its scope and calls itself, which runs its body with the scope open; structEntered names the
+struct, which tells the inner call it is the inner one. The writer's next call must be that inner one, so the name
+must match. An untraced stream never gets here, so the writer still costs one pointer test.
 ================
 */
 bool idStreamTrace::EnterStruct( const char* name )
 {
-	if( structEntered )
+	if( structEntered != NULL )
 	{
-		structEntered = false;
+		assert( idStr::Cmp( structEntered, name ) == 0 );
+		structEntered = NULL;
 		return false;
 	}
 	BeginScope( name );
-	structEntered = true;
+	structEntered = name;
 	return true;
 }
 
@@ -406,6 +385,19 @@ void idStreamTrace::Primitive( streamPrimitive_t type, int size, unsigned int ha
 	e.hash = hash;
 	e.child = -1;
 	e.type = type;
+}
+
+/*
+================
+idStreamTrace::Handle
+
+The field's name goes in names, as a scope's does, so the entry can say which handle it is.
+================
+*/
+void idStreamTrace::Handle( const char* field )
+{
+	Primitive( SP_HANDLE, sizeof( int ), StringHash( field ) );
+	entries[ entries.Num() - 1 ].child = NameIndex( field );
 }
 
 /*
@@ -477,10 +469,11 @@ void idStreamTrace::IndexScopes( idList<int>& first, idList<int>& order ) const
 idStreamTrace::SameShape
 
 Compares one scope of this trace with one of another: name, object, and each entry's type and size, plus a string's
-hash when compareHashes is set (a child scope's name always). position is the first entry that differs.
+hash when compareHashes is set (a child scope's or a handle's name always). With handlesAsInts a handle compares as
+the INT it is in the stream, by type and size alone. position is the first entry that differs.
 ================
 */
-bool idStreamTrace::SameShape( const idStreamTrace& other, int scope, int otherScope, const idList<int>& first, const idList<int>& order, const idList<int>& otherFirst, const idList<int>& otherOrder, bool compareHashes, int& position ) const
+bool idStreamTrace::SameShape( const idStreamTrace& other, int scope, int otherScope, const idList<int>& first, const idList<int>& order, const idList<int>& otherFirst, const idList<int>& otherOrder, bool compareHashes, bool handlesAsInts, int& position ) const
 {
 	position = 0;
 	if( idStr::Cmp( ScopeName( scope ), other.ScopeName( otherScope ) ) != 0 || scopes[ scope ].object != other.scopes[ otherScope ].object )
@@ -493,11 +486,13 @@ bool idStreamTrace::SameShape( const idStreamTrace& other, int scope, int otherS
 	{
 		const streamTraceEntry_t& a = entries[ order[ first[ scope ] + position ] ];
 		const streamTraceEntry_t& b = other.entries[ otherOrder[ otherFirst[ otherScope ] + position ] ];
-		if( a.type != b.type || a.size != b.size )
+		const int aType = ( handlesAsInts && a.type == SP_HANDLE ) ? SP_INT : a.type;
+		const int bType = ( handlesAsInts && b.type == SP_HANDLE ) ? SP_INT : b.type;
+		if( aType != bType || a.size != b.size )
 		{
 			return false;
 		}
-		if( ( compareHashes || a.type == SP_SCOPE ) && a.hash != b.hash )
+		if( ( compareHashes || aType == SP_SCOPE || aType == SP_HANDLE ) && a.hash != b.hash )
 		{
 			return false;
 		}
@@ -523,6 +518,10 @@ void idStreamTrace::DescribeEntry( const streamTraceEntry_t* entry, idStr& out )
 	else if( entry->type == SP_STRING )
 	{
 		out = va( "STRING %d #%08x", entry->size, entry->hash );
+	}
+	else if( entry->type == SP_HANDLE )
+	{
+		out = va( "HANDLE %d %s", entry->size, names[ entry->child ].c_str() );
 	}
 	else
 	{
@@ -585,7 +584,7 @@ int idStreamTrace::CompareShapes( const idStreamTrace& write, const idStreamTrac
 	for( int s = 0; s < num; s++ )
 	{
 		int position;
-		if( write.SameShape( read, s, s, writeFirst, writeOrder, readFirst, readOrder, true, position ) )
+		if( write.SameShape( read, s, s, writeFirst, writeOrder, readFirst, readOrder, true, false, position ) )
 		{
 			continue;
 		}
@@ -607,110 +606,6 @@ int idStreamTrace::CompareShapes( const idStreamTrace& write, const idStreamTrac
 						  read.scopes[ s ].object, read.ScopeName( s ), position, ( w != NULL ) ? w->offset : -1, wrote.c_str(), readBack.c_str(), writeNum, readNum );
 	}
 	return failures;
-}
-
-/*
-================
-idStreamTrace::RuleCovers
-================
-*/
-bool idStreamTrace::RuleCovers( int rule, int scope, int position, const idList<int>& first, const idList<int>& order ) const
-{
-	const streamTraceAllow_t& r = allowRules[ rule ];
-	if( idStr::Cmp( ScopeName( scope ), r.scope ) != 0 )
-	{
-		return false;
-	}
-	if( r.anchor == NULL )
-	{
-		return ( position >= r.delta && position < r.delta + r.count );
-	}
-
-	const int start = first[ scope ];
-	const int num = first[ scope + 1 ] - start;
-
-	int numAnchors = 0;
-	for( int p = 0; p < num; p++ )
-	{
-		const streamTraceEntry_t& e = entries[ order[ start + p ] ];
-		if( e.type == SP_SCOPE && idStr::Cmp( ScopeName( e.child ), r.anchor ) == 0 )
-		{
-			numAnchors++;
-		}
-	}
-
-	int anchor = 0;
-	for( int p = 0; p < num; p++ )
-	{
-		const streamTraceEntry_t& e = entries[ order[ start + p ] ];
-		if( e.type != SP_SCOPE || idStr::Cmp( ScopeName( e.child ), r.anchor ) != 0 )
-		{
-			continue;
-		}
-		anchor++;
-		if( r.fromEnd != 0 && anchor != numAnchors - r.fromEnd + 1 )
-		{
-			continue;
-		}
-		if( r.delta == 0 )
-		{
-			if( position == p )
-			{
-				return true;
-			}
-		}
-		else if( position >= p + r.delta && position < p + r.delta + r.count )
-		{
-			return true;
-		}
-	}
-	return false;
-}
-
-/*
-================
-idStreamTrace::IsAllowed
-
-An entry is allowed by a rule on its own scope, or because a rule on an enclosing scope allows a whole child.
-================
-*/
-bool idStreamTrace::IsAllowed( int scope, int position, const idList<int>& first, const idList<int>& order, int& rule ) const
-{
-	for( rule = 0; rule < NUM_ALLOW_RULES; rule++ )
-	{
-		if( allowRules[ rule ].delta != 0 || allowRules[ rule ].anchor == NULL )
-		{
-			if( RuleCovers( rule, scope, position, first, order ) )
-			{
-				return true;
-			}
-		}
-	}
-
-	for( int child = scope; scopes[ child ].parent >= 0; child = scopes[ child ].parent )
-	{
-		const int parent = scopes[ child ].parent;
-		const int start = first[ parent ];
-		const int num = first[ parent + 1 ] - start;
-		for( int p = 0; p < num; p++ )
-		{
-			const streamTraceEntry_t& e = entries[ order[ start + p ] ];
-			if( e.type != SP_SCOPE || e.child != child )
-			{
-				continue;
-			}
-			for( rule = 0; rule < NUM_ALLOW_RULES; rule++ )
-			{
-				if( allowRules[ rule ].delta == 0 && allowRules[ rule ].anchor != NULL && RuleCovers( rule, parent, p, first, order ) )
-				{
-					return true;
-				}
-			}
-			break;
-		}
-	}
-	rule = -1;
-	return false;
 }
 
 /*
@@ -738,7 +633,7 @@ static void CountGroup( idStrList& groups, idList<int>& counts, idHashIndex& has
 ================
 idStreamTrace::CompareBytes
 
-K3, second half: two saves of the same state, byte for byte through their traces, apart from the allowlist. A
+K3, second half: two saves of the same state, byte for byte through their traces, apart from the render handles. A
 string compares by its text: its bytes are a table offset, which moves for every string the other save added first,
 and the tables follow from the texts. Where the two saves stop holding the same objects in the same order, the
 scopes no longer pair: that point is one failure, and nothing after it is compared. Both traces must have been
@@ -751,13 +646,14 @@ int idStreamTrace::CompareBytes( const idStreamTrace& a, const idStreamTrace& b,
 	a.IndexScopes( aFirst, aOrder );
 	b.IndexScopes( bFirst, bOrder );
 
-	int allowed[ NUM_ALLOW_RULES ];
-	memset( allowed, 0, sizeof( allowed ) );
-
-	// every failure also counts under its (scope, position, entry), so the whole tally prints however many there are
+	// every failure also counts under its (scope, position, entry), so the whole tally prints however many there are;
+	// every handle that differs counts under its field
 	idStrList groups;
 	idList<int> groupCounts;
 	idHashIndex groupHash;
+	idStrList handles;
+	idList<int> handleCounts;
+	idHashIndex handleHash;
 
 	int failures = 0;
 	int num = Min( a.scopes.Num(), b.scopes.Num() );
@@ -782,7 +678,7 @@ int idStreamTrace::CompareBytes( const idStreamTrace& a, const idStreamTrace& b,
 	for( int s = 0; s < num; s++ )
 	{
 		int position;
-		if( !a.SameShape( b, s, s, aFirst, aOrder, bFirst, bOrder, false, position ) )
+		if( !a.SameShape( b, s, s, aFirst, aOrder, bFirst, bOrder, false, false, position ) )
 		{
 			const int aNum = aFirst[ s + 1 ] - aFirst[ s ];
 			const int bNum = bFirst[ s + 1 ] - bFirst[ s ];
@@ -820,10 +716,9 @@ int idStreamTrace::CompareBytes( const idStreamTrace& a, const idStreamTrace& b,
 				continue;
 			}
 
-			int rule;
-			if( a.IsAllowed( s, p, aFirst, aOrder, rule ) )
+			if( ea.type == SP_HANDLE )
 			{
-				allowed[ rule ]++;
+				CountGroup( handles, handleCounts, handleHash, a.names[ ea.child ].c_str() );
 				continue;
 			}
 
@@ -870,12 +765,9 @@ int idStreamTrace::CompareBytes( const idStreamTrace& a, const idStreamTrace& b,
 	{
 		gameLocal.Printf( "  failed: and %d more kinds\n", groups.Num() - 4 * MAX_REPORTED );
 	}
-	for( int r = 0; r < NUM_ALLOW_RULES; r++ )
+	for( int h = 0; h < handles.Num(); h++ )
 	{
-		if( allowed[ r ] > 0 )
-		{
-			gameLocal.Printf( "  allowed: %5d x %s\n", allowed[ r ], allowRules[ r ].what );
-		}
+		gameLocal.Printf( "  allowed: %5d x %s\n", handleCounts[ h ], handles[ h ].c_str() );
 	}
 	return failures;
 }
@@ -885,9 +777,10 @@ typedef struct streamTraceClassStats_s
 {
 	int					paired;
 	int					differ;
+	int					handlesOnly;	// paired scopes that differ only in their handles
 	int					onlyBefore;
 	int					onlyNow;
-	int					object;			// the first difference
+	int					object;			// the first difference, or of handlesOnly if no scope differs
 	int					position;
 	idStr				before;
 	idStr				now;
@@ -910,7 +803,9 @@ static int ScopeKey( const char* name, int object )
 idStreamTrace::CompareClasses
 
 K5: a trace saved by an earlier build against this one. Scopes pair by (object, name, n-th such scope of the
-object); each pair compares type and size per position, never values, and the findings add up per class.
+object); each pair compares type and size per position, never values, and the findings add up per class. A pair
+that differs only where one build writes a WriteRenderHandle and the other the WriteInt of the same bytes, or a
+handle of another name, is counted apart: no byte of the save moved, only what the round trip lets differ.
 ================
 */
 int idStreamTrace::CompareClasses( const idStreamTrace& before, const idStreamTrace& now )
@@ -990,7 +885,7 @@ int idStreamTrace::CompareClasses( const idStreamTrace& before, const idStreamTr
 			c = classNames.Append( name );
 			classHash.Add( classKey, c );
 			streamTraceClassStats_t& n = stats.Alloc();
-			n.paired = n.differ = n.onlyBefore = n.onlyNow = 0;
+			n.paired = n.differ = n.handlesOnly = n.onlyBefore = n.onlyNow = 0;
 			n.object = n.position = -1;
 		}
 		streamTraceClassStats_t& st = stats[ c ];
@@ -1004,11 +899,24 @@ int idStreamTrace::CompareClasses( const idStreamTrace& before, const idStreamTr
 		st.paired++;
 
 		int position;
-		if( now.SameShape( before, s, match, nowFirst, nowOrder, beforeFirst, beforeOrder, false, position ) )
+		if( now.SameShape( before, s, match, nowFirst, nowOrder, beforeFirst, beforeOrder, false, false, position ) )
 		{
 			continue;
 		}
-		if( st.differ++ == 0 )
+		// again with each handle as the INT it is in the stream: a pass means only handles differ, and a failure's
+		// position is the first difference that is not a handle's
+		int intPosition;
+		bool first;
+		if( now.SameShape( before, s, match, nowFirst, nowOrder, beforeFirst, beforeOrder, false, true, intPosition ) )
+		{
+			first = ( st.handlesOnly++ == 0 && st.differ == 0 );
+		}
+		else
+		{
+			first = ( st.differ++ == 0 );
+			position = intPosition;
+		}
+		if( first )
 		{
 			const int nowNum = nowFirst[ s + 1 ] - nowFirst[ s ];
 			const int beforeNum = beforeFirst[ match + 1 ] - beforeFirst[ match ];
@@ -1029,11 +937,18 @@ int idStreamTrace::CompareClasses( const idStreamTrace& before, const idStreamTr
 	}
 
 	int classesDiffer = 0;
+	int classesHandlesOnly = 0;
 	for( int c = 0; c < classNames.Num(); c++ )
 	{
 		const streamTraceClassStats_t& st = stats[ c ];
 		if( st.differ == 0 && st.onlyNow == 0 )
 		{
+			if( st.handlesOnly > 0 )
+			{
+				classesHandlesOnly++;
+				gameLocal.Printf( "  %s: %d of %d paired scopes differ only in their handles; first at object %d, position %d: was %s, now %s\n", classNames[ c ].c_str(), st.handlesOnly, st.paired,
+								  st.object, st.position, st.before.c_str(), st.now.c_str() );
+			}
 			continue;
 		}
 		classesDiffer++;
@@ -1051,7 +966,7 @@ int idStreamTrace::CompareClasses( const idStreamTrace& before, const idStreamTr
 	{
 		gameLocal.Printf( "  %d scopes of the old trace have no partner here\n", onlyBefore );
 	}
-	gameLocal.Printf( "  %d classes, %d scopes in the old trace, %d here\n", classNames.Num(), before.scopes.Num(), now.scopes.Num() );
+	gameLocal.Printf( "  %d classes, %d scopes in the old trace, %d here; %d classes differ only in their handles (not counted)\n", classNames.Num(), before.scopes.Num(), now.scopes.Num(), classesHandlesOnly );
 	return classesDiffer;
 }
 
@@ -1138,9 +1053,9 @@ bool idStreamTrace::ReadFile( const char* fileName )
 	int id = 0, version = 0, num = 0;
 	f->ReadBig( id );
 	f->ReadBig( version );
-	if( id != STREAMTRACE_FILE_ID || version != STREAMTRACE_FILE_VERSION )
+	if( id != STREAMTRACE_FILE_ID || version < STREAMTRACE_FILE_OLDEST || version > STREAMTRACE_FILE_VERSION )
 	{
-		gameLocal.Printf( "  %s is not a stream trace of version %d\n", fileName, STREAMTRACE_FILE_VERSION );
+		gameLocal.Printf( "  %s is not a stream trace of version %d to %d\n", fileName, STREAMTRACE_FILE_OLDEST, STREAMTRACE_FILE_VERSION );
 		fileSystem->CloseFile( f );
 		return false;
 	}
@@ -1182,7 +1097,15 @@ bool idStreamTrace::ReadFile( const char* fileName )
 					f->ReadBig( e.size );
 					f->ReadBig( e.hash );
 					f->ReadBig( e.child );
-					ok = ( f->Read( &e.type, 1 ) == 1 && e.scope < scopes.Num() && e.child < scopes.Num() && ( e.type != SP_SCOPE || e.child >= 0 ) );
+					ok = ( f->Read( &e.type, 1 ) == 1 && e.scope < scopes.Num() );
+					if( e.type == SP_HANDLE )
+					{
+						ok = ok && ( e.child >= 0 && e.child < names.Num() );		// a field name
+					}
+					else
+					{
+						ok = ok && ( e.child < scopes.Num() && ( e.type != SP_SCOPE || e.child >= 0 ) );
+					}
 				}
 			}
 		}

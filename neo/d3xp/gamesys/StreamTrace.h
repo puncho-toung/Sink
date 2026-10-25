@@ -42,12 +42,13 @@ If you have questions concerning this license or the applicable additional terms
 	- one per class level, around the Save or Restore that CallSave_r / CallRestore_r runs, keyed by the object's
 	  index in the save's object list and the class name, so a WriteStaticObject nests inside its owner;
 	- the pseudo-scopes <globals> (the stream itself), <program>, <events>, <sound> and <tracemodels>;
-	- a struct scope where the byte allowlist needs a key or a position to count from: idClipModel, renderEntity_t,
-	  renderLight_t, usercmd_t and idDict.
+	- a struct scope for idClipModel, renderEntity_t, renderLight_t, usercmd_t and idDict.
 	A child shows in its parent as one SP_SCOPE entry, so the parent's positions do not move with what the child
-	holds. The three paths that bypass the primitives (the sound world, a GUI's state and the trace-model padding)
-	record one SP_OPAQUE entry, sized by the bytes that went through the stream's file: Length() on the pipelined
-	save file is the compressed size and its Tell() asserts, so the count is taken in front of it.
+	holds. An int written by idSaveGame::WriteRenderHandle is an SP_HANDLE entry named by its field: the one value the
+	round trip's byte compare lets differ (K3), since a load may give it back changed (a Restore re-acquires a render
+	handle from the render world). The three paths that bypass the primitives (the sound world, a GUI's state and the
+	trace-model padding) record one SP_OPAQUE entry, sized by the bytes that went through the stream's file: Length()
+	on the pipelined save file is the compressed size and its Tell() asserts, so the count is taken in front of it.
 
 	A snapshot trace (idSnapshotTrace) is the sink of each object's idBitMsg in a snapshot, keyed by (snapshot time,
 	object number). net_snapTrace sends the host's writes or a client's reads to a file; testSnapTraceCompare matches
@@ -78,6 +79,7 @@ enum streamPrimitive_t
 	SP_MAT3,
 	SP_ANGLES,
 	SP_OBJECT,
+	SP_HANDLE,			// WriteRenderHandle's int; hash is the CRC-32 of its field name
 	SP_NUM_PRIMITIVES
 };
 
@@ -86,8 +88,8 @@ typedef struct streamTraceEntry_s
 	int					scope;		// the scope the entry belongs to
 	int					offset;		// its first byte in the stream
 	int					size;		// in bytes; 0 for SP_SCOPE
-	unsigned int		hash;		// a string's text or a child scope's name; 0 otherwise
-	int					child;		// SP_SCOPE: the child's scope index; -1 otherwise
+	unsigned int		hash;		// a string's text, a child scope's name or a handle's field name; 0 otherwise
+	int					child;		// SP_SCOPE: the child's scope index; SP_HANDLE: the field's index in names; -1 otherwise
 	byte				type;		// streamPrimitive_t
 } streamTraceEntry_t;
 
@@ -146,6 +148,7 @@ public:
 	void					EndScope();
 	bool					EnterStruct( const char* name );	// see idSaveGame::WriteRenderEntity
 	void					Primitive( streamPrimitive_t type, int size, unsigned int hash );	// after the bytes moved
+	void					Handle( const char* field );		// a render handle's int, after it moved; field is static storage
 	void					Opaque( int start );				// the bytes since Tell() returned start
 	int						Tell() const
 	{
@@ -178,7 +181,7 @@ public:
 	}
 
 private:
-	idStrList				names;			// scope names, each once
+	idStrList				names;			// scope and handle field names, each once
 	idHashIndex				nameHash;
 	idList<streamTraceScope_t>	scopes;		// in the order they opened
 	idList<streamTraceEntry_t>	entries;	// in stream order
@@ -186,7 +189,7 @@ private:
 	idList<byte>			bytes;			// the captured stream, with capture set
 	idFile_StreamTrace		counter;
 	int						object;			// the current top-level object, -1 outside the object loop
-	bool					structEntered;
+	const char* 			structEntered;	// the struct whose writer calls itself next, or NULL
 
 	int						NameIndex( const char* name );
 	const char* 			ScopeName( int scope ) const
@@ -194,9 +197,7 @@ private:
 		return names[ scopes[ scope ].name ].c_str();
 	}
 	void					IndexScopes( idList<int>& first, idList<int>& order ) const;
-	bool					SameShape( const idStreamTrace& other, int scope, int otherScope, const idList<int>& first, const idList<int>& order, const idList<int>& otherFirst, const idList<int>& otherOrder, bool compareHashes, int& position ) const;
-	bool					IsAllowed( int scope, int position, const idList<int>& first, const idList<int>& order, int& rule ) const;
-	bool					RuleCovers( int rule, int scope, int position, const idList<int>& first, const idList<int>& order ) const;
+	bool					SameShape( const idStreamTrace& other, int scope, int otherScope, const idList<int>& first, const idList<int>& order, const idList<int>& otherFirst, const idList<int>& otherOrder, bool compareHashes, bool handlesAsInts, int& position ) const;
 	void					DescribeEntry( const streamTraceEntry_t* entry, idStr& out ) const;
 };
 

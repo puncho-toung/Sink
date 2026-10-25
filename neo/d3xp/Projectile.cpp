@@ -138,7 +138,7 @@ void idProjectile::Save( idSaveGame* savefile ) const
 	savefile->WriteInt( thrust_end );
 
 	savefile->WriteRenderLight( renderLight );
-	savefile->WriteInt( ( int )lightDefHandle );
+	savefile->WriteRenderHandle( ( int )lightDefHandle, "idProjectile::lightDefHandle" );	//puncho - saves (P1-m10b)
 	savefile->WriteVec3( lightOffset );
 	savefile->WriteInt( lightStartTime );
 	savefile->WriteInt( lightEndTime );
@@ -174,7 +174,7 @@ void idProjectile::Restore( idRestoreGame* savefile )
 	savefile->ReadInt( thrust_end );
 
 	savefile->ReadRenderLight( renderLight );
-	savefile->ReadInt( ( int& )lightDefHandle );
+	savefile->ReadRenderHandle( ( int& )lightDefHandle, "idProjectile::lightDefHandle" );	//puncho - saves (P1-m10b)
 	savefile->ReadVec3( lightOffset );
 	savefile->ReadInt( lightStartTime );
 	savefile->ReadInt( lightEndTime );
@@ -2370,11 +2370,11 @@ void idBFGProjectile::Save( idSaveGame* savefile ) const
 	{
 		beamTargets[i].target.Save( savefile );
 		savefile->WriteRenderEntity( beamTargets[i].renderEntity );
-		savefile->WriteInt( beamTargets[i].modelDefHandle );
+		savefile->WriteRenderHandle( beamTargets[i].modelDefHandle, "idBFGProjectile::beamTargets.modelDefHandle" );	//puncho - saves (P1-m10b)
 	}
 
 	savefile->WriteRenderEntity( secondModel );
-	savefile->WriteInt( secondModelDefHandle );
+	savefile->WriteRenderHandle( secondModelDefHandle, "idBFGProjectile::secondModelDefHandle" );	//puncho - saves (P1-m10b)
 	savefile->WriteInt( nextDamageTime );
 	savefile->WriteString( damageFreq );
 }
@@ -2394,7 +2394,7 @@ void idBFGProjectile::Restore( idRestoreGame* savefile )
 	{
 		beamTargets[i].target.Restore( savefile );
 		savefile->ReadRenderEntity( beamTargets[i].renderEntity );
-		savefile->ReadInt( beamTargets[i].modelDefHandle );
+		savefile->ReadRenderHandle( beamTargets[i].modelDefHandle, "idBFGProjectile::beamTargets.modelDefHandle" );	//puncho - saves (P1-m10b)
 
 		if( beamTargets[i].modelDefHandle >= 0 )
 		{
@@ -2403,7 +2403,7 @@ void idBFGProjectile::Restore( idRestoreGame* savefile )
 	}
 
 	savefile->ReadRenderEntity( secondModel );
-	savefile->ReadInt( secondModelDefHandle );
+	savefile->ReadRenderHandle( secondModelDefHandle, "idBFGProjectile::secondModelDefHandle" );	//puncho - saves (P1-m10b)
 	savefile->ReadInt( nextDamageTime );
 	savefile->ReadString( damageFreq );
 

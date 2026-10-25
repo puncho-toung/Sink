@@ -368,13 +368,13 @@ void idWeapon::Save( idSaveGame* savefile ) const
 	savefile->WriteString( displayName );
 	savefile->WriteString( itemDesc );
 
-	savefile->WriteInt( guiLightHandle );
+	savefile->WriteRenderHandle( guiLightHandle, "idWeapon::guiLightHandle" );	//puncho - saves (P1-m10b)
 	savefile->WriteRenderLight( guiLight );
 
-	savefile->WriteInt( muzzleFlashHandle );
+	savefile->WriteRenderHandle( muzzleFlashHandle, "idWeapon::muzzleFlashHandle" );	//puncho - saves (P1-m10b)
 	savefile->WriteRenderLight( muzzleFlash );
 
-	savefile->WriteInt( worldMuzzleFlashHandle );
+	savefile->WriteRenderHandle( worldMuzzleFlashHandle, "idWeapon::worldMuzzleFlashHandle" );	//puncho - saves (P1-m10b)
 	savefile->WriteRenderLight( worldMuzzleFlash );
 
 	savefile->WriteVec3( flashColor );
@@ -430,7 +430,7 @@ void idWeapon::Save( idSaveGame* savefile ) const
 
 	savefile->WriteInt( lastAttack );
 
-	savefile->WriteInt( nozzleGlowHandle );
+	savefile->WriteRenderHandle( nozzleGlowHandle, "idWeapon::nozzleGlowHandle" );	//puncho - saves (P1-m10b)
 	savefile->WriteRenderLight( nozzleGlow );
 
 	savefile->WriteVec3( nozzleGlowColor );
@@ -474,7 +474,7 @@ void idWeapon::Save( idSaveGame* savefile ) const
 		savefile->WriteBool( light->active );
 		savefile->WriteInt( light->startTime );
 		savefile->WriteJoint( light->joint );
-		savefile->WriteInt( light->lightHandle );
+		savefile->WriteRenderHandle( light->lightHandle, "idWeapon::weaponLights.lightHandle" );	//puncho - saves (P1-m10b)
 		savefile->WriteRenderLight( light->light );
 	}
 
@@ -563,21 +563,21 @@ void idWeapon::Restore( idRestoreGame* savefile )
 	savefile->ReadString( displayName );
 	savefile->ReadString( itemDesc );
 
-	savefile->ReadInt( guiLightHandle );
+	savefile->ReadRenderHandle( guiLightHandle, "idWeapon::guiLightHandle" );	//puncho - saves (P1-m10b)
 	savefile->ReadRenderLight( guiLight );
 	if( guiLightHandle >= 0 )
 	{
 		guiLightHandle = gameRenderWorld->AddLightDef( &guiLight );
 	}
 
-	savefile->ReadInt( muzzleFlashHandle );
+	savefile->ReadRenderHandle( muzzleFlashHandle, "idWeapon::muzzleFlashHandle" );	//puncho - saves (P1-m10b)
 	savefile->ReadRenderLight( muzzleFlash );
 	if( muzzleFlashHandle >= 0 )
 	{
 		muzzleFlashHandle = gameRenderWorld->AddLightDef( &muzzleFlash );
 	}
 
-	savefile->ReadInt( worldMuzzleFlashHandle );
+	savefile->ReadRenderHandle( worldMuzzleFlashHandle, "idWeapon::worldMuzzleFlashHandle" );	//puncho - saves (P1-m10b)
 	savefile->ReadRenderLight( worldMuzzleFlash );
 	if( worldMuzzleFlashHandle >= 0 )
 	{
@@ -642,7 +642,7 @@ void idWeapon::Restore( idRestoreGame* savefile )
 
 	savefile->ReadInt( lastAttack );
 
-	savefile->ReadInt( nozzleGlowHandle );
+	savefile->ReadRenderHandle( nozzleGlowHandle, "idWeapon::nozzleGlowHandle" );	//puncho - saves (P1-m10b)
 	savefile->ReadRenderLight( nozzleGlow );
 	if( nozzleGlowHandle >= 0 )
 	{
@@ -711,7 +711,7 @@ void idWeapon::Restore( idRestoreGame* savefile )
 		savefile->ReadBool( newLight.active );
 		savefile->ReadInt( newLight.startTime );
 		savefile->ReadJoint( newLight.joint );
-		savefile->ReadInt( newLight.lightHandle );
+		savefile->ReadRenderHandle( newLight.lightHandle, "idWeapon::weaponLights.lightHandle" );	//puncho - saves (P1-m10b)
 		savefile->ReadRenderLight( newLight.light );
 		if( newLight.lightHandle >= 0 )
 		{
