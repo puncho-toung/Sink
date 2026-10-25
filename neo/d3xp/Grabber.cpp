@@ -386,7 +386,10 @@ void idGrabber::StopDrag( bool dropOnly )
 			{
 				idAI* aiEnt = static_cast<idAI*>( ent );
 
-				aiEnt->Damage( thePlayer, thePlayer, vec3_origin, "damage_suicide", 1.0f, INVALID_JOINT );
+				if( idEntity::MayDamageHere( aiEnt ) )	//puncho - MP-C7 (P0-M2): a dropped monster dies on the server only
+				{
+					aiEnt->Damage( thePlayer, thePlayer, vec3_origin, "damage_suicide", 1.0f, INVALID_JOINT );
+				}
 			}
 
 			af->SetThrown( !dropOnly );

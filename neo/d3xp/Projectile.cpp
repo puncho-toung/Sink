@@ -768,12 +768,7 @@ bool idProjectile::Collide( const trace_t& collision, const idVec3& velocity )
 			// idPlayer::Damage sends the hit claim to the server (a head attachment passes it on to its body).
 			// Everything else is the server's to damage: a client that ran Damage on its own copy of a monster
 			// would kill it and fire its targets (idAI::Killed) where the server never did
-			const idEntity* victim = ent;
-			if( ent->IsType( idAFAttachment::Type ) && static_cast<const idAFAttachment*>( ent )->GetBody() != NULL )
-			{
-				victim = static_cast<const idAFAttachment*>( ent )->GetBody();
-			}
-			const bool clientHitPlayer = common->IsClient() && victim->IsType( idPlayer::Type );
+			const bool clientHitPlayer = common->IsClient() && idEntity::MayDamageHere( ent );
 			//puncho end
 
 			// Only handle the server's own attacks here. Attacks by other players on the server occur through
@@ -2145,7 +2140,10 @@ void idSoulCubeMissile::KillTarget( const idVec3& dir )
 		{
 			static_cast<idPlayer*>( ownerEnt )->GiveHealthPool( act->health );
 		}
-		act->Damage( this, owner.GetEntity(), dir,  spawnArgs.GetString( "def_damage" ), 1.0f, INVALID_JOINT );
+		if( idEntity::MayDamageHere( act ) )	//puncho - MP-C7 (P0-M2): a client's cube kills on the server only
+		{
+			act->Damage( this, owner.GetEntity(), dir,  spawnArgs.GetString( "def_damage" ), 1.0f, INVALID_JOINT );
+		}
 		act->GetAFPhysics()->SetTimeScale( 0.25 );
 		StartSound( "snd_explode", SND_CHANNEL_BODY, 0, false, NULL );
 	}
@@ -2490,7 +2488,10 @@ void idBFGProjectile::Think()
 				{
 					org = beamTargets[i].target.GetEntity()->GetPhysics()->GetOrigin() - GetPhysics()->GetOrigin();
 					org.Normalize();
-					beamTargets[i].target.GetEntity()->Damage( this, owner.GetEntity(), org, damageFreq, ( damagePower ) ? damagePower : 1.0f, INVALID_JOINT );
+					if( idEntity::MayDamageHere( beamTargets[i].target.GetEntity() ) )	//puncho - MP-C7 (P0-M2): a client's beam damages players only
+					{
+						beamTargets[i].target.GetEntity()->Damage( this, owner.GetEntity(), org, damageFreq, ( damagePower ) ? damagePower : 1.0f, INVALID_JOINT );
+					}
 				}
 				else
 				{
@@ -2758,7 +2759,8 @@ void idBFGProjectile::Explode( const trace_t& collision, idEntity* ignore )
 			}
 		}
 
-		if( damage[0] && ( beamTargets[i].target.GetEntity()->entityNumber > gameLocal.numClients - 1 ) )
+		//puncho - MP-C7 (P0-M2): on a client nothing here: players are excluded by entity number, everything else by MayDamageHere
+		if( damage[0] && ( beamTargets[i].target.GetEntity()->entityNumber > gameLocal.numClients - 1 ) && idEntity::MayDamageHere( beamTargets[i].target.GetEntity() ) )
 		{
 			dir = beamTargets[i].target.GetEntity()->GetPhysics()->GetOrigin() - GetPhysics()->GetOrigin();
 			dir.Normalize();

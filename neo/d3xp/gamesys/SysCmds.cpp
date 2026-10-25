@@ -3139,6 +3139,116 @@ static void Cmd_TestDeclRemap_f( const idCmdArgs& args )
 }
 //puncho end
 
+//puncho start - gate tools for plans/phase1/02-FIXES.md track F3
+/*
+==================
+Cmd_TestLaunch_f
+
+testLaunch <projectileDef> <target> [dmgPower]: launches a projectile from the local player's eye at the target's centre,
+spawned as idWeapon::Event_LaunchProjectiles spawns it on this peer: replicated on the host, net_skip_replication on a
+client. So a client's BFG, rocket or soul cube runs its Launch, Think, Collide and Explode on the client, with no attack
+button and no aim.
+==================
+*/
+static void Cmd_TestLaunch_f( const idCmdArgs& args )
+{
+	idPlayer* player = gameLocal.GetLocalPlayer();
+	if( player == NULL || args.Argc() < 3 )
+	{
+		gameLocal.Printf( "usage: testLaunch <projectileDef> <target> [dmgPower]\n" );
+		return;
+	}
+	const idDict* def = gameLocal.FindEntityDefDict( args.Argv( 1 ), false );
+	idEntity* target = gameLocal.FindEntity( args.Argv( 2 ) );
+	if( def == NULL || target == NULL )
+	{
+		gameLocal.Printf( "testLaunch: no entityDef '%s' or no entity '%s'\n", args.Argv( 1 ), args.Argv( 2 ) );
+		return;
+	}
+	const float dmgPower = ( args.Argc() > 3 ) ? atof( args.Argv( 3 ) ) : 1.0f;
+
+	idDict projectileDict = *def;
+	projectileDict.SetBool( "net_skip_replication", common->IsClient() );	// before the spawn: it picks the slot range
+	idEntity* ent = NULL;
+	gameLocal.SpawnEntityDef( projectileDict, &ent, false );
+	if( ent == NULL || !ent->IsType( idProjectile::Type ) )
+	{
+		gameLocal.Printf( "testLaunch: '%s' is not an idProjectile\n", args.Argv( 1 ) );
+		delete ent;
+		return;
+	}
+
+	idProjectile* proj = static_cast< idProjectile* >( ent );
+	const idVec3 eye = player->GetEyePosition();
+	idVec3 dir = target->GetPhysics()->GetAbsBounds().GetCenter() - eye;
+	dir.Normalize();
+	const idVec3 start = eye + dir * 40.0f;	// outside the owner's bounds
+	proj->Create( player, start, dir );
+	proj->Launch( start, dir, vec3_origin, 0.0f, 1.0f, dmgPower );
+	gameLocal.Printf( "testLaunch: %s launched %s, entity %d, skipReplication %d, at '%s' (entity %d)\n", common->IsClient() ? "client" : "host",
+					  args.Argv( 1 ), ent->entityNumber, ent->fl.skipReplication ? 1 : 0, target->name.c_str(), target->entityNumber );
+}
+
+/*
+==================
+Cmd_TestUnspectate_f
+
+testUnspectate: on the host, every player wants to play, as pressing attack while spectating asks, so warmup can end
+==================
+*/
+static void Cmd_TestUnspectate_f( const idCmdArgs& args )
+{
+	if( !common->IsServer() )
+	{
+		gameLocal.Printf( "testUnspectate: runs on a multiplayer host\n" );
+		return;
+	}
+	int players = 0;
+	for( int i = 0; i < gameLocal.numClients; i++ )
+	{
+		idEntity* ent = gameLocal.entities[ i ];
+		if( ent == NULL || !ent->IsType( idPlayer::Type ) )
+		{
+			continue;
+		}
+		idPlayer* player = static_cast< idPlayer* >( ent );
+		if( player->wantSpectate )
+		{
+			player->forceRespawn = true;
+		}
+		player->wantSpectate = false;
+		players++;
+	}
+	gameLocal.Printf( "testUnspectate: %d players want to play\n", players );
+}
+
+/*
+==================
+Cmd_TestEntState_f
+
+testEntState <entity>...: this peer's view of each entity, so a host's and a client's lines can be compared
+==================
+*/
+static void Cmd_TestEntState_f( const idCmdArgs& args )
+{
+	const char* peer = common->IsClient() ? "client" : "host";
+	for( int i = 1; i < args.Argc(); i++ )
+	{
+		idEntity* ent = gameLocal.FindEntity( args.Argv( i ) );
+		if( ent == NULL )
+		{
+			gameLocal.Printf( "testEntState %s %s: gone\n", peer, args.Argv( i ) );
+			continue;
+		}
+		const renderEntity_t* re = ent->GetRenderEntity();
+		gameLocal.Printf( "testEntState %s %s: entity %d %s, health %d, takedamage %d, hidden %d, contents %d, networkSync %d, model %s, mode %g, timeOffset %g\n",
+						  peer, ent->name.c_str(), ent->entityNumber, ent->GetClassname(), ent->health, ent->fl.takedamage ? 1 : 0, ent->IsHidden() ? 1 : 0,
+						  ent->GetPhysics()->GetContents(), ent->fl.networkSync ? 1 : 0, ( re->hModel != NULL ) ? re->hModel->Name() : "none",
+						  re->shaderParms[ SHADERPARM_MODE ], re->shaderParms[ SHADERPARM_TIMEOFFSET ] );
+	}
+}
+//puncho end
+
 /*
 ==================
 Cmd_RecordViewNotes_f
@@ -3641,6 +3751,11 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "testSnapTraceCompare",	Cmd_TestSnapTraceCompare_f,	CMD_FL_GAME,				"testSnapTraceCompare <host file> <client file>: matches a client's net_snapTrace reads with the host's writes" );
 	//puncho end
 	cmdSystem->AddCommand( "testSpawnChurn",		Cmd_TestSpawnChurn_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"spawns and deletes entities to test the per-slot spawn-id generation" );	//puncho - identity (P1-A2)
+	//puncho start - gate tools for plans/phase1/02-FIXES.md track F3
+	cmdSystem->AddCommand( "testLaunch",			Cmd_TestLaunch_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"testLaunch <projectileDef> <target> [dmgPower]: launches a projectile at an entity as this peer's weapon would" );
+	cmdSystem->AddCommand( "testUnspectate",		Cmd_TestUnspectate_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"on a multiplayer host, makes every player want to play, so warmup can end" );
+	cmdSystem->AddCommand( "testEntState",			Cmd_TestEntState_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"testEntState <entity>...: prints this peer's view of each entity" );
+	//puncho end
 	cmdSystem->AddCommand( "testDeclRemap",			Cmd_TestDeclRemap_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"drives the implicit decl announce table: make, decode, sound, rocket, impact, fx, speakers" );	//puncho - content check (P1-A3a)
 	cmdSystem->AddCommand( "testModel",				idTestModel::TestModel_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"tests a model", idTestModel::ArgCompletion_TestModel );
 	cmdSystem->AddCommand( "testSkin",				idTestModel::TestSkin_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"tests a skin on an existing testModel", idCmdSystem::ArgCompletion_Decl<DECL_SKIN> );

@@ -3708,6 +3708,30 @@ void idEntity::RemoveContactEntity( idEntity* ent )
 
 ***********************************************************************/
 
+//puncho start - MP-C7 (plans/phase1/02-FIXES.md P0-M2)
+/*
+============
+idEntity::MayDamageHere
+
+A client's own projectiles, beams and splash run on the client (net_skip_replication), and so do KillBox and the
+grabber. Damage on the client's copy of a monster or a breakable would kill it and fire its targets where the server
+never did, so every such site asks this first. A head is an idAFAttachment whose Damage passes to its body.
+============
+*/
+bool idEntity::MayDamageHere( const idEntity* victim )
+{
+	if( !common->IsClient() )
+	{
+		return true;
+	}
+	if( victim != NULL && victim->IsType( idAFAttachment::Type ) && static_cast< const idAFAttachment* >( victim )->GetBody() != NULL )
+	{
+		victim = static_cast< const idAFAttachment* >( victim )->GetBody();
+	}
+	return victim != NULL && victim->IsType( idPlayer::Type );
+}
+//puncho end
+
 /*
 ============
 idEntity::CanDamage

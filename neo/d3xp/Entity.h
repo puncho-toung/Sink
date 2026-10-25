@@ -424,6 +424,12 @@ public:
 	// applies damage to this entity
 	virtual	void			Damage( idEntity* inflictor, idEntity* attacker, const idVec3& dir, const char* damageDefName, const float damageScale, const int location );
 
+	//puncho start - MP-C7 (plans/phase1/02-FIXES.md P0-M2): whether this peer may apply damage to victim. A client
+	// damages players only, directly or through an idAFAttachment on one, since idPlayer::Damage sends the hit claim;
+	// every other entity is the server's to damage, kill and fire targets for
+	static bool				MayDamageHere( const idEntity* victim );
+	//puncho end
+
 	// adds a damage effect like overlays, blood, sparks, debris etc.
 	virtual void			AddDamageEffect( const trace_t& collision, const idVec3& velocity, const char* damageDefName );
 
