@@ -44,6 +44,8 @@ static const int SNAP_ENTITIES = SNAP_PLAYERSTATE_END;
 static const int SNAP_ENTITIES_END = SNAP_ENTITIES + MAX_GENTITIES;
 static const int SNAP_LAST_CLIENT_FRAME = SNAP_ENTITIES_END;
 static const int SNAP_LAST_CLIENT_FRAME_END = SNAP_LAST_CLIENT_FRAME + MAX_PLAYERS;
+//puncho - P0-m9: the objects other than entities fit the snapshot layer's budget for them (sys/sys_session.h)
+compile_time_assert( SNAP_LAST_CLIENT_FRAME_END - MAX_GENTITIES <= MAX_NET_FIXED_OBJECTS );
 
 /*
 ===============================================================================

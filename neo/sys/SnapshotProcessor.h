@@ -146,13 +146,19 @@ private:
 		// The real solution should be coming soon.
 		// Doom MP: we encountered the same problem, going from 1024 to 4096 as well until a better solution is in place
 		// (initial, useless, exchange of func_statics is killing us)
-		// D3-Sink 2026-10-23: one object per replicated entity, so this mirrors MAX_GENTITIES
-		// (GENTITYNUM_BITS 14 in d3xp/Game_local.h, which this layer cannot include) plus the
-		// fixed snapshot objects; about 1.3 MB per processor
-		static const int MAX_OBJ_PARMS		= 16384 + 128;
-
-		static const int MAX_LZW_PARMS		= 32;
+		// D3-Sink 2026-10-23: one object per replicated entity plus the fixed snapshot objects;
+		// about 1.3 MB per processor
+		//puncho start - P0-m9 (plans/phase1/02-FIXES.md): both terms from sys/sys_session.h, which the game asserts
+		// against. An LZW job takes the objects of one batch, closed at MAX_OBJ_HEADERS objects or when idLobby's
+		// 128 KB of object job memory is full, so twice the header batches of a full table covers objects of up to
+		// about 1 KB on average. The batches split where they always did: only a snapshot past the old 32 jobs (8192
+		// objects at most) changes, from a fatal error to sent, so no wire byte changes
+		static const int MAX_OBJ_PARMS		= MAX_NET_ENTITIES + MAX_NET_FIXED_OBJECTS;
 		static const int MAX_OBJ_HEADERS	= 256;
+		static const int MAX_LZW_PARMS		= 2 * ( ( MAX_OBJ_PARMS + MAX_OBJ_HEADERS - 1 ) / MAX_OBJ_HEADERS );
+		// the game's object numbers stay below MAX_OBJ_PARMS and cross the jobs as uint16 (objJobState_t)
+		compile_time_assert( MAX_OBJ_PARMS <= 1 << 16 );
+		//puncho end
 		static const int MAX_LZW_MEM		= 1024 * 8;		// 8k in the byte * lzwMem buffers, must be <= PS3_DMA_MAX
 
 		// Parm memory to jobs

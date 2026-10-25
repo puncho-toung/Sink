@@ -3247,6 +3247,51 @@ static void Cmd_TestEntState_f( const idCmdArgs& args )
 						  re->shaderParms[ SHADERPARM_MODE ], re->shaderParms[ SHADERPARM_TIMEOFFSET ] );
 	}
 }
+
+/*
+==================
+Cmd_TestSnapSubmit_f
+
+testSnapSubmit <objects> <bytes>: one synthetic snapshot of <objects> objects of <bytes> random bytes each, through the
+host's submit path (idSnapshotProcessor::SubmitPendingSnap with idLobby's 128 KB of object job memory) against an empty
+base, so every object is new. A full table is MAX_GENTITIES entity objects and the game's fixed ones: 16403 today.
+A cap reached ends in idLib::Error; reaching the PASS line means the jobs took it.
+==================
+*/
+static void Cmd_TestSnapSubmit_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 3 )
+	{
+		gameLocal.Printf( "usage: testSnapSubmit <objects> <bytes>\n" );
+		return;
+	}
+	const int numObjects = idMath::ClampInt( 1, MAX_NET_ENTITIES + MAX_NET_FIXED_OBJECTS, atoi( args.Argv( 1 ) ) );
+	const int objectBytes = idMath::ClampInt( 1, 4096, atoi( args.Argv( 2 ) ) );
+	const int objMemorySize = 128 * 1024;	// idLobby::SNAP_OBJ_JOB_MEMORY
+
+	idSnapShot ss;
+	idTempArray< byte > data( objectBytes );
+	idRandom random( 1 );
+	for( int i = 0; i < numObjects; i++ )
+	{
+		for( int b = 0; b < objectBytes; b++ )
+		{
+			data[ b ] = ( byte )( 1 + random.RandomInt( 254 ) );
+		}
+		ss.S_AddObject( i, ~0U, data.Ptr(), objectBytes );
+	}
+
+	idSnapshotProcessor* proc = new( TAG_NETWORKING ) idSnapshotProcessor();
+	uint8* objMemory = ( uint8* )Mem_Alloc16( objMemorySize, TAG_NETWORKING );
+	lzwCompressionData_t* lzwData = ( lzwCompressionData_t* )Mem_Alloc( sizeof( lzwCompressionData_t ), TAG_NETWORKING );
+	gameLocal.Printf( "testSnapSubmit: submitting %d objects of %d bytes\n", numObjects, objectBytes );
+	proc->TrySetPendingSnapshot( ss );
+	proc->SubmitPendingSnap( 1, objMemory, objMemorySize, lzwData );
+	gameLocal.Printf( "testSnapSubmit: PASS: %d objects of %d bytes submitted, delta ready %d\n", numObjects, objectBytes, proc->PendingSnapReadyToSend() ? 1 : 0 );
+	Mem_Free( lzwData );
+	Mem_Free16( objMemory );
+	delete proc;
+}
 //puncho end
 
 /*
@@ -3755,6 +3800,7 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "testLaunch",			Cmd_TestLaunch_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"testLaunch <projectileDef> <target> [dmgPower]: launches a projectile at an entity as this peer's weapon would" );
 	cmdSystem->AddCommand( "testUnspectate",		Cmd_TestUnspectate_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"on a multiplayer host, makes every player want to play, so warmup can end" );
 	cmdSystem->AddCommand( "testEntState",			Cmd_TestEntState_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"testEntState <entity>...: prints this peer's view of each entity" );
+	cmdSystem->AddCommand( "testSnapSubmit",		Cmd_TestSnapSubmit_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"testSnapSubmit <objects> <bytes>: submits one synthetic snapshot through the snapshot jobs" );
 	//puncho end
 	cmdSystem->AddCommand( "testDeclRemap",			Cmd_TestDeclRemap_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"drives the implicit decl announce table: make, decode, sound, rocket, impact, fx, speakers" );	//puncho - content check (P1-A3a)
 	cmdSystem->AddCommand( "testModel",				idTestModel::TestModel_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"tests a model", idTestModel::ArgCompletion_TestModel );

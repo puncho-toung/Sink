@@ -34,6 +34,14 @@ If you have questions concerning this license or the applicable additional terms
 typedef uint8 peerMask_t;
 static const int MAX_PLAYERS			= 8;
 
+//puncho start - P0-m9 (plans/phase1/02-FIXES.md): the snapshot layer's object budget, one place for both sides of it.
+// The game sends one snapshot object per entity slot (d3xp/Game_local.h asserts MAX_GENTITIES fits) plus a few fixed
+// ones (game state, shader parms, portals, player states, client frames: d3xp/Game_network.cpp asserts they fit), and
+// sys/SnapshotProcessor.h sizes its job memory from the sum
+static const int MAX_NET_ENTITIES		= 1 << 14;
+static const int MAX_NET_FIXED_OBJECTS	= 128;
+//puncho end
+
 static const int MAX_REDUNDANT_CMDS	= 3;
 
 static const int MAX_LOCAL_PLAYERS		= 2;

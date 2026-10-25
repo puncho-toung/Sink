@@ -1930,10 +1930,8 @@ needs them (single player never does), and kept until the next load starts or th
 */
 void idLobby::VerifyPeerContent( int p )
 {
-	static const char* const globalNames[] = { "classes", "mapGeometry", "map entities", "script image" };	//puncho - "map entities": P1-A3a, K37; "script image": P1-A3b
-	compile_time_assert( sizeof( globalNames ) / sizeof( globalNames[0] ) == CONTENT_DIGEST_COUNT );
-	static const char* const layerNames[] = { "entityDefs", "materials", "skins", "sounds", "fx", "script", "map entities" };	//puncho - P1-A3b, K38
-	compile_time_assert( sizeof( layerNames ) / sizeof( layerNames[0] ) == LAYER_DIGEST_COUNT );
+	static const char* const globalNames[] = { CONTENT_DIGEST_LIST( DIGEST_ROW_NAME ) };	//puncho - P0-m9: the names beside the rows (d3xp/Game.h)
+	static const char* const layerNames[] = { LAYER_DIGEST_LIST( DIGEST_ROW_NAME ) };		//puncho
 
 	assert( IsHost() && loaded );
 	if( !localContentDigestsValid )

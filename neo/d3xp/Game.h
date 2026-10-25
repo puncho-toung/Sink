@@ -205,27 +205,39 @@ struct aiHudStats_t
 // CRC32 so a refusal names what differs. The message is the load id, the CONTENT_DIGEST_COUNT global longs, the
 // layer count as a byte, then LAYER_DIGEST_COUNT longs per content layer, base first: changing either list changes the
 // wire format and bumps BUILD_NUMBER.
+//puncho start - P0-m9 (plans/phase1/02-FIXES.md): each list is X( row, name ) and makes both its enum and the names a
+// refusal prints (idLobby::VerifyPeerContent), so the two cannot drift apart
+#define CONTENT_DIGEST_LIST( X ) \
+	X( CONTENT_DIGEST_CLASSES,		"classes" )			/* idClass type names in typeNum order: snapshot entities cross as a typeNum */ \
+	X( CONTENT_DIGEST_MAP_GEOMETRY,	"mapGeometry" )		/* idMapFile::GetGeometryCRC, the value the .cm and .aas files are validated against */ \
+	X( CONTENT_DIGEST_MAP_ENTITIES,	"map entities" )	/* idMapFile::GetEntitiesCRC: every map entity's key/values, _extra_ents.map merged */ \
+	X( CONTENT_DIGEST_SCRIPT_IMAGE,	"script image" )	/* idProgram::CalculateChecksum: the compiled program, whatever compiled it (a console script included) */
+
+// the rows of one content layer (idFileSystem::GetNumLayers), so a refusal names the layer too
+#define LAYER_DIGEST_LIST( X ) \
+	X( LAYER_DIGEST_ENTITYDEFS,		"entityDefs" )		/* the explicit decls whose winning file the layer serves: index, name and text CRC */ \
+	X( LAYER_DIGEST_MATERIALS,		"materials" ) \
+	X( LAYER_DIGEST_SKINS,			"skins" ) \
+	X( LAYER_DIGEST_SOUNDS,			"sounds" ) \
+	X( LAYER_DIGEST_FX,				"fx" ) \
+	X( LAYER_DIGEST_SCRIPT,			"script" )			/* idProgram::GetLayerChecksums: the source files the compiler read from the layer */ \
+	X( LAYER_DIGEST_MAP_ENTITIES,	"map entities" )	/* idMapFile::GetLayerEntitiesCRC: the map file the layer serves and its _extra_ents.map */
+
+#define DIGEST_ROW_ENUM( row, name )	row,
+#define DIGEST_ROW_NAME( row, name )	name,
+
 enum contentDigest_t
 {
-	CONTENT_DIGEST_CLASSES,			// idClass type names in typeNum order: snapshot entities cross as a typeNum
-	CONTENT_DIGEST_MAP_GEOMETRY,	// idMapFile::GetGeometryCRC, the value the .cm and .aas files are validated against
-	CONTENT_DIGEST_MAP_ENTITIES,	// idMapFile::GetEntitiesCRC: every map entity's key/values, _extra_ents.map merged
-	CONTENT_DIGEST_SCRIPT_IMAGE,	// idProgram::CalculateChecksum: the compiled program, whatever compiled it (a console script included)
+	CONTENT_DIGEST_LIST( DIGEST_ROW_ENUM )
 	CONTENT_DIGEST_COUNT
 };
 
-// the rows of one content layer (idFileSystem::GetNumLayers), so a refusal names the layer too
 enum layerDigest_t
 {
-	LAYER_DIGEST_ENTITYDEFS,		// the explicit decls whose winning file the layer serves: index, name and text CRC
-	LAYER_DIGEST_MATERIALS,
-	LAYER_DIGEST_SKINS,
-	LAYER_DIGEST_SOUNDS,
-	LAYER_DIGEST_FX,
-	LAYER_DIGEST_SCRIPT,			// idProgram::GetLayerChecksums: the source files the compiler read from the layer
-	LAYER_DIGEST_MAP_ENTITIES,		// idMapFile::GetLayerEntitiesCRC: the map file the layer serves and its _extra_ents.map
+	LAYER_DIGEST_LIST( DIGEST_ROW_ENUM )
 	LAYER_DIGEST_COUNT
 };
+//puncho end
 
 struct contentDigests_t
 {

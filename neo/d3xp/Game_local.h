@@ -75,11 +75,12 @@ const int MAX_CLIENTS_IN_PVS	= MAX_CLIENTS >> 3;
 // 14 bits since 2026-10-23: 16384 entity slots. The width is baked into spawn ids (the other
 // 18 bits carry the slot's generation, MAX_SPAWN_GENERATION below), idEntityPtr, saves (gated by
 // BUILD_NUMBER_SAVE_VERSION_ENTITY_BITS_14), snapshots and bind packing; the snapshot layer's
-// MAX_OBJ_PARMS (sys/SnapshotProcessor.h) is sized to match, and the query lists of this many
-// entries live in the scratch arena (com_gameScratchKB), not on the stack. Client and server must
-// agree on it.
+// MAX_OBJ_PARMS (sys/SnapshotProcessor.h) is sized from MAX_NET_ENTITIES (sys/sys_session.h),
+// and the query lists of this many entries live in the scratch arena (com_gameScratchKB), not on
+// the stack. Client and server must agree on it.
 const int GENTITYNUM_BITS		= 14;
 const int MAX_GENTITIES			= 1 << GENTITYNUM_BITS;
+compile_time_assert( MAX_GENTITIES <= MAX_NET_ENTITIES );	//puncho - P0-m9: one snapshot object per entity slot
 const int ENTITYNUM_NONE		= MAX_GENTITIES - 1;
 const int ENTITYNUM_WORLD		= MAX_GENTITIES - 2;
 const int ENTITYNUM_MAX_NORMAL	= MAX_GENTITIES - 2;
