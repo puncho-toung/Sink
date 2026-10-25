@@ -1621,6 +1621,12 @@ bool idMapFile::Parse( const char* filename, bool ignoreRegion, bool osPath, boo
 	const char* servedForm = NULL;
 	if( readLayer < 0 && !osPath && idLib::fileSystem->GetNumLayers() > 1 )
 	{
+		// P1-M2: a top-level merging parse lists the layers afresh, so a map file or a patch added to or removed from a
+		// layer since the last query serves, and merges, as a fresh process would
+		if( !ignoreExtraEnts )
+		{
+			idLib::fileSystem->ClearLayerSets();
+		}
 		static const char* forms[] = { "json", "glb", "gltf", "map" };
 		int servedLayer = -1;
 		for( int form = ignoreRegion ? 1 : 0; form < 4; form++ )
@@ -2514,6 +2520,7 @@ bool idMapFile::WriteLevelEdits( const char* fileName )
 		return Write( target, ".map" );
 	}
 
+	idLib::fileSystem->ClearLayerSets();	//puncho - P1-M2: the serving layer as it is now, not as first listed
 	const int numLayers = idLib::fileSystem->GetNumLayers();
 	const int writeLayer = idLib::fileSystem->GetWriteLayer();
 	const int mapLayer = idLib::fileSystem->GetFileLayer( sourceName );

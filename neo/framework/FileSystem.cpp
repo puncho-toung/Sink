@@ -202,6 +202,7 @@ public:
 	virtual int				GetFileLayer( const char* relativePath );
 	virtual void			GetFileLayers( const char* relativePath, idList<int>& layers );
 	virtual idFile*			OpenFileReadFromLayer( const char* relativePath, int layer );
+	virtual void			ClearLayerSets();	//puncho - P1-M2
 	virtual void			GetModList( idStrList& mods ) const;
 	//puncho end
 	// resource tracking
@@ -2052,6 +2053,13 @@ void idFileSystemLocal::RemoveFile( const char* relativePath )
 	remove( OSPath );
 #endif
 	// RB end
+
+	//puncho start - P1-M2: the write layer's loose set still holds the removed path
+	if( layerNames.Num() > 1 )
+	{
+		ClearLayerSets();
+	}
+	//puncho end
 }
 
 /*
@@ -3174,6 +3182,7 @@ Limits of the layers, reported rather than solved (K24):
 */
 void idFileSystemLocal::ListModConflicts_f( const idCmdArgs& args )
 {
+	fileSystemLocal.ClearLayerSets();	//puncho - P1-M2: the report reads the layers as they are now
 	idStrList paths;
 	idList<int> pathLayers;
 	const int numMerged = fileSystemLocal.FindLayerShadows( paths, pathLayers );
@@ -3735,13 +3744,7 @@ void idFileSystemLocal::Startup()
 	}
 
 	// K21: the layers' loose file sets start empty and fill a directory at a time as they are asked
-	for( int i = 0; i <= MAX_MOD_LAYERS; i++ )
-	{
-		layerPaths[i].Clear();
-		layerPathHash[i].Clear();
-		layerDirs[i].Clear();
-		layerDirHash[i].Clear();
-	}
+	ClearLayerSets();	//puncho - P1-M2
 	//puncho end
 
 	// add our commands
@@ -4510,6 +4513,27 @@ void idFileSystemLocal::GetFileLayers( const char* relativePath, idList<int>& la
 		{
 			layers.Append( layer );
 		}
+	}
+}
+
+/*
+===========
+idFileSystemLocal::ClearLayerSets
+
+P1-M2: a directory's loose set is listed once and then kept up only by the engine's own writers (WriteFile,
+OpenFileWrite, RenameFile), so a file added or removed outside the engine, or by RemoveFile, leaves a layer query
+wrong until this runs: a top-level map parse, a decl reload, the in-engine map writers and the shadow report call it
+first
+===========
+*/
+void idFileSystemLocal::ClearLayerSets()
+{
+	for( int i = 0; i <= MAX_MOD_LAYERS; i++ )
+	{
+		layerPaths[i].Clear();
+		layerPathHash[i].Clear();
+		layerDirs[i].Clear();
+		layerDirHash[i].Clear();
 	}
 }
 

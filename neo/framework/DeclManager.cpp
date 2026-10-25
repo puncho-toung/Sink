@@ -1193,6 +1193,7 @@ idDeclManagerLocal::Reload
 */
 void idDeclManagerLocal::Reload( bool force )
 {
+	fileSystem->ClearLayerSets();	//puncho - P1-M2: a copy added to or removed from a layer since startup decides the takeovers
 	for( int i = 0; i < loadedFiles.Num(); i++ )
 	{
 		loadedFiles[i]->Reload( force );
