@@ -2059,6 +2059,7 @@ bool idClip::GetModelContactFeature( const contactInfo_t& contact, const idClipM
 				break;
 			}
 			case CONTACT_TRMVERTEX:
+			case CONTACT_TRMEDGE:	//puncho - OQ-B4
 			{
 				// the model contact feature is a collision model polygon
 				collisionModelManager->GetModelPolygon( handle, contact.modelFeature, winding );

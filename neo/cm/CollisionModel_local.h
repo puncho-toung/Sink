@@ -205,6 +205,13 @@ typedef struct cm_model_s
 	cm_brushRefBlock_t* 	brushRefBlocks;		// list with blocks of brush references
 	cm_polygonBlock_t* 		polygonBlock;		// memory block with all polygons
 	cm_brushBlock_t* 		brushBlock;			// memory block with all brushes
+	//puncho start - OQ-B4: polygon ids, a contact's modelFeature for a polygon. Numbered once the model is final, in
+	// the order WriteBinaryModelToFile stores the polygons, so a model read back from its .bcm keeps them
+	int						maxPolygonIds;		// size of the id table
+	int						numPolygonIds;		// ids given; in the trace model slot the first numPolygons are in use
+	cm_polygon_t** 			polygonsById;		// polygon id -> polygon
+	idHashIndex				polygonIdHash;		// polygon address -> id, keyed by CM_PolygonIdKey
+	//puncho end
 	// statistics
 	int						numPolygons;
 	int						polygonMemory;
@@ -447,6 +454,13 @@ private:			// CollisionMap_load.cpp
 	void			FreeBrush( cm_model_t* model, cm_brush_t* brush );
 	void			FreeTree_r( cm_model_t* model, cm_node_t* headNode, cm_node_t* node );
 	void			FreeModel( cm_model_t* model );
+	//puncho start - OQ-B4: polygon ids
+	void			AllocPolygonIds( cm_model_t* model, int numPolygons );
+	void			AddPolygonId( cm_model_t* model, cm_polygon_t* p );
+	void			NumberPolygons_r( cm_model_t* model, cm_node_t* node );
+	void			NumberPolygons( cm_model_t* model );
+	int				PolygonId( const cm_model_t* model, const cm_polygon_t* p ) const;
+	//puncho end
 	// merging polygons
 	void			ReplacePolygons( cm_model_t* model, cm_node_t* node, cm_polygon_t* p1, cm_polygon_t* p2, cm_polygon_t* newp );
 	cm_polygon_t* 	TryMergePolygons( cm_model_t* model, cm_polygon_t* p1, cm_polygon_t* p2 );

@@ -330,13 +330,16 @@ bool idCollisionModelManagerLocal::TestTrmInPolygon( cm_traceWork_t* tw, cm_poly
 		if( j >= p->numEdges )
 		{
 			tw->trace.fraction = 0.0f;
-			tw->trace.c.type = CONTACT_EDGE;
+			//puncho start - OQ-B4: its own type, since the feature is a polygon id, where CONTACT_EDGE's is an edge number that
+			// a small id would alias; it was the polygon's address, truncated
+			tw->trace.c.type = CONTACT_TRMEDGE;
 			tw->trace.c.normal = p->plane.Normal();
 			tw->trace.c.dist = p->plane.Dist();
 			tw->trace.c.contents = p->contents;
 			tw->trace.c.material = p->material;
 			tw->trace.c.point = tw->vertices[tw->edges[i].vertexNum[ !flip ]].p;
-			tw->trace.c.modelFeature = *reinterpret_cast<int*>( &p );
+			tw->trace.c.modelFeature = PolygonId( tw->model, p );
+			//puncho end
 			tw->trace.c.trmFeature = i;
 			return true;
 		}

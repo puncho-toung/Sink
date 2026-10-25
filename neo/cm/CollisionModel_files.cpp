@@ -599,6 +599,8 @@ cm_model_t* idCollisionModelManagerLocal::ParseCollisionModel( idLexer* src )
 						model->numPolygonRefs * sizeof( cm_polygonRef_t ) +
 						model->numBrushRefs * sizeof( cm_brushRef_t );
 
+	NumberPolygons( model );	//puncho - OQ-B4
+
 	return model;
 }
 
