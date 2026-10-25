@@ -136,6 +136,33 @@ public:																	\
 	virtual	idTypeInfo						*GetType() const;		\
 	static	idEventFunc<nameofclass>		eventCallbacks[]
 
+//puncho start - OQ-B7: whether a class level's Save and Restore differ from its type super's, decided by the compiler.
+// CallSave_r and CallRestore_r tested it by comparing the two member pointers, which identical-code folding (MSVC
+// /OPT:ICF) can make equal for two distinct functions. The function &C::Save names belongs to one class: C when C
+// declares it (const or not: the declaration's cast takes either), else the nearest C++ base that does, which need not
+// be the type super (idItemTeam is declared under idItem and inherits idMoveableItem's). Two levels share a Save
+// exactly when those owners match
+template< class T, class U > struct idClassSameType
+{
+	static const bool value = false;
+};
+template< class T > struct idClassSameType< T, T >
+{
+	static const bool value = true;
+};
+template< class T > struct idClassMemberOwner;
+template< class C, class R, class A > struct idClassMemberOwner< R ( C::* )( A ) >
+{
+	typedef C type;
+};
+template< class C, class R, class A > struct idClassMemberOwner< R ( C::* )( A ) const >
+{
+	typedef C type;
+};
+#define CLASS_OWNS_LEVEL_FUNC( nameofsuperclass, nameofclass, func )	\
+	( !idClassSameType< idClassMemberOwner< decltype( &nameofclass::func ) >::type, idClassMemberOwner< decltype( &nameofsuperclass::func ) >::type >::value )
+//puncho end
+
 /*
 ================
 CLASS_DECLARATION
@@ -152,7 +179,8 @@ incorrect.  Use this on concrete classes only.
 #define CLASS_DECLARATION( nameofsuperclass, nameofclass )											\
 	idTypeInfo nameofclass::Type( #nameofclass, #nameofsuperclass,									\
 		( idEventFunc<idClass> * )nameofclass::eventCallbacks,	nameofclass::CreateInstance, ( void ( idClass::* )() )&nameofclass::Spawn,	\
-		( void ( idClass::* )( idSaveGame * ) const )&nameofclass::Save, ( void ( idClass::* )( idRestoreGame * ) )&nameofclass::Restore );	\
+		( void ( idClass::* )( idSaveGame * ) const )&nameofclass::Save, ( void ( idClass::* )( idRestoreGame * ) )&nameofclass::Restore,	\
+		CLASS_OWNS_LEVEL_FUNC( nameofsuperclass, nameofclass, Save ), CLASS_OWNS_LEVEL_FUNC( nameofsuperclass, nameofclass, Restore ) );	\
 	idClass *nameofclass::CreateInstance() {														\
 		try {																						\
 			nameofclass *ptr = new nameofclass;														\
@@ -171,7 +199,8 @@ idEventFunc<nameofclass> nameofclass::eventCallbacks[] = {
 #define CLASS_DECLARATION( nameofsuperclass, nameofclass )											\
 	idTypeInfo nameofclass::Type( #nameofclass, #nameofsuperclass,									\
 		( idEventFunc<idClass> * )nameofclass::eventCallbacks,	nameofclass::CreateInstance, ( void ( idClass::* )() )&nameofclass::Spawn,	\
-		( void ( idClass::* )( idSaveGame * ) const )&nameofclass::Save, ( void ( idClass::* )( idRestoreGame * ) )&nameofclass::Restore );	\
+		( void ( idClass::* )( idSaveGame * ) const )&nameofclass::Save, ( void ( idClass::* )( idRestoreGame * ) )&nameofclass::Restore,	\
+		CLASS_OWNS_LEVEL_FUNC( nameofsuperclass, nameofclass, Save ), CLASS_OWNS_LEVEL_FUNC( nameofsuperclass, nameofclass, Restore ) );	\
 	idClass *nameofclass::CreateInstance() {													\
 			nameofclass *ptr = new nameofclass;														\
 			ptr->FindUninitializedMemory();															\
@@ -214,7 +243,8 @@ on abstract classes only.
 #define ABSTRACT_DECLARATION( nameofsuperclass, nameofclass )										\
 	idTypeInfo nameofclass::Type( #nameofclass, #nameofsuperclass,									\
 		( idEventFunc<idClass> * )nameofclass::eventCallbacks, nameofclass::CreateInstance, ( void ( idClass::* )() )&nameofclass::Spawn,	\
-		( void ( idClass::* )( idSaveGame * ) const )&nameofclass::Save, ( void ( idClass::* )( idRestoreGame * ) )&nameofclass::Restore );	\
+		( void ( idClass::* )( idSaveGame * ) const )&nameofclass::Save, ( void ( idClass::* )( idRestoreGame * ) )&nameofclass::Restore,	\
+		CLASS_OWNS_LEVEL_FUNC( nameofsuperclass, nameofclass, Save ), CLASS_OWNS_LEVEL_FUNC( nameofsuperclass, nameofclass, Restore ) );	\
 	idClass *nameofclass::CreateInstance() {													\
 		gameLocal.Error( "Cannot instanciate abstract class %s.", #nameofclass );					\
 		return NULL;																				\
@@ -340,6 +370,8 @@ public:
 	void	( idClass::*Spawn )();
 	void	( idClass::*Save )( idSaveGame* savefile ) const;
 	void	( idClass::*Restore )( idRestoreGame* savefile );
+	bool						ownSave;			//puncho - OQ-B7: Save is not the type super's (CLASS_OWNS_LEVEL_FUNC)
+	bool						ownRestore;			//puncho - OQ-B7: Restore is not the type super's
 
 	idEventFunc<idClass>* 		eventCallbacks;
 	eventCallback_t* 			eventMap;
@@ -353,7 +385,8 @@ public:
 
 	idTypeInfo( const char* classname, const char* superclass,
 				idEventFunc<idClass>* eventCallbacks, idClass * ( *CreateInstance )(), void ( idClass::*Spawn )(),
-				void ( idClass::*Save )( idSaveGame* savefile ) const, void	( idClass::*Restore )( idRestoreGame* savefile ) );
+				void ( idClass::*Save )( idSaveGame* savefile ) const, void	( idClass::*Restore )( idRestoreGame* savefile ),
+				bool ownSave, bool ownRestore );	//puncho - OQ-B7
 	~idTypeInfo();
 
 	void						Init();
