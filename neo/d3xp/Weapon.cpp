@@ -135,6 +135,8 @@ END_CLASS
 
 
 idCVar cg_projectile_clientAuthoritative_maxCatchup( "cg_projectile_clientAuthoritative_maxCatchup", "500", CVAR_INTEGER, "" );
+//puncho - OQ-B6
+idCVar cg_projectile_clientAuthoritative_catchupSlack( "cg_projectile_clientAuthoritative_catchupSlack", "100", CVAR_INTEGER, "milliseconds of jitter a remote client's projectile catch-up may run past the round trip and interpolation delay the host measures and assumes" );
 
 idCVar g_useWeaponDepthHack( "g_useWeaponDepthHack", "1", CVAR_BOOL, "Crunch z depth on weapons" );
 
@@ -4171,7 +4173,33 @@ void idWeapon::Event_LaunchProjectiles( int num_projectiles, float spread, float
 			{
 				int serverTimeOnClient = owner->usercmd.serverGameMilliseconds;
 
-				int delta = idMath::ClampInt( 0, cg_projectile_clientAuthoritative_maxCatchup.GetInteger(), gameLocal.GetServerGameTimeMs() - serverTimeOnClient );
+				//puncho start - OQ-B6: serverGameMilliseconds is the client's word for the server time it was viewing, so the
+				// lead it buys is also bounded by what this host measures and assumes:
+				// - the peer's round trip (a RELIABLE_PING every 3 s, taken on receipt, so send waits are in it; INVALID_PING
+				//   until the first, which leaves only the cap);
+				// - the delay a client renders behind its newest snapshot: one interpolation span, the buffer
+				//   Common_network.cpp steers to and the window before it catches up;
+				// - the client's usercmd send period and this host's own usercmd run buffer, both on the frame grid
+				//   (Game_local.cpp RunAllUserCmdsForPlayer);
+				// - a slack for jitter, a buffer above its target after a stall, and a ping older than the last spike.
+				// An honest lead is inside it and a claimed older view is cut to it; maxCatchup stays the outer cap and a
+				// view from the future gives 0. The round trip comes from echoes the client sends, so the bound holds an
+				// unmodified client; a modified one that delays its echoes still reaches the cap, as before
+				extern idCVar net_ucmdRate;
+				extern idCVar net_maxBufferedSnapMS;
+				extern idCVar net_minBufferedSnapPCT_Static;
+				extern idCVar net_minBufferedSnapWinPCT_Static;
+				const int rawDelta = gameLocal.GetServerGameTimeMs() - serverTimeOnClient;
+				const int rttMs = session->GetActingGameStateLobbyBase().GetLobbyUserQoS( gameLocal.lobbyUserIDs[ owner->entityNumber ] );
+				const int snapMs = common->GetSnapRate();
+				const int bufferMs = Min( net_maxBufferedSnapMS.GetInteger(), idMath::Ftoi( snapMs * net_minBufferedSnapPCT_Static.GetFloat() ) );
+				const int interpMs = snapMs + bufferMs + idMath::Ftoi( snapMs * net_minBufferedSnapWinPCT_Static.GetFloat() );
+				const int extraFrameMs = FRAME_TO_MSEC( common->GetGameFrame() + 2 ) - FRAME_TO_MSEC( common->GetGameFrame() );
+				const int cmdMs = MSEC_ALIGN_TO_FRAME( net_ucmdRate.GetInteger() ) + MSEC_ALIGN_TO_FRAME( net_ucmdRate.GetInteger() + extraFrameMs );
+				const int leadBound = Max( 0, rttMs ) + interpMs + cmdMs + cg_projectile_clientAuthoritative_catchupSlack.GetInteger();
+				const int maxDelta = Min( cg_projectile_clientAuthoritative_maxCatchup.GetInteger(), leadBound );
+				int delta = idMath::ClampInt( 0, maxDelta, rawDelta );
+				//puncho end
 
 				int startTime = gameLocal.GetServerGameTimeMs() - delta;
 
@@ -4183,6 +4211,9 @@ void idWeapon::Event_LaunchProjectiles( int num_projectiles, float spread, float
 				if( cg_predictedSpawn_debug.GetBool() )
 				{
 					idLib::Printf( "Spawning throw item projectile for player %d. PredictiveKey: %d \n", owner->GetEntityNumber(), predictedKey );
+					//puncho - OQ-B6: the catch-up's inputs and result
+					idLib::Printf( "Projectile catch-up for player %d: raw %d ms, bound %d ms (rtt %d, interpolation %d, usercmds %d), applied %d ms\n",
+								   owner->GetEntityNumber(), rawDelta, leadBound, rttMs, interpMs, cmdMs, delta );
 				}
 			}
 			else
