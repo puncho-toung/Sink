@@ -269,6 +269,9 @@ public:
 	virtual void			GetFileLayers( const char* relativePath, idList<int>& layers ) = 0;
 	// one layer's copy of relativePath, NULL when that layer holds none
 	virtual idFile*			OpenFileReadFromLayer( const char* relativePath, int layer ) = 0;
+	//puncho - P1-M2: forgets the layers' loose file sets, which list a directory once and then follow only the engine's
+	// own writes, so the next query lists each directory afresh and sees files added or removed outside the engine
+	virtual void			ClearLayerSets() = 0;
 	// the mod list: the layer names after base, in load order (fs_game_base, each fs_mods entry, fs_game)
 	virtual void			GetModList( idStrList& mods ) const = 0;
 	// a comma-separated mod list split into names, spaces trimmed and empty entries dropped
