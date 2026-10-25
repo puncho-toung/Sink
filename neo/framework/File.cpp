@@ -686,6 +686,7 @@ idFile_Memory::idFile_Memory()
 	mode = ( 1 << FS_WRITE );
 	filePtr = NULL;
 	curPtr = NULL;
+	timestamp = 0;	//puncho - OQ-B5
 }
 
 /*
@@ -704,6 +705,7 @@ idFile_Memory::idFile_Memory( const char* name )
 	mode = ( 1 << FS_WRITE );
 	filePtr = NULL;
 	curPtr = NULL;
+	timestamp = 0;	//puncho - OQ-B5
 }
 
 /*
@@ -722,6 +724,7 @@ idFile_Memory::idFile_Memory( const char* name, char* data, int length )
 	mode = ( 1 << FS_WRITE );
 	filePtr = data;
 	curPtr = data;
+	timestamp = 0;	//puncho - OQ-B5
 }
 
 /*
@@ -740,6 +743,7 @@ idFile_Memory::idFile_Memory( const char* name, const char* data, int length )
 	mode = ( 1 << FS_READ );
 	filePtr = const_cast<char*>( data );
 	curPtr = const_cast<char*>( data );
+	timestamp = 0;	//puncho - OQ-B5
 }
 
 /*
@@ -967,7 +971,7 @@ idFile_Memory::Timestamp
 */
 ID_TIME_T idFile_Memory::Timestamp() const
 {
-	return 0;
+	return timestamp;	//puncho - OQ-B5: 0 unless SetTimestamp gave the source file's
 }
 
 /*
@@ -1122,6 +1126,7 @@ void idFile_Memory::SetData( const char* data, int length )
 	mode = ( 1 << FS_READ );
 	filePtr = const_cast<char*>( data );
 	curPtr = const_cast<char*>( data );
+	timestamp = 0;	//puncho - OQ-B5
 }
 
 /*
@@ -1735,6 +1740,7 @@ idFile_InZip::idFile_InZip()
 	zipFilePos = 0;
 	fileSize = 0;
 	memset( &z, 0, sizeof( z ) );
+	timestamp = 0;	//puncho - OQ-B5
 }
 
 /*
@@ -1825,7 +1831,7 @@ idFile_InZip::Timestamp
 */
 ID_TIME_T idFile_InZip::Timestamp() const
 {
-	return 0;
+	return timestamp;	//puncho - OQ-B5: was 0, so no cache built from a .pk4 file ever went stale
 }
 
 /*

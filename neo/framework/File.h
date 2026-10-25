@@ -213,6 +213,12 @@ public:
 
 	void					TakeDataOwnership();
 
+	//puncho - OQ-B5: the time of the file this one holds a copy of, which Timestamp returns (0 by default)
+	void					SetTimestamp( ID_TIME_T t )
+	{
+		timestamp = t;
+	}
+
 	size_t					GetMaxLength()
 	{
 		return maxSize;
@@ -232,6 +238,7 @@ private:
 	int						granularity;	// file granularity
 	char* 					filePtr;		// buffer holding the file data
 	char* 					curPtr;			// current read/write pointer
+	ID_TIME_T				timestamp;		//puncho - OQ-B5: see SetTimestamp
 };
 
 
@@ -364,6 +371,7 @@ private:
 	// DG end
 	int						fileSize;		// size of the file
 	void* 					z;				// unzip info
+	ID_TIME_T				timestamp;		//puncho - OQ-B5: the entry's modification time (idZipContainer::OpenFile)
 };
 
 class idFile_InnerResource : public idFile

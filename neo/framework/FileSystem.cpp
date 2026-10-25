@@ -4074,6 +4074,7 @@ idFile* idFileSystemLocal::GetZipFile( const char* fileName, bool memFile, int l
 				if( mfile != NULL )
 				{
 					mfile->TakeDataOwnership();
+					mfile->SetTimestamp( file->Timestamp() );	//puncho - OQ-B5: the copy keeps the entry's time
 					delete file;
 					return mfile;
 				}

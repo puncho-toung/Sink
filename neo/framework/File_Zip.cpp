@@ -181,6 +181,77 @@ bool idZipContainer::Init( const char* _fileName )
 	return true;
 }
 
+//puncho start - OQ-B5
+/*
+================
+Zip_EntryTime
+
+An entry's modification time in UTC. Packers on Windows and Unix store it in an extra field of the central directory:
+NTFS (0x000a, tag 1: FILETIME, 100 ns since 1601) or extended time (0x5455, flag bit 0: seconds since 1970). The DOS
+date beside it is the packer's local time to 2 s, so it is used only when neither field is there, read as this
+machine's local time. The UTC fields give every machine and zone the same stamp, the one a loose copy of the file has;
+0 when nothing can be read, which skips the staleness checks as before.
+================
+*/
+static ID_TIME_T Zip_EntryTime( const byte* extra, int extraLength, const unz_file_info64& info )
+{
+	int pos = 0;
+	while( pos + 4 <= extraLength )
+	{
+		const int headerId = extra[ pos ] | ( extra[ pos + 1 ] << 8 );
+		const int dataSize = extra[ pos + 2 ] | ( extra[ pos + 3 ] << 8 );
+		const byte* data = extra + pos + 4;
+		if( pos + 4 + dataSize > extraLength )
+		{
+			break;
+		}
+		if( headerId == 0x000a && dataSize >= 4 + 4 + 8 )
+		{
+			// 4 reserved bytes, then attributes: tag, size, value
+			int attr = 4;
+			while( attr + 4 <= dataSize )
+			{
+				const int tag = data[ attr ] | ( data[ attr + 1 ] << 8 );
+				const int size = data[ attr + 2 ] | ( data[ attr + 3 ] << 8 );
+				if( tag == 1 && size >= 8 && attr + 4 + 8 <= dataSize )
+				{
+					uint64 fileTime = 0;
+					for( int i = 7; i >= 0; i-- )
+					{
+						fileTime = ( fileTime << 8 ) | data[ attr + 4 + i ];
+					}
+					const uint64 unixEpoch = 116444736000000000ULL;	// 1970-01-01 as a FILETIME
+					if( fileTime > unixEpoch )
+					{
+						return ( ID_TIME_T )( ( fileTime - unixEpoch ) / 10000000ULL );
+					}
+					break;
+				}
+				attr += 4 + size;
+			}
+		}
+		else if( headerId == 0x5455 && dataSize >= 5 && ( data[ 0 ] & 1 ) != 0 )
+		{
+			const uint32 seconds = data[ 1 ] | ( data[ 2 ] << 8 ) | ( data[ 3 ] << 16 ) | ( ( uint32 )data[ 4 ] << 24 );
+			return ( ID_TIME_T )( int32 )seconds;
+		}
+		pos += 4 + dataSize;
+	}
+
+	struct tm entryTime;
+	memset( &entryTime, 0, sizeof( entryTime ) );
+	entryTime.tm_year = ( int )info.tmu_date.tm_year - 1900;
+	entryTime.tm_mon = ( int )info.tmu_date.tm_mon;
+	entryTime.tm_mday = ( int )info.tmu_date.tm_mday;
+	entryTime.tm_hour = ( int )info.tmu_date.tm_hour;
+	entryTime.tm_min = ( int )info.tmu_date.tm_min;
+	entryTime.tm_sec = ( int )info.tmu_date.tm_sec;
+	entryTime.tm_isdst = -1;
+	const time_t localStamp = mktime( &entryTime );
+	return ( localStamp == ( time_t )( -1 ) ) ? 0 : ( ID_TIME_T )localStamp;
+}
+//puncho end
+
 /*
 ===========
 idZipContainer::ReadFileFromZip
@@ -201,7 +272,8 @@ idFile_InZip* idZipContainer::OpenFile( const idZipCacheEntry& rt, const char* r
 	// the following stuff is needed to get the uncompress filesize (for file->fileSize)
 	char	filename_inzip[MAX_ZIPPED_FILE_NAME];
 	unz_file_info64	file_info;
-	int err = unzGetCurrentFileInfo64( uf, &file_info, filename_inzip, sizeof( filename_inzip ), NULL, 0, NULL, 0 );
+	byte	extraField[ 256 ];	//puncho - OQ-B5: the central directory's extra field, for the entry's UTC time
+	int err = unzGetCurrentFileInfo64( uf, &file_info, filename_inzip, sizeof( filename_inzip ), extraField, sizeof( extraField ), NULL, 0 );
 	if( err != UNZ_OK )
 	{
 		common->FatalError( "Couldn't get file info for %s in %s, pos %llu", relativePath, fileName.c_str(), rt.offset );
@@ -214,6 +286,12 @@ idFile_InZip* idZipContainer::OpenFile( const idZipCacheEntry& rt, const char* r
 	file->fullPath = fileName + "/" + relativePath;
 	file->zipFilePos = rt.offset;
 	file->fileSize = file_info.uncompressed_size;
+
+	//puncho start - OQ-B5: the entry's own modification time, so a changed file in a .pk4 invalidates the caches built
+	// from it. A time, not a content stamp (CRC and length), since some consumers order timestamps: ReloadModels, the
+	// GUI and image reloads, idMapFile::NeedsReload, and the camera and glTF animation caches against their generated files
+	file->timestamp = Zip_EntryTime( extraField, Min( ( int )file_info.size_file_extra, ( int )sizeof( extraField ) ), file_info );
+	//puncho end
 
 	return file;
 }
