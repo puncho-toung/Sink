@@ -2174,10 +2174,11 @@ void idDeclManagerLocal::ListDeclConflicts_f( const idCmdArgs& args )
 ===================
 idDeclManagerLocal::FinishDeclRegistration
 
-The save header (K44), computed once the game has registered its folders, over explicit decls only: per layer and decl
-type, the count and a CRC of the names that layer first defines, in index order, beside the mod list. An override
-defines nothing new and a text edit names nothing new, so both keep a save loading; a new or removed decl shifts the
-indices that saves store raw (entityDefNumber, lastDamageDef), so it changes the header and the save is refused by name.
+The save header (K44), computed once the game has registered its folders, over explicit entityDefs only: per layer,
+the count and a CRC of the entityDef names that layer first defines, in index order, beside the mod list. An override
+defines nothing new and a text edit names nothing new, so both keep a save loading; a new or removed entityDef shifts
+the indices that saves store raw (entityDefNumber, lastDamageDef), so it changes the header and the save is refused by
+name. No other decl type's index reaches a save (P1-M1), so a new material, sound or skin keeps every save loading.
 ===================
 */
 void idDeclManagerLocal::FinishDeclRegistration()
@@ -2194,40 +2195,34 @@ void idDeclManagerLocal::FinishDeclRegistration()
 		layerModList += mods[i];
 	}
 
+	const declType_t type = DECL_ENTITYDEF;	//puncho - P1-M1: the one type whose indices saves store raw
 	int counts[ MAX_MOD_LAYERS + 1 ];
 	unsigned int crcs[ MAX_MOD_LAYERS + 1 ];
-	for( int type = 0; type < declTypes.Num(); type++ )
+	for( int layer = 0; layer < numLayers; layer++ )
 	{
-		if( declTypes[type] == NULL )
+		counts[layer] = 0;
+		CRC32_InitChecksum( crcs[layer] );
+	}
+	for( int i = 0; i < linearLists[type].Num(); i++ )
+	{
+		const idDeclLocal* decl = linearLists[type][i];
+		if( decl->sourceFile == &implicitDecls || decl->definedLayer < 0 || decl->definedLayer >= numLayers )
 		{
 			continue;
 		}
-		for( int layer = 0; layer < numLayers; layer++ )
+		counts[decl->definedLayer]++;
+		CRC32_UpdateChecksum( crcs[decl->definedLayer], decl->name.c_str(), decl->name.Length() + 1 );
+	}
+	for( int layer = 0; layer < numLayers; layer++ )
+	{
+		if( counts[layer] > 0 )
 		{
-			counts[layer] = 0;
-			CRC32_InitChecksum( crcs[layer] );
-		}
-		for( int i = 0; i < linearLists[type].Num(); i++ )
-		{
-			const idDeclLocal* decl = linearLists[type][i];
-			if( decl->sourceFile == &implicitDecls || decl->definedLayer < 0 || decl->definedLayer >= numLayers )
-			{
-				continue;
-			}
-			counts[decl->definedLayer]++;
-			CRC32_UpdateChecksum( crcs[decl->definedLayer], decl->name.c_str(), decl->name.Length() + 1 );
-		}
-		for( int layer = 0; layer < numLayers; layer++ )
-		{
-			if( counts[layer] > 0 )
-			{
-				layerDeclDigest_t& digest = layerDigests.Alloc();
-				digest.layer = layer;
-				digest.type = ( declType_t )type;
-				digest.count = counts[layer];
-				digest.crc = crcs[layer];
-				CRC32_FinishChecksum( digest.crc );
-			}
+			layerDeclDigest_t& digest = layerDigests.Alloc();
+			digest.layer = layer;
+			digest.type = type;
+			digest.count = counts[layer];
+			digest.crc = crcs[layer];
+			CRC32_FinishChecksum( digest.crc );
 		}
 	}
 

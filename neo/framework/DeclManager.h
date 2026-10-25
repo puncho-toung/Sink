@@ -377,9 +377,10 @@ public:
 	//puncho start - MP-A5 (K23, K44)
 	// Called once the game has registered its folders: computes the save header and prints the decl conflict report.
 	virtual void			FinishDeclRegistration() = 0;
-	// Sets the save header's keys into header: the mod list (the layer names after base, in order) and, per layer and
-	// decl type, the count and a digest of the explicit decl names that layer first defines, in index order. Overrides
-	// and text edits leave it unchanged; a new or removed decl, which shifts the indices saves store raw, changes it.
+	// Sets the save header's keys into header: the mod list (the layer names after base, in order) and, per layer, the
+	// count and a digest of the explicit entityDef names that layer first defines, in index order. Overrides and text
+	// edits leave it unchanged; a new or removed entityDef, which shifts the indices saves store raw, changes it. No
+	// other type's index reaches a save, so no other type has a row (P1-M1).
 	virtual void			GetLayerSaveHeader( idDict& header ) const = 0;
 	//puncho end
 

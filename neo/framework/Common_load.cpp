@@ -1115,18 +1115,20 @@ bool idCommonLocal::SaveGame( const char* saveName )
 ===============
 CheckSaveLayers
 
-The save's mod list and per-layer decl names against this session's (idDeclManager::GetLayerSaveHeader). Saves store
-some decl indices raw, so a new or removed decl in any layer, base content included, would restore them wrong: the
-save is refused, naming the lowest layer and the type that differ. Overrides and text edits define no new name and
+The save's mod list and per-layer entityDef names against this session's (idDeclManager::GetLayerSaveHeader). Saves
+store entityDef indices raw, so a new or removed entityDef in any layer, base content included, would restore them
+wrong: the save is refused, naming the lowest layer that differs. Overrides and text edits define no new name and
 pass. A save older than the header is refused by its version.
 ===============
 */
 static bool CheckSaveLayers( const idDict& saved, idStr& refusal )
 {
+	//puncho - P0-m5: the oldest save this build loads, the first whose details hold the mod list and the layer rows
+	const int OLDEST_LOADABLE_SAVE_VERSION = BUILD_NUMBER_SAVE_VERSION_MOD_LAYERS;
 	const int saveVersion = saved.GetInt( SAVEGAME_DETAIL_FIELD_SAVE_VERSION, 0 );
-	if( saveVersion < BUILD_NUMBER_SAVE_VERSION_MOD_LAYERS )
+	if( saveVersion < OLDEST_LOADABLE_SAVE_VERSION )
 	{
-		refusal.Format( "save version %d predates the mod list in the save header (version %d)", saveVersion, BUILD_NUMBER_SAVE_VERSION_MOD_LAYERS );
+		refusal.Format( "save version %d predates the mod list in the save header (version %d)", saveVersion, OLDEST_LOADABLE_SAVE_VERSION );
 		return false;
 	}
 
@@ -1159,8 +1161,10 @@ static bool CheckSaveLayers( const idDict& saved, idStr& refusal )
 		return false;
 	}
 
-	// every key either dict holds; the lowest layer that differs is named
+	// every key either dict holds; the lowest layer that differs is named. Only the entityDef rows count (P1-M1): the
+	// other types' rows that 1411-1413 saves carry are skipped, since no other type's index reaches a save
 	const char* prefix = "layerDecls_";
+	const char* entityDefName = declManager->GetDeclNameFromType( DECL_ENTITYDEF );
 	int worstLayer = MAX_MOD_LAYERS + 1;
 	idStr worstKey;
 	for( int pass = 0; pass < 2; pass++ )
@@ -1169,7 +1173,13 @@ static bool CheckSaveLayers( const idDict& saved, idStr& refusal )
 		const idDict& other = ( pass == 0 ) ? current : saved;
 		for( const idKeyValue* kv = from.MatchPrefix( prefix ); kv != NULL; kv = from.MatchPrefix( prefix, kv ) )
 		{
-			const int layer = atoi( kv->GetKey().c_str() + idStr::Length( prefix ) );
+			const char* row = kv->GetKey().c_str() + idStr::Length( prefix );
+			const char* rowType = strchr( row, '_' );
+			if( rowType == NULL || idStr::Icmp( rowType + 1, entityDefName ) != 0 )	//puncho - P1-M1
+			{
+				continue;
+			}
+			const int layer = atoi( row );
 			if( layer < worstLayer && kv->GetValue().Cmp( other.GetString( kv->GetKey(), "0 0" ) ) != 0 )
 			{
 				worstLayer = layer;
