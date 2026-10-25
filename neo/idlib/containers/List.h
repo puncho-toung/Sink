@@ -655,6 +655,10 @@ ID_INLINE void idList<_type_, _tag_>::AssureSize( int newSize, const _type_ &ini
 
 	if( newSize > size )
 	{
+		//puncho start - OQ-B2: initValue may be one of this list's elements, which the resize frees; it is then read from
+		// its slot in the new storage
+		const int aliasIndex = ( &initValue >= list && &initValue < list + size ) ? ( int )( &initValue - list ) : -1;
+		//puncho end
 
 		if( granularity == 0 )  	// this is a hack to fix our memset classes
 		{
@@ -666,9 +670,10 @@ ID_INLINE void idList<_type_, _tag_>::AssureSize( int newSize, const _type_ &ini
 		num = size;
 		Resize( newSize );
 
+		const _type_& value = ( aliasIndex >= 0 ) ? list[ aliasIndex ] : initValue;	//puncho - OQ-B2
 		for( int i = num; i < newSize; i++ )
 		{
-			list[i] = initValue;
+			list[i] = value;
 		}
 	}
 
@@ -747,6 +752,13 @@ template< typename _type_, memTag_t _tag_ >
 ID_INLINE idList<_type_, _tag_>& idList<_type_, _tag_>::operator=( const idList<_type_, _tag_>& other )
 {
 	int	i;
+
+	//puncho start - OQ-B2: a self-assignment's Clear() would free the elements it is about to copy, emptying the list
+	if( &other == this )
+	{
+		return *this;
+	}
+	//puncho end
 
 	Clear();
 
@@ -875,8 +887,13 @@ ID_INLINE int idList<_type_, _tag_>::Append( _type_ const& obj )
 		Resize( granularity );
 	}
 
+	const _type_* src = &obj;	//puncho - OQ-B2
 	if( num == size )
 	{
+		//puncho start - OQ-B2: Append( list[ i ] ) at capacity: obj lies in the storage the resize frees, so it is read
+		// from its slot in the new storage. The test runs on the resize path only
+		const int aliasIndex = ( src >= list && src < list + num ) ? ( int )( src - list ) : -1;
+		//puncho end
 		int newsize;
 
 		if( granularity == 0 )  	// this is a hack to fix our memset classes
@@ -885,9 +902,13 @@ ID_INLINE int idList<_type_, _tag_>::Append( _type_ const& obj )
 		}
 		newsize = size + granularity;
 		Resize( newsize - newsize % granularity );
+		if( aliasIndex >= 0 )
+		{
+			src = list + aliasIndex;	//puncho - OQ-B2 (list + i, not &list[ i ]: nvrhi handles overload unary &)
+		}
 	}
 
-	list[ num ] = obj;
+	list[ num ] = *src;	//puncho - OQ-B2
 	num++;
 
 	return num - 1;
@@ -907,6 +928,11 @@ Returns the index of the new element.
 template< typename _type_, memTag_t _tag_ >
 ID_INLINE int idList<_type_, _tag_>::Insert( _type_ const& obj, int index )
 {
+	//puncho start - OQ-B2: obj may be one of this list's elements, which a resize frees and the shift below moves; it is
+	// then read from its slot in the new storage
+	int aliasIndex = ( &obj >= list && &obj < list + num ) ? ( int )( &obj - list ) : -1;
+	//puncho end
+
 	if( !list )
 	{
 		Resize( granularity );
@@ -937,7 +963,20 @@ ID_INLINE int idList<_type_, _tag_>::Insert( _type_ const& obj, int index )
 		list[i] = list[i - 1];
 	}
 	num++;
-	list[index] = obj;
+	//puncho start - OQ-B2
+	if( aliasIndex < 0 )
+	{
+		list[index] = obj;
+	}
+	else
+	{
+		if( aliasIndex >= index )
+		{
+			aliasIndex++;	// the shift moved it up one
+		}
+		list[index] = list[aliasIndex];
+	}
+	//puncho end
 	return index;
 }
 
