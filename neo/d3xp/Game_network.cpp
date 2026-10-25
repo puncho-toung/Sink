@@ -44,6 +44,8 @@ static const int SNAP_ENTITIES = SNAP_PLAYERSTATE_END;
 static const int SNAP_ENTITIES_END = SNAP_ENTITIES + MAX_GENTITIES;
 static const int SNAP_LAST_CLIENT_FRAME = SNAP_ENTITIES_END;
 static const int SNAP_LAST_CLIENT_FRAME_END = SNAP_LAST_CLIENT_FRAME + MAX_PLAYERS;
+//puncho - P0-m9: the objects other than entities fit the snapshot layer's budget for them (sys/sys_session.h)
+compile_time_assert( SNAP_LAST_CLIENT_FRAME_END - MAX_GENTITIES <= MAX_NET_FIXED_OBJECTS );
 
 /*
 ===============================================================================
@@ -378,7 +380,7 @@ static void DeclLayerDigests( declType_t type, layerDigest_t row, contentDigests
 	const int numDecls = declManager->GetNumDecls( type );
 	for( int i = 0; i < numDecls; i++ )
 	{
-		// no parse and no media; the bare decl object is allocated, as idSaveGame::WriteDecls does
+		// no parse and no media: every decl object exists from the first BeginLevelLoad
 		const idDecl* decl = declManager->DeclByIndex( type, i, false );
 		if( decl->IsImplicit() )
 		{
@@ -526,6 +528,13 @@ void idGameLocal::SyncPlayersWithLobbyUsers( bool initial )
 
 		if( !lobby.IsLobbyUserValid( lobbyUserID ) )
 		{
+			//puncho start - P0-m8: the count behind the one warning, then a clean slate for the next client in this slot
+			if( hitClaimRefusals[ i ] > 1 )
+			{
+				Printf( "CLIENT_HITSCAN_HIT: %d claims from client %d refused on this map, the first one printed\n", hitClaimRefusals[ i ], i );
+			}
+			hitClaimRefusals[ i ] = 0;
+			//puncho end
 			delete entities[ i ];
 			mpGame.DisconnectClient( i );
 			lobbyUserIDs[i] = lobbyUserID_t();
@@ -558,6 +567,7 @@ void idGameLocal::SyncPlayersWithLobbyUsers( bool initial )
 
 		mpGame.ServerClientConnect( freePlayerDataIndex );
 		Printf( "client %d connected.\n", freePlayerDataIndex );
+		hitClaimRefusals[ freePlayerDataIndex ] = 0;	//puncho - P0-m8: counted per connect
 
 		lobbyUserIDs[ freePlayerDataIndex ] = lobbyUserID;
 
@@ -1155,7 +1165,14 @@ void idGameLocal::ServerProcessReliableMessage( int clientNum, int type, const i
 			}
 			if( refused != NULL )
 			{
-				common->Warning( "CLIENT_HITSCAN_HIT from client %d refused, %s (attacker %d, victim %d, joint %d, damage def %d, scale %g, dir %g %g %g)", clientNum, refused, attackerNum, victimNum, location, damageDefIndex, damageScale, dir.x, dir.y, dir.z );
+				//puncho start - P0-m8: a peer can send these in a loop, so its first refusal warns and the rest are counted
+				// (printed when it disconnects or the map ends)
+				const int refusals = ( clientNum < MAX_CLIENTS ) ? ++hitClaimRefusals[ clientNum ] : 1;
+				if( refusals == 1 )
+				{
+					common->Warning( "CLIENT_HITSCAN_HIT from client %d refused, %s (attacker %d, victim %d, joint %d, damage def %d, scale %g, dir %g %g %g); further refusals are counted", clientNum, refused, attackerNum, victimNum, location, damageDefIndex, damageScale, dir.x, dir.y, dir.z );
+				}
+				//puncho end
 				break;
 			}
 			//puncho end
@@ -1423,8 +1440,10 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 		if( !ent || ent->GetType()->typeNum != typeNum || ent->entityDefNumber != entityDefNumber || spawnId != spawnIds[ entityNumber ] )
 		{
 			//puncho start - identity (P1-A2): the content check proves the map text equal, not the slot layout: a map-range
-			// slot the host fills with something else is logged, so a drift between the peers' map spawns shows
-			if( ent != NULL && entityNumber >= MAX_CLIENTS && entityNumber < mapSpawnCount )
+			// slot the host fills with something else is logged, so a drift between the peers' map spawns shows. A
+			// networkSync entity's slot is the host's to free and refill (a broken light, a removed item), so its
+			// replacement is legitimate (P1-m7)
+			if( ent != NULL && entityNumber >= MAX_CLIENTS && entityNumber < mapSpawnCount && !ent->fl.networkSync )
 			{
 				Warning( "ClientReadSnapshot: the host's %s of generation %d replaces map-range entity %d '%s' (%s, generation %d)", typeInfo->classname, spawnId, entityNumber, ent->name.c_str(), ent->GetClassname(), spawnIds[ entityNumber ] );
 			}
@@ -1459,7 +1478,8 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 					}
 					const char* classname = declManager->DeclByIndex( DECL_ENTITYDEF, entityDefNumber, false )->GetName();
 					args.Set( "classname", classname );
-					if( !SpawnEntityDef( args, &ent ) || !entities[entityNumber] || entities[entityNumber]->GetType()->typeNum != typeNum )
+					//puncho - identity (P1-A2, P1-m6): the spawnId test catches a registration that did not take forcedGen
+					if( !SpawnEntityDef( args, &ent ) || !entities[entityNumber] || entities[entityNumber]->GetType()->typeNum != typeNum || spawnIds[ entityNumber ] != spawnId )
 					{
 						Error( "Failed to spawn entity with classname '%s' of type '%s'", classname, typeInfo->classname );
 					}
@@ -1467,7 +1487,7 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 				else
 				{
 					ent = SpawnEntityType( *typeInfo, &args, true );
-					if( !entities[entityNumber] || entities[entityNumber]->GetType()->typeNum != typeNum )
+					if( !entities[entityNumber] || entities[entityNumber]->GetType()->typeNum != typeNum || spawnIds[ entityNumber ] != spawnId )	//puncho - P1-m6
 					{
 						Error( "Failed to spawn entity of type '%s'", typeInfo->classname );
 					}
@@ -1485,6 +1505,10 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 					numClients = entityNumber + 1;
 				}
 			}
+			//puncho start - identity (P1-A2, P1-m6): the one-shot is for this slot's registration only; a spawn that did
+			// not take it must not leave it armed for a later one
+			forcedGenEntityNum = -1;
+			//puncho end
 		}
 
 		if( ss.ObjectIsStaleByIndex( o ) )

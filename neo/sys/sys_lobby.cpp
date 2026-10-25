@@ -1930,10 +1930,8 @@ needs them (single player never does), and kept until the next load starts or th
 */
 void idLobby::VerifyPeerContent( int p )
 {
-	static const char* const globalNames[] = { "classes", "mapGeometry", "map entities", "script image" };	//puncho - "map entities": P1-A3a, K37; "script image": P1-A3b
-	compile_time_assert( sizeof( globalNames ) / sizeof( globalNames[0] ) == CONTENT_DIGEST_COUNT );
-	static const char* const layerNames[] = { "entityDefs", "materials", "skins", "sounds", "fx", "script", "map entities" };	//puncho - P1-A3b, K38
-	compile_time_assert( sizeof( layerNames ) / sizeof( layerNames[0] ) == LAYER_DIGEST_COUNT );
+	static const char* const globalNames[] = { CONTENT_DIGEST_LIST( DIGEST_ROW_NAME ) };	//puncho - P0-m9: the names beside the rows (d3xp/Game.h)
+	static const char* const layerNames[] = { LAYER_DIGEST_LIST( DIGEST_ROW_NAME ) };		//puncho
 
 	assert( IsHost() && loaded );
 	if( !localContentDigestsValid )
@@ -2194,7 +2192,18 @@ int idLobby::HandleInitialPeerConnection( idBitMsg& msg, const lobbyAddress_t& p
 	idStr modReason;
 	if( ModListDiffers( peerModList, modReason ) )
 	{
-		idLib::Printf( "NET: Refusing %s at connect, %s\n", peerAddress.ToString(), modReason.c_str() );
+		//puncho start - P0-m8: a joiner retries its connect, and anyone can send one in a loop, so the line prints once
+		// per address in 10 s; every attempt is still refused
+		static lobbyAddress_t lastRefusedAddress;
+		static int lastRefusedTime = 0;
+		const int now = Sys_Milliseconds();
+		if( !peerAddress.Compare( lastRefusedAddress, true ) || now - lastRefusedTime >= 10000 )
+		{
+			idLib::Printf( "NET: Refusing %s at connect, %s\n", peerAddress.ToString(), modReason.c_str() );
+			lastRefusedAddress = peerAddress;
+			lastRefusedTime = now;
+		}
+		//puncho end
 		byte refusalBuffer[ 512 ];
 		idBitMsg refusal( refusalBuffer, sizeof( refusalBuffer ) );
 		refusal.WriteUShort( sessionID );

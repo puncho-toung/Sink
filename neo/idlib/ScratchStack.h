@@ -133,6 +133,10 @@ private:
 
 	void* 				AllocBytes( int bytes );
 	void				PrintScopes() const;
+
+	//puncho - P1-m8 (plans/phase1/02-FIXES.md): idScratchScope on a thread with no arena; out of line, so the scope's
+	// test costs a compare and a branch never taken
+	NO_RETURN static void	NoArena( const char* name );
 };
 
 // the calling thread's arena; NULL on a thread that never runs game code
@@ -156,7 +160,12 @@ public:
 	explicit idScratchScope( const char* name )
 	{
 		stack = threadScratchStack;
-		assert( stack != NULL );	// this thread has no arena: game code outside the game and main threads
+		//puncho start - P1-m8: in release builds too, a named fatal error instead of a NULL dereference
+		if( stack == NULL )
+		{
+			idScratchStack::NoArena( name );	// this thread has no arena: game code outside the game and main threads
+		}
+		//puncho end
 		mark = stack->used;
 		top = stack->top;
 		if( stack->numScopes < MAX_SCRATCH_SCOPES )

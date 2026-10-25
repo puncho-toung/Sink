@@ -3140,6 +3140,209 @@ static void Cmd_TestDeclRemap_f( const idCmdArgs& args )
 }
 //puncho end
 
+//puncho start - gate tools for plans/phase1/02-FIXES.md track F3
+/*
+==================
+Cmd_TestLaunch_f
+
+testLaunch <projectileDef> <target> [dmgPower]: launches a projectile from the local player's eye at the target's centre,
+spawned as idWeapon::Event_LaunchProjectiles spawns it on this peer: replicated on the host, net_skip_replication on a
+client. So a client's BFG, rocket or soul cube runs its Launch, Think, Collide and Explode on the client, with no attack
+button and no aim.
+==================
+*/
+static void Cmd_TestLaunch_f( const idCmdArgs& args )
+{
+	idPlayer* player = gameLocal.GetLocalPlayer();
+	if( player == NULL || args.Argc() < 3 )
+	{
+		gameLocal.Printf( "usage: testLaunch <projectileDef> <target> [dmgPower]\n" );
+		return;
+	}
+	const idDict* def = gameLocal.FindEntityDefDict( args.Argv( 1 ), false );
+	idEntity* target = gameLocal.FindEntity( args.Argv( 2 ) );
+	if( def == NULL || target == NULL )
+	{
+		gameLocal.Printf( "testLaunch: no entityDef '%s' or no entity '%s'\n", args.Argv( 1 ), args.Argv( 2 ) );
+		return;
+	}
+	const float dmgPower = ( args.Argc() > 3 ) ? atof( args.Argv( 3 ) ) : 1.0f;
+
+	idDict projectileDict = *def;
+	projectileDict.SetBool( "net_skip_replication", common->IsClient() );	// before the spawn: it picks the slot range
+	idEntity* ent = NULL;
+	gameLocal.SpawnEntityDef( projectileDict, &ent, false );
+	if( ent == NULL || !ent->IsType( idProjectile::Type ) )
+	{
+		gameLocal.Printf( "testLaunch: '%s' is not an idProjectile\n", args.Argv( 1 ) );
+		delete ent;
+		return;
+	}
+
+	idProjectile* proj = static_cast< idProjectile* >( ent );
+	const idVec3 eye = player->GetEyePosition();
+	idVec3 dir = target->GetPhysics()->GetAbsBounds().GetCenter() - eye;
+	dir.Normalize();
+	const idVec3 start = eye + dir * 40.0f;	// outside the owner's bounds
+	proj->Create( player, start, dir );
+	proj->Launch( start, dir, vec3_origin, 0.0f, 1.0f, dmgPower );
+	gameLocal.Printf( "testLaunch: %s launched %s, entity %d, skipReplication %d, at '%s' (entity %d)\n", common->IsClient() ? "client" : "host",
+					  args.Argv( 1 ), ent->entityNumber, ent->fl.skipReplication ? 1 : 0, target->name.c_str(), target->entityNumber );
+}
+
+/*
+==================
+Cmd_TestUnspectate_f
+
+testUnspectate: on the host, every player wants to play, as pressing attack while spectating asks, so warmup can end
+==================
+*/
+static void Cmd_TestUnspectate_f( const idCmdArgs& args )
+{
+	if( !common->IsServer() )
+	{
+		gameLocal.Printf( "testUnspectate: runs on a multiplayer host\n" );
+		return;
+	}
+	int players = 0;
+	for( int i = 0; i < gameLocal.numClients; i++ )
+	{
+		idEntity* ent = gameLocal.entities[ i ];
+		if( ent == NULL || !ent->IsType( idPlayer::Type ) )
+		{
+			continue;
+		}
+		idPlayer* player = static_cast< idPlayer* >( ent );
+		if( player->wantSpectate )
+		{
+			player->forceRespawn = true;
+		}
+		player->wantSpectate = false;
+		players++;
+	}
+	gameLocal.Printf( "testUnspectate: %d players want to play\n", players );
+}
+
+/*
+==================
+Cmd_TestEntState_f
+
+testEntState <entity>...: this peer's view of each entity, so a host's and a client's lines can be compared
+==================
+*/
+static void Cmd_TestEntState_f( const idCmdArgs& args )
+{
+	const char* peer = common->IsClient() ? "client" : "host";
+	for( int i = 1; i < args.Argc(); i++ )
+	{
+		idEntity* ent = gameLocal.FindEntity( args.Argv( i ) );
+		if( ent == NULL )
+		{
+			gameLocal.Printf( "testEntState %s %s: gone\n", peer, args.Argv( i ) );
+			continue;
+		}
+		const renderEntity_t* re = ent->GetRenderEntity();
+		gameLocal.Printf( "testEntState %s %s: entity %d %s, health %d, takedamage %d, hidden %d, contents %d, networkSync %d, model %s, mode %g, timeOffset %g\n",
+						  peer, ent->name.c_str(), ent->entityNumber, ent->GetClassname(), ent->health, ent->fl.takedamage ? 1 : 0, ent->IsHidden() ? 1 : 0,
+						  ent->GetPhysics()->GetContents(), ent->fl.networkSync ? 1 : 0, ( re->hModel != NULL ) ? re->hModel->Name() : "none",
+						  re->shaderParms[ SHADERPARM_MODE ], re->shaderParms[ SHADERPARM_TIMEOFFSET ] );
+	}
+}
+
+/*
+==================
+Cmd_TestHitClaim_f
+
+testHitClaim <count> <victim> <joint> [damageDef]: a client sends <count> hit claims (32 at most, inside the reliable
+queue) against <victim> at <joint>, a joint name or number, with the local player as the attacker, in the layout
+idPlayer::Damage sends. A joint out of range is a bad claim; a real joint in the attacker's view is a legitimate one.
+==================
+*/
+static void Cmd_TestHitClaim_f( const idCmdArgs& args )
+{
+	idPlayer* player = gameLocal.GetLocalPlayer();
+	if( !common->IsClient() || player == NULL || args.Argc() < 4 )
+	{
+		gameLocal.Printf( "usage: testHitClaim <count> <victim> <joint> [damageDef], on a client\n" );
+		return;
+	}
+	const int count = idMath::ClampInt( 1, 32, atoi( args.Argv( 1 ) ) );
+	idEntity* victim = gameLocal.FindEntity( args.Argv( 2 ) );
+	const idDeclEntityDef* damageDef = gameLocal.FindEntityDef( ( args.Argc() > 4 ) ? args.Argv( 4 ) : "damage_bullet_machinegun_mp", false );
+	if( victim == NULL || damageDef == NULL )
+	{
+		gameLocal.Printf( "testHitClaim: no entity '%s' or no damage def\n", args.Argv( 2 ) );
+		return;
+	}
+	const jointHandle_t joint = ( victim->GetAnimator() != NULL ) ? victim->GetAnimator()->GetJointHandle( args.Argv( 3 ) ) : INVALID_JOINT;
+	const int location = ( joint != INVALID_JOINT ) ? joint : atoi( args.Argv( 3 ) );
+	idVec3 dir = victim->GetPhysics()->GetAbsBounds().GetCenter() - player->GetEyePosition();
+	dir.Normalize();
+
+	idLobbyBase& lobby = session->GetActingGameStateLobbyBase();
+	for( int i = 0; i < count; i++ )
+	{
+		byte		msgBuffer[ MAX_GAME_MESSAGE_SIZE ];
+		idBitMsg	msg;
+		msg.InitWrite( msgBuffer, sizeof( msgBuffer ) );
+		msg.BeginWriting();
+		msg.WriteShort( player->entityNumber );
+		msg.WriteShort( victim->entityNumber );
+		msg.WriteVectorFloat( dir );
+		msg.WriteLong( damageDef->Index() );
+		msg.WriteFloat( 1.0f );
+		msg.WriteLong( location );
+		lobby.SendReliableToHost( GAME_RELIABLE_MESSAGE_CLIENT_HITSCAN_HIT, msg );
+	}
+	gameLocal.Printf( "testHitClaim: %d claims sent against '%s' (entity %d), joint %d, damage def %s\n", count, victim->name.c_str(), victim->entityNumber, location, damageDef->GetName() );
+}
+
+/*
+==================
+Cmd_TestSnapSubmit_f
+
+testSnapSubmit <objects> <bytes>: one synthetic snapshot of <objects> objects of <bytes> random bytes each, through the
+host's submit path (idSnapshotProcessor::SubmitPendingSnap with idLobby's 128 KB of object job memory) against an empty
+base, so every object is new. A full table is MAX_GENTITIES entity objects and the game's fixed ones: 16403 today.
+A cap reached ends in idLib::Error; reaching the PASS line means the jobs took it.
+==================
+*/
+static void Cmd_TestSnapSubmit_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 3 )
+	{
+		gameLocal.Printf( "usage: testSnapSubmit <objects> <bytes>\n" );
+		return;
+	}
+	const int numObjects = idMath::ClampInt( 1, MAX_NET_ENTITIES + MAX_NET_FIXED_OBJECTS, atoi( args.Argv( 1 ) ) );
+	const int objectBytes = idMath::ClampInt( 1, 4096, atoi( args.Argv( 2 ) ) );
+	const int objMemorySize = 128 * 1024;	// idLobby::SNAP_OBJ_JOB_MEMORY
+
+	idSnapShot ss;
+	idTempArray< byte > data( objectBytes );
+	idRandom random( 1 );
+	for( int i = 0; i < numObjects; i++ )
+	{
+		for( int b = 0; b < objectBytes; b++ )
+		{
+			data[ b ] = ( byte )( 1 + random.RandomInt( 254 ) );
+		}
+		ss.S_AddObject( i, ~0U, data.Ptr(), objectBytes );
+	}
+
+	idSnapshotProcessor* proc = new( TAG_NETWORKING ) idSnapshotProcessor();
+	uint8* objMemory = ( uint8* )Mem_Alloc16( objMemorySize, TAG_NETWORKING );
+	lzwCompressionData_t* lzwData = ( lzwCompressionData_t* )Mem_Alloc( sizeof( lzwCompressionData_t ), TAG_NETWORKING );
+	gameLocal.Printf( "testSnapSubmit: submitting %d objects of %d bytes\n", numObjects, objectBytes );
+	proc->TrySetPendingSnapshot( ss );
+	proc->SubmitPendingSnap( 1, objMemory, objMemorySize, lzwData );
+	gameLocal.Printf( "testSnapSubmit: PASS: %d objects of %d bytes submitted, delta ready %d\n", numObjects, objectBytes, proc->PendingSnapReadyToSend() ? 1 : 0 );
+	Mem_Free( lzwData );
+	Mem_Free16( objMemory );
+	delete proc;
+}
+//puncho end
+
 /*
 ==================
 Cmd_RecordViewNotes_f
@@ -3642,6 +3845,13 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "testSnapTraceCompare",	Cmd_TestSnapTraceCompare_f,	CMD_FL_GAME,				"testSnapTraceCompare <host file> <client file>: matches a client's net_snapTrace reads with the host's writes" );
 	//puncho end
 	cmdSystem->AddCommand( "testSpawnChurn",		Cmd_TestSpawnChurn_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"spawns and deletes entities to test the per-slot spawn-id generation" );	//puncho - identity (P1-A2)
+	//puncho start - gate tools for plans/phase1/02-FIXES.md track F3
+	cmdSystem->AddCommand( "testLaunch",			Cmd_TestLaunch_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"testLaunch <projectileDef> <target> [dmgPower]: launches a projectile at an entity as this peer's weapon would" );
+	cmdSystem->AddCommand( "testUnspectate",		Cmd_TestUnspectate_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"on a multiplayer host, makes every player want to play, so warmup can end" );
+	cmdSystem->AddCommand( "testEntState",			Cmd_TestEntState_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"testEntState <entity>...: prints this peer's view of each entity" );
+	cmdSystem->AddCommand( "testHitClaim",			Cmd_TestHitClaim_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"testHitClaim <count> <victim> <joint> [damageDef]: a client sends hit claims to the host" );
+	cmdSystem->AddCommand( "testSnapSubmit",		Cmd_TestSnapSubmit_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"testSnapSubmit <objects> <bytes>: submits one synthetic snapshot through the snapshot jobs" );
+	//puncho end
 	cmdSystem->AddCommand( "testDeclRemap",			Cmd_TestDeclRemap_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"drives the implicit decl announce table: make, decode, sound, rocket, impact, fx, speakers" );	//puncho - content check (P1-A3a)
 	cmdSystem->AddCommand( "testModel",				idTestModel::TestModel_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"tests a model", idTestModel::ArgCompletion_TestModel );
 	cmdSystem->AddCommand( "testSkin",				idTestModel::TestSkin_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"tests a skin on an existing testModel", idCmdSystem::ArgCompletion_Decl<DECL_SKIN> );

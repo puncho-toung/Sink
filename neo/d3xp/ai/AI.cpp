@@ -5809,12 +5809,12 @@ void idAI::PushWithAF()
 
 	num_pushed = 0;
 	af.ChangePose( this, gameLocal.time );
-	//puncho start - MP-A4 (K26a): both lists are in the scratch arena. touchList is cut to its results; pushed_ents
-	// holds each touched entity once at most, so it takes num entries, not MAX_GENTITIES held through the Damage below
+	//puncho start - MP-A4 (K26a), P1-m9: the lists are in the scratch arena. EntitiesTouchingAF puts the touch list in this
+	// scope, cut to its results; pushed_ents holds each touched entity once at most, so it takes num entries, not
+	// MAX_GENTITIES held through the Damage below
 	idScratchScope scratch( "idAI::PushWithAF" );
-	afTouch_t* touchList = scratch.Alloc< afTouch_t >( MAX_GENTITIES );
-	int num = af.EntitiesTouchingAF( touchList );
-	scratch.Trim( touchList, num );
+	afTouch_t* touchList;
+	int num = af.EntitiesTouchingAF( scratch, touchList );
 	idEntity** pushed_ents = scratch.Alloc< idEntity* >( num );
 	//puncho end
 	for( i = 0; i < num; i++ )

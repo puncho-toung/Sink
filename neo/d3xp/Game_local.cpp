@@ -253,6 +253,7 @@ void idGameLocal::Clear()
 	mapSpawnCount = 0;
 	clientSpawnCensus.Clear();
 	//puncho end
+	memset( hitClaimRefusals, 0, sizeof( hitClaimRefusals ) );	//puncho - P0-m8
 	camera = NULL;
 	aasList.Clear();
 	aasNames.Clear();
@@ -1048,6 +1049,7 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	forcedGenEntityNum = -1;
 	clientSpawnCensus.Clear();
 	//puncho end
+	memset( hitClaimRefusals, 0, sizeof( hitClaimRefusals ) );	//puncho - P0-m8: counted per map
 
 	spawnedEntities.Clear();
 	activeEntities.Clear();
@@ -1910,6 +1912,16 @@ void idGameLocal::MapShutdown()
 			}
 		}
 		clientSpawnCensus.Clear();
+	}
+	//puncho end
+
+	//puncho start - P0-m8: the count behind the one warning, for the clients still here at map end
+	for( int i = 0; i < MAX_CLIENTS; i++ )
+	{
+		if( hitClaimRefusals[ i ] > 1 )
+		{
+			Printf( "CLIENT_HITSCAN_HIT: %d claims from client %d refused on this map, the first one printed\n", hitClaimRefusals[ i ], i );
+		}
 	}
 	//puncho end
 
@@ -5102,7 +5114,7 @@ void idGameLocal::KillBox( idEntity* ent, bool catch_teleport )
 				hit->Damage( ent, ent, vec3_origin, "damage_telefrag", 1.0f, INVALID_JOINT );
 			}
 		}
-		else if( !catch_teleport )
+		else if( !catch_teleport && idEntity::MayDamageHere( hit ) )	//puncho - MP-C7 (P0-M2): a client's teleport (EVENT_EXIT_TELEPORTER) runs this too
 		{
 			hit->Damage( ent, ent, vec3_origin, "damage_telefrag", 1.0f, INVALID_JOINT );
 		}
@@ -5240,7 +5252,7 @@ void idGameLocal::RadiusDamage( const idVec3& origin, idEntity* inflictor, idEnt
 		//puncho start - MP-C7 (plans/00-MASTER-PLAN.md stream C): a client damages players only, as in
 		// idProjectile::Collide. The projectiles a client launches are not replicated (net_skip_replication), so
 		// idProjectile::Explode does not return before the splash and it lands here on the client too
-		if( common->IsClient() && !ent->IsType( idPlayer::Type ) )
+		if( !idEntity::MayDamageHere( ent ) )
 		{
 			continue;
 		}

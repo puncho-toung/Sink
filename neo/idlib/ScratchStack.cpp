@@ -203,3 +203,22 @@ void idScratchStack::PrintScopes() const
 	}
 	idLib::Printf( "  %d of %d bytes in use\n", used, size );
 }
+
+//puncho start - P1-m8 (plans/phase1/02-FIXES.md)
+/*
+========================
+idScratchStack::NoArena
+
+The game and main threads point threadScratchStack at the game's arena (idCommonLocal); any other thread that
+reaches game code has none. Names the scope and the thread rather than dereferencing NULL in a release build.
+========================
+*/
+void idScratchStack::NoArena( const char* name )
+{
+	if( idLib::IsMainThread() )
+	{
+		idLib::FatalError( "idScratchScope '%s': the main thread has no scratch arena", name );
+	}
+	idLib::FatalError( "idScratchScope '%s': thread %llx has no scratch arena; only the game and main threads run game code", name, ( unsigned long long )Sys_GetCurrentThreadID() );
+}
+//puncho end

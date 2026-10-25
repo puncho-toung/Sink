@@ -145,7 +145,9 @@ Sys_StaticTLSSize
 
 glibc places a thread's static TLS (idStr's va buffers alone are 192 KB) and its TCB
 at the top of the stack it is given, so Sys_CreateThread adds this to the requested
-size. It is the PT_TLS segments of the loaded objects, rounded up to the page size.
+size. It is the PT_TLS segments of the loaded objects, rounded up to the page size;
+glibc's static TLS surplus and the TCB come out of the rounding slack, so the usable
+stack ends within a page below the request (P1-m12, measured: 255 KB of 256 KB).
 ========================
 */
 static size_t Sys_StaticTLSSize()
