@@ -416,7 +416,7 @@ void idCollisionModelManagerLocal::TranslateTrmVertexThroughPolygon( cm_traceWor
 		tw->trace.c.contents = poly->contents;
 		tw->trace.c.material = poly->material;
 		tw->trace.c.type = CONTACT_TRMVERTEX;
-		tw->trace.c.modelFeature = *reinterpret_cast<int*>( &poly );
+		tw->trace.c.modelFeature = PolygonId( tw->model, poly );	//puncho - OQ-B4: the polygon id, not a truncated address
 		tw->trace.c.trmFeature = v - tw->vertices;
 		tw->trace.c.point = v->p + tw->trace.fraction * ( v->endp - v->p );
 		// if retrieving contacts
@@ -476,7 +476,7 @@ void idCollisionModelManagerLocal::TranslatePointThroughPolygon( cm_traceWork_t*
 		tw->trace.c.contents = poly->contents;
 		tw->trace.c.material = poly->material;
 		tw->trace.c.type = CONTACT_TRMVERTEX;
-		tw->trace.c.modelFeature = *reinterpret_cast<int*>( &poly );
+		tw->trace.c.modelFeature = PolygonId( tw->model, poly );	//puncho - OQ-B4: the polygon id, not a truncated address
 		tw->trace.c.trmFeature = v - tw->vertices;
 		tw->trace.c.point = v->p + tw->trace.fraction * ( v->endp - v->p );
 		// if retrieving contacts

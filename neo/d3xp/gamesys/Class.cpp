@@ -63,7 +63,8 @@ are initialized before superclasses.
 ================
 */
 idTypeInfo::idTypeInfo( const char* classname, const char* superclass, idEventFunc<idClass>* eventCallbacks, idClass * ( *CreateInstance )(),
-						void ( idClass::*Spawn )(), void ( idClass::*Save )( idSaveGame* savefile ) const, void ( idClass::*Restore )( idRestoreGame* savefile ) )
+						void ( idClass::*Spawn )(), void ( idClass::*Save )( idSaveGame* savefile ) const, void ( idClass::*Restore )( idRestoreGame* savefile ),
+						bool ownSave, bool ownRestore )	//puncho - OQ-B7
 {
 
 	idTypeInfo* type;
@@ -76,6 +77,8 @@ idTypeInfo::idTypeInfo( const char* classname, const char* superclass, idEventFu
 	this->Spawn				= Spawn;
 	this->Save				= Save;
 	this->Restore			= Restore;
+	this->ownSave			= ownSave;			//puncho - OQ-B7
+	this->ownRestore		= ownRestore;
 	this->CreateInstance	= CreateInstance;
 	this->super				= idClass::GetClass( superclass );
 	this->freeEventMap		= false;
@@ -251,7 +254,24 @@ void idTypeInfo::Shutdown()
 const idEventDef EV_Remove( "<immediateremove>", NULL );
 const idEventDef EV_SafeRemove( "remove", NULL );
 
-ABSTRACT_DECLARATION( NULL, idClass )
+//puncho start - OQ-B7: ABSTRACT_DECLARATION( NULL, idClass ) by hand, since CLASS_OWNS_LEVEL_FUNC cannot name NULL's Save. The
+// root has no type super, so CallSave_r and CallRestore_r never read its two flags
+idTypeInfo idClass::Type( "idClass", "NULL",
+						  ( idEventFunc<idClass>* )idClass::eventCallbacks, idClass::CreateInstance, ( void ( idClass::* )() )&idClass::Spawn,
+						  ( void ( idClass::* )( idSaveGame* ) const )&idClass::Save, ( void ( idClass::* )( idRestoreGame* ) )&idClass::Restore,
+						  true, true );
+idClass* idClass::CreateInstance()
+{
+	gameLocal.Error( "Cannot instanciate abstract class %s.", "idClass" );
+	return NULL;
+}
+idTypeInfo* idClass::GetType() const
+{
+	return &( idClass::Type );
+}
+idEventFunc<idClass> idClass::eventCallbacks[] =
+{
+//puncho end
 EVENT( EV_Remove,				idClass::Event_Remove )
 EVENT( EV_SafeRemove,			idClass::Event_SafeRemove )
 END_CLASS

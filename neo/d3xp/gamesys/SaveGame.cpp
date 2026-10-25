@@ -212,7 +212,7 @@ void idSaveGame::CallSave_r( const idTypeInfo* cls, const idClass* obj )
 	if( cls->super )
 	{
 		CallSave_r( cls->super, obj );
-		if( cls->super->Save == cls->Save )
+		if( !cls->ownSave )	//puncho - OQ-B7: was cls->super->Save == cls->Save, which identical-code folding can fool
 		{
 			// don't call save on this inheritance level since the function was called in the super class
 			return;
@@ -1406,7 +1406,7 @@ void idRestoreGame::CallRestore_r( const idTypeInfo* cls, idClass* obj )
 	if( cls->super )
 	{
 		CallRestore_r( cls->super, obj );
-		if( cls->super->Restore == cls->Restore )
+		if( !cls->ownRestore )	//puncho - OQ-B7: was cls->super->Restore == cls->Restore
 		{
 			// don't call save on this inheritance level since the function was called in the super class
 			return;

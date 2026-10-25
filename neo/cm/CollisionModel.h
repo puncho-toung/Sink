@@ -54,7 +54,8 @@ typedef enum
 	CONTACT_NONE,							// no contact
 	CONTACT_EDGE,							// trace model edge hits model edge
 	CONTACT_MODELVERTEX,					// model vertex hits trace model polygon
-	CONTACT_TRMVERTEX						// trace model vertex hits model polygon
+	CONTACT_TRMVERTEX,						// trace model vertex hits model polygon
+	CONTACT_TRMEDGE							// trace model edge pierces model polygon (position test)	//puncho - OQ-B4: was tagged CONTACT_EDGE with a polygon for its feature
 } contactType_t;
 
 // contact info
@@ -66,7 +67,7 @@ typedef struct
 	float					dist;			// contact plane distance
 	int						contents;		// contents at other side of surface
 	const idMaterial* 		material;		// surface material
-	int						modelFeature;	// contact feature on model
+	int						modelFeature;	// contact feature on model: an edge or vertex number, or a polygon id //puncho - OQ-B4
 	int						trmFeature;		// contact feature on trace model
 	int						entityNum;		// entity the contact surface is a part of
 	int						id;				// id of clip model the contact surface is part of

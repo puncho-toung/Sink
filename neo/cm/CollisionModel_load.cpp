@@ -446,6 +446,7 @@ void idCollisionModelManagerLocal::FreeModel( cm_model_t* model )
 	Mem_Free( model->edges );
 	// free vertices
 	Mem_Free( model->vertices );
+	Mem_Free( model->polygonsById );	//puncho - OQ-B4 (the id hash goes with the model)
 	// free the model
 	delete model;
 }
@@ -627,6 +628,8 @@ cm_model_t* idCollisionModelManagerLocal::AllocModel()
 	model->brushRefBlocks = NULL;
 	model->polygonBlock = NULL;
 	model->brushBlock = NULL;
+	model->maxPolygonIds = model->numPolygonIds = 0;	//puncho - OQ-B4
+	model->polygonsById = NULL;
 	model->numPolygons = model->polygonMemory =
 							 model->numBrushes = model->brushMemory =
 										 model->numNodes = model->numBrushRefs =
@@ -864,6 +867,13 @@ void idCollisionModelManagerLocal::SetupTrmModelStructure()
 		trmPolygons[i]->p->material = trmMaterial;
 		trmPolygons[i]->p->numEdges = 0;
 	}
+	//puncho start - OQ-B4: polygon i holds the trace model's polygon i, so that is its id
+	AllocPolygonIds( model, MAX_TRACEMODEL_POLYS );
+	for( i = 0; i < MAX_TRACEMODEL_POLYS; i++ )
+	{
+		AddPolygonId( model, trmPolygons[i]->p );
+	}
+	//puncho end
 	// allocate brush for position test
 	trmBrushes[0] = AllocBrushReference( model, 1 );
 	trmBrushes[0]->b = AllocBrush( model, MAX_TRACEMODEL_POLYS );
@@ -3454,6 +3464,127 @@ void idCollisionModelManagerLocal::OptimizeArrays( cm_model_t* model )
 }
 
 /*
+===============================================================================
+
+Polygon ids
+
+OQ-B4: a contact with a model polygon (CONTACT_TRMVERTEX, and CONTACT_TRMEDGE, the position test's trm edge in a polygon)
+names it in modelFeature by an id, its index in polygonsById. It was the polygon's address cast to int,
+which a 64-bit build truncates. The ids are rebuilt at every load and never stored, so no file changes;
+the address hash stands in for an id field, since a bigger cm_polygon_t would change the polygonMemory
+that the .cm and .bcm files record.
+
+===============================================================================
+*/
+
+//puncho start - OQ-B4
+/*
+================
+CM_PolygonIdKey
+
+The low bits of a polygon address are alignment. A multiply by the golden ratio mixes every address bit into the high
+half of the product, and the key is that half, which the hash then masks to its size.
+================
+*/
+static ID_INLINE int CM_PolygonIdKey( const cm_polygon_t* p )
+{
+	return ( int )( ( ( uint64 )( uintptr_t )p * 0x9E3779B97F4A7C15ULL ) >> 32 );
+}
+
+/*
+================
+idCollisionModelManagerLocal::AllocPolygonIds
+================
+*/
+void idCollisionModelManagerLocal::AllocPolygonIds( cm_model_t* model, int numPolygons )
+{
+	numPolygons = Max( numPolygons, 1 );
+	Mem_Free( model->polygonsById );
+	model->polygonsById = ( cm_polygon_t** ) Mem_ClearedAlloc( numPolygons * sizeof( cm_polygon_t* ), TAG_COLLISION );
+	model->maxPolygonIds = numPolygons;
+	model->numPolygonIds = 0;
+	model->polygonIdHash.Clear( idMath::CeilPowerOfTwo( numPolygons ), numPolygons );
+}
+
+/*
+================
+idCollisionModelManagerLocal::AddPolygonId
+================
+*/
+void idCollisionModelManagerLocal::AddPolygonId( cm_model_t* model, cm_polygon_t* p )
+{
+	if( model->numPolygonIds >= model->maxPolygonIds )
+	{
+		common->Error( "AddPolygonId: model '%s' has more polygons than its %d ids", model->name.c_str(), model->maxPolygonIds );
+	}
+	model->polygonsById[ model->numPolygonIds ] = p;
+	model->polygonIdHash.Add( CM_PolygonIdKey( p ), model->numPolygonIds );
+	model->numPolygonIds++;
+}
+
+/*
+================
+idCollisionModelManagerLocal::NumberPolygons_r
+
+The walk of BuildUniqueLists in WriteBinaryModelToFile: a node's references in list order, then children[0],
+then children[1], each polygon numbered where it is first seen. It leaves every checkcount alone, since the
+.bcm stores them.
+================
+*/
+void idCollisionModelManagerLocal::NumberPolygons_r( cm_model_t* model, cm_node_t* node )
+{
+	for( cm_polygonRef_t* pref = node->polygons; pref != NULL; pref = pref->next )
+	{
+		if( PolygonId( model, pref->p ) == -1 )
+		{
+			AddPolygonId( model, pref->p );
+		}
+	}
+	if( node->planeType != -1 )
+	{
+		NumberPolygons_r( model, node->children[0] );
+		NumberPolygons_r( model, node->children[1] );
+	}
+}
+
+/*
+================
+idCollisionModelManagerLocal::NumberPolygons
+
+For a model whose polygons are final: built (FinishModel) or parsed from a .cm file. A model read from a .bcm
+takes each polygon's file index instead, which is the same id.
+================
+*/
+void idCollisionModelManagerLocal::NumberPolygons( cm_model_t* model )
+{
+	AllocPolygonIds( model, model->numPolygons );
+	if( model->node != NULL )
+	{
+		NumberPolygons_r( model, model->node );
+	}
+}
+
+/*
+================
+idCollisionModelManagerLocal::PolygonId
+
+-1 for a polygon the model never numbered.
+================
+*/
+int idCollisionModelManagerLocal::PolygonId( const cm_model_t* model, const cm_polygon_t* p ) const
+{
+	for( int id = model->polygonIdHash.First( CM_PolygonIdKey( p ) ); id != -1; id = model->polygonIdHash.Next( id ) )
+	{
+		if( model->polygonsById[ id ] == p )
+		{
+			return id;
+		}
+	}
+	return -1;
+}
+//puncho end
+
+/*
 ================
 idCollisionModelManagerLocal::FinishModel
 ================
@@ -3487,6 +3618,8 @@ void idCollisionModelManagerLocal::FinishModel( cm_model_t* model )
 						model->numNodes * sizeof( cm_node_t ) +
 						model->numPolygonRefs * sizeof( cm_polygonRef_t ) +
 						model->numBrushRefs * sizeof( cm_brushRef_t );
+
+	NumberPolygons( model );	//puncho - OQ-B4: after the merges, when the polygons are final
 }
 
 static const byte BCM_VERSION = 100;
@@ -3657,6 +3790,15 @@ cm_model_t* idCollisionModelManagerLocal::LoadBinaryModelFromFile( idFile* file,
 	};
 	model->node = AllocNode( model, model->numNodes + 1 );
 	local::ReadNodeTree( file, model, model->node, polys, brushes );
+
+	//puncho start - OQ-B4: the writer stores the polygons in NumberPolygons' order, so the file index is the id. The tree
+	// cannot be walked again for them: ReadNodeTree puts each node's references in reverse order
+	AllocPolygonIds( model, polys.Num() );
+	for( int i = 0; i < polys.Num(); i++ )
+	{
+		AddPolygonId( model, polys[i] );
+	}
+	//puncho end
 
 	// We should have only allocated a single block, and used every entry in the block
 	// assert( model->nodeBlocks != NULL && model->nodeBlocks->next == NULL && model->nodeBlocks->nextNode == NULL );
@@ -4188,7 +4330,12 @@ void idCollisionModelManagerLocal::AccumulateModelInfo( cm_model_t* model )
 {
 	int i;
 
-	memset( model, 0, sizeof( *model ) );
+	//puncho start - OQ-B4: the counters one by one, since cm_model_t holds an idHashIndex that a memset would clobber
+	model->numVertices = model->numEdges = model->numPolygons = model->polygonMemory = 0;
+	model->numBrushes = model->brushMemory = model->numNodes = model->numBrushRefs = model->numPolygonRefs = 0;
+	model->numInternalEdges = model->numSharpEdges = model->numRemovedPolys = model->numMergedPolys = 0;
+	model->usedMemory = 0;
+	//puncho end
 	// accumulate statistics of all loaded models
 	for( i = 0; i < numModels; i++ )
 	{
@@ -4532,7 +4679,15 @@ bool idCollisionModelManagerLocal::GetModelPolygon( cmHandle_t model, int polygo
 		return false;
 	}
 
-	poly = *reinterpret_cast<cm_polygon_t**>( &polygonNum );
+	//puncho start - OQ-B4: an id, looked up and range-checked: a contact from an older save holds a truncated address
+	const cm_model_t* cm = models[model];
+	if( polygonNum < 0 || polygonNum >= cm->numPolygonIds )
+	{
+		common->Printf( "idCollisionModelManagerLocal::GetModelPolygon: invalid polygon number\n" );
+		return false;
+	}
+	poly = cm->polygonsById[ polygonNum ];
+	//puncho end
 	winding.Clear();
 	for( i = 0; i < poly->numEdges; i++ )
 	{
