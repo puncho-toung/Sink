@@ -170,6 +170,9 @@ public:
 	virtual void		Hide();
 	virtual void		Show();
 
+	virtual void		WriteToSnapshot( idBitMsg& msg ) const;	//puncho - P0-m10: the break replicates
+	virtual void		ReadFromSnapshot( const idBitMsg& msg );	//puncho
+
 private:
 	int					count;
 	int					nextTriggerTime;

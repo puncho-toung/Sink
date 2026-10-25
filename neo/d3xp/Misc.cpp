@@ -487,6 +487,7 @@ idDamagable::idDamagable()
 {
 	count = 0;
 	nextTriggerTime = 0;
+	fl.networkSync = true;	//puncho - P0-m10: the server breaks it, the clients show it (WriteToSnapshot)
 }
 
 /*
@@ -670,6 +671,65 @@ void idDamagable::Event_RestoreDamagable()
 	health = spawnArgs.GetInt( "health", "5" );
 	Show();
 }
+
+//puncho start - P0-m10 (plans/phase1/02-FIXES.md): the server's break as state, so a client and a late joiner show it
+/*
+================
+idDamagable::WriteToSnapshot
+
+What BecomeBroken and Event_RestoreDamagable leave behind: the broken model, hidden, the state parm and the break time,
+which BecomeBroken stores as the shader time offset (-MS2SEC). BecomeBroken is the only writer of nextTriggerTime and
+always moves it past zero, so a non-zero nextTriggerTime says it ran and set the broken model, if there is one.
+================
+*/
+void idDamagable::WriteToSnapshot( idBitMsg& msg ) const
+{
+	msg.WriteBits( ( nextTriggerTime != 0 ) ? 1 : 0, 1 );
+	msg.WriteBits( IsHidden() ? 1 : 0, 1 );
+	msg.WriteFloat( renderEntity.shaderParms[ SHADERPARM_MODE ] );
+	msg.WriteFloat( renderEntity.shaderParms[ SHADERPARM_TIMEOFFSET ] );
+}
+
+/*
+================
+idDamagable::ReadFromSnapshot
+
+Sets the state, never toggles it, and never calls ActivateTargets: the server fires the targets, and what they change
+replicates on its own.
+================
+*/
+void idDamagable::ReadFromSnapshot( const idBitMsg& msg )
+{
+	const bool broken = msg.ReadBits( 1 ) != 0;
+	const bool hidden = msg.ReadBits( 1 ) != 0;
+	const float mode = msg.ReadFloat();
+	const float timeOffset = msg.ReadFloat();
+	if( !msg.HasChanged() )
+	{
+		return;
+	}
+
+	const char* brokenModel = spawnArgs.GetString( "broken" );
+	if( broken && brokenModel[0] != '\0' && renderEntity.hModel != renderModelManager->FindModel( brokenModel ) )
+	{
+		SetModel( brokenModel );
+	}
+	if( hidden != IsHidden() )
+	{
+		if( hidden )
+		{
+			Hide();
+		}
+		else
+		{
+			Show();
+		}
+	}
+	renderEntity.shaderParms[ SHADERPARM_MODE ] = mode;
+	renderEntity.shaderParms[ SHADERPARM_TIMEOFFSET ] = timeOffset;
+	UpdateVisuals();
+}
+//puncho end
 
 
 /*
