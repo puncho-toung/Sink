@@ -1478,7 +1478,8 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 					}
 					const char* classname = declManager->DeclByIndex( DECL_ENTITYDEF, entityDefNumber, false )->GetName();
 					args.Set( "classname", classname );
-					if( !SpawnEntityDef( args, &ent ) || !entities[entityNumber] || entities[entityNumber]->GetType()->typeNum != typeNum )
+					//puncho - identity (P1-A2, P1-m6): the spawnId test catches a registration that did not take forcedGen
+					if( !SpawnEntityDef( args, &ent ) || !entities[entityNumber] || entities[entityNumber]->GetType()->typeNum != typeNum || spawnIds[ entityNumber ] != spawnId )
 					{
 						Error( "Failed to spawn entity with classname '%s' of type '%s'", classname, typeInfo->classname );
 					}
@@ -1486,7 +1487,7 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 				else
 				{
 					ent = SpawnEntityType( *typeInfo, &args, true );
-					if( !entities[entityNumber] || entities[entityNumber]->GetType()->typeNum != typeNum )
+					if( !entities[entityNumber] || entities[entityNumber]->GetType()->typeNum != typeNum || spawnIds[ entityNumber ] != spawnId )	//puncho - P1-m6
 					{
 						Error( "Failed to spawn entity of type '%s'", typeInfo->classname );
 					}
@@ -1504,6 +1505,10 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 					numClients = entityNumber + 1;
 				}
 			}
+			//puncho start - identity (P1-A2, P1-m6): the one-shot is for this slot's registration only; a spawn that did
+			// not take it must not leave it armed for a later one
+			forcedGenEntityNum = -1;
+			//puncho end
 		}
 
 		if( ss.ObjectIsStaleByIndex( o ) )
