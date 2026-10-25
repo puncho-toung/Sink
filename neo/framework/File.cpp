@@ -897,9 +897,17 @@ int idFile_Memory::Write( const void* buffer, int len )
 	}
 #endif
 
+	//puncho start - OQ-B1: an overwrite after a seek back leaves the length alone. Only a write past the end moves the
+	// end and its terminator, and the room test above (len + 1 from curPtr) made space for both. An unmoved end keeps
+	// the terminator it has, or has none when SetLength sized the block exactly
+	const size_t writeEnd = ( size_t )( curPtr - filePtr ) + len;
 	curPtr += len;
-	fileSize += len;
-	filePtr[ fileSize ] = 0; // len + 1
+	if( writeEnd > fileSize )
+	{
+		fileSize = writeEnd;
+		filePtr[ fileSize ] = 0; // len + 1
+	}
+	//puncho end
 	return len;
 }
 
@@ -999,22 +1007,24 @@ idFile_Memory::Seek
 */
 int idFile_Memory::Seek( long offset, fsOrigin_t origin )
 {
-
+	//puncho start - OQ-B1: the target is computed and clamped as an offset, so curPtr never leaves
+	// [filePtr, filePtr + fileSize], not even for the pointer arithmetic
+	int64 target;
 	switch( origin )
 	{
 		case FS_SEEK_CUR:
 		{
-			curPtr += offset;
+			target = ( int64 )( curPtr - filePtr ) + offset;
 			break;
 		}
 		case FS_SEEK_END:
 		{
-			curPtr = filePtr + fileSize - offset;
+			target = ( int64 )fileSize - offset;
 			break;
 		}
 		case FS_SEEK_SET:
 		{
-			curPtr = filePtr + offset;
+			target = offset;
 			break;
 		}
 		default:
@@ -1023,16 +1033,18 @@ int idFile_Memory::Seek( long offset, fsOrigin_t origin )
 			return -1;
 		}
 	}
-	if( curPtr < filePtr )
+	if( target < 0 )
 	{
 		curPtr = filePtr;
 		return -1;
 	}
-	if( curPtr > filePtr + fileSize )
+	if( target > ( int64 )fileSize )
 	{
 		curPtr = filePtr + fileSize;
 		return -1;
 	}
+	curPtr = filePtr + target;
+	//puncho end
 	return 0;
 }
 
