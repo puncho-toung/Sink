@@ -606,6 +606,24 @@ void idSaveGame::WriteObject( const idClass* obj )
 	//puncho end
 }
 
+//puncho start - saves (P1-m10b)
+/*
+================
+idSaveGame::WriteRenderHandle
+
+WriteInt's bytes, traced as an SP_HANDLE named by field: the one entry the round trip's byte compare lets differ.
+================
+*/
+void idSaveGame::WriteRenderHandle( const int handle, const char* field )
+{
+	file->WriteBig( handle );
+	if( streamTrace != NULL )
+	{
+		streamTrace->Handle( field );
+	}
+}
+//puncho end
+
 /*
 ================
 idSaveGame::WriteStaticObject
@@ -825,8 +843,8 @@ void idSaveGame::WriteRenderEntity( const renderEntity_t& renderEntity )
 {
 	int i;
 
-	//puncho start - stream-trace (P1-A1c, K3): a struct scope; the handle the owner writes beside it is an allowlist
-	// position counted from it
+	//puncho start - stream-trace (P1-A1c, K3): a struct scope; the owner writes the entity's handle beside it with
+	// WriteRenderHandle (P1-m10b)
 	if( streamTrace != NULL && streamTrace->EnterStruct( "renderEntity_t" ) )
 	{
 		WriteRenderEntity( renderEntity );
@@ -1042,7 +1060,8 @@ idSaveGame::WriteUsercmd
 */
 void idSaveGame::WriteUsercmd( const usercmd_t& usercmd )
 {
-	//puncho start - stream-trace (P1-A1c, K3): a struct scope; the save driver's dummy one is allowed whole
+	//puncho start - stream-trace (P1-A1c, K3): a struct scope; the save driver's dummy one is all zeros (usercmd_t's
+	// constructor), so it compares like any other
 	if( streamTrace != NULL && streamTrace->EnterStruct( "usercmd_t" ) )
 	{
 		WriteUsercmd( usercmd );
@@ -1747,6 +1766,24 @@ void idRestoreGame::ReadObject( idClass*& obj )
 	}
 	obj = objects[ index ];
 }
+
+//puncho start - saves (P1-m10b)
+/*
+================
+idRestoreGame::ReadRenderHandle
+
+The int WriteRenderHandle wrote, traced under the same field name.
+================
+*/
+void idRestoreGame::ReadRenderHandle( int& handle, const char* field )
+{
+	file->ReadBig( handle );
+	if( streamTrace != NULL )
+	{
+		streamTrace->Handle( field );
+	}
+}
+//puncho end
 
 /*
 ================

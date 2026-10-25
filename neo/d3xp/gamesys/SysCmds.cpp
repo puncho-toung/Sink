@@ -2737,9 +2737,9 @@ Cmd_TestSaveRoundTrip_f
 
 K3: save to memory, load that and save again, each save taken right after InitFromSaveGame returns, then load the
 second save and take a third. The first trip holds each scope's read trace against its write trace. The second and
-third saves are compared byte for byte apart from the allowlist: a restore's one-time fix-ups (UpdateVisuals and
-Present on every entity, a GUI's StateChanged, idClipModel's touchCount) have run before both of them, so they
-must agree. The game goes on from the reloaded state.
+third saves are compared byte for byte apart from the ints written by idSaveGame::WriteRenderHandle (P1-m10b): a
+restore's one-time fix-ups (UpdateVisuals and Present on every entity, a GUI's StateChanged, idClipModel's
+touchCount) have run before both of them, so they must agree. The game goes on from the reloaded state.
 ==================
 */
 static void Cmd_TestSaveRoundTrip_f( const idCmdArgs& args )
@@ -2790,8 +2790,9 @@ static void Cmd_TestSaveRoundTrip_f( const idCmdArgs& args )
 	}
 	if( !loaded )
 	{
-		// the map is gone, as idCommonLocal::ExecuteMapChange quits to the title after a refused load
-		gameLocal.Printf( "testSaveRoundTrip: FAIL: the load refused the save (the script changed?); restart the map\n" );
+		// P1-m13: a refused load has torn the world down, and the next frame would spawn the player into it.
+		// idCommonLocal::ExecuteMapChange quits to the title after a refused load; the drop does the same here
+		gameLocal.Error( "testSaveRoundTrip: the load refused the save (the script changed?)" );
 		return;
 	}
 

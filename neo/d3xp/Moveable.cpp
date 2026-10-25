@@ -948,8 +948,8 @@ void idExplodingBarrel::Save( idSaveGame* savefile ) const
 	savefile->WriteMat3( spawnAxis );
 
 	savefile->WriteInt( state );
-	savefile->WriteInt( particleModelDefHandle );
-	savefile->WriteInt( lightDefHandle );
+	savefile->WriteRenderHandle( particleModelDefHandle, "idExplodingBarrel::particleModelDefHandle" );	//puncho - saves (P1-m10b)
+	savefile->WriteRenderHandle( lightDefHandle, "idExplodingBarrel::lightDefHandle" );	//puncho - saves (P1-m10b)
 
 	savefile->WriteRenderEntity( particleRenderEntity );
 	savefile->WriteRenderLight( light );
@@ -972,8 +972,8 @@ void idExplodingBarrel::Restore( idRestoreGame* savefile )
 	savefile->ReadMat3( spawnAxis );
 
 	savefile->ReadInt( ( int& )state );
-	savefile->ReadInt( ( int& )particleModelDefHandle );
-	savefile->ReadInt( ( int& )lightDefHandle );
+	savefile->ReadRenderHandle( ( int& )particleModelDefHandle, "idExplodingBarrel::particleModelDefHandle" );	//puncho - saves (P1-m10b)
+	savefile->ReadRenderHandle( ( int& )lightDefHandle, "idExplodingBarrel::lightDefHandle" );	//puncho - saves (P1-m10b)
 
 	savefile->ReadRenderEntity( particleRenderEntity );
 	savefile->ReadRenderLight( light );

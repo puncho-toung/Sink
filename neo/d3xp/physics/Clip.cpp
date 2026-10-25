@@ -539,7 +539,7 @@ void idClipModel::Save( idSaveGame* savefile ) const
 		savefile->WriteString( "" );
 	}
 	savefile->WriteInt( traceModelIndex );
-	savefile->WriteInt( renderModelHandle );
+	savefile->WriteRenderHandle( renderModelHandle, "idClipModel::renderModelHandle" );	//puncho - saves (P1-m10b)
 	savefile->WriteBool( clipLinks != NULL );
 	savefile->WriteInt( touchCount );
 }
@@ -579,7 +579,7 @@ void idClipModel::Restore( idRestoreGame* savefile )
 		int realIndex = traceModelIndex & ~TRACE_MODEL_SAVED;
 		traceModelCache[realIndex]->refCount++;
 	}
-	savefile->ReadInt( renderModelHandle );
+	savefile->ReadRenderHandle( renderModelHandle, "idClipModel::renderModelHandle" );	//puncho - saves (P1-m10b)
 	savefile->ReadBool( linked );
 	savefile->ReadInt( touchCount );
 

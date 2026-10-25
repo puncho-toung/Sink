@@ -74,6 +74,11 @@ public:
 	void					WriteAngles( const idAngles& angles );
 	void					WriteObject( const idClass* obj );
 	void					WriteStaticObject( const idClass& obj );
+	//puncho start - saves (P1-m10b): an int a load may give back changed, so it may differ from save to save: a render
+	// or PVS handle the Restore re-acquires, or one of two client fields idGameLocal::SaveGame writes. The bytes are
+	// WriteInt's; field, a string literal, names it in the trace
+	void					WriteRenderHandle( const int handle, const char* field );
+	//puncho end
 	void					WriteDict( const idDict* dict );
 	void					WriteMaterial( const idMaterial* material );
 	void					WriteSkin( const idDeclSkin* skin );
@@ -170,6 +175,7 @@ public:
 	void					ReadAngles( idAngles& angles );
 	void					ReadObject( idClass*& obj );
 	void					ReadStaticObject( idClass& obj );
+	void					ReadRenderHandle( int& handle, const char* field );	//puncho - saves (P1-m10b): WriteRenderHandle's int, read as ReadInt
 	void					ReadDict( idDict* dict );
 	void					ReadMaterial( const idMaterial*& material );
 	void					ReadSkin( const idDeclSkin*& skin );

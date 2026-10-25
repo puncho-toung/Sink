@@ -844,11 +844,11 @@ void idEntity::Save( idSaveGame* savefile ) const
 	savefile->WriteInt( timeGroup );
 	savefile->WriteBool( noGrab );
 	savefile->WriteRenderEntity( xrayEntity );
-	savefile->WriteInt( xrayEntityHandle );
+	savefile->WriteRenderHandle( xrayEntityHandle, "idEntity::xrayEntityHandle" );	//puncho - saves (P1-m10b)
 	savefile->WriteSkin( xraySkin );
 
 	savefile->WriteRenderEntity( renderEntity );
-	savefile->WriteInt( modelDefHandle );
+	savefile->WriteRenderHandle( modelDefHandle, "idEntity::modelDefHandle" );	//puncho - saves (P1-m10b)
 	savefile->WriteRefSound( refSound );
 
 	ENTITY_BIND_SCHEMA( SCHEMA_SAVE, ( *this ) )	//puncho - schema (P1-A1a): the bind branch (Entity.h)
@@ -925,7 +925,7 @@ void idEntity::Restore( idRestoreGame* savefile )
 	savefile->ReadInt( timeGroup );
 	savefile->ReadBool( noGrab );
 	savefile->ReadRenderEntity( xrayEntity );
-	savefile->ReadInt( xrayEntityHandle );
+	savefile->ReadRenderHandle( xrayEntityHandle, "idEntity::xrayEntityHandle" );	//puncho - saves (P1-m10b)
 	if( xrayEntityHandle != -1 )
 	{
 		xrayEntityHandle =  gameRenderWorld->AddEntityDef( &xrayEntity );
@@ -933,7 +933,7 @@ void idEntity::Restore( idRestoreGame* savefile )
 	savefile->ReadSkin( xraySkin );
 
 	savefile->ReadRenderEntity( renderEntity );
-	savefile->ReadInt( modelDefHandle );
+	savefile->ReadRenderHandle( modelDefHandle, "idEntity::modelDefHandle" );	//puncho - saves (P1-m10b)
 	savefile->ReadRefSound( refSound );
 
 	ENTITY_BIND_SCHEMA( SCHEMA_RESTORE, ( *this ) )	//puncho - schema (P1-A1a)
