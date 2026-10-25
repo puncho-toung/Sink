@@ -78,7 +78,8 @@ public:
 	}
 	void					SetupPose( idEntity* ent, int time );
 	void					ChangePose( idEntity* ent, int time );
-	int						EntitiesTouchingAF( afTouch_t touchList[ MAX_GENTITIES ] ) const;
+	//puncho - P1-m9 (plans/phase1/02-FIXES.md): the touch list goes in the caller's scope, sized by the clip query's count
+	int						EntitiesTouchingAF( idScratchScope& scratch, afTouch_t*& touchList ) const;
 	void					Start();
 	void					StartFromCurrentPose( int inheritVelocityTime );
 	void					Stop();

@@ -366,24 +366,27 @@ void idAF::ChangePose( idEntity* ent, int time )
 idAF::EntitiesTouchingAF
 ================
 */
-int idAF::EntitiesTouchingAF( afTouch_t touchList[ MAX_GENTITIES ] ) const
+int idAF::EntitiesTouchingAF( idScratchScope& scratch, afTouch_t*& touchList ) const
 {
 	int i, j, numClipModels;
 	idAFBody* body;
 	idClipModel* cm;
 	int numTouching;
 
+	touchList = NULL;
 	if( !IsLoaded() )
 	{
 		return 0;
 	}
 
 	numTouching = 0;
-	//puncho start - MP-A4 (K26a): the list is in the scratch arena, cut to its results
-	idScratchScope scratch( "idAF::EntitiesTouchingAF" );
+	//puncho start - MP-A4 (K26a), P1-m9: both lists go in the caller's scope, since the touch list outlives this call, and
+	// each is cut to its results. A clip model is touched once at most (it is cleared below), so the clip count bounds
+	// the touch list and nothing is truncated; MAX_GENTITIES touches, 384 KB, were asked for before
 	idClipModel** clipModels = scratch.Alloc< idClipModel* >( MAX_GENTITIES );
 	numClipModels = gameLocal.clip.ClipModelsTouchingBounds( physicsObj.GetAbsBounds(), -1, clipModels, MAX_GENTITIES );
 	scratch.Trim( clipModels, numClipModels );
+	touchList = scratch.Alloc< afTouch_t >( numClipModels );
 	//puncho end
 
 	for( i = 0; i < jointMods.Num(); i++ )
@@ -420,6 +423,7 @@ int idAF::EntitiesTouchingAF( afTouch_t touchList[ MAX_GENTITIES ] ) const
 		}
 	}
 
+	scratch.Trim( touchList, numTouching );	//puncho - P1-m9
 	return numTouching;
 }
 
