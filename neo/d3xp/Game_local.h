@@ -640,6 +640,12 @@ public:
 	static void				MapRestart_f( const idCmdArgs& args );
 
 	idMapFile* 				GetLevelMap();
+	//puncho start - P1-m3: the map file as loaded, NULL with no map; unlike GetLevelMap it never parses
+	const idMapFile*		GetLoadedMap() const
+	{
+		return ( mapFileName.Length() > 0 ) ? mapFile : NULL;
+	}
+	//puncho end
 	const char* 			GetMapName() const;
 
 	int						NumAAS() const;

@@ -485,6 +485,25 @@ protected:
 };
 
 
+//puncho start - P1-m3: what one map patch entity did to the merged map, mechanism only; policy over the records, such
+// as the use_aas advice of idGameLocal::SpawnMapEntities, is the caller's
+enum mapPatchResult_t
+{
+	MAP_PATCH_MERGED,		// set keys on the map entity of its name
+	MAP_PATCH_APPENDED,		// a new entity: none of its name, or it has none
+	MAP_PATCH_SKIPPED		// a worldspawn patch, which a patch cannot address
+};
+
+struct mapPatchEntity_t
+{
+	int						entity;		// the merged map's entity index, -1 when skipped
+	int						layer;		// the patch's layer rank, -1 for an os path
+	idStr					file;		// the patch file
+	int						line;		// the line the patch entity starts on
+	mapPatchResult_t		result;
+};
+//puncho end
+
 class idMapFile
 {
 public:
@@ -578,9 +597,16 @@ public:
 	// a whole-map write bakes no patch in: it is refused while any layer other than exceptLayer holds a patch for
 	// mapName, naming the layers
 	static bool				RefuseWholeMapWrite( const char* mapName, int exceptLayer = -1 );
-	// the last merge's log: each patch entity appended or skipped, with file:line, and each brought-in monster whose
-	// AAS size the map lacks
-	static const idStrList&	GetPatchLog();
+	// the last merge's log: each patch entity appended or skipped, with file:line (P1-m3: a member, no longer global)
+	const idStrList&		GetPatchLog() const
+	{
+		return patchLog;
+	}
+	// the last merge's records, one per patch entity in merge order (P1-m3)
+	const idList<mapPatchEntity_t>&	GetPatchEntities() const
+	{
+		return patchEntities;
+	}
 	//puncho end
 
 protected:
@@ -596,6 +622,8 @@ protected:
 	idStr					sourceName;			// the file Parse loaded, with its extension
 	int						readLayer;			// a patch reads this layer's own copy; -1 reads the served copy
 	idList<int>				entityLines;		// a patch's entity start lines, for the merge log
+	idStrList				patchLog;			// P1-m3: the last merge's log, GetPatchLog
+	idList<mapPatchEntity_t>	patchEntities;	// P1-m3: the last merge's records, GetPatchEntities
 	//puncho end
 	idList<unsigned int>	layerEntitiesCRC;	//puncho - content check (P1-A3b, K38): GetLayerEntitiesCRC per layer rank
 

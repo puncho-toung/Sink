@@ -4801,6 +4801,34 @@ void idGameLocal::SpawnMapEntities()
 	}
 
 	Printf( "...%i entities spawned, %i inhibited\n\n", num, inhibit );
+
+	//puncho start - P1-m3: the use_aas advice, game policy over the map merge's records. LoadMap has loaded the AAS
+	// files; a monster needs the one of its size, and the AAS compiler builds only the sizes the map uses, so a patch
+	// that brings in a monster of another size leaves it standing still until the map gets runAAS. Once per entity
+	const idList<mapPatchEntity_t>& patched = mapFile->GetPatchEntities();
+	idList<int> advised;
+	for( i = 0; i < patched.Num(); i++ )
+	{
+		const mapPatchEntity_t& record = patched[i];
+		if( record.entity < 0 || record.entity >= numEntities || advised.FindIndex( record.entity ) >= 0 )
+		{
+			continue;
+		}
+		const idDict& epairs = mapFile->GetEntity( record.entity )->epairs;
+		const char* useAAS = epairs.GetString( "use_aas" );
+		if( useAAS[0] == '\0' )
+		{
+			const idDict* def = FindEntityDefDict( epairs.GetString( "classname" ), false );
+			useAAS = ( def != NULL ) ? def->GetString( "use_aas" ) : "";
+		}
+		if( useAAS[0] != '\0' && GetAAS( useAAS ) == NULL )
+		{
+			advised.Append( record.entity );
+			Warning( "%s %s:%d: '%s' (%s) uses %s, which %s has no AAS file for: run runAAS on the map", ( record.layer >= 0 ) ? fileSystem->GetLayerName( record.layer ) : "os path",
+					 record.file.c_str(), record.line, epairs.GetString( "name" ), epairs.GetString( "classname" ), useAAS, mapFileName.c_str() );
+		}
+	}
+	//puncho end
 }
 
 /*

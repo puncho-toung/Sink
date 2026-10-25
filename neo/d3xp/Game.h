@@ -510,6 +510,8 @@ public:
 	virtual void				MapCopyDictToEntityByIndex( int index, const idDict* dict ) const;
 	virtual const char* 		MapGetFileName() const;
 	virtual bool				MapIsGLTF() const;
+	//puncho - P1-m3: the map file as the game loaded it, merged patches and their log included, NULL with no map; never parses
+	virtual const idMapFile*	MapGetLoadedFile() const;
 
 };
 

@@ -1589,10 +1589,7 @@ void idMapEntity::CalculateBrushOrigin()
 	originOffset /= static_cast<float>( originBrushes.Num() );
 }
 
-//puncho start - MP-A5 (K41, K41b)
-static idStrList patchLog;		// the last merge's log; idMapFile::GetPatchLog
-static bool LayerHoldsPatch( const char* mapName, int layer );
-//puncho end
+static bool LayerHoldsPatch( const char* mapName, int layer );	//puncho - MP-A5 (K41)
 
 /*
 ===============
@@ -1913,6 +1910,7 @@ bool idMapFile::Parse( const char* filename, bool ignoreRegion, bool osPath, boo
 		fullName = name;
 		fullName += "_extra_ents";
 		patchLog.Clear();
+		patchEntities.Clear();	// P1-m3
 		if( osPath )
 		{
 			idMapFile extrasMap;
@@ -2016,8 +2014,9 @@ idMapFile::MergePatch
 
 Applies one layer's patch: a named entity overrides keys on the map entity of that name (an empty value deletes the
 key), anything else appends, and a worldspawn patch is skipped. The merge log keeps each appended or skipped entity
-with its file:line, since a misspelled name appends a second entity silently, and each patch entity whose use_aas
-size the map has no AAS file for: such a monster stands still until the map gets runAAS.
+with its file:line, since a misspelled name appends a second entity silently. Mechanism only (P1-m3): every patch
+entity is recorded with what it did (GetPatchEntities), and policy over the records, such as the use_aas advice of
+idGameLocal::SpawnMapEntities, is the caller's.
 ===============
 */
 void idMapFile::MergePatch( const idMapFile& patch, int layer )
@@ -2025,12 +2024,9 @@ void idMapFile::MergePatch( const idMapFile& patch, int layer )
 	const char* layerName = ( layer >= 0 ) ? idLib::fileSystem->GetLayerName( layer ) : "os path";
 	const int firstLogLine = patchLog.Num();
 	// base's own patches (the retail env probes) merge silently unless developer is set; a mod's are logged entity by
-	// entity. dmap and the AAS compiler build the AAS files, so they do not report missing ones
+	// entity
 	const bool developer = idLib::cvarSystem->GetCVarBool( "developer" );
 	const bool logEntities = ( layer > 0 || developer );
-	const bool checkAAS = logEntities && ( com_editors & ( EDITOR_DMAP | EDITOR_AAS ) ) == 0;
-	idStrList checkedAAS;		// the use_aas sizes already looked up, each once per patch
-	idList<bool> foundAAS;
 	int numMerged = 0;
 	int numAppended = 0;
 	int numSkipped = 0;
@@ -2040,6 +2036,10 @@ void idMapFile::MergePatch( const idMapFile& patch, int layer )
 		const int line = ( i < patch.entityLines.Num() ) ? patch.entityLines[i] : 0;
 		const char* classname = extraEnt->epairs.GetString( "classname", "no classname" );
 		idMapEntity* mapEnt = NULL;
+		mapPatchEntity_t& record = patchEntities.Alloc();	// P1-m3
+		record.layer = layer;
+		record.file = patch.sourceName;
+		record.line = line;
 
 		const idKeyValue* kv = extraEnt->epairs.FindKey( "name" );
 		if( kv && kv->GetValue().Length() )
@@ -2069,6 +2069,8 @@ void idMapFile::MergePatch( const idMapFile& patch, int layer )
 					}
 				}
 				numMerged++;
+				record.entity = entities.FindIndex( mapEnt );
+				record.result = MAP_PATCH_MERGED;
 			}
 		}
 
@@ -2083,6 +2085,8 @@ void idMapFile::MergePatch( const idMapFile& patch, int layer )
 				// don't grab brushes or polys
 				mapEnt->epairs.Copy( extraEnt->epairs );
 				numAppended++;
+				record.entity = entities.Num() - 1;
+				record.result = MAP_PATCH_APPENDED;
 				if( logEntities && kv && kv->GetValue().Length() )
 				{
 					patchLog.Append( va( "%s %s:%d: appended '%s' (%s): %s has no entity of that name", layerName, patch.sourceName.c_str(), line, kv->GetValue().c_str(), classname, name.c_str() ) );
@@ -2095,38 +2099,13 @@ void idMapFile::MergePatch( const idMapFile& patch, int layer )
 			else
 			{
 				numSkipped++;
+				record.entity = -1;
+				record.result = MAP_PATCH_SKIPPED;
 				if( logEntities )
 				{
 					patchLog.Append( va( "%s %s:%d: skipped a worldspawn patch; a patch cannot address worldspawn", layerName, patch.sourceName.c_str(), line ) );
 				}
-				continue;
 			}
-		}
-
-		// a monster needs the map's AAS file of its size, and the AAS compiler only builds a size the map uses
-		if( !checkAAS )
-		{
-			continue;
-		}
-		const char* useAAS = mapEnt->epairs.GetString( "use_aas" );
-		if( useAAS[0] == '\0' && declManager != NULL )
-		{
-			const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, mapEnt->epairs.GetString( "classname" ), false ) );
-			useAAS = ( def != NULL ) ? def->dict.GetString( "use_aas" ) : "";
-		}
-		if( useAAS[0] == '\0' )
-		{
-			continue;
-		}
-		int checked = checkedAAS.FindIndex( useAAS );
-		if( checked < 0 )
-		{
-			checked = checkedAAS.Append( useAAS );
-			foundAAS.Append( idLib::fileSystem->ReadFile( va( "%s.%s", name.c_str(), useAAS ), NULL, NULL ) > 0 );
-		}
-		if( !foundAAS[checked] )
-		{
-			patchLog.Append( va( "%s %s:%d: '%s' (%s) uses %s, which %s has no AAS file for: run runAAS on the map", layerName, patch.sourceName.c_str(), line, mapEnt->epairs.GetString( "name" ), mapEnt->epairs.GetString( "classname" ), useAAS, name.c_str() ) );
 		}
 	}
 
@@ -2138,16 +2117,6 @@ void idMapFile::MergePatch( const idMapFile& patch, int layer )
 	{
 		idLib::Printf( "  %s\n", patchLog[i].c_str() );
 	}
-}
-
-/*
-===============
-idMapFile::GetPatchLog
-===============
-*/
-const idStrList& idMapFile::GetPatchLog()
-{
-	return patchLog;
 }
 
 /*

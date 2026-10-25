@@ -1477,6 +1477,21 @@ bool idGameEdit::MapIsGLTF() const
 	return ( mapFile && mapFile->IsGLTF() );
 }
 
+//puncho start - P1-m3
+/*
+================
+idGameEdit::MapGetLoadedFile
+
+the map file as the game loaded it, with the patches merged and the merge's log and records, NULL when no map is
+loaded; unlike the editing calls above it never parses, so a report can read the log without replacing the map
+================
+*/
+const idMapFile* idGameEdit::MapGetLoadedFile() const
+{
+	return gameLocal.GetLoadedMap();
+}
+//puncho end
+
 /*
 ================
 idGameEdit::MapGetUniqueMatchingKeyVals

@@ -3216,10 +3216,16 @@ void idFileSystemLocal::ListModConflicts_f( const idCmdArgs& args )
 		common->Printf( "A map patch that changes lights, doors, movers or brush models needs the map recompiled and rebaked; one that\n"
 						"changes only spawn keys needs neither, unless it brings in a monster whose use_aas size the map lacks (runAAS).\n" );
 	}
-	const idStrList& mergeLog = idMapFile::GetPatchLog();
-	if( mergeLog.Num() > 0 )
+	// P1-m3: the merge log is the loaded map's own, read through the game without a parse
+	const idMapFile* loadedMap = ( gameEdit != NULL ) ? gameEdit->MapGetLoadedFile() : NULL;
+	if( loadedMap == NULL )
 	{
-		common->Printf( "The last map merge (K41b):\n" );
+		common->Printf( "No map is loaded, so there is no map merge to list.\n" );
+	}
+	else if( loadedMap->GetPatchLog().Num() > 0 )
+	{
+		const idStrList& mergeLog = loadedMap->GetPatchLog();
+		common->Printf( "The merge of the loaded map, %s:\n", loadedMap->GetName() );
 		for( int i = 0; i < mergeLog.Num(); i++ )
 		{
 			common->Printf( "  %s\n", mergeLog[i].c_str() );
