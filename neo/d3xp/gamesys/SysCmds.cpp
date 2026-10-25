@@ -2790,8 +2790,9 @@ static void Cmd_TestSaveRoundTrip_f( const idCmdArgs& args )
 	}
 	if( !loaded )
 	{
-		// the map is gone, as idCommonLocal::ExecuteMapChange quits to the title after a refused load
-		gameLocal.Printf( "testSaveRoundTrip: FAIL: the load refused the save (the script changed?); restart the map\n" );
+		// P1-m13: a refused load has torn the world down, and the next frame would spawn the player into it.
+		// idCommonLocal::ExecuteMapChange quits to the title after a refused load; the drop does the same here
+		gameLocal.Error( "testSaveRoundTrip: the load refused the save (the script changed?)" );
 		return;
 	}
 
