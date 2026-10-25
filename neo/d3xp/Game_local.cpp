@@ -1480,6 +1480,29 @@ void idGameLocal::InitFromNewMap( const char* mapName, idRenderWorld* renderWorl
 	Printf( "--------------------------------------\n" );
 }
 
+//puncho start - saves (P0-m5)
+/*
+=================
+idSaveGamePipelineOwner
+
+Deletes InitFromSaveGame's pipelined file however the load ends. A savegame.Error or gameLocal.Error throws an
+idException past the function, and the file each one left behind held 768 KB of block buffers, the inflate state and
+two live worker threads.
+=================
+*/
+class idSaveGamePipelineOwner
+{
+public:
+	idSaveGamePipelineOwner( idFile_SaveGamePipelined* pipelineFile ) : file( pipelineFile ) {}
+	~idSaveGamePipelineOwner()
+	{
+		delete file;
+	}
+
+	idFile_SaveGamePipelined* 	file;
+};
+//puncho end
+
 /*
 =================
 idGameLocal::InitFromSaveGame
@@ -1509,19 +1532,15 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 	// load the map needed for this savegame
 	LoadMap( mapName, 0 );
 
-	idFile_SaveGamePipelined* pipelineFile = new( TAG_SAVEGAMES ) idFile_SaveGamePipelined();
+	//puncho start - saves (P0-m5): the owner frees the pipelined file on every way out, the refused-script return and
+	// every Error's unwind included; declared before the idRestoreGame that reads through it, so it outlives the reader.
+	// No version test is needed here: CheckSaveLayers (Common_load.cpp) refuses every save older than
+	// BUILD_NUMBER_SAVE_VERSION_MOD_LAYERS before any map loads
+	idSaveGamePipelineOwner pipeline( new( TAG_SAVEGAMES ) idFile_SaveGamePipelined() );
+	idFile_SaveGamePipelined* pipelineFile = pipeline.file;
+	//puncho end
 	pipelineFile->OpenForReading( saveGameFile );
 	idRestoreGame savegame( pipelineFile, stringTableFile, saveGameVersion );
-
-	//puncho start - identity (P1-A2)
-	// spawn ids are stored packed with GENTITYNUM_BITS index bits, and a save written with the old 12-bit
-	// index would restore every entity reference wrong (1407); a save before the per-slot generation holds
-	// one spawnCount where slotGen is read (K13, 1410)
-	if( saveGameVersion < BUILD_NUMBER_SAVE_VERSION_SLOT_GENERATION )
-	{
-		savegame.Error( "idGameLocal::InitFromSaveGame: save game version %i predates the per-slot spawn-id generation (version %i) and cannot be restored.", saveGameVersion, BUILD_NUMBER_SAVE_VERSION_SLOT_GENERATION );
-	}
-	//puncho end
 
 	// Create the list of all objects in the game
 	savegame.CreateObjects();
@@ -1808,10 +1827,7 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 
 	Printf( "--------------------------------------\n" );
 
-	delete pipelineFile;
-	pipelineFile = NULL;
-
-	return true;
+	return true;	//puncho - saves (P0-m5): the owner deletes the pipelined file
 }
 
 /*
