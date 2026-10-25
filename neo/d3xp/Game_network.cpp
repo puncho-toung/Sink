@@ -865,6 +865,9 @@ void idGameLocal::ServerWriteSnapshot( idSnapShot& ss )
 
 		msg.WriteBits( ent->GetPredictedKey(), 32 );
 
+		//puncho - F4-m1: say whether the class data follows. A client cannot tell from the size, since the header
+		// rounds up to whole bytes, and its own copy's networkSync can differ (a net_instanthit projectile)
+		msg.WriteBool( ent->fl.networkSync );
 		if( ent->fl.networkSync )
 		{
 			// write the class specific data to the snapshot
@@ -1370,6 +1373,7 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 		int typeNum = msg.ReadBits( idClass::GetTypeNumBits() );
 		int entityDefNumber = ClientRemapDecl( DECL_ENTITYDEF, msg.ReadBits( entityDefBits ) );
 		const int predictedKey = msg.ReadBits( 32 );
+		const bool hasClassData = msg.ReadBool();	//puncho - F4-m1: the host's networkSync for this entity
 
 		idTypeInfo* typeInfo = idClass::GetType( typeNum );
 		if( !typeInfo )
@@ -1543,7 +1547,10 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 			ent->FlagNewSnapshot();
 
 			// read the class specific data from the snapshot; SRS - only if network-synced
-			if( msg.GetRemainingReadBits() > 0 && ent->fl.networkSync )
+			//puncho - F4-m1: only when the host wrote it. The remaining bits were the test, and the byte padding after
+			// the header passed it: a client spawned a net_instanthit bullet with networkSync on (the host turns it off,
+			// Weapon.cpp), read past the end and spun in idProjectile::ReadFromSnapshot
+			if( hasClassData && ent->fl.networkSync )
 			{
 				ent->ReadFromSnapshot_Ex( msg );
 				ent->snapshotBits = msg.GetSize();

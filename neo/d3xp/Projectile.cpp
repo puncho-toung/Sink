@@ -1604,7 +1604,25 @@ void idProjectile::ReadFromSnapshot( const idBitMsg& msg )
 	projectileState_t newState;
 
 	owner.SetSpawnId( msg.ReadBits( 32 ) );
-	newState = ( projectileState_t ) msg.ReadBits( 3 );
+	//puncho start - F4-m1: a state the walk below can never reach (ReadBits gives -1 past the end of the message, and 5-7
+	// are not states) spun the client forever, so the walk is skipped and the state kept. The bits are tested before the
+	// cast, since -1 is outside the enum's range
+	const int stateBits = msg.ReadBits( 3 );
+	if( stateBits < SPAWNED || stateBits > EXPLODED )
+	{
+		static int badStateWarnings = 0;
+		if( badStateWarnings < 8 )
+		{
+			badStateWarnings++;
+			gameLocal.Warning( "idProjectile::ReadFromSnapshot: entity %d (%s) has projectile state %d, kept %d", entityNumber, GetEntityDefName(), stateBits, ( int )state );
+		}
+		newState = state;
+	}
+	else
+	{
+		newState = ( projectileState_t )stateBits;
+	}
+	//puncho end
 
 	if( msg.ReadBits( 1 ) )
 	{
