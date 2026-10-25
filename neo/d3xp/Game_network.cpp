@@ -380,7 +380,7 @@ static void DeclLayerDigests( declType_t type, layerDigest_t row, contentDigests
 	const int numDecls = declManager->GetNumDecls( type );
 	for( int i = 0; i < numDecls; i++ )
 	{
-		// no parse and no media; the bare decl object is allocated, as idSaveGame::WriteDecls does
+		// no parse and no media: every decl object exists from the first BeginLevelLoad
 		const idDecl* decl = declManager->DeclByIndex( type, i, false );
 		if( decl->IsImplicit() )
 		{
