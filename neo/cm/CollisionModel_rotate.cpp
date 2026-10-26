@@ -1441,7 +1441,7 @@ void idCollisionModelManagerLocal::Rotation180( trace_t* results, const idVec3& 
 		return;
 	}
 
-	idCollisionModelManagerLocal::checkCount++;
+	idCollisionModelManagerLocal::NextCheckCount();
 
 	tw.trace.fraction = 1.0f;
 	tw.trace.c.contents = 0;

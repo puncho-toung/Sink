@@ -1373,7 +1373,7 @@ idFixedWinding* idCollisionModelManagerLocal::WindingOutsideBrushes( idFixedWind
 	cm_windingList->contents = contents;
 	cm_windingList->primitiveNum = primitiveNum;
 	//
-	checkCount++;
+	NextCheckCount();
 	R_ChopWindingListWithTreeBrushes( cm_windingList, headNode );
 	//
 	if( !cm_windingList->numWindings )
@@ -1501,7 +1501,7 @@ cm_polygon_t* idCollisionModelManagerLocal::TryMergePolygons( cm_model_t* model,
 {
 	int i, j, nexti, prevj;
 	int p1BeforeShare, p1AfterShare, p2BeforeShare, p2AfterShare;
-	int newEdges[CM_MAX_POLYGON_EDGES], newNumEdges;
+	int newEdges[2 * CM_MAX_POLYGON_EDGES + 2], newNumEdges;
 	int edgeNum, edgeNum1, edgeNum2, newEdgeNum1, newEdgeNum2;
 	cm_edge_t* edge;
 	cm_polygon_t* newp;
@@ -1684,6 +1684,21 @@ cm_polygon_t* idCollisionModelManagerLocal::TryMergePolygons( cm_model_t* model,
 		{
 			newEdges[newNumEdges++] = p2->edges[i];
 		}
+	}
+
+	if( newNumEdges > CM_MAX_POLYGON_EDGES )
+	{
+		// GetEdge already counted the proposed collinear replacements as users.
+		if( !keep1 )
+		{
+			model->edges[abs( newEdgeNum1 )].numUsers--;
+		}
+		if( !keep2 )
+		{
+			model->edges[abs( newEdgeNum2 )].numUsers--;
+		}
+		numMergesRefused++;
+		return NULL;
 	}
 
 	newp = AllocPolygon( model, newNumEdges );
@@ -3437,7 +3452,7 @@ void idCollisionModelManagerLocal::OptimizeArrays( cm_model_t* model )
 		}
 	}
 	// change polygon edge indexes
-	checkCount++;
+	NextCheckCount();
 	RemapEdges( model->node, remap );
 	model->numEdges = newNumEdges;
 
@@ -3593,13 +3608,13 @@ idCollisionModelManagerLocal::FinishModel
 void idCollisionModelManagerLocal::FinishModel( cm_model_t* model )
 {
 	// try to merge polygons
-	checkCount++;
+	NextCheckCount();
 	MergeTreePolygons( model, model->node );
 	// find internal edges (no mesh can ever collide with internal edges)
-	checkCount++;
+	NextCheckCount();
 	FindInternalEdges( model, model->node );
 	// calculate edge normals
-	checkCount++;
+	NextCheckCount();
 	CalculateEdgeNormals( model, model->node );
 
 	//common->Printf( "%s vertex hash spread is %d\n", model->name.c_str(), cm_vertexHash->GetSpread() );
@@ -3673,6 +3688,7 @@ cm_model_t* idCollisionModelManagerLocal::LoadBinaryModelFromFile( idFile* file,
 	{
 		file->ReadBig( model->vertices[i].p );
 		file->ReadBig( model->vertices[i].checkcount );
+		model->vertices[i].checkcount = 0;
 		file->ReadBig( model->vertices[i].side );
 		file->ReadBig( model->vertices[i].sideSet );
 	}
@@ -3682,6 +3698,7 @@ cm_model_t* idCollisionModelManagerLocal::LoadBinaryModelFromFile( idFile* file,
 	for( int i = 0; i < model->numEdges; i++ )
 	{
 		file->ReadBig( model->edges[i].checkcount );
+		model->edges[i].checkcount = 0;
 		file->ReadBig( model->edges[i].internal );
 		file->ReadBig( model->edges[i].numUsers );
 		file->ReadBig( model->edges[i].side );
@@ -3733,11 +3750,19 @@ cm_model_t* idCollisionModelManagerLocal::LoadBinaryModelFromFile( idFile* file,
 		file->ReadBig( materialIndex );
 		int numEdges = 0;
 		file->ReadBig( numEdges );
+		if( numEdges < 0 || numEdges > CM_MAX_POLYGON_EDGES )
+		{
+			numPolygonsRefused++;
+			common->Warning( "collision polygon has %d edges (maximum %d), rejecting binary model", numEdges, CM_MAX_POLYGON_EDGES );
+			FreeModel( model );
+			return NULL;
+		}
 		polys[i] = AllocPolygon( model, numEdges );
 		polys[i]->numEdges = numEdges;
 		polys[i]->material = materials[materialIndex];
 		file->ReadBig( polys[i]->bounds );
 		file->ReadBig( polys[i]->checkcount );
+		polys[i]->checkcount = 0;
 		file->ReadBig( polys[i]->contents );
 		file->ReadBig( polys[i]->plane );
 		file->ReadBigArray( polys[i]->edges, polys[i]->numEdges );
@@ -3752,6 +3777,7 @@ cm_model_t* idCollisionModelManagerLocal::LoadBinaryModelFromFile( idFile* file,
 		brushes[i]->numPlanes = numPlanes;
 		brushes[i]->material = materials[materialIndex];
 		file->ReadBig( brushes[i]->checkcount );
+		brushes[i]->checkcount = 0;
 		file->ReadBig( brushes[i]->bounds );
 		file->ReadBig( brushes[i]->contents );
 		file->ReadBig( brushes[i]->primitiveNum );
@@ -4461,6 +4487,10 @@ void idCollisionModelManagerLocal::BuildModels( const idMapFile* mapFile, bool i
 	common->Printf( "%6i models\n", numModels );
 	PrintModelInfo( &model );
 	common->Printf( "%.0f msec to load collision data.\n", timer.Milliseconds() );
+	if( numMergesRefused || numPolygonsRefused )
+	{
+		common->Printf( "cm: mergesRefused %d polygonsRefused %d\n", numMergesRefused, numPolygonsRefused );
+	}
 }
 
 
@@ -4882,7 +4912,7 @@ bool idCollisionModelManagerLocal::TrmFromModel( const cm_model_t* model, idTrac
 	trm.bounds.Clear();
 
 	// copy polygons
-	checkCount++;
+	NextCheckCount();
 	if( !TrmFromModel_r( trm, model->node ) )
 	{
 		common->Printf( "idCollisionModelManagerLocal::TrmFromModel: model %s has too many polygons.\n", model->name.c_str() );
@@ -4971,4 +5001,75 @@ bool idCollisionModelManagerLocal::TrmFromModel( const char* modelName, idTraceM
 	}
 
 	return TrmFromModel( models[ handle ], trm );
+}
+
+static void CM_ClearNodeCheckCounts_r( cm_node_t* node )
+{
+	while( node != NULL )
+	{
+		for( cm_polygonRef_t* ref = node->polygons; ref; ref = ref->next )
+		{
+			ref->p->checkcount = 0;
+		}
+		for( cm_brushRef_t* ref = node->brushes; ref; ref = ref->next )
+		{
+			ref->b->checkcount = 0;
+		}
+		if( node->planeType == -1 )
+		{
+			break;
+		}
+		CM_ClearNodeCheckCounts_r( node->children[0] );
+		node = node->children[1];
+	}
+}
+
+void idCollisionModelManagerLocal::ClearCheckCounts()
+{
+	const uint64 start = Sys_Microseconds();
+	int cleared = 0;
+	if( models != NULL )
+	{
+		// Clear full capacity: a later trace model may use previously inactive vertices/edges.
+		// Its edges include slot numEdges; ordinary models count the dummy edge in numEdges.
+		for( int i = 0; i <= maxModels; i++ )
+		{
+			cm_model_t* model = models[i];
+			if( model == NULL )
+			{
+				continue;
+			}
+			for( int j = 0; j < model->maxVertices; j++ )
+			{
+				model->vertices[j].checkcount = 0;
+			}
+			for( int j = 0; j < model->maxEdges; j++ )
+			{
+				model->edges[j].checkcount = 0;
+			}
+			CM_ClearNodeCheckCounts_r( model->node );
+			cleared++;
+		}
+	}
+	for( int i = 0; i < MAX_TRACEMODEL_POLYS; i++ )
+	{
+		if( trmPolygons[i] != NULL )
+		{
+			trmPolygons[i]->p->checkcount = 0;
+		}
+	}
+	if( trmBrushes[0] != NULL )
+	{
+		trmBrushes[0]->b->checkcount = 0;
+	}
+	common->Printf( "checkCount wrapped: %d models cleared in %d us\n", cleared, ( int )( Sys_Microseconds() - start ) );
+}
+
+void idCollisionModelManagerLocal::NextCheckCount()
+{
+	if( ++checkCount == 0 )
+	{
+		ClearCheckCounts();
+		checkCount = 1;
+	}
 }

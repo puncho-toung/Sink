@@ -381,7 +381,7 @@ void idCollisionModelManagerLocal::DrawModel( cmHandle_t handle, const idVec3& m
 
 	model = models[ handle ];
 	viewPos = ( viewOrigin - modelOrigin ) * modelAxis.Transpose();
-	checkCount++;
+	NextCheckCount();
 	DrawNodePolygons( model, model->node, modelOrigin, modelAxis, viewPos, radius );
 }
 
@@ -587,6 +587,17 @@ void idCollisionModelManagerLocal::DebugOutput( const idVec3& origin )
 // Hash only defined, portable fields, never padding, pointers or feature identifiers.
 static void CM_TestContactCRC( unsigned int& crc, const contactInfo_t& contact )
 {
+	if( contact.type == CONTACT_NONE )
+	{
+		// No-hit traces leave the other contact fields unspecified in the static trace work.
+		contactInfo_t empty;
+		memset( &empty, 0, sizeof( empty ) );
+		CRC32_UpdateChecksum( crc, &empty.normal, sizeof( empty.normal ) );
+		CRC32_UpdateChecksum( crc, &empty.dist, sizeof( empty.dist ) );
+		CRC32_UpdateChecksum( crc, &empty.contents, sizeof( empty.contents ) );
+		CRC32_UpdateChecksum( crc, &empty.type, sizeof( empty.type ) );
+		return;
+	}
 	CRC32_UpdateChecksum( crc, &contact.normal, sizeof( contact.normal ) );
 	CRC32_UpdateChecksum( crc, &contact.dist, sizeof( contact.dist ) );
 	CRC32_UpdateChecksum( crc, &contact.contents, sizeof( contact.contents ) );

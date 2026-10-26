@@ -83,7 +83,7 @@ Collision model
 typedef struct cm_vertex_s
 {
 	idVec3					p;					// vertex point
-	int						checkcount;			// for multi-check avoidance
+	unsigned int			checkcount;			// for multi-check avoidance
 	// DG: use int instead of long for 64bit compatibility
 	unsigned int			side;				// each bit tells at which side this vertex passes one of the trace model edges
 	unsigned int			sideSet;			// each bit tells if sidedness for the trace model edge has been calculated yet
@@ -92,7 +92,7 @@ typedef struct cm_vertex_s
 
 typedef struct cm_edge_s
 {
-	int						checkcount;			// for multi-check avoidance
+	unsigned int			checkcount;			// for multi-check avoidance
 	unsigned short			internal;			// a trace model can never collide with internal edges
 	unsigned short			numUsers;			// number of polygons using this edge
 	// DG: use int instead of long for 64bit compatibility
@@ -112,7 +112,7 @@ typedef struct cm_polygonBlock_s
 typedef struct cm_polygon_s
 {
 	idBounds				bounds;				// polygon bounds
-	int						checkcount;			// for multi-check avoidance
+	unsigned int			checkcount;			// for multi-check avoidance
 	int						contents;			// contents behind polygon
 	const idMaterial* 		material;			// material
 	idPlane					plane;				// polygon plane
@@ -148,7 +148,7 @@ typedef struct cm_brush_s
 		primitiveNum = 0;
 		numPlanes = 0;
 	}
-	int						checkcount;			// for multi-check avoidance
+	unsigned int			checkcount;			// for multi-check avoidance
 	idBounds				bounds;				// brush bounds
 	int						contents;			// contents of brush
 	const idMaterial* 		material;			// material
@@ -310,9 +310,9 @@ typedef struct cm_traceWork_s
 	float maxDistFromHeartPlane1;
 	idPlane heartPlane2;
 	float maxDistFromHeartPlane2;
-	idPluecker polygonEdgePlueckerCache[CM_MAX_POLYGON_EDGES];
-	idPluecker polygonVertexPlueckerCache[CM_MAX_POLYGON_EDGES];
-	idVec3 polygonRotationOriginCache[CM_MAX_POLYGON_EDGES];
+	idPluecker polygonEdgePlueckerCache[CM_MAX_POLYGON_EDGES + 1];
+	idPluecker polygonVertexPlueckerCache[CM_MAX_POLYGON_EDGES + 1];
+	idVec3 polygonRotationOriginCache[CM_MAX_POLYGON_EDGES + 1];
 } cm_traceWork_t;
 
 /*
@@ -544,7 +544,7 @@ private:			// CollisionMap_files.cpp
 	cm_node_t* 		ParseNodes( idLexer* src, cm_model_t* model, cm_node_t* parent );
 	void			ParseVertices( idLexer* src, cm_model_t* model );
 	void			ParseEdges( idLexer* src, cm_model_t* model );
-	void			ParsePolygons( idLexer* src, cm_model_t* model );
+	bool			ParsePolygons( idLexer* src, cm_model_t* model );
 	void			ParseBrushes( idLexer* src, cm_model_t* model );
 	cm_model_t* 	ParseCollisionModel( idLexer* src );
 	bool			LoadCollisionModelFile( const char* name, unsigned int mapFileCRC );
@@ -565,7 +565,9 @@ private:			// collision map data
 	int numMergesRefused;
 	int numPolygonsRefused;
 	// for multi-check avoidance
-	int				checkCount;
+	unsigned int	checkCount;
+	void NextCheckCount();
+	void ClearCheckCounts();
 	// models
 	int				maxModels;
 	int				numModels;

@@ -132,7 +132,7 @@ private:
 	int						renderModelHandle;		// render model def handle
 
 	struct clipLink_s* 		clipLinks;				// links into sectors
-	int						touchCount;
+	unsigned int			touchCount;
 
 	void					Init();			// initialize
 	void					Link_r( struct clipSector_s* node );
@@ -305,6 +305,8 @@ struct clipStats_t
 	unsigned int	numContacts;
 	unsigned int	numGathers;				// ClipModelsTouchingBounds calls (one sector walk each)
 	unsigned int	numGatherCandidates;	// clip models those walks handed back
+	unsigned int	usQueries;
+	unsigned int	numCapHits;
 	unsigned int	numTrmQueries;			// touched models with a trace model in Translation, Rotation and Contacts
 };
 //puncho end
@@ -371,6 +373,7 @@ public:
 	void					PrintStatistics();
 	//puncho start - ai-harness: copies all nine counters without zeroing them
 	void					GetStatistics( clipStats_t& stats ) const;
+	void GetMapStatistics( clipStats_t& stats ) const { stats = mapStats; }
 	//puncho end
 	void					DrawClipModels( const idVec3& eye, const float radius, const idEntity* passEntity );
 	bool					DrawModelContactFeature( const contactInfo_t& contact, const idClipModel* clipModel, int lifetime ) const;
@@ -381,7 +384,11 @@ private:
 	idBounds				worldBounds;
 	idClipModel				temporaryClipModel;
 	idClipModel				defaultClipModel;
-	mutable int				touchCount;
+	mutable clipStats_t mapStats;
+	mutable int queryDepth;
+	uint64 BeginQuery() const;
+	void EndQuery( uint64 start ) const;
+	mutable unsigned int				touchCount;
 	// statistics
 	int						numTranslations;
 	int						numRotations;

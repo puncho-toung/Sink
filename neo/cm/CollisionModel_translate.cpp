@@ -867,7 +867,7 @@ void idCollisionModelManagerLocal::Translation( trace_t* results, const idVec3& 
 	}
 #endif
 
-	idCollisionModelManagerLocal::checkCount++;
+	idCollisionModelManagerLocal::NextCheckCount();
 
 	tw.trace.fraction = 1.0f;
 	tw.trace.c.contents = 0;

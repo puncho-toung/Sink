@@ -426,8 +426,8 @@ void idBounds::FromPointRotation( const idVec3& point, const idRotation& rotatio
 		radius = ( point - rotation.GetOrigin() ).Length();
 
 		// FIXME: these bounds are usually way larger
-		b[0].Set( -radius, -radius, -radius );
-		b[1].Set( radius, radius, radius );
+		b[0] = rotation.GetOrigin() - idVec3( radius, radius, radius );
+		b[1] = rotation.GetOrigin() + idVec3( radius, radius, radius );
 	}
 }
 
@@ -460,12 +460,12 @@ void idBounds::FromBoundsRotation( const idBounds& bounds, const idVec3& origin,
 	else
 	{
 
-		point = ( bounds[1] - bounds[0] ) * 0.5f;
-		radius = ( bounds[1] - point ).Length() + ( point - rotation.GetOrigin() ).Length();
+		point = ( ( bounds[0] + bounds[1] ) * 0.5f ) * axis + origin;
+		radius = ( ( bounds[1] - bounds[0] ) * 0.5f ).Length() + ( point - rotation.GetOrigin() ).Length();
 
 		// FIXME: these bounds are usually way larger
-		b[0].Set( -radius, -radius, -radius );
-		b[1].Set( radius, radius, radius );
+		b[0] = rotation.GetOrigin() - idVec3( radius, radius, radius );
+		b[1] = rotation.GetOrigin() + idVec3( radius, radius, radius );
 	}
 }
 

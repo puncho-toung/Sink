@@ -233,17 +233,17 @@ void idCollisionModelManagerLocal::WriteCollisionModel( idFile* fp, cm_model_t* 
 	WriteNodes( fp, model->node );
 	fp->WriteFloatString( "\t}\n" );
 	// polygons
-	checkCount++;
+	NextCheckCount();
 	polygonMemory = CountPolygonMemory( model->node );
 	fp->WriteFloatString( "\tpolygons /* polygonMemory = */ %d {\n", polygonMemory );
-	checkCount++;
+	NextCheckCount();
 	WritePolygons( fp, model->node );
 	fp->WriteFloatString( "\t}\n" );
 	// brushes
-	checkCount++;
+	NextCheckCount();
 	brushMemory = CountBrushMemory( model->node );
 	fp->WriteFloatString( "\tbrushes /* brushMemory = */ %d {\n", brushMemory );
-	checkCount++;
+	NextCheckCount();
 	WriteBrushes( fp, model->node );
 	fp->WriteFloatString( "\t}\n" );
 	// closing brace
@@ -427,7 +427,7 @@ cm_node_t* idCollisionModelManagerLocal::ParseNodes( idLexer* src, cm_model_t* m
 idCollisionModelManagerLocal::ParsePolygons
 ================
 */
-void idCollisionModelManagerLocal::ParsePolygons( idLexer* src, cm_model_t* model )
+bool idCollisionModelManagerLocal::ParsePolygons( idLexer* src, cm_model_t* model )
 {
 	cm_polygon_t* p;
 	int i, numEdges;
@@ -446,6 +446,12 @@ void idCollisionModelManagerLocal::ParsePolygons( idLexer* src, cm_model_t* mode
 	{
 		// parse polygon
 		numEdges = src->ParseInt();
+		if( numEdges < 0 || numEdges > CM_MAX_POLYGON_EDGES )
+		{
+			numPolygonsRefused++;
+			common->Warning( "collision polygon has %d edges (maximum %d), rebuilding collision", numEdges, CM_MAX_POLYGON_EDGES );
+			return false;
+		}
 		p = AllocPolygon( model, numEdges );
 		p->numEdges = numEdges;
 		src->ExpectTokenString( "(" );
@@ -467,6 +473,7 @@ void idCollisionModelManagerLocal::ParsePolygons( idLexer* src, cm_model_t* mode
 		// filter polygon into tree
 		R_FilterPolygonIntoTree( model, model->node, NULL, p );
 	}
+	return true;
 }
 
 /*
@@ -571,7 +578,10 @@ cm_model_t* idCollisionModelManagerLocal::ParseCollisionModel( idLexer* src )
 
 		if( token == "polygons" )
 		{
-			ParsePolygons( src, model );
+			if( !ParsePolygons( src, model ) )
+			{
+				return NULL;
+			}
 			continue;
 		}
 
@@ -584,7 +594,7 @@ cm_model_t* idCollisionModelManagerLocal::ParseCollisionModel( idLexer* src )
 		src->Error( "ParseCollisionModel: bad token \"%s\"", token.c_str() );
 	}
 	// calculate edge normals
-	checkCount++;
+	NextCheckCount();
 	CalculateEdgeNormals( model, model->node );
 	// get model bounds from brush and polygon bounds
 	CM_GetNodeBounds( &model->bounds, model->node );
@@ -645,13 +655,15 @@ bool idCollisionModelManagerLocal::LoadCollisionModelFile( const char* name, uns
 	}
 
 	// see if we have a generated version of this
+	const int firstModel = numModels;
 	bool loaded = false;
 	idFileLocal file( fileSystem->OpenFileReadMemory( generatedFileName ) );
 	if( file != NULL )
 	{
 		int numEntries = 0;
 		file->ReadBig( numEntries );
-		file->ReadString( mapName );
+		idStr storedMapName;
+		file->ReadString( storedMapName );
 		file->ReadBig( crc );
 		idStrStatic< 32 > fileID;
 		idStrStatic< 32 > fileVersion;
@@ -679,6 +691,12 @@ bool idCollisionModelManagerLocal::LoadCollisionModelFile( const char* name, uns
 
 	if( !loaded )
 	{
+		// A rejected cache must not leave a partial world before the text fallback.
+		while( numModels > firstModel )
+		{
+			FreeModel( models[--numModels] );
+			models[numModels] = NULL;
+		}
 
 		fileName.SetFileExtension( CM_FILE_EXT );
 		src = new( TAG_COLLISION ) idLexer( fileName );
@@ -742,6 +760,11 @@ bool idCollisionModelManagerLocal::LoadCollisionModelFile( const char* name, uns
 				cm_model_t* model = ParseCollisionModel( src );
 				if( model == NULL )
 				{
+					while( numModels > firstModel )
+					{
+						FreeModel( models[--numModels] );
+						models[numModels] = NULL;
+					}
 					delete src;
 					return false;
 				}

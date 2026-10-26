@@ -411,7 +411,7 @@ void idClipModel::Init()
 	renderModelHandle = -1;
 	traceModelIndex = -1;
 	clipLinks = NULL;
-	touchCount = -1;
+	touchCount = 0;
 }
 
 /*
@@ -495,7 +495,7 @@ idClipModel::idClipModel( const idClipModel* model )
 	}
 	renderModelHandle = model->renderModelHandle;
 	clipLinks = NULL;
-	touchCount = -1;
+	touchCount = 0;
 }
 
 /*
@@ -581,12 +581,13 @@ void idClipModel::Restore( idRestoreGame* savefile )
 	}
 	savefile->ReadRenderHandle( renderModelHandle, "idClipModel::renderModelHandle" );	//puncho - saves (P1-m10b)
 	savefile->ReadBool( linked );
-	savefile->ReadInt( touchCount );
+	int savedTouchCount;
+	savefile->ReadInt( savedTouchCount );
 
 	// the render model will be set when the clip model is linked
 	renderModelHandle = -1;
 	clipLinks = NULL;
-	touchCount = -1;
+	touchCount = 0;
 
 	if( linked )
 	{
@@ -658,6 +659,7 @@ idClipModel::Unlink
 */
 void idClipModel::Unlink()
 {
+	touchCount = 0;
 	clipLink_t* link;
 
 	for( link = clipLinks; link; link = clipLinks )
@@ -814,6 +816,8 @@ idClip::idClip
 */
 idClip::idClip()
 {
+	memset( &mapStats, 0, sizeof( mapStats ) );
+	queryDepth = 0;
 	numClipSectors = 0;
 	clipSectors = NULL;
 	worldBounds.Zero();
@@ -887,6 +891,8 @@ idClip::Init
 */
 void idClip::Init()
 {
+	memset( &mapStats, 0, sizeof( mapStats ) );
+	queryDepth = 0;
 	cmHandle_t h;
 	idVec3 size, maxSector = vec3_origin;
 
@@ -894,7 +900,7 @@ void idClip::Init()
 	clipSectors = new( TAG_PHYSICS_CLIP ) clipSector_t[MAX_SECTORS];
 	memset( clipSectors, 0, MAX_SECTORS * sizeof( clipSector_t ) );
 	numClipSectors = 0;
-	touchCount = -1;
+	touchCount = 0;
 
 	// get world map bounds
 	h = collisionModelManager->LoadModel( "worldMap", false );
@@ -956,6 +962,8 @@ typedef struct listParms_s
 	int				maxCount;
 } listParms_t;
 
+static idCVar g_clipProfile( "g_clipProfile", "0", CVAR_GAME | CVAR_BOOL, "time outermost clip queries for MAP statistics" );
+
 void idClip::ClipModelsTouchingBounds_r( const struct clipSector_s* node, listParms_t& parms ) const
 {
 
@@ -1011,6 +1019,7 @@ void idClip::ClipModelsTouchingBounds_r( const struct clipSector_s* node, listPa
 
 		if( parms.count >= parms.maxCount )
 		{
+			mapStats.numCapHits++;
 			gameLocal.Warning( "idClip::ClipModelsTouchingBounds_r: max count" );
 			return;
 		}
@@ -1028,6 +1037,7 @@ idClip::ClipModelsTouchingBounds
 */
 int idClip::ClipModelsTouchingBounds( const idBounds& bounds, int contentMask, idClipModel** clipModelList, int maxCount ) const
 {
+	const uint64 queryStart = BeginQuery();
 	listParms_t parms;
 
 	if(	bounds[0][0] > bounds[1][0] ||
@@ -1036,6 +1046,7 @@ int idClip::ClipModelsTouchingBounds( const idBounds& bounds, int contentMask, i
 	{
 		// we should not go through the tree for degenerate or backwards bounds
 		assert( false );
+		EndQuery( queryStart );
 		return 0;
 	}
 
@@ -1046,14 +1057,34 @@ int idClip::ClipModelsTouchingBounds( const idBounds& bounds, int contentMask, i
 	parms.count = 0;
 	parms.maxCount = maxCount;
 
-	touchCount++;
+	if( ++touchCount == 0 )
+	{
+		const uint64 start = Sys_Microseconds();
+		int cleared = 0;
+		for( int i = 0; i < numClipSectors; i++ )
+		{
+			for( clipLink_t* link = clipSectors[i].clipLinks; link; link = link->nextInSector )
+			{
+				if( link->clipModel->touchCount != 0 )
+				{
+					link->clipModel->touchCount = 0;
+					cleared++;
+				}
+			}
+		}
+		touchCount = 1;
+		gameLocal.Printf( "touchCount wrapped: %d clip models cleared in %d us\n", cleared, ( int )( Sys_Microseconds() - start ) );
+	}
 	ClipModelsTouchingBounds_r( clipSectors, parms );
 
 	//puncho start - ai-harness: one gather per sector walk, its candidates by count
 	numGathers++;
+	mapStats.numGathers++;
 	numGatherCandidates += parms.count;
+	mapStats.numGatherCandidates += parms.count;
 	//puncho end
 
+	EndQuery( queryStart );
 	return parms.count;
 }
 
@@ -1290,6 +1321,7 @@ idClip::TranslationEntities
 void idClip::TranslationEntities( trace_t& results, const idVec3& start, const idVec3& end,
 								  const idClipModel* mdl, const idMat3& trmAxis, int contentMask, const idEntity* passEntity )
 {
+	const uint64 queryStart = BeginQuery();
 	int i, num;
 	idClipModel* touch;		//puncho - MP-A4: the list moved to the scratch arena
 	idBounds traceBounds;
@@ -1299,6 +1331,7 @@ void idClip::TranslationEntities( trace_t& results, const idVec3& start, const i
 
 	if( TestHugeTranslation( results, mdl, start, end, trmAxis ) )
 	{
+		EndQuery( queryStart );
 		return;
 	}
 
@@ -1338,11 +1371,13 @@ void idClip::TranslationEntities( trace_t& results, const idVec3& start, const i
 		if( touch->renderModelHandle != -1 )
 		{
 			idClip::numRenderModelTraces++;
+			mapStats.numRenderModelTraces++;
 			TraceRenderModel( trace, start, end, radius, trmAxis, touch );
 		}
 		else
 		{
 			idClip::numTranslations++;
+			mapStats.numTranslations++;
 			collisionModelManager->Translation( &trace, start, end, trm, trmAxis, contentMask,
 												touch->Handle(), touch->origin, touch->axis );
 		}
@@ -1358,6 +1393,7 @@ void idClip::TranslationEntities( trace_t& results, const idVec3& start, const i
 			}
 		}
 	}
+	EndQuery( queryStart );
 }
 
 /*
@@ -1368,6 +1404,7 @@ idClip::Translation
 bool idClip::Translation( trace_t& results, const idVec3& start, const idVec3& end,
 						  const idClipModel* mdl, const idMat3& trmAxis, int contentMask, const idEntity* passEntity )
 {
+	const uint64 queryStart = BeginQuery();
 	int i, num;
 	idClipModel* touch;		//puncho - MP-A4: the list moved to the scratch arena
 	idBounds traceBounds;
@@ -1377,6 +1414,7 @@ bool idClip::Translation( trace_t& results, const idVec3& start, const idVec3& e
 
 	if( TestHugeTranslation( results, mdl, start, end, trmAxis ) )
 	{
+		EndQuery( queryStart );
 		return true;
 	}
 
@@ -1386,10 +1424,12 @@ bool idClip::Translation( trace_t& results, const idVec3& start, const idVec3& e
 	{
 		// test world
 		idClip::numTranslations++;
+		mapStats.numTranslations++;
 		collisionModelManager->Translation( &results, start, end, trm, trmAxis, contentMask, 0, vec3_origin, mat3_default );
 		results.c.entityNum = results.fraction != 1.0f ? ENTITYNUM_WORLD : ENTITYNUM_NONE;
 		if( results.fraction == 0.0f )
 		{
+			EndQuery( queryStart );
 			return true;		// blocked immediately by the world
 		}
 	}
@@ -1439,11 +1479,13 @@ bool idClip::Translation( trace_t& results, const idVec3& start, const idVec3& e
 		if( touch->renderModelHandle != -1 )
 		{
 			idClip::numRenderModelTraces++;
+			mapStats.numRenderModelTraces++;
 			TraceRenderModel( trace, start, end, radius, trmAxis, touch );
 		}
 		else
 		{
 			idClip::numTranslations++;
+			mapStats.numTranslations++;
 			collisionModelManager->Translation( &trace, start, end, trm, trmAxis, contentMask,
 												touch->Handle(), touch->origin, touch->axis );
 		}
@@ -1459,8 +1501,10 @@ bool idClip::Translation( trace_t& results, const idVec3& start, const idVec3& e
 			}
 		}
 	}
-	numTrmQueries += trmQueries;	//puncho - ai-harness
+	numTrmQueries += trmQueries;
+	mapStats.numTrmQueries += trmQueries;	//puncho - ai-harness
 
+	EndQuery( queryStart );
 	return ( results.fraction < 1.0f );
 }
 
@@ -1472,6 +1516,7 @@ idClip::Rotation
 bool idClip::Rotation( trace_t& results, const idVec3& start, const idRotation& rotation,
 					   const idClipModel* mdl, const idMat3& trmAxis, int contentMask, const idEntity* passEntity )
 {
+	const uint64 queryStart = BeginQuery();
 	int i, num;
 	idClipModel* touch;		//puncho - MP-A4: the list moved to the scratch arena
 	idBounds traceBounds;
@@ -1484,10 +1529,12 @@ bool idClip::Rotation( trace_t& results, const idVec3& start, const idRotation& 
 	{
 		// test world
 		idClip::numRotations++;
+		mapStats.numRotations++;
 		collisionModelManager->Rotation( &results, start, rotation, trm, trmAxis, contentMask, 0, vec3_origin, mat3_default );
 		results.c.entityNum = results.fraction != 1.0f ? ENTITYNUM_WORLD : ENTITYNUM_NONE;
 		if( results.fraction == 0.0f )
 		{
+			EndQuery( queryStart );
 			return true;		// blocked immediately by the world
 		}
 	}
@@ -1539,6 +1586,7 @@ bool idClip::Rotation( trace_t& results, const idVec3& start, const idRotation& 
 		}
 
 		idClip::numRotations++;
+		mapStats.numRotations++;
 		collisionModelManager->Rotation( &trace, start, rotation, trm, trmAxis, contentMask,
 										 touch->Handle(), touch->origin, touch->axis );
 
@@ -1553,8 +1601,10 @@ bool idClip::Rotation( trace_t& results, const idVec3& start, const idRotation& 
 			}
 		}
 	}
-	numTrmQueries += trmQueries;	//puncho - ai-harness
+	numTrmQueries += trmQueries;
+	mapStats.numTrmQueries += trmQueries;	//puncho - ai-harness
 
+	EndQuery( queryStart );
 	return ( results.fraction < 1.0f );
 }
 
@@ -1566,6 +1616,8 @@ idClip::Motion
 bool idClip::Motion( trace_t& results, const idVec3& start, const idVec3& end, const idRotation& rotation,
 					 const idClipModel* mdl, const idMat3& trmAxis, int contentMask, const idEntity* passEntity )
 {
+	const uint64 queryStart = BeginQuery();
+	mapStats.numMotions++;
 	int i, num;
 	idClipModel* touch;		//puncho - MP-A4: the list moved to the scratch arena
 	idVec3 dir, endPosition;
@@ -1579,6 +1631,7 @@ bool idClip::Motion( trace_t& results, const idVec3& start, const idVec3& end, c
 
 	if( TestHugeTranslation( results, mdl, start, end, trmAxis ) )
 	{
+		EndQuery( queryStart );
 		return true;
 	}
 
@@ -1588,13 +1641,17 @@ bool idClip::Motion( trace_t& results, const idVec3& start, const idVec3& end, c
 		if( start == end )
 		{
 			// pure rotation
-			return Rotation( results, start, rotation, mdl, trmAxis, contentMask, passEntity );
+			const bool queryResult = Rotation( results, start, rotation, mdl, trmAxis, contentMask, passEntity );
+			EndQuery( queryStart );
+			return queryResult;
 		}
 	}
 	else if( start != end )
 	{
 		// pure translation
-		return Translation( results, start, end, mdl, trmAxis, contentMask, passEntity );
+		const bool queryResult = Translation( results, start, end, mdl, trmAxis, contentMask, passEntity );
+		EndQuery( queryStart );
+		return queryResult;
 	}
 	else
 	{
@@ -1602,6 +1659,7 @@ bool idClip::Motion( trace_t& results, const idVec3& start, const idVec3& end, c
 		results.fraction = 1.0f;
 		results.endpos = start;
 		results.endAxis = trmAxis;
+		EndQuery( queryStart );
 		return false;
 	}
 
@@ -1619,6 +1677,7 @@ bool idClip::Motion( trace_t& results, const idVec3& start, const idVec3& end, c
 	{
 		// translational collision with world
 		idClip::numTranslations++;
+		mapStats.numTranslations++;
 		collisionModelManager->Translation( &translationalTrace, start, end, trm, trmAxis, contentMask, 0, vec3_origin, mat3_default );
 		translationalTrace.c.entityNum = translationalTrace.fraction != 1.0f ? ENTITYNUM_WORLD : ENTITYNUM_NONE;
 	}
@@ -1662,11 +1721,13 @@ bool idClip::Motion( trace_t& results, const idVec3& start, const idVec3& end, c
 			if( touch->renderModelHandle != -1 )
 			{
 				idClip::numRenderModelTraces++;
+				mapStats.numRenderModelTraces++;
 				TraceRenderModel( trace, start, end, radius, trmAxis, touch );
 			}
 			else
 			{
 				idClip::numTranslations++;
+				mapStats.numTranslations++;
 				collisionModelManager->Translation( &trace, start, end, trm, trmAxis, contentMask,
 													touch->Handle(), touch->origin, touch->axis );
 			}
@@ -1696,6 +1757,7 @@ bool idClip::Motion( trace_t& results, const idVec3& start, const idVec3& end, c
 	{
 		// rotational collision with world
 		idClip::numRotations++;
+		mapStats.numRotations++;
 		collisionModelManager->Rotation( &rotationalTrace, endPosition, endRotation, trm, trmAxis, contentMask, 0, vec3_origin, mat3_default );
 		rotationalTrace.c.entityNum = rotationalTrace.fraction != 1.0f ? ENTITYNUM_WORLD : ENTITYNUM_NONE;
 	}
@@ -1733,6 +1795,7 @@ bool idClip::Motion( trace_t& results, const idVec3& start, const idVec3& end, c
 			}
 
 			idClip::numRotations++;
+			mapStats.numRotations++;
 			collisionModelManager->Rotation( &trace, endPosition, endRotation, trm, trmAxis, contentMask,
 											 touch->Handle(), touch->origin, touch->axis );
 
@@ -1761,6 +1824,7 @@ bool idClip::Motion( trace_t& results, const idVec3& start, const idVec3& end, c
 
 	results.fraction = Max( translationalTrace.fraction, rotationalTrace.fraction );
 
+	EndQuery( queryStart );
 	return ( translationalTrace.fraction < 1.0f || rotationalTrace.fraction < 1.0f );
 }
 
@@ -1772,6 +1836,7 @@ idClip::Contacts
 int idClip::Contacts( contactInfo_t* contacts, const int maxContacts, const idVec3& start, const idVec6& dir, const float depth,
 					  const idClipModel* mdl, const idMat3& trmAxis, int contentMask, const idEntity* passEntity )
 {
+	const uint64 queryStart = BeginQuery();
 	int i, j, num, n, numContacts;
 	idClipModel* touch;		//puncho - MP-A4: the list moved to the scratch arena
 	idBounds traceBounds;
@@ -1783,6 +1848,7 @@ int idClip::Contacts( contactInfo_t* contacts, const int maxContacts, const idVe
 	{
 		// test world
 		idClip::numContacts++;
+		mapStats.numContacts++;
 		numContacts = collisionModelManager->Contacts( contacts, maxContacts, start, dir, depth, trm, trmAxis, contentMask, 0, vec3_origin, mat3_default );
 	}
 	else
@@ -1798,6 +1864,7 @@ int idClip::Contacts( contactInfo_t* contacts, const int maxContacts, const idVe
 
 	if( numContacts >= maxContacts )
 	{
+		EndQuery( queryStart );
 		return numContacts;
 	}
 
@@ -1842,6 +1909,7 @@ int idClip::Contacts( contactInfo_t* contacts, const int maxContacts, const idVe
 		}
 
 		idClip::numContacts++;
+		mapStats.numContacts++;
 		n = collisionModelManager->Contacts( contacts + numContacts, maxContacts - numContacts,
 											 start, dir, depth, trm, trmAxis, contentMask,
 											 touch->Handle(), touch->origin, touch->axis );
@@ -1858,8 +1926,10 @@ int idClip::Contacts( contactInfo_t* contacts, const int maxContacts, const idVe
 			break;
 		}
 	}
-	numTrmQueries += trmQueries;	//puncho - ai-harness
+	numTrmQueries += trmQueries;
+	mapStats.numTrmQueries += trmQueries;	//puncho - ai-harness
 
+	EndQuery( queryStart );
 	return numContacts;
 }
 
@@ -1870,6 +1940,7 @@ idClip::Contents
 */
 int idClip::Contents( const idVec3& start, const idClipModel* mdl, const idMat3& trmAxis, int contentMask, const idEntity* passEntity )
 {
+	const uint64 queryStart = BeginQuery();
 	int i, num, contents;
 	idClipModel* touch;		//puncho - MP-A4: the list moved to the scratch arena
 	idBounds traceBounds;
@@ -1881,6 +1952,7 @@ int idClip::Contents( const idVec3& start, const idClipModel* mdl, const idMat3&
 	{
 		// test world
 		idClip::numContents++;
+		mapStats.numContents++;
 		contents = collisionModelManager->Contents( start, trm, trmAxis, contentMask, 0, vec3_origin, mat3_default );
 	}
 	else
@@ -1938,12 +2010,14 @@ int idClip::Contents( const idVec3& start, const idClipModel* mdl, const idMat3&
 		}
 
 		idClip::numContents++;
+		mapStats.numContents++;
 		if( collisionModelManager->Contents( start, trm, trmAxis, contentMask, touch->Handle(), touch->origin, touch->axis ) )
 		{
 			contents |= ( touch->contents & contentMask );
 		}
 	}
 
+	EndQuery( queryStart );
 	return contents;
 }
 
@@ -1956,9 +2030,12 @@ void idClip::TranslationModel( trace_t& results, const idVec3& start, const idVe
 							   const idClipModel* mdl, const idMat3& trmAxis, int contentMask,
 							   cmHandle_t model, const idVec3& modelOrigin, const idMat3& modelAxis )
 {
+	const uint64 queryStart = BeginQuery();
 	const idTraceModel* trm = TraceModelForClipModel( mdl );
 	idClip::numTranslations++;
+	mapStats.numTranslations++;
 	collisionModelManager->Translation( &results, start, end, trm, trmAxis, contentMask, model, modelOrigin, modelAxis );
+	EndQuery( queryStart );
 }
 
 /*
@@ -1970,9 +2047,12 @@ void idClip::RotationModel( trace_t& results, const idVec3& start, const idRotat
 							const idClipModel* mdl, const idMat3& trmAxis, int contentMask,
 							cmHandle_t model, const idVec3& modelOrigin, const idMat3& modelAxis )
 {
+	const uint64 queryStart = BeginQuery();
 	const idTraceModel* trm = TraceModelForClipModel( mdl );
 	idClip::numRotations++;
+	mapStats.numRotations++;
 	collisionModelManager->Rotation( &results, start, rotation, trm, trmAxis, contentMask, model, modelOrigin, modelAxis );
+	EndQuery( queryStart );
 }
 
 /*
@@ -1984,9 +2064,13 @@ int idClip::ContactsModel( contactInfo_t* contacts, const int maxContacts, const
 						   const idClipModel* mdl, const idMat3& trmAxis, int contentMask,
 						   cmHandle_t model, const idVec3& modelOrigin, const idMat3& modelAxis )
 {
+	const uint64 queryStart = BeginQuery();
 	const idTraceModel* trm = TraceModelForClipModel( mdl );
 	idClip::numContacts++;
-	return collisionModelManager->Contacts( contacts, maxContacts, start, dir, depth, trm, trmAxis, contentMask, model, modelOrigin, modelAxis );
+	mapStats.numContacts++;
+	const int queryResult = collisionModelManager->Contacts( contacts, maxContacts, start, dir, depth, trm, trmAxis, contentMask, model, modelOrigin, modelAxis );
+	EndQuery( queryStart );
+	return queryResult;
 }
 
 /*
@@ -1998,9 +2082,13 @@ int idClip::ContentsModel( const idVec3& start,
 						   const idClipModel* mdl, const idMat3& trmAxis, int contentMask,
 						   cmHandle_t model, const idVec3& modelOrigin, const idMat3& modelAxis )
 {
+	const uint64 queryStart = BeginQuery();
 	const idTraceModel* trm = TraceModelForClipModel( mdl );
 	idClip::numContents++;
-	return collisionModelManager->Contents( start, trm, trmAxis, contentMask, model, modelOrigin, modelAxis );
+	mapStats.numContents++;
+	const int queryResult = collisionModelManager->Contents( start, trm, trmAxis, contentMask, model, modelOrigin, modelAxis );
+	EndQuery( queryStart );
+	return queryResult;
 }
 
 /*
@@ -2115,6 +2203,8 @@ void idClip::GetStatistics( clipStats_t& stats ) const
 	stats.numGathers = numGathers;
 	stats.numGatherCandidates = numGatherCandidates;
 	stats.numTrmQueries = numTrmQueries;
+	stats.usQueries = mapStats.usQueries;
+	stats.numCapHits = mapStats.numCapHits;
 }
 //puncho end
 
@@ -2234,4 +2324,20 @@ void idClip::SelfTest( int count, int seed )
 		CRC32_FinishChecksum( digests[pass] );
 	}
 	gameLocal.Printf( "clipSelfTest: gathers %d digest 0x%08x wrap %s\n", count, digests[0], digests[0] == digests[1] ? "equal" : "DIFFERENT" );
+}
+
+uint64 idClip::BeginQuery() const
+{
+	const bool outermost = queryDepth++ == 0;
+	return outermost && g_clipProfile.GetBool() ? Sys_Microseconds() : 0;
+}
+
+void idClip::EndQuery( uint64 start ) const
+{
+	assert( queryDepth > 0 );
+	queryDepth--;
+	if( start != 0 )
+	{
+		mapStats.usQueries += ( unsigned int )( Sys_Microseconds() - start );
+	}
 }

@@ -530,7 +530,7 @@ int	idCollisionModelManagerLocal::TransformedPointContents( const idVec3& p, cmH
 	p_l = p - origin;
 	if( modelAxis.IsRotated() )
 	{
-		p_l *= modelAxis;
+		p_l *= modelAxis.Transpose();
 	}
 	return idCollisionModelManagerLocal::PointContents( p_l, model );
 }
@@ -565,7 +565,7 @@ int idCollisionModelManagerLocal::ContentsTrm( trace_t* results, const idVec3& s
 		return results->c.contents;
 	}
 
-	idCollisionModelManagerLocal::checkCount++;
+	idCollisionModelManagerLocal::NextCheckCount();
 
 	tw.trace.fraction = 1.0f;
 	tw.trace.c.contents = 0;

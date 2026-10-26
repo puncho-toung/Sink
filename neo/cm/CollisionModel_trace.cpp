@@ -261,20 +261,20 @@ void idCollisionModelManagerLocal::TraceThroughModel( cm_traceWork_t* tw )
 	{
 		// approximate the rotation with a series of straight line movements
 		// total length covered along circle
-		d = tw->radius * DEG2RAD( tw->angle );
+		d = tw->radius * DEG2RAD( idMath::Fabs( tw->angle ) );
 		// if more than one step
 		if( d > CIRCLE_APPROXIMATION_LENGTH )
 		{
 			// number of steps for the approximation
-			numSteps = ( int )( CIRCLE_APPROXIMATION_LENGTH / d );
+			numSteps = ( int )idMath::Ceil( d / CIRCLE_APPROXIMATION_LENGTH );
 			// start of approximation
 			start = tw->start;
 			// trace circle approximation steps through the BSP tree
-			for( i = 0; i < numSteps; i++ )
+			for( i = 0; i < numSteps - 1; i++ )
 			{
 				// calculate next point on approximated circle
 				rot.Set( tw->origin, tw->axis, tw->angle * ( ( float )( i + 1 ) / numSteps ) );
-				end = start * rot;
+				end = tw->start * rot;
 				// trace through spatial subdivision and then through leafs
 				idCollisionModelManagerLocal::TraceThroughAxialBSPTree_r( tw, tw->model->node, 0, 1, start, end );
 				// no need to continue if something was hit already
