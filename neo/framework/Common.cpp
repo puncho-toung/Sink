@@ -261,7 +261,7 @@ doom set test blah + map test
 ============================================================================
 */
 
-#define		MAX_CONSOLE_LINES	32
+#define		MAX_CONSOLE_LINES	64
 int			com_numConsoleLines;
 idCmdArgs	com_consoleLines[MAX_CONSOLE_LINES];
 
@@ -281,6 +281,11 @@ void idCommonLocal::ParseCommandLine( int argc, const char* const* argv )
 	{
 		if( idStr::Icmp( argv[ i ], "+connect_lobby" ) == 0 )
 		{
+			if( i + 1 >= argc )
+			{
+				Sys_Error( "+connect_lobby requires an identifier" );
+				return;
+			}
 			// Handle Steam bootable invites.
 
 			// RB begin
@@ -293,6 +298,11 @@ void idCommonLocal::ParseCommandLine( int argc, const char* const* argv )
 		}
 		else if( argv[ i ][ 0 ] == '+' )
 		{
+			if( com_numConsoleLines == MAX_CONSOLE_LINES )
+			{
+				Sys_Error( "Too many startup commands (maximum %d)", MAX_CONSOLE_LINES );
+				return;
+			}
 			com_numConsoleLines++;
 			com_consoleLines[ com_numConsoleLines - 1 ].AppendArg( argv[ i ] + 1 );
 		}

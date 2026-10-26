@@ -44,8 +44,8 @@ If you have questions concerning this license or the applicable additional terms
 #define LAUNCH_TITLE_DOOM2_EXECUTABLE		"doom2.exe"
 
 
-idCVar com_loadTimeline( "com_loadTimeline", "0", CVAR_SYSTEM | CVAR_BOOL, "print the 28 map transition phases" );
-idCVar com_loadTimelineLog( "com_loadTimelineLog", "", CVAR_SYSTEM, "append load phases to loadtimeline/<plain name>.csv" );
+idCVar com_loadTimeline( "com_loadTimeline", "0", CVAR_SYSTEM | CVAR_BOOL | CVAR_NOCHEAT, "print the 28 map transition phases" );
+idCVar com_loadTimelineLog( "com_loadTimelineLog", "", CVAR_SYSTEM | CVAR_NOCHEAT, "append load phases to loadtimeline/<plain name>.csv" );
 struct loadTimelineRow_t
 {
 	uint64 us;
