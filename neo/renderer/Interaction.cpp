@@ -416,16 +416,11 @@ idInteraction* idInteraction::AllocAndLink( idRenderEntityLocal* edef, idRenderL
 		edef->lastInteraction = interaction;
 	}
 
-	// update the interaction table
-	if( renderWorld->interactionTable != NULL )
+	if( renderWorld->GetInteraction( ldef->index, edef->index ) != NULL )
 	{
-		int index = ldef->index * renderWorld->interactionTableWidth + edef->index;
-		if( renderWorld->interactionTable[index] != NULL )
-		{
-			common->Error( "idInteraction::AllocAndLink: non NULL table entry" );
-		}
-		renderWorld->interactionTable[ index ] = interaction;
+		common->Error( "idInteraction::AllocAndLink: non NULL table entry" );
 	}
+	renderWorld->SetInteraction( ldef->index, edef->index, interaction );
 
 	return interaction;
 }
@@ -510,17 +505,12 @@ void idInteraction::UnlinkAndFree()
 	// clear the table pointer
 	idRenderWorldLocal* renderWorld = this->lightDef->world;
 
-	// RB: added check for NULL
-	if( renderWorld->interactionTable != NULL )
+	const idInteraction* indexed = renderWorld->GetInteraction( lightDef->index, entityDef->index );
+	if( indexed != NULL && indexed != this && indexed != INTERACTION_EMPTY )
 	{
-		int index = this->lightDef->index * renderWorld->interactionTableWidth + this->entityDef->index;
-		if( renderWorld->interactionTable[index] != this && renderWorld->interactionTable[index] != INTERACTION_EMPTY )
-		{
-			common->Error( "idInteraction::UnlinkAndFree: interactionTable wasn't set" );
-		}
-		renderWorld->interactionTable[index] = NULL;
+		common->Error( "idInteraction::UnlinkAndFree: interaction index wasn't set" );
 	}
-	// RB end
+	renderWorld->SetInteraction( lightDef->index, entityDef->index, NULL );
 
 	Unlink();
 
@@ -575,9 +565,8 @@ void idInteraction::MakeEmpty()
 	}
 
 	// store the special marker in the interaction table
-	const int interactionIndex = lightDef->index * entityDef->world->interactionTableWidth + entityDef->index;
-	assert( entityDef->world->interactionTable[ interactionIndex ] == this );
-	entityDef->world->interactionTable[ interactionIndex ] = INTERACTION_EMPTY;
+	assert( entityDef->world->GetInteraction( lightDef->index, entityDef->index ) == this );
+	entityDef->world->SetInteraction( lightDef->index, entityDef->index, INTERACTION_EMPTY );
 }
 
 /*

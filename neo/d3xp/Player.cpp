@@ -33,6 +33,8 @@ If you have questions concerning this license or the applicable additional terms
 #include "../framework/Common_local.h"
 #include "PredictedValue_impl.h"
 
+idCVar g_testSpawnView( "g_testSpawnView", "", CVAR_GAME, "one-shot testmap origin yaw pitch; not archived" );
+
 idCVar flashlight_batteryDrainTimeMS( "flashlight_batteryDrainTimeMS", "30000", CVAR_INTEGER, "amount of time (in MS) it takes for full battery to drain (-1 == no battery drain)" );
 idCVar flashlight_batteryChargeTimeMS( "flashlight_batteryChargeTimeMS", "3000", CVAR_INTEGER, "amount of time (in MS) it takes to fully recharge battery" );
 idCVar flashlight_minActivatePercent( "flashlight_minActivatePercent", ".25", CVAR_FLOAT, "( 0.0 - 1.0 ) minimum amount of battery (%) needed to turn on flashlight" );
@@ -3063,6 +3065,24 @@ use normal spawn selection.
 */
 void idPlayer::SelectInitialSpawnPoint( idVec3& origin, idAngles& angles )
 {
+	if( g_testSpawnView.GetString()[0] != '\0' )
+	{
+		const idStr savedView = g_testSpawnView.GetString();
+		g_testSpawnView.SetString( "" );
+		float x, y, z, yaw, pitch;
+		char trailing;
+		if( !common->IsMultiplayer() && sscanf( savedView.c_str(), "%f %f %f %f %f %c", &x, &y, &z, &yaw, &pitch, &trailing ) == 5 &&
+			idMath::Fabs( x ) <= MAX_WORLD_COORD && idMath::Fabs( y ) <= MAX_WORLD_COORD && idMath::Fabs( z ) <= MAX_WORLD_COORD &&
+			idMath::Fabs( yaw ) <= 360000.0f && idMath::Fabs( pitch ) <= 360000.0f )
+		{
+			origin.Set( x, y, z );
+			angles.Set( pitch, yaw, 0.0f );
+			gameLocal.Printf( "testmap restored view %s\n", savedView.c_str() );
+			return;
+		}
+		gameLocal.Warning( "testmap ignored an invalid saved view" );
+	}
+
 	idEntity* spot;
 	idStr skin;
 

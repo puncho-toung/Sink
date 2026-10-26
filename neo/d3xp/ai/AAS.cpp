@@ -60,6 +60,9 @@ idAASLocal::idAASLocal
 idAASLocal::idAASLocal()
 {
 	file = NULL;
+	totalCacheMemory = 0;
+	cacheEvictions = 0;
+	travelSaturated = 0;
 	//puncho start - ai-avoidance (WP-A2)
 	areaWalls = NULL;
 	wallEdgeStamp = NULL;

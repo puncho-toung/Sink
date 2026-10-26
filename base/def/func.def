@@ -283,6 +283,7 @@ entityDef func_static {
 	
 	"solid"						"1"
 	"noclipmodel"				"0"
+	"editor_usage2" "Prefer func_group for unreferenced brush detail. spawnSkipStatics may omit inlined collision-free, unnamed or auto-named unreferenced models; solid inlined models retain their entity for collision."
 }
 
 entityDef func_shaking {

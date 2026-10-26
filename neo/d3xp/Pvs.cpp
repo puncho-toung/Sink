@@ -30,6 +30,14 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "Game_local.h"
+#include "../idlib/hashing/CRC32.h"
+
+static idCVar g_pvsCache( "g_pvsCache", "1", CVAR_GAME | CVAR_BOOL, "cache static map PVS by ordered portal geometry" );
+static idCVar g_pvsCacheVerify( "g_pvsCacheVerify", "0", CVAR_GAME | CVAR_BOOL, "recompute and compare a cached map PVS" );
+
+// Bump when FrontPortalPVS, PassagePVS or AreaPVSFromPortalPVS changes.
+static const int PVS_CACHE_VERSION = 1;
+static const unsigned int PVS_CACHE_MAGIC = ( 'B' << 24 ) | ( 'P' << 16 ) | ( 'V' << 8 ) | 'S';
 
 #define MAX_BOUNDS_AREAS	16
 
@@ -75,6 +83,7 @@ idPVS::idPVS
 */
 idPVS::idPVS()
 {
+	initMilliseconds = 0;
 	int i;
 
 	numAreas = 0;
@@ -916,6 +925,7 @@ idPVS::Init
 */
 void idPVS::Init()
 {
+	initMilliseconds = 0;
 	int totalVisibleAreas;
 
 	Shutdown();
@@ -955,6 +965,82 @@ void idPVS::Init()
 	idTimer timer;
 	timer.Start();
 
+	// Only inputs read by CreatePVSData belong in this key. Portal blocking state is dynamic.
+	unsigned int cacheKey;
+	CRC32_InitChecksum( cacheKey );
+	CRC32_UpdateChecksum( cacheKey, &PVS_CACHE_VERSION, sizeof( PVS_CACHE_VERSION ) );
+	CRC32_UpdateChecksum( cacheKey, &numAreas, sizeof( numAreas ) );
+	CRC32_UpdateChecksum( cacheKey, &numPortals, sizeof( numPortals ) );
+	for( int a = 0; a < numAreas; a++ )
+	{
+		for( int p = 0; p < gameRenderWorld->NumPortalsInArea( a ); p++ )
+		{
+			const exitPortal_t portal = gameRenderWorld->GetPortal( a, p );
+			CRC32_UpdateChecksum( cacheKey, portal.areas, sizeof( portal.areas ) );
+			const int points = portal.w->GetNumPoints();
+			CRC32_UpdateChecksum( cacheKey, &points, sizeof( points ) );
+			for( int i = 0; i < points; i++ )
+			{
+				for( int axis = 0; axis < 3; axis++ )
+				{
+					const float coordinate = ( *portal.w )[i][axis];
+					CRC32_UpdateChecksum( cacheKey, &coordinate, sizeof( coordinate ) );
+				}
+			}
+		}
+	}
+	CRC32_FinishChecksum( cacheKey );
+	idStr cachePath = "generated/";
+	cachePath += gameLocal.GetMapName();
+	cachePath.StripFileExtension();
+	cachePath += ".bpvs";
+	const int cacheBytes = numAreas * areaVisBytes;
+	const char* cacheResult = g_pvsCache.GetBool() ? "miss" : "disabled";
+	bool cacheHit = false;
+	byte* verifiedPVS = NULL;
+	if( g_pvsCache.GetBool() )
+	{
+		idFile* cache = fileSystem->OpenFileReadMemory( cachePath );
+		if( cache != NULL )
+		{
+			unsigned int magic = 0, key = 0, checksum = 0;
+			int version = 0, areas = 0, portals = 0, visBytes = 0;
+			bool valid = cache->ReadUnsignedInt( magic ) == 4 && cache->ReadInt( version ) == 4 &&
+				cache->ReadUnsignedInt( key ) == 4 && cache->ReadInt( areas ) == 4 &&
+				cache->ReadInt( portals ) == 4 && cache->ReadInt( visBytes ) == 4;
+			cacheResult = "corrupt";
+			if( valid && magic == PVS_CACHE_MAGIC )
+			{
+				cacheResult = "stale";
+				if( version == PVS_CACHE_VERSION && key == cacheKey && areas == numAreas && portals == numPortals && visBytes == areaVisBytes )
+				{
+					cacheResult = "corrupt";
+					if( cache->Length() == 28 + cacheBytes && cache->Read( areaPVS, cacheBytes ) == cacheBytes &&
+						cache->ReadUnsignedInt( checksum ) == 4 && checksum == CRC32_BlockChecksum( areaPVS, cacheBytes ) )
+					{
+						cacheHit = true;
+						cacheResult = "hit";
+					}
+				}
+			}
+			fileSystem->CloseFile( cache );
+		}
+	}
+	if( cacheHit && !g_pvsCacheVerify.GetBool() )
+	{
+		timer.Stop();
+		initMilliseconds = ( int )timer.Milliseconds();
+		gameLocal.Printf( "PVS cache hit %s: %.0f ms, %i bytes\n", cachePath.c_str(), timer.Milliseconds(), cacheBytes );
+		return;
+	}
+	if( cacheHit )
+	{
+		verifiedPVS = new( TAG_PVS ) byte[cacheBytes];
+		memcpy( verifiedPVS, areaPVS, cacheBytes );
+	}
+	// A truncated/corrupt file may have partially overwritten the output buffer.
+	memset( areaPVS, 0xFF, cacheBytes );
+
 	CreatePVSData();
 
 	FrontPortalPVS();
@@ -967,7 +1053,36 @@ void idPVS::Init()
 
 	DestroyPVSData();
 
+	if( verifiedPVS != NULL )
+	{
+		if( memcmp( verifiedPVS, areaPVS, cacheBytes ) != 0 )
+		{
+			gameLocal.Warning( "PVS cache verification mismatch: %s", cachePath.c_str() );
+			cacheHit = false;
+			cacheResult = "mismatch";
+		}
+		delete[] verifiedPVS;
+	}
+	if( g_pvsCache.GetBool() && !cacheHit && !fileSystem->InProductionMode() )
+	{
+		idFile* cache = fileSystem->OpenFileWrite( cachePath, "fs_basepath" );
+		if( cache != NULL )
+		{
+			cache->WriteUnsignedInt( PVS_CACHE_MAGIC );
+			cache->WriteInt( PVS_CACHE_VERSION );
+			cache->WriteUnsignedInt( cacheKey );
+			cache->WriteInt( numAreas );
+			cache->WriteInt( numPortals );
+			cache->WriteInt( areaVisBytes );
+			cache->Write( areaPVS, cacheBytes );
+			cache->WriteUnsignedInt( CRC32_BlockChecksum( areaPVS, cacheBytes ) );
+			fileSystem->CloseFile( cache );
+			gameLocal.Printf( "PVS cache written %s\n", cachePath.c_str() );
+		}
+	}
 	timer.Stop();
+	initMilliseconds = ( int )timer.Milliseconds();
+	gameLocal.Printf( "PVS cache %s %s: %.0f ms, %i bytes\n", cacheResult, cachePath.c_str(), timer.Milliseconds(), cacheBytes );
 
 	gameLocal.Printf( "%5.0f msec to calculate PVS\n", timer.Milliseconds() );
 	gameLocal.Printf( "%5d areas\n", numAreas );

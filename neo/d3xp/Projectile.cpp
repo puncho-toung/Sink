@@ -1298,6 +1298,10 @@ void idProjectile::Explode( const trace_t& collision, idEntity* ignore )
 				dir.Normalize();
 
 				gameLocal.SpawnEntityDef( *debris, &ent, false );
+				if( ent == NULL && gameLocal.SpawnRefused() )
+				{
+					return;
+				}
 				if( ent == NULL || !ent->IsType( idDebris::Type ) )
 				{
 					gameLocal.Error( "'projectile_debris' is not an idDebris" );
@@ -1323,6 +1327,10 @@ void idProjectile::Explode( const trace_t& collision, idEntity* ignore )
 				dir.Normalize();
 
 				gameLocal.SpawnEntityDef( *debris, &ent, false );
+				if( ent == NULL && gameLocal.SpawnRefused() )
+				{
+					return;
+				}
 				if( ent == NULL || !ent->IsType( idDebris::Type ) )
 				{
 					gameLocal.Error( "'projectile_shrapnel' is not an idDebris" );

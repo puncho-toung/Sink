@@ -68,6 +68,8 @@ class idPVS
 public:
 	idPVS();
 	~idPVS();
+	uint64 GetMapBytes() const { return ( uint64 )numAreas * areaVisBytes; }
+	int GetInitMilliseconds() const { return initMilliseconds; }
 	// setup for the current map
 	void				Init();
 	void				Shutdown();
@@ -95,6 +97,7 @@ public:
 	bool				CheckAreasForPortalSky( const pvsHandle_t handle, const idVec3& origin );
 
 private:
+	int initMilliseconds;
 	int					numAreas;
 	int					numPortals;
 	bool* 				connectedAreas;

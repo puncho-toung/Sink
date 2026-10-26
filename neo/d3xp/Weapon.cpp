@@ -4754,6 +4754,10 @@ void idWeapon::Event_EjectBrass()
 	}
 
 	gameLocal.SpawnEntityDef( brassDict, &ent, false );
+	if( ent == NULL && gameLocal.SpawnRefused() )
+	{
+		return;
+	}
 	if( !ent || !ent->IsType( idDebris::Type ) )
 	{
 		gameLocal.Error( "'%s' is not an idDebris", weaponDef ? weaponDef->dict.GetString( "def_ejectBrass" ) : "def_ejectBrass" );

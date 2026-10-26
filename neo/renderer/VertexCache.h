@@ -46,8 +46,8 @@ If you have questions concerning this license or the applicable additional terms
 
 	// there are a lot more static indexes than vertexes, because interactions are just new
 	// index lists that reference existing vertexes
-	const int STATIC_INDEX_MEMORY = 4 * 31 * 1024 * 1024;
-	const int STATIC_VERTEX_MEMORY = 4 * 31 * 1024 * 1024;	// make sure it fits in VERTCACHE_OFFSET_MASK!
+	const int STATIC_INDEX_MEMORY = 256 * 1024 * 1024;
+	const int STATIC_VERTEX_MEMORY = 256 * 1024 * 1024;	// make sure it fits in VERTCACHE_OFFSET_MASK!
 
 	// vertCacheHandle_t packs size, offset, and frame number into 64 bits
 	typedef uint64 vertCacheHandle_t;
@@ -57,10 +57,10 @@ If you have questions concerning this license or the applicable additional terms
 	const int VERTCACHE_SIZE_MASK = 0x7fffff;			// 23 bits = 8 megs
 
 	const int VERTCACHE_OFFSET_SHIFT = 24;
-	const int VERTCACHE_OFFSET_MASK = 0x7ffffff;		// 27 bits = 128 megs
+	const int VERTCACHE_OFFSET_MASK = 0x1fffffff;	// 29 bits = 512 megs
 
-	const int VERTCACHE_FRAME_SHIFT = 51;
-	const int VERTCACHE_FRAME_MASK = 0x1fff;			// 13 bits = 8191 frames to wrap around
+	const int VERTCACHE_FRAME_SHIFT = 53;
+	const int VERTCACHE_FRAME_MASK = 0x7ff;			// 11 bits = 2047 frames to wrap around
 
 
 #else

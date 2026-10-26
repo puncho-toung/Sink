@@ -36,7 +36,28 @@ If you have questions concerning this license or the applicable additional terms
 #define CACHETYPE_AREA				1
 #define CACHETYPE_PORTAL			2
 
-#define MAX_ROUTING_CACHE_MEMORY	(2*1024*1024)
+static idCVar aas_routingCacheKB( "aas_routingCacheKB", "2048", CVAR_GAME | CVAR_INTEGER, "routing cache budget in KB per AAS size class", 1, 1048576 );
+static idCVar aas_saturateTravelTime( "aas_saturateTravelTime", "1", CVAR_GAME | CVAR_BOOL, "saturate routing travel times instead of wrapping" );
+
+unsigned short idAASLocal::ClampTravelTime( int value, bool saturate ) const
+{
+	if( saturate && value > 65535 )
+	{
+		if( travelSaturated < INT_MAX )
+		{
+			travelSaturated++;
+		}
+		return 65535;
+	}
+	return ( unsigned short )value;
+}
+
+void idAASLocal::GetRoutingStats( int& bytes, int& evictions, int& saturated ) const
+{
+	bytes = totalCacheMemory;
+	evictions = cacheEvictions;
+	saturated = travelSaturated;
+}
 
 #define LEDGE_TRAVELTIME_PANALTY	250
 
@@ -109,7 +130,7 @@ unsigned short idAASLocal::AreaTravelTime( int areaNum, const idVec3& start, con
 	{
 		return 1;
 	}
-	return ( unsigned short ) idMath::Ftoi( dist );
+	return ClampTravelTime( idMath::Ftoi( dist ), aas_saturateTravelTime.GetBool() );
 }
 
 /*
@@ -242,6 +263,8 @@ void idAASLocal::SetupRoutingCache()
 
 	cacheListStart = cacheListEnd = NULL;
 	totalCacheMemory = 0;
+	cacheEvictions = 0;
+	travelSaturated = 0;
 }
 
 /*
@@ -317,6 +340,8 @@ void idAASLocal::ShutdownRoutingCache()
 
 	cacheListStart = cacheListEnd = NULL;
 	totalCacheMemory = 0;
+	cacheEvictions = 0;
+	travelSaturated = 0;
 }
 
 /*
@@ -371,7 +396,7 @@ void idAASLocal::RoutingStats() const
 
 	gameLocal.Printf( "%6d area cache (%d KB)\n", numAreaCache, totalAreaCacheMemory >> 10 );
 	gameLocal.Printf( "%6d portal cache (%d KB)\n", numPortalCache, totalPortalCacheMemory >> 10 );
-	gameLocal.Printf( "%6d total cache (%d KB)\n", numAreaCache + numPortalCache, totalCacheMemory >> 10 );
+	gameLocal.Printf( "%6d total cache (%d KB), budget %i KB, evictions %i, travel saturated %i\n", numAreaCache + numPortalCache, totalCacheMemory >> 10, aas_routingCacheKB.GetInteger(), cacheEvictions, travelSaturated );
 	gameLocal.Printf( "%6d area travel times (%d KB)\n", numAreaTravelTimes, ( numAreaTravelTimes * sizeof( unsigned short ) ) >> 10 );
 	gameLocal.Printf( "%6d area cache entries (%d KB)\n", areaCacheIndexSize, ( areaCacheIndexSize * sizeof( idRoutingCache* ) ) >> 10 );
 	gameLocal.Printf( "%6d portal cache entries (%d KB)\n", portalCacheIndexSize, ( portalCacheIndexSize * sizeof( idRoutingCache* ) ) >> 10 );
@@ -825,6 +850,7 @@ idAASLocal::UpdateAreaRoutingCache
 */
 void idAASLocal::UpdateAreaRoutingCache( idRoutingCache* areaCache ) const
 {
+	const bool saturate = aas_saturateTravelTime.GetBool();
 	int i, nextAreaNum, cluster, badTravelFlags, clusterAreaNum, numReachableAreas;
 	unsigned short t, startAreaTravelTimes[MAX_REACH_PER_AREA];
 	idRoutingUpdate* updateListStart, *updateListEnd, *curUpdate, *nextUpdate;
@@ -910,7 +936,7 @@ void idAASLocal::UpdateAreaRoutingCache( idRoutingCache* areaCache ) const
 
 			// time already travelled plus the traveltime through the current area
 			// plus the travel time of the reachability towards the next area
-			t = curUpdate->tmpTravelTime + curUpdate->areaTravelTimes[i] + reach->travelTime;
+			t = ClampTravelTime( curUpdate->tmpTravelTime + curUpdate->areaTravelTimes[i] + reach->travelTime, saturate );
 
 			if( !areaCache->travelTimes[clusterAreaNum] || t < areaCache->travelTimes[clusterAreaNum] )
 			{
@@ -928,7 +954,7 @@ void idAASLocal::UpdateAreaRoutingCache( idRoutingCache* areaCache ) const
 					// avoid areas near ledges
 					if( file->GetArea( nextAreaNum ).flags & AREA_LEDGE )
 					{
-						nextUpdate->tmpTravelTime += LEDGE_TRAVELTIME_PANALTY;
+						nextUpdate->tmpTravelTime = ClampTravelTime( nextUpdate->tmpTravelTime + LEDGE_TRAVELTIME_PANALTY, saturate );
 					}
 				}
 
@@ -1003,6 +1029,7 @@ idAASLocal::UpdatePortalRoutingCache
 */
 void idAASLocal::UpdatePortalRoutingCache( idRoutingCache* portalCache ) const
 {
+	const bool saturate = aas_saturateTravelTime.GetBool();
 	int i, portalNum, clusterAreaNum;
 	unsigned short t;
 	const aasPortal_t* portal;
@@ -1060,7 +1087,7 @@ void idAASLocal::UpdatePortalRoutingCache( idRoutingCache* portalCache ) const
 			{
 				continue;
 			}
-			t += curUpdate->tmpTravelTime;
+			t = ClampTravelTime( t + curUpdate->tmpTravelTime, saturate );
 
 			if( !portalCache->travelTimes[portalNum] || t < portalCache->travelTimes[portalNum] )
 			{
@@ -1078,7 +1105,7 @@ void idAASLocal::UpdatePortalRoutingCache( idRoutingCache* portalCache ) const
 				}
 				nextUpdate->areaNum = portal->areaNum;
 				// add travel time through the actual portal area for the next update
-				nextUpdate->tmpTravelTime = t + portal->maxAreaTravelTime;
+				nextUpdate->tmpTravelTime = ClampTravelTime( t + portal->maxAreaTravelTime, saturate );
 
 				if( !nextUpdate->isInList )
 				{
@@ -1147,6 +1174,7 @@ idAASLocal::RouteToGoalArea
 */
 bool idAASLocal::RouteToGoalArea( int areaNum, const idVec3 origin, int goalAreaNum, int travelFlags, int& travelTime, idReachability** reach ) const
 {
+	const bool saturate = aas_saturateTravelTime.GetBool();
 	int clusterNum, goalClusterNum, portalNum, i, clusterAreaNum;
 	unsigned short int t, bestTime;
 	const aasPortal_t* portal;
@@ -1183,9 +1211,13 @@ bool idAASLocal::RouteToGoalArea( int areaNum, const idVec3 origin, int goalArea
 		return false;
 	}
 
-	while( totalCacheMemory > MAX_ROUTING_CACHE_MEMORY )
+	while( totalCacheMemory > aas_routingCacheKB.GetInteger() * 1024 && cacheListStart != NULL )
 	{
 		DeleteOldestCache();
+		if( cacheEvictions < INT_MAX )
+		{
+			cacheEvictions++;
+		}
 	}
 
 	clusterNum = file->GetArea( areaNum ).cluster;
@@ -1229,7 +1261,7 @@ bool idAASLocal::RouteToGoalArea( int areaNum, const idVec3 origin, int goalArea
 		if( clusterCache->travelTimes[clusterAreaNum] )
 		{
 			bestReach = GetAreaReachability( areaNum, clusterCache->reachabilities[clusterAreaNum] );
-			bestTime = clusterCache->travelTimes[clusterAreaNum] + AreaTravelTime( areaNum, origin, bestReach->start );
+			bestTime = ClampTravelTime( clusterCache->travelTimes[clusterAreaNum] + AreaTravelTime( areaNum, origin, bestReach->start ), saturate );
 		}
 		else
 		{
@@ -1298,12 +1330,12 @@ bool idAASLocal::RouteToGoalArea( int areaNum, const idVec3 origin, int goalArea
 
 		// the total travel time is the travel time from the portal area to the goal area
 		// plus the travel time from the source area towards the portal area
-		t = portalCache->travelTimes[portalNum] + areaCache->travelTimes[clusterAreaNum];
+		t = ClampTravelTime( portalCache->travelTimes[portalNum] + areaCache->travelTimes[clusterAreaNum], saturate );
 		// NOTE:	Should add the exact travel time through the portal area.
 		//			However we add the largest travel time through the portal area.
 		//			We cannot directly calculate the exact travel time through the portal area
 		//			because the reachability used to travel into the portal area is not known.
-		t += portal->maxAreaTravelTime;
+		t = ClampTravelTime( t + portal->maxAreaTravelTime, saturate );
 
 		// if the time is better than the one already found
 		if( !bestTime || t < bestTime )
@@ -1353,6 +1385,7 @@ idAASLocal::FindNearestGoal
 */
 bool idAASLocal::FindNearestGoal( aasGoal_t& goal, int areaNum, const idVec3 origin, const idVec3& target, int travelFlags, aasObstacle_t* obstacles, int numObstacles, idAASCallback& callback ) const
 {
+	const bool saturate = aas_saturateTravelTime.GetBool();
 	//puncho start - ai-harness: a Path::Requests leaf, disjoint from PathToGoal by construction (00-PLAN.md §2.1)
 	PROFILE_STATIC_DESC( descPath, "Path::Requests", ::Optick::Category::Navigation );
 	idAIProfileScope scopePath( gameLocal.aiStats.usPath, descPath );
@@ -1449,9 +1482,9 @@ bool idAASLocal::FindNearestGoal( aasGoal_t& goal, int areaNum, const idVec3 ori
 				continue;
 			}
 
-			t = curUpdate->tmpTravelTime +
+			t = ClampTravelTime( curUpdate->tmpTravelTime +
 				AreaTravelTime( curUpdate->areaNum, curUpdate->start, reach->start ) +
-				reach->travelTime;
+				reach->travelTime, saturate );
 
 			// project target origin onto movement vector through the area
 			v1 = reach->end - curUpdate->start;
@@ -1480,7 +1513,15 @@ bool idAASLocal::FindNearestGoal( aasGoal_t& goal, int areaNum, const idVec3 ori
 			// avoid moving closer to the target
 			if( dist < targetDist )
 			{
-				t += ( targetDist - dist ) * 10;
+				if( saturate )
+				{
+					const float penalty = ( targetDist - dist ) * 10;
+					t = ClampTravelTime( t + ( int )Min( penalty, 65536.0f ), true );
+				}
+				else
+				{
+					t += ( targetDist - dist ) * 10;
+				}
 			}
 
 			// if we already found a closer location
@@ -1521,7 +1562,7 @@ bool idAASLocal::FindNearestGoal( aasGoal_t& goal, int areaNum, const idVec3 ori
 				// avoid areas near ledges
 				if( file->GetArea( nextAreaNum ).flags & AREA_LEDGE )
 				{
-					nextUpdate->tmpTravelTime += LEDGE_TRAVELTIME_PANALTY;
+					nextUpdate->tmpTravelTime = ClampTravelTime( nextUpdate->tmpTravelTime + LEDGE_TRAVELTIME_PANALTY, saturate );
 				}
 			}
 

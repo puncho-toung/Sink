@@ -95,6 +95,7 @@ public:
 	virtual bool				Init( const idStr& mapName, unsigned int mapFileCRC ) = 0;
 	// Print AAS stats.
 	virtual void				Stats() const = 0;
+	virtual void				GetRoutingStats( int& bytes, int& evictions, int& saturated ) const = 0;
 	// Test from the given origin.
 	virtual void				Test( const idVec3& origin ) = 0;
 	// Get the AAS settings.

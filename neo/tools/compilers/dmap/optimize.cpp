@@ -2145,6 +2145,10 @@ This will also fix tjunctions
 
 ===================
 */
+extern idCVar dmap_phaseTimes;
+extern int dmapOptimizeGroups;
+extern int dmapMaxGroupTris;
+
 void	OptimizeGroupList( optimizeGroup_t* groupList )
 {
 	int			c_in, c_edge, c_tjunc2;
@@ -2161,6 +2165,11 @@ void	OptimizeGroupList( optimizeGroup_t* groupList )
 	// re-introduce some t junctions
 	for( group = groupList ; group ; group = group->nextGroup )
 	{
+		if( dmap_phaseTimes.GetBool() )
+		{
+			dmapOptimizeGroups++;
+			dmapMaxGroupTris = Max( dmapMaxGroupTris, CountTriList( group->triList ) );
+		}
 		OptimizeOptList( group );
 	}
 	c_edge = CountGroupListTris( groupList );

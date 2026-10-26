@@ -3212,6 +3212,10 @@ bool idGameEdit::AF_SpawnEntity( const char* fileName )
 	args.Set( "articulatedFigure", fileName );
 	args.Set( "nodrop", "1" );
 	ent = static_cast<idAFEntity_Generic*>( gameLocal.SpawnEntityType( idAFEntity_Generic::Type, &args ) );
+	if( ent == NULL )
+	{
+		return false;
+	}
 
 	// always update this entity
 	ent->BecomeActive( TH_THINK );

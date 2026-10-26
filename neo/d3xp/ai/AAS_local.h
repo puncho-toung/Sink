@@ -132,6 +132,7 @@ public:
 	virtual bool				Init( const idStr& mapName, unsigned int mapFileCRC );
 	virtual void				Shutdown();
 	virtual void				Stats() const;
+	virtual void				GetRoutingStats( int& bytes, int& evictions, int& saturated ) const;
 	virtual void				Test( const idVec3& origin );
 	virtual const idAASSettings* GetSettings() const;
 	virtual int					PointAreaNum( const idVec3& origin ) const;
@@ -179,6 +180,9 @@ private:	// routing data
 	int							numAreaTravelTimes;		// number of area travel times
 	mutable idRoutingCache* 	cacheListStart;			// start of list with cache sorted from oldest to newest
 	mutable idRoutingCache* 	cacheListEnd;			// end of list with cache sorted from oldest to newest
+	mutable int					cacheEvictions;
+	mutable int					travelSaturated;
+	unsigned short				ClampTravelTime( int value, bool saturate ) const;
 	mutable int					totalCacheMemory;		// total cache memory used
 	idList<idRoutingObstacle*, TAG_AAS>	obstacleList;			// list with obstacles
 

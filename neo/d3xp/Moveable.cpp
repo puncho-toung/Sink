@@ -1322,6 +1322,10 @@ void idExplodingBarrel::Killed( idEntity* inflictor, idEntity* attacker, int dam
 			dir.Normalize();
 
 			gameLocal.SpawnEntityDef( *debris_args, &ent, false );
+			if( ent == NULL && gameLocal.SpawnRefused() )
+			{
+				return;
+			}
 			if( ent == NULL || !ent->IsType( idDebris::Type ) )
 			{
 				gameLocal.Error( "'projectile_debris' is not an idDebris" );

@@ -347,7 +347,7 @@ vertCacheHandle_t idVertexCache::AllocStaticVertex( const void* data, int bytes,
 {
 	if( staticData.vertexMemUsed.GetValue() + bytes > STATIC_VERTEX_MEMORY )
 	{
-		idLib::FatalError( "AllocStaticVertex failed, increase STATIC_VERTEX_MEMORY" );
+		idLib::FatalError( "AllocStaticVertex failed: %i used + %i requested > %i bytes", staticData.vertexMemUsed.GetValue(), bytes, STATIC_VERTEX_MEMORY );
 	}
 	return ActuallyAlloc( staticData, data, bytes, CACHE_VERTEX, commandList );
 }
@@ -361,7 +361,7 @@ vertCacheHandle_t idVertexCache::AllocStaticIndex( const void* data, int bytes, 
 {
 	if( staticData.indexMemUsed.GetValue() + bytes > STATIC_INDEX_MEMORY )
 	{
-		idLib::FatalError( "AllocStaticIndex failed, increase STATIC_INDEX_MEMORY" );
+		idLib::FatalError( "AllocStaticIndex failed: %i used + %i requested > %i bytes", staticData.indexMemUsed.GetValue(), bytes, STATIC_INDEX_MEMORY );
 	}
 	return ActuallyAlloc( staticData, data, bytes, CACHE_INDEX, commandList );
 }

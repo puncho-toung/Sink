@@ -852,6 +852,10 @@ idEntityFx* idEntityFx::StartFx( const char* fx, const idVec3* useOrigin, const 
 	args.SetBool( "start", true );
 	args.Set( "fx", fx );
 	idEntityFx* nfx = static_cast<idEntityFx*>( gameLocal.SpawnEntityType( idEntityFx::Type, &args ) );
+	if( nfx == NULL )
+	{
+		return NULL;
+	}
 	if( nfx->Joint() && *nfx->Joint() )
 	{
 		nfx->BindToJoint( ent, nfx->Joint(), true );

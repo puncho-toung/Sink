@@ -40,6 +40,21 @@ idCVar dmap_maxSurfaceVerts( "dmap_maxSurfaceVerts", "65535", CVAR_INTEGER | CVA
 
 dmapGlobals_t	dmapGlobals;
 
+idCVar dmap_phaseTimes( "dmap_phaseTimes", "1", CVAR_TOOL | CVAR_BOOL, "print summed compiler phase milliseconds" );
+int dmapOptimizeGroups;
+int dmapMaxGroupTris;
+static const char* dmapPhaseNames[] = { "load", "facebsp", "portals", "filter", "flood", "fillOutside", "clipSides", "floodAreas", "putPrimitives", "dressPre", "prelight", "optimize", "dressPost", "tjunc", "dressPostTj", "write", "cm" };
+static int dmapPhaseMS[sizeof( dmapPhaseNames ) / sizeof( dmapPhaseNames[0] )];
+
+static void DmapPhaseEnd( int phase, int started )
+{
+	if( dmap_phaseTimes.GetBool() )
+	{
+		dmapPhaseMS[phase] += Sys_Milliseconds() - started;
+	}
+}
+
+
 /*
 ============
 ProcessModel
@@ -48,6 +63,7 @@ ProcessModel
 bool ProcessModel( uEntity_t* e, bool floodFillWorld )
 {
 	bspFace_t*	faces;
+	int phaseStart = Sys_Milliseconds();
 
 	faces = MakeStructuralBspFaceList( e->primitives );
 
@@ -60,10 +76,13 @@ bool ProcessModel( uEntity_t* e, bool floodFillWorld )
 	// build a bsp tree using all of the sides
 	// of all of the structural brushes
 	e->tree = FaceBSP( faces );
+	DmapPhaseEnd( 1, phaseStart );
 
 	// create portals at every leaf intersection
 	// to allow flood filling
+	phaseStart = Sys_Milliseconds();
 	MakeTreePortals( e->tree );
+	DmapPhaseEnd( 2, phaseStart );
 
 	// RB: calculate node numbers for split plane analysis
 	int numLeafs = 0;
@@ -71,6 +90,7 @@ bool ProcessModel( uEntity_t* e, bool floodFillWorld )
 	int depth = log2f( numLeafs + 1 );
 
 	// classify the leafs as opaque or areaportal
+	phaseStart = Sys_Milliseconds();
 	FilterBrushesIntoTree( e );
 
 	// RB: use mapTri_t by MapPolygonMesh primitives in case we don't use brushes
@@ -78,6 +98,8 @@ bool ProcessModel( uEntity_t* e, bool floodFillWorld )
 	{
 		FilterMeshesIntoTree( e );
 	}
+
+	DmapPhaseEnd( 3, phaseStart );
 
 	// see if the bsp is completely enclosed
 	bool floodFillEntity = ( e->tree->simpleBSP && dmapGlobals.entityNum != 0 );
@@ -93,15 +115,22 @@ bool ProcessModel( uEntity_t* e, bool floodFillWorld )
 		//if( inside ) // should always work
 		{
 			// set the outside leafs to opaque
+			phaseStart = Sys_Milliseconds();
 			FillOutside( e );
+			DmapPhaseEnd( 5, phaseStart );
 		}
 	}
 	else if( ( floodFillWorld && !dmapGlobals.noFlood ) )
 	{
-		if( FloodEntities( e->tree ) )
+		phaseStart = Sys_Milliseconds();
+		const bool enclosed = FloodEntities( e->tree );
+		DmapPhaseEnd( 4, phaseStart );
+		if( enclosed )
 		{
 			// set the outside leafs to opaque
+			phaseStart = Sys_Milliseconds();
 			FillOutside( e );
+			DmapPhaseEnd( 5, phaseStart );
 		}
 		else
 		{
@@ -124,45 +153,65 @@ bool ProcessModel( uEntity_t* e, bool floodFillWorld )
 	// get minimum convex hulls for each visible side
 	// this must be done before creating area portals,
 	// because the visible hull is used as the portal
+	phaseStart = Sys_Milliseconds();
 	ClipSidesByTree( e );
+	DmapPhaseEnd( 6, phaseStart );
 
 	// determine areas before clipping tris into the
 	// tree, so tris will never cross area boundaries
+	phaseStart = Sys_Milliseconds();
 	FloodAreas( e );
+	DmapPhaseEnd( 7, phaseStart );
 
 	// we now have a BSP tree with solid and non-solid leafs marked with areas
 	// all primitives will now be clipped into this, throwing away
 	// fragments in the solid areas
+	phaseStart = Sys_Milliseconds();
 	PutPrimitivesInAreas( e );
+	DmapPhaseEnd( 8, phaseStart );
 
 	// generated geometry that must be light carved and optimized like the brushes
+	phaseStart = Sys_Milliseconds();
 	DressAreasPreOptimize( e );
+	DmapPhaseEnd( 9, phaseStart );
 
 	// now build shadow volumes for the lights and split
 	// the optimize lists by the light beam trees
 	// so there won't be unneeded overdraw in the static
 	// case
+	phaseStart = Sys_Milliseconds();
 	Prelight( e );
+	DmapPhaseEnd( 10, phaseStart );
 
 	// optimizing is a superset of fixing tjunctions
 	if( !dmapGlobals.noOptimize )
 	{
+		phaseStart = Sys_Milliseconds();
 		OptimizeEntity( e );
+		DmapPhaseEnd( 11, phaseStart );
 	}
 	else if( !dmapGlobals.noTJunc )
 	{
+		phaseStart = Sys_Milliseconds();
 		FixEntityTjunctions( e );
+		DmapPhaseEnd( 13, phaseStart );
 	}
 
 	// generated geometry the optimizer must not re-triangulate, but that still
 	// takes part in the global T-junction fix
+	phaseStart = Sys_Milliseconds();
 	DressAreasPostOptimize( e );
+	DmapPhaseEnd( 12, phaseStart );
 
 	// now fix t junctions across areas
+	phaseStart = Sys_Milliseconds();
 	FixGlobalTjunctions( e );
+	DmapPhaseEnd( 13, phaseStart );
 
 	// generated geometry that must reach the .proc exactly as the pass made it
+	phaseStart = Sys_Milliseconds();
 	DressAreasPostTjunction( e );
+	DmapPhaseEnd( 14, phaseStart );
 
 	return true;
 }
@@ -521,14 +570,22 @@ void Dmap( const idCmdArgs& args )
 	//
 	start = Sys_Milliseconds();
 
+	memset( dmapPhaseMS, 0, sizeof( dmapPhaseMS ) );
+	dmapOptimizeGroups = 0;
+	dmapMaxGroupTris = 0;
+	int phaseStart = Sys_Milliseconds();
 	if( !LoadDMapFile( passedName ) )
 	{
 		return;
 	}
 
+	DmapPhaseEnd( 0, phaseStart );
+
 	if( ProcessModels() )
 	{
+		phaseStart = Sys_Milliseconds();
 		WriteOutputFile();
+		DmapPhaseEnd( 15, phaseStart );
 	}
 	else
 	{
@@ -572,6 +629,7 @@ void Dmap( const idCmdArgs& args )
 			// write always a fresh .cm file
 			collisionModelManager->LoadMap( dmapGlobals.dmapFile, true );
 			collisionModelManager->FreeMap();
+			DmapPhaseEnd( 16, start );
 
 			end = Sys_Milliseconds();
 			common->Printf( "-------------------------------------\n" );
@@ -585,6 +643,14 @@ void Dmap( const idCmdArgs& args )
 			RunAAS_f( args );
 		}
 
+		if( dmap_phaseTimes.GetBool() )
+		{
+			for( int phase = 0; phase < sizeof( dmapPhaseNames ) / sizeof( dmapPhaseNames[0] ); phase++ )
+			{
+				common->Printf( "dmap phase %s %i\n", dmapPhaseNames[phase], dmapPhaseMS[phase] );
+			}
+			common->Printf( "dmap optimize groups %i maxGroupTris %i\n", dmapOptimizeGroups, dmapMaxGroupTris );
+		}
 		common->DmapPacifierFilename( passedName, "Done" );
 	}
 	else

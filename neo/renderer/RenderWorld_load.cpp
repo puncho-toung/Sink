@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "RenderCommon.h"
+extern idCVar r_bakeStaleGuard;
 #include "Model_local.h"
 
 
@@ -810,11 +811,7 @@ void idRenderWorldLocal::FreeDefs()
 {
 	generateAllInteractionsCalled = false;
 
-	if( interactionTable )
-	{
-		R_StaticFree( interactionTable );
-		interactionTable = NULL;
-	}
+	FreeInteractionIndex();
 
 	// free all lightDefs
 	for( int i = 0; i < lightDefs.Num(); i++ )
@@ -952,7 +949,12 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 			file->ReadString( mapName );
 			file->ReadBig( mapTimeStamp );
 			loaded = true;
-			for( int i = 0; i < numEntries; i++ )
+			if( r_bakeStaleGuard.GetBool() && !fileSystem->InProductionMode() && currentTimeStamp != FILE_NOT_FOUND_TIMESTAMP && mapTimeStamp != currentTimeStamp )
+			{
+				common->Printf( "%s is stale for %s, reparsing\n", generatedFileName.c_str(), filename.c_str() );
+				loaded = false;
+			}
+			for( int i = 0; loaded && i < numEntries; i++ )
 			{
 				idStrStatic< MAX_OSPATH > type;
 				file->ReadString( type );
