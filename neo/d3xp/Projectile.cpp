@@ -2863,6 +2863,8 @@ idDebris::Spawn
 void idDebris::Spawn()
 {
 	owner = NULL;
+	// Unlaunched debris can be saved too; physics teardown needs its owning entity.
+	physicsObj.SetSelf( this );
 	smokeFly = NULL;
 	smokeFlyTime = 0;
 }
@@ -2934,6 +2936,8 @@ void idDebris::Restore( idRestoreGame* savefile )
 	owner.Restore( savefile );
 
 	savefile->ReadStaticObject( physicsObj );
+	// Older unlaunched debris saves may contain a NULL physics owner.
+	physicsObj.SetSelf( this );
 	RestorePhysics( &physicsObj );
 
 	savefile->ReadParticle( smokeFly );
