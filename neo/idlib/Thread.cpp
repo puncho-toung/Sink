@@ -258,8 +258,9 @@ int idSysThread::ThreadProc( idSysThread* thread )
 		fflush( stdout );
 		fflush( stderr );
 
-		// We don't handle threads terminating unexpectedly very well, so just terminate the whole process
-		exit( 1 );
+		// Static destructors may join this failed worker while the main thread waits for it.
+		// The diagnostics are flushed above; terminate without running process teardown.
+		_Exit( 1 );
 	}
 
 	thread->isRunning = false;
