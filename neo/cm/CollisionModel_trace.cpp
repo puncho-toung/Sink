@@ -242,6 +242,27 @@ void idCollisionModelManagerLocal::TraceThroughAxialBSPTree_r( cm_traceWork_t* t
 
 /*
 ================
+idCollisionModelManagerLocal::TraceAllNodes_r
+
+Self-test oracle: visit every polygon using the same unsplit analytic sweep.
+================
+*/
+void idCollisionModelManagerLocal::TraceAllNodes_r( cm_traceWork_t* tw, cm_node_t* node )
+{
+	if( node == NULL )
+	{
+		return;
+	}
+	TraceTrmThroughNode( tw, node );
+	if( node->planeType != -1 )
+	{
+		TraceAllNodes_r( tw, node->children[0] );
+		TraceAllNodes_r( tw, node->children[1] );
+	}
+}
+
+/*
+================
 idCollisionModelManagerLocal::TraceThroughModel
 ================
 */
@@ -251,6 +272,12 @@ void idCollisionModelManagerLocal::TraceThroughModel( cm_traceWork_t* tw )
 	int i, numSteps;
 	idVec3 start, end;
 	idRotation rot;
+
+	if( selfTestFullTraversal )
+	{
+		TraceAllNodes_r( tw, tw->model->node );
+		return;
+	}
 
 	if( !tw->rotation )
 	{

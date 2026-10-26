@@ -652,6 +652,8 @@ unsigned int idCollisionModelManagerLocal::SelfTestDigest( int count, int seed )
 	return crc;
 }
 
+bool idCollisionModelManagerLocal::selfTestFullTraversal = false;
+
 void idCollisionModelManagerLocal::SelfTest( int count, int seed )
 {
 	if( numModels == 0 || models == NULL || models[0] == NULL )
@@ -730,21 +732,19 @@ void idCollisionModelManagerLocal::SelfTest( int count, int seed )
 		rotation.Set( point - idVec3( radius, 0, 0 ), idVec3( 0, 0, 1 ), angle );
 		trace_t full, part;
 		Rotation( &full, point, rotation, NULL, mat3_identity, -1, 0, vec3_origin, mat3_identity );
-		float referenceFraction = 1.0f;
-		samples = ( int )idMath::Ceil( angle );
-		for( int step = 0; step < samples; step++ )
+		// Splitting the sweep restarts the expel-zone rules at every boundary and is
+		// not an oracle for the original sweep. Keep its start and angle identical.
+		selfTestFullTraversal = true;
+		Rotation( &part, point, rotation, NULL, mat3_identity, -1, 0, vec3_origin, mat3_identity );
+		selfTestFullTraversal = false;
+		const float referenceFraction = part.fraction;
+		if( ( full.fraction < 1.0f ) != ( referenceFraction < 1.0f ) || idMath::Fabs( full.fraction - referenceFraction ) > 0.00001f )
 		{
-			idRotation cumulative( rotation.GetOrigin(), rotation.GetVec(), angle * step / samples );
-			idRotation segment( rotation.GetOrigin(), rotation.GetVec(), angle / samples );
-			Rotation( &part, point * cumulative, segment, NULL, mat3_identity, -1, 0, vec3_origin, mat3_identity );
-			if( part.fraction < 1.0f )
+			if( chordFailures < 8 )
 			{
-				referenceFraction = ( step + part.fraction ) / samples;
-				break;
+				common->Printf( "cm_selfTest chord case %d: start %.6f %.6f %.6f radius %.6f angle %.6f full %.9f reference %.9f\n",
+					i, point.x, point.y, point.z, radius, angle, full.fraction, referenceFraction );
 			}
-		}
-		if( ( full.fraction < 1.0f ) != ( referenceFraction < 1.0f ) || idMath::Fabs( full.fraction - referenceFraction ) * angle > 1.0f )
-		{
 			chordFailures++;
 		}
 	}

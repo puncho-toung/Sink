@@ -180,7 +180,9 @@ void idMaterial::FreeData()
 		{
 			if( stages[i].texture.cinematic != NULL )
 			{
+#if !defined( DMAP )
 				delete stages[i].texture.cinematic;
+#endif
 				stages[i].texture.cinematic = NULL;
 			}
 			if( stages[i].newStage != NULL )
@@ -3602,6 +3604,7 @@ idMaterial::CloseCinematic
 */
 void idMaterial::CloseCinematic() const
 {
+#if !defined( DMAP )
 	for( int i = 0; i < numStages; i++ )
 	{
 		if( stages[i].texture.cinematic )
@@ -3611,6 +3614,7 @@ void idMaterial::CloseCinematic() const
 			stages[i].texture.cinematic = NULL;
 		}
 	}
+#endif
 }
 
 /*
@@ -4419,3 +4423,22 @@ CONSOLE_COMMAND_SHIP( makeMaterials, "Make .mtr file from a models or textures f
 
 #endif // #if !defined( DMAP )
 // RB end
+
+void idMaterial::TouchMedia()
+{
+#if !defined( DMAP )
+	globalImages->TouchImage( lightFalloffImage );
+	for( int i = 0; i < numStages; i++ )
+	{
+		globalImages->TouchImage( stages[i].texture.image );
+		if( stages[i].newStage != NULL )
+		{
+			for( int j = 0; j < stages[i].newStage->numFragmentProgramImages; j++ )
+			{
+				globalImages->TouchImage( stages[i].newStage->fragmentProgramImages[j] );
+			}
+		}
+	}
+	if( gui != NULL ) { gui = uiManager->FindGui( gui->Name(), true, false, true ); }
+#endif
+}
