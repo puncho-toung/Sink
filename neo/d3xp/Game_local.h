@@ -621,6 +621,7 @@ public:
 	bool PrepareTransitionPlayerSpawn( idPlayer* player );
 	bool BeginMapTransition( const mapTransition_t& transition );
 	void CommitMapTransition();
+	void CarryTransitionSounds();
 	void ApplyTransitionCarry();
 	bool SelectTransitionSpawn( idPlayer* player, idVec3& origin, idAngles& angles );
 	void FinishTransitionSpawn( idPlayer* player );

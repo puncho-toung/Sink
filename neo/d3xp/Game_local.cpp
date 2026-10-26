@@ -1965,6 +1965,12 @@ idGameLocal::MapShutdown
 */
 void idGameLocal::MapShutdown()
 {
+	// Clients do not execute the server's transition commit. Preserve their local
+	// emitters at the same pre-delete boundary, only for an actual transition load.
+	if( common->IsClient() && common->IsGameDrivenLoad() && session->GetState() == idSession::LOADING && gameSoundWorld != NULL )
+	{
+		CarryTransitionSounds();
+	}
 	worldStore.CommitCurrentMap();
 	idProjectile::ClearSimulationQueue();
 	Printf( "--------- Game Map Shutdown ----------\n" );

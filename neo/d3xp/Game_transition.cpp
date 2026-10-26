@@ -174,6 +174,27 @@ static idEntity* TransitionBindRoot( idEntity* ent )
 	return NULL;
 }
 
+void idGameLocal::CarryTransitionSounds()
+{
+	if( cvarSystem->GetCVarBool( "s_transitionCarry" ) )
+	{
+		if( cvarSystem->GetCVarInteger( "com_levelKeep" ) < 1 )
+		{
+			Warning( "transition sound disabled: requires com_levelKeep >= 1" );
+		}
+		else
+		{
+			for( int i = 0; i < num_entities; i++ )
+			{
+				if( entities[i] != NULL && entities[i]->IsType( idSound::Type ) )
+				{
+					static_cast<idSound*>( entities[i] )->CarryTransitionSound();
+				}
+			}
+		}
+	}
+}
+
 void idGameLocal::CommitMapTransition()
 {
 	if( g_showTransition.GetBool() )
@@ -377,23 +398,7 @@ void idGameLocal::CommitMapTransition()
 			worldStore.MarkDeparted( ent );
 		}
 	}
-	if( cvarSystem->GetCVarBool( "s_transitionCarry" ) )
-	{
-		if( cvarSystem->GetCVarInteger( "com_levelKeep" ) < 1 )
-		{
-			Warning( "transition sound disabled: requires com_levelKeep >= 1" );
-		}
-		else
-		{
-			for( int i = 0; i < num_entities; i++ )
-			{
-				if( entities[i] != NULL && entities[i]->IsType( idSound::Type ) )
-				{
-					static_cast<idSound*>( entities[i] )->CarryTransitionSound();
-				}
-			}
-		}
-	}
+	CarryTransitionSounds();
 	worldStore.continueNextLoad = worldStore.IsActive();
 	worldStore.CommitCurrentMap();
 	common->ReportTransitionMetric( TRANSITION_CARRY_US, Sys_Microseconds() - carryStart );
