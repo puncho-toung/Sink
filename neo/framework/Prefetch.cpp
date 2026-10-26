@@ -29,6 +29,8 @@ static bool workerStarted, prefetchActive, prefetchServing;
 static int mapEntryCount;
 static int entryCount, resolveIndex, completedCount, hitCount, missCount, skippedCount;
 static uint64 reservedBytes, hitBytes, maxSliceUs;
+static uint64 maxResolveUs, maxResolveStepUs, maxCompletionUs, maxPublishUs, maxRequestUs;
+static int sliceOverruns, resolveOverruns, completionOverruns;
 static char requestedMap[MAX_OSPATH];
 static char pendingMap[MAX_OSPATH];
 static bool pendingRequest;
@@ -121,12 +123,20 @@ public:
 };
 static idPrefetchThread prefetchThread;
 
-static void Prefetch_Drain()
+static void Prefetch_Drain( int limit = MAX_PREFETCH_ENTRIES, uint64 deadline = 0, uint64 sliceBudget = 0 )
 {
 	int tail = completionTail.load( std::memory_order_relaxed );
 	const int head = completionHead.load( std::memory_order_acquire );
-	while( tail != head )
+	int drained = 0;
+	while( tail != head && drained < limit )
 	{
+		const uint64 start = deadline != 0 ? Sys_Microseconds() : 0;
+		if( deadline != 0 )
+		{
+			if( start >= deadline ) { break; }
+			const bool initialProbe = drained == 0 && deadline - start > sliceBudget / 2;
+			if( !initialProbe && ( maxCompletionUs == 0 || start + 2 * maxCompletionUs + 1 >= deadline ) ) { break; }
+		}
 		prefetchEntry_t& entry = prefetchEntries[completionRing[tail % MAX_PREFETCH_ENTRIES]];
 		entry.ready = entry.error == 0;
 		if( entry.error != 0 )
@@ -136,6 +146,13 @@ static void Prefetch_Drain()
 		}
 		completedCount++;
 		tail++;
+		drained++;
+		if( deadline != 0 )
+		{
+			const uint64 elapsed = Sys_Microseconds() - start;
+			maxCompletionUs = Max( maxCompletionUs, elapsed );
+			completionOverruns += elapsed > sliceBudget;
+		}
 	}
 	completionTail.store( tail, std::memory_order_release );
 }
@@ -143,6 +160,7 @@ static void Prefetch_Drain()
 void Prefetch_StopWorker()
 {
 	if( !workerStarted ) { return; }
+	const bool completedBeforeStop = workerFinished.load( std::memory_order_acquire ) && requestsDone.load( std::memory_order_acquire );
 	prefetchAbort.store( true, std::memory_order_release );
 	const int start = Sys_Milliseconds();
 	while( !workerFinished.load( std::memory_order_acquire ) && Sys_Milliseconds() - start < 500 ) { Sys_Sleep( 1 ); }
@@ -151,6 +169,9 @@ void Prefetch_StopWorker()
 	prefetchThread.StopThread( true );
 	workerStarted = false;
 	Prefetch_Drain();
+	// Report outside the timed pump; the final slice includes all drain/order/publish work.
+	common->Printf( "PREFETCH done %s complete=%d skipped=%d bytes=%llu maxSliceUs=%llu resolved=%d entries=%d cancelled=%d\n", requestedMap, completedCount, skippedCount, ( unsigned long long )reservedBytes, ( unsigned long long )maxSliceUs, resolveIndex, entryCount, !completedBeforeStop );
+	common->Printf( "PREFETCH budget maxResolveUs=%llu maxResolveStepUs=%llu maxCompletionUs=%llu maxPublishUs=%llu maxRequestUs=%llu sliceOverruns=%d resolveOverruns=%d completionOverruns=%d\n", ( unsigned long long )maxResolveUs, ( unsigned long long )maxResolveStepUs, ( unsigned long long )maxCompletionUs, ( unsigned long long )maxPublishUs, ( unsigned long long )maxRequestUs, sliceOverruns, resolveOverruns, completionOverruns );
 }
 
 void Prefetch_Clear()
@@ -160,6 +181,8 @@ void Prefetch_Clear()
 	memset( prefetchEntries, 0, sizeof( prefetchEntries ) );
 	entryCount = resolveIndex = completedCount = hitCount = missCount = skippedCount = 0;
 	reservedBytes = hitBytes = maxSliceUs = 0;
+	maxResolveUs = maxResolveStepUs = maxCompletionUs = maxPublishUs = maxRequestUs = 0;
+	sliceOverruns = resolveOverruns = completionOverruns = 0;
 	requestHead.store( 0 ); requestTail.store( 0 );
 	completionHead.store( 0 ); completionTail.store( 0 );
 	prefetchHash.Clear();
@@ -283,46 +306,74 @@ void Prefetch_Request( const char* mapName )
 
 void Prefetch_Pump()
 {
+	if( !pendingRequest && !prefetchActive ) { return; }
+	const uint64 start = Sys_Microseconds();
+	const uint64 sliceBudget = ( uint64 )com_prefetchSliceUs.GetInteger();
 	if( pendingRequest )
 	{
 		pendingRequest = false;
 		Prefetch_Request( pendingMap );
+		maxRequestUs = Max( maxRequestUs, Sys_Microseconds() - start );
 	}
-	if( !prefetchActive ) { return; }
-	const uint64 start = Sys_Microseconds();
-	Prefetch_Drain();
+	if( !prefetchActive )
+	{
+		const uint64 elapsed = Sys_Microseconds() - start;
+		maxSliceUs = Max( maxSliceUs, elapsed );
+		sliceOverruns += elapsed > sliceBudget;
+		return;
+	}
+	Prefetch_Drain( 32, start + sliceBudget, sliceBudget );
 	const uint64 budget = ( uint64 )com_prefetchBudgetMB.GetInteger() * 1024 * 1024;
 	int batch[32];
 	int batchCount = 0;
-	while( resolveIndex < entryCount && batchCount < 32 && Sys_Microseconds() - start < ( uint64 )com_prefetchSliceUs.GetInteger() )
+	int attempts = 0;
+	while( resolveIndex < entryCount && batchCount < 32 && attempts < 32 )
 	{
+		const uint64 stepStart = Sys_Microseconds();
+		const uint64 elapsed = stepStart - start;
+		// Resolution contains indivisible OS calls. Reserve twice the observed step
+		// high-water cost, plus publication, rather than starting with a few us left.
+		// One initial probe makes progress when there is no estimate (or one call
+		// itself exceeds the budget); it still reports its full measured duration.
+		const bool initialProbe = attempts == 0 && elapsed < Max( ( uint64 )1, sliceBudget / 2 );
+		if( elapsed >= sliceBudget || ( !initialProbe && ( maxResolveStepUs == 0 || elapsed + 2 * maxResolveStepUs + maxPublishUs + 1 >= sliceBudget ) ) )
+		{
+			break;
+		}
+		const bool firstEstimate = maxResolveStepUs == 0;
 		const int index = resolveIndex++;
 		prefetchEntry_t& entry = prefetchEntries[index];
-		if( !fileSystem->ResolveForRead( entry.path, entry.source ) || entry.source.length == 0 || entry.source.length > INT_MAX || entry.source.length > budget - Min( reservedBytes, budget ) )
+		const bool resolved = fileSystem->ResolveForRead( entry.path, entry.source );
+		const uint64 resolveUs = Sys_Microseconds() - stepStart;
+		maxResolveUs = Max( maxResolveUs, resolveUs );
+		resolveOverruns += resolveUs > sliceBudget;
+		attempts++;
+		if( !resolved || entry.source.length == 0 || entry.source.length > INT_MAX || entry.source.length > budget - Min( reservedBytes, budget ) )
 		{
 			skippedCount++;
-			continue;
 		}
-		reservedBytes += entry.source.length;
-		batch[batchCount++] = index;
-	}
-	// Preserve map-own priority, then sort only this ready manifest batch.
-	// A batch never waits for the remaining manifest and is bounded to 32 entries.
-	for( int i = 1; i < batchCount; i++ )
-	{
-		const int index = batch[i];
-		int j = i;
-		while( j > 0 && index >= mapEntryCount && batch[j - 1] >= mapEntryCount )
+		else
 		{
-			const resolvedFile_t& a = prefetchEntries[index].source;
-			const resolvedFile_t& b = prefetchEntries[batch[j - 1]].source;
-			const int order = idStr::Cmp( a.osPath, b.osPath );
-			if( order > 0 || ( order == 0 && a.offset >= b.offset ) ) { break; }
-			batch[j] = batch[j - 1];
-			j--;
+			reservedBytes += entry.source.length;
+			// Charge ordering to the admitted step. Preserve map-own priority and
+			// stable container/offset ordering within this bounded ready batch.
+			int j = batchCount;
+			while( j > 0 && index >= mapEntryCount && batch[j - 1] >= mapEntryCount )
+			{
+				const resolvedFile_t& a = entry.source;
+				const resolvedFile_t& b = prefetchEntries[batch[j - 1]].source;
+				const int order = idStr::Cmp( a.osPath, b.osPath );
+				if( order > 0 || ( order == 0 && a.offset >= b.offset ) ) { break; }
+				batch[j] = batch[j - 1];
+				j--;
+			}
+			batch[j] = index;
+			batchCount++;
 		}
-		batch[j] = index;
+		maxResolveStepUs = Max( maxResolveStepUs, Sys_Microseconds() - stepStart );
+		if( firstEstimate ) { break; }
 	}
+	const uint64 publishStart = Sys_Microseconds();
 	const int head = requestHead.load( std::memory_order_relaxed );
 	for( int i = 0; i < batchCount; i++ )
 	{
@@ -330,13 +381,14 @@ void Prefetch_Pump()
 	}
 	requestHead.store( head + batchCount, std::memory_order_release );
 	if( resolveIndex == entryCount ) { requestsDone.store( true, std::memory_order_release ); }
-	maxSliceUs = Max( maxSliceUs, Sys_Microseconds() - start );
-	if( workerFinished.load( std::memory_order_acquire ) )
+	if( workerFinished.load( std::memory_order_acquire ) && completionTail.load( std::memory_order_relaxed ) == completionHead.load( std::memory_order_acquire ) )
 	{
-		Prefetch_Drain();
 		prefetchActive = false;
-		common->Printf( "PREFETCH done %s complete=%d skipped=%d bytes=%llu maxSliceUs=%llu\n", requestedMap, completedCount, skippedCount, ( unsigned long long )reservedBytes, ( unsigned long long )maxSliceUs );
 	}
+	maxPublishUs = Max( maxPublishUs, Sys_Microseconds() - publishStart );
+	const uint64 elapsed = Sys_Microseconds() - start;
+	maxSliceUs = Max( maxSliceUs, elapsed );
+	sliceOverruns += elapsed > sliceBudget;
 }
 
 void Prefetch_BeginLoad()
