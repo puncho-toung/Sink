@@ -332,6 +332,9 @@ typedef struct cm_procNode_s
 class idCollisionModelManagerLocal : public idCollisionModelManager
 {
 public:
+	int GetNumModels() const { return numModels; }
+	void SelfTest( int count, int seed );
+	unsigned int SelfTestDigest( int count, int seed );
 	// load collision models from a map file
 	void			LoadMap( const idMapFile* mapFile, bool ignoreOldCollisionFile );
 	// frees all the collision models
@@ -559,6 +562,8 @@ private:			// collision map data
 	idStr			mapName;
 	ID_TIME_T			mapFileTime;
 	int				loaded;
+	int numMergesRefused;
+	int numPolygonsRefused;
 	// for multi-check avoidance
 	int				checkCount;
 	// models

@@ -196,6 +196,7 @@ void idCollisionModelManagerLocal::Clear()
 	mapName.Clear();
 	mapFileTime = 0;
 	loaded = 0;
+	numMergesRefused = numPolygonsRefused = 0;
 	checkCount = 0;
 	maxModels = 0;
 	numModels = 0;

@@ -2194,3 +2194,44 @@ bool idClip::DrawModelContactFeature( const contactInfo_t& contact, const idClip
 
 	return true;
 }
+
+void idClip::SelfTest( int count, int seed )
+{
+	if( clipSectors == NULL )
+	{
+		gameLocal.Printf( "clipSelfTest: load a map first\n" );
+		return;
+	}
+	count = idMath::ClampInt( 1, 100000, count );
+	unsigned int digests[2];
+	// Fixed command-only storage: never consume the game scratch arena or allocate in a query.
+	static idClipModel* touched[MAX_GENTITIES];
+	for( int pass = 0; pass < 2; pass++ )
+	{
+		if( pass == 1 )
+		{
+			touchCount = 0xFFFFFFFFU - count / 2;
+		}
+		idRandom random( seed );
+		CRC32_InitChecksum( digests[pass] );
+		for( int i = 0; i < count; i++ )
+		{
+			idVec3 center;
+			for( int j = 0; j < 3; j++ )
+			{
+				center[j] = worldBounds[0][j] + random.RandomFloat() * ( worldBounds[1][j] - worldBounds[0][j] );
+			}
+			idBounds bounds( center );
+			bounds.ExpandSelf( 1.0f + random.RandomFloat() * 1024.0f );
+			int n = ClipModelsTouchingBounds( bounds, -1, touched, MAX_GENTITIES );
+			CRC32_UpdateChecksum( digests[pass], &n, sizeof( n ) );
+			for( int j = 0; j < n; j++ )
+			{
+				int entityNum = touched[j]->GetEntity() ? touched[j]->GetEntity()->entityNumber : ENTITYNUM_NONE;
+				CRC32_UpdateChecksum( digests[pass], &entityNum, sizeof( entityNum ) );
+			}
+		}
+		CRC32_FinishChecksum( digests[pass] );
+	}
+	gameLocal.Printf( "clipSelfTest: gathers %d digest 0x%08x wrap %s\n", count, digests[0], digests[0] == digests[1] ? "equal" : "DIFFERENT" );
+}

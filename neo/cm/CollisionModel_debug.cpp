@@ -583,3 +583,165 @@ void idCollisionModelManagerLocal::DebugOutput( const idVec3& origin )
 	Mem_Free( testend );
 	testend = NULL;
 }
+
+// Hash only defined, portable fields, never padding, pointers or feature identifiers.
+static void CM_TestContactCRC( unsigned int& crc, const contactInfo_t& contact )
+{
+	CRC32_UpdateChecksum( crc, &contact.normal, sizeof( contact.normal ) );
+	CRC32_UpdateChecksum( crc, &contact.dist, sizeof( contact.dist ) );
+	CRC32_UpdateChecksum( crc, &contact.contents, sizeof( contact.contents ) );
+	CRC32_UpdateChecksum( crc, &contact.type, sizeof( contact.type ) );
+}
+
+unsigned int idCollisionModelManagerLocal::SelfTestDigest( int count, int seed )
+{
+	idRandom random( seed );
+	idTraceModel box;
+	box.SetupBox( 2.0f );
+	unsigned int crc;
+	CRC32_InitChecksum( crc );
+	for( int i = 0; i < count; i++ )
+	{
+		idVec3 start, end;
+		for( int j = 0; j < 3; j++ )
+		{
+			start[j] = models[0]->bounds[0][j] + random.RandomFloat() * ( models[0]->bounds[1][j] - models[0]->bounds[0][j] );
+			end[j] = start[j] + random.CRandomFloat() * 64.0f;
+		}
+		trace_t trace;
+		memset( &trace, 0, sizeof( trace ) );
+		Translation( &trace, start, end, &box, mat3_identity, -1, 0, vec3_origin, mat3_identity );
+		CRC32_UpdateChecksum( crc, &trace.fraction, sizeof( trace.fraction ) );
+		CRC32_UpdateChecksum( crc, &trace.endpos, sizeof( trace.endpos ) );
+		CM_TestContactCRC( crc, trace.c );
+		int contents = Contents( start, &box, mat3_identity, -1, 0, vec3_origin, mat3_identity );
+		CRC32_UpdateChecksum( crc, &contents, sizeof( contents ) );
+		contents = Contents( start, NULL, mat3_identity, -1, 0, vec3_origin, mat3_identity );
+		CRC32_UpdateChecksum( crc, &contents, sizeof( contents ) );
+		contactInfo_t contacts[16];
+		memset( contacts, 0, sizeof( contacts ) );
+		idVec6 direction;
+		direction.Zero();
+		direction.SubVec3( 0 ) = end - start;
+		direction.SubVec3( 0 ).Normalize();
+		int n = Contacts( contacts, 16, start, direction, 2.0f, &box, mat3_identity, -1, 0, vec3_origin, mat3_identity );
+		CRC32_UpdateChecksum( crc, &n, sizeof( n ) );
+		for( int j = 0; j < n; j++ )
+		{
+			CM_TestContactCRC( crc, contacts[j] );
+		}
+		idRotation rotation( start + idVec3( 8, 0, 0 ), idVec3( 0, 0, 1 ), 30.0f );
+		memset( &trace, 0, sizeof( trace ) );
+		Rotation( &trace, start, rotation, &box, mat3_identity, -1, 0, vec3_origin, mat3_identity );
+		CRC32_UpdateChecksum( crc, &trace.fraction, sizeof( trace.fraction ) );
+		CRC32_UpdateChecksum( crc, &trace.endpos, sizeof( trace.endpos ) );
+		CM_TestContactCRC( crc, trace.c );
+	}
+	CRC32_FinishChecksum( crc );
+	return crc;
+}
+
+void idCollisionModelManagerLocal::SelfTest( int count, int seed )
+{
+	if( numModels == 0 || models == NULL || models[0] == NULL )
+	{
+		common->Printf( "cm_selfTest: load a map first\n" );
+		return;
+	}
+	count = idMath::ClampInt( 1, 100000, count );
+	idRandom random( seed );
+	int boundsFailures = 0, pointFailures = 0, contentsFailures = 0, chordFailures = 0;
+	idTraceModel tiny;
+	tiny.SetupBox( 0.01f );
+	for( int i = 0; i < count; i++ )
+	{
+		idVec3 origin, pivot, extent, axis;
+		for( int j = 0; j < 3; j++ )
+		{
+			origin[j] = random.CRandomFloat() * 4096.0f;
+			pivot[j] = random.CRandomFloat() * 4096.0f;
+			extent[j] = 1.0f + random.RandomFloat() * 63.0f;
+			axis[j] = random.CRandomFloat();
+		}
+		if( axis.Normalize() == 0.0f )
+		{
+			axis.Set( 0, 0, 1 );
+		}
+		float angle = ( 180.0f + random.RandomFloat() * 540.0f ) * ( ( i & 1 ) ? -1.0f : 1.0f );
+		idMat3 modelAxis = idAngles( random.RandomFloat() * 360, random.RandomFloat() * 360, random.RandomFloat() * 360 ).ToMat3();
+		if( i == 0 )
+		{
+			origin.Zero(); pivot.Set( 1000, 0, 0 ); extent.Set( 16, 16, 16 ); axis.Set( 0, 0, 1 ); angle = 270.0f; modelAxis.Identity();
+		}
+		idBounds local( -extent, extent ), swept, sweptPoint;
+		idRotation rotation( pivot, axis, angle );
+		swept.FromBoundsRotation( local, origin, modelAxis, rotation );
+		swept.ExpandSelf( CM_BOX_EPSILON );
+		sweptPoint.FromPointRotation( origin, rotation );
+		sweptPoint.ExpandSelf( CM_BOX_EPSILON );
+		idVec3 corners[8];
+		local.ToPoints( corners );
+		for( int j = 0; j < 8; j++ )
+		{
+			corners[j] = corners[j] * modelAxis + origin;
+		}
+		bool badBounds = false, badPoint = false;
+		int samples = ( int )idMath::Ceil( idMath::Fabs( angle ) );
+		for( int step = 0; step <= samples; step++ )
+		{
+			rotation.SetAngle( angle * step / samples );
+			badPoint |= !sweptPoint.ContainsPoint( origin * rotation );
+			for( int j = 0; j < 8; j++ )
+			{
+				badBounds |= !swept.ContainsPoint( corners[j] * rotation );
+			}
+		}
+		boundsFailures += badBounds;
+		pointFailures += badPoint;
+
+		idVec3 point;
+		for( int j = 0; j < 3; j++ )
+		{
+			point[j] = models[0]->bounds[0][j] + random.RandomFloat() * ( models[0]->bounds[1][j] - models[0]->bounds[0][j] );
+		}
+		idVec3 transformed = point * modelAxis;
+		int pointContents = Contents( transformed, NULL, mat3_identity, -1, 0, vec3_origin, modelAxis );
+		int boxContents = Contents( transformed, &tiny, modelAxis, -1, 0, vec3_origin, modelAxis );
+		// A finite box may straddle a surface; only compare samples where the identity oracle agrees.
+		int reference = Contents( point, NULL, mat3_identity, -1, 0, vec3_origin, mat3_identity );
+		if( boxContents == reference && pointContents != boxContents )
+		{
+			contentsFailures++;
+		}
+
+		float radius = 1.0f + random.RandomFloat() * 2999.0f;
+		angle = 30.0f + random.RandomFloat() * 140.0f;
+		rotation.Set( point - idVec3( radius, 0, 0 ), idVec3( 0, 0, 1 ), angle );
+		trace_t full, part;
+		Rotation( &full, point, rotation, NULL, mat3_identity, -1, 0, vec3_origin, mat3_identity );
+		float referenceFraction = 1.0f;
+		samples = ( int )idMath::Ceil( angle );
+		for( int step = 0; step < samples; step++ )
+		{
+			idRotation cumulative( rotation.GetOrigin(), rotation.GetVec(), angle * step / samples );
+			idRotation segment( rotation.GetOrigin(), rotation.GetVec(), angle / samples );
+			Rotation( &part, point * cumulative, segment, NULL, mat3_identity, -1, 0, vec3_origin, mat3_identity );
+			if( part.fraction < 1.0f )
+			{
+				referenceFraction = ( step + part.fraction ) / samples;
+				break;
+			}
+		}
+		if( ( full.fraction < 1.0f ) != ( referenceFraction < 1.0f ) || idMath::Fabs( full.fraction - referenceFraction ) * angle > 1.0f )
+		{
+			chordFailures++;
+		}
+	}
+	unsigned int digest = SelfTestDigest( count, seed );
+	checkCount = 0xFFFFFFFFU - count / 2;
+	unsigned int wrapDigest = SelfTestDigest( count, seed );
+	bool equal = digest == wrapDigest;
+	common->Printf( "cm_selfTest: bounds %d/%d point %d/%d contents %d/%d chord %d/%d digest 0x%08x wrap %s mergesRefused %d polygonsRefused %d\n",
+		boundsFailures, count, pointFailures, count, contentsFailures, count, chordFailures, count, digest, equal ? "equal" : "DIFFERENT", numMergesRefused, numPolygonsRefused );
+	common->Printf( "%s\n", ( boundsFailures || pointFailures || contentsFailures || chordFailures || !equal ) ? "FAIL" : "PASS" );
+}
