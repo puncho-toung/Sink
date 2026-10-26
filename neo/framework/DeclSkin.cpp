@@ -207,3 +207,18 @@ const idMaterial* idDeclSkin::RemapShaderBySkin( const idMaterial* shader ) cons
 	// didn't find a match or wildcard, so stay the same
 	return shader;
 }
+
+void idDeclSkin::TouchMedia()
+{
+	for( int i = 0; i < mappings.Num(); i++ )
+	{
+		if( mappings[i].from != NULL )
+		{
+			declManager->FindMaterial( mappings[i].from->GetName() );
+		}
+		if( mappings[i].to != NULL )
+		{
+			declManager->FindMaterial( mappings[i].to->GetName() );
+		}
+	}
+}

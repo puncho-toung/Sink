@@ -454,6 +454,7 @@ idSoundSystemLocal::LoadSample
 */
 idSoundSample* idSoundSystemLocal::LoadSample( const char* name )
 {
+	DeclMediaLookup();
 	idStrStatic< MAX_OSPATH > canonical = name;
 	canonical.ToLower();
 	canonical.BackSlashesToSlashes();

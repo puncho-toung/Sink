@@ -455,6 +455,7 @@ public:
 
 	// RB begin
 	virtual void LoadPhase( loadPhase_t phase );
+	virtual bool IsSaveGameLoad() const { return mapSpawnData.savegameFile != NULL; }
 	virtual bool IsGameDrivenLoad() const { return mapSpawnData.gameDriven && mapSpawnData.savegameFile == NULL; }
 	virtual void PrefetchMap( const char* name );
 	virtual int LevelKeepGrace() const;

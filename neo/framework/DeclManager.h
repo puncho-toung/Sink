@@ -137,6 +137,8 @@ public:
 };
 
 
+void DeclMediaLookup();
+
 class idDecl
 {
 public:
@@ -147,6 +149,7 @@ public:
 		base = NULL;
 	}
 	virtual 				~idDecl() {};
+	virtual void TouchMedia() {}
 
 	// Returns the name of the decl.
 	const char* 			GetName() const

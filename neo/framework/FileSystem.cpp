@@ -3226,7 +3226,11 @@ void idFileSystemLocal::ListModConflicts_f( const idCmdArgs& args )
 						"changes only spawn keys needs neither, unless it brings in a monster whose use_aas size the map lacks (runAAS).\n" );
 	}
 	// P1-m3: the merge log is the loaded map's own, read through the game without a parse
+#if defined( DMAP )
+	const idMapFile* loadedMap = NULL;
+#else
 	const idMapFile* loadedMap = ( gameEdit != NULL ) ? gameEdit->MapGetLoadedFile() : NULL;
+#endif
 	if( loadedMap == NULL )
 	{
 		common->Printf( "No map is loaded, so there is no map merge to list.\n" );

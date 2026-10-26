@@ -361,6 +361,7 @@ void idRenderModelManagerLocal::LoadModelLods( idRenderModel* model )
 
 idRenderModel* idRenderModelManagerLocal::GetModel( const char* _modelName, bool createIfNotFound, const idImportOptions* options )
 {
+	DeclMediaLookup();
 	if( !_modelName || !_modelName[0] )
 	{
 		return NULL;

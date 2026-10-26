@@ -488,6 +488,7 @@ static const char* predef_lightstylesinfo[] =
 class idMaterial : public idDecl
 {
 public:
+	virtual void TouchMedia();
 	idMaterial();
 	virtual				~idMaterial();
 

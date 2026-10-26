@@ -296,6 +296,7 @@ public:
 	idStr						AddFrameCommand( const class idDeclModelDef* modelDef, int framenum, idLexer& src, const idDict* def );
 	void						CallFrameCommands( idEntity* ent, int from, int to ) const;
 	bool						HasFrameCommands() const;
+	void TouchMedia();
 
 	// returns first frame (zero based) that command occurs.  returns -1 if not found.
 	int							FindFrameForFrameCommand( frameCommandType_t framecommand, const frameCommand_t** command ) const;
@@ -314,6 +315,7 @@ public:
 class idDeclModelDef : public idDecl
 {
 public:
+	virtual void TouchMedia();
 	idDeclModelDef();
 	~idDeclModelDef();
 

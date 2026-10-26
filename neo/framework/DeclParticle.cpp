@@ -1884,3 +1884,14 @@ void idParticleStage::operator=( const idParticleStage& src )
 	boundsExpansion = src.boundsExpansion;
 	bounds = src.bounds;
 }
+
+void idDeclParticle::TouchMedia()
+{
+	for( int i = 0; i < stages.Num(); i++ )
+	{
+		if( stages[i]->material != NULL )
+		{
+			declManager->FindMaterial( stages[i]->material->GetName() );
+		}
+	}
+}

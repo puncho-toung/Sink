@@ -355,6 +355,7 @@ idStr idAnim::AddFrameCommand( const idDeclModelDef* modelDef, int framenum, idL
 			return va( "Function '%s' not found", token.c_str() );
 		}
 #endif
+		fc.string = new( TAG_ANIM ) idStr( token );
 	}
 	else if( token == "object_call" )
 	{
@@ -1016,7 +1017,10 @@ void idAnim::CallFrameCommands( idEntity* ent, int from, int to ) const
 			{
 				case FC_SCRIPTFUNCTION:
 				{
-					gameLocal.CallFrameCommand( ent, command.function );
+					if( command.function != NULL )
+					{
+						gameLocal.CallFrameCommand( ent, command.function );
+					}
 					break;
 				}
 				case FC_SCRIPTFUNCTIONOBJECT:
@@ -6328,3 +6332,61 @@ idRenderModel* idGameEdit::ANIM_CreateMeshForAnim( idRenderModel* model, const c
 }
 
 #endif // #if !defined( DMAP )
+void idAnim::TouchMedia()
+{
+	for( int i = 0; i < frameCommands.Num(); i++ )
+	{
+		frameCommand_t& command = frameCommands[i];
+		if( command.type >= FC_SOUND && command.type <= FC_SOUND_CHATTER )
+		{
+			if( command.string == NULL && command.soundShader != NULL )
+			{
+				declManager->FindSound( command.soundShader->GetName() );
+			}
+		}
+		else if( command.type == FC_SKIN && command.skin != NULL )
+		{
+			declManager->FindSkin( command.skin->GetName() );
+		}
+		else if( ( command.type == FC_FX || command.type == FC_TRIGGER_FX ) && command.string != NULL )
+		{
+			declManager->FindType( DECL_FX, command.string->c_str() );
+		}
+		else if( command.type == FC_TRIGGER_SMOKE_PARTICLE && command.string != NULL )
+		{
+			declManager->FindType( DECL_PARTICLE, command.string->c_str() );
+		}
+		else if( command.type == FC_START_EMITTER && command.string != NULL )
+		{
+			const int space = command.string->Find( ' ' );
+			if( space >= 0 )
+			{
+				declManager->FindType( DECL_PARTICLE, command.string->c_str() + space + 1 );
+			}
+		}
+#if !defined( DMAP )
+		else if( command.type == FC_SCRIPTFUNCTION )
+		{
+			// Script storage is reset at map shutdown; never dereference the old function.
+			command.function = command.string != NULL ? gameLocal.program.FindFunction( command.string->c_str() ) : NULL;
+			if( command.function == NULL )
+			{
+				gameLocal.Warning( "retained anim %s cannot rebind script callback %s", FullName(), command.string != NULL ? command.string->c_str() : "<missing name>" );
+			}
+		}
+#endif
+	}
+}
+
+void idDeclModelDef::TouchMedia()
+{
+	Touch();
+	if( skin != NULL )
+	{
+		declManager->FindSkin( skin->GetName() );
+	}
+	for( int i = 0; i < anims.Num(); i++ )
+	{
+		anims[i]->TouchMedia();
+	}
+}

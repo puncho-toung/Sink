@@ -721,3 +721,41 @@ idDeclAudio::FreeData
 void idDeclAudio::FreeData()
 {
 }
+
+void idDeclVideo::TouchMedia()
+{
+	if( preview != NULL )
+	{
+		declManager->FindMaterial( preview->GetName() );
+	}
+	if( video != NULL )
+	{
+		declManager->FindMaterial( video->GetName() );
+	}
+	if( audio != NULL )
+	{
+		declManager->FindSound( audio->GetName() );
+	}
+}
+void idDeclAudio::TouchMedia()
+{
+	if( audio != NULL )
+	{
+		declManager->FindSound( audio->GetName() );
+	}
+}
+void idDeclPDA::TouchMedia()
+{
+	for( int i = 0; i < emails.Num(); i++ )
+	{
+		declManager->FindType( DECL_EMAIL, emails[i]->GetName() );
+	}
+	for( int i = 0; i < audios.Num(); i++ )
+	{
+		declManager->FindType( DECL_AUDIO, audios[i]->GetName() );
+	}
+	for( int i = 0; i < videos.Num(); i++ )
+	{
+		declManager->FindType( DECL_VIDEO, videos[i]->GetName() );
+	}
+}

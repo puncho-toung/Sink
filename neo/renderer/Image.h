@@ -532,6 +532,7 @@ public:
 		commandList = nullptr;
 	}
 
+	void TouchImage( idImage* image );
 	void				Init();
 	void				Shutdown();
 

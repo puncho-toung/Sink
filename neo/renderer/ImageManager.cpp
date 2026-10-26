@@ -400,6 +400,7 @@ Loading of the image may be deferred for dynamic loading.
 idImage*	idImageManager::ImageFromFile( const char* _name, textureFilter_t filter,
 		textureRepeat_t repeat, textureUsage_t usage, cubeFiles_t cubeMap, int cubeMapSize )
 {
+	DeclMediaLookup();
 
 	if( !_name || !_name[0] || idStr::Icmp( _name, "default" ) == 0 || idStr::Icmp( _name, "_default" ) == 0 )
 	{
@@ -1203,3 +1204,19 @@ void idImageManager::CacheGlobalIlluminationData_f( const idCmdArgs& args )
 	globalImages->cacheImages = false;
 }
 #endif
+void idImageManager::TouchImage( idImage* image )
+{
+	if( image == NULL )
+	{
+		return;
+	}
+	image->levelLoadReferenced = true;
+	if( !insideLevelLoad )
+	{
+		image->referencedOutsideLevelLoad = true;
+		if( !image->IsLoaded() )
+		{
+			image->ActuallyLoadImage( false, nullptr );
+		}
+	}
+}

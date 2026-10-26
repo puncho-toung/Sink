@@ -279,6 +279,7 @@ void idUserInterfaceManagerLocal::DeAlloc( idUserInterface* gui )
 
 idUserInterface* idUserInterfaceManagerLocal::FindGui( const char* qpath, bool autoLoad, bool needUnique, bool forceNOTUnique )
 {
+	DeclMediaLookup();
 	int c = guis.Num();
 
 	for( int i = 0; i < c; i++ )

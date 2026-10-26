@@ -1338,8 +1338,37 @@ void idDeclManagerLocal::Reload( bool force )
 idDeclManagerLocal::BeginLevelLoad
 ===================
 */
+static idCVar decl_keepInWorld( "decl_keepInWorld", "0", CVAR_SYSTEM | CVAR_INTEGER, "retain parsed decls: 1 game-driven, 2 all except save loads", 0, 2 );
+static thread_local int declParsingType = -1;
+static int declParsedCount, declTouchMissing;
+static bool declMissingReported[DECL_MAX_TYPES];
+
+void DeclMediaLookup()
+{
+	if( !decl_keepInWorld.GetInteger() || declParsingType < 0 )
+	{
+		return;
+	}
+	switch( declParsingType )
+	{
+		case DECL_MATERIAL: case DECL_SOUND: case DECL_PARTICLE: case DECL_SKIN:
+		case DECL_MODELDEF: case DECL_FX: case DECL_VIDEO: case DECL_AUDIO: case DECL_PDA:
+			return;
+	}
+	declTouchMissing++;
+	if( !declMissingReported[declParsingType] )
+	{
+		declMissingReported[declParsingType] = true;
+		common->Warning( "decl_touch_missing: %s", declManager->GetDeclNameFromType( ( declType_t )declParsingType ) );
+	}
+}
+
 void idDeclManagerLocal::BeginLevelLoad()
 {
+	declParsedCount = declTouchMissing = 0;
+	memset( declMissingReported, 0, sizeof( declMissingReported ) );
+	const bool keep = ( decl_keepInWorld.GetInteger() == 1 && common->IsGameDrivenLoad() ) || ( decl_keepInWorld.GetInteger() == 2 && !common->IsSaveGameLoad() );
+	common->Printf( "DECLCACHE keep=%d\n", keep );
 	insideLevelLoad = true;
 
 	// clear all the referencedThisLevel flags and purge all the data
@@ -1350,7 +1379,14 @@ void idDeclManagerLocal::BeginLevelLoad()
 		for( int j = 0 ; j < num ; j++ )
 		{
 			idDeclLocal* decl = linearLists[i][j];
-			decl->Purge();
+			if( keep )
+			{
+				decl->referencedThisLevel = false;
+			}
+			else
+			{
+				decl->Purge();
+			}
 		}
 	}
 }
@@ -1362,6 +1398,7 @@ idDeclManagerLocal::EndLevelLoad
 */
 void idDeclManagerLocal::EndLevelLoad()
 {
+	common->Printf( "DECLCACHE decl_parsed=%d decl_touch_missing=%d\n", declParsedCount, declTouchMissing );
 	insideLevelLoad = false;
 
 	// we don't need to do anything here, but the image manager, model manager,
@@ -1608,6 +1645,10 @@ External users will always cause the decl to be parsed before returning
 */
 const idDecl* idDeclManagerLocal::FindType( declType_t type, const char* name, bool makeDefault )
 {
+	if( type == DECL_MATERIAL || type == DECL_SOUND || type == DECL_MODELDEF || type == DECL_SKIN || type == DECL_PARTICLE || type == DECL_FX || type == DECL_PDA || type == DECL_VIDEO || type == DECL_AUDIO )
+	{
+		DeclMediaLookup();
+	}
 	idDeclLocal* decl;
 
 	idScopedCriticalSection cs( mutex );
@@ -1645,6 +1686,12 @@ const idDecl* idDeclManagerLocal::FindType( declType_t type, const char* name, b
 		decl->parsedOutsideLevelLoad = !insideLevelLoad;
 	}
 
+	// Mark before touching: skins, materials and alternate sounds may form cycles.
+	if( decl_keepInWorld.GetInteger() && decl->declState == DS_PARSED && !decl->referencedThisLevel )
+	{
+		decl->referencedThisLevel = true;
+		decl->self->TouchMedia();
+	}
 	// mark it as referenced
 	decl->referencedThisLevel = true;
 	decl->everReferenced = true;
@@ -5873,6 +5920,9 @@ idDeclLocal::ParseLocal
 */
 void idDeclLocal::ParseLocal()
 {
+	const int previousParsingType = declParsingType;
+	declParsingType = type;
+	declParsedCount++;
 	bool generatedDefaultText = false;
 
 	AllocateSelf();
@@ -5896,6 +5946,7 @@ void idDeclLocal::ParseLocal()
 	{
 		MakeDefault();
 		declManagerLocal.indent--;
+		declParsingType = previousParsingType;
 		return;
 	}
 
@@ -5915,6 +5966,7 @@ void idDeclLocal::ParseLocal()
 	}
 
 	declManagerLocal.indent--;
+	declParsingType = previousParsingType;
 }
 
 /*

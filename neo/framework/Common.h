@@ -313,6 +313,7 @@ class idCommon
 {
 public:
 	virtual void LoadPhase( loadPhase_t phase ) {}
+	virtual bool IsSaveGameLoad() const { return false; }
 	virtual bool IsGameDrivenLoad() const { return false; }
 	virtual void PrefetchMap( const char* name ) {}
 	virtual int LevelKeepGrace() const { return 0; }

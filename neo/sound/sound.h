@@ -80,6 +80,7 @@ const int		SOUND_MAX_CLASSES		= 4;
 class idSoundShader : public idDecl
 {
 public:
+	virtual void TouchMedia();
 	idSoundShader();
 	virtual					~idSoundShader();
 

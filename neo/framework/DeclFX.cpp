@@ -522,3 +522,22 @@ void idDeclFX::FreeData()
 {
 	events.Clear();
 }
+
+void idDeclFX::TouchMedia()
+{
+	for( int i = 0; i < events.Num(); i++ )
+	{
+		const idFXSingleAction& action = events[i];
+		switch( action.type )
+		{
+			case FX_LIGHT: case FX_ATTACHLIGHT: case FX_DECAL:
+				declManager->FindMaterial( action.data ); break;
+			case FX_MODEL: case FX_PARTICLE: case FX_ATTACHENTITY:
+				renderModelManager->FindModel( action.data ); break;
+			case FX_SOUND:
+				declManager->FindSound( action.data ); break;
+			case FX_LAUNCH:
+				declManager->FindType( DECL_ENTITYDEF, action.data ); break;
+		}
+	}
+}

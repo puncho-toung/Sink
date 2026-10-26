@@ -99,6 +99,7 @@ typedef struct
 class idDeclFX : public idDecl
 {
 public:
+	virtual void TouchMedia();
 	virtual size_t			Size() const;
 	virtual const char* 	DefaultDefinition() const;
 	virtual bool			Parse( const char* text, const int textLength, bool allowBinaryVersion );

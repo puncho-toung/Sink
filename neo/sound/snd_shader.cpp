@@ -510,3 +510,18 @@ const char* idSoundShader::GetSound( int index ) const
 	}
 	return "";
 }
+
+void idSoundShader::TouchMedia()
+{
+	for( int i = 0; i < entries.Num(); i++ )
+	{
+		if( entries[i] != NULL )
+		{
+			soundSystemLocal.LoadSample( entries[i]->GetName() );
+		}
+	}
+	if( altSound != NULL )
+	{
+		declManager->FindSound( altSound->GetName() );
+	}
+}

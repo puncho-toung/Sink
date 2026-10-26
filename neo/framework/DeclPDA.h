@@ -83,6 +83,7 @@ private:
 class idDeclVideo : public idDecl
 {
 public:
+	virtual void TouchMedia();
 	idDeclVideo() : preview( NULL ), video( NULL ), audio( NULL ) {};
 
 	virtual size_t			Size() const;
@@ -125,6 +126,7 @@ private:
 class idDeclAudio : public idDecl
 {
 public:
+	virtual void TouchMedia();
 	idDeclAudio() : audio( NULL ) {};
 
 	virtual size_t			Size() const;
@@ -156,6 +158,7 @@ private:
 class idDeclPDA : public idDecl
 {
 public:
+	virtual void TouchMedia();
 	idDeclPDA()
 	{
 		originalEmails = originalVideos = 0;

@@ -46,6 +46,7 @@ typedef struct
 class idDeclSkin : public idDecl
 {
 public:
+	virtual void TouchMedia();
 	virtual size_t			Size() const;
 	virtual bool			SetDefaultText();
 	virtual const char* 	DefaultDefinition() const;

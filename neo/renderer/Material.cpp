@@ -4439,6 +4439,9 @@ void idMaterial::TouchMedia()
 			}
 		}
 	}
-	if( gui != NULL ) { gui = uiManager->FindGui( gui->Name(), true, false, true ); }
+	if( gui != NULL )
+	{
+		gui = uiManager->FindGui( gui->Name(), true, false, true );
+	}
 #endif
 }
