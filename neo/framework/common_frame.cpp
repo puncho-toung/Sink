@@ -417,7 +417,14 @@ void idCommonLocal::Draw()
 		Sys_Sleep( com_sleepDraw.GetInteger() );
 	}
 
-	if( loadPacifierBinarizeActive || LoadPacifierRunning() )
+	extern idCVar com_transitionOverlayMs;
+	if( insideExecuteMapChange && IsGameDrivenLoad() && transitionLoadStartTime != 0 &&
+		com_transitionOverlayMs.GetInteger() >= 0 && Sys_Milliseconds() - transitionLoadStartTime < com_transitionOverlayMs.GetInteger() )
+	{
+		renderSystem->SetColor( colorBlack );
+		renderSystem->DrawStretchPic( 0, 0, renderSystem->GetVirtualWidth(), renderSystem->GetVirtualHeight(), 0, 0, 1, 1, whiteMaterial );
+	}
+	else if( loadPacifierBinarizeActive || LoadPacifierRunning() )
 	{
 		// foresthale 2014-05-30: when binarizing an asset we show a special
 		// overlay indicating progress
@@ -429,6 +436,7 @@ void idCommonLocal::Draw()
 		if( loadGUI != NULL )
 		{
 			loadGUI->Render( renderSystem, Sys_Milliseconds() );
+		transitionGuiDraws++;
 		}
 
 		// draw general progress bar
@@ -480,6 +488,7 @@ void idCommonLocal::Draw()
 		renderSystem->DrawStretchPic( 0, 0, renderSystem->GetVirtualWidth(), renderSystem->GetVirtualHeight(), 0, 0, 1, 1, whiteMaterial );
 
 		loadGUI->Render( renderSystem, Sys_Milliseconds() );
+		transitionGuiDraws++;
 	}
 	// RB begin
 #if defined(USE_DOOMCLASSIC)
@@ -973,6 +982,7 @@ void idCommonLocal::Frame()
 			mapSpawnData.savegameFile = NULL;
 			mapSpawnData.persistentPlayerInfo.Clear();
 			mapSpawnData.worldTimeBase = 0;
+			mapSpawnData.gameDriven = false;
 			return;
 		}
 		else if( session->GetState() != idSession::INGAME && mapSpawned )

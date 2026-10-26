@@ -194,6 +194,9 @@ idCommonLocal::idCommonLocal() :
 	insideUpdateScreen = false;
 	insideExecuteMapChange = false;
 
+	mapSpawnData.gameDriven = false;
+	transitionLoadStartTime = 0;
+	transitionGuiDraws = 0;
 	mapSpawnData.worldTimeBase = 0;
 	mapSpawnData.savegameFile = NULL;
 

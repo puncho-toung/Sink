@@ -313,6 +313,7 @@ class idCommon
 {
 public:
 	virtual void LoadPhase( loadPhase_t phase ) {}
+	virtual bool IsGameDrivenLoad() const { return false; }
 
 	virtual						~idCommon() {}
 

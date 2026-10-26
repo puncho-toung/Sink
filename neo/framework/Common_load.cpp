@@ -150,6 +150,11 @@ void idCommonLocal::FinishLoadTimeline()
 	}
 }
 
+idCVar com_transitionWipeMs( "com_transitionWipeMs", "1000", CVAR_SYSTEM | CVAR_INTEGER, "game-driven total presentation budget; -1 uses legacy held wipes", -1, 10000 );
+idCVar com_transitionOverlayMs( "com_transitionOverlayMs", "50", CVAR_SYSTEM | CVAR_INTEGER, "game-driven loading overlay delay after fade; -1 draws immediately", -1, 10000 );
+idCVar com_transitionKeepInput( "com_transitionKeepInput", "0", CVAR_SYSTEM | CVAR_BOOL, "preserve held buttons and toggles across game-driven changes" );
+idCVar com_transitionStrip( "com_transitionStrip", "0", CVAR_SYSTEM | CVAR_INTEGER, "game-driven load bits: 1 skip settle, 4 skip synchronous autosave (checkpoint requires MP-D0)", 0, 7 );
+
 idCVar com_wipeSeconds( "com_wipeSeconds", "1", CVAR_SYSTEM, "" );
 idCVar com_disableAutoSaves( "com_disableAutoSaves", "0", CVAR_SYSTEM | CVAR_BOOL, "" );
 idCVar com_disableAllSaves( "com_disableAllSaves", "0", CVAR_SYSTEM | CVAR_BOOL, "" );
@@ -182,7 +187,13 @@ void idCommonLocal::StartWipe( const char* _wipeMaterial, bool hold )
 	wipeMaterial = declManager->FindMaterial( _wipeMaterial, false );
 
 	wipeStartTime = Sys_Milliseconds();
-	wipeStopTime = wipeStartTime + SEC2MS( com_wipeSeconds.GetFloat() );
+	int duration = SEC2MS( com_wipeSeconds.GetFloat() );
+	if( IsGameDrivenLoad() && com_transitionWipeMs.GetInteger() >= 0 )
+	{
+		// Loading consumes the presentation budget; never add a held second before IO.
+		duration = hold ? 0 : Max( 0, com_transitionWipeMs.GetInteger() - ( wipeStartTime - transitionLoadStartTime ) );
+	}
+	wipeStopTime = wipeStartTime + duration;
 	wipeHold = hold;
 }
 
@@ -224,6 +235,7 @@ idCommonLocal::StartNewGame
 */
 void idCommonLocal::StartNewGame( const char* mapName, bool devmap, int gameMode )
 {
+	mapSpawnData.gameDriven = false;
 	if( session->GetSignInManager().GetMasterLocalUser() == NULL )
 	{
 		// For development make sure a controller is registered
@@ -294,6 +306,7 @@ Single player transition from one map to another
 */
 void idCommonLocal::MoveToNewMap( const char* mapName, bool devmap )
 {
+	mapSpawnData.gameDriven = !devmap;
 	LoadPhase( LOAD_MOVE );
 	mapSpawnData.worldTimeBase = devmap ? 0 : game->GetWorldTime();
 	idMatchParameters matchParameters;
@@ -594,6 +607,12 @@ void idCommonLocal::ExecuteMapChange()
 	// run the wipe to completion
 	StartWipe( "wipeMaterial", true );
 	CompleteWipe();
+	transitionLoadStartTime = Sys_Milliseconds();
+	transitionGuiDraws = 0;
+	if( IsGameDrivenLoad() )
+	{
+		Printf( "TRANSITION wipe=%d overlay=%d keepInput=%d strip=%d\n", com_transitionWipeMs.GetInteger(), com_transitionOverlayMs.GetInteger(), com_transitionKeepInput.GetBool(), com_transitionStrip.GetInteger() );
+	}
 
 	int sm = Sys_Milliseconds();
 	// shut down the existing game if it is running
@@ -670,7 +689,7 @@ void idCommonLocal::ExecuteMapChange()
 
 	// for the synchronous networking we needed to roll the angles over from
 	// level to level, but now we can just clear everything
-	usercmdGen->InitForNewMap();
+	usercmdGen->InitForNewMap( IsGameDrivenLoad() && com_transitionKeepInput.GetBool() );
 
 	// load and spawn all other entities ( from a savegame possibly )
 	if( mapSpawnData.savegameFile )
@@ -755,7 +774,7 @@ void idCommonLocal::ExecuteMapChange()
 		// In single player, run a bunch of frames to make sure ragdolls are settled
 		idUserCmdMgr emptyCommandManager;
 		gameReturn_t emptyGameReturn;
-		for( int i = 0; i < 100; i++ )
+		for( int i = 0; i < ( IsGameDrivenLoad() && ( com_transitionStrip.GetInteger() & 1 ) ? 0 : 100 ); i++ )
 		{
 			for( int playerIndex = 0; playerIndex < MAX_PLAYERS; ++playerIndex )
 			{
@@ -767,7 +786,19 @@ void idCommonLocal::ExecuteMapChange()
 		// kick off an auto-save of the game (so we can always continue in this map if we die before hitting an autosave)
 		LoadPhase( LOAD_AUTOSAVE );
 		common->Printf( "----- Saving Game -----\n" );
-		SaveGame( "autosave" );
+		if( IsGameDrivenLoad() && ( com_transitionStrip.GetInteger() & 4 ) )
+		{
+			static bool warnedCheckpoint = false;
+			if( !warnedCheckpoint )
+			{
+				Warning( "transition autosave skipped: MP-D0 RequestCheckpoint is unavailable" );
+				warnedCheckpoint = true;
+			}
+		}
+		else
+		{
+			SaveGame( "autosave" );
+		}
 	}
 
 	LoadPhase( LOAD_INTERACTIONS );
@@ -806,7 +837,10 @@ void idCommonLocal::ExecuteMapChange()
 		reliableQueue.Clear();
 	}
 
-	usercmdGen->Clear();
+	if( !IsGameDrivenLoad() || !com_transitionKeepInput.GetBool() )
+	{
+		usercmdGen->Clear();
+	}
 
 	// remove any prints from the notify lines
 	console->ClearNotifyLines();
@@ -824,8 +858,15 @@ void idCommonLocal::ExecuteMapChange()
 	// we are valid for game draws now
 	insideExecuteMapChange = false;
 	mapSpawned = true;
-	Sys_ClearEvents();
-
+	if( !IsGameDrivenLoad() || !com_transitionKeepInput.GetBool() )
+	{
+		Sys_ClearEvents();
+	}
+	if( IsGameDrivenLoad() )
+	{
+		Printf( "TRANSITION guiDraws=%d\n", transitionGuiDraws );
+	}
+	transitionLoadStartTime = 0;
 
 	int	msec = Sys_Milliseconds() - start;
 	FinishLoadTimeline();

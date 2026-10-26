@@ -455,6 +455,7 @@ public:
 
 	// RB begin
 	virtual void LoadPhase( loadPhase_t phase );
+	virtual bool IsGameDrivenLoad() const { return mapSpawnData.gameDriven && mapSpawnData.savegameFile == NULL; }
 	virtual void				LoadPacifierInfo( VERIFY_FORMAT_STRING const char* fmt, ... );
 	virtual void				LoadPacifierProgressTotal( int total );
 	virtual void				LoadPacifierProgressIncrement( int step );
@@ -552,6 +553,7 @@ private:
 	// This data is cleared after ExecuteMapChange
 	struct mapSpawnData_t
 	{
+		bool				gameDriven;
 		idFile_SaveGame* 	savegameFile;				// Used for loading a save game
 		idFile_SaveGame* 	stringTableFile;			// String table read from save game loaded
 		idFile_SaveGamePipelined* pipelineFile;
@@ -560,6 +562,8 @@ private:
 		idDict				persistentPlayerInfo;		// Used for transitioning from map to map
 	};
 	mapSpawnData_t		mapSpawnData;
+	int					transitionLoadStartTime;
+	int					transitionGuiDraws;
 	idStr				currentMapName;			// for checking reload on same level
 	bool				mapSpawned;				// cleared on Stop()
 

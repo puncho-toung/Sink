@@ -226,7 +226,7 @@ public:
 
 	void			Init();
 
-	void			InitForNewMap();
+	void			InitForNewMap( bool keepInput );
 
 	void			Shutdown();
 
@@ -286,6 +286,7 @@ private:
 	int				inhibitCommands;	// true when in console or menu locally
 
 	bool			initialized;
+	bool			discardTransitionMouse;
 
 	usercmd_t		cmd;		// the current cmd being built
 
@@ -337,6 +338,7 @@ idUsercmdGenLocal::idUsercmdGenLocal
 idUsercmdGenLocal::idUsercmdGenLocal()
 {
 	initialized = false;
+	discardTransitionMouse = false;
 
 	pollTime = 0;
 	lastPollTime = 0;
@@ -1124,6 +1126,11 @@ void idUsercmdGenLocal::MakeCurrent()
 	// dialog, activation) can drop the lock in between
 	InhibitUsercmd( INHIBIT_TOOL, ImGuiTools::ToolWantsViewLock() );
 
+	if( discardTransitionMouse )
+	{
+		mouseDx = mouseDy = 0;
+		discardTransitionMouse = false;
+	}
 	idVec3 oldAngles = viewangles;
 
 	if( !Inhibited() )
@@ -1255,8 +1262,17 @@ void idUsercmdGenLocal::Init()
 idUsercmdGenLocal::InitForNewMap
 ================
 */
-void idUsercmdGenLocal::InitForNewMap()
+void idUsercmdGenLocal::InitForNewMap( bool keepInput )
 {
+	if( keepInput )
+	{
+		impulseSequence = 0;
+		impulse = 0;
+		ClearAngles();
+		discardTransitionMouse = true;
+		return;
+	}
+	discardTransitionMouse = false;
 	impulseSequence = 0;
 	impulse = 0;
 

@@ -204,7 +204,7 @@ public:
 	virtual	void		Init() = 0;
 
 	// Prepares for a new map.
-	virtual void		InitForNewMap() = 0;
+	virtual void		InitForNewMap( bool keepInput = false ) = 0;
 
 	// Shut down.
 	virtual void		Shutdown() = 0;
