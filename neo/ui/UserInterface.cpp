@@ -190,7 +190,9 @@ void idUserInterfaceManagerLocal::EndLevelLoad( const char* mapName )
 		delete f;
 	}
 
-	common->ReportLevelCache( 3, 0, guis.Num(), purged, 0, 0 );
+	int64 bytes = 0;
+	for( int i = 0; i < guis.Num(); i++ ) { bytes += guis[i]->Size(); }
+	common->ReportLevelCache( 3, 0, guis.Num(), purged, 0, bytes );
 	dcOld.Init();
 	dcOptimized.Init();
 }

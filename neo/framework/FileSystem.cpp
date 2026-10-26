@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "Unzip.h"
+#include "Prefetch.h"
 
 #if !defined( TYPEINFOPROJECT ) && !defined( DMAP  )
 	#include "Zip.h"
@@ -170,6 +171,8 @@ public:
 	virtual void			RemoveFile( const char* relativePath );
 	virtual	bool			RemoveDir( const char* relativePath );
 	virtual bool			RenameFile( const char* relativePath, const char* newName, const char* basePath = "fs_savepath" );
+	virtual void MountPrefetchResource( const char* name ) { AddResourceFile( name ); }
+	virtual bool ResolveForRead( const char* path, resolvedFile_t& out, const char* gamedir = NULL );
 	virtual idFile* 		OpenFileReadFlags( const char* relativePath, int searchFlags, bool allowCopyFiles = true, const char* gamedir = NULL );
 	virtual idFile* 		OpenFileRead( const char* relativePath, bool allowCopyFiles = true, const char* gamedir = NULL );
 	virtual idFile* 		OpenFileReadMemory( const char* relativePath, bool allowCopyFiles = true, const char* gamedir = NULL );
@@ -858,6 +861,7 @@ idFileSystemLocal::EndLevelLoad
 */
 void idFileSystemLocal::EndLevelLoad()
 {
+	Prefetch_EndLoad();
 	if( fs_buildResources.GetBool() )
 	{
 		int saveCopyFiles = fs_copyfiles.GetInteger();
@@ -3873,6 +3877,7 @@ Frees all resources and closes all files
 */
 void idFileSystemLocal::Shutdown( bool reloading )
 {
+	Prefetch_Clear();
 	gameFolder.Clear();
 
 	for( int sp = fileSystemLocal.searchPaths.Num() - 1; sp >= 0; sp-- )
@@ -4169,6 +4174,90 @@ Used for streaming data out of either a
 separate file or a ZIP file.
 ===========
 */
+bool idFileSystemLocal::ResolveForRead( const char* path, resolvedFile_t& out, const char* gamedir )
+{
+	assert( !Prefetch_IsWorker() );
+	memset( &out, 0, sizeof( out ) );
+	if( path == NULL || path[0] == 0 || strstr( path, ".." ) || strstr( path, "::" ) ) { return false; }
+	if( path[0] == '/' || path[0] == '\\' ) { path++; }
+	for( int layer = layerNames.Num() - 1; layer >= 0; layer-- )
+	{
+		// Match OpenLayerFile, including priority values other than 0/1.
+		for( int pass = 0; pass < 2; pass++ )
+		{
+			if( fs_resourceLoadPriority.GetInteger() == ( pass == 0 ? 1 : 0 ) )
+			{
+				idZipCacheEntry zip;
+				if( UsingZipFiles() && GetZipCacheEntry( path, zip, layer ) )
+				{
+					idStr::Copynz( out.osPath, zip.owner->GetFileName(), sizeof( out.osPath ) );
+					unzFile handle = unzOpen( out.osPath );
+					unz_file_info64 info;
+					if( handle == NULL ) { return false; }
+					const bool valid = unzSetOffset64( handle, zip.offset ) == UNZ_OK && unzGetCurrentFileInfo64( handle, &info, out.entryName, sizeof( out.entryName ), NULL, 0, NULL, 0 ) == UNZ_OK;
+					unzClose( handle );
+					if( !valid ) { return false; }
+					out.kind = 2;
+					out.offset = zip.offset;
+					out.length = info.uncompressed_size;
+					out.compressedSize = info.compressed_size;
+					out.crc = info.crc;
+					idFile* file = zip.owner->OpenFile( zip, path );
+					out.timestamp = file->Timestamp();
+					delete file;
+					struct stat st;
+					if( stat( out.osPath, &st ) != 0 ) { return false; }
+					out.archiveTime = st.st_mtime;
+					out.archiveSize = st.st_size;
+					return true;
+				}
+				idResourceCacheEntry resource;
+				if( UsingResourceFiles() && GetResourceCacheEntry( path, resource, layer ) )
+				{
+					out.kind = 1;
+					idStr::Copynz( out.osPath, resource.owner->resourceFile->GetFullPath(), sizeof( out.osPath ) );
+					out.offset = resource.offset;
+					out.length = resource.length;
+					struct stat st;
+					if( stat( out.osPath, &st ) != 0 ) { return false; }
+					out.archiveTime = st.st_mtime;
+					out.archiveSize = st.st_size;
+					return true;
+				}
+			}
+			if( pass == 0 )
+			{
+				for( int sp = searchPaths.Num() - 1; sp >= 0; sp-- )
+				{
+					const searchpath_t& search = searchPaths[sp];
+					if( search.layer != layer || ( gamedir != NULL && gamedir[0] && search.gamedir != gamedir ) ) { continue; }
+					idStr netpath = BuildOSPath( search.path, search.gamedir, path );
+					idFileHandle handle = OpenOSFile( netpath, FS_READ );
+					if( handle == NULL ) { continue; }
+					idFile_Permanent* file = new( TAG_IDFILE ) idFile_Permanent();
+					file->o = handle;
+					file->mode = 1 << FS_READ;
+					out.length = DirectFileLength( handle );
+					out.timestamp = file->Timestamp();
+					idStr::Copynz( out.osPath, netpath, sizeof( out.osPath ) );
+#if defined( __linux__ )
+					// OpenOSFile may have found a case-folded basename. Reopen that exact inode's path.
+					char descriptor[64];
+					idStr::snPrintf( descriptor, sizeof( descriptor ), "/proc/self/fd/%d", fileno( handle ) );
+					const ssize_t length = readlink( descriptor, out.osPath, sizeof( out.osPath ) - 1 );
+					if( length > 0 ) { out.osPath[length] = 0; }
+#endif
+					delete file;
+					out.archiveTime = out.timestamp;
+					out.archiveSize = out.length;
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
 idFile* idFileSystemLocal::OpenFileReadFlags( const char* relativePath, int searchFlags, bool allowCopyFiles, const char* gamedir )
 {
 
@@ -4207,6 +4296,13 @@ idFile* idFileSystemLocal::OpenFileReadFlags( const char* relativePath, int sear
 	if( fs_debug.GetBool() )
 	{
 		idLib::Printf( "FILE DEBUG: opening %s\n", relativePath );
+	}
+
+	assert( !Prefetch_IsWorker() );
+	if( !fs_buildResources.GetBool() && !fs_copyfiles.GetBool() )
+	{
+		idFile* prefetched = Prefetch_Open( relativePath, gamedir );
+		if( prefetched != NULL ) { return prefetched; }
 	}
 
 	//puncho start - MP-A5 (K21a): files are served layer by layer, top down, so a packed file in a higher layer beats

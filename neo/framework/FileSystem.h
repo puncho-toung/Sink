@@ -107,6 +107,8 @@ private:
 	idStrList				list;
 };
 
+struct resolvedFile_t;
+
 class idFileSystem
 {
 public:
@@ -160,6 +162,8 @@ public:
 	// As a quick check for existance. -1 length == not present.
 	// A 0 byte will always be appended at the end, so string ops are safe.
 	// The buffer should be considered read-only, because it may be cached for other uses.
+	virtual void MountPrefetchResource( const char* name ) {}
+	virtual bool ResolveForRead( const char* path, resolvedFile_t& out, const char* gamedir = NULL ) { return false; }
 	virtual int				ReadFile( const char* relativePath, void** buffer, ID_TIME_T* timestamp = NULL ) = 0;
 
 	// Frees the memory allocated by ReadFile.

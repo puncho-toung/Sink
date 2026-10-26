@@ -314,6 +314,7 @@ class idCommon
 public:
 	virtual void LoadPhase( loadPhase_t phase ) {}
 	virtual bool IsGameDrivenLoad() const { return false; }
+	virtual void PrefetchMap( const char* name ) {}
 	virtual int LevelKeepGrace() const { return 0; }
 	virtual bool IsLevelAssetPinned( int type, const char* name, int filter = -1, int repeat = -1, int usage = -1, int cubeMap = -1 ) const { return false; }
 	virtual void ReportLevelCache( int manager, int loaded, int kept, int purged, int pinned, int64 bytes ) {}

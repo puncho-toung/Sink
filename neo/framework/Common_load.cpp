@@ -33,6 +33,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "Common_local.h"
 #include "../sys/sys_lobby_backend.h"
+#include "Prefetch.h"
 
 
 #define LAUNCH_TITLE_DOOM_EXECUTABLE		"doom1.exe"
@@ -192,6 +193,11 @@ void idCommon::PreloadManifestName( const char* map, idStr& result )
 	result = "maps/";
 	result += base;
 	result += ".preload";
+}
+
+void idCommonLocal::PrefetchMap( const char* name )
+{
+	Prefetch_Queue( name );
 }
 
 int idCommonLocal::LevelKeepGrace() const
@@ -660,6 +666,7 @@ Exits with mapSpawned = true
 */
 void idCommonLocal::ExecuteMapChange()
 {
+	Prefetch_BeginLoad();
 	if( session->GetState() != idSession::LOADING )
 	{
 		idLib::Warning( "Session state is not LOADING in ExecuteMapChange" );

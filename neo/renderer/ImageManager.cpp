@@ -604,6 +604,26 @@ idImage* idImageManager::ScratchImage( const char* name, const idImageOpts& opts
 idImageManager::GetImage
 ===============
 */
+idImage* idImageManager::GetImageWithParameters( const char* source, textureFilter_t filter, textureRepeat_t repeat, textureUsage_t usage, cubeFiles_t cubeMap ) const
+{
+	if( source == NULL || source[0] == 0 ) { return NULL; }
+	idStr name = source;
+	const char* extensions[] = { ".tga", ".jpg", ".png", ".exr", ".hdr" };
+	for( int i = 0; i < 5; i++ ) { name.Replace( extensions[i], "" ); }
+	name.BackSlashesToSlashes();
+	if( idStr::Icmpn( source, "fonts", 5 ) == 0 || idStr::Icmpn( source, "newfonts", 8 ) == 0 ) { usage = TD_FONT; }
+	if( idStr::Icmpn( source, "lights", 6 ) == 0 ) { usage = TD_LIGHT; }
+	for( int i = imageHash.First( name.FileNameHash() ); i != -1; i = imageHash.Next( i ) )
+	{
+		idImage* image = images[i];
+		if( name.Icmp( image->GetName() ) == 0 && ( name[0] == '_' || ( image->filter == filter && image->repeat == repeat && image->usage == usage && image->cubeFiles == cubeMap ) ) )
+		{
+			return image;
+		}
+	}
+	return NULL;
+}
+
 idImage* idImageManager::GetImage( const char* _name ) const
 {
 	if( !_name || !_name[0] || idStr::Icmp( _name, "default" ) == 0 || idStr::Icmp( _name, "_default" ) == 0 )
