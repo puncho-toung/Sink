@@ -3902,8 +3902,9 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 		postLoadExportModels.SetBool( false );
 	}
 
-	//declManagerLocal.Reload( true );
-	common->FatalError( "Exporting successful, need to restart engine manually" );
+	// Export parsing omits inheritance, so do not return to a running map.
+	common->Printf( "FGD export complete; shutting down for a clean restart.\n" );
+	cmdSystem->BufferCommandText( CMD_EXEC_INSERT, "quit\n" );
 }
 
 void idDeclManagerLocal::ExportImagesToTrenchBroom_f( const idCmdArgs& args )
