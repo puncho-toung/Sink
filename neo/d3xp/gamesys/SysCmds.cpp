@@ -3961,6 +3961,25 @@ static void Cmd_ListDormancy_f( const idCmdArgs& args )
 	}
 }
 
+static void Cmd_RunScriptFunction_f( const idCmdArgs& args )
+{
+	if( args.Argc() != 2 || !gameLocal.CheatsOk() || common->IsClient() || gameLocal.GameState() != GAMESTATE_ACTIVE || gameLocal.IsMapTransitionActive() )
+	{
+		gameLocal.Printf( "runScriptFunction requires an idle server map and one function name\n" );
+		return;
+	}
+	const function_t* function = gameLocal.program.FindFunction( args.Argv( 1 ) );
+	if( function == NULL || function->eventdef != NULL || function->type == NULL || function->type->Type() != ev_function || function->type->ReturnType() == NULL || function->type->NumParameters() != 0 || function->type->ReturnType()->Type() != ev_void || function->def == NULL || function->def->scope == NULL || function->def->scope->Type() != ev_namespace )
+	{
+		gameLocal.Printf( "Unknown function or unsupported signature: %s (requires global void function with no arguments)\n", args.Argv( 1 ) );
+		return;
+	}
+	// Invoke precompiled diagnostics without modifying the program image or
+	// adding the synthetic console filename that cannot be reopened on restore.
+	idThread* thread = new idThread( function );
+	thread->Start(); // Ordinary script-thread ownership, including waits and completion.
+}
+
 struct recordTestRow_t
 {
 	int ordinal, health;
@@ -3976,6 +3995,22 @@ static void Cmd_RecordTest_f( const idCmdArgs& args )
 {
 	if( !gameLocal.CheatsOk() || args.Argc() < 2 )
 	{
+		return;
+	}
+	if( idStr::Icmp( args.Argv( 1 ), "lifetime" ) == 0 && args.Argc() == 4 && idStr::Icmpn( gameLocal.GetMapName(), "maps/_test/mg/", 14 ) == 0 )
+	{
+		int changed = 0;
+		const bool corpses = idStr::Icmp( args.Argv( 2 ), "corpses" ) == 0;
+		for( int i = MAX_CLIENTS; i < MAX_GENTITIES; i++ )
+		{
+			idEntity* ent = gameLocal.entities[i];
+			if( ent != NULL && ( corpses ? ent->IsType( idCorpse::Type ) : ent->name == args.Argv( 2 ) ) && !ent->spawnArgs.GetBool( "persist_nocap" ) )
+			{
+				ent->spawnArgs.SetInt( "persist_lifetime", atoi( args.Argv( 3 ) ) );
+				changed++;
+			}
+		}
+		gameLocal.Printf( "RECORD_TEST %s lifetime targets=%d\n", changed > 0 ? "PASS" : "FAIL", changed );
 		return;
 	}
 	if( idStr::Icmp( args.Argv( 1 ), "codec" ) == 0 )
@@ -4196,38 +4231,35 @@ static void Cmd_ListTransition_f( const idCmdArgs& args )
 	gameLocal.ListTransition();
 }
 
+bool QueueTransitionTestParty( const mapTransition_t& request, bool farPeer );
+
 static void Cmd_TestPartyPlacement_f( const idCmdArgs& args )
 {
-	if( common->IsClient() || !gameLocal.CheatsOk() || args.Argc() < 2 || args.Argc() > 3 )
+	if( common->IsClient() || !gameLocal.CheatsOk() || args.Argc() != 5 )
 	{
-		gameLocal.Printf( "usage: testPartyPlacement <departure landmark> [farPeer 0/1] (server only)\n" );
+		gameLocal.Printf( "usage: testPartyPlacement <map> <departure> <arrival> <farPeer 0/1> (server only)\n" );
 		return;
 	}
-	const landmark_t* landmark = worldStore.FindLandmark( args.Argv( 1 ) );
-	if( landmark == NULL )
+	if( worldStore.FindLandmark( args.Argv( 2 ) ) == NULL )
 	{
 		gameLocal.Printf( "testPartyPlacement: missing landmark\n" );
 		return;
 	}
-	const bool farPeer = args.Argc() == 3 && atoi( args.Argv( 2 ) ) != 0;
 	int count = 0;
 	for( int i = 0; i < MAX_CLIENTS; i++ )
 	{
-		if( gameLocal.entities[i] == NULL || !gameLocal.entities[i]->IsType( idPlayer::Type ) )
-		{
-			continue;
-		}
-		idPlayer* player = static_cast<idPlayer*>( gameLocal.entities[i] );
-		idVec3 origin = landmark->origin + idVec3( -40.0f, count == 0 ? -48.0f : 48.0f, -35.5f );
-		if( farPeer && count > 0 )
-		{
-			origin.x = 0.0f;
-		}
-		player->Teleport( origin, ang_zero, NULL );
-		player->GetPhysics()->SetLinearVelocity( idVec3( 8.0f, 0.0f, 0.0f ) );
-		count++;
+		count += gameLocal.entities[i] != NULL && gameLocal.entities[i]->IsType( idPlayer::Type );
 	}
-	gameLocal.Printf( "testPartyPlacement players=%d farPeer=%d\n", count, farPeer );
+	if( count < 1 || count > 2 )
+	{
+		gameLocal.Printf( "testPartyPlacement: fixture requires one or two players\n" );
+		return;
+	}
+	mapTransition_t request;
+	request.nextMap = args.Argv( 1 );
+	request.departLandmark = args.Argv( 2 );
+	request.arrivalLandmark = args.Argv( 3 );
+	QueueTransitionTestParty( request, atoi( args.Argv( 4 ) ) != 0 );
 }
 
 static void Cmd_TransitionTest_f( const idCmdArgs& args )
@@ -4251,9 +4283,10 @@ void idGameLocal::InitConsoleCommands()
 {
 	cmdSystem->AddCommand( "corpseFixture", CorpseFixture_f, CMD_FL_GAME | CMD_FL_CHEAT, "bounded static corpse render fixture (mg test maps only)" );
 	cmdSystem->AddCommand( "mapGraphCheck", MapGraphCheck_f, CMD_FL_GAME, "check map graph authoring kit and seeded caps" );
+	cmdSystem->AddCommand( "runScriptFunction", Cmd_RunScriptFunction_f, CMD_FL_GAME | CMD_FL_CHEAT, "invoke a precompiled global noarg void function without changing the script image" );
 	cmdSystem->AddCommand( "recordTest", Cmd_RecordTest_f, CMD_FL_GAME | CMD_FL_CHEAT, "capture/compare record functional fixture; pose moves one test prop" );
 	cmdSystem->AddCommand( "listTransition", Cmd_ListTransition_f, CMD_FL_GAME, "list bounded transition state" );
-	cmdSystem->AddCommand( "testPartyPlacement", Cmd_TestPartyPlacement_f, CMD_FL_GAME | CMD_FL_CHEAT, "place a test party near a landmark, optionally leave peers far away" );
+	cmdSystem->AddCommand( "testPartyPlacement", Cmd_TestPartyPlacement_f, CMD_FL_GAME | CMD_FL_CHEAT, "place and capture a one/two-player fixture party at the transition boundary" );
 	cmdSystem->AddCommand( "transitionTest", Cmd_TransitionTest_f, CMD_FL_GAME | CMD_FL_CHEAT, "request a landmark transition" );
 	cmdSystem->AddCommand( "listMapRecords", Cmd_ListMapRecords_f, CMD_FL_GAME, "list persistent map records" );
 	cmdSystem->AddCommand( "dumpMapState", Cmd_DumpMapState_f, CMD_FL_GAME, "write current authored state CSV" );

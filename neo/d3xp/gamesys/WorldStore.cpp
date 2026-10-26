@@ -691,7 +691,7 @@ idEntity* idWorldStore::SpawnCreated( idFile_Memory& in, const idMat3& rotation,
 	idDict args;
 	args.Set( "classname", def );
 	args.SetBool( "dropped", true );
-	args.Set( "persist_lifetime", "-1" );
+	args.SetInt( "persist_lifetime", lifetime );
 	args.Set( "_worldCreatedId", va( "%llu", ( unsigned long long )id ) );
 	args.Set( "_worldCreatedTime", va( "%llu", ( unsigned long long )when ) );
 	idEntity* ent = NULL;
@@ -714,6 +714,39 @@ void idWorldStore::CommitCurrentMap()
 		return;
 	}
 	const uint64 commitStart = Sys_Microseconds();
+	// Expire before collecting pointers or enumerating canonical save objects.
+	// Entity-slot traversal remains valid when deletion also removes attachments.
+	const int64 now = gameLocal.GetWorldTime();
+	for( int i = MAX_CLIENTS; i < MAX_GENTITIES; i++ )
+	{
+		idEntity* ent = gameLocal.entities[i];
+		if( ent == NULL || ent->spawnArgs.GetBool( "_worldDeparted" ) )
+		{
+			continue;
+		}
+		const int lifetime = ent->spawnArgs.GetInt( "persist_lifetime", "-1" );
+		if( lifetime <= 0 )
+		{
+			continue;
+		}
+		int64 born;
+		if( ent->IsType( idCorpse::Type ) )
+		{
+			born = static_cast<idCorpse*>( ent )->DeathTime();
+		}
+		else if( ent->mapSpawnIndex < 0 && !ent->IsType( idPlayer::Type ) && ent->spawnArgs.GetString( "_worldCreatedId", "0" )[0] != '0' )
+		{
+			born = strtoll( ent->spawnArgs.GetString( "_worldCreatedTime", "0" ), NULL, 10 );
+		}
+		else
+		{
+			continue;
+		}
+		if( now >= born && now - born >= ( int64 )lifetime * 1000 )
+		{
+			delete ent;
+		}
+	}
 	idMapFile* map = gameLocal.mapFile;
 	bool isCleared = true;
 	idList<createdCandidate_t, TAG_GAME> bodies;
@@ -1298,6 +1331,15 @@ void idWorldStore::Restore( idRestoreGame* save )
 	if( !mapGraphDirector.RestoreRecord() )
 	{
 		save->Error( "Invalid DREC" );
+	}
+	if( dungeonRecords.Num() == 0 )
+	{
+		// A non-world save carries an empty store. Do not turn it into a new
+		// world from current cvars while reconstructing the saved game.
+		worldName.Clear();
+		instanceId = 0;
+		currentNode = 0;
+		return;
 	}
 	const dungeonRecipe_t& recipe = mapGraphDirector.RecipeForLoad( gameLocal.GetMapName() );
 	worldName = recipe.worldName;

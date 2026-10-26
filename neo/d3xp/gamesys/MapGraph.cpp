@@ -1132,6 +1132,10 @@ void idMapGraphDirector::StoreRecord()
 bool idMapGraphDirector::RestoreRecord()
 {
 	Clear();
+	if( worldStore.dungeonRecords.Num() == 0 )
+	{
+		return true;
+	}
 	if( worldStore.dungeonRecords.Num() > 2 )
 	{
 		return false;

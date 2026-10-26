@@ -48,6 +48,20 @@ struct transitionState_t
 	bool pending, active, relative, carryApplied;
 };
 static transitionState_t transitionState;
+static bool transitionTestPlacementPending;
+static bool transitionTestFarPeer;
+
+bool QueueTransitionTestParty( const mapTransition_t& request, bool farPeer )
+{
+	if( !gameLocal.BeginMapTransition( request ) )
+	{
+		return false;
+	}
+	transitionTestPlacementPending = true;
+	transitionTestFarPeer = farPeer;
+	return true;
+}
+
 
 static int TransitionPlayerIndex( int client )
 {
@@ -72,6 +86,7 @@ void idGameLocal::ClearMapTransition()
 	sessionCommand.Clear();
 	worldStore.continueNextLoad = false;
 	transitionState.pending = transitionState.active = false;
+	transitionTestPlacementPending = false;
 	for( int i = 0; i < transitionState.count; i++ )
 	{
 		transitionState.carry[i].spawned = NULL;
@@ -190,6 +205,31 @@ void idGameLocal::CommitMapTransition()
 	transitionState.count = transitionState.fallback = transitionState.rotationIgnored = 0;
 	transitionState.carryApplied = false;
 	const landmark_t* depart = worldStore.FindLandmark( transitionState.request.departLandmark );
+	if( transitionTestPlacementPending )
+	{
+		// Developer fixture setup shares the post-think capture boundary. Otherwise
+		// remote client-authoritative physics can undo a console teleport before capture.
+		transitionTestPlacementPending = false;
+		int count = 0;
+		for( int i = 0; depart != NULL && i < MAX_CLIENTS; i++ )
+		{
+			if( entities[i] == NULL || !entities[i]->IsType( idPlayer::Type ) )
+			{
+				continue;
+			}
+			idPlayer* player = static_cast<idPlayer*>( entities[i] );
+			idVec3 origin = depart->origin + idVec3( -40.0f, count == 0 ? -48.0f : 48.0f, -35.5f );
+			if( transitionTestFarPeer && count > 0 )
+			{
+				origin.x = 0.0f;
+			}
+			player->Teleport( origin, ang_zero, NULL );
+			player->GetPhysics()->SetLinearVelocity( idVec3( 8.0f, 0.0f, 0.0f ) );
+			count++;
+		}
+		Printf( "testPartyPlacement players=%d farPeer=%d\n", count, transitionTestFarPeer );
+	}
+
 	transitionState.relative = g_transitionLandmarks.GetBool() && depart != NULL && !transitionState.request.arrivalLandmark.IsEmpty();
 	if( g_transitionLandmarks.GetBool() && !transitionState.relative )
 	{
