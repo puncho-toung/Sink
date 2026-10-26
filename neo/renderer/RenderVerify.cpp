@@ -519,3 +519,55 @@ CONSOLE_COMMAND( dumpProbeDepth, "renders one probe cube face and prints its lin
 	common->Printf( "probeDepth probe %i face %s origin ( %s ) centre %.3f 0x%08x min4x4 %.3f 0x%08x\n", probeIndex, faceNames[face],
 					def->parms.origin.ToString( 3 ), centreDist, R_VerifyFloatBits( centreDist ), minDist, R_VerifyFloatBits( minDist ) );
 }
+
+/*
+===================
+verifyLodTrace
+
+Developer-only, synchronous check of the collision-facing model lookup. Local
+endpoints let the same ray be repeated after moving the camera or reloading.
+===================
+*/
+CONSOLE_COMMAND( verifyLodTrace, "trace a model by name using local endpoints: verifyLodTrace <model> <sx> <sy> <sz> <ex> <ey> <ez>", NULL )
+{
+	if( args.Argc() != 8 || tr.primaryWorld == NULL )
+	{
+		common->Printf( "verifyLodTrace: requires a loaded map, model name and six coordinates\n" );
+		return;
+	}
+	commonLocal.WaitGameThread();
+	const idVec3 localStart( atof( args.Argv( 2 ) ), atof( args.Argv( 3 ) ), atof( args.Argv( 4 ) ) );
+	const idVec3 localEnd( atof( args.Argv( 5 ) ), atof( args.Argv( 6 ) ), atof( args.Argv( 7 ) ) );
+	int matched = 0;
+	for( int i = 0; i < tr.primaryWorld->entityDefs.Num(); i++ )
+	{
+		idRenderEntityLocal* def = tr.primaryWorld->entityDefs[i];
+		if( def == NULL || def->parms.hModel == NULL || idStr::Cmp( def->parms.hModel->Name(), args.Argv( 1 ) ) != 0 )
+		{
+			continue;
+		}
+		matched++;
+		idRenderModel* base = R_EntityDefDynamicModel( def );
+		const bool baseIdentity = base != NULL && ( def->parms.hModel->IsDynamicModel() == DM_STATIC ?
+			base == def->parms.hModel : base == def->cachedDynamicModel && base != def->lodDynamicModel );
+		int triangles = 0;
+		if( base != NULL )
+		{
+			for( int s = 0; s < base->NumBaseSurfaces(); s++ )
+			{
+				const modelSurface_t* surface = base->Surface( s );
+				if( surface->geometry != NULL )
+				{
+					triangles += surface->geometry->numIndexes / 3;
+				}
+			}
+		}
+		const idVec3 start = localStart * def->parms.axis + def->parms.origin;
+		const idVec3 end = localEnd * def->parms.axis + def->parms.origin;
+		modelTrace_t trace;
+		const bool hit = tr.primaryWorld->ModelTrace( trace, i, start, end, 0.0f );
+		common->Printf( "LODTRACE entity %d level %d baseIdentity %d triangles %d hit %d fraction %.6f joint %d\n",
+			i, def->lodLevel, baseIdentity, triangles, hit, trace.fraction, trace.jointNumber );
+	}
+	common->Printf( "LODTRACE matched %d\n", matched );
+}

@@ -1249,8 +1249,11 @@ bool idEntity::DoDormantTests()
 			}
 		}
 
-		// wake up
+		// The legacy path also consumes a completed wake. Do not retain a
+		// request or budget timestamp if distance dormancy is enabled later.
 		dormantStart = 0;
+		dormantWakeRequested = false;
+		dormantWakeDeferredAt = 0;
 		fl.hasAwakened = true;		// only go dormant when area closed off now, not just out of PVS
 		return false;
 	}
