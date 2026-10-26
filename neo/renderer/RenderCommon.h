@@ -347,6 +347,7 @@ struct viewLight_t
 
 	// R_AddSingleLight() determined that the light isn't actually needed
 	bool					removeFromList;
+	int					lightRefsWalked;
 
 	// R_AddSingleLight builds this list of entities that need to be added
 	// to the viewEntities list because they potentially cast shadows into
@@ -442,6 +443,7 @@ struct viewEntity_t
 	// parallelAddModels will build a chain of surfaces here that will need to
 	// be linked to the lights or added to the drawsurf list in a serial code section
 	drawSurf_t* 			drawSurfs;
+	int					contactedCapHits;
 };
 
 // RB: viewEnvprobes are allocated on the frame temporary stack memory
@@ -962,6 +964,8 @@ public:
 	virtual float			GetPhysicalScreenWidthInCentimeters() const;
 	virtual idRenderWorld* 	AllocRenderWorld();
 	virtual void			FreeRenderWorld( idRenderWorld* rw );
+	virtual void			GetMapStats( renderMapStats_t& stats ) const;
+	virtual void			ListMapLightGrids() const;
 	virtual void			BeginLevelLoad();
 	virtual void			EndLevelLoad();
 	virtual void			LoadLevelImages();
@@ -1079,6 +1083,7 @@ public:
 
 	viewDef_t* 				viewDef;
 
+	bool					drawSurfClampWarned;
 	performanceCounters_t	pc;					// performance counters
 
 	viewEntity_t			identitySpace;		// can use if we don't know viewDef->worldSpace is valid
@@ -1147,6 +1152,7 @@ extern idCVar r_windowWidth;
 extern idCVar r_windowHeight;
 
 extern idCVar r_debugContext;				// enable various levels of context debug
+extern idCVar r_maxSortedDrawSurfs;
 extern idCVar r_useValidationLayers;
 extern idCVar r_vidMode;					// video mode number
 extern idCVar r_displayRefresh;				// optional display refresh rate option for vid mode
@@ -1600,6 +1606,7 @@ TR_FRONTEND_MAIN
 void R_InitFrameData();
 void R_ShutdownFrameData();
 void R_ToggleSmpFrame();
+uint64 R_GetImageLoadBytes();
 void* R_FrameAlloc( int bytes, frameAllocType_t type = FRAME_ALLOC_UNKNOWN );
 void* R_ClearedFrameAlloc( int bytes, frameAllocType_t type = FRAME_ALLOC_UNKNOWN );
 

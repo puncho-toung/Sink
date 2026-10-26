@@ -105,6 +105,27 @@ enum antiAliasingMode_t
 #endif
 };
 
+// Map diagnostics are sampled after the frontend job list has completed.
+struct renderMapStats_t
+{
+	uint64	staticVertexBytes;
+	uint64	staticIndexBytes;
+	uint64	staticVertexCapacity;
+	uint64	staticIndexCapacity;
+	uint64	frameBytes;
+	uint64	frameHighWater;
+	uint64	imageBytes;
+	uint64	lightGridBytes;
+	uint64	interactionBytes;
+	int		entityDefs;
+	int		lightDefs;
+	int		envprobeDefs;
+	int		interactionWidth;
+	int		interactionHeight;
+	int		areas;
+	int		portals;
+};
+
 // CPU counters and timers
 struct performanceCounters_t
 {
@@ -135,6 +156,11 @@ struct performanceCounters_t
 	int		c_entityReferences;
 	int		c_lightReferences;
 	int		c_guiSurfs;
+	int		c_probesConsidered;
+	int		c_drawSurfs;
+	int		c_drawSurfsClamped;
+	int		c_lightRefsWalked;
+	int		c_contactedCapHits;
 
 	int		c_mocVerts;
 	int		c_mocIndexes;
@@ -161,6 +187,7 @@ struct backEndCounters_t
 	int		c_textureLights;
 	//puncho end
 
+	int		c_shadowAtlasFailed;
 	int		c_shadowAtlasUsage; // allocated pixels in the atlas
 	int		c_shadowViews;
 	int		c_shadowElements;
@@ -295,6 +322,8 @@ public:
 	// registered before rendering any frames to prevent disk hits,
 	// but they can still be registered at a later time
 	// if necessary.
+	virtual void			GetMapStats( renderMapStats_t& stats ) const = 0;
+	virtual void			ListMapLightGrids() const = 0;
 	virtual void			BeginLevelLoad() = 0;
 	virtual void			EndLevelLoad() = 0;
 	virtual void			Preload( const idPreloadManifest& manifest, const char* mapName ) = 0;

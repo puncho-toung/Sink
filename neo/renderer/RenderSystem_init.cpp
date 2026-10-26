@@ -65,6 +65,8 @@ If you have questions concerning this license or the applicable additional terms
 // DeviceContext bypasses RenderSystem to work directly with this
 idGuiModel* tr_guiModel;
 
+idCVar r_maxSortedDrawSurfs( "r_maxSortedDrawSurfs", "65535", CVAR_RENDERER | CVAR_INTEGER, "maximum ambient draw surfaces before the 16-bit sort index clamps", 1, 65535 );
+
 // functions that are not called every frame
 glconfig_t	glConfig;
 
@@ -1910,6 +1912,7 @@ idRenderSystemLocal::Clear
 */
 void idRenderSystemLocal::Clear()
 {
+	drawSurfClampWarned = false;
 	registered = false;
 	frameCount = 0;
 	viewCount = 0;
@@ -2735,11 +2738,98 @@ void idRenderSystemLocal::ResetGuiModels()
 
 /*
 ========================
+idRenderSystemLocal::ListMapLightGrids
+========================
+*/
+void idRenderSystemLocal::ListMapLightGrids() const
+{
+	if( primaryWorld == NULL )
+	{
+		return;
+	}
+	int areas[10];
+	int bytes[10];
+	int count = 0;
+	for( int area = 0; area < primaryWorld->numPortalAreas; area++ )
+	{
+		const idImage* image = primaryWorld->portalAreas[area].lightGrid.irradianceImage;
+		const int size = image != NULL ? image->StorageSize() : 0;
+		int slot = 0;
+		while( slot < count && bytes[slot] >= size )
+		{
+			slot++;
+		}
+		if( slot == 10 )
+		{
+			continue;
+		}
+		if( count < 10 )
+		{
+			count++;
+		}
+		for( int i = count - 1; i > slot; i-- )
+		{
+			areas[i] = areas[i - 1];
+			bytes[i] = bytes[i - 1];
+		}
+		areas[slot] = area;
+		bytes[slot] = size;
+	}
+	for( int i = 0; i < count; i++ )
+	{
+		common->Printf( "MAP lightgrid area %d: %d KB\n", areas[i], bytes[i] / 1024 );
+	}
+}
+
+/*
+========================
+idRenderSystemLocal::GetMapStats
+========================
+*/
+void idRenderSystemLocal::GetMapStats( renderMapStats_t& stats ) const
+{
+	memset( &stats, 0, sizeof( stats ) );
+	stats.staticVertexBytes = vertexCache.staticData.vertexMemUsed.GetValue();
+	stats.staticIndexBytes = vertexCache.staticData.indexMemUsed.GetValue();
+	stats.staticVertexCapacity = STATIC_VERTEX_MEMORY;
+	stats.staticIndexCapacity = STATIC_INDEX_MEMORY;
+	stats.imageBytes = R_GetImageLoadBytes();
+	if( frameData != NULL )
+	{
+		stats.frameBytes = frameData->frameMemoryAllocated.GetValue();
+		stats.frameHighWater = frameData->highWaterAllocated;
+	}
+	if( primaryWorld == NULL )
+	{
+		return;
+	}
+	stats.entityDefs = primaryWorld->entityDefs.Num();
+	stats.lightDefs = primaryWorld->lightDefs.Num();
+	stats.envprobeDefs = primaryWorld->envprobeDefs.Num();
+	stats.interactionWidth = primaryWorld->interactionTableWidth;
+	stats.interactionHeight = primaryWorld->interactionTableHeight;
+	stats.interactionBytes = ( uint64 )stats.interactionWidth * stats.interactionHeight * sizeof( idInteraction* );
+	stats.areas = primaryWorld->numPortalAreas;
+	stats.portals = primaryWorld->numInterAreaPortals;
+	for( int i = 0; i < stats.areas; i++ )
+	{
+		const idImage* image = primaryWorld->portalAreas[i].lightGrid.irradianceImage;
+		if( image != NULL )
+		{
+			stats.lightGridBytes += image->StorageSize();
+		}
+	}
+}
+
+/*
+========================
 idRenderSystemLocal::BeginLevelLoad
 ========================
 */
 void idRenderSystemLocal::BeginLevelLoad()
 {
+	drawSurfClampWarned = false;
+	backEnd.shadowAtlasFailedHighWater = 0;
 	// clear binding sets for previous level images and light data #676
 	backEnd.ClearCaches();
 

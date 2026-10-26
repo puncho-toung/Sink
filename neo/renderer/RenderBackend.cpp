@@ -3920,7 +3920,12 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 		renderLog.CloseBlock();
 	}
 
-	//idLib::Printf( "failed tiling for %i shadow maps\n", failedNum );
+	pc.c_shadowAtlasFailed += failedNum;
+	if( failedNum > shadowAtlasFailedHighWater )
+	{
+		shadowAtlasFailedHighWater = failedNum;
+		common->Warning( "shadow atlas overflow: %d lights", failedNum );
+	}
 
 	// go back to main render target
 	if( previousFramebuffer != NULL )

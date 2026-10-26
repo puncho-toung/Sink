@@ -536,6 +536,13 @@ void idImage::GetGeneratedName( idStr& _name, const textureUsage_t& _usage, cons
 	}
 }
 
+static uint64 imageLoadBytes;
+
+uint64 R_GetImageLoadBytes()
+{
+	return imageLoadBytes;
+}
+
 /*
 ===============
 ActuallyLoadImage
@@ -901,6 +908,7 @@ void idImage::ActuallyLoadImage( bool fromBackEnd, nvrhi::ICommandList* commandL
 #endif
 
 	isLoaded = true;
+	imageLoadBytes += StorageSize();
 }
 
 void idImage::DeferredLoadImage()

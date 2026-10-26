@@ -330,6 +330,7 @@ private:
 
 public:
 	backEndCounters_t	pc;
+	int					shadowAtlasFailedHighWater;
 
 	// surfaces used for code-based drawing
 	drawSurf_t			unitSquareSurface;

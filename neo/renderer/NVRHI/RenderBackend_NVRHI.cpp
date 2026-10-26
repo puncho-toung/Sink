@@ -2506,6 +2506,7 @@ idRenderBackend::idRenderBackend
 */
 idRenderBackend::idRenderBackend()
 {
+	shadowAtlasFailedHighWater = 0;
 	hiZGenPass = nullptr;
 	ssaoPass = nullptr;
 

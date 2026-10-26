@@ -323,6 +323,7 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 {
 	// we will add all interaction surfs here, to be chained to the lights in later serial code
 	vEntity->drawSurfs = NULL;
+	vEntity->contactedCapHits = 0;
 
 	// globals we really should pass in...
 	const viewDef_t* viewDef = tr.viewDef;
@@ -383,6 +384,7 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 					staticInteractions[numContactedLights] = world->interactionTable[vLight->lightDef->index * world->interactionTableWidth + entityIndex];
 					if( ++numContactedLights == MAX_CONTACTED_LIGHTS )
 					{
+						vEntity->contactedCapHits = 1;
 						break;
 					}
 				}
@@ -439,6 +441,7 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 			staticInteractions[numContactedLights] = world->interactionTable[vLight->lightDef->index * world->interactionTableWidth + entityIndex];
 			if( ++numContactedLights == MAX_CONTACTED_LIGHTS )
 			{
+				vEntity->contactedCapHits = 1;
 				break;
 			}
 		}
@@ -1258,6 +1261,7 @@ void R_AddModels()
 
 	for( viewEntity_t* vEntity = tr.viewDef->viewEntitys; vEntity != NULL; vEntity = vEntity->next )
 	{
+		tr.pc.c_contactedCapHits += vEntity->contactedCapHits;
 		// RB
 		if( vEntity->drawSurfs != NULL )
 		{

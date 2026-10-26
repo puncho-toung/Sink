@@ -541,7 +541,9 @@ static void R_FindClosestEnvironmentProbes()
 		return;
 	}
 
-	idList<RenderEnvprobeLocal*, TAG_RENDER_ENVPROBE> viewEnvprobes;
+	const int probeCapacity = tr.primaryWorld->envprobeDefs.Num();
+	RenderEnvprobeLocal** viewEnvprobes = ( RenderEnvprobeLocal** )R_FrameAlloc( probeCapacity * sizeof( viewEnvprobes[0] ) );
+	int numViewEnvprobes = 0;
 	for( int i = 0; i < tr.primaryWorld->envprobeDefs.Num(); i++ )
 	{
 		RenderEnvprobeLocal* vProbe = tr.primaryWorld->envprobeDefs[i];
@@ -553,11 +555,12 @@ static void R_FindClosestEnvironmentProbes()
 				continue;
 			}
 
-			viewEnvprobes.AddUnique( vProbe );
+			viewEnvprobes[numViewEnvprobes++] = vProbe;
+			tr.pc.c_probesConsidered++;
 		}
 	}
 
-	if( viewEnvprobes.Num() == 0 )
+	if( numViewEnvprobes == 0 )
 	{
 		return;
 	}
@@ -566,7 +569,7 @@ static void R_FindClosestEnvironmentProbes()
 
 	// sort by distance
 	// RB: each Doom 3 level has ~50 - 150 probes so this should be ok for each frame
-	viewEnvprobes.SortWithTemplate( idSort_CompareEnvprobe( testOrigin ) );
+	idSort_CompareEnvprobe( testOrigin ).Sort( viewEnvprobes, numViewEnvprobes );
 
 	RenderEnvprobeLocal* nearest = viewEnvprobes[0];
 	tr.viewDef->probeBoundsRel = nearest->globalProbeBounds;
@@ -588,7 +591,7 @@ static void R_FindClosestEnvironmentProbes()
 		verts[i] = viewEnvprobes[0]->parms.origin;
 	}
 
-	for( int i = 0; i < viewEnvprobes.Num() && i < 3; i++ )
+	for( int i = 0; i < numViewEnvprobes && i < 3; i++ )
 	{
 		RenderEnvprobeLocal* vProbe = viewEnvprobes[i];
 
@@ -600,7 +603,7 @@ static void R_FindClosestEnvironmentProbes()
 	for ( int i = 0; i < 3; i++ )
 	{
 		float depthValid = 0.0f;
-		if ( i < viewEnvprobes.Num() &&
+		if ( i < numViewEnvprobes &&
 			viewEnvprobes[i]->depthImage &&
 			viewEnvprobes[i]->depthImage->IsLoaded() && !viewEnvprobes[i]->depthImage->IsDefaulted() )
 		{
@@ -614,7 +617,7 @@ static void R_FindClosestEnvironmentProbes()
 	// it would be swapped out for the 4th, so the active set can change with no pop and
 	// without needing a triangulation. The same weights drive the diffuse SH blend
 	// below, which the old triangle path only did in the degenerate (collinear) case.
-	const int numProbes = viewEnvprobes.Num();
+	const int numProbes = numViewEnvprobes;
 
 	float probeDist[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 	for (int i = 0; i < 4 && i < numProbes; i++)
@@ -662,7 +665,7 @@ static void R_FindClosestEnvironmentProbes()
 
 	tr.viewDef->radianceImageBlends.Set(bary.x, bary.y, bary.z, 0.0f);
 
-	for( int i = 0; i < viewEnvprobes.Num() && i < 3; i++ )
+	for( int i = 0; i < numViewEnvprobes && i < 3; i++ )
 	{
 		if( !viewEnvprobes[i]->radianceImage->IsDefaulted() )
 		{
@@ -671,7 +674,7 @@ static void R_FindClosestEnvironmentProbes()
 	}
 
 	// depth cubes for radiance probes 1 and 2 (probe 0 == nearest == depthImage)
-	for (int i = 1; i < viewEnvprobes.Num() && i < 3; i++)
+	for (int i = 1; i < numViewEnvprobes && i < 3; i++)
 	{
 		if (viewEnvprobes[i]->depthImage && viewEnvprobes[i]->depthImage->IsLoaded() && !viewEnvprobes[i]->depthImage->IsDefaulted())
 		{
@@ -1022,6 +1025,20 @@ void R_RenderView( viewDef_t* parms )
 
 	// any viewLight that didn't have visible surfaces can have it's shadows removed
 	R_OptimizeViewLightsList();
+
+	// The packed sort key has only 16 bits for the draw-surface index.
+	tr.pc.c_drawSurfs += tr.viewDef->numDrawSurfs;
+	const int maxSorted = r_maxSortedDrawSurfs.GetInteger();
+	if( tr.viewDef->numDrawSurfs > maxSorted )
+	{
+		tr.pc.c_drawSurfsClamped += tr.viewDef->numDrawSurfs - maxSorted;
+		if( !tr.drawSurfClampWarned )
+		{
+			common->Warning( "draw surfaces clamped from %d to %d", tr.viewDef->numDrawSurfs, maxSorted );
+			tr.drawSurfClampWarned = true;
+		}
+		tr.viewDef->numDrawSurfs = maxSorted;
+	}
 
 	// sort all the ambient surfaces for translucency ordering
 	R_SortDrawSurfs( tr.viewDef->drawSurfs, tr.viewDef->numDrawSurfs );

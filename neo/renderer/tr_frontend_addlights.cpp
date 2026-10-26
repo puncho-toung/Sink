@@ -164,6 +164,7 @@ Add any precomputed shadow volumes.
 */
 static void R_AddSingleLight( viewLight_t* vLight )
 {
+	vLight->lightRefsWalked = 0;
 	// until proven otherwise
 	vLight->removeFromList = true;
 	vLight->shadowOnlyViewEntities = NULL;
@@ -574,6 +575,7 @@ static void R_AddSingleLight( viewLight_t* vLight )
 		// check all the models in this area
 		for( areaReference_t* eref = area->entityRefs.areaNext; eref != &area->entityRefs; eref = eref->areaNext )
 		{
+			vLight->lightRefsWalked++;
 			idRenderEntityLocal* edef = eref->entity;
 
 			if( vLight->entityInteractionState[ edef->index ] != viewLight_t::INTERACTION_UNCHECKED )
@@ -746,6 +748,7 @@ void R_AddLights()
 	while( *ptr != NULL )
 	{
 		viewLight_t* vLight = *ptr;
+		tr.pc.c_lightRefsWalked += vLight->lightRefsWalked;
 
 		if( vLight->removeFromList )
 		{
