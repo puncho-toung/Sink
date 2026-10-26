@@ -92,6 +92,17 @@ ID_INLINE void operator delete[]( void* p ) noexcept
 {
 	Mem_Free( p );
 }
+
+// C++14 and later may select sized delete; it must use the same heap as new.
+ID_INLINE void operator delete( void* p, size_t ) noexcept
+{
+	Mem_Free( p );
+}
+
+ID_INLINE void operator delete[]( void* p, size_t ) noexcept
+{
+	Mem_Free( p );
+}
 #ifdef _MSC_VER
 	#pragma warning( pop )
 #endif
