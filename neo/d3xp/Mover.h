@@ -298,6 +298,8 @@ class idMover_Binary : public idEntity
 public:
 	CLASS_PROTOTYPE( idMover_Binary );
 
+	bool RecordAtPosition2() const;
+	void ApplyRecordState( bool position2, bool locked );
 	idMover_Binary();
 	~idMover_Binary();
 
@@ -414,6 +416,7 @@ public:
 	bool					IsOpen();
 	bool					IsNoTouch();
 	bool					AllowPlayerOnly( idEntity* ent );
+	void ApplyRecordLock( bool locked );
 	int						IsLocked();
 	void					Lock( int f );
 	void					Use( idEntity* other, idEntity* activator );

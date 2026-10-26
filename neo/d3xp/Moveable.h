@@ -65,6 +65,10 @@ class idMoveable : public idEntity
 {
 public:
 	CLASS_PROTOTYPE( idMoveable );
+	virtual bool CanCrossTransition() const override
+	{
+		return true;
+	}
 
 	idMoveable();
 	~idMoveable();

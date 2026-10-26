@@ -176,6 +176,7 @@ const idEventDef AI_StopEmitter( "stopEmitter", "s" );
 
 
 CLASS_DECLARATION( idActor, idAI )
+EVENT( EV_SafeRemove, idAI::Event_PersistCorpse )
 EVENT( EV_Activate,							idAI::Event_Activate )
 EVENT( EV_Touch,							idAI::Event_Touch )
 EVENT( AI_FindEnemy,						idAI::Event_FindEnemy )
@@ -2395,6 +2396,13 @@ idAI::Event_StopThinking
 */
 void idAI::Event_StopThinking()
 {
+	// Zombies end their death script here instead of calling remove(). Give
+	// those AF bodies the same settle interval as monster_base::state_Dead.
+	if( !common->IsClient() && worldStore.IsActive() && g_corpses.GetBool() && health <= 0 && spawnArgs.GetInt( "persist_lifetime", "-1" ) != 0 )
+	{
+		CancelEvents( &EV_SafeRemove );
+		PostEventMS( &EV_SafeRemove, 3000 );
+	}
 	BecomeInactive( TH_THINK );
 	idThread* thread = idThread::CurrentThread();
 	if( thread )

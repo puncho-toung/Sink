@@ -5531,3 +5531,42 @@ void idRiser::Event_Activate( idEntity* activator )
 		physicsObj.SetLinearExtrapolation( EXTRAPOLATION_LINEAR, gameLocal.slow.time, time * 1000, physicsObj.GetOrigin(), delta, vec3_origin );
 	}
 }
+
+// Record replay snaps directly: no signals, sounds, target activation or events.
+bool idMover_Binary::RecordAtPosition2() const
+{
+	return moverState == MOVER_POS2 || moverState == MOVER_1TO2;
+}
+
+void idMover_Binary::ApplyRecordState( bool position2, bool locked )
+{
+	CancelEvents( &EV_Mover_ReturnToPos1 );
+	CancelEvents( &EV_Mover_MatchTeam );
+	CancelEvents( &EV_ReachedPos );
+	CancelEvents( &EV_Activate );
+	if( IsType( idDoor::Type ) )
+	{
+		CancelEvents( &EV_Door_StartOpen );
+		CancelEvents( &EV_Door_Lock );
+	}
+	moverState = position2 ? MOVER_POS2 : MOVER_POS1;
+	move_thread = 0;
+	stateStartTime = gameLocal.time;
+	physicsObj.SetLinearInterpolation( 0, 0, 0, 0, pos1, pos2 );
+	physicsObj.SetLinearExtrapolation( EXTRAPOLATION_NONE, gameLocal.time, 0, position2 ? pos2 : pos1, vec3_origin, vec3_origin );
+	physicsObj.SetOrigin( position2 ? pos2 : pos1 );
+	physicsObj.PutToRest();
+	spawnArgs.SetInt( "locked", locked ? 1 : 0 );
+	SetPortalState( position2 );
+	if( IsType( idDoor::Type ) )
+	{
+		static_cast<idDoor*>( this )->ApplyRecordLock( locked );
+	}
+	UpdateVisuals();
+}
+
+void idDoor::ApplyRecordLock( bool locked )
+{
+	spawnArgs.SetInt( "locked", locked ? 1 : 0 );
+	SetAASAreaState( locked && !RecordAtPosition2() );
+}

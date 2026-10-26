@@ -126,6 +126,8 @@ const int DefaultPrivateGameFlags	= MATCH_JOIN_IN_PROGRESS | MATCH_REQUIRE_PARTY
 idMatchParameters
 ================================================
 */
+const int MAX_MATCH_GAME_DATA = 96;
+
 class idMatchParameters
 {
 public:
@@ -135,8 +137,12 @@ public:
 		gameMap( GAME_MAP_RANDOM ),
 		gameEpisode( GAME_EPISODE_UNKNOWN ),
 		gameSkill( GAME_SKILL_DEFAULT ),
-		matchFlags( 0 )
-	{}
+		matchFlags( 0 ),
+		gameDataSize( 0 ),
+		gameDataValid( true )
+	{
+		memset( gameData, 0, sizeof( gameData ) );
+	}
 
 	void Write( idBitMsg& msg )
 	{
@@ -159,6 +165,14 @@ public:
 		serializer.Serialize( matchFlags );
 		serializer.SerializeString( mapName );
 		serverInfo.Serialize( serializer );
+		serializer.Serialize( gameDataSize );
+		gameDataValid = gameDataSize <= MAX_MATCH_GAME_DATA &&
+			( serializer.IsWriting() || gameDataSize * 8 <= serializer.GetMsg().GetRemainingReadBits() );
+		for( int i = 0; i < gameDataSize; i++ )
+		{
+			uint8 discard = 0;
+			serializer.Serialize( i < MAX_MATCH_GAME_DATA ? gameData[i] : discard );
+		}
 	}
 
 	uint8 	numSlots;
@@ -170,6 +184,9 @@ public:
 
 	idStr	mapName; // This is only used for SP (gameMap == GAME_MAP_SINGLEPLAYER)
 	idDict	serverInfo;
+	uint8 gameDataSize;
+	byte gameData[MAX_MATCH_GAME_DATA];
+	bool gameDataValid;
 };
 
 /*
@@ -368,6 +385,21 @@ public:
 	virtual void						SendReliable( int type, idBitMsg& msg, bool callReceiveReliable = true, peerMask_t sessionUserMask = MAX_UNSIGNED_TYPE( peerMask_t ) ) = 0;
 	virtual void						SendReliableToLobbyUser( lobbyUserID_t lobbyUserID, int type, idBitMsg& msg ) = 0;
 	virtual void						SendReliableToHost( int type, idBitMsg& msg ) = 0;
+
+	virtual void BeginTransitionHold()
+	{
+	}
+	virtual bool TransitionDrainReady( bool timeout )
+	{
+		return true;
+	}
+	virtual bool TransitionArrivalReady( bool timeout )
+	{
+		return true;
+	}
+	virtual void CancelTransitionHold()
+	{
+	}
 
 	// Lobby user access
 	virtual const char* 				GetLobbyUserName( lobbyUserID_t lobbyUserID ) const = 0;

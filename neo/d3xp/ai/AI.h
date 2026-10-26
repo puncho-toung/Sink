@@ -299,6 +299,11 @@ class idAI : public idActor
 {
 public:
 	CLASS_PROTOTYPE( idAI );
+	virtual bool CanCrossTransition() const override
+	{
+		return spawnArgs.GetBool( "transition", "0" );
+	}
+	void Event_PersistCorpse();
 
 	idAI();
 	~idAI();

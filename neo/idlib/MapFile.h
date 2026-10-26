@@ -562,6 +562,7 @@ public:
 	{
 		return geometryCRC;
 	}
+	unsigned int			GetEntityCRC( int ordinal ) const;
 	unsigned int			GetEntitiesCRC() const;	//puncho - content check (P1-A3a, K37): CRC of every entity's key/values, '\r' dropped
 	//puncho - content check (P1-A3b, K38): one layer's part of the merged entities, the GetEntitiesCRC of the map file the
 	// layer serves and of the layer's _extra_ents.map, each as parsed before the merge; 0 when Parse merged no patches

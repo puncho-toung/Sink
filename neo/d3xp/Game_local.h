@@ -104,6 +104,8 @@ void gameError( const char* fmt, ... );
 #include "gamesys/SysCvar.h"
 #include "gamesys/SysCmds.h"
 #include "gamesys/SaveGame.h"
+#include "gamesys/WorldStore.h"
+#include "gamesys/MapGraph.h"
 
 #include "script/Script_Program.h"
 
@@ -173,7 +175,9 @@ enum
 	GAME_RELIABLE_MESSAGE_MATCH_STARTED_TIME,
 	GAME_RELIABLE_MESSAGE_ACHIEVEMENT_UNLOCK,
 	GAME_RELIABLE_MESSAGE_CLIENT_HITSCAN_HIT,
-	GAME_RELIABLE_MESSAGE_DECL_REMAP					//puncho - content check (P1-A3a, K19): host to peers, slots of the implicit decl announce table
+	GAME_RELIABLE_MESSAGE_DECL_REMAP,					//puncho - content check (P1-A3a, K19): host to peers, slots of the implicit decl announce table
+	GAME_RELIABLE_MESSAGE_TRANSITION,
+	GAME_RELIABLE_MESSAGE_PREFETCH
 };
 
 typedef enum
@@ -498,6 +502,7 @@ public:
 	//puncho end
 	//puncho start - ai-harness (plans/ai-harness/00-PLAN.md §2.2, §2.5): host-side debug state, never saved or replicated
 	void					PrefetchMap( const char* name ) { common->PrefetchMap( name ); }
+	virtual int GetPlayerOrigins( idVec3* origins, int maxOrigins ) const;
 	idVec3				dormantSources[MAX_CLIENTS];
 	int					numDormantSources;
 	int					dormantWakesRemaining;
@@ -608,6 +613,21 @@ public:
 	virtual void FinishMapTicStats() { mapAllocTic = Mem_GetAllocationCount() - mapAllocStart; }
 	clipStats_t mapClipStart;
 	unsigned int mapAllocStart, mapAllocTic;
+	virtual int WriteMatchGameData( const char* map, byte* out, int max );
+	virtual void SetMatchGameData( const byte* data, int size );
+	virtual void BroadcastMapTransition( unsigned short sequence, const char* map ) override;
+	virtual bool ReceiveMapTransition( int type, const idBitMsg& msg ) override;
+	virtual bool IsMapTransitionActive() const override;
+	bool PrepareTransitionPlayerSpawn( idPlayer* player );
+	bool BeginMapTransition( const mapTransition_t& transition );
+	void CommitMapTransition();
+	void ApplyTransitionCarry();
+	bool SelectTransitionSpawn( idPlayer* player, idVec3& origin, idAngles& angles );
+	void FinishTransitionSpawn( idPlayer* player );
+	bool RestoreTransitionPlayerInfo( int clientNum );
+	virtual void ClearMapTransition() override;
+	void ListTransition() const;
+	bool TransitionPartyReady( const char* landmark ) const;
 	virtual int64 GetWorldTime() const { return worldTimeBase + fast.time; }
 	virtual void SetWorldTimeBase( int64 base ) { worldTimeBase = base; }
 	int64 worldTimeBase;
@@ -878,6 +898,7 @@ public:
 	const char* 			GetMPPlayerDefName() const;
 
 private:
+	friend class idWorldStore;
 	idStr					mapFileName;			// name of the map, empty string if no map loaded
 	idMapFile* 				mapFile;				// will be NULL during the game unless in-game editing is used
 	bool					mapCycleLoaded;
@@ -1220,6 +1241,7 @@ const int	CINEMATIC_SKIP_DELAY	= SEC2MS( 2.0f );
 #include "menus/MenuScreen.h"
 #include "menus/MenuHandler.h"
 
+#include "Corpse.h"
 #include "script/Script_Compiler.h"
 #include "script/Script_Interpreter.h"
 #include "script/Script_Thread.h"

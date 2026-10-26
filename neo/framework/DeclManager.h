@@ -79,6 +79,7 @@ typedef enum
 	DECL_EMAIL,
 	DECL_MODELEXPORT,
 	DECL_MAPDEF,
+	DECL_MAPGRAPH,
 
 	// new decl types can be added here
 

@@ -63,6 +63,10 @@ class idItem : public idEntity
 {
 public:
 	CLASS_PROTOTYPE( idItem );
+	virtual bool CanCrossTransition() const override
+	{
+		return true;
+	}
 
 	idItem();
 	virtual					~idItem();

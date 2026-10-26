@@ -1,0 +1,49 @@
+entityDef info_landmark {
+	"dmapOnly" "1"
+	"editor_color" "0 1 1"
+	"editor_usage" "Map graph doorway; landmark identity survives editor group renames"
+	"editor_var landmark" "Stable doorway id"
+	"editor_var kind" "Doorway template kind"
+	"editor_var link" "map:landmark or @mapGraph"
+	"editor_float radius" "Arrival placement radius"
+	"radius" "256"
+	"entry" "1"
+	"exit" "1"
+}
+entityDef trigger_transition {
+	"dmapOnly" "1"
+	"editor_color" "0 0.7 1"
+	"editor_usage" "Map-only carry volume paired with a landmark"
+	"editor_var landmark" "Doorway id"
+	"cap" "64"
+	"carry" "all"
+}
+entityDef info_landing {
+	"dmapOnly" "1"
+	"editor_color" "0 1 0"
+	"editor_usage" "Explicit party landing slot, index 0 through 7"
+	"editor_var landmark" "Arrival doorway id"
+	"editor_int index" "Party player index"
+}
+
+entityDef corpse {
+	"spawnclass" "idCorpse"
+	"persist_lifetime" "-1"
+}
+
+entityDef trigger_changelevel {
+	"inherit" "trigger_multiple"
+	"spawnclass" "idTrigger_ChangeLevel"
+	"editor_color" "0.2 0.8 1"
+	"editor_usage" "Whole party map graph exit"
+	"editor_var landmark" "Departure doorway id"
+	"wait_party" "1"
+}
+
+entityDef mg_elite {
+	"inherit" "monster_zombie_maint"
+	"persist_lifetime" "-1"
+	"persist_nocap" "1"
+	"persist_noreset" "1"
+	"burnaway" "0"
+}

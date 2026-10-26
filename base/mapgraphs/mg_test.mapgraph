@@ -1,0 +1,50 @@
+mapGraph mg_test {
+ root start
+ maxNodes 20
+ maxDepth 20
+ instanceEnd return128
+ flag challenge_done 0
+ landmarkKind door128
+ landmarkKind return128
+ nodeKind start {
+  cap 1
+  reset never
+  map maps/_test/mg/mg_a {
+   weight 1
+   landmark back return128 entry exit
+   landmark forward door128 exit required
+  }
+ }
+ nodeKind hall {
+  cap 17
+  reset cleared 60
+  map maps/_test/mg/mg_b {
+   weight 3
+   landmark back door128 entry exit
+   landmark forward door128 exit required
+  }
+ }
+ nodeKind challenge {
+  cap 1
+  reset never
+  map maps/_test/mg/mg_c {
+   weight 1
+   landmark back door128 entry exit
+   landmark forward door128 exit
+  }
+ }
+ nodeKind boss {
+  cap 1
+  reset never
+  map maps/_test/mg/mg_c {
+   weight 1
+   landmark back door128 entry exit
+   landmark forward door128 exit
+  }
+ }
+ rule start door128 -> challenge if challenge_done
+ rule start door128 -> hall weight 1 open
+ rule hall door128 -> hall weight 3 open
+ rule hall door128 -> boss weight 1 open
+ endcap door128 boss
+}

@@ -32,6 +32,7 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "Game_local.h"
+#include "gamesys/MapGraph.h"
 #include "../framework/Common_local.h"
 #include "gamesys/StreamTrace.h"	//puncho - stream-trace (P1-A1c)
 
@@ -45,6 +46,9 @@ static const int SNAP_ENTITIES_END = SNAP_ENTITIES + MAX_GENTITIES;
 static const int SNAP_LAST_CLIENT_FRAME = SNAP_ENTITIES_END;
 static const int SNAP_LAST_CLIENT_FRAME_END = SNAP_LAST_CLIENT_FRAME + MAX_PLAYERS;
 static const int SNAP_PORTALS_EXTRA = SNAP_LAST_CLIENT_FRAME_END;
+static const int SNAP_MAP_REMOVED = SNAP_LAST_CLIENT_FRAME_END + 64;
+static const int MAP_REMOVED_CHUNKS = ( MAX_GENTITIES + 3999 ) / 4000;
+compile_time_assert( SNAP_MAP_REMOVED + MAP_REMOVED_CHUNKS - MAX_GENTITIES <= MAX_NET_FIXED_OBJECTS );
 static const int PORTALS_PER_SNAP_OBJECT = 1300;
 static const int MAX_PORTAL_CHUNKS = 16;
 compile_time_assert( SNAP_PORTALS_EXTRA + MAX_PORTAL_CHUNKS - MAX_GENTITIES <= MAX_NET_FIXED_OBJECTS );
@@ -441,6 +445,25 @@ void idGameLocal::GetContentDigests( contentDigests_t& digests ) const
 	digests.global[ CONTENT_DIGEST_MAP_ENTITIES ]	= ( mapFile != NULL ) ? mapFile->GetEntitiesCRC() : 0;
 	// the per-layer SCRIPT rows say which files were read; this proves both peers compiled the same image from them
 	digests.global[ CONTENT_DIGEST_SCRIPT_IMAGE ]	= program.CalculateChecksum( false );
+
+	digests.global[ CONTENT_DIGEST_WORLD ] = mapGraphDirector.WorldDigest();
+	uint32 renderCRC;
+	CRC32_InitChecksum( renderCRC );
+	int renderValue = LittleLong( gameRenderWorld->NumAreas() );
+	CRC32_UpdateChecksum( renderCRC, &renderValue, sizeof( renderValue ) );
+	renderValue = LittleLong( gameRenderWorld->NumPortals() );
+	CRC32_UpdateChecksum( renderCRC, &renderValue, sizeof( renderValue ) );
+	for( int area = 0; area < gameRenderWorld->NumAreas(); area++ )
+	{
+		for( int portal = 0; portal < gameRenderWorld->NumPortalsInArea( area ); portal++ )
+		{
+			const exitPortal_t p = gameRenderWorld->GetPortal( area, portal );
+			int pair[2] = { LittleLong( p.areas[0] ), LittleLong( p.areas[1] ) };
+			CRC32_UpdateChecksum( renderCRC, pair, sizeof( pair ) );
+		}
+	}
+	CRC32_FinishChecksum( renderCRC );
+	digests.global[ CONTENT_DIGEST_RENDER_WORLD ] = renderCRC;
 
 	DeclLayerDigests( DECL_ENTITYDEF, LAYER_DIGEST_ENTITYDEFS, digests );
 	DeclLayerDigests( DECL_MATERIAL, LAYER_DIGEST_MATERIALS, digests );
@@ -908,6 +931,25 @@ void idGameLocal::ServerWriteSnapshot( idSnapShot& ss )
 		//puncho end
 	}
 
+	if( worldStore.IsActive() && session->GetActingGameStateLobbyBase().GetNumConnectedPeers() > 0 )
+	{
+		for( int chunk = 0; chunk < MAP_REMOVED_CHUNKS; chunk++ )
+		{
+			const int first = chunk * 500;
+			const int bytes = Min( 500, ( int )sizeof( worldStore.removed ) - first );
+			bool any = false;
+			for( int i = 0; i < bytes; i++ ) any |= worldStore.removed[first+i] != 0;
+			if( !any )
+			{
+				continue;
+			}
+			msg.InitWrite( buffer, sizeof( buffer ) );
+			msg.BeginWriting();
+			msg.WriteData( worldStore.removed + first, bytes );
+			ss.S_AddObject( SNAP_MAP_REMOVED + chunk, ~0U, msg, "Removed map entities" );
+		}
+	}
+
 	//puncho start - ai-harness: written on the main thread between game frames (SendSnapshots is the only caller);
 	// RunFrame copies the block at the top of the next tic. The two tags go on the Net::MinionSnapshot event.
 	snapStats.objects = snapObjects;
@@ -1044,6 +1086,10 @@ void idGameLocal::ServerProcessReliableMessage( int clientNum, int type, const i
 	}
 	switch( type )
 	{
+		case GAME_RELIABLE_MESSAGE_TRANSITION:
+		case GAME_RELIABLE_MESSAGE_PREFETCH:
+			return; // Host alone controls map intent.
+
 		case GAME_RELIABLE_MESSAGE_CHAT:
 		case GAME_RELIABLE_MESSAGE_TCHAT:
 		{
@@ -1389,6 +1435,36 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 			}
 			continue;
 		}
+		if( snapObjectNum >= SNAP_MAP_REMOVED && snapObjectNum < SNAP_MAP_REMOVED + MAP_REMOVED_CHUNKS )
+		{
+			const int first = ( snapObjectNum - SNAP_MAP_REMOVED ) * 500;
+			const int bytes = Min( 500, ( int )sizeof( worldStore.removed ) - first );
+			if( !worldStore.IsActive() || msg.GetSize() != bytes )
+			{
+				Error( "Invalid removed-map snapshot" );
+			}
+			for( int i = 0; i < bytes; i++ )
+			{
+				const byte bits = msg.ReadByte();
+				const byte fresh = bits & ~worldStore.removed[first+i];
+				worldStore.removed[first+i] |= bits;
+				for( int bit = 0; bit < 8; bit++ )
+				{
+					const int index = ( first + i ) * 8 + bit;
+					if( !( fresh & ( 1 << bit ) ) || index >= worldStore.mapSpawned.Num() )
+					{
+						continue;
+					}
+					const mapSpawnRow_t& row = worldStore.mapSpawned[index];
+					idEntity* ent = entities[row.entityNumber];
+					if( ent != NULL && GetSpawnId( ent ) == row.spawnId )
+					{
+						delete ent;
+					}
+				}
+			}
+			continue;
+		}
 		if( snapObjectNum < SNAP_ENTITIES || snapObjectNum >= SNAP_ENTITIES_END )
 		{
 			continue;
@@ -1663,6 +1739,15 @@ void idGameLocal::ClientProcessReliableMessage( int type, const idBitMsg& msg )
 {
 	switch( type )
 	{
+		case GAME_RELIABLE_MESSAGE_TRANSITION:
+		{
+			const unsigned short sequence = msg.ReadUShort();
+			char map[64];
+			msg.ReadString( map, sizeof( map ) );
+			common->NotifyMapTransition( sequence, map );
+			break;
+		}
+
 		case GAME_RELIABLE_MESSAGE_SYNCEDCVARS:
 		{
 			idDict syncedCvars;
@@ -1785,6 +1870,16 @@ void idGameLocal::ClientProcessReliableMessage( int type, const idBitMsg& msg )
 			break;
 		}
 		//puncho start - content check (P1-A3a, K19)
+		case GAME_RELIABLE_MESSAGE_PREFETCH:
+		{
+			char predictedMap[64];
+			msg.ReadString( predictedMap, sizeof( predictedMap ) );
+			if( predictedMap[0] && !strstr( predictedMap, ".." ) )
+			{
+				PrefetchMap( predictedMap );
+			}
+			break;
+		}
 		case GAME_RELIABLE_MESSAGE_DECL_REMAP:
 		{
 			ClientReadDeclRemap( msg );
@@ -2167,3 +2262,37 @@ void idEventQueue::Enqueue( entityNetEvent_t* event, outOfOrderBehaviour_t behav
 	end = event;
 }
 
+
+void idGameLocal::BroadcastMapTransition( unsigned short sequence, const char* map )
+{
+	byte bytes[68];
+	idBitMsg message( bytes, sizeof( bytes ) );
+	message.WriteUShort( sequence );
+	message.WriteString( map, 64 );
+	session->GetActingGameStateLobbyBase().SendReliable( GAME_RELIABLE_MESSAGE_TRANSITION, message, false );
+}
+
+bool idGameLocal::ReceiveMapTransition( int type, const idBitMsg& msg )
+{
+	// The captured epoch is frozen through drain and arrival. Lobby/content ACKs
+	// never enter this game-message path; chat remains valid across the crossing.
+	if( common->IsServer() && common->IsGameDrivenLoad() && type != GAME_RELIABLE_MESSAGE_CHAT && type != GAME_RELIABLE_MESSAGE_TCHAT && type != GAME_RELIABLE_MESSAGE_VCHAT )
+	{
+		static unsigned int rejected = 0;
+		Printf( "transition_stale_game_reliable count=%u type=%d\n", ++rejected, type );
+		return true;
+	}
+	if( type != GAME_RELIABLE_MESSAGE_TRANSITION )
+	{
+		return false;
+	}
+	// Intent must be consumed before the next lobby reliable can change session state.
+	if( common->IsClient() && msg.GetRemainingData() >= 3 && msg.GetRemainingData() <= 66 )
+	{
+		const unsigned short sequence = msg.ReadUShort();
+		char map[64];
+		msg.ReadString( map, sizeof( map ) );
+		common->NotifyMapTransition( sequence, map );
+	}
+	return true;
+}

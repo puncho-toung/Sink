@@ -1,0 +1,7 @@
+textures/editor/landmark
+{
+	qer_editorimage textures/common/trigger
+	nonsolid
+	noshadows
+	nodraw
+}

@@ -194,6 +194,7 @@ public:
 	int						entityDefNumber;		// index into the entity def list
 
 	idLinkList<idEntity>	budgetNode;
+	int					mapSpawnIndex; // derived ordinal row; restored from ORDT
 	int					budgetClass;	// derived; rebuilt after restore, never on the wire
 	idLinkList<idEntity>	spawnNode;				// for being linked into spawnedEntities list
 	idLinkList<idEntity>	activeNode;				// for being linked into activeEntities list
@@ -309,6 +310,10 @@ public:
 	virtual void			FreeLightDef();
 	virtual void			Hide();
 	virtual void			Show();
+	virtual bool CanCrossTransition() const
+	{
+		return false;
+	}
 	bool					IsHidden() const;
 	void					UpdateVisuals();
 	void					UpdateModel();

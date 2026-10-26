@@ -313,7 +313,12 @@ void idTarget_EndLevel::Event_Activate( idEntity* activator )
 	}
 	else
 	{
-		gameLocal.sessionCommand = "map ";
+		mapTransition_t request;
+		request.nextMap = nextMap;
+		request.departLandmark = spawnArgs.GetString( "departLandmark", spawnArgs.GetString( "landmark" ) );
+		request.arrivalLandmark = spawnArgs.GetString( "arrivalLandmark", request.departLandmark );
+		gameLocal.BeginMapTransition( request );
+		return;
 	}
 
 	gameLocal.sessionCommand += nextMap;
@@ -2020,6 +2025,11 @@ idTarget_LevelTrigger::Event_Activate
 */
 void idTarget_LevelTrigger::Event_Activate( idEntity* activator )
 {
+	if( worldStore.IsActive() )
+	{
+		mapGraphDirector.QueueEffect( spawnArgs.GetString( "levelName" ), spawnArgs.GetString( "triggerName" ), "activate" );
+		return;
+	}
 	for( int i = 0; i < gameLocal.numClients; i++ )
 	{
 		if( gameLocal.entities[ i ] )

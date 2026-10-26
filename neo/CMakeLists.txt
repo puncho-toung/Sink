@@ -702,7 +702,9 @@ set(GAMED3XP_SOURCES
 	d3xp/GameEdit.cpp
 	d3xp/GameSpawnVerify.cpp
 	d3xp/GameVerify.cpp
+	d3xp/Corpse.cpp
 	d3xp/Game_local.cpp
+	d3xp/Game_transition.cpp
 	d3xp/Game_network.cpp
 	d3xp/Grabber.cpp
 	d3xp/IK.cpp
@@ -739,6 +741,10 @@ set(GAMED3XP_GAMESYS_SOURCES
 	d3xp/gamesys/Class.cpp
 	#d3xp/gamesys/DebugGraph.cpp
 	d3xp/gamesys/Event.cpp
+	d3xp/gamesys/CorpseFixture.cpp
+	d3xp/gamesys/MapGraphCheck.cpp
+	d3xp/gamesys/MapGraph.cpp
+	d3xp/gamesys/WorldStore.cpp
 	d3xp/gamesys/SaveGame.cpp
 	d3xp/gamesys/StreamTrace.cpp
 	d3xp/gamesys/SysCmds.cpp

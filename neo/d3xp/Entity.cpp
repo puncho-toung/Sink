@@ -523,6 +523,7 @@ idEntity::idEntity():
 	entityDefNumber = -1;
 
 	budgetNode.SetOwner( this );
+	mapSpawnIndex = -1;
 	budgetClass = -1;
 	spawnNode.SetOwner( this );
 	activeNode.SetOwner( this );
@@ -755,7 +756,12 @@ void idEntity::Spawn()
 	}
 
 	// auto-start a sound on the entity
-	if( refSound.shader && !refSound.waitfortrigger )
+	if( IsType( idSound::Type ) && spawnArgs.GetBool( "s_transition" ) && spawnArgs.GetBool( "s_global" ) )
+	{
+		refSound.referenceSound = gameSoundWorld->AdoptCarriedEmitter( spawnArgs.GetString( "s_shader" ) );
+		renderEntity.referenceSound = refSound.referenceSound;
+	}
+	if( refSound.shader && !refSound.waitfortrigger && refSound.referenceSound == NULL )
 	{
 		StartSoundShader( refSound.shader, SND_CHANNEL_ANY, 0, false, NULL );
 	}

@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "../Game_local.h"
+#include "../Corpse.h"
 
 #include "../tools/imgui/afeditor/AfEditor.h"
 #include "StreamTrace.h"	//puncho - stream-trace (P1-A1c)
@@ -3960,8 +3961,268 @@ static void Cmd_ListDormancy_f( const idCmdArgs& args )
 	}
 }
 
+struct recordTestRow_t
+{
+	int ordinal, health;
+	unsigned int poseCRC;
+	bool present, hidden;
+	idVec3 origin;
+};
+static idList<recordTestRow_t, TAG_GAME> recordTestBaseline;
+static idStr recordTestMap;
+static int recordTestFailures;
+
+static void Cmd_RecordTest_f( const idCmdArgs& args )
+{
+	if( !gameLocal.CheatsOk() || args.Argc() < 2 )
+	{
+		return;
+	}
+	if( idStr::Icmp( args.Argv( 1 ), "codec" ) == 0 )
+	{
+		worldStore.TestCodec();
+		return;
+	}
+	if( idStr::Icmp( args.Argv( 1 ), "pose" ) == 0 && args.Argc() == 6 )
+	{
+		idEntity* ent = gameLocal.FindEntity( args.Argv( 2 ) );
+		if( ent == NULL )
+		{
+			recordTestFailures++;
+			gameLocal.Printf( "RECORD_TEST FAIL missing pose target\n" );
+			return;
+		}
+		ent->SetOrigin( idVec3( atof( args.Argv( 3 ) ), atof( args.Argv( 4 ) ), atof( args.Argv( 5 ) ) ) );
+		ent->GetPhysics()->PutToRest();
+		return;
+	}
+	if( idStr::Icmp( args.Argv( 1 ), "exit" ) == 0 && args.Argc() == 3 )
+	{
+		if( !mapGraphDirector.RequestTransition( args.Argv( 2 ) ) )
+		{
+			recordTestFailures++;
+			gameLocal.Printf( "RECORD_TEST FAIL refused graph exit\n" );
+		}
+		return;
+	}
+	if( idStr::Icmp( args.Argv( 1 ), "corpses" ) == 0 && args.Argc() == 3 )
+	{
+		int count = 0;
+		for( idEntity* ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
+		{
+			count += ent->IsType( idCorpse::Type ) ? 1 : 0;
+		}
+		gameLocal.Printf( "RECORD_TEST %s corpses=%d expected=%s\n", count == atoi( args.Argv( 2 ) ) ? "PASS" : "WAIT", count, args.Argv( 2 ) );
+		return;
+	}
+	if( idStr::Icmp( args.Argv( 1 ), "flag" ) == 0 && args.Argc() == 4 )
+	{
+		const int value = mapGraphDirector.GetFlag( args.Argv( 2 ) );
+		const bool equal = value == atoi( args.Argv( 3 ) );
+		if( !equal )
+		{
+			recordTestFailures++;
+		}
+		gameLocal.Printf( "RECORD_TEST %s flag=%s value=%d expected=%s\n", equal ? "PASS" : "FAIL", args.Argv( 2 ), value, args.Argv( 3 ) );
+		return;
+	}
+	if( idStr::Icmp( args.Argv( 1 ), "node" ) == 0 && args.Argc() == 3 )
+	{
+		const bool equal = worldStore.currentNode == atoi( args.Argv( 2 ) );
+		if( !equal )
+		{
+			recordTestFailures++;
+		}
+		gameLocal.Printf( "RECORD_TEST %s node=%d expected=%s\n", equal ? "PASS" : "FAIL", worldStore.currentNode, args.Argv( 2 ) );
+		return;
+	}
+	if( idStr::Icmp( args.Argv( 1 ), "exists" ) == 0 && args.Argc() == 4 )
+	{
+		const bool exists = gameLocal.FindEntity( args.Argv( 2 ) ) != NULL;
+		const bool equal = exists == ( atoi( args.Argv( 3 ) ) != 0 );
+		if( !equal )
+		{
+			recordTestFailures++;
+		}
+		gameLocal.Printf( "RECORD_TEST %s entity=%s exists=%d\n", equal ? "PASS" : "FAIL", args.Argv( 2 ), exists );
+		return;
+	}
+	if( idStr::Icmp( args.Argv( 1 ), "kill" ) == 0 && args.Argc() == 3 )
+	{
+		idEntity* ent = gameLocal.FindEntity( args.Argv( 2 ) );
+		if( ent != NULL && ent->IsType( idAI::Type ) )
+		{
+			ent->Show();
+			ent->health = 1;
+			ent->Damage( gameLocal.GetLocalPlayer(), gameLocal.GetLocalPlayer(), vec3_origin, "damage_bullet_pistol", 1.0f, INVALID_JOINT );
+		}
+		else
+		{
+			recordTestFailures++;
+			gameLocal.Printf( "RECORD_TEST FAIL missing kill target\n" );
+		}
+		return;
+	}
+	if( idStr::Icmp( args.Argv( 1 ), "bind_count" ) == 0 && args.Argc() == 3 )
+	{
+		int count = 0;
+		for( idEntity* ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
+		{
+			if( ent->mapSpawnIndex < 0 && ent->GetBindMaster() != NULL && strtoull( ent->spawnArgs.GetString( "_worldCreatedId", "0" ), NULL, 10 ) != 0 )
+			{
+				count++;
+			}
+		}
+		const bool equal = count == atoi( args.Argv( 2 ) );
+		if( !equal )
+		{
+			recordTestFailures++;
+		}
+		gameLocal.Printf( "RECORD_TEST %s created_binds=%d expected=%s\n", equal ? "PASS" : "FAIL", count, args.Argv( 2 ) );
+		return;
+	}
+	if( idStr::Icmp( args.Argv( 1 ), "capture" ) == 0 )
+	{
+		recordTestBaseline.Clear();
+		recordTestMap = gameLocal.GetMapName();
+		recordTestFailures = 0;
+		for( int i = 0; i < worldStore.mapSpawned.Num(); i++ )
+		{
+			const mapSpawnRow_t& row = worldStore.mapSpawned[i];
+			idEntity* ent = gameLocal.entities[row.entityNumber];
+			recordTestRow_t expected;
+			expected.ordinal = row.ordinal;
+			expected.present = ent != NULL && gameLocal.GetSpawnId( ent ) == row.spawnId;
+			expected.health = expected.present ? ent->health : 0;
+			expected.hidden = expected.present && ent->IsHidden();
+			expected.origin = expected.present ? ent->GetPhysics()->GetOrigin() : vec3_origin;
+			expected.poseCRC = 0;
+			if( expected.present && ent->IsType( idCorpse::Type ) )
+			{
+				idFile_Memory pose;
+				static_cast<idCorpse*>( ent )->WritePose( &pose );
+				expected.poseCRC = CRC32_BlockChecksum( pose.GetDataPtr(), pose.Length() );
+			}
+			recordTestBaseline.Append( expected );
+		}
+		gameLocal.Printf( "RECORD_TEST CAPTURE %s %d rows\n", recordTestMap.c_str(), recordTestBaseline.Num() );
+		return;
+	}
+	if( idStr::Icmp( args.Argv( 1 ), "compare" ) == 0 )
+	{
+		int failures = 0;
+		if( recordTestBaseline.Num() == 0 || recordTestMap != gameLocal.GetMapName() || recordTestBaseline.Num() != worldStore.mapSpawned.Num() || gameLocal.IsMapTransitionActive() )
+		{
+			failures++;
+			gameLocal.Printf( "RECORD_TEST identity mismatch expected=%s actual=%s rows=%d/%d pending=%d\n", recordTestMap.c_str(), gameLocal.GetMapName(), recordTestBaseline.Num(), worldStore.mapSpawned.Num(), gameLocal.IsMapTransitionActive() );
+		}
+		for( int i = 0; i < recordTestBaseline.Num() && i < worldStore.mapSpawned.Num(); i++ )
+		{
+			const recordTestRow_t& expected = recordTestBaseline[i];
+			const mapSpawnRow_t& row = worldStore.mapSpawned[i];
+			idEntity* ent = gameLocal.entities[row.entityNumber];
+			const bool present = ent != NULL && gameLocal.GetSpawnId( ent ) == row.spawnId;
+			unsigned int poseCRC = 0;
+			if( present && ent->IsType( idCorpse::Type ) )
+			{
+				idFile_Memory pose;
+				static_cast<idCorpse*>( ent )->WritePose( &pose );
+				poseCRC = CRC32_BlockChecksum( pose.GetDataPtr(), pose.Length() );
+			}
+			if( poseCRC != expected.poseCRC || row.ordinal != expected.ordinal || present != expected.present || ( present && ( ent->health != expected.health || ent->IsHidden() != expected.hidden || !ent->GetPhysics()->GetOrigin().Compare( expected.origin, 0.0001f ) ) ) )
+			{
+				failures++;
+				gameLocal.Printf( "RECORD_TEST mismatch ordinal %d present=%d/%d health=%d/%d hidden=%d/%d origin=%s/%s\n", expected.ordinal, present, expected.present, present ? ent->health : 0, expected.health, present && ent->IsHidden(), expected.hidden, present ? ent->GetPhysics()->GetOrigin().ToString() : "absent", expected.origin.ToString() );
+			}
+		}
+		recordTestFailures += failures;
+		gameLocal.Printf( "RECORD_TEST %s %s changed_rows=%d total_failures=%d\n", failures == 0 ? "PASS" : "FAIL", args.Argc() > 2 ? args.Argv( 2 ) : "compare", failures, recordTestFailures );
+		return;
+	}
+	if( idStr::Icmp( args.Argv( 1 ), "finish" ) == 0 )
+	{
+		gameLocal.Printf( "RECORD_TEST COMPLETE %s total_failures=%d\n", recordTestFailures == 0 && recordTestBaseline.Num() > 0 ? "PASS" : "FAIL", recordTestFailures );
+	}
+}
+
+static void Cmd_ListMapRecords_f( const idCmdArgs& args )
+{
+	worldStore.ListRecords();
+}
+
+static void Cmd_SetWorldTime_f( const idCmdArgs& args )
+{
+	if( args.Argc() != 2 || !gameLocal.CheatsOk() )
+	{
+		return;
+	}
+	const int64 value = strtoll( args.Argv( 1 ), NULL, 10 );
+	if( value < 0 )
+	{
+		return;
+	}
+	gameLocal.SetWorldTimeBase( value - gameLocal.fast.time );
+}
+
+static void Cmd_DumpMapState_f( const idCmdArgs& args )
+{
+	if( args.Argc() != 2 )
+	{
+		return;
+	}
+	idFile* out = fileSystem->OpenFileWrite( args.Argv( 1 ) );
+	if( out == NULL )
+	{
+		return;
+	}
+	out->Printf( "ordinal,name,def,health,hidden,x,y,z\n" );
+	for( int i = 0; i < worldStore.mapSpawned.Num(); i++ )
+	{
+		const mapSpawnRow_t& row = worldStore.mapSpawned[i];
+		idEntity* ent = gameLocal.entities[row.entityNumber];
+		if( ent == NULL || gameLocal.GetSpawnId( ent ) != row.spawnId )
+		{
+			out->Printf( "%d,REMOVED,,,,,,\n", row.ordinal );
+			continue;
+		}
+		const idVec3& origin = ent->GetPhysics()->GetOrigin();
+		out->Printf( "%d,%s,%s,%d,%d,%.9g,%.9g,%.9g\n", row.ordinal, ent->name.c_str(), ent->GetEntityDefName(), ent->health, ent->IsHidden(), origin.x, origin.y, origin.z );
+	}
+	fileSystem->CloseFile( out );
+}
+
+static void Cmd_ListTransition_f( const idCmdArgs& args )
+{
+	gameLocal.ListTransition();
+}
+
+static void Cmd_TransitionTest_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 3 || common->IsClient() )
+	{
+		gameLocal.Printf( "usage: transitionTest <map> <departure> [arrival] (server only)\n" );
+		return;
+	}
+	mapTransition_t request;
+	request.nextMap = args.Argv( 1 );
+	request.departLandmark = args.Argv( 2 );
+	request.arrivalLandmark = args.Argc() > 3 ? args.Argv( 3 ) : args.Argv( 2 );
+	gameLocal.BeginMapTransition( request );
+}
+
+void MapGraphCheck_f( const idCmdArgs& args );
+void CorpseFixture_f( const idCmdArgs& args );
+
 void idGameLocal::InitConsoleCommands()
 {
+	cmdSystem->AddCommand( "corpseFixture", CorpseFixture_f, CMD_FL_GAME | CMD_FL_CHEAT, "bounded static corpse render fixture (mg test maps only)" );
+	cmdSystem->AddCommand( "mapGraphCheck", MapGraphCheck_f, CMD_FL_GAME, "check map graph authoring kit and seeded caps" );
+	cmdSystem->AddCommand( "recordTest", Cmd_RecordTest_f, CMD_FL_GAME | CMD_FL_CHEAT, "capture/compare record functional fixture; pose moves one test prop" );
+	cmdSystem->AddCommand( "listTransition", Cmd_ListTransition_f, CMD_FL_GAME, "list bounded transition state" );
+	cmdSystem->AddCommand( "transitionTest", Cmd_TransitionTest_f, CMD_FL_GAME | CMD_FL_CHEAT, "request a landmark transition" );
+	cmdSystem->AddCommand( "listMapRecords", Cmd_ListMapRecords_f, CMD_FL_GAME, "list persistent map records" );
+	cmdSystem->AddCommand( "dumpMapState", Cmd_DumpMapState_f, CMD_FL_GAME, "write current authored state CSV" );
+	cmdSystem->AddCommand( "setWorldTime", Cmd_SetWorldTime_f, CMD_FL_GAME | CMD_FL_CHEAT, "set unscaled world clock in milliseconds" );
 	cmdSystem->AddCommand( "listMap", Cmd_ListMap_f, CMD_FL_GAME, "list MAP resource rows, portal digest and entity classes" );
 	cmdSystem->AddCommand( "worldTime", Cmd_WorldTime_f, CMD_FL_GAME, "print the unscaled world clock" );
 	cmdSystem->AddCommand( "cm_selfTest", Cmd_CMSelfTest_f, CMD_FL_GAME | CMD_FL_CHEAT, "seeded collision bounds, contents, rotation and wrap tests" );

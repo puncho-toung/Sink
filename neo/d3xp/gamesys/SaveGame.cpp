@@ -167,6 +167,7 @@ idSaveGame::WriteDecls
 */
 void idSaveGame::WriteDecls()
 {
+	WriteInt( declManager->GetNumDeclTypes() );
 	// Write out all loaded decls
 	for( int t = 0; t < declManager->GetNumDeclTypes(); t++ )
 	{
@@ -1267,7 +1268,16 @@ idRestoreGame::ReadDecls
 void idRestoreGame::ReadDecls()
 {
 	idStr declName;
-	for( int t = 0; t < declManager->GetNumDeclTypes(); t++ )
+	int types = 15;
+	if( GetBuildNumber() >= BUILD_NUMBER_SAVE_VERSION_WORLD_STORE )
+	{
+		ReadInt( types );
+	}
+	if( types < 0 || types > 256 )
+	{
+		Error( "Invalid saved decl type count" );
+	}
+	for( int t = 0; t < types; t++ )
 	{
 		while( true )
 		{
@@ -1276,7 +1286,10 @@ void idRestoreGame::ReadDecls()
 			{
 				break;
 			}
-			declManager->FindType( ( declType_t )t, declName );
+			if( t < declManager->GetNumDeclTypes() )
+			{
+				declManager->FindType( ( declType_t )t, declName );
+			}
 		}
 	}
 }

@@ -1,0 +1,20 @@
+mapGraph mg_policy {
+ persistent 1
+ flag challenge_done 0
+ landmarkKind door128
+ landmarkKind return128
+ nodeKind world {
+  cap 2
+  reset never
+  map maps/_test/mg/mg_policy {
+   weight 1
+   landmark back return128 entry exit
+   landmark forward door128 exit required
+  }
+  map maps/_test/mg/hub {
+   weight 1
+   landmark townportal door128 entry exit
+   landmark forward door128 entry exit
+  }
+ }
+}

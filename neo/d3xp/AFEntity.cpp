@@ -1033,6 +1033,8 @@ void idAFEntity_Base::DropAFs( idEntity* ent, const char* type, idList<idEntity*
 	{
 
 		args.Set( "classname", kv->GetValue() );
+		args.SetBool( "dropped", true );
+		args.SetInt( "persist_lifetime", 0 );
 		gameLocal.SpawnEntityDef( args, &newEnt );
 
 		if( newEnt && newEnt->IsType( idAFEntity_Base::Type ) )

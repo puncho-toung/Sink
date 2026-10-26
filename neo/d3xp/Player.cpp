@@ -2114,10 +2114,18 @@ void idPlayer::Spawn()
 		{
 			// set yourself ready to spawn. idMultiplayerGame will decide when/if appropriate and call SpawnFromSpawnSpot
 			SetupWeaponEntity();
+			const bool transitionSpawn = gameLocal.PrepareTransitionPlayerSpawn( this );
+			if( transitionSpawn )
+			{
+				SetClipModel();
+			}
 			SpawnFromSpawnSpot();
-			forceRespawn = true;
-			wantSpectate = true;
-			assert( spectating );
+			if( !transitionSpawn )
+			{
+				forceRespawn = true;
+				wantSpectate = true;
+				assert( spectating );
+			}
 		}
 	}
 	else
@@ -2970,6 +2978,12 @@ void idPlayer::PrepareForRestart()
 	// we will be restarting program, clear the client entities from program-related things first
 	ShutdownThreads();
 
+	// MapClear deletes these non-player entities. Authored restart slots may
+	// reuse generation one, so surviving players must release their old handles.
+	weapon = NULL;
+	flashlight = NULL;
+	enviroSuitLight = NULL;
+
 	// the sound world is going to be cleared, don't keep references to emitters
 	FreeSoundEmitter( false );
 }
@@ -3114,8 +3128,17 @@ void idPlayer::SpawnFromSpawnSpot()
 	idVec3		spawn_origin;
 	idAngles	spawn_angles;
 
-	SelectInitialSpawnPoint( spawn_origin, spawn_angles );
+	if( !gameLocal.SelectTransitionSpawn( this, spawn_origin, spawn_angles ) )
+	{
+		SelectInitialSpawnPoint( spawn_origin, spawn_angles );
+	}
+	else if( spectating )
+	{
+		// SpawnToPoint lifts ordinary spectator starts; the landmark is already a world position.
+		spawn_origin.z -= pm_normalheight.GetFloat() + SPECTATE_RAISE;
+	}
 	SpawnToPoint( spawn_origin, spawn_angles );
+	gameLocal.FinishTransitionSpawn( this );
 }
 
 /*
@@ -3291,7 +3314,7 @@ Restores any inventory and player stats when changing levels.
 */
 void idPlayer::RestorePersistantInfo()
 {
-	if( common->IsMultiplayer() || g_demoMode.GetBool() )
+	if( !gameLocal.RestoreTransitionPlayerInfo( entityNumber ) && ( common->IsMultiplayer() || g_demoMode.GetBool() ) )
 	{
 		gameLocal.persistentPlayerInfo[entityNumber].Clear();
 	}
@@ -5530,12 +5553,12 @@ void idPlayer::DropWeapon( bool died )
 	if( died )
 	{
 		// ain't gonna throw you no weapon if I'm dead
-		item = weapon.GetEntity()->DropItem( vec3_origin, 0, WEAPON_DROP_TIME, died );
+		item = weapon.GetEntity()->DropItem( vec3_origin, 0, worldStore.IsActive() ? 0 : WEAPON_DROP_TIME, died );
 	}
 	else
 	{
 		viewAngles.ToVectors( &forward, NULL, &up );
-		item = weapon.GetEntity()->DropItem( 250.0f * forward + 150.0f * up, 500, WEAPON_DROP_TIME, died );
+		item = weapon.GetEntity()->DropItem( 250.0f * forward + 150.0f * up, 500, worldStore.IsActive() ? 0 : WEAPON_DROP_TIME, died );
 	}
 	if( !item )
 	{

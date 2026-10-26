@@ -2554,6 +2554,27 @@ spawned the same entities with the same spawn args. Each entity hashes its pair 
 its terminator, which keeps the boundaries unambiguous. Computed on demand: it walks every pair.
 ===============
 */
+unsigned int idMapFile::GetEntityCRC( int ordinal ) const
+{
+	if( ordinal < 0 || ordinal >= entities.Num() )
+	{
+		return 0;
+	}
+	unsigned int crc;
+	CRC32_InitChecksum( crc );
+	const idDict& epairs = entities[ordinal]->epairs;
+	const int count = LittleLong( epairs.GetNumKeyVals() );
+	CRC32_UpdateChecksum( crc, &count, sizeof( count ) );
+	for( int i = 0; i < epairs.GetNumKeyVals(); i++ )
+	{
+		const idKeyValue* kv = epairs.GetKeyVal( i );
+		CRC32_UpdateChecksumNoCR( crc, kv->GetKey().c_str(), kv->GetKey().Length() + 1 );
+		CRC32_UpdateChecksumNoCR( crc, kv->GetValue().c_str(), kv->GetValue().Length() + 1 );
+	}
+	CRC32_FinishChecksum( crc );
+	return crc;
+}
+
 unsigned int idMapFile::GetEntitiesCRC() const
 {
 	unsigned int crc;

@@ -1,0 +1,71 @@
+Version 2
+// entity 0
+{
+"classname" "worldspawn"
+}
+// entity 1
+{
+"classname" "func_group"
+"_tb_type" "_tb_group"
+"_tb_id" "1"
+"_tb_name" "door128"
+"_tb_linked_group_id" "a2a5033b-fbe8-4fe2-891a-000000000128"
+}
+// entity 2
+{
+"classname" "info_landmark"
+"name" "doorway"
+"landmark" "doorway"
+"kind" "door128"
+"_tb_group" "1"
+// primitive 0
+{
+ brushDef3
+ {
+  ( 0 0 1 -128 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/nodraw" 0 0 0
+  ( 0 1 0 -64 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/nodraw" 0 0 0
+  ( 1 0 0 -4 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/editor/landmark" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/nodraw" 0 0 0
+  ( 0 -1 0 -64 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/nodraw" 0 0 0
+  ( -1 0 0 -4 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/nodraw" 0 0 0
+ }
+}
+}
+// entity 3
+{
+"classname" "trigger_transition"
+"name" "doorway_carry"
+"landmark" "doorway"
+"_tb_group" "1"
+// primitive 0
+{
+ brushDef3
+ {
+  ( 0 0 1 -192 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 0 1 0 -128 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 1 0 0 -96 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 0 -1 0 -128 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( -1 0 0 -96 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+ }
+}
+}
+// entity 4
+{
+"classname" "trigger_changelevel"
+"name" "doorway_trigger"
+"landmark" "doorway"
+"_tb_group" "1"
+// primitive 0
+{
+ brushDef3
+ {
+  ( 0 0 1 -128 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 0 1 0 -64 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 1 0 0 -8 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 0 -1 0 -64 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( -1 0 0 -8 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+ }
+}
+}

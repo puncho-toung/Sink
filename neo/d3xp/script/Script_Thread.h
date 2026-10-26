@@ -152,6 +152,14 @@ private:
 	void 						Event_SetPersistantArg( const char* key, const char* value );
 	void 						Event_GetPersistantString( const char* key );
 	void 						Event_GetPersistantFloat( const char* key );
+	void Event_GetDungeonFlag( const char* flag );
+	void Event_SetDungeonFlag( const char* flag, float value );
+	void Event_RequestTransition( const char* landmark );
+	void Event_GetNodeVisits();
+	void Event_SetExitLocked( const char* landmark, float locked );
+	void Event_QueueNodeEffect( const char* map, const char* entity, const char* action );
+	void Event_OpenTownPortal();
+	void Event_OpenTownPortalFor( idEntity* caster );
 	void 						Event_GetPersistantVector( const char* key );
 	void						Event_AngToForward( idAngles& ang );
 	void						Event_AngToRight( idAngles& ang );

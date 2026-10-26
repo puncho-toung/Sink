@@ -821,6 +821,11 @@ idAI::Spawn
 */
 void idAI::Spawn()
 {
+	if( worldStore.IsActive() && g_corpses.GetBool() && spawnArgs.GetInt( "persist_lifetime", "-1" ) != 0 )
+	{
+		spawnArgs.SetFloat( "burnaway", 0.0f );
+	}
+
 	const char*			jointname;
 	const idKeyValue*	kv;
 	idStr				jointName;
@@ -6883,4 +6888,40 @@ void idCombatNode::Event_MarkUsed()
 	{
 		disabled = true;
 	}
+}
+
+void idAI::Event_PersistCorpse()
+{
+	if( !common->IsClient() && worldStore.IsActive() && g_corpses.GetBool() && health <= 0 && spawnArgs.GetInt( "persist_lifetime", "-1" ) != 0 )
+	{
+		if( IsGibbed() )
+		{
+			if( worldStore.remains < 65535 )
+			{
+				worldStore.remains++;
+			}
+		}
+		else
+		{
+			idDict args;
+			args.Set( "classname", "corpse" );
+			idEntity* ent = NULL;
+			if( gameLocal.SpawnEntityDef( args, &ent ) && ent != NULL )
+			{
+				idCorpse* corpse = static_cast<idCorpse*>( ent );
+				if( corpse->Capture( this ) )
+				{
+					worldStore.ReplaceMapEntity( this, corpse );
+					corpse->spawnArgs.Set( "_worldCreatedId", spawnArgs.GetString( "_worldCreatedId", "0" ) );
+					corpse->spawnArgs.Set( "_worldCreatedTime", va( "%lld", ( long long )corpse->DeathTime() ) );
+				}
+				else
+				{
+					gameLocal.Warning( "Could not preserve corpse %s", name.c_str() );
+					delete corpse;
+				}
+			}
+		}
+	}
+	PostEventMS( &EV_Remove, 0 );
 }

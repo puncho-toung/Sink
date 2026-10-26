@@ -319,4 +319,13 @@ private:
 	void				Event_Touch( idEntity* other, trace_t* trace );
 };
 
+class idTrigger_ChangeLevel : public idTrigger_Multi
+{
+public:
+	CLASS_PROTOTYPE( idTrigger_ChangeLevel );
+private:
+	void Event_TransitionTouch( idEntity* other, trace_t* trace );
+	void Event_TransitionActivate( idEntity* activator );
+};
+
 #endif /* !__GAME_TRIGGER_H__ */

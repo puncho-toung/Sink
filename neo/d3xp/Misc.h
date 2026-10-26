@@ -158,6 +158,11 @@ class idDamagable : public idEntity
 {
 public:
 	CLASS_PROTOTYPE( idDamagable );
+	bool RecordBroken() const
+	{
+		return nextTriggerTime != 0;
+	}
+	void ApplyRecordBroken();
 
 	idDamagable();
 

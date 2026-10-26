@@ -1,0 +1,14 @@
+mapGraph mg_hub {
+ persistent 1
+ flag challenge_done 0
+ landmarkKind door128
+ nodeKind hub {
+  cap 1
+  reset never
+  map maps/_test/mg/hub {
+   weight 1
+   landmark townportal door128 entry exit
+   landmark forward door128 entry exit
+  }
+ }
+}

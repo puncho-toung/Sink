@@ -463,12 +463,12 @@ bool idItem::Pickup( idPlayer* player )
 	bool dropped = spawnArgs.GetBool( "dropped" );
 	bool no_respawn = spawnArgs.GetBool( "no_respawn" );
 
-	if( common->IsMultiplayer() && respawn == 0.0f )
+	if( common->IsMultiplayer() && !worldStore.IsActive() && respawn == 0.0f )
 	{
 		respawn = 20.0f;
 	}
 
-	if( respawn && !dropped && !no_respawn )
+	if( !worldStore.IsActive() && respawn && !dropped && !no_respawn )
 	{
 		const char* sfx = spawnArgs.GetString( "fxRespawn" );
 		if( sfx != NULL && *sfx != '\0' )
@@ -477,7 +477,7 @@ bool idItem::Pickup( idPlayer* player )
 		}
 		PostEventSec( &EV_RespawnItem, respawn );
 	}
-	else if( !spawnArgs.GetBool( "inv_objective" ) && !no_respawn )
+	else if( !spawnArgs.GetBool( "inv_objective" ) && ( worldStore.IsActive() || !no_respawn ) )
 	{
 		// give some time for the pickup sound to play
 		// FIXME: Play on the owner
@@ -2060,8 +2060,10 @@ idEntity* idMoveableItem::DropItem( const char* classname, const idVec3& origin,
 		{
 			removeDelay = 5 * 60 * 1000;
 		}
-		// always remove a dropped item after 5 minutes in case it dropped to an unreachable location
-		item->PostEventMS( &EV_Remove, removeDelay );
+		if( !worldStore.IsActive() )
+		{
+			item->PostEventMS( &EV_Remove, removeDelay );
+		}
 	}
 	return item;
 }

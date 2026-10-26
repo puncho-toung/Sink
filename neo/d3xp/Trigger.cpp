@@ -1585,3 +1585,39 @@ void idTrigger_Flag::Event_Touch( idEntity* other, trace_t* trace )
 		idTrigger_Multi::Event_Touch( other, trace );
 	}
 }
+
+CLASS_DECLARATION( idTrigger_Multi, idTrigger_ChangeLevel )
+EVENT( EV_Touch, idTrigger_ChangeLevel::Event_TransitionTouch )
+EVENT( EV_Activate, idTrigger_ChangeLevel::Event_TransitionActivate )
+END_CLASS
+
+void idTrigger_ChangeLevel::Event_TransitionTouch( idEntity* other, trace_t* trace )
+{
+	if( other != NULL && other->IsType( idPlayer::Type ) && other->health > 0 )
+	{
+		Event_TransitionActivate( other );
+	}
+}
+
+void idTrigger_ChangeLevel::Event_TransitionActivate( idEntity* activator )
+{
+	if( common->IsClient() )
+	{
+		return;
+	}
+	const char* landmark = spawnArgs.GetString( "landmark" );
+	if( spawnArgs.GetBool( "wait_party", "1" ) && !gameLocal.TransitionPartyReady( landmark ) )
+	{
+		return;
+	}
+	if( worldStore.IsActive() )
+	{
+		mapGraphDirector.RequestTransition( landmark );
+		return;
+	}
+	mapTransition_t transition;
+	transition.nextMap = spawnArgs.GetString( "nextMap" );
+	transition.departLandmark = landmark;
+	transition.arrivalLandmark = spawnArgs.GetString( "arrivalLandmark", landmark );
+	gameLocal.BeginMapTransition( transition );
+}

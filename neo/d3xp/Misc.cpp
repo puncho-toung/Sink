@@ -4607,3 +4607,15 @@ void idPortalSky::Event_Activate( idEntity* activator )
 {
 	gameLocal.SetPortalSkyEnt( this );
 }
+
+void idDamagable::ApplyRecordBroken()
+{
+	nextTriggerTime = Max( 1, gameLocal.time );
+	const char* model = spawnArgs.GetString( "broken" );
+	if( model[0] != '\0' )
+	{
+		SetModel( model );
+	}
+	fl.takedamage = false;
+	UpdateVisuals();
+}

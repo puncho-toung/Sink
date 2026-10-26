@@ -1230,3 +1230,14 @@ scriptEvent entity	vagary_ChooseObjectToThrow( vector mins, vector maxs, float s
 
 // throws object at enemy
 scriptEvent void	vagary_ThrowObjectAtEnemy( entity ent, float speed );
+
+// Server-owned world graph controls. Values affect variants at the next load.
+scriptEvent float getDungeonFlag( string flag );
+scriptEvent void setDungeonFlag( string flag, float value );
+scriptEvent void requestTransition( string landmark );
+scriptEvent float getNodeVisits();
+scriptEvent void setExitLocked( string landmark, float locked );
+scriptEvent void queueNodeEffect( string map, string entity, string action );
+// No-arg portal is SP-only. MP scripts supply the authoritative player caster.
+scriptEvent void openTownPortal();
+scriptEvent void openTownPortalFor( entity caster );

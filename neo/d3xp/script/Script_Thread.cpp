@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "../Game_local.h"
+#include "../gamesys/MapGraph.h"
 #include "../gamesys/Schema.h"	//puncho - schema (P1-A1a): expands THREAD_SCHEMA
 
 const idEventDef EV_Thread_Execute( "<execute>", NULL );
@@ -65,6 +66,14 @@ const idEventDef EV_Thread_SpawnVector( "SpawnVector", "sv", 'v' );
 const idEventDef EV_Thread_ClearPersistantArgs( "clearPersistantArgs" );
 const idEventDef EV_Thread_SetPersistantArg( "setPersistantArg", "ss" );
 const idEventDef EV_Thread_GetPersistantString( "getPersistantString", "s", 's' );
+const idEventDef EV_Thread_GetDungeonFlag( "getDungeonFlag", "s", 'f' );
+const idEventDef EV_Thread_SetDungeonFlag( "setDungeonFlag", "sf" );
+const idEventDef EV_Thread_RequestTransition( "requestTransition", "s" );
+const idEventDef EV_Thread_GetNodeVisits( "getNodeVisits", NULL, 'f' );
+const idEventDef EV_Thread_SetExitLocked( "setExitLocked", "sf" );
+const idEventDef EV_Thread_QueueNodeEffect( "queueNodeEffect", "sss" );
+const idEventDef EV_Thread_OpenTownPortal( "openTownPortal", NULL );
+const idEventDef EV_Thread_OpenTownPortalFor( "openTownPortalFor", "e" );
 const idEventDef EV_Thread_GetPersistantFloat( "getPersistantFloat", "s", 'f' );
 const idEventDef EV_Thread_GetPersistantVector( "getPersistantVector", "s", 'v' );
 const idEventDef EV_Thread_AngToForward( "angToForward", "v", 'v' );
@@ -149,6 +158,14 @@ EVENT( EV_Thread_SpawnVector,			idThread::Event_SpawnVector )
 EVENT( EV_Thread_ClearPersistantArgs,	idThread::Event_ClearPersistantArgs )
 EVENT( EV_Thread_SetPersistantArg,		idThread::Event_SetPersistantArg )
 EVENT( EV_Thread_GetPersistantString,	idThread::Event_GetPersistantString )
+EVENT( EV_Thread_GetDungeonFlag, idThread::Event_GetDungeonFlag )
+EVENT( EV_Thread_SetDungeonFlag, idThread::Event_SetDungeonFlag )
+EVENT( EV_Thread_RequestTransition, idThread::Event_RequestTransition )
+EVENT( EV_Thread_GetNodeVisits, idThread::Event_GetNodeVisits )
+EVENT( EV_Thread_SetExitLocked, idThread::Event_SetExitLocked )
+EVENT( EV_Thread_QueueNodeEffect, idThread::Event_QueueNodeEffect )
+EVENT( EV_Thread_OpenTownPortal, idThread::Event_OpenTownPortal )
+EVENT( EV_Thread_OpenTownPortalFor, idThread::Event_OpenTownPortalFor )
 EVENT( EV_Thread_GetPersistantFloat,	idThread::Event_GetPersistantFloat )
 EVENT( EV_Thread_GetPersistantVector,	idThread::Event_GetPersistantVector )
 EVENT( EV_Thread_AngToForward,			idThread::Event_AngToForward )
@@ -2233,3 +2250,40 @@ void idThread::Event_AISetAvoid( const char* squad, const char* avoid )
 	gameLocal.SetAISquadAvoid( squad, avoid );
 }
 //puncho end
+
+void idThread::Event_GetDungeonFlag( const char* flag )
+{
+	ReturnFloat( mapGraphDirector.GetFlag( flag ) );
+}
+void idThread::Event_SetDungeonFlag( const char* flag, float value )
+{
+	if( value != value )
+	{
+		value = 0.0f;
+	}
+	mapGraphDirector.SetFlag( flag, ( int )idMath::ClampFloat( 0.0f, 65535.0f, value ) );
+}
+void idThread::Event_RequestTransition( const char* landmark )
+{
+	mapGraphDirector.RequestTransition( landmark );
+}
+void idThread::Event_GetNodeVisits()
+{
+	ReturnFloat( mapGraphDirector.GetNodeVisits() );
+}
+void idThread::Event_SetExitLocked( const char* landmark, float locked )
+{
+	mapGraphDirector.SetExitLocked( landmark, locked != 0.0f );
+}
+void idThread::Event_QueueNodeEffect( const char* map, const char* entity, const char* action )
+{
+	mapGraphDirector.QueueEffect( map, entity, action );
+}
+void idThread::Event_OpenTownPortal()
+{
+	mapGraphDirector.OpenTownPortal();
+}
+void idThread::Event_OpenTownPortalFor( idEntity* caster )
+{
+	mapGraphDirector.OpenTownPortalFor( caster );
+}

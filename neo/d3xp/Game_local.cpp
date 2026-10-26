@@ -75,7 +75,7 @@ idCVar net_usercmd_timing_debug( "net_usercmd_timing_debug", "0", CVAR_BOOL, "Pr
 
 
 idCVar net_refuseMapWithPeers( "net_refuseMapWithPeers", "1", CVAR_GAME | CVAR_BOOL, "refuse legacy game-driven map changes while session peers are connected" );
-idCVar net_maxSkipReplicatedStatics( "net_maxSkipReplicatedStatics", "128", CVAR_GAME | CVAR_INTEGER, "map-spawn nonreplicated entity budget; 0 disables", 0, 256 );
+idCVar net_maxSkipReplicatedStatics( "net_maxSkipReplicatedStatics", "128", CVAR_NOCHEAT | CVAR_GAME | CVAR_INTEGER, "map-spawn nonreplicated entity budget; 0 disables", 0, 256 );
 extern idCVar g_projectileCatchUp;
 
 // List of all defs used by the player that will stay on the fast timeline
@@ -319,6 +319,7 @@ idGameLocal::Init
 */
 void idGameLocal::Init()
 {
+	worldStore.Clear();
 	const idDict* dict;
 	idAAS* aas;
 
@@ -344,6 +345,9 @@ void idGameLocal::Init()
 	Printf( "gamedate: %s\n", ID__DATE__ );
 
 	// register game specific decl types
+	declManager->RegisterDeclType( "mapGraph", DECL_MAPGRAPH, idDeclAllocator<idDeclMapGraph> );
+	declManager->RegisterDeclFolder( "mapgraphs", ".mapgraph", DECL_MAPGRAPH );
+	mapGraphDirector.Init();
 	declManager->RegisterDeclType( "model",				DECL_MODELDEF,		idDeclAllocator<idDeclModelDef> );
 	declManager->RegisterDeclType( "export",			DECL_MODELEXPORT,	idDeclAllocator<idDecl> );
 
@@ -430,6 +434,8 @@ void idGameLocal::Shutdown()
 	mpGame.Shutdown();
 
 	MapShutdown();
+	mapGraphDirector.Shutdown();
+	worldStore.Clear();
 
 	//puncho start - ai-harness: MapShutdown flushed the rows; the file itself lives until the game shuts down
 	if( aiProfileFile != NULL )
@@ -503,6 +509,8 @@ the session may have written some data to the file already
 */
 void idGameLocal::SaveGame( idFile* f, idFile* strings )
 {
+	// Record cap eviction must finish before the save object list captures pointers.
+	worldStore.PrepareSave();
 	int i;
 	idEntity* ent;
 	idEntity* link;
@@ -730,6 +738,7 @@ void idGameLocal::SaveGame( idFile* f, idFile* strings )
 
 	// write out pending events
 	savegame.BeginTraceScope( "<events>" );	//puncho - stream-trace (P1-A1c, K1)
+	worldStore.Save( &savegame );
 	idEvent::Save( &savegame );
 	savegame.EndTraceScope();	//puncho - stream-trace
 
@@ -1036,6 +1045,7 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 			mapFile = NULL;
 			Error( "Couldn't load %s", mapName );
 		}
+		worldStore.ReadMapData( mapFile );
 	}
 	mapFileName = mapFile->GetName();
 	ReadAISquads();	//puncho - ai-avoidance (WP-A7): before the monsters spawn and look their squad up
@@ -1213,6 +1223,7 @@ idGameLocal::LocalMapRestart
 */
 void idGameLocal::LocalMapRestart()
 {
+	worldStore.CommitCurrentMap();
 	int i;	//puncho - identity (P1-A2)
 
 	Printf( "----------- Game Map Restart ------------\n" );
@@ -1373,6 +1384,11 @@ void idGameLocal::MapPopulate( const int* slotGenBeforeRestart )	//puncho - iden
 	}
 	//puncho end
 
+	worldStore.ApplyCurrentMap();
+	ApplyTransitionCarry();
+	mapGraphDirector.ApplyPending();
+	mapGraphDirector.MapLoaded();
+
 	// execute pending events before the very first game frame
 	// this makes sure the map script main() function is called
 	// before the physics are run so entities can bind correctly
@@ -1468,6 +1484,14 @@ void idGameLocal::InitFromNewMap( const char* mapName, idRenderWorld* renderWorl
 		MapShutdown();
 	}
 
+	if( !common->IsGameDrivenLoad() )
+	{
+		ClearMapTransition();
+	}
+	mapGraphDirector.RecipeForLoad( mapName );
+	worldStore.BeginMap( mapName );
+	mapGraphDirector.BeginMap( mapName );
+	worldStore.currentNode = worldStore.instanceId != 0 ? mapGraphDirector.RecipeForLoad( mapName ).currentNode : 0;
 	Printf( "----------- Game Map Init ------------\n" );
 
 	gamestate = GAMESTATE_STARTUP;
@@ -1510,6 +1534,7 @@ void idGameLocal::InitFromNewMap( const char* mapName, idRenderWorld* renderWorl
 	animationLib.FlushUnusedAnims();
 
 	gamestate = GAMESTATE_ACTIVE;
+	worldStore.FinishMapActivation();
 
 	Printf( "--------------------------------------\n" );
 }
@@ -1845,10 +1870,20 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 
 	// Read out pending events
 	savegame.BeginTraceScope( "<events>" );	//puncho - stream-trace (P1-A1c, K1)
+	if( savegame.GetBuildNumber() >= BUILD_NUMBER_SAVE_VERSION_WORLD_STORE )
+	{
+		worldStore.Restore( &savegame );
+	}
+	else
+	{
+		worldStore.Clear();
+	}
 	idEvent::Restore( &savegame );
 	savegame.EndTraceScope();	//puncho - stream-trace
 
 	savegame.RestoreObjects();
+	worldStore.RestoreOrdinals();
+	mapGraphDirector.MapLoaded();
 
 	//puncho start - ai-avoidance (WP-A4): the restored actors and moveables, as SpawnEntityDef does for spawned ones
 	for( idEntity* ent = spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
@@ -1930,6 +1965,7 @@ idGameLocal::MapShutdown
 */
 void idGameLocal::MapShutdown()
 {
+	worldStore.CommitCurrentMap();
 	idProjectile::ClearSimulationQueue();
 	Printf( "--------- Game Map Shutdown ----------\n" );
 
@@ -3197,6 +3233,7 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			RunAIStats( num, ( int )( ( timer_think.Milliseconds() + timer_events.Milliseconds() ) * 1000.0f ) );
 			//puncho end
 
+			CommitMapTransition();
 			BuildReturnValue( ret );
 
 			// see if a target_sessionCommand has forced a changelevel
@@ -4094,6 +4131,8 @@ void idGameLocal::RunDebugInfo()
 
 	const idVec3& origin = player->GetPhysics()->GetOrigin();
 
+	worldStore.DrawDebug();
+
 	if( g_showEntityInfo.GetBool() )
 	{
 		idMat3		axis = player->viewAngles.ToMat3();
@@ -4460,7 +4499,7 @@ int idGameLocal::GetEntityBudgetClass( const idTypeInfo& type, const idDict& arg
 	{
 		return 2;
 	}
-	if( type.IsType( idAFEntity_Base::Type ) && !type.IsType( idActor::Type ) )
+	if( type.IsType( idAFEntity_Base::Type ) && !type.IsType( idActor::Type ) && args.GetBool( "dropped" ) )
 	{
 		return 3;
 	}
@@ -4700,6 +4739,7 @@ void idGameLocal::UnregisterEntity( idEntity* ent )
 			ent->budgetNode.Remove();
 			ent->budgetClass = -1;
 		}
+		worldStore.EntityRemoved( ent );
 		ent->spawnNode.Remove();
 		entities[ ent->entityNumber ] = NULL;
 		spawnIds[ ent->entityNumber ] = -1;
@@ -4708,7 +4748,7 @@ void idGameLocal::UnregisterEntity( idEntity* ent )
 
 		if( ent->entityNumber >= MAX_CLIENTS && ent->entityNumber < firstFreeEntityIndex[ freeListType ] )
 		{
-			firstFreeEntityIndex[ freeListType ] = ent->entityNumber;
+			firstFreeEntityIndex[ freeListType ] = worldStore.IsActive() && freeListType == 0 ? Max( mapSpawnCount, ent->entityNumber ) : ent->entityNumber;
 		}
 		ent->entityNumber = ENTITYNUM_NONE;
 	}
@@ -4929,6 +4969,10 @@ idGameLocal::InhibitEntitySpawn
 */
 bool idGameLocal::InhibitEntitySpawn( idDict& spawnArgs )
 {
+	if( mapGraphDirector.InhibitSpawn( spawnArgs, mapFile ) )
+	{
+		return true;
+	}
 	bool result = false;
 
 	if( common->IsMultiplayer() )
@@ -5194,6 +5238,7 @@ void idGameLocal::ListMapStatics() const
 
 void idGameLocal::SpawnMapEntities()
 {
+	worldStore.BeginSpawn();
 	int			i;
 	int			num;
 	int			inhibit;
@@ -5272,7 +5317,9 @@ void idGameLocal::SpawnMapEntities()
 			// Admer: brush origin offsets:
 			args.SetVector( BRUSH_ORIGIN_KEY, mapEnt->originOffset );
 
-			SpawnEntityDef( args );
+			idEntity* spawned = NULL;
+			SpawnEntityDef( args, &spawned );
+			worldStore.TrackSpawn( i, spawned );
 			num++;
 		}
 		else
@@ -7318,6 +7365,7 @@ void idGameLocal::GetMapStats( mapGameStats_t& stats ) const
 		if( entities[i] != NULL )
 		{
 			stats.entities++;
+			stats.corpseLive += entities[i]->IsType( idCorpse::Type ) ? 1 : 0;
 			if( entities[i]->thinkFlags != 0 )
 			{
 				stats.activeEntities++;
@@ -7328,6 +7376,18 @@ void idGameLocal::GetMapStats( mapGameStats_t& stats ) const
 			}
 		}
 	}
+	stats.dungeonTransitions = idMapGraphDirector::transitions;
+	stats.dungeonRefused = idMapGraphDirector::refused;
+	stats.dungeonInhibited = idMapGraphDirector::inhibited;
+	stats.dungeonPrefetches = idMapGraphDirector::prefetches;
+	stats.recordMaps = worldStore.recordMaps;
+	stats.recordEntries = worldStore.recordEntries;
+	stats.recordCreated = worldStore.recordCreated;
+	stats.recordBytes = worldStore.recordBytes;
+	stats.recordDropped = worldStore.recordDropped;
+	stats.corpseEvicted = worldStore.corpseEvicted;
+	stats.recordCommitUs = worldStore.commitUs;
+	stats.recordApplyUs = worldStore.applyUs;
 	stats.cmModels = collisionModelManager->GetNumModels();
 	stats.skipStatics = skipReplicatedStatics;
 	stats.pvsBytes = pvs.GetMapBytes();

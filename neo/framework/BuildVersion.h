@@ -46,5 +46,16 @@ const int BUILD_NUMBER_SAVE_VERSION_SNAPSHOT_CLASS_DATA_BIT     = 1415;	// F4-m1
 const int BUILD_NUMBER_SAVE_VERSION_PORTAL_SNAPSHOT_OBJECTS = 1416; // P2.0.7: portal state chunk objects
 const int BUILD_NUMBER_SAVE_VERSION_WORLD_CLOCK = 1417; // P2.0.8: saved unscaled world-time base
 
-const int BUILD_NUMBER = BUILD_NUMBER_SAVE_VERSION_WORLD_CLOCK;
+const int BUILD_NUMBER_SAVE_VERSION_COOP_TRANSITION = 1418; // ordered transition intent and held game reliables
+const int BUILD_NUMBER_SAVE_VERSION_WORLD_STORE = 1419; // P2.4: counted decls and WSTO
+const int BUILD_NUMBER_SAVE_VERSION_SNAP_MAP_REMOVED = 1421; // P2.4: absolute removed map-ordinal objects
+const int BUILD_NUMBER_SAVE_VERSION_CORPSE = 1422; // P2.4: static corpse class, save and pose snapshot
+const int BUILD_NUMBER_SAVE_VERSION_DIRECTOR = 1420; // P2.4: script director events
+const int BUILD_NUMBER_SAVE_VERSION_DUNGEON_RECORD = 1423; // DREC v2 and multiple records
+const int BUILD_NUMBER_SAVE_VERSION_DUNGEON_PENDING = 1423; // bounded pending effects
+const int BUILD_NUMBER_SAVE_VERSION_DUNGEON_RECIPE = 1423; // load recipe, world digests, prefetch reliable
+const int BUILD_NUMBER_SAVE_VERSION_MAP_RECORD_NODE = 1424; // MREC v2 separates repeated map-template nodes
+const int BUILD_NUMBER_SAVE_VERSION_RECORD_BIND = 1425; // carried-created binding identity aspect
+const int BUILD_NUMBER_SAVE_VERSION_CORPSE_POLICY = 1426; // corpse per-entity protected/reset flags
+const int BUILD_NUMBER = BUILD_NUMBER_SAVE_VERSION_CORPSE_POLICY;
 const int BUILD_NUMBER_MINOR = 0;

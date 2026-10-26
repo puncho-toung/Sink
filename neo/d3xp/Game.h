@@ -210,6 +210,9 @@ struct mapGameStats_t
 	int entityHighWater, spawnStaticsSkipped;
 	int64 entityRefused, aasCacheBytes, aasCacheEvictions, aasTravelSaturated;
 	int budgetLive[4], budgetEvicted[4], budgetRefused[4];
+	int recordMaps, recordEntries, recordCreated, recordBytes, recordDropped, corpseLive, corpseEvicted;
+	unsigned int recordCommitUs, recordApplyUs;
+	unsigned int dungeonTransitions, dungeonRefused, dungeonInhibited, dungeonPrefetches;
 };
 
 // The last tic's record for the com_showFPS 3 window, the aistats: line and the CSV (§2.5). POD on
@@ -239,7 +242,9 @@ struct aiHudStats_t
 	X( CONTENT_DIGEST_CLASSES,		"classes" )			/* idClass type names in typeNum order: snapshot entities cross as a typeNum */ \
 	X( CONTENT_DIGEST_MAP_GEOMETRY,	"mapGeometry" )		/* idMapFile::GetGeometryCRC, the value the .cm and .aas files are validated against */ \
 	X( CONTENT_DIGEST_MAP_ENTITIES,	"map entities" )	/* idMapFile::GetEntitiesCRC: every map entity's key/values, _extra_ents.map merged */ \
-	X( CONTENT_DIGEST_SCRIPT_IMAGE,	"script image" )	/* idProgram::CalculateChecksum: the compiled program, whatever compiled it (a console script included) */
+	X( CONTENT_DIGEST_SCRIPT_IMAGE,	"script image" )	/* idProgram::CalculateChecksum: the compiled program, whatever compiled it (a console script included) */ \
+	X( CONTENT_DIGEST_WORLD, "world" ) \
+	X( CONTENT_DIGEST_RENDER_WORLD, "render world" )
 
 // the rows of one content layer (idFileSystem::GetNumLayers), so a refusal names the layer too
 #define LAYER_DIGEST_LIST( X ) \
@@ -306,6 +311,10 @@ public:
 
 	// common calls this before moving the single player game to a new level.
 	virtual const idDict& 		GetPersistentPlayerInfo( int clientNum ) = 0;
+	virtual int GetPlayerOrigins( idVec3* origins, int maxOrigins ) const
+	{
+		return 0;
+	}
 
 	// common calls this right before a new level is loaded.
 	virtual void				SetPersistentPlayerInfo( int clientNum, const idDict& playerInfo ) = 0;
@@ -364,6 +373,22 @@ public:
 	// the loaded map. The session calls it once a map load has finished: on a joiner to send them, on the host to compare
 	// them
 	virtual void				GetContentDigests( contentDigests_t& digests ) const = 0;
+	virtual void ClearMapTransition()
+	{
+	}
+	virtual bool IsMapTransitionActive() const
+	{
+		return false;
+	}
+	virtual void BroadcastMapTransition( unsigned short sequence, const char* map )
+	{
+	}
+	virtual bool ReceiveMapTransition( int type, const idBitMsg& msg )
+	{
+		return false;
+	}
+	virtual int WriteMatchGameData( const char* mapName, byte* out, int max ) = 0;
+	virtual void SetMatchGameData( const byte* data, int size ) = 0;
 	//puncho end
 
 	// Used to manage divergent time-lines
@@ -558,7 +583,7 @@ extern idGameEdit* 				gameEdit;
 ===============================================================================
 */
 
-const int GAME_API_VERSION		= 10; // P2 stage 0: GetMapStats, LoadPhase, GetWorldTime/SetWorldTimeBase
+const int GAME_API_VERSION		= 11; // P2: transition and dungeon recipe interfaces
 
 typedef struct
 {
