@@ -648,22 +648,6 @@ void idCommonLocal::LoadLoadingGui( const char* mapName, bool& hellMap )
 			}
 
 			const idMatchParameters& matchParameters = session->GetActingGameStateLobbyBase().GetMatchParms();
-	if( !matchParameters.gameDataValid )
-	{
-		Warning( "map load refused: invalid match game data" );
-		LeaveGame();
-		return;
-	}
-	if( IsClient() )
-	{
-		game->SetMatchGameData( matchParameters.gameData, matchParameters.gameDataSize );
-		const int delayUntil = Sys_Milliseconds() + com_testLoadDelayMs.GetInteger();
-		while( Sys_Milliseconds() < delayUntil )
-		{
-			session->Pump();
-			Sys_Sleep( 1 );
-		}
-	}
 
 			if( matchParameters.gameMode == GAME_MODE_SINGLEPLAYER )
 			{
@@ -747,6 +731,13 @@ void idCommonLocal::ExecuteMapChange()
 	const int cachedLoadingID = session->GetLoadingID();
 
 	const idMatchParameters& matchParameters = session->GetActingGameStateLobbyBase().GetMatchParms();
+
+	if( !matchParameters.gameDataValid )
+	{
+		Warning( "map load refused: invalid match game data" );
+		LeaveGame();
+		return;
+	}
 
 	if( matchParameters.numSlots <= 0 )
 	{
@@ -835,6 +826,18 @@ void idCommonLocal::ExecuteMapChange()
 	// shut down the existing game if it is running
 	LoadPhase( LOAD_UNLOAD );
 	UnloadMap();
+	// Recipe decoding is a load prerequisite, independent of loading-screen metadata.
+
+	if( IsClient() )
+	{
+		game->SetMatchGameData( matchParameters.gameData, matchParameters.gameDataSize );
+		const int delayUntil = Sys_Milliseconds() + com_testLoadDelayMs.GetInteger();
+		while( Sys_Milliseconds() < delayUntil )
+		{
+			session->Pump();
+			Sys_Sleep( 1 );
+		}
+	}
 	int ms = Sys_Milliseconds() - sm;
 	common->Printf( "%6d msec to unload map\n", ms );
 
@@ -2321,29 +2324,40 @@ void idCommonLocal::PumpMapTransition()
 	else if( transitionState == 2 && transitionLoaded && lobby.TransitionArrivalReady( elapsed >= net_transitionArriveMs.GetInteger() ) )
 	{
 		transitionTimelineNetUs += ( uint64 )elapsed * 1000;
-		transitionState = 0;
 		mapSpawnData.gameDriven = true;
 		StartWipe( "wipe2Material" );
+		// StartWipe captures a Draw: keep the arrival hold until its new deadline exists.
+		transitionState = 0;
 		mapSpawnData.gameDriven = false;
 		Printf( "transition_release seq=%u\n", transitionSequence );
 	}
 	else if( transitionState == 3 )
 	{
-		if( transitionLoaded && session->GetState() == idSession::INGAME && transitionArrivalSnapshotTime < 0 )
+		const int hostPeer = lobby.PeerIndexForHost();
+		if( transitionLoaded && ( hostPeer < 0 || lobby.IsPeerDisconnected( hostPeer ) ) )
 		{
-			transitionArrivalSnapshotTime = game->GetSSEndTime();
+			Warning( "transition host disconnected or refused load seq=%u", transitionLastAccepted );
+			LeaveGame();
+			return;
 		}
-		if( transitionLoaded && session->GetState() == idSession::INGAME && game->GetSSEndTime() > transitionArrivalSnapshotTime )
+		// The game's interpolation endpoints can still belong to the previous map.
+		// Common's snapshot state is reset per load; latch only a processed new-map snapshot.
+		if( transitionLoaded && session->GetState() == idSession::INGAME && readSnapshotIndex > 0 && transitionArrivalSnapshotTime < 0 )
 		{
-			transitionState = 0;
+			transitionArrivalSnapshotTime = snapCurrent.serverTime;
+			Printf( "transition_client_baseline seq=%u snapshot_ms=%d\n", transitionLastAccepted, transitionArrivalSnapshotTime );
+		}
+		if( transitionLoaded && session->GetState() == idSession::INGAME && transitionArrivalSnapshotTime >= 0 && snapCurrent.serverTime > transitionArrivalSnapshotTime )
+		{
 			mapSpawnData.gameDriven = true;
 			StartWipe( "wipe2Material" );
+			transitionState = 0;
 			mapSpawnData.gameDriven = false;
 			Printf( "transition_client_arrived seq=%u\n", transitionLastAccepted );
 		}
 		else if( elapsed >= ( transitionLoaded ? net_transitionArriveMs.GetInteger() : net_transitionWaitMs.GetInteger() ) )
 		{
-			Warning( "transition client wait timeout seq=%u", transitionLastAccepted );
+			Warning( "transition client wait timeout seq=%u loaded=%d session=%d snapshots=%d/%d snapshot_ms=%d baseline_ms=%d", transitionLastAccepted, transitionLoaded, ( int )session->GetState(), readSnapshotIndex, writeSnapshotIndex, snapCurrent.serverTime, transitionArrivalSnapshotTime );
 			LeaveGame();
 		}
 	}

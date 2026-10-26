@@ -115,6 +115,11 @@ void FormatMapRows( char rows[6][256], bool high[6] )
 	idStr::snPrintf( rows[3], 256, "MAP game entities %d/16384 active %d nonrep %d/256 cm %d/2048 statics %d/%d", g.entities, g.activeEntities, g.nonReplicated, g.cmModels, g.skipStatics, cap );
 	idStr::snPrintf( rows[4], 256, "MAP clip/tic trans %u rot %u motion %u cont %u contacts %u gathers %u cand %u rmt %u us %u", g.clipTrans, g.clipRot, g.clipMotion, g.clipContents, g.clipContacts, g.clipGathers, g.clipCandidates, g.clipRmt, g.clipUs );
 	idStr::snPrintf( rows[5], 256, "MAP alloc game %u/tic main %u/frame ent_hw %i refused %lld aasCache %lld KB evictions %lld saturated %lld", g.allocGameTic, mapMainAllocations, g.entityHighWater, ( long long )g.entityRefused, ( long long )( g.aasCacheBytes / 1024 ), ( long long )g.aasCacheEvictions, ( long long )g.aasTravelSaturated );
+	if( g.recordMaps > 0 )
+	{
+		const int used = idStr::Length( rows[3] );
+		idStr::snPrintf( rows[3] + used, 256 - used, " rec %d/%d/%d %dKB drop%d commit/apply %.2f/%.2fms corpse %d/%d", g.recordMaps, g.recordEntries, g.recordCreated, g.recordBytes / 1024, g.recordDropped, g.recordCommitUs * 0.001, g.recordApplyUs * 0.001, g.corpseLive, g.corpseEvicted );
+	}
 	high[0] = r.staticVertexBytes * 4 >= r.staticVertexCapacity * 3 || r.staticIndexBytes * 4 >= r.staticIndexCapacity * 3 || r.frameBytes >= 48 * 1024 * 1024;
 	high[1] = ( r.entityCapacity > 0 && r.entityDefs * 4 >= r.entityCapacity * 3 ) || ( r.lightCapacity > 0 && r.lightDefs * 4 >= r.lightCapacity * 3 ) || ( r.probeCapacity > 0 && r.envprobeDefs * 4 >= r.probeCapacity * 3 );
 	high[2] = r.portals >= 15600;
@@ -157,7 +162,7 @@ void idCommonLocal::LogMapRows( int tics )
 				com_mapRowsLog.SetString( "" ); return;
 			}
 			idStr::Copynz( mapRowsName, name, sizeof( mapRowsName ) );
-			mapRowsFile->Printf( "frame,ms,tics,usFrameBusy,usFrameIdle,usGameRF,usGame,usRF,usRB,usGPU,usMOC,views,draws,tris,shadowViews,shadowDraws,shadowTris,atlasPct,viewEntities,shadowEntities,viewLights,staticVtxKB,staticIdxKB,frameKB,entityDefs,lightDefs,envprobeDefs,interactionKB,areas,portals,pvsKB,lightGridKB,entities,activeEntities,nonReplicated,cmModels,clipTrans,clipRot,clipMotion,clipContents,clipContacts,clipGathers,clipCandidates,clipUs,allocGameTic,allocMainFrame,probesConsidered,drawSurfs,drawSurfsClamped,atlasFailed,lightRefsWalked,contactedCapHits,skipStatics,usFindView,usAddLights,cullDistEntities,cullPixelEntities,cullLights,fadedLights,cullShadowSkips,lightRefsWalkedMax,gatherAreas,gatherMismatch,lodEntities1,lodEntities2,lodEntities3,lodTrisSaved,lodSwitches,lodThrash,lodCacheBuilds,mocOccluderTris,mocSkippedSize,mocSkippedBudget,mocSpotTests,mocSpotCulls,viewEntsUnder4px,viewEntsUnder16px,viewEntsBeyond8k,ent_highWater,ent_refused,spawnStaticsSkipped,aasCacheBytes,aasCacheEvictions,aasTravelSaturated,bud_debris_live,bud_debris_evicted,bud_debris_refused,bud_fx_live,bud_fx_evicted,bud_fx_refused,bud_item_live,bud_item_evicted,bud_item_refused,bud_gib_live,bud_gib_evicted,bud_gib_refused,itab_mode,itab_entries,itab_capacity,itab_maxProbe,itab_mismatches,itab_lateInserts,gai_ms\n" );
+			mapRowsFile->Printf( "frame,ms,tics,usFrameBusy,usFrameIdle,usGameRF,usGame,usRF,usRB,usGPU,usMOC,views,draws,tris,shadowViews,shadowDraws,shadowTris,atlasPct,viewEntities,shadowEntities,viewLights,staticVtxKB,staticIdxKB,frameKB,entityDefs,lightDefs,envprobeDefs,interactionKB,areas,portals,pvsKB,lightGridKB,entities,activeEntities,nonReplicated,cmModels,clipTrans,clipRot,clipMotion,clipContents,clipContacts,clipGathers,clipCandidates,clipUs,allocGameTic,allocMainFrame,probesConsidered,drawSurfs,drawSurfsClamped,atlasFailed,lightRefsWalked,contactedCapHits,skipStatics,usFindView,usAddLights,cullDistEntities,cullPixelEntities,cullLights,fadedLights,cullShadowSkips,lightRefsWalkedMax,gatherAreas,gatherMismatch,lodEntities1,lodEntities2,lodEntities3,lodTrisSaved,lodSwitches,lodThrash,lodCacheBuilds,mocOccluderTris,mocSkippedSize,mocSkippedBudget,mocSpotTests,mocSpotCulls,viewEntsUnder4px,viewEntsUnder16px,viewEntsBeyond8k,ent_highWater,ent_refused,spawnStaticsSkipped,aasCacheBytes,aasCacheEvictions,aasTravelSaturated,bud_debris_live,bud_debris_evicted,bud_debris_refused,bud_fx_live,bud_fx_evicted,bud_fx_refused,bud_item_live,bud_item_evicted,bud_item_refused,bud_gib_live,bud_gib_evicted,bud_gib_refused,itab_mode,itab_entries,itab_capacity,itab_maxProbe,itab_mismatches,itab_lateInserts,gai_ms,rec_maps,rec_entries,rec_created,rec_bytes,rec_dropped,rec_commitUs,rec_applyUs,corpse_live,corpse_evicted,dg_transitions,dg_refused,dg_inhibited,dg_prefetches\n" );
 			mapRowsFlushTime = Sys_Milliseconds();
 			Printf( "MAP CSV opened: %s\n", path );
 		}
@@ -240,7 +245,10 @@ void idCommonLocal::LogMapRows( int tics )
 		r.interactionMaxProbe,
 		r.interactionMismatches,
 		r.interactionLateInserts,
-		r.interactionGenerateMS
+		r.interactionGenerateMS,
+		g.recordMaps, g.recordEntries, g.recordCreated, g.recordBytes, g.recordDropped,
+		g.recordCommitUs, g.recordApplyUs, g.corpseLive, g.corpseEvicted,
+		g.dungeonTransitions, g.dungeonRefused, g.dungeonInhibited, g.dungeonPrefetches
 	};
 	char row[2048];
 	int length = 0;
@@ -571,6 +579,10 @@ void idCommonLocal::Draw()
 	else if( game && game->Shell_IsActive() )
 	{
 		bool gameDraw = game->Draw( game->GetLocalClientNum() );
+		if( gameDraw )
+		{
+			RecordTransitionDraw();
+		}
 		if( !gameDraw )
 		{
 			renderSystem->SetColor( colorBlack );
@@ -598,6 +610,10 @@ void idCommonLocal::Draw()
 			if( game )
 			{
 				gameDraw = game->Draw( Game()->GetLocalClientNum() );
+				if( gameDraw )
+				{
+					RecordTransitionDraw();
+				}
 			}
 			int end = Sys_Milliseconds();
 			time_gameDraw += ( end - start );	// note time used for com_speeds
@@ -707,17 +723,28 @@ void idCommonLocal::ProcessGameReturn( const gameReturn_t& ret )
 		idCmdArgs args;
 
 		args.TokenizeString( ret.sessionCommand, false );
+		const bool transitionCommand = !idStr::Icmp( args.Argv( 0 ), "map" ) || !idStr::Icmp( args.Argv( 0 ), "transition" );
+		if( transitionCommand && IsMultiplayer() && session->GetActingGameStateLobbyBase().HasActivePeers() && cvarSystem->GetCVarBool( "net_coopTransitions" ) )
+		{
+			if( !BeginCoopTransition( args.Argv( 1 ) ) )
+			{
+				Warning( "co-op transition request refused" );
+			}
+			return;
+		}
+
 		if( cvarSystem->GetCVarBool( "net_refuseMapWithPeers" ) && IsMultiplayer() &&
 			session->GetActivePlatformLobbyBase().HasActivePeers() &&
-			( !idStr::Icmp( args.Argv( 0 ), "map" ) || !idStr::Icmp( args.Argv( 0 ), "devmap" ) ) )
+			( !idStr::Icmp( args.Argv( 0 ), "map" ) || !idStr::Icmp( args.Argv( 0 ), "transition" ) || !idStr::Icmp( args.Argv( 0 ), "devmap" ) ) )
 		{
 			Warning( "map change to '%s' refused: peers in the session (co-op transitions are P2.3.5)", args.Argv( 1 ) );
 			return;
 		}
 
 
-		if( !idStr::Icmp( args.Argv( 0 ), "map" ) )
+		if( !idStr::Icmp( args.Argv( 0 ), "map" ) || !idStr::Icmp( args.Argv( 0 ), "transition" ) )
 		{
+			BeginTransitionTimeline( args.Argv( 0 ) );
 			MoveToNewMap( args.Argv( 1 ), false );
 		}
 		else if( !idStr::Icmp( args.Argv( 0 ), "devmap" ) )
@@ -1024,6 +1051,14 @@ void idCommonLocal::Frame()
 		session->UpdateSignInManager();
 		session->Pump();
 		session->ProcessSnapAckQueue();
+		const bool hadMapBeforeTransitionPump = mapSpawned;
+		PumpMapTransition();
+		if( hadMapBeforeTransitionPump && !mapSpawned )
+		{
+			// A timeout can LeaveGame here. Its UpdateScreen advances frame buffers,
+			// invalidating renderCommands and the tic count captured earlier this frame.
+			return;
+		}
 
 		if( session->GetState() == idSession::LOADING )
 		{
@@ -1032,10 +1067,13 @@ void idCommonLocal::Frame()
 			mapSpawnData.savegameFile = NULL;
 			mapSpawnData.persistentPlayerInfo.Clear();
 			mapSpawnData.worldTimeBase = 0;
-			mapSpawnData.gameDriven = false;
+			if( transitionState == 0 )
+			{
+				mapSpawnData.gameDriven = false;
+			}
 			return;
 		}
-		else if( session->GetState() != idSession::INGAME && mapSpawned )
+		else if( session->GetState() != idSession::INGAME && mapSpawned && transitionState == 0 )
 		{
 			// If the game is running, but the session reports we are not in a game, disconnect
 			// This happens when a server disconnects us or we sign out
@@ -1052,6 +1090,11 @@ void idCommonLocal::Frame()
 		}
 
 		ExecuteReliableMessages();
+		if( transitionState != 0 )
+		{
+			numGameFrames = 0;
+			gameTimeResidual = 0;
+		}
 
 		// send frame and mouse events to active guis
 		GuiFrameEvents();
@@ -1143,7 +1186,12 @@ void idCommonLocal::Frame()
 		// This may block if the game is taking longer than the render back end
 		gameThread.WaitForThread();
 		DrainPrintRelay();
+		FlushTransitionTimeline();
 		Prefetch_Pump();
+		if( mapSpawned )
+		{
+			renderWorld->FinishInteractionSlice();
+		}
 
 		// SRS - Use finishSyncTime_EndFrame to record timing just after gameThread.WaitForThread()
 		frameTiming.finishSyncTime_EndFrame = Sys_Microseconds();
@@ -1154,7 +1202,10 @@ void idCommonLocal::Frame()
 
 		// Now that we have an updated game frame, we can send out new snapshots to our clients
 		session->Pump(); // Pump to get updated usercmds to relay
-		SendSnapshots();
+		if( transitionState != 1 && transitionState != 3 )
+		{
+			SendSnapshots();
+		}
 
 		// Render the sound system using the latest commands from the game thread
 		if( pauseGame )

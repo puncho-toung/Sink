@@ -4196,6 +4196,40 @@ static void Cmd_ListTransition_f( const idCmdArgs& args )
 	gameLocal.ListTransition();
 }
 
+static void Cmd_TestPartyPlacement_f( const idCmdArgs& args )
+{
+	if( common->IsClient() || !gameLocal.CheatsOk() || args.Argc() < 2 || args.Argc() > 3 )
+	{
+		gameLocal.Printf( "usage: testPartyPlacement <departure landmark> [farPeer 0/1] (server only)\n" );
+		return;
+	}
+	const landmark_t* landmark = worldStore.FindLandmark( args.Argv( 1 ) );
+	if( landmark == NULL )
+	{
+		gameLocal.Printf( "testPartyPlacement: missing landmark\n" );
+		return;
+	}
+	const bool farPeer = args.Argc() == 3 && atoi( args.Argv( 2 ) ) != 0;
+	int count = 0;
+	for( int i = 0; i < MAX_CLIENTS; i++ )
+	{
+		if( gameLocal.entities[i] == NULL || !gameLocal.entities[i]->IsType( idPlayer::Type ) )
+		{
+			continue;
+		}
+		idPlayer* player = static_cast<idPlayer*>( gameLocal.entities[i] );
+		idVec3 origin = landmark->origin + idVec3( -40.0f, count == 0 ? -48.0f : 48.0f, -35.5f );
+		if( farPeer && count > 0 )
+		{
+			origin.x = 0.0f;
+		}
+		player->Teleport( origin, ang_zero, NULL );
+		player->GetPhysics()->SetLinearVelocity( idVec3( 8.0f, 0.0f, 0.0f ) );
+		count++;
+	}
+	gameLocal.Printf( "testPartyPlacement players=%d farPeer=%d\n", count, farPeer );
+}
+
 static void Cmd_TransitionTest_f( const idCmdArgs& args )
 {
 	if( args.Argc() < 3 || common->IsClient() )
@@ -4219,6 +4253,7 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "mapGraphCheck", MapGraphCheck_f, CMD_FL_GAME, "check map graph authoring kit and seeded caps" );
 	cmdSystem->AddCommand( "recordTest", Cmd_RecordTest_f, CMD_FL_GAME | CMD_FL_CHEAT, "capture/compare record functional fixture; pose moves one test prop" );
 	cmdSystem->AddCommand( "listTransition", Cmd_ListTransition_f, CMD_FL_GAME, "list bounded transition state" );
+	cmdSystem->AddCommand( "testPartyPlacement", Cmd_TestPartyPlacement_f, CMD_FL_GAME | CMD_FL_CHEAT, "place a test party near a landmark, optionally leave peers far away" );
 	cmdSystem->AddCommand( "transitionTest", Cmd_TransitionTest_f, CMD_FL_GAME | CMD_FL_CHEAT, "request a landmark transition" );
 	cmdSystem->AddCommand( "listMapRecords", Cmd_ListMapRecords_f, CMD_FL_GAME, "list persistent map records" );
 	cmdSystem->AddCommand( "dumpMapState", Cmd_DumpMapState_f, CMD_FL_GAME, "write current authored state CSV" );

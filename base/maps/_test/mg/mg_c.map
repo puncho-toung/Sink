@@ -160,6 +160,24 @@ Version 2
 }
 // entity 11
 {
+"classname" "info_landing"
+"name" "back_landing_0"
+"landmark" "back"
+"index" "0"
+"origin" "-400 160 32"
+"dmapOnly" "1"
+}
+// entity 12
+{
+"classname" "info_landing"
+"name" "back_landing_1"
+"landmark" "back"
+"index" "1"
+"origin" "-400 240 32"
+"dmapOnly" "1"
+}
+// entity 13
+{
 "classname" "trigger_changelevel"
 "name" "back_trigger"
 "landmark" "back"
@@ -176,7 +194,7 @@ Version 2
  }
 }
 }
-// entity 12
+// entity 14
 {
 "classname" "trigger_transition"
 "name" "back_carry"
@@ -194,7 +212,7 @@ Version 2
  }
 }
 }
-// entity 13
+// entity 15
 {
 "classname" "info_landmark"
 "name" "forward"
@@ -217,7 +235,25 @@ Version 2
  }
 }
 }
-// entity 14
+// entity 16
+{
+"classname" "info_landing"
+"name" "forward_landing_0"
+"landmark" "forward"
+"index" "0"
+"origin" "400 160 32"
+"dmapOnly" "1"
+}
+// entity 17
+{
+"classname" "info_landing"
+"name" "forward_landing_1"
+"landmark" "forward"
+"index" "1"
+"origin" "400 240 32"
+"dmapOnly" "1"
+}
+// entity 18
 {
 "classname" "trigger_changelevel"
 "name" "forward_trigger"
@@ -235,7 +271,7 @@ Version 2
  }
 }
 }
-// entity 15
+// entity 19
 {
 "classname" "trigger_transition"
 "name" "forward_carry"
@@ -253,7 +289,7 @@ Version 2
  }
 }
 }
-// entity 16
+// entity 20
 {
 "classname" "moveable_cannister"
 "name" "carry_child"
@@ -262,21 +298,21 @@ Version 2
 "bindOrientated" "1"
 "transition" "1"
 }
-// entity 17
+// entity 21
 {
 "classname" "moveable_cannister"
 "name" "carry_forward"
 "origin" "350 0 128"
 "transition" "1"
 }
-// entity 18
+// entity 22
 {
 "classname" "moveable_cannister"
 "name" "carry_back"
 "origin" "-350 0 128"
 "transition" "1"
 }
-// entity 19
+// entity 23
 {
 "classname" "func_door"
 "name" "gate"
@@ -297,14 +333,14 @@ Version 2
  }
 }
 }
-// entity 20
+// entity 24
 {
 "classname" "target_levelTrigger"
 "name" "remote_effect"
 "levelName" "maps/_test/mg/mg_b"
 "triggerName" "gate"
 }
-// entity 21
+// entity 25
 {
 "classname" "trigger_once"
 "name" "lever"
@@ -322,28 +358,28 @@ Version 2
  }
 }
 }
-// entity 22
+// entity 26
 {
 "classname" "moveable_cannister"
 "name" "choice_a"
 "origin" "200 -100 128"
 "dungeon_variant" "crates:a"
 }
-// entity 23
+// entity 27
 {
 "classname" "moveable_cannister"
 "name" "choice_b"
 "origin" "240 -100 128"
 "dungeon_variant" "crates:b"
 }
-// entity 24
+// entity 28
 {
 "classname" "moveable_cannister"
 "name" "challenge_reward"
 "origin" "280 -100 128"
 "dungeon_if" "challenge_done"
 }
-// entity 25
+// entity 29
 {
 "classname" "monster_zombie_maint"
 "name" "monster_0"
@@ -353,7 +389,7 @@ Version 2
 "persist_nocap" "0"
 "persist_noreset" "0"
 }
-// entity 26
+// entity 30
 {
 "classname" "monster_zombie_morgue"
 "name" "monster_1"
@@ -363,7 +399,7 @@ Version 2
 "persist_nocap" "1"
 "persist_noreset" "1"
 }
-// entity 27
+// entity 31
 {
 "classname" "mg_elite"
 "name" "monster_2"

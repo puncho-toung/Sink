@@ -528,6 +528,7 @@ bool idGameLocal::SelectTransitionSpawn( idPlayer* player, idVec3& origin, idAng
 			origin = mapFile->GetEntity( best )->epairs.GetVector( "origin" );
 			if( TransitionPositionClear( record, origin ) )
 			{
+				Printf( "transition_landing slot=%d index=%d origin=%.9g,%.9g,%.9g\n", player->entityNumber, bestIndex, origin.x, origin.y, origin.z );
 				clear = true; break;
 			}
 		}
