@@ -935,6 +935,15 @@ void R_RenderView( viewDef_t* parms )
 
 	tr.viewDef = parms;
 
+	// Parse once before entity jobs; every worker reads the same immutable thresholds.
+	if( sscanf( r_modelLodPixels.GetString(), "%f %f %f", &parms->modelLodPixels[0], &parms->modelLodPixels[1], &parms->modelLodPixels[2] ) != 3 )
+	{
+		parms->modelLodPixels[0] = 256.0f;
+		parms->modelLodPixels[1] = 128.0f;
+		parms->modelLodPixels[2] = 64.0f;
+	}
+	parms->modelLodScale = Max( 0.0f, r_modelLodScale.GetFloat() );
+
 	// every view, subviews included, measures its relative quantities from its own eye; a subview
 	// is a copy of its parent, so these fields are set here and never inherited
 	tr.viewDef->renderOrigin = r_cameraRelative.GetInteger() ? idVec3d( parms->renderView.vieworg ) : idVec3d();

@@ -598,6 +598,8 @@ struct lightGatherArea_t
 struct viewDef_t
 {
 	lightGatherArea_t* lightGatherAreas;
+	float				modelLodPixels[3];
+	float				modelLodScale;
 	// specified in the call to DrawScene()
 	renderView_t		renderView;
 

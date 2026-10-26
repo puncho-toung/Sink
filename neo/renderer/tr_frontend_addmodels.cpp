@@ -471,12 +471,7 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 	idRenderModel* source = entityDef->parms.hModel;
 	if( source->NumLods() > 0 && !renderEntity->weaponDepthHack && renderEntity->modelDepthHack == 0.0f )
 	{
-		float thresholds[3] = { 256.0f, 128.0f, 64.0f };
-		if( sscanf( r_modelLodPixels.GetString(), "%f %f %f", &thresholds[0], &thresholds[1], &thresholds[2] ) != 3 )
-		{
-			thresholds[0] = 256.0f; thresholds[1] = 128.0f; thresholds[2] = 64.0f;
-		}
-		const float scale = ( renderEntity->lodScale > 0.0f ? renderEntity->lodScale : 1.0f ) * Max( 0.0f, r_modelLodScale.GetFloat() );
+		const float scale = ( renderEntity->lodScale > 0.0f ? renderEntity->lodScale : 1.0f ) * viewDef->modelLodScale;
 		const idVec3 size = entityDef->globalReferenceBounds[1] - entityDef->globalReferenceBounds[0];
 		float projectedHeight = 0.0f;
 		for( int axis = 0; axis < 3; axis++ )
@@ -488,7 +483,7 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 		for( int n = 0; n < source->NumLods(); n++ )
 		{
 			const float hysteresis = viewDef->isSubview ? 1.0f : ( entityDef->lodLevel > n ? 1.1f : 0.9f );
-			if( pixels < thresholds[n] * scale * hysteresis )
+			if( pixels < viewDef->modelLodPixels[n] * scale * hysteresis )
 			{
 				lodLevel = n + 1;
 			}
