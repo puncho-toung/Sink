@@ -75,6 +75,7 @@ viewLight_t* R_SetLightDefViewLight( idRenderLightLocal* light )
 	// add to the view light chain
 	viewLight_t* vLight = ( viewLight_t* )R_ClearedFrameAlloc( sizeof( *vLight ), FRAME_ALLOC_VIEW_LIGHT );
 	vLight->lightDef = light;
+	vLight->cullFade = 1.0f;
 
 	// the scissorRect will be expanded as the light bounds is accepted into visible portal chains
 	// and the scissor will be reduced in R_AddSingleLight based on the screen space projection
@@ -212,6 +213,78 @@ bool idRenderWorldLocal::CullEntityByPortals( const idRenderEntityLocal* entity,
 	return false;
 }
 
+float R_ProjectedBoundsPixels( const idBounds& bounds, const viewDef_t* view )
+{
+	if( bounds.ContainsPoint( view->renderView.vieworg ) )
+	{
+		return idMath::INFINITUM;
+	}
+	const float distance = ( bounds.GetCenter() - view->renderView.vieworg ).Length();
+	const float diameter = ( bounds[1] - bounds[0] ).Length();
+	const float denominator = 2.0f * distance * idMath::Tan( DEG2RAD( view->renderView.fov_y * 0.5f ) );
+	return denominator > 0.0f ? diameter * view->viewport.GetHeight() / denominator : idMath::INFINITUM;
+}
+
+float R_VisibilityFade( const idBounds& bounds, float maxDistance, float minPixels, const viewDef_t* view, int& reason )
+{
+	reason = 0;
+	if( !r_distanceCull.GetBool() )
+	{
+		return 1.0f;
+	}
+	float fade = 1.0f;
+	// The slider is the full-detail radius, not the far edge of its fade band.
+	const bool defaultDistance = maxDistance <= 0.0f;
+	if( defaultDistance )
+	{
+		maxDistance = r_viewDistance.GetFloat();
+	}
+	maxDistance *= Max( 0.0f, r_cullDistanceScale.GetFloat() );
+	minPixels *= Max( 0.0f, r_cullPixelsScale.GetFloat() );
+	if( maxDistance > 0.0f )
+	{
+		float distanceSqr = 0.0f;
+		for( int axis = 0; axis < 3; axis++ )
+		{
+			const float nearest = idMath::ClampFloat( bounds[0][axis], bounds[1][axis], view->renderView.vieworg[axis] );
+			const float delta = nearest - view->renderView.vieworg[axis];
+			distanceSqr += delta * delta;
+		}
+		const float distance = idMath::Sqrt( distanceSqr );
+		const float band = maxDistance * idMath::ClampFloat( 0.001f, 1.0f, r_cullFadeFraction.GetFloat() );
+		const float farDistance = defaultDistance ? maxDistance + band : maxDistance;
+		if( distance > farDistance )
+		{
+			reason = 1;
+			return 0.0f;
+		}
+		fade *= idMath::ClampFloat( 0.0f, 1.0f, ( farDistance - distance ) / band );
+	}
+	if( minPixels > 0.0f )
+	{
+		const float pixels = R_ProjectedBoundsPixels( bounds, view );
+		if( pixels < minPixels )
+		{
+			reason = 2;
+			return 0.0f;
+		}
+		fade *= idMath::ClampFloat( 0.0f, 1.0f, ( pixels - minPixels ) / ( 0.5f * minPixels ) );
+	}
+	return fade;
+}
+
+bool R_CullEntityDistance( const idRenderEntityLocal* entity, const viewDef_t* view, int& reason )
+{
+	reason = 0;
+	if( !r_distanceCull.GetBool() || entity->parms.weaponDepthHack || entity->parms.modelDepthHack != 0.0f ||
+		( entity->parms.hModel != NULL && entity->parms.hModel->IsStaticWorldModel() ) )
+	{
+		return false;
+	}
+	R_VisibilityFade( entity->globalReferenceBounds, entity->parms.maxVisDist, entity->parms.minVisPixels, view, reason );
+	return reason != 0;
+}
+
 /*
 ===================
 AddAreaViewEntities
@@ -259,6 +332,23 @@ void idRenderWorldLocal::AddAreaViewEntities( int areaNum, const portalStack_t* 
 			continue;
 		}
 
+		int cullReason;
+		if( R_CullEntityDistance( entity, tr.viewDef, cullReason ) )
+		{
+			if( cullReason == 1 )
+			{
+				tr.pc.c_cullDistEntities++;
+			}
+			else
+			{
+				tr.pc.c_cullPixelEntities++;
+			}
+			if( r_showDistanceCull.GetInteger() >= 2 )
+			{
+				DebugBounds( colorRed, entity->globalReferenceBounds );
+			}
+			continue;
+		}
 		viewEntity_t* vEnt = R_SetEntityDefViewEntity( entity );
 
 		// possibly expand the scissor rect
@@ -394,7 +484,24 @@ void idRenderWorldLocal::AddAreaViewLights( int areaNum, const portalStack_t* ps
 			continue;
 		}
 
+		float fade = 1.0f;
+		if( !light->parms.parallel && !light->lightShader->IsFogLight() && !light->lightShader->IsBlendLight() )
+		{
+			int reason;
+			fade = R_VisibilityFade( light->globalLightBounds, light->parms.maxVisDist, light->parms.minVisPixels, tr.viewDef, reason );
+			if( fade <= 0.0f )
+			{
+				tr.pc.c_cullLights++;
+				continue;
+			}
+		}
+		const bool firstReference = light->viewCount != tr.viewCount;
 		viewLight_t* vLight = R_SetLightDefViewLight( light );
+		vLight->cullFade = fade;
+		if( firstReference && fade < 1.0f )
+		{
+			tr.pc.c_fadedLights++;
+		}
 
 		// expand the scissor rect
 		vLight->scissorRect.Union( ps->rect );

@@ -80,6 +80,8 @@ void R_ClearEntityDefDynamicModel( idRenderEntityLocal* def )
 		def->dynamicModel = NULL;
 	}
 	def->dynamicModelFrameCount = 0;
+	// Retain sibling storage through pose updates, exactly like cachedDynamicModel.
+	def->lodDynamicModelFrameCount = 0;
 }
 
 /*
@@ -381,7 +383,7 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 				if( vLight->entityInteractionState[entityIndex] == viewLight_t::INTERACTION_YES )
 				{
 					contactedLights[numContactedLights] = vLight;
-					staticInteractions[numContactedLights] = world->interactionTable[vLight->lightDef->index * world->interactionTableWidth + entityIndex];
+					staticInteractions[numContactedLights] = world->GetInteraction( vLight->lightDef->index, entityIndex );
 					if( ++numContactedLights == MAX_CONTACTED_LIGHTS )
 					{
 						vEntity->contactedCapHits = 1;
@@ -438,7 +440,7 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 				}
 			}
 			contactedLights[numContactedLights] = vLight;
-			staticInteractions[numContactedLights] = world->interactionTable[vLight->lightDef->index * world->interactionTableWidth + entityIndex];
+			staticInteractions[numContactedLights] = world->GetInteraction( vLight->lightDef->index, entityIndex );
 			if( ++numContactedLights == MAX_CONTACTED_LIGHTS )
 			{
 				vEntity->contactedCapHits = 1;
@@ -463,8 +465,92 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 		return;
 	}
 
+	// Rendering alone may use a sibling. R_EntityDefDynamicModel and every trace retain LOD0.
+	idRenderModel* baseGeometry = model;
+	int lodLevel = 0;
+	idRenderModel* source = entityDef->parms.hModel;
+	if( source->NumLods() > 0 && !renderEntity->weaponDepthHack && renderEntity->modelDepthHack == 0.0f )
+	{
+		float thresholds[3] = { 256.0f, 128.0f, 64.0f };
+		if( sscanf( r_modelLodPixels.GetString(), "%f %f %f", &thresholds[0], &thresholds[1], &thresholds[2] ) != 3 )
+		{
+			thresholds[0] = 256.0f; thresholds[1] = 128.0f; thresholds[2] = 64.0f;
+		}
+		const float scale = ( renderEntity->lodScale > 0.0f ? renderEntity->lodScale : 1.0f ) * Max( 0.0f, r_modelLodScale.GetFloat() );
+		const idVec3 size = entityDef->globalReferenceBounds[1] - entityDef->globalReferenceBounds[0];
+		float projectedHeight = 0.0f;
+		for( int axis = 0; axis < 3; axis++ )
+		{
+			projectedHeight += size[axis] * idMath::Fabs( viewDef->renderView.viewaxis[2][axis] );
+		}
+		const float diameter = size.Length();
+		const float pixels = diameter > 0.0f ? R_ProjectedBoundsPixels( entityDef->globalReferenceBounds, viewDef ) * projectedHeight / diameter : 0.0f;
+		for( int n = 0; n < source->NumLods(); n++ )
+		{
+			const float hysteresis = viewDef->isSubview ? 1.0f : ( entityDef->lodLevel > n ? 1.1f : 0.9f );
+			if( pixels < thresholds[n] * scale * hysteresis )
+			{
+				lodLevel = n + 1;
+			}
+		}
+		if( !viewDef->isSubview && lodLevel != entityDef->lodLevel )
+		{
+			vEntity->lodSwitches = 1;
+			vEntity->lodThrash = tr.frameCount - entityDef->lodSwitchFrame < 30;
+			entityDef->lodSwitchFrame = tr.frameCount;
+			entityDef->lodLevel = lodLevel;
+		}
+		if( lodLevel > 0 )
+		{
+			idRenderModel* sibling = source->Lod( lodLevel );
+			if( sibling->IsDynamicModel() != DM_STATIC )
+			{
+				if( entityDef->lodDynamicLevel != lodLevel )
+				{
+					delete entityDef->lodDynamicModel;
+					entityDef->lodDynamicModel = NULL;
+					entityDef->lodDynamicModelFrameCount = 0;
+					entityDef->lodDynamicLevel = lodLevel;
+				}
+				if( entityDef->lodDynamicModelFrameCount != tr.viewCount )
+				{
+					vEntity->lodCacheBuilds += entityDef->lodDynamicModel == NULL;
+					entityDef->lodDynamicModel = sibling->InstantiateDynamicModel( renderEntity, viewDef, entityDef->lodDynamicModel );
+					entityDef->lodDynamicModelFrameCount = tr.viewCount;
+				}
+				model = entityDef->lodDynamicModel;
+			}
+			else
+			{
+				model = sibling;
+			}
+			if( model == NULL )
+			{
+				model = baseGeometry;
+				lodLevel = 0;
+			}
+		}
+	}
+	vEntity->lodLevel = lodLevel;
+	if( lodLevel > 0 )
+	{
+		for( int i = 0; i < baseGeometry->NumSurfaces(); i++ )
+		{
+			vEntity->lodTrisSaved += baseGeometry->Surface( i )->geometry->numIndexes / 3;
+		}
+		for( int i = 0; i < model->NumSurfaces(); i++ )
+		{
+			vEntity->lodTrisSaved -= model->Surface( i )->geometry->numIndexes / 3;
+		}
+		// Static interaction surface indices belong to the base mesh, never to its sibling.
+		for( int i = 0; i < numContactedLights; i++ )
+		{
+			staticInteractions[i] = NULL;
+		}
+	}
+
 	// add the lightweight blood decal surfaces if the model is directly visible
-	if( modelIsVisible )
+	if( modelIsVisible && lodLevel == 0 )
 	{
 		assert( !vEntity->scissorRect.IsEmpty() );
 
@@ -681,16 +767,18 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 		//const char* shaderName = shader->GetName();
 		//if( idStr::Cmp( shaderName, "textures/rock/sharprock_dark") == 0 )
 		//{
-		//	tr.pc.c_mocTests += 0;
+		//	vEntity->mocTests += 0;
 		//}
 
 #if defined(USE_INTRINSICS_SSE)
 
-		const bool viewInsideSurface = tri->bounds.ContainsPoint( localViewOrigin );
+		const idBounds& mocBounds = gpuSkinned ? entityDef->localReferenceBounds : tri->bounds;
+		const bool viewInsideSurface = ( r_mocFixes.GetInteger() & 4 ) ?
+			R_MocNearBounds( mocBounds, renderEntity->origin, renderEntity->axis, viewDef ) : tri->bounds.ContainsPoint( localViewOrigin );
 
 		//if( viewInsideSurface && idStr::Cmp( shaderName, "models/weapons/berserk/fist") != 0 )
 		//{
-		//	tr.pc.c_mocTests += 1;
+		//	vEntity->mocTests += 1;
 		//
 		//	tr.viewDef->renderWorld->DebugBounds( colorCyan, tri->bounds, renderEntity->origin );
 		//}
@@ -703,8 +791,8 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 			{
 				idVec4 triVerts[8];
 
-				tr.pc.c_mocIndexes += 36;
-				tr.pc.c_mocVerts += 8;
+				vEntity->mocIndexes += 36;
+				vEntity->mocVerts += 8;
 
 				idBounds surfaceBounds;
 #if 1
@@ -727,7 +815,7 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 				idRenderMatrix invProjectMVPMatrix;
 				idRenderMatrix::Multiply( viewDef->worldCullUnjitteredMVP, inverseBaseModelProject, invProjectMVPMatrix );
 
-				tr.pc.c_mocTests += 1;
+				vEntity->mocTests += 1;
 
 				// NOTE: unit cube instead of zeroToOne cube
 				idVec4* verts = tr.maskedUnitCubeVerts;
@@ -747,7 +835,7 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 #endif
 				if( result != MaskedOcclusionCulling::VISIBLE )
 				{
-					tr.pc.c_mocCulledSurfaces += 1;
+					vEntity->mocCulled += 1;
 					surfaceDirectlyVisible = false;
 				}
 			}
@@ -1262,6 +1350,21 @@ void R_AddModels()
 	for( viewEntity_t* vEntity = tr.viewDef->viewEntitys; vEntity != NULL; vEntity = vEntity->next )
 	{
 		tr.pc.c_contactedCapHits += vEntity->contactedCapHits;
+		tr.pc.c_lodEntities1 += vEntity->lodLevel == 1;
+		tr.pc.c_lodEntities2 += vEntity->lodLevel == 2;
+		tr.pc.c_lodEntities3 += vEntity->lodLevel == 3;
+		tr.pc.c_lodTrisSaved += vEntity->lodTrisSaved;
+		tr.pc.c_lodSwitches += vEntity->lodSwitches;
+		tr.pc.c_lodThrash += vEntity->lodThrash;
+		tr.pc.c_lodCacheBuilds += vEntity->lodCacheBuilds;
+		if( r_showModelLod.GetBool() )
+		{
+			tr.viewDef->renderWorld->DrawText( va( "LOD %d", vEntity->lodLevel ), vEntity->entityDef->globalReferenceBounds.GetCenter(), 0.2f, colorWhite, tr.viewDef->renderView.viewaxis );
+		}
+		tr.pc.c_mocIndexes += vEntity->mocIndexes;
+		tr.pc.c_mocVerts += vEntity->mocVerts;
+		tr.pc.c_mocTests += vEntity->mocTests;
+		tr.pc.c_mocCulledSurfaces += vEntity->mocCulled;
 		// RB
 		if( vEntity->drawSurfs != NULL )
 		{

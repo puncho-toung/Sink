@@ -112,6 +112,24 @@ idCVar r_useShadowSurfaceScissor( "r_useShadowSurfaceScissor", "1", CVAR_RENDERE
 idCVar r_maxAnisotropicFiltering( "r_maxAnisotropicFiltering", "8", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "limit aniso filtering" );
 idCVar r_useTrilinearFiltering( "r_useTrilinearFiltering", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "Extra quality filtering" );
 // RB: not used anymore
+idCVar r_mocOccluderMinPixels( "r_mocOccluderMinPixels", "0", CVAR_RENDERER | CVAR_FLOAT, "skip occluder surfaces smaller than this projected diameter" );
+idCVar r_mocOccluderMaxDist( "r_mocOccluderMaxDist", "0", CVAR_RENDERER | CVAR_FLOAT, "skip occluder surfaces beyond this distance" );
+idCVar r_mocTriangleBudget( "r_mocTriangleBudget", "0", CVAR_RENDERER | CVAR_INTEGER, "maximum occluder triangles submitted per view; zero unlimited" );
+idCVar r_mocFixes( "r_mocFixes", "0", CVAR_RENDERER | CVAR_INTEGER, "MOC fixes: 1 spot depth, 2 whole tiles, 4 near-plane proxies, 8 culled-light log" );
+idCVar r_lightGatherGrid( "r_lightGatherGrid", "0", CVAR_RENDERER | CVAR_INTEGER, "minimum area refs for spatial light gather; zero off" );
+idCVar r_lightGatherCell( "r_lightGatherCell", "1024", CVAR_RENDERER | CVAR_FLOAT, "minimum light-gather XY cell extent" );
+idCVar r_lightGatherCompare( "r_lightGatherCompare", "0", CVAR_RENDERER | CVAR_BOOL, "validate spatial gather exclusions with exact light bounds test" );
+idCVar r_modelLod( "r_modelLod", "0", CVAR_RENDERER | CVAR_BOOL, "discover model LOD siblings at next map load" );
+idCVar r_modelLodPixels( "r_modelLodPixels", "256 128 64", CVAR_RENDERER | 0, "LOD projected diameter thresholds" );
+idCVar r_modelLodScale( "r_modelLodScale", "1", CVAR_RENDERER | CVAR_FLOAT, "scale model LOD thresholds" );
+idCVar r_showModelLod( "r_showModelLod", "0", CVAR_RENDERER | CVAR_BOOL, "label selected frontend model LOD" );
+idCVar r_viewDistance( "r_viewDistance", "8192", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "full-detail radius before the outer visibility fade band", 1024.0f, 8192.0f );
+idCVar r_distanceCull( "r_distanceCull", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "enable distance and projected-size culling" );
+idCVar r_cullDistanceScale( "r_cullDistanceScale", "1", CVAR_RENDERER | CVAR_FLOAT, "scale authored visibility distances" );
+idCVar r_cullPixelsScale( "r_cullPixelsScale", "1", CVAR_RENDERER | CVAR_FLOAT, "scale authored minimum projected sizes" );
+idCVar r_cullFadeFraction( "r_cullFadeFraction", "0.15", CVAR_RENDERER | CVAR_FLOAT, "fraction of light visibility range faded" );
+idCVar r_showDistanceCull( "r_showDistanceCull", "0", CVAR_RENDERER | CVAR_INTEGER, "1: counters, 2: culled entity bounds" );
+idCVar r_showOpenStats( "r_showOpenStats", "0", CVAR_RENDERER | CVAR_BOOL, "collect open-space projected-size census" );
 idCVar r_lodBias( "r_lodBias", "0.5", CVAR_RENDERER | CVAR_ARCHIVE, "UNUSED: image lod bias" );
 // RB end
 
@@ -1899,6 +1917,7 @@ void R_InitCommands()
 	cmdSystem->AddCommand( "reportSurfaceAreas", R_ReportSurfaceAreas_f, CMD_FL_RENDERER, "lists all used materials sorted by surface area" );
 	cmdSystem->AddCommand( "showInteractionMemory", R_ShowInteractionMemory_f, CMD_FL_RENDERER, "shows memory used by interactions" );
 	cmdSystem->AddCommand( "vid_restart", R_VidRestart_f, CMD_FL_RENDERER, "restarts renderSystem" );
+	cmdSystem->AddCommand( "checkOpenAreas", R_CheckOpenAreas_f, CMD_FL_RENDERER, "report open-area budgets and advisory extents" );
 	cmdSystem->AddCommand( "listRenderEntityDefs", R_ListRenderEntityDefs_f, CMD_FL_RENDERER, "lists the entity defs" );
 	cmdSystem->AddCommand( "listRenderLightDefs", R_ListRenderLightDefs_f, CMD_FL_RENDERER, "lists the light defs" );
 	cmdSystem->AddCommand( "listModes", R_ListModes_f, CMD_FL_RENDERER, "lists all video modes" );
@@ -2808,7 +2827,17 @@ void idRenderSystemLocal::GetMapStats( renderMapStats_t& stats ) const
 	stats.envprobeDefs = primaryWorld->envprobeDefs.Num();
 	stats.interactionWidth = primaryWorld->interactionTableWidth;
 	stats.interactionHeight = primaryWorld->interactionTableHeight;
-	stats.interactionBytes = ( uint64 )stats.interactionWidth * stats.interactionHeight * sizeof( idInteraction* );
+	stats.interactionBytes = primaryWorld->InteractionIndexBytes();
+	stats.entityCapacity = MAX_RENDER_ENTITY_DEFS;
+	stats.lightCapacity = MAX_RENDER_LIGHT_DEFS;
+	stats.probeCapacity = MAX_RENDER_ENVPROBE_DEFS;
+	stats.interactionMode = primaryWorld->interactionIndexSparse ? 1 : 0;
+	stats.interactionEntries = primaryWorld->interactionIndexEntries;
+	stats.interactionCapacity = primaryWorld->interactionIndexSparse ? primaryWorld->interactionIndexCapacity : primaryWorld->interactionTableWidth * primaryWorld->interactionTableHeight;
+	stats.interactionMaxProbe = primaryWorld->interactionMaxProbe;
+	stats.interactionMismatches = primaryWorld->interactionMismatches.GetValue();
+	stats.interactionLateInserts = primaryWorld->interactionLateInserts;
+	stats.interactionGenerateMS = primaryWorld->interactionGenerateMS;
 	stats.areas = primaryWorld->numPortalAreas;
 	stats.portals = primaryWorld->numInterAreaPortals;
 	for( int i = 0; i < stats.areas; i++ )

@@ -81,6 +81,9 @@ private:
 	idRenderModel* 						defaultModel;
 	idRenderModel* 						beamModel;
 	idRenderModel* 						spriteModel;
+	bool								modelLodEnabled;
+	bool								loadingLods;
+	void								LoadModelLods( idRenderModel* model );
 	bool								insideLevelLoad;		// don't actually load now
 	nvrhi::CommandListHandle			commandList;
 
@@ -106,6 +109,8 @@ idRenderModelManagerLocal::idRenderModelManagerLocal()
 	defaultModel = NULL;
 	beamModel = NULL;
 	spriteModel = NULL;
+	modelLodEnabled = false;
+	loadingLods = false;
 	insideLevelLoad = false;
 }
 
@@ -308,6 +313,52 @@ void idRenderModelManagerLocal::Shutdown()
 idRenderModelManagerLocal::GetModel
 =================
 */
+void idRenderModelManagerLocal::LoadModelLods( idRenderModel* model )
+{
+	if( loadingLods || !insideLevelLoad || !modelLodEnabled || model->IsDefaultModel() || model->IsStaticWorldModel() || !model->IsReloadable() )
+	{
+		return;
+	}
+	idStr base = model->Name();
+	idStr extension;
+	base.ExtractFileExtension( extension );
+	base.StripFileExtension();
+	if( extension.IsEmpty() || base.Find( "_lod" ) >= 0 || ( model->IsDynamicModel() != DM_STATIC && extension.Icmp( "md5mesh" ) != 0 ) )
+	{
+		return;
+	}
+	loadingLods = true;
+	for( int level = 1; level <= 3; level++ ) { model->SetLod( level, NULL ); }
+	for( int level = 1; level <= 3; level++ )
+	{
+		const idStr name = base + va( "_lod%d.", level ) + extension;
+		if( fileSystem->ReadFile( name, NULL ) < 0 ) { break; }
+		idRenderModel* sibling = GetModel( name, false, NULL );
+		if( sibling == NULL || sibling->IsDefaultModel() ) { break; }
+		bool matches = sibling->NumJoints() == model->NumJoints();
+		if( model->IsDynamicModel() == DM_STATIC )
+		{
+			const idBounds baseBounds = model->Bounds().Expand( 0.1f );
+			const idBounds siblingBounds = sibling->Bounds();
+			matches = matches && baseBounds.ContainsPoint( siblingBounds[0] ) && baseBounds.ContainsPoint( siblingBounds[1] );
+		}
+
+		for( int joint = 0; matches && joint < model->NumJoints(); joint++ )
+		{
+			matches = idStr::Cmp( model->GetJointName( ( jointHandle_t )joint ), sibling->GetJointName( ( jointHandle_t )joint ) ) == 0;
+		}
+		if( !matches )
+		{
+			common->Warning( "LOD %s has incompatible joints or exceeds base bounds; dropping %s chain", name.c_str(), model->Name() );
+			for( int n = 1; n <= 3; n++ ) { model->SetLod( n, NULL ); }
+			break;
+		}
+		model->SetLod( level, sibling );
+		sibling->SetLevelLoadReferenced( true );
+	}
+	loadingLods = false;
+}
+
 idRenderModel* idRenderModelManagerLocal::GetModel( const char* _modelName, bool createIfNotFound, const idImportOptions* options )
 {
 	if( !_modelName || !_modelName[0] )
@@ -399,6 +450,7 @@ idRenderModel* idRenderModelManagerLocal::GetModel( const char* _modelName, bool
 			}
 
 			model->SetLevelLoadReferenced( true );
+			LoadModelLods( model );
 			return model;
 		}
 	}
@@ -579,6 +631,7 @@ idRenderModel* idRenderModelManagerLocal::GetModel( const char* _modelName, bool
 	// RB end
 
 	AddModel( model );
+	LoadModelLods( model );
 
 	return model;
 }
@@ -816,8 +869,16 @@ void idRenderModelManagerLocal::FreeModelVertexCaches()
 idRenderModelManagerLocal::BeginLevelLoad
 =================
 */
+static int modelLevelLoadCount;
+
 void idRenderModelManagerLocal::BeginLevelLoad()
 {
+	modelLevelLoadCount++;
+	#if defined( DMAP )
+	modelLodEnabled = false;
+	#else
+	modelLodEnabled = r_modelLod.GetBool();
+	#endif
 	insideLevelLoad = true;
 
 	for( int i = 0; i < models.Num(); i++ )
@@ -825,13 +886,14 @@ void idRenderModelManagerLocal::BeginLevelLoad()
 		idRenderModel* model = models[i];
 
 		// always reload all models
-		if( model->IsReloadable() )
+		if( common->LevelKeepGrace() == 0 && model->IsReloadable() )
 		{
 			R_CheckForEntityDefsUsingModel( model );
 			model->PurgeModel();
 		}
 
 		model->SetLevelLoadReferenced( false );
+		for( int level = 1; level <= 3; level++ ) { model->SetLod( level, NULL ); }
 	}
 
 #if !defined( DMAP )
@@ -926,13 +988,20 @@ void idRenderModelManagerLocal::EndLevelLoad()
 	int	purgeCount = 0;
 	int	keepCount = 0;
 	int	loadCount = 0;
+	int pinnedCount = 0;
 
 	// purge any models not touched
 	for( int i = 0; i < models.Num(); i++ )
 	{
 		idRenderModel* model = models[i];
 
-		if( !model->IsLevelLoadReferenced() && model->IsLoaded() && model->IsReloadable() )
+		const bool pinned = model->IsLoaded() && common->IsLevelAssetPinned( PRELOAD_MODEL, model->Name() );
+		pinnedCount += pinned ? 1 : 0;
+		if( model->IsLevelLoadReferenced() || pinned )
+		{
+			model->lastUseLoad = modelLevelLoadCount;
+		}
+		if( !model->IsLevelLoadReferenced() && !pinned && model->IsLoaded() && model->IsReloadable() && modelLevelLoadCount - model->lastUseLoad >= common->LevelKeepGrace() )
 		{
 //			common->Printf( "purging %s\n", model->Name() );
 
@@ -995,6 +1064,17 @@ void idRenderModelManagerLocal::EndLevelLoad()
 	deviceManager->GetDevice()->executeCommandList( commandList );
 #endif
 
+	int resident = 0;
+	int64 bytes = 0;
+	for( int i = 0; i < models.Num(); i++ )
+	{
+		if( models[i]->IsLoaded() )
+		{
+			resident++;
+			bytes += models[i]->Memory();
+		}
+	}
+	common->ReportLevelCache( 1, loadCount, resident, purgeCount, pinnedCount, bytes );
 	// _D3XP added this
 	int	end = Sys_Milliseconds();
 	common->Printf( "%5i models purged from previous level, ", purgeCount );

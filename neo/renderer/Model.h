@@ -154,6 +154,7 @@ class idRenderModel
 {
 public:
 	virtual						~idRenderModel() {};
+	int lastUseLoad = 0;
 
 	// Loads static models only, dynamic models must be loaded by the modelManager
 	virtual void				InitFromFile( const char* fileName, const idImportOptions* options ) = 0;
@@ -256,6 +257,9 @@ public:
 
 	// models of the form "_area*" may have a prelight shadow model associated with it
 	virtual bool				IsStaticWorldModel() const = 0;
+	virtual int					NumLods() const = 0;
+	virtual idRenderModel*		Lod( int level ) = 0;
+	virtual void				SetLod( int level, idRenderModel* model ) = 0;
 
 	// models parsed from inside map files or dynamically created cannot be reloaded by
 	// reloadmodels

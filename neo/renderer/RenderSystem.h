@@ -122,6 +122,8 @@ struct renderMapStats_t
 	int		envprobeDefs;
 	int		interactionWidth;
 	int		interactionHeight;
+	int		entityCapacity, lightCapacity, probeCapacity;
+	int		interactionMode, interactionEntries, interactionCapacity, interactionMaxProbe, interactionMismatches, interactionLateInserts, interactionGenerateMS;
 	int		areas;
 	int		portals;
 };
@@ -168,6 +170,31 @@ struct performanceCounters_t
 	int		c_mocCulledSurfaces;
 	int		c_mocCulledLights;
 
+	int		c_cullDistEntities;
+	int		c_cullPixelEntities;
+	int		c_cullLights;
+	int		c_fadedLights;
+	int		c_cullShadowSkips;
+	int		c_lightRefsWalkedMax;
+	int		c_gatherAreas;
+	int		c_gatherMismatch;
+	int		c_lodEntities1;
+	int		c_lodEntities2;
+	int		c_lodEntities3;
+	int		c_lodTrisSaved;
+	int		c_lodSwitches;
+	int		c_lodThrash;
+	int		c_lodCacheBuilds;
+	int		c_mocOccluderTris;
+	int		c_mocSkippedSize;
+	int		c_mocSkippedBudget;
+	int		c_mocSpotTests;
+	int		c_mocSpotCulls;
+	int		c_viewEntsUnder4px;
+	int		c_viewEntsUnder16px;
+	int		c_viewEntsBeyond8k;
+	uint64	usFindView;
+	uint64	usAddLights;
 	uint64	mocMicroSec;
 	uint64	frontEndMicroSec;	// sum of time in all RE_RenderScene's in a frame
 };

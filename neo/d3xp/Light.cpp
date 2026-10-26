@@ -88,6 +88,10 @@ void idGameEdit::ParseSpawnArgsToRenderLight( const idDict* args, renderLight_t*
 	idVec3	color;
 
 	memset( renderLight, 0, sizeof( *renderLight ) );
+	const float distanceScale = gameLocal.world != NULL ? gameLocal.world->spawnArgs.GetFloat( "maxVisDistScale", "1" ) : 1.0f;
+	const float pixelScale = gameLocal.world != NULL ? gameLocal.world->spawnArgs.GetFloat( "minVisPixelsScale", "1" ) : 1.0f;
+	renderLight->maxVisDist = Max( 0.0f, args->GetFloat( "maxVisDist", "0" ) * distanceScale );
+	renderLight->minVisPixels = Max( 0.0f, args->GetFloat( "minVisPixels", "0" ) * pixelScale );
 
 	if( !args->GetVector( "light_origin", "", renderLight->origin ) )
 	{
@@ -420,6 +424,10 @@ void idLight::Restore( idRestoreGame* savefile )
 	bool hadPrelightModel;
 
 	savefile->ReadRenderLight( renderLight );
+	const float distanceScale = gameLocal.world != NULL ? gameLocal.world->spawnArgs.GetFloat( "maxVisDistScale", "1" ) : 1.0f;
+	const float pixelScale = gameLocal.world != NULL ? gameLocal.world->spawnArgs.GetFloat( "minVisPixelsScale", "1" ) : 1.0f;
+	renderLight.maxVisDist = Max( 0.0f, spawnArgs.GetFloat( "maxVisDist", "0" ) * distanceScale );
+	renderLight.minVisPixels = Max( 0.0f, spawnArgs.GetFloat( "minVisPixels", "0" ) * pixelScale );
 
 	// light styles are not saved (light_styles restarts empty, lightStyle -1), so math_style restarts
 	// off with them instead of reading the constructor's zero as style 0

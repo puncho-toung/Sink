@@ -193,6 +193,8 @@ public:
 	int						entityNumber;			// index into the entity list
 	int						entityDefNumber;		// index into the entity def list
 
+	idLinkList<idEntity>	budgetNode;
+	int					budgetClass;	// derived; rebuilt after restore, never on the wire
 	idLinkList<idEntity>	spawnNode;				// for being linked into spawnedEntities list
 	idLinkList<idEntity>	activeNode;				// for being linked into activeEntities list
 	idLinkList<idEntity>	aimAssistNode;			// linked into gameLocal.aimAssistEntities
@@ -207,6 +209,11 @@ public:
 	idScriptObject			scriptObject;			// contains all script defined data for this entity
 
 	int						thinkFlags;				// TH_? flags
+	float					dormantRadius;
+	float					dormantHysteresis;
+	float					dormantEngagedScale;
+	int						dormantWakeDeferredAt;
+	bool					dormantWakeRequested;
 	int						dormantStart;			// time that the entity was first closed off from player
 	bool					cinematic;				// during cinematics, entity will only think if cinematic is set
 
@@ -276,6 +283,8 @@ public:
 	virtual void			Think();
 	bool					CheckDormant();	// dormant == on the active list, but out of PVS
 	virtual	void			DormantBegin();	// called when entity becomes dormant
+	virtual float			DormantRadiusScale() const;
+	virtual void			DormantCatchUp( int elapsedMs );
 	virtual	void			DormantEnd();		// called when entity wakes from being dormant
 	bool					IsActive() const;
 	void					BecomeActive( int flags );

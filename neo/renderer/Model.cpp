@@ -58,6 +58,7 @@ idRenderModelStatic::idRenderModelStatic
 */
 idRenderModelStatic::idRenderModelStatic()
 {
+	memset( lodModels, 0, sizeof( lodModels ) );
 	name = "<undefined>";
 	bounds.Clear();
 	lastModifiedFrame = 0;
@@ -1038,6 +1039,27 @@ void idRenderModelStatic::FreeSurfaceTriangles( srfTriangles_t* tris ) const
 idRenderModelStatic::IsStaticWorldModel
 ================
 */
+int idRenderModelStatic::NumLods() const
+{
+	int count = 0;
+	while( count < 3 && lodModels[count] != NULL )
+	{
+		count++;
+	}
+	return count;
+}
+
+idRenderModel* idRenderModelStatic::Lod( int level )
+{
+	return level > 0 && level <= NumLods() ? lodModels[level - 1] : this;
+}
+
+void idRenderModelStatic::SetLod( int level, idRenderModel* model )
+{
+	assert( level >= 1 && level <= 3 );
+	lodModels[level - 1] = model;
+}
+
 bool idRenderModelStatic::IsStaticWorldModel() const
 {
 	return isStaticWorldModel;

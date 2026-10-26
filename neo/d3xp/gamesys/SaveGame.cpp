@@ -2039,6 +2039,9 @@ void idRestoreGame::ReadRenderEntity( renderEntity_t& renderEntity )
 	}
 	//puncho end
 
+	renderEntity.maxVisDist = renderEntity.minVisPixels = 0.0f;
+	renderEntity.cullShadow = 0;
+	renderEntity.lodScale = 1.0f;
 	ReadModel( renderEntity.hModel );
 
 	ReadInt( renderEntity.entityNum );
@@ -2113,6 +2116,7 @@ void idRestoreGame::ReadRenderLight( renderLight_t& renderLight )
 	}
 	//puncho end
 
+	renderLight.maxVisDist = renderLight.minVisPixels = 0.0f;
 	ReadMat3( renderLight.axis );
 	ReadVec3( renderLight.origin );
 

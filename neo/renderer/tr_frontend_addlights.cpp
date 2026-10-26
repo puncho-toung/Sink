@@ -162,6 +162,50 @@ if it is determined to not have any visible effect due to being flashed off or t
 Add any precomputed shadow volumes.
 ===================
 */
+static bool R_SpotLightMocArgs( const idRenderMatrix& unjitteredMVP, const idRenderMatrix& inverseBaseLightProject,
+								   const idScreenRect& scissor, int viewWidth, int viewHeight, float zNear, float ndcRect[4], float& wmin )
+{
+	idRenderMatrix cubeToClip;
+	idRenderMatrix::Multiply( unjitteredMVP, inverseBaseLightProject, cubeToClip );
+	const float* weightRow = inverseBaseLightProject[3];
+
+	wmin = idMath::INFINITUM;
+	float nearWeight = 0.0f;					// 1 / n: the weight of the near face
+	float farWeight = idMath::INFINITUM;		// 1 / ( n + f ): the far face
+	for( int i = 0; i < 8; i++ )
+	{
+		const idVec4 corner( float( i & 1 ), float( ( i >> 1 ) & 1 ), float( ( i >> 2 ) & 1 ), 1.0f );
+		const float weight = weightRow[0] * corner.x + weightRow[1] * corner.y + weightRow[2] * corner.z + weightRow[3];
+		if( weight <= 0.0f )
+		{
+			return false;		// no spot, point or parallel light has this: a degenerate volume, not tested
+		}
+		nearWeight = Max( nearWeight, weight );
+		farWeight = Min( farWeight, weight );
+		idVec4 clip;
+		cubeToClip.TransformPoint( corner, clip );
+		wmin = Min( wmin, clip.w / weight );
+	}
+
+	// float error: a far corner comes out of terms of size |position| / n that cancel. The suite measures at most
+	// 19 * 2^-24 * ( |position| + w ) * ( n + f ) / n with the engine's Inverse; test 32 of those nearer.
+	// Corner 0, ( 0, 0, 0 ), lies on the near face, next to the light's origin.
+	const float position = idVec3( inverseBaseLightProject[0][3], inverseBaseLightProject[1][3], inverseBaseLightProject[2][3] ).Length() /
+						   inverseBaseLightProject[3][3];
+	wmin -= 32.0f * 5.9604645e-8f * ( position + wmin ) * ( nearWeight / farWeight );
+	if( wmin <= zNear )
+	{
+		return false;
+	}
+
+	// pixel x covers [ x, x + 1 ): the inclusive rect [ x1, x2 ] is [ x1, x2 + 1 ), widened to [ x1 - 1, x2 + 2 )
+	ndcRect[0] = Max( -1.0f, -1.0f + 2.0f * float( scissor.x1 - 1 ) / float( viewWidth ) );
+	ndcRect[1] = Max( -1.0f, -1.0f + 2.0f * float( scissor.y1 - 1 ) / float( viewHeight ) );
+	ndcRect[2] = Min( 1.0f, -1.0f + 2.0f * float( scissor.x2 + 2 ) / float( viewWidth ) );
+	ndcRect[3] = Min( 1.0f, -1.0f + 2.0f * float( scissor.y2 + 2 ) / float( viewHeight ) );
+	return true;
+}
+
 static void R_AddSingleLight( viewLight_t* vLight )
 {
 	vLight->lightRefsWalked = 0;
@@ -343,7 +387,9 @@ static void R_AddSingleLight( viewLight_t* vLight )
 		vLight->scissorRect.zmin = projected[0][2];
 		vLight->scissorRect.zmax = projected[1][2];
 
-		const bool viewInsideLight = !idRenderMatrix::CullPointToMVP( light->baseLightProject, viewDef->renderView.vieworg, true );
+		const bool viewInsideLight = !idRenderMatrix::CullPointToMVP( light->baseLightProject, viewDef->renderView.vieworg, true ) ||
+			( ( r_mocFixes.GetInteger() & 4 ) && ( vLight->pointLight || vLight->parallel ) &&
+			R_MocNearBounds( light->globalLightBounds, vec3_origin, mat3_identity, viewDef ) );
 
 		// RB: test surface visibility by drawing the triangles of the bounds
 #if defined(USE_INTRINSICS_SSE)
@@ -353,14 +399,14 @@ static void R_AddSingleLight( viewLight_t* vLight )
 			idVec4 triVerts[8];
 			unsigned int triIndices[] = { 0, 1, 2 };
 
-			tr.pc.c_mocIndexes += 36;
-			tr.pc.c_mocVerts += 8;
+			vLight->mocIndexes += 36;
+			vLight->mocVerts += 8;
 
 			idRenderMatrix invProjectMVPMatrix;
 
 			// draw light volume 1 percentage bigger to avoid flickering
 			// right before entering the volume with the camera
-			const float mocLightScale = 0.99f;
+			const float mocLightScale = ( r_mocFixes.GetInteger() & 4 ) ? 1.0f : 0.99f;
 			// F1 ( impl/BUILD-AND-G0.md 10 ): this test is formed in the render-origin frame, the relative
 			// inverse ( vLight->, translated by R_TranslateViewLight ) times the relative unjittered MVP, not
 			// light-> times worldCullUnjitteredMVP like the culls above. The absolute product cancels two
@@ -382,7 +428,7 @@ static void R_AddSingleLight( viewLight_t* vLight )
 
 			idRenderMatrix::Multiply( viewDef->worldSpace.unjitteredMVP, scaledInverseBaseLightProject, invProjectMVPMatrix );
 
-			tr.pc.c_mocTests += 1;
+			vLight->mocTests += 1;
 
 			float wmin = idMath::INFINITUM;
 
@@ -416,7 +462,7 @@ static void R_AddSingleLight( viewLight_t* vLight )
 #endif
 				if( result != MaskedOcclusionCulling::VISIBLE )
 				{
-					tr.pc.c_mocCulledLights += 1;
+					vLight->mocCulled += 1;
 					return;
 				}
 #else
@@ -424,6 +470,23 @@ static void R_AddSingleLight( viewLight_t* vLight )
 				tr.maskedOcclusionCulling->RenderTriangles( ( float* )triVerts, triIndices, 1, NULL, MaskedOcclusionCulling::BACKFACE_NONE );
 				maskVisible = true;
 #endif
+			}
+			else if( r_mocFixes.GetInteger() & 1 )
+			{
+				float rect[4], depth;
+				const float zNear = r_znear.GetFloat() * ( viewDef->renderView.cramZNear ? 0.25f : 1.0f );
+				if( R_SpotLightMocArgs( viewDef->worldSpace.unjitteredMVP, vLight->inverseBaseLightProject,
+					vLight->scissorRect, viewDef->viewport.GetWidth(), viewDef->viewport.GetHeight(), zNear, rect, depth ) )
+				{
+					vLight->mocSpotTests++;
+					const MaskedOcclusionCulling::CullingResult result = tr.maskedOcclusionCulling->TestRect( rect[0], rect[1], rect[2], rect[3], depth );
+					if( result != MaskedOcclusionCulling::VISIBLE )
+					{
+						vLight->mocSpotCulls++;
+						vLight->mocCulled++;
+						return;
+					}
+				}
 			}
 			else
 			{
@@ -452,7 +515,7 @@ static void R_AddSingleLight( viewLight_t* vLight )
 				MaskedOcclusionCulling::CullingResult result = tr.maskedOcclusionCulling->TestRect( x1, y1, x2, y2, wmin2 );
 				if( result != MaskedOcclusionCulling::VISIBLE )
 				{
-					tr.pc.c_mocCulledLights += 1;
+					vLight->mocCulled += 1;
 					return;
 				}
 			}
@@ -555,7 +618,7 @@ static void R_AddSingleLight( viewLight_t* vLight )
 	// this bool array will be set true whenever the entity will visibly interact with the light
 	vLight->entityInteractionState = ( byte* )R_ClearedFrameAlloc( light->world->entityDefs.Num() * sizeof( vLight->entityInteractionState[0] ), FRAME_ALLOC_INTERACTION_STATE );
 
-	idInteraction** const interactionTableRow = light->world->interactionTable + light->index * light->world->interactionTableWidth;
+
 
 	for( areaReference_t* lref = light->references; lref != NULL; lref = lref->ownerNext )
 	{
@@ -572,11 +635,83 @@ static void R_AddSingleLight( viewLight_t* vLight )
 			}
 		}
 
-		// check all the models in this area
-		for( areaReference_t* eref = area->entityRefs.areaNext; eref != &area->entityRefs; eref = eref->areaNext )
+		const lightGatherArea_t* grid = viewDef->lightGatherAreas != NULL ? &viewDef->lightGatherAreas[area->areaNum] : NULL;
+		int* selected = NULL;
+		int selectedCount = 0;
+		if( grid != NULL && grid->refs != NULL )
 		{
+			const idBounds query = light->globalLightBounds.Expand( grid->cellSize * 0.5f );
+			const int x1 = idMath::ClampInt( 0, grid->width - 1, idMath::Ftoi( idMath::Floor( ( query[0].x - grid->origin.x ) / grid->cellSize ) ) );
+			const int x2 = idMath::ClampInt( 0, grid->width - 1, idMath::Ftoi( idMath::Floor( ( query[1].x - grid->origin.x ) / grid->cellSize ) ) );
+			const int y1 = idMath::ClampInt( 0, grid->height - 1, idMath::Ftoi( idMath::Floor( ( query[0].y - grid->origin.y ) / grid->cellSize ) ) );
+			const int y2 = idMath::ClampInt( 0, grid->height - 1, idMath::Ftoi( idMath::Floor( ( query[1].y - grid->origin.y ) / grid->cellSize ) ) );
+			int candidateCount = 0;
+			for( int i = grid->oversize; i != -1; i = grid->refs[i].next )
+			{
+				candidateCount++;
+			}
+			for( int y = y1; y <= y2; y++ )
+			{
+				for( int x = x1; x <= x2; x++ )
+				{
+					for( int i = grid->heads[y * grid->width + x]; i != -1; i = grid->refs[i].next )
+					{
+						candidateCount++;
+					}
+				}
+			}
+			// The grid must save frame memory as well as interaction tests for sparse lights.
+			selected = ( int* )R_FrameAlloc( Max( 1, candidateCount ) * sizeof( int ), FRAME_ALLOC_INTERACTION_STATE );
+			for( int i = grid->oversize; i != -1; i = grid->refs[i].next )
+			{
+				selected[selectedCount++] = i;
+			}
+			for( int y = y1; y <= y2; y++ )
+			{
+				for( int x = x1; x <= x2; x++ )
+				{
+					for( int i = grid->heads[y * grid->width + x]; i != -1; i = grid->refs[i].next )
+					{
+						selected[selectedCount++] = i;
+					}
+				}
+			}
+			// Preserve the original area-list order, including shadow-only list insertion order.
+			idSort_QuickDefault<int>().Sort( selected, selectedCount );
+			if( r_lightGatherCompare.GetBool() )
+			{
+				int cursor = 0;
+				for( int i = 0; i < grid->numRefs; i++ )
+				{
+					if( cursor < selectedCount && selected[cursor] == i )
+					{
+						cursor++;
+						continue;
+					}
+					const idRenderEntityLocal* entity = grid->refs[i].entity;
+					if( !R_CullModelBoundsToLight( light, entity->localReferenceBounds, entity->modelRenderMatrix ) )
+					{
+						vLight->gatherMismatch++;
+					}
+				}
+			}
+		}
+
+		areaReference_t* eref = area->entityRefs.areaNext;
+		int selectedIndex = 0;
+		while( selected != NULL ? selectedIndex < selectedCount : eref != &area->entityRefs )
+		{
+			idRenderEntityLocal* edef;
+			if( selected != NULL )
+			{
+				edef = grid->refs[selected[selectedIndex++]].entity;
+			}
+			else
+			{
+				edef = eref->entity;
+				eref = eref->areaNext;
+			}
 			vLight->lightRefsWalked++;
-			idRenderEntityLocal* edef = eref->entity;
 
 			if( vLight->entityInteractionState[ edef->index ] != viewLight_t::INTERACTION_UNCHECKED )
 			{
@@ -588,14 +723,14 @@ static void R_AddSingleLight( viewLight_t* vLight )
 			// The table is updated at interaction::AllocAndLink() and interaction::UnlinkAndFree()
 
 			// TODO(Stephen): interactionTableRow is null if renderDef is used in a gui.sub
-			const idInteraction* inter = interactionTableRow[ edef->index ];
+			const idInteraction* inter = light->world->GetInteraction( light->index, edef->index );
 
 			const renderEntity_t& eParms = edef->parms;
 			const idRenderModel* eModel = eParms.hModel;
 
 			// a large fraction of static entity / light pairs will still have no interactions even though
 			// they are both present in the same area(s)
-			if( eModel != NULL && !eModel->IsDynamicModel() && inter == INTERACTION_EMPTY )
+			if( eModel != NULL && !eModel->IsDynamicModel() && eModel->NumLods() == 0 && inter == INTERACTION_EMPTY )
 			{
 				// the interaction was statically checked, and it didn't generate any surfaces,
 				// so there is no need to force the entity onto the view list if it isn't
@@ -652,6 +787,13 @@ static void R_AddSingleLight( viewLight_t* vLight )
 			{
 				// entity is directly visible, so the interaction is definitely needed
 				vLight->entityInteractionState[ edef->index ] = viewLight_t::INTERACTION_YES;
+				continue;
+			}
+
+			int cullReason;
+			if( eParms.cullShadow && R_CullEntityDistance( edef, viewDef, cullReason ) )
+			{
+				vLight->cullShadowSkips++;
 				continue;
 			}
 
@@ -719,6 +861,71 @@ void R_AddLights()
 {
 	SCOPED_PROFILE_EVENT( "R_AddLights" );
 
+	tr.viewDef->lightGatherAreas = NULL;
+	if( r_lightGatherGrid.GetInteger() > 0 )
+	{
+		idRenderWorldLocal* world = static_cast<idRenderWorldLocal*>( tr.viewDef->renderWorld );
+		lightGatherArea_t* grids = ( lightGatherArea_t* )R_ClearedFrameAlloc( world->numPortalAreas * sizeof( lightGatherArea_t ), FRAME_ALLOC_INTERACTION_STATE );
+		tr.viewDef->lightGatherAreas = grids;
+		// Mark only areas touched by this view's lights; no persistent grid invalidation state.
+		for( viewLight_t* light = tr.viewDef->viewLights; light != NULL; light = light->next )
+		{
+			for( areaReference_t* ref = light->lightDef->references; ref != NULL; ref = ref->ownerNext )
+			{
+				grids[ref->area->areaNum].numRefs = -1;
+			}
+		}
+		for( int areaNum = 0; areaNum < world->numPortalAreas; areaNum++ )
+		{
+			lightGatherArea_t& grid = grids[areaNum];
+			if( grid.numRefs != -1 )
+			{
+				continue;
+			}
+			grid.numRefs = 0;
+			portalArea_t& area = world->portalAreas[areaNum];
+			idBounds bounds = area.globalBounds;
+			for( areaReference_t* ref = area.entityRefs.areaNext; ref != &area.entityRefs; ref = ref->areaNext )
+			{
+				grid.numRefs++;
+				bounds.AddBounds( ref->entity->globalReferenceBounds );
+			}
+			if( grid.numRefs < r_lightGatherGrid.GetInteger() )
+			{
+				continue;
+			}
+			const idVec3 extent = bounds[1] - bounds[0];
+			grid.origin = bounds[0];
+			grid.cellSize = Max( Max( 1.0f, r_lightGatherCell.GetFloat() ), Max( extent.x, extent.y ) / 128.0f );
+			grid.width = idMath::ClampInt( 1, 128, idMath::Ftoi( idMath::Ceil( extent.x / grid.cellSize ) ) );
+			grid.height = idMath::ClampInt( 1, 128, idMath::Ftoi( idMath::Ceil( extent.y / grid.cellSize ) ) );
+			grid.heads = ( int* )R_FrameAlloc( grid.width * grid.height * sizeof( int ), FRAME_ALLOC_INTERACTION_STATE );
+			grid.refs = ( lightGatherRef_t* )R_FrameAlloc( grid.numRefs * sizeof( lightGatherRef_t ), FRAME_ALLOC_INTERACTION_STATE );
+			for( int i = 0; i < grid.width * grid.height; i++ )
+			{
+				grid.heads[i] = -1;
+			}
+			grid.oversize = -1;
+			int ordinal = 0;
+			for( areaReference_t* ref = area.entityRefs.areaNext; ref != &area.entityRefs; ref = ref->areaNext, ordinal++ )
+			{
+				const idBounds& entityBounds = ref->entity->globalReferenceBounds;
+				const idVec3 center = entityBounds.GetCenter();
+				int* head = &grid.oversize;
+				if( entityBounds[1].x - entityBounds[0].x <= grid.cellSize && entityBounds[1].y - entityBounds[0].y <= grid.cellSize )
+				{
+					const int x = idMath::ClampInt( 0, grid.width - 1, idMath::Ftoi( ( center.x - grid.origin.x ) / grid.cellSize ) );
+					const int y = idMath::ClampInt( 0, grid.height - 1, idMath::Ftoi( ( center.y - grid.origin.y ) / grid.cellSize ) );
+					head = &grid.heads[y * grid.width + x];
+				}
+				grid.refs[ordinal].entity = ref->entity;
+				grid.refs[ordinal].next = *head;
+				*head = ordinal;
+			}
+			tr.pc.c_gatherAreas++;
+		}
+	}
+
 	//-------------------------------------------------
 	// check each light individually, possibly in parallel
 	//-------------------------------------------------
@@ -749,6 +956,19 @@ void R_AddLights()
 	{
 		viewLight_t* vLight = *ptr;
 		tr.pc.c_lightRefsWalked += vLight->lightRefsWalked;
+		tr.pc.c_mocIndexes += vLight->mocIndexes;
+		tr.pc.c_mocVerts += vLight->mocVerts;
+		tr.pc.c_mocTests += vLight->mocTests;
+		tr.pc.c_mocCulledLights += vLight->mocCulled;
+		tr.pc.c_mocSpotTests += vLight->mocSpotTests;
+		tr.pc.c_mocSpotCulls += vLight->mocSpotCulls;
+		if( ( r_mocFixes.GetInteger() & 8 ) && vLight->mocCulled )
+		{
+			common->DPrintf( "moccull %d %d %d %d %d\n", vLight->lightDef->index, vLight->scissorRect.x1, vLight->scissorRect.y1, vLight->scissorRect.x2, vLight->scissorRect.y2 );
+		}
+		tr.pc.c_lightRefsWalkedMax = Max( tr.pc.c_lightRefsWalkedMax, vLight->lightRefsWalked );
+		tr.pc.c_cullShadowSkips += vLight->cullShadowSkips;
+		tr.pc.c_gatherMismatch += vLight->gatherMismatch;
 
 		if( vLight->removeFromList )
 		{

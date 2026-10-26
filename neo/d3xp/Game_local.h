@@ -497,6 +497,10 @@ public:
 	int						shooterTokenTic;		// framenum of the last pass, -1 none
 	//puncho end
 	//puncho start - ai-harness (plans/ai-harness/00-PLAN.md §2.2, §2.5): host-side debug state, never saved or replicated
+	void					PrefetchMap( const char* name ) { common->PrefetchMap( name ); }
+	idVec3				dormantSources[MAX_CLIENTS];
+	int					numDormantSources;
+	int					dormantWakesRemaining;
 	aiTicStats_t			aiStats;				// the live tic census, zeroed after SortActiveEntityList
 	snapStats_t				snapStats;				// written by ServerWriteSnapshot on the main thread between game frames
 	aiHudStats_t			aiHudStats;				// the last tic's record for the HUD, filled by RunAIStats
@@ -656,6 +660,18 @@ public:
 	//puncho end
 	const char* 			GetMapName() const;
 	void					ListMapStatics() const;
+	void					ListBudgets() const;
+	bool					SpawnRefused() const { return budgetSpawnRefused; }
+	void					ResetEntityBudgets( bool restore );
+	int					GetEntityBudgetClass( const idTypeInfo& type, const idDict& args ) const;
+	bool					PrepareBudgetSpawn( int budget, const idDict& args );
+	void					JoinEntityBudget( idEntity* entity, int budget );
+	idLinkList<idEntity>	entityBudgets[4];
+	int					budgetLive[4], budgetEvicted[4], budgetRefused[4];
+	int					budgetFreeSlots[2], budgetHighWater;
+	int					mapStaticSkipCount;
+	int					budgetAlarm[2];
+	bool					budgetSpawnRefused;
 
 	int						NumAAS() const;
 	idAAS* 					GetAAS( int num ) const;

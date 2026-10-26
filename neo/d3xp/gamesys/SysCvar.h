@@ -325,4 +325,14 @@ extern idCVar	net_clientSelfSmoothing;
 extern idCVar ng_classicFlashlight;
 // RB end
 
+extern idCVar g_dormantDistance;
+extern idCVar g_dormantRadiusScale;
+extern idCVar g_dormantWakeBudget;
+extern idCVar g_dormantWakeUrgent;
+extern idCVar g_dormantWakeMaxDelay;
+extern idCVar g_dormantStats;
+extern idCVar g_showDormancy;
+extern idCVar g_dormantCatchUp;
+extern idCVar g_dormantCatchUpMinMs;
+
 #endif /* !__SYS_CVAR_H__ */

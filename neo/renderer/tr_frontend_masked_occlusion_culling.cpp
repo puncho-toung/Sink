@@ -40,6 +40,33 @@ If you have questions concerning this license or the applicable additional terms
 #include "RenderCommon.h"
 #include "Model_local.h"
 
+bool R_MocNearBounds( const idBounds& bounds, const idVec3& origin, const idMat3& axis, const viewDef_t* view )
+{
+	const idRenderMatrix& projection = view->unjitteredProjectionRenderMatrix;
+	const float zNear = r_znear.GetFloat() * ( view->renderView.cramZNear ? 0.25f : 1.0f );
+	const float tx = ( 1.0f + idMath::Fabs( projection[0][2] ) ) / projection[0][0];
+	const float ty = ( 1.0f + idMath::Fabs( projection[1][2] ) ) / projection[1][1];
+	const float radius = zNear * idMath::Sqrt( 1.0f + tx * tx + ty * ty );
+	const float determinant = axis[0] * axis[1].Cross( axis[2] );
+	if( idMath::Fabs( determinant ) < 1e-10f )
+	{
+		return true;
+	}
+	const idVec3 delta = view->renderView.vieworg - origin;
+	for( int i = 0; i < 3; i++ )
+	{
+		// Solve the scaled model axis rather than assuming an orthonormal rotation.
+		const idVec3 normal = axis[( i + 1 ) % 3].Cross( axis[( i + 2 ) % 3] );
+		const float eye = ( delta * normal ) / determinant;
+		const float reach = radius * normal.Length() / idMath::Fabs( determinant );
+		if( eye < bounds[0][i] - reach || eye > bounds[1][i] + reach )
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
 static const float CHECK_BOUNDS_EPSILON = 1.0f;
 
 /*
@@ -377,6 +404,24 @@ void R_RenderSingleModel( viewEntity_t* vEntity )
 			// render the BSP area surfaces and from static model entities only the occlusion surfaces to keep the tris count at minimum
 			if( model->IsStaticWorldModel() || ( shader->IsOccluder() && !gpuSkinned ) )
 			{
+				if( r_mocOccluderMinPixels.GetFloat() > 0.0f || r_mocOccluderMaxDist.GetFloat() > 0.0f )
+				{
+					idBounds worldBounds;
+					worldBounds.FromTransformedBounds( tri->bounds, renderEntity->origin, renderEntity->axis );
+					if( ( r_mocOccluderMinPixels.GetFloat() > 0.0f && R_ProjectedBoundsPixels( worldBounds, viewDef ) < r_mocOccluderMinPixels.GetFloat() ) ||
+						( r_mocOccluderMaxDist.GetFloat() > 0.0f && ( worldBounds.GetCenter() - viewDef->renderView.vieworg ).LengthSqr() > Square( r_mocOccluderMaxDist.GetFloat() ) ) )
+					{
+						tr.pc.c_mocSkippedSize++;
+						continue;
+					}
+				}
+				const int triangles = tri->numIndexes / 3;
+				if( r_mocTriangleBudget.GetInteger() > 0 && triangles > r_mocTriangleBudget.GetInteger() - tr.pc.c_mocOccluderTris )
+				{
+					tr.pc.c_mocSkippedBudget++;
+					continue;
+				}
+				tr.pc.c_mocOccluderTris += triangles;
 				tr.pc.c_mocIndexes += tri->numIndexes;
 				tr.pc.c_mocVerts += tri->numIndexes;
 
@@ -576,6 +621,13 @@ void R_FillMaskedOcclusionBufferWithModels( viewDef_t* viewDef )
 		// must be multiple of 4
 		viewHeight = ( viewHeight + 3 ) & ~3;
 	}
+
+	if( r_mocFixes.GetInteger() & 2 )
+	{
+		viewWidth = Max( 32, ( viewWidth + 31 ) & ~31 );
+		viewHeight = Max( 16, ( viewHeight + 15 ) & ~15 );
+	}
+	tr.pc.c_mocOccluderTris = tr.pc.c_mocSkippedSize = tr.pc.c_mocSkippedBudget = 0;
 
 	const float zNear = ( viewDef->renderView.cramZNear ) ? ( r_znear.GetFloat() * 0.25f ) : r_znear.GetFloat();
 

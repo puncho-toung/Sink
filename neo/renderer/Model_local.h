@@ -90,6 +90,9 @@ public:
 	virtual srfTriangles_t* 	AllocSurfaceTriangles( int numVerts, int numIndexes ) const;
 	virtual void				FreeSurfaceTriangles( srfTriangles_t* tris ) const;
 	virtual bool				IsStaticWorldModel() const;
+	virtual int					NumLods() const;
+	virtual idRenderModel*		Lod( int level );
+	virtual void				SetLod( int level, idRenderModel* model );
 	virtual dynamicModel_t		IsDynamicModel() const;
 	virtual bool				IsDefaultModel() const;
 	virtual bool				IsReloadable() const;
@@ -146,6 +149,7 @@ public:
 	vertCacheHandle_t			jointsInvertedBuffer;
 
 protected:
+	idRenderModel*			lodModels[3]; // manager owns siblings; never collision models
 	int							lastModifiedFrame;
 	int							lastArchivedFrame;
 

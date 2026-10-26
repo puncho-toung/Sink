@@ -2421,6 +2421,7 @@ idFuncSmoke::Event_Activate
 */
 void idFuncSmoke::Event_Activate( idEntity* activator )
 {
+	dormantWakeRequested = true;
 	if( thinkFlags & TH_UPDATEPARTICLES )
 	{
 		restart = false;
@@ -3753,6 +3754,7 @@ idPhantomObjects::Event_Activate
 */
 void idPhantomObjects::Event_Activate( idEntity* activator )
 {
+	dormantWakeRequested = true;
 	int i;
 	float time;
 	float frac;

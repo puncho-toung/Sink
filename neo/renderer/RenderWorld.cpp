@@ -90,6 +90,56 @@ void R_ListRenderLightDefs_f( const idCmdArgs& args )
 R_ListRenderEntityDefs_f
 ===================
 */
+void R_CheckOpenAreas_f( const idCmdArgs& args )
+{
+	if( tr.primaryWorld == NULL )
+	{
+		common->Printf( "checkOpenAreas: no world\n" );
+		return;
+	}
+	const float guideExtent = args.Argc() > 1 ? Max( 1.0f, ( float )atof( args.Argv( 1 ) ) ) : 4096.0f;
+	const int maxLights = args.Argc() > 2 ? Max( 1, atoi( args.Argv( 2 ) ) ) : 64;
+	const int maxRefs = args.Argc() > 3 ? Max( 1, atoi( args.Argv( 3 ) ) ) : 1024;
+	int overBudget = 0, largeAreas = 0;
+	for( int a = 0; a < tr.primaryWorld->numPortalAreas; a++ )
+	{
+		const portalArea_t& area = tr.primaryWorld->portalAreas[a];
+		int refs = 0, lights = 0, occluders = 0;
+		for( const areaReference_t* ref = area.entityRefs.areaNext; ref != &area.entityRefs; ref = ref->areaNext )
+		{
+			refs++;
+			const idRenderModel* model = ref->entity->parms.hModel;
+			if( model == NULL )
+			{
+				continue;
+			}
+			for( int i = 0; i < model->NumSurfaces(); i++ )
+			{
+				const modelSurface_t* surface = model->Surface( i );
+				occluders += surface->shader != NULL && surface->shader->IsOccluder();
+			}
+		}
+		for( const areaReference_t* ref = area.lightRefs.areaNext; ref != &area.lightRefs; ref = ref->areaNext )
+		{
+			lights += ref->light->LightCastsShadows();
+		}
+		const idVec3 extent = area.globalBounds[1] - area.globalBounds[0];
+		const int64 width = ( int64 )area.lightGrid.lightGridBounds[0] * area.lightGrid.lightGridBounds[2] * 16;
+		const int64 height = ( int64 )area.lightGrid.lightGridBounds[1] * 16;
+		const bool large = extent.x > guideExtent || extent.y > guideExtent;
+		const bool over = lights > maxLights || refs > maxRefs || width > 16384 || height > 16384;
+		largeAreas += large;
+		overBudget += over;
+		if( large || over || occluders )
+		{
+			common->Printf( "area %d: extent %.0fx%.0f shadowedLights %d refs %d gridPoints %d atlas %lldx%lld occluders %d%s\n",
+				a, extent.x, extent.y, lights, refs, area.lightGrid.lightGridPoints.Num(), ( long long )width, ( long long )height, occluders,
+				large ? " (extent guidance only)" : "" );
+		}
+	}
+	common->Printf( "checkOpenAreas: %d areas, %d over budget, %d above extent guidance (not enforced)\n", tr.primaryWorld->numPortalAreas, overBudget, largeAreas );
+}
+
 void R_ListRenderEntityDefs_f( const idCmdArgs& args )
 {
 	int			i;
@@ -156,7 +206,12 @@ idRenderWorldLocal::idRenderWorldLocal()
 	doublePortals = NULL;
 	numInterAreaPortals = 0;
 
-	interactionTable = 0;
+	interactionTable = NULL;
+	interactionIndex = NULL;
+	interactionIndexCapacity = interactionIndexShift = interactionIndexEntries = 0;
+	interactionMaxProbe = interactionLateInserts = interactionGenerateMS = 0;
+	interactionIndexSparse = interactionIndexVerify = false;
+	interactionMismatches.SetValue( 0 );
 	interactionTableWidth = 0;
 	interactionTableHeight = 0;
 
@@ -206,30 +261,163 @@ idRenderWorldLocal::~idRenderWorldLocal()
 ResizeInteractionTable
 ===================
 */
-void idRenderWorldLocal::ResizeInteractionTable()
+static idCVar r_interactionTableMaxMB( "r_interactionTableMaxMB", "64", CVAR_RENDERER | CVAR_INTEGER, "dense interaction budget in MB; 0 always dense, -1 always sparse" );
+static idCVar r_interactionIndexVerify( "r_interactionIndexVerify", "0", CVAR_RENDERER | CVAR_BOOL, "build both interaction indices and compare lookups" );
+
+size_t idRenderWorldLocal::InteractionIndexBytes() const
 {
-	// we overflowed the interaction table, so make it larger
-	common->Printf( "idRenderWorldLocal::ResizeInteractionTable: overflowed interactionTable, resizing\n" );
+	return ( interactionTable ? ( size_t )interactionTableWidth * interactionTableHeight * sizeof( *interactionTable ) : 0 ) +
+		( size_t )interactionIndexCapacity * sizeof( interactionIndexSlot_t );
+}
 
-	const int oldInteractionTableWidth = interactionTableWidth;
-	const int oldIinteractionTableHeight = interactionTableHeight;
-	idInteraction** oldInteractionTable = interactionTable;
-
-	// build the interaction table
-	// this will be dynamically resized if the entity / light counts grow too much
-	interactionTableWidth = entityDefs.Num() + 100;
-	interactionTableHeight = lightDefs.Num() + 100;
-	const int	size =  interactionTableWidth * interactionTableHeight * sizeof( *interactionTable );
-	interactionTable = ( idInteraction** )R_ClearedStaticAlloc( size );
-	for( int l = 0; l < oldIinteractionTableHeight; l++ )
+void idRenderWorldLocal::FreeInteractionIndex()
+{
+	if( interactionTable != NULL )
 	{
-		for( int e = 0; e < oldInteractionTableWidth; e++ )
+		R_StaticFree( interactionTable );
+		interactionTable = NULL;
+	}
+	if( interactionIndex != NULL )
+	{
+		R_StaticFree( interactionIndex );
+		interactionIndex = NULL;
+	}
+	interactionIndexCapacity = interactionIndexEntries = 0;
+	interactionTableWidth = interactionTableHeight = 0;
+}
+
+idInteraction* idRenderWorldLocal::GetInteraction( int light, int entity ) const
+{
+	if( light < 0 || entity < 0 || light >= interactionTableHeight || entity >= interactionTableWidth )
+	{
+		return NULL;
+	}
+	idInteraction* sparseValue = NULL;
+	if( interactionIndex != NULL )
+	{
+		const unsigned int key = ( ( unsigned int )light << 16 ) | ( unsigned int )entity;
+		const int mask = interactionIndexCapacity - 1;
+		int slot = ( key * 0x9E3779B1u ) >> interactionIndexShift;
+		while( interactionIndex[slot].value != NULL )
 		{
-			interactionTable[ l * interactionTableWidth + e ] = oldInteractionTable[ l * oldInteractionTableWidth + e ];
+			if( interactionIndex[slot].key == key )
+			{
+				sparseValue = interactionIndex[slot].value;
+				break;
+			}
+			slot = ( slot + 1 ) & mask;
 		}
 	}
+	idInteraction* denseValue = interactionTable ? interactionTable[( size_t )light * interactionTableWidth + entity] : NULL;
+	if( interactionIndexVerify && denseValue != sparseValue )
+	{
+		interactionMismatches.Increment();
+	}
+	return interactionIndexSparse ? sparseValue : denseValue;
+}
 
-	R_StaticFree( oldInteractionTable );
+void idRenderWorldLocal::SetInteraction( int light, int entity, idInteraction* value )
+{
+	if( light < 0 || entity < 0 || light >= interactionTableHeight || entity >= interactionTableWidth )
+	{
+		return;
+	}
+	if( interactionIndex != NULL )
+	{
+		const unsigned int key = ( ( unsigned int )light << 16 ) | ( unsigned int )entity;
+		const int mask = interactionIndexCapacity - 1;
+		int slot = ( key * 0x9E3779B1u ) >> interactionIndexShift;
+		int probes = 1;
+		while( interactionIndex[slot].value != NULL && interactionIndex[slot].key != key )
+		{
+			slot = ( slot + 1 ) & mask;
+			probes++;
+		}
+		interactionMaxProbe = Max( interactionMaxProbe, probes );
+		if( value != NULL )
+		{
+			if( interactionIndex[slot].value == NULL )
+			{
+				if( generateAllInteractionsCalled )
+				{
+					interactionLateInserts++;
+					assert( !generateAllInteractionsCalled );
+					return;
+				}
+				interactionIndexEntries++;
+			}
+			interactionIndex[slot].key = key;
+			interactionIndex[slot].value = value;
+		}
+		else if( interactionIndex[slot].value != NULL )
+		{
+			// Shift only entries whose probe chain crosses the hole; no tombstones accumulate.
+			int hole = slot;
+			for( int next = ( hole + 1 ) & mask; interactionIndex[next].value != NULL; next = ( next + 1 ) & mask )
+			{
+				const int home = ( interactionIndex[next].key * 0x9E3779B1u ) >> interactionIndexShift;
+				if( ( ( next - home ) & mask ) >= ( ( next - hole ) & mask ) )
+				{
+					interactionIndex[hole] = interactionIndex[next];
+					hole = next;
+				}
+			}
+			interactionIndex[hole].value = NULL;
+			interactionIndexEntries--;
+		}
+	}
+	if( interactionTable != NULL )
+	{
+		const size_t index = ( size_t )light * interactionTableWidth + entity;
+		if( interactionIndex == NULL && ( interactionTable[index] == NULL ) != ( value == NULL ) )
+		{
+			interactionIndexEntries += value != NULL ? 1 : -1;
+		}
+		interactionTable[index] = value;
+	}
+}
+
+void idRenderWorldLocal::ListInteractionIndex() const
+{
+	common->Printf( "itab_mode %s interactionKB %" PRIuSIZE " itab_entries %i itab_capacity %i itab_maxProbe %i itab_mismatches %i lateInserts %i\n",
+		interactionIndexSparse ? "sparse" : "dense", InteractionIndexBytes() >> 10, interactionIndexEntries, interactionIndexCapacity,
+		interactionMaxProbe, interactionMismatches.GetValue(), interactionLateInserts );
+	int longest[10] = { 0 };
+	if( interactionIndex != NULL )
+	{
+		for( int i = 0; i < interactionIndexCapacity; i++ )
+		{
+			if( interactionIndex[i].value == NULL )
+			{
+				continue;
+			}
+			const int home = ( interactionIndex[i].key * 0x9E3779B1u ) >> interactionIndexShift;
+			int probes = ( ( i - home ) & ( interactionIndexCapacity - 1 ) ) + 1;
+			for( int rank = 0; rank < 10; rank++ )
+			{
+				if( probes > longest[rank] )
+				{
+					const int displaced = longest[rank];
+					longest[rank] = probes;
+					probes = displaced;
+				}
+			}
+		}
+		common->Printf( "longest lookup probes:" );
+		for( int rank = 0; rank < 10; rank++ )
+		{
+			common->Printf( " %i", longest[rank] );
+		}
+		common->Printf( "\n" );
+	}
+}
+
+CONSOLE_COMMAND( listInteractionIndex, "prints the current map interaction index", NULL )
+{
+	if( tr.primaryWorld != NULL )
+	{
+		tr.primaryWorld->ListInteractionIndex();
+	}
 }
 
 /*
@@ -245,10 +433,6 @@ qhandle_t idRenderWorldLocal::AddEntityDef( const renderEntity_t* re )
 	{
 		entityHandle = entityDefs.Append( NULL );
 
-		if( interactionTable && entityDefs.Num() > interactionTableWidth )
-		{
-			ResizeInteractionTable();
-		}
 	}
 
 	UpdateEntityDef( entityHandle, re );
@@ -281,7 +465,7 @@ void idRenderWorldLocal::UpdateEntityDef( qhandle_t entityHandle, const renderEn
 	}
 
 	// create new slots if needed
-	if( entityHandle < 0 || entityHandle > LUDICROUS_INDEX )
+	if( entityHandle < 0 || entityHandle >= MAX_RENDER_ENTITY_DEFS )
 	{
 		common->Error( "idRenderWorld::UpdateEntityDef: index = %i", entityHandle );
 	}
@@ -446,10 +630,6 @@ qhandle_t idRenderWorldLocal::AddLightDef( const renderLight_t* rlight )
 	if( lightHandle == -1 )
 	{
 		lightHandle = lightDefs.Append( NULL );
-		if( interactionTable && lightDefs.Num() > interactionTableHeight )
-		{
-			ResizeInteractionTable();
-		}
 	}
 	UpdateLightDef( lightHandle, rlight );
 
@@ -476,7 +656,7 @@ void idRenderWorldLocal::UpdateLightDef( qhandle_t lightHandle, const renderLigh
 	tr.pc.c_lightUpdates++;
 
 	// create new slots if needed
-	if( lightHandle < 0 || lightHandle > LUDICROUS_INDEX )
+	if( lightHandle < 0 || lightHandle >= MAX_RENDER_LIGHT_DEFS )
 	{
 		common->Error( "idRenderWorld::UpdateLightDef: index = %i", lightHandle );
 	}
@@ -633,7 +813,7 @@ void idRenderWorldLocal::UpdateEnvprobeDef( qhandle_t envprobeHandle, const rend
 	tr.pc.c_envprobeUpdates++;
 
 	// create new slots if needed
-	if( envprobeHandle < 0 || envprobeHandle > LUDICROUS_INDEX )
+	if( envprobeHandle < 0 || envprobeHandle >= MAX_RENDER_ENVPROBE_DEFS )
 	{
 		common->Error( "idRenderWorld::UpdateEnvprobeDef: index = %i", envprobeHandle );
 	}
@@ -1928,12 +2108,56 @@ void idRenderWorldLocal::GenerateAllInteractions()
 	// try and do any view specific optimizations
 	tr.viewDef = NULL;
 
-	// build the interaction table
-	// this will be dynamically resized if the entity / light counts grow too much
+	FreeInteractionIndex();
 	interactionTableWidth = entityDefs.Num() + 100;
 	interactionTableHeight = lightDefs.Num() + 100;
-	int	size =  interactionTableWidth * interactionTableHeight * sizeof( *interactionTable );
-	interactionTable = ( idInteraction** )R_ClearedStaticAlloc( size );
+	const size_t denseBytes = ( size_t )interactionTableWidth * interactionTableHeight * sizeof( *interactionTable );
+	const int maxMB = r_interactionTableMaxMB.GetInteger();
+	interactionIndexSparse = maxMB < 0 || ( maxMB > 0 && denseBytes > ( size_t )maxMB * 1024 * 1024 );
+	interactionIndexVerify = r_interactionIndexVerify.GetBool() && denseBytes <= INT_MAX;
+	interactionMaxProbe = interactionLateInserts = interactionGenerateMS = 0;
+	interactionMismatches.SetValue( 0 );
+	if( !interactionIndexSparse || interactionIndexVerify )
+	{
+		if( denseBytes > INT_MAX )
+		{
+			common->Error( "interaction table E=%i L=%i exceeds allocator limit (%" PRIuSIZE " bytes)", interactionTableWidth, interactionTableHeight, denseBytes );
+		}
+		interactionTable = ( idInteraction** )R_ClearedStaticAlloc( ( int )denseBytes );
+	}
+	if( interactionIndexSparse || interactionIndexVerify )
+	{
+		size_t pairs = 0;
+		for( int i = 0; i < lightDefs.Num(); i++ )
+		{
+			const idRenderLightLocal* light = lightDefs[i];
+			if( light == NULL )
+			{
+				continue;
+			}
+			for( areaReference_t* lref = light->references; lref != NULL; lref = lref->ownerNext )
+			{
+				portalArea_t* area = lref->area;
+				for( areaReference_t* eref = area->entityRefs.areaNext; eref != &area->entityRefs; eref = eref->areaNext )
+				{
+					pairs++;
+				}
+			}
+		}
+		size_t capacity = 1024;
+		interactionIndexShift = 22;
+		while( capacity < pairs * 2 )
+		{
+			capacity *= 2;
+			interactionIndexShift--;
+		}
+		if( capacity > INT_MAX / sizeof( interactionIndexSlot_t ) )
+		{
+			common->Error( "sparse interaction index exceeds allocator limit: %" PRIuSIZE " pairs", pairs );
+		}
+		interactionIndexCapacity = ( int )capacity;
+		interactionIndex = ( interactionIndexSlot_t* )R_ClearedStaticAlloc( ( int )( capacity * sizeof( interactionIndexSlot_t ) ) );
+	}
 
 	tr.commandList->open();
 
@@ -1974,6 +2198,7 @@ void idRenderWorldLocal::GenerateAllInteractions()
 				// if we already have an interaction, we don't need to do anything
 				if( inter != NULL )
 				{
+					SetInteraction( ldef->index, edef->index, inter->IsEmpty() ? INTERACTION_EMPTY : inter );
 					continue;
 				}
 
@@ -1995,9 +2220,11 @@ void idRenderWorldLocal::GenerateAllInteractions()
 
 	int end = Sys_Milliseconds();
 	int	msec = end - start;
+	interactionGenerateMS = msec;
 
 	common->Printf( "idRenderWorld::GenerateAllInteractions, msec = %i\n", msec );
-	common->Printf( "interactionTable size: %i bytes\n", size );
+	common->Printf( "interactionTable size: %" PRIuSIZE " bytes\n", InteractionIndexBytes() );
+	ListInteractionIndex();
 	common->Printf( "%i interactions take %i bytes\n", count, count * sizeof( idInteraction ) );
 
 	// entities flagged as noDynamicInteractions will no longer make any

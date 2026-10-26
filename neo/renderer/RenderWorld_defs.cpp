@@ -100,6 +100,11 @@ void R_FreeEntityDefDerivedData( idRenderEntityLocal* def, bool keepDecals, bool
 	{
 		delete def->cachedDynamicModel;
 		def->cachedDynamicModel = NULL;
+		delete def->lodDynamicModel;
+		def->lodDynamicModel = NULL;
+		def->lodDynamicModelFrameCount = 0;
+		def->lodDynamicLevel = 0;
+		def->lodLevel = 0;
 	}
 
 	// free the entityRefs from the areas

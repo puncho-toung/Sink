@@ -298,6 +298,11 @@ public:
 	int						dynamicModelFrameCount;	// continuously animating dynamic models will recreate
 	// dynamicModel if this doesn't == tr.viewCount
 	idRenderModel* 			cachedDynamicModel;
+	idRenderModel*			lodDynamicModel;
+	int						lodDynamicModelFrameCount;
+	int						lodDynamicLevel;
+	int						lodLevel;
+	int						lodSwitchFrame;
 
 	// the local bounds used to place entityRefs, either from parms for dynamic entities, or a model bounds
 	idBounds				localReferenceBounds;
@@ -347,7 +352,16 @@ struct viewLight_t
 
 	// R_AddSingleLight() determined that the light isn't actually needed
 	bool					removeFromList;
-	int					lightRefsWalked;
+	int						lightRefsWalked;
+	int						cullShadowSkips;
+	int					gatherMismatch;
+	float					cullFade;
+	int					mocSpotTests;
+	int					mocSpotCulls;
+	int					mocIndexes;
+	int					mocVerts;
+	int					mocTests;
+	int					mocCulled;
 
 	// R_AddSingleLight builds this list of entities that need to be added
 	// to the viewEntities list because they potentially cast shadows into
@@ -444,6 +458,15 @@ struct viewEntity_t
 	// be linked to the lights or added to the drawsurf list in a serial code section
 	drawSurf_t* 			drawSurfs;
 	int					contactedCapHits;
+	int					lodLevel;
+	int					lodTrisSaved;
+	int					lodSwitches;
+	int					lodThrash;
+	int					lodCacheBuilds;
+	int					mocIndexes;
+	int					mocVerts;
+	int					mocTests;
+	int					mocCulled;
 };
 
 // RB: viewEnvprobes are allocated on the frame temporary stack memory
@@ -555,8 +578,26 @@ typedef idPlane frustum_t[FRUSTUM_PLANES];
 // RB end
 
 // viewDefs are allocated on the frame temporary stack memory
+struct lightGatherRef_t
+{
+	idRenderEntityLocal* entity;
+	int next;
+};
+
+struct lightGatherArea_t
+{
+	lightGatherRef_t* refs;
+	int* heads;
+	int numRefs;
+	int width, height;
+	int oversize;
+	float cellSize;
+	idVec3 origin;
+};
+
 struct viewDef_t
 {
+	lightGatherArea_t* lightGatherAreas;
 	// specified in the call to DrawScene()
 	renderView_t		renderView;
 
@@ -1180,6 +1221,24 @@ extern idCVar r_brightness;					// changes gamma tables
 extern idCVar r_checkBounds;				// compare all surface bounds with precalculated ones
 extern idCVar r_maxAnisotropicFiltering;	// texture filtering parameter
 extern idCVar r_useTrilinearFiltering;		// Extra quality filtering
+extern idCVar r_mocOccluderMinPixels;
+extern idCVar r_mocOccluderMaxDist;
+extern idCVar r_mocTriangleBudget;
+extern idCVar r_mocFixes;
+extern idCVar r_lightGatherGrid;
+extern idCVar r_lightGatherCell;
+extern idCVar r_lightGatherCompare;
+extern idCVar r_modelLod;
+extern idCVar r_modelLodPixels;
+extern idCVar r_modelLodScale;
+extern idCVar r_showModelLod;
+extern idCVar r_viewDistance;
+extern idCVar r_distanceCull;
+extern idCVar r_cullDistanceScale;
+extern idCVar r_cullPixelsScale;
+extern idCVar r_cullFadeFraction;
+extern idCVar r_showDistanceCull;
+extern idCVar r_showOpenStats;
 extern idCVar r_lodBias;					// lod bias
 
 extern idCVar r_useLightPortalFlow;			// 1 = do a more precise area reference determination
@@ -1579,6 +1638,11 @@ RENDERWORLD_PORTALS
 ============================================================
 */
 
+// Pure visibility math; safe in a light job. Bounds and eye are absolute map coordinates.
+bool R_MocNearBounds( const idBounds& bounds, const idVec3& origin, const idMat3& axis, const viewDef_t* view );
+float R_ProjectedBoundsPixels( const idBounds& bounds, const viewDef_t* view );
+float R_VisibilityFade( const idBounds& bounds, float maxDistance, float minPixels, const viewDef_t* view, int& reason );
+bool R_CullEntityDistance( const idRenderEntityLocal* entity, const viewDef_t* view, int& reason );
 viewEntity_t* R_SetEntityDefViewEntity( idRenderEntityLocal* def );
 viewLight_t* R_SetLightDefViewLight( idRenderLightLocal* def );
 

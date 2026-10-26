@@ -33,7 +33,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "BoundsTrack.h"
 
 // assume any lightDef or entityDef index above this is an internal error
-const int LUDICROUS_INDEX	= 10000;
+const int MAX_RENDER_ENTITY_DEFS = 32768;
+const int MAX_RENDER_LIGHT_DEFS = 16384;
+const int MAX_RENDER_ENVPROBE_DEFS = 10000;
 
 
 typedef struct portal_s
@@ -170,6 +172,12 @@ struct shProbeEntry_t
 	idVec3		sh[9];						// L2 SH irradiance, RGB per coefficient
 };
 
+struct interactionIndexSlot_t
+{
+	unsigned int key;
+	idInteraction* value;
+};
+
 class idRenderWorldLocal : public idRenderWorld
 {
 public:
@@ -284,6 +292,21 @@ public:
 	// Growing this table is time consuming, so we add a pad value to the number
 	// of entityDefs and lightDefs
 	idInteraction** 		interactionTable;
+	interactionIndexSlot_t* interactionIndex;
+	int					interactionIndexCapacity;
+	int					interactionIndexShift;
+	int					interactionIndexEntries;
+	int					interactionMaxProbe;
+	int					interactionLateInserts;
+	int					interactionGenerateMS;
+	bool				interactionIndexSparse;
+	bool				interactionIndexVerify;
+	mutable idSysInterlockedInteger interactionMismatches;
+	idInteraction*		GetInteraction( int light, int entity ) const;
+	void					SetInteraction( int light, int entity, idInteraction* value );
+	void					FreeInteractionIndex();
+	size_t				InteractionIndexBytes() const;
+	void					ListInteractionIndex() const;
 	int						interactionTableWidth;		// entityDefs
 	int						interactionTableHeight;		// lightDefs
 
@@ -363,7 +386,6 @@ public:
 	//--------------------------
 	// RenderWorld.cpp
 
-	void					ResizeInteractionTable();
 
 	void					AddEntityRefToArea( idRenderEntityLocal* def, portalArea_t* area );
 	void					AddLightRefToArea( idRenderLightLocal* light, portalArea_t* area );
@@ -412,6 +434,7 @@ public:
 static idInteraction* const INTERACTION_EMPTY = ( idInteraction* )1;
 
 void R_ListRenderLightDefs_f( const idCmdArgs& args );
+void R_CheckOpenAreas_f( const idCmdArgs& args );
 void R_ListRenderEntityDefs_f( const idCmdArgs& args );
 
 #endif /* !__RENDERWORLDLOCAL_H__ */

@@ -532,6 +532,12 @@ float idConsoleLocal::DrawFPS( float y )
 								commonLocal.stats_frontend.c_mocCulledSurfaces,
 								commonLocal.stats_frontend.c_mocVerts,
 								commonLocal.stats_frontend.c_mocIndexes );
+			const performanceCounters_t& open = commonLocal.stats_frontend;
+			ImGui::TextColored( colorLtGrey, "OPEN: cull:%i/%i lights:%i fade:%i refs:%i max:%i mismatch:%i LOD:%i/%i/%i trisSaved:%i",
+				open.c_cullDistEntities, open.c_cullPixelEntities, open.c_cullLights, open.c_fadedLights,
+				open.c_lightRefsWalked, open.c_lightRefsWalkedMax, open.c_gatherMismatch,
+				open.c_lodEntities1, open.c_lodEntities2, open.c_lodEntities3, open.c_lodTrisSaved );
+
 
 			ImGui::TextColored( colorLtGrey, "ADDMODEL: callback:%-2i createInteractions:%i createShadowVolumes:%i",
 								commonLocal.stats_frontend.c_entityDefCallbacks,
@@ -581,6 +587,9 @@ float idConsoleLocal::DrawFPS( float y )
 			if( aiHud != NULL && com_showFPS.GetInteger() > 3 )
 			{
 				const aiTicStats_t& t = aiHud->tic;
+				ImGui::TextColored( colorLtGrey, "dormancy: tests %d asleep %d closed %d far %d unseen %d wakes %d sleeps %d deferred %d forced %d violations %d catchups %d",
+					t.dormTests, t.dormAsleep, t.dormClosedOff, t.dormFar, t.dormUnseen, t.dormWakes, t.dormSleeps, t.dormDeferred, t.dormForced, t.dormViolations, t.dormCatchUps );
+
 				ImGui::TextColored( colorLtGrey, "AI    thinks %-3i  moving %-3i  think %.1f ms  [max128 %.1f]   worst %s %.2f ms",
 									t.thinks, t.moveTics, t.usThink * 0.001f, aiHud->usThinkMax128 * 0.001f,
 									aiHud->worstName, aiHud->worst.usThink * 0.001f );

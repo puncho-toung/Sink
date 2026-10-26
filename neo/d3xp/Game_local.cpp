@@ -208,6 +208,8 @@ idGameLocal::Clear
 */
 void idGameLocal::Clear()
 {
+	numDormantSources = 0;
+	dormantWakesRemaining = 0;
 	memset( &mapClipStart, 0, sizeof( mapClipStart ) );
 	mapAllocStart = 0;
 	mapAllocTic = 0;
@@ -222,6 +224,7 @@ void idGameLocal::Clear()
 		persistentPlayerInfo[i].Clear();
 	}
 	memset( entities, 0, sizeof( entities ) );
+	ResetEntityBudgets( false );
 	memset( spawnIds, -1, sizeof( spawnIds ) );
 	firstFreeEntityIndex[0] = 0;
 	firstFreeEntityIndex[1] = ENTITYNUM_FIRST_NON_REPLICATED;
@@ -1057,6 +1060,7 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 
 	// initialize all entities for this game
 	memset( entities, 0, sizeof( entities ) );
+	ResetEntityBudgets( false );
 	memset( spawnIds, -1, sizeof( spawnIds ) );
 	//puncho start - identity (P1-A2)
 	memset( slotGen, 0, sizeof( slotGen ) );
@@ -1866,6 +1870,7 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 	//puncho end
 
 	gamestate = GAMESTATE_ACTIVE;
+	ResetEntityBudgets( true );
 
 	Printf( "--------------------------------------\n" );
 
@@ -2563,6 +2568,8 @@ idGameLocal::SetupPlayerPVS
 */
 void idGameLocal::SetupPlayerPVS()
 {
+	numDormantSources = 0;
+	dormantWakesRemaining = Max( 0, g_dormantWakeBudget.GetInteger() );
 	int			i;
 	idEntity* 	ent;
 	idPlayer* 	player;
@@ -2578,6 +2585,14 @@ void idGameLocal::SetupPlayerPVS()
 		}
 
 		player = static_cast<idPlayer*>( ent );
+		idEntity* source = player->GetPrivateCameraView();
+		if( source == NULL )
+		{
+			if( camera != NULL ) { source = camera; }
+			else { source = player; }
+		}
+		if( numDormantSources < MAX_CLIENTS ) { dormantSources[numDormantSources++] = source->GetPhysics()->GetOrigin(); }
+
 
 		if( playerPVS.i == -1 )
 		{
@@ -3250,7 +3265,7 @@ static const char* const aiProfileCsvHeader =
 	"flowSteps,flowCellsBuilt,flowFieldsOpened,flowPromoted,roleFollowers,"	// ai-avoidance: appended after wallMs; WP-A2/A4 after avoidDropped; WP-A1/A3, WP-A5, WP-A6/A7 after those
 	"attacksMelee,attacksMissile,attacksCharge,projectilesAlive,damageEvents,friendlyDamage,painEvents,deaths,ragdollsActive,"
 	"enemyChanges,enemyLost,noEnemy,canHitTraces,attackPosSearches,coverSearches,usCombatTraces,"	// ai-combat (plans/ai-combat/00-PLAN.md §2.4): appended after roleFollowers
-	"usShooterTokens,shooterCandidates,shooterHolders,shooterGrants,shooterYields,shooterExpired,shooterDenied,shooterTests,shooterSniperAsks\n";	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): appended after usCombatTraces
+	"usShooterTokens,shooterCandidates,shooterHolders,shooterGrants,shooterYields,shooterExpired,shooterDenied,shooterTests,shooterSniperAsks,dormTests,dormAsleep,dormClosedOff,dormFar,dormUnseen,dormWakes,dormSleeps,dormDeferred,dormForced,dormViolations,awakeNear2k,awakeNear4k,awakeNear8k,awakeFar,dormCatchUps,aasCacheBytes,aasCacheEvictions,aasTravelSaturated\n";	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): appended after usCombatTraces
 
 /*
 ================
@@ -3414,6 +3429,15 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 		{
 			idStr::Copynz( snap, ",,,,,", sizeof( snap ) );
 		}
+		int64 aasBytes = 0, aasEvictions = 0, aasSaturated = 0;
+		for( int i = 0; i < aasList.Num(); i++ )
+		{
+			int bytes, evictions, saturated;
+			aasList[i]->GetRoutingStats( bytes, evictions, saturated );
+			aasBytes += bytes;
+			aasEvictions += evictions;
+			aasSaturated += saturated;
+		}
 		const int len = idStr::snPrintf( row, sizeof( row ),
 										"%d,%d,%d,%d,%d,%d,"
 										"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
@@ -3428,7 +3452,7 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 										"%d,%d,%d,%d,"
 										"%d,%d,%d,%d,%d,"
 										"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
-										"%d,%d,%d,%d,%d,%d,%d,%d,%d\n",	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): the shooter tokens
+										"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%lld,%lld,%lld\n",	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): the shooter tokens
 										framenum, time, usTic, numEnts, t.thinks, t.moveTics,
 										t.usThink, t.usPerceive, t.usScript, t.usMove, t.usMovePath, t.usMoveAvoid, t.usMovePhysics, t.usPath, t.usAnimUpdate, t.usAnimCtl,
 										aiHudStats.worst.usThink, aiHudStats.worstName,
@@ -3443,7 +3467,7 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 										t.flowSteps, t.flowCellsBuilt, t.flowFieldsOpened, t.flowPromoted, t.roleFollowers,
 										t.attacksMelee, t.attacksMissile, t.attacksCharge, t.projectilesAlive, t.damageEvents, t.friendlyDamage, t.painEvents, t.deaths, t.ragdollsActive,
 										t.enemyChanges, t.enemyLost, t.noEnemy, t.canHitTraces, t.attackPosSearches, t.coverSearches, t.usCombatTraces,
-										t.usShooterTokens, t.shooterCandidates, t.shooterHolders, t.shooterGrants, t.shooterYields, t.shooterExpired, t.shooterDenied, t.shooterTests, t.shooterSniperAsks );	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md)
+										t.usShooterTokens, t.shooterCandidates, t.shooterHolders, t.shooterGrants, t.shooterYields, t.shooterExpired, t.shooterDenied, t.shooterTests, t.shooterSniperAsks, t.dormTests, t.dormAsleep, t.dormClosedOff, t.dormFar, t.dormUnseen, t.dormWakes, t.dormSleeps, t.dormDeferred, t.dormForced, t.dormViolations, t.awakeNear2k, t.awakeNear4k, t.awakeNear8k, t.awakeFar, t.dormCatchUps, ( long long )aasBytes, ( long long )aasEvictions, ( long long )aasSaturated );	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md)
 		if( aiProfileLen + len >= ( int )sizeof( aiProfileBuf ) )
 		{
 			FlushAIProfileLog();
@@ -4393,6 +4417,146 @@ idGameLocal::RegisterEntity
 forceSpawnId >= 0 forces the generation, as does a client's one-shot from a snapshot (K10).
 ===================
 */
+static idCVar g_budgetDebris( "g_budgetDebris", "0", CVAR_GAME | CVAR_INTEGER, "maximum live transient debris; 0 disables" );
+static idCVar g_budgetFx( "g_budgetFx", "0", CVAR_GAME | CVAR_INTEGER, "maximum live transient effects; 0 disables" );
+static idCVar g_budgetItems( "g_budgetItems", "0", CVAR_GAME | CVAR_INTEGER, "refuse new optional dropped items at this cap; existing items persist" );
+static idCVar g_budgetGibs( "g_budgetGibs", "0", CVAR_GAME | CVAR_INTEGER, "maximum live transient gibs; 0 disables" );
+static idCVar g_entityReserve( "g_entityReserve", "64", CVAR_GAME | CVAR_INTEGER, "free entity slots reserved for essential spawns; 0 disables" );
+static const char* budgetNames[] = { "debris", "fx", "item", "gib" };
+
+int idGameLocal::GetEntityBudgetClass( const idTypeInfo& type, const idDict& args ) const
+{
+	if( gamestate != GAMESTATE_ACTIVE )
+	{
+		return -1;
+	}
+	// Actors/corpses and authored essential items cannot be evicted by a transient budget.
+	if( type.IsType( idActor::Type ) || type.IsType( idProjectile::Type ) || type.IsType( idWeapon::Type ) || args.GetBool( "essential" ) || args.GetBool( "quest_item" ) )
+	{
+		return -1;
+	}
+	const char* explicitBudget = args.GetString( "spawn_budget" );
+	if( explicitBudget[0] != '\0' )
+	{
+		for( int i = 0; i < 4; i++ )
+		{
+			if( idStr::Icmp( explicitBudget, budgetNames[i] ) == 0 )
+			{
+				// Items always retain the non-evicting class, even with an erroneous def key.
+				return type.IsType( idItem::Type ) || type.IsType( idMoveableItem::Type ) ? 2 : i;
+			}
+		}
+		return -1;
+	}
+	if( type.IsType( idDebris::Type ) )
+	{
+		return 0;
+	}
+	if( type.IsType( idEntityFx::Type ) )
+	{
+		return 1;
+	}
+	if( ( type.IsType( idItem::Type ) || type.IsType( idMoveableItem::Type ) ) && args.GetBool( "dropped" ) )
+	{
+		return 2;
+	}
+	if( type.IsType( idAFEntity_Base::Type ) && !type.IsType( idActor::Type ) )
+	{
+		return 3;
+	}
+	return -1;
+}
+
+void idGameLocal::ResetEntityBudgets( bool restore )
+{
+	for( int i = 0; i < 4; i++ )
+	{
+		entityBudgets[i].Clear();
+		budgetLive[i] = budgetEvicted[i] = budgetRefused[i] = 0;
+	}
+	budgetFreeSlots[0] = ENTITYNUM_FIRST_NON_REPLICATED - MAX_CLIENTS;
+	budgetFreeSlots[1] = ENTITYNUM_MAX_NORMAL - ENTITYNUM_FIRST_NON_REPLICATED;
+	budgetHighWater = 0;
+	mapStaticSkipCount = 0;
+	budgetAlarm[0] = budgetAlarm[1] = 0;
+	budgetSpawnRefused = false;
+	if( restore )
+	{
+		for( int i = MAX_CLIENTS; i < ENTITYNUM_MAX_NORMAL; i++ )
+		{
+			idEntity* ent = entities[i];
+			if( ent != NULL )
+			{
+				budgetFreeSlots[i >= ENTITYNUM_FIRST_NON_REPLICATED]--;
+				ent->budgetClass = -1;
+				JoinEntityBudget( ent, GetEntityBudgetClass( *ent->GetType(), ent->spawnArgs ) );
+			}
+		}
+		budgetHighWater = ENTITYNUM_MAX_NORMAL - MAX_CLIENTS - budgetFreeSlots[0] - budgetFreeSlots[1];
+	}
+}
+
+bool idGameLocal::PrepareBudgetSpawn( int budget, const idDict& args )
+{
+	if( budget < 0 )
+	{
+		return true;
+	}
+	const int caps[] = { g_budgetDebris.GetInteger(), g_budgetFx.GetInteger(), g_budgetItems.GetInteger(), g_budgetGibs.GetInteger() };
+	const int range = common->IsMultiplayer() && args.GetBool( "net_skip_replication" ) ? 1 : 0;
+	const int free = common->IsMultiplayer() ? budgetFreeSlots[range] : budgetFreeSlots[0] + budgetFreeSlots[1];
+	const bool reserveFull = g_entityReserve.GetInteger() > 0 && free <= g_entityReserve.GetInteger();
+	const bool capFull = caps[budget] > 0 && budgetLive[budget] >= caps[budget];
+	if( reserveFull || ( budget == 2 && capFull ) )
+	{
+		budgetSpawnRefused = true;
+		if( budgetRefused[budget] < INT_MAX )
+		{
+			budgetRefused[budget]++;
+		}
+		if( budgetRefused[budget] == 1 || budgetRefused[budget] % 1000 == 0 )
+		{
+			Warning( "refused optional %s spawn: %i free slots, %i live, %i refused", budgetNames[budget], free, budgetLive[budget], budgetRefused[budget] );
+		}
+		return false;
+	}
+	if( capFull )
+	{
+		idEntity* oldest = entityBudgets[budget].Next();
+		if( oldest != NULL )
+		{
+			oldest->budgetNode.Remove();
+			oldest->budgetClass = -1;
+			budgetLive[budget]--;
+			if( budgetEvicted[budget] < INT_MAX )
+			{
+				budgetEvicted[budget]++;
+			}
+			oldest->PostEventMS( &EV_Remove, 0 );
+		}
+	}
+	return true;
+}
+
+void idGameLocal::JoinEntityBudget( idEntity* ent, int budget )
+{
+	if( budget >= 0 && ent != NULL )
+	{
+		ent->budgetClass = budget;
+		ent->budgetNode.AddToEnd( entityBudgets[budget] );
+		budgetLive[budget]++;
+	}
+}
+
+void idGameLocal::ListBudgets() const
+{
+	Printf( "ent_used %i ent_highWater %i free_normal %i free_nonreplicated %i\n", ENTITYNUM_MAX_NORMAL - MAX_CLIENTS - budgetFreeSlots[0] - budgetFreeSlots[1], budgetHighWater, budgetFreeSlots[0], budgetFreeSlots[1] );
+	for( int i = 0; i < 4; i++ )
+	{
+		Printf( "bud_%s_live %i bud_%s_evicted %i bud_%s_refused %i\n", budgetNames[i], budgetLive[i], budgetNames[i], budgetEvicted[i], budgetNames[i], budgetRefused[i] );
+	}
+}
+
 void idGameLocal::RegisterEntity( idEntity* ent, int forceSpawnId, const idDict& spawnArgsToCopy )
 {
 	int spawn_entnum;
@@ -4466,6 +4630,20 @@ void idGameLocal::RegisterEntity( idEntity* ent, int forceSpawnId, const idDict&
 	}
 	slotGen[ spawn_entnum ] = gen;
 
+	if( spawn_entnum >= MAX_CLIENTS && spawn_entnum < ENTITYNUM_MAX_NORMAL )
+	{
+		const int range = spawn_entnum >= ENTITYNUM_FIRST_NON_REPLICATED;
+		budgetFreeSlots[range]--;
+		budgetHighWater = Max( budgetHighWater, ENTITYNUM_MAX_NORMAL - MAX_CLIENTS - budgetFreeSlots[0] - budgetFreeSlots[1] );
+		const int capacity = range ? ENTITYNUM_MAX_NORMAL - ENTITYNUM_FIRST_NON_REPLICATED : ENTITYNUM_FIRST_NON_REPLICATED - MAX_CLIENTS;
+		const int used = capacity - budgetFreeSlots[range];
+		const int alarm = used * 100 >= capacity * 90 ? 2 : used * 100 >= capacity * 75 ? 1 : 0;
+		if( alarm > budgetAlarm[range] )
+		{
+			budgetAlarm[range] = alarm;
+			Warning( "entity range %i crossed %i percent: %i / %i", range, alarm == 2 ? 90 : 75, used, capacity );
+		}
+	}
 	entities[ spawn_entnum ] = ent;
 	spawnIds[ spawn_entnum ] = gen;
 	//puncho end
@@ -4512,6 +4690,16 @@ void idGameLocal::UnregisterEntity( idEntity* ent )
 
 	if( ( ent->entityNumber != ENTITYNUM_NONE ) && ( entities[ ent->entityNumber ] == ent ) )
 	{
+		if( ent->entityNumber >= MAX_CLIENTS && ent->entityNumber < ENTITYNUM_MAX_NORMAL )
+		{
+			budgetFreeSlots[ent->entityNumber >= ENTITYNUM_FIRST_NON_REPLICATED]++;
+		}
+		if( ent->budgetClass >= 0 )
+		{
+			budgetLive[ent->budgetClass]--;
+			ent->budgetNode.Remove();
+			ent->budgetClass = -1;
+		}
 		ent->spawnNode.Remove();
 		entities[ ent->entityNumber ] = NULL;
 		spawnIds[ ent->entityNumber ] = -1;
@@ -4534,6 +4722,8 @@ idGameLocal::SpawnEntityType
 idEntity* idGameLocal::SpawnEntityType( const idTypeInfo& classdef, const idDict* args, bool bIsClientReadSnapshot )
 {
 	idClass* obj;
+	int budget = -1;
+	budgetSpawnRefused = false;
 
 #if _DEBUG
 	if( common->IsClient() )
@@ -4557,8 +4747,18 @@ idEntity* idGameLocal::SpawnEntityType( const idTypeInfo& classdef, const idDict
 		{
 			spawnArgs.Clear();
 		}
+		if( !bIsClientReadSnapshot && !spawnArgs.FindKey( "spawn_entnum" ) )
+		{
+			budget = GetEntityBudgetClass( classdef, spawnArgs );
+			if( !PrepareBudgetSpawn( budget, spawnArgs ) )
+			{
+				spawnArgs.Clear();
+				return NULL;
+			}
+		}
 		obj = classdef.CreateInstance();
 		obj->CallSpawn();
+		JoinEntityBudget( static_cast<idEntity*>( obj ), budget );
 	}
 
 	catch( idAllocError& )
@@ -4580,6 +4780,7 @@ returning false if not found
 */
 bool idGameLocal::SpawnEntityDef( const idDict& args, idEntity** ent, bool setDefaults )
 {
+	budgetSpawnRefused = false;
 	const char*	classname;
 	const char*	spawn;
 	idTypeInfo*	cls;
@@ -4642,6 +4843,13 @@ bool idGameLocal::SpawnEntityDef( const idDict& args, idEntity** ent, bool setDe
 			return false;
 		}
 
+		const int budget = spawnArgs.FindKey( "spawn_entnum" ) ? -1 : GetEntityBudgetClass( *cls, spawnArgs );
+		if( !PrepareBudgetSpawn( budget, spawnArgs ) )
+		{
+			spawnArgs.Clear();
+			return false;
+		}
+
 		obj = cls->CreateInstance();
 		if( !obj )
 		{
@@ -4653,6 +4861,7 @@ bool idGameLocal::SpawnEntityDef( const idDict& args, idEntity** ent, bool setDe
 
 		if( obj->IsType( idEntity::Type ) )
 		{
+			JoinEntityBudget( static_cast<idEntity*>( obj ), budget );
 			GrowMaxObstacleRadius( static_cast<idEntity*>( obj ) );	//puncho - ai-avoidance (WP-A4)
 		}
 
@@ -4864,7 +5073,7 @@ static bool MapStaticCanSkip( const idMapFile* map, int entity, const idHashInde
 	const idStr model = args.GetString( "model" );
 	if( model.IsEmpty() || model.Icmp( name ) == 0 )
 	{
-		reason = "brush static: consider func_group";
+		reason = "brush static (retained)";
 		return false;
 	}
 	const bool inlineAll = map->GetEntity( 0 )->epairs.GetBool( "inlineAllStatics" );
@@ -4932,6 +5141,15 @@ void idGameLocal::ListMapStatics() const
 	idList<mapStaticReference_t, TAG_GAME> refs;
 	BuildMapStaticReferences( mapFile, references, refs );
 	int eligible = 0;
+	idStr scriptPath = mapFileName;
+	scriptPath.SetFileExtension( "script" );
+	void* scriptData = NULL;
+	fileSystem->ReadFile( scriptPath, &scriptData );
+	const idStr scriptText = scriptData != NULL ? ( const char* )scriptData : "";
+	if( scriptData != NULL )
+	{
+		fileSystem->FreeFile( scriptData );
+	}
 	for( int e = 1; e < mapFile->GetNumEntities(); e++ )
 	{
 		const idDict& args = mapFile->GetEntity( e )->epairs;
@@ -4945,6 +5163,31 @@ void idGameLocal::ListMapStatics() const
 		eligible += canSkip;
 		idEntity* live = FindEntity( args.GetString( "name" ) );
 		Printf( "map static %i %s entity %i: %s\n", e, args.GetString( "name" ), live ? live->entityNumber : -1, reason.c_str() );
+		const idStr name = args.GetString( "name" );
+		if( !name.IsEmpty() && canSkip )
+		{
+			idStr quoted = "\"";
+			quoted += name;
+			quoted += "\"";
+			idStr reference = "$";
+			reference += name;
+			if( scriptText.Find( quoted ) >= 0 || scriptText.Find( reference ) >= 0 )
+			{
+				Warning( "map static %s referenced by script; this diagnostic does not change the spawn decision", name.c_str() );
+			}
+		}
+		if( reason == "brush static (retained)" )
+		{
+			bool referenced = false;
+			for( int r = references.First( references.GenerateKey( name, false ) ); r != -1; r = references.Next( r ) )
+			{
+				referenced |= refs[r].entity != e && refs[r].value->GetValue().Icmp( name ) == 0;
+			}
+			if( !referenced )
+			{
+				Printf( "map static %i could be func_group (check script references before authoring change)\n", e );
+			}
+		}
 	}
 	Printf( "map statics: %i eligible for collision-free inline skip\n", eligible );
 }
@@ -5038,7 +5281,15 @@ void idGameLocal::SpawnMapEntities()
 		}
 	}
 
-	Printf( "...%i entities spawned, %i inhibited (%i statics skipped)\n\n", num, inhibit, skippedStatics );
+	mapStaticSkipCount = skippedStatics;
+	if( skipStatics )
+	{
+		Printf( "...%i entities spawned, %i inhibited (%i statics skipped)\n\n", num, inhibit, skippedStatics );
+	}
+	else
+	{
+		Printf( "...%i entities spawned, %i inhibited\n\n", num, inhibit );
+	}
 
 	//puncho start - P1-m3: the use_aas advice, game policy over the map merge's records. LoadMap has loaded the AAS
 	// files; a monster needs the one of its size, and the AAS compiler builds only the sizes the map uses, so a patch
@@ -7093,4 +7344,21 @@ void idGameLocal::GetMapStats( mapGameStats_t& stats ) const
 	stats.clipRmt = current.numRenderModelTraces - mapClipStart.numRenderModelTraces;
 	stats.clipUs = current.usQueries - mapClipStart.usQueries;
 	stats.allocGameTic = mapAllocTic;
+	stats.entityHighWater = budgetHighWater;
+	stats.spawnStaticsSkipped = mapStaticSkipCount;
+	for( int i = 0; i < 4; i++ )
+	{
+		stats.budgetLive[i] = budgetLive[i];
+		stats.budgetEvicted[i] = budgetEvicted[i];
+		stats.budgetRefused[i] = budgetRefused[i];
+		stats.entityRefused += budgetRefused[i];
+	}
+	for( int i = 0; i < aasList.Num(); i++ )
+	{
+		int bytes, evictions, saturated;
+		aasList[i]->GetRoutingStats( bytes, evictions, saturated );
+		stats.aasCacheBytes += bytes;
+		stats.aasCacheEvictions += evictions;
+		stats.aasTravelSaturated += saturated;
+	}
 }

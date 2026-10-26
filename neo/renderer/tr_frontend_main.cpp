@@ -1005,7 +1005,22 @@ void R_RenderView( viewDef_t* parms )
 
 	// identify all the visible portal areas, and create view lights and view entities
 	// for all the the entityDefs and lightDefs that are in the visible portal areas
+	const uint64 findViewStart = Sys_Microseconds();
 	static_cast<idRenderWorldLocal*>( parms->renderWorld )->FindViewLightsAndEntities();
+	tr.pc.usFindView = Sys_Microseconds() - findViewStart;
+	tr.pc.c_viewEntsUnder4px = tr.pc.c_viewEntsUnder16px = tr.pc.c_viewEntsBeyond8k = 0;
+	if( r_showOpenStats.GetBool() )
+	{
+		for( const viewEntity_t* entity = tr.viewDef->viewEntitys; entity != NULL; entity = entity->next )
+		{
+			const idBounds& bounds = entity->entityDef->globalReferenceBounds;
+			const float pixels = R_ProjectedBoundsPixels( bounds, tr.viewDef );
+			tr.pc.c_viewEntsUnder4px += pixels < 4.0f;
+			tr.pc.c_viewEntsUnder16px += pixels < 16.0f;
+			tr.pc.c_viewEntsBeyond8k += ( bounds.GetCenter() - tr.viewDef->renderView.vieworg ).LengthSqr() > Square( 8192.0f );
+		}
+	}
+
 
 	// wait for any shadow volume jobs from the previous frame to finish
 	tr.frontEndJobList->Wait();
@@ -1015,7 +1030,9 @@ void R_RenderView( viewDef_t* parms )
 
 	// make sure that interactions exist for all light / entity combinations that are visible
 	// add any pre-generated light shadows, and calculate the light shader values
+	const uint64 addLightsStart = Sys_Microseconds();
 	R_AddLights();
+	tr.pc.usAddLights = Sys_Microseconds() - addLightsStart;
 
 	// adds ambient surfaces and create any necessary interaction surfaces to add to the light lists
 	R_AddModels();

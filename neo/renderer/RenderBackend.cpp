@@ -1890,7 +1890,7 @@ void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const view
 	}
 	// RB end
 
-	const float lightScale = r_lightScale.GetFloat();
+	const float lightScale = r_lightScale.GetFloat() * vLight->cullFade;
 
 	for( int lightStageNum = 0; lightStageNum < lightShader->GetNumStages(); lightStageNum++ )
 	{

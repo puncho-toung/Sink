@@ -379,6 +379,7 @@ public:
 	bool					DrawModelContactFeature( const contactInfo_t& contact, const idClipModel* clipModel, int lifetime ) const;
 
 private:
+	int						sectorDepth;
 	int						numClipSectors;
 	struct clipSector_s* 	clipSectors;
 	idBounds				worldBounds;

@@ -4664,6 +4664,130 @@ idAI::Activate
 Notifies the script that a monster has been activated by a trigger or flashlight
 =====================
 */
+float idAI::DormantRadiusScale() const
+{
+	return enemy.GetEntity() != NULL && enemy.GetEntity()->health > 0 ? dormantEngagedScale : 1.0f;
+}
+
+static idEntity* DormantPathSuccessor( const idEntity* node )
+{
+	idEntity* result = NULL;
+	int firstOrdinal = INT_MAX;
+	for( const idKeyValue* key = node->spawnArgs.MatchPrefix( "target" ); key != NULL; key = node->spawnArgs.MatchPrefix( "target", key ) )
+	{
+		const char* suffix = key->GetKey().c_str() + 6;
+		int ordinal = 0;
+		bool valid = true;
+		for( const char* digit = suffix; *digit != '\0'; digit++ )
+		{
+			if( *digit < '0' || *digit > '9' || ordinal > 1000000 )
+			{
+				valid = false;
+				break;
+			}
+			ordinal = ordinal * 10 + *digit - '0';
+		}
+		if( !valid || ordinal >= firstOrdinal )
+		{
+			continue;
+		}
+		idEntity* target = gameLocal.FindEntity( key->GetValue() );
+		if( target != NULL && idStr::Cmpn( target->spawnArgs.GetString( "classname" ), "path_", 5 ) == 0 )
+		{
+			result = target;
+			firstOrdinal = ordinal;
+		}
+	}
+	return result;
+}
+
+void idAI::DormantCatchUp( int elapsedMs )
+{
+	const float speed = spawnArgs.GetFloat( "catchup_speed", "0" );
+	if( health <= 0 || enemy.GetEntity() != NULL || speed <= 0.0f || move.moveCommand != MOVE_TO_ENTITY )
+	{
+		return;
+	}
+	int* currentPath = ( int* )scriptObject.GetVariable( "current_path", ev_entity );
+	int* nextPath = ( int* )scriptObject.GetVariable( "next_path", ev_entity );
+	if( currentPath == NULL || nextPath == NULL || *currentPath <= 0 || *currentPath > MAX_GENTITIES )
+	{
+		return;
+	}
+	idEntity* node = gameLocal.entities[*currentPath - 1];
+	if( node == NULL || node != move.goalEntity.GetEntity() || idStr::Cmp( node->spawnArgs.GetString( "classname" ), "path_corner" ) != 0 )
+	{
+		return;
+	}
+	const int maxNodes = idMath::ClampInt( 1, 64, spawnArgs.GetInt( "catchup_maxNodes", "64" ) );
+	idEntity* visited[64];
+	float arrival[64];
+	int count = 0;
+	float remaining = elapsedMs * 0.001f;
+	float used = 0.0f;
+	idVec3 position = GetPhysics()->GetOrigin();
+	idEntity* landing = NULL;
+	idEntity* from = node;
+	// A detected cycle consumes whole laps arithmetically, then at most one final lap.
+	for( int step = 0; node != NULL && step < maxNodes * 2; step++ )
+	{
+		const char* type = node->spawnArgs.GetString( "classname" );
+		if( idStr::Cmp( type, "path_corner" ) != 0 && idStr::Cmp( type, "path_wait" ) != 0 )
+		{
+			break;
+		}
+		const float travel = ( node->GetPhysics()->GetOrigin() - position ).Length() / speed;
+		const float wait = idStr::Cmp( type, "path_wait" ) == 0 ? Max( 0.0f, node->spawnArgs.GetFloat( "wait", "0" ) ) : 0.0f;
+		const float cost = travel + wait;
+		if( cost > remaining )
+		{
+			break;
+		}
+		remaining -= cost;
+		used += cost;
+		position = node->GetPhysics()->GetOrigin();
+		landing = node;
+		int repeated = -1;
+		for( int i = 0; i < count; i++ )
+		{
+			if( visited[i] == node )
+			{
+				repeated = i;
+				break;
+			}
+		}
+		if( repeated >= 0 )
+		{
+			const float cycle = used - arrival[repeated];
+			if( cycle <= 0.0f )
+			{
+				break;
+			}
+			remaining -= idMath::Floor( remaining / cycle ) * cycle;
+			count = 0;
+		}
+		if( count == maxNodes )
+		{
+			break;
+		}
+		visited[count] = node;
+		arrival[count++] = used;
+		node = DormantPathSuccessor( node );
+	}
+	if( landing == NULL )
+	{
+		return;
+	}
+	idEntity* successor = DormantPathSuccessor( landing );
+	SetOrigin( landing->GetPhysics()->GetOrigin() );
+	*currentPath = landing->entityNumber + 1;
+	*nextPath = successor != NULL ? successor->entityNumber + 1 : 0;
+	MoveToEntity( landing );
+	gameLocal.aiStats.dormCatchUps++;
+	gameLocal.DPrintf( "catchup %s %d %s %s\n", name.c_str(), elapsedMs, from->name.c_str(), landing->name.c_str() );
+}
+
+
 void idAI::Activate( idEntity* activator )
 {
 	idPlayer* player;
@@ -4675,6 +4799,7 @@ void idAI::Activate( idEntity* activator )
 	}
 
 	// make sure he's not dormant
+	dormantWakeRequested = true;
 	dormantStart = 0;
 
 	if( num_cinematics )

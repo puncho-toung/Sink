@@ -313,6 +313,8 @@ public:
 
 	void					Spawn();
 	void					HeardSound( idEntity* ent, const char* action );
+	virtual float			DormantRadiusScale() const;
+	virtual void			DormantCatchUp( int elapsedMs );
 	idActor*					GetEnemy() const;
 	void					TalkTo( idActor* actor );
 	talkState_t				GetTalkState() const;

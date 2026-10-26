@@ -843,6 +843,11 @@ void Cmd_GetViewpos_f( const idCmdArgs& args )
 Cmd_SetViewpos_f
 =================
 */
+static void Cmd_ListBudgets_f( const idCmdArgs& args )
+{
+	gameLocal.ListBudgets();
+}
+
 static void Cmd_ListMapStatics_f( const idCmdArgs& args )
 {
 	gameLocal.ListMapStatics();
@@ -3818,6 +3823,11 @@ so it can perform tab completion
 */
 static void Cmd_ListMap_f( const idCmdArgs& args )
 {
+	if( gameRenderWorld == NULL )
+	{
+		gameLocal.Printf( "listMap: no map loaded\n" );
+		return;
+	}
 	char rows[6][256];
 	bool high[6];
 	FormatMapRows( rows, high );
@@ -3916,6 +3926,40 @@ static void Cmd_ClipSelfTest_f( const idCmdArgs& args )
 	gameLocal.clip.SelfTest( args.Argc() > 1 ? atoi( args.Argv( 1 ) ) : 10000, args.Argc() > 2 ? atoi( args.Argv( 2 ) ) : 1 );
 }
 
+static void Cmd_CheckPVSAreas_f( const idCmdArgs& args )
+{
+	int count = 0;
+	for( int i = 0; i < MAX_GENTITIES; i++ )
+	{
+		const idEntity* entity = gameLocal.entities[i];
+		if( entity == NULL || entity->GetPhysics() == NULL )
+		{
+			continue;
+		}
+		int areas[5];
+		const int touched = gameRenderWorld->BoundsInAreas( entity->GetPhysics()->GetAbsBounds(), areas, 5 );
+		if( touched > 4 )
+		{
+			gameLocal.Printf( "PVS entity %d %s touches more than four areas\n", i, entity->name.c_str() );
+			count++;
+		}
+	}
+	gameLocal.Printf( "checkPVSAreas: %d entities\n", count );
+}
+
+static void Cmd_ListDormancy_f( const idCmdArgs& args )
+{
+	for( int i = 0; i < MAX_GENTITIES; i++ )
+	{
+		const idEntity* entity = gameLocal.entities[i];
+		if( entity != NULL && entity->dormantRadius > 0.0f )
+		{
+			gameLocal.Printf( "dormant entity %d %s radius %.0f band %.0f asleep %d requested %d deferred %d\n", i, entity->name.c_str(),
+				entity->dormantRadius, entity->dormantHysteresis, entity->fl.isDormant, entity->dormantWakeRequested, entity->dormantWakeDeferredAt );
+		}
+	}
+}
+
 void idGameLocal::InitConsoleCommands()
 {
 	cmdSystem->AddCommand( "listMap", Cmd_ListMap_f, CMD_FL_GAME, "list MAP resource rows, portal digest and entity classes" );
@@ -3939,6 +3983,9 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "notarget",				Cmd_Notarget_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"disables the player as a target" );
 	cmdSystem->AddCommand( "noclip",				Cmd_Noclip_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"disables collision detection for the player" );
 	cmdSystem->AddCommand( "where",					Cmd_GetViewpos_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"prints the current view position" );
+	cmdSystem->AddCommand( "listBudgets", Cmd_ListBudgets_f, CMD_FL_GAME, "list transient budget counters and entity high water" );
+	cmdSystem->AddCommand( "checkPVSAreas", Cmd_CheckPVSAreas_f, CMD_FL_GAME, "list entities touching more than four PVS areas" );
+	cmdSystem->AddCommand( "listDormancy", Cmd_ListDormancy_f, CMD_FL_GAME, "list authored dormancy entities and wake state" );
 	cmdSystem->AddCommand( "listMapStatics", Cmd_ListMapStatics_f, CMD_FL_GAME, "list static spawn-skip eligibility and retained entity numbers" );
 	cmdSystem->AddCommand( "saveTestView", Cmd_SaveTestView_f, CMD_FL_GAME, "save a single-player view for the next testmap" );
 	cmdSystem->AddCommand( "getviewpos",			Cmd_GetViewpos_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"prints the current view position" );

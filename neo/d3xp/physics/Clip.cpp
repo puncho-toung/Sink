@@ -32,8 +32,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "../Game_local.h"
 
-#define	MAX_SECTOR_DEPTH				12
-#define MAX_SECTORS						((1<<(MAX_SECTOR_DEPTH+1))-1)
+static idCVar g_clipSectorAuto( "g_clipSectorAuto", "0", CVAR_GAME | CVAR_BOOL, "scale clip sector depth by map extent at load; off until stock-map census passes" );
 
 typedef struct clipSector_s
 {
@@ -820,6 +819,7 @@ idClip::idClip()
 	queryDepth = 0;
 	numClipSectors = 0;
 	clipSectors = NULL;
+	sectorDepth = 12;
 	worldBounds.Zero();
 	numRotations = numTranslations = numMotions = numRenderModelTraces = numContents = numContacts = 0;
 	numGathers = numGatherCandidates = numTrmQueries = 0;	//puncho - ai-harness
@@ -842,7 +842,7 @@ clipSector_t* idClip::CreateClipSectors_r( const int depth, const idBounds& boun
 	anode = &clipSectors[idClip::numClipSectors];
 	idClip::numClipSectors++;
 
-	if( depth == MAX_SECTOR_DEPTH )
+	if( depth == sectorDepth )
 	{
 		anode->axis = -1;
 		anode->children[0] = anode->children[1] = NULL;
@@ -896,15 +896,28 @@ void idClip::Init()
 	cmHandle_t h;
 	idVec3 size, maxSector = vec3_origin;
 
-	// clear clip sectors
-	clipSectors = new( TAG_PHYSICS_CLIP ) clipSector_t[MAX_SECTORS];
-	memset( clipSectors, 0, MAX_SECTORS * sizeof( clipSector_t ) );
+
 	numClipSectors = 0;
 	touchCount = 0;
 
 	// get world map bounds
 	h = collisionModelManager->LoadModel( "worldMap", false );
 	collisionModelManager->GetModelBounds( h, worldBounds );
+	sectorDepth = 12;
+	float extent = Max( worldBounds[1].x - worldBounds[0].x, worldBounds[1].y - worldBounds[0].y );
+	if( g_clipSectorAuto.GetBool() )
+	{
+		while( extent > 16384.0f && sectorDepth < 16 )
+		{
+			extent *= 0.5f;
+			sectorDepth += 2;
+		}
+	}
+	const int sectorCount = ( 1 << ( sectorDepth + 1 ) ) - 1;
+	clipSectors = new( TAG_PHYSICS_CLIP ) clipSector_t[sectorCount];
+	memset( clipSectors, 0, sectorCount * sizeof( clipSector_t ) );
+	gameLocal.Printf( "clip sector depth %d (%d sectors, %d KB)\n", sectorDepth, sectorCount, int( sectorCount * sizeof( clipSector_t ) / 1024 ) );
+
 
 	// create world sectors
 	CreateClipSectors_r( 0, worldBounds, maxSector );

@@ -40,6 +40,8 @@ extern idCVar s_volume_dB;
 extern idCVar r_exposure; // RB: use this to control HDR exposure or brightness in LDR mode
 extern idCVar r_lightScale;
 extern idCVar r_useSSR;
+extern idCVar r_viewDistance;
+extern idCVar r_distanceCull;
 
 /*
 ========================
@@ -182,6 +184,15 @@ void idMenuScreen_Shell_SystemOptions::Initialize( idMenuHandler* data )
 	control->SetDataSource( &systemData, idMenuDataSource_SystemSettings::SYSTEM_FIELD_BRIGHTNESS );
 	control->SetupEvents( 2, options->GetChildren().Num() );
 	control->AddEventAction( WIDGET_EVENT_PRESS ).Set( WIDGET_ACTION_COMMAND, idMenuDataSource_SystemSettings::SYSTEM_FIELD_BRIGHTNESS );
+	options->AddChild( control );
+
+	control = new( TAG_SWF ) idMenuWidget_ControlButton();
+	control->SetOptionType( OPTION_SLIDER_BAR );
+	control->SetLabel( "View Distance" );
+	control->SetDescription( "Full detail from 1024 to 8192 units. Adjusting enables distance culling; distant lights fade beyond this radius." );
+	control->SetDataSource( &systemData, idMenuDataSource_SystemSettings::SYSTEM_FIELD_VIEWDISTANCE );
+	control->SetupEvents( 2, options->GetChildren().Num() );
+	control->AddEventAction( WIDGET_EVENT_PRESS ).Set( WIDGET_ACTION_COMMAND, idMenuDataSource_SystemSettings::SYSTEM_FIELD_VIEWDISTANCE );
 	options->AddChild( control );
 
 	control = new( TAG_SWF ) idMenuWidget_ControlButton();
@@ -442,6 +453,8 @@ void idMenuScreen_Shell_SystemOptions::idMenuDataSource_SystemSettings::LoadData
 	originalVsync = r_swapInterval.GetInteger();
 	originalBrightness = r_exposure.GetFloat();
 	originalVolume = s_volume_dB.GetFloat();
+	originalViewDistance = r_viewDistance.GetFloat();
+	originalDistanceCull = r_distanceCull.GetBool();
 	// RB begin
 	originalRenderMode = r_renderMode.GetInteger();
 	originalAmbientBrightness = r_forceAmbient.GetFloat();
@@ -680,6 +693,12 @@ void idMenuScreen_Shell_SystemOptions::idMenuDataSource_SystemSettings::AdjustFi
 			r_lightScale.SetFloat( LinearAdjust( clamped, 0.0f, 100.0f, 2.0f, 4.0f ) );
 			break;
 		}
+		case SYSTEM_FIELD_VIEWDISTANCE:
+		{
+			r_viewDistance.SetFloat( idMath::ClampFloat( 1024.0f, 8192.0f, r_viewDistance.GetFloat() + adjustAmount * 71.68f ) );
+			r_distanceCull.SetBool( true );
+			break;
+		}
 		case SYSTEM_FIELD_VOLUME:
 		{
 			const float percent = 100.0f * Square( 1.0f - ( s_volume_dB.GetFloat() / DB_SILENCE ) );
@@ -871,6 +890,9 @@ idSWFScriptVar idMenuScreen_Shell_SystemOptions::idMenuDataSource_SystemSettings
 		case SYSTEM_FIELD_BRIGHTNESS:
 			return LinearAdjust( r_exposure.GetFloat(), 0.0f, 1.0f, 0.0f, 100.0f );
 
+		case SYSTEM_FIELD_VIEWDISTANCE:
+			return LinearAdjust( r_viewDistance.GetFloat(), 1024.0f, 8192.0f, 0.0f, 100.0f );
+
 		case SYSTEM_FIELD_VOLUME:
 		{
 			return 100.0f * Square( 1.0f - ( s_volume_dB.GetFloat() / DB_SILENCE ) );
@@ -886,6 +908,10 @@ idMenuScreen_Shell_SystemOptions::idMenuDataSource_SystemSettings::IsDataChanged
 */
 bool idMenuScreen_Shell_SystemOptions::idMenuDataSource_SystemSettings::IsDataChanged() const
 {
+	if( originalViewDistance != r_viewDistance.GetFloat() || originalDistanceCull != r_distanceCull.GetBool() )
+	{
+		return true;
+	}
 	if( idStr::Icmp( r_graphicsAPI.GetString(), originalRenderAPI ) != 0 )
 	{
 		return true;

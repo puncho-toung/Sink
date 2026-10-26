@@ -380,6 +380,16 @@ idCVar g_grabberDamping(			"g_grabberDamping",			"0.5",			CVAR_GAME | CVAR_FLOAT
 
 idCVar g_xp_bind_run_once(          "g_xp_bind_run_once",		"0",			CVAR_GAME | CVAR_BOOL | CVAR_ARCHIVE, "Rebind all controls once for D3XP." );
 
+idCVar g_dormantDistance( "g_dormantDistance", "1", CVAR_GAME | CVAR_BOOL, "enable authored distance dormancy" );
+idCVar g_dormantRadiusScale( "g_dormantRadiusScale", "1", CVAR_GAME | CVAR_FLOAT, "scale authored dormancy radius" );
+idCVar g_dormantWakeBudget( "g_dormantWakeBudget", "4", CVAR_GAME | CVAR_INTEGER, "nonurgent distance wakes per tic; zero unlimited" );
+idCVar g_dormantWakeUrgent( "g_dormantWakeUrgent", "1024", CVAR_GAME | CVAR_FLOAT, "distance for urgent wakes" );
+idCVar g_dormantWakeMaxDelay( "g_dormantWakeMaxDelay", "250", CVAR_GAME | CVAR_INTEGER, "maximum deferred wake delay in game milliseconds" );
+idCVar g_dormantStats( "g_dormantStats", "0", CVAR_GAME | CVAR_BOOL, "collect keyed awake distance census" );
+idCVar g_showDormancy( "g_showDormancy", "0", CVAR_GAME | CVAR_INTEGER, "1 colored bounds; 2 distance/radius labels" );
+idCVar g_dormantCatchUp( "g_dormantCatchUp", "1", CVAR_GAME | CVAR_BOOL, "run authored catch-up hook after long dormant sleep" );
+idCVar g_dormantCatchUpMinMs( "g_dormantCatchUpMinMs", "5000", CVAR_GAME | CVAR_INTEGER, "minimum dormant duration for catch-up" );
+
 // RB: new game mode vars
 idCVar ng_classicFlashlight(		"ng_classicFlashlight",		"0",			CVAR_GAME | CVAR_BOOL | CVAR_ARCHIVE | CVAR_NEW, "Classic flash light weapon" );
 // RB end

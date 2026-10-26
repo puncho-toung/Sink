@@ -164,11 +164,26 @@ struct aiTicStats_t
 	int		shooterDenied;			// canHitEnemyFromAnim calls ShooterMayTest refused for want of a token (no trace, no GetAnim)
 	int		shooterTests;			// Event_CanHitEnemyFromAnim tests that reached their traces, always counted; part of canHitTraces
 	int		shooterSniperAsks;		// sniper calls ShooterMayTest saw past the touching test, with the tokens on
+	int		dormTests;
+	int		dormAsleep;
+	int		dormClosedOff;
+	int		dormFar;
+	int		dormUnseen;
+	int		dormWakes;
+	int		dormSleeps;
+	int		dormDeferred;
+	int		dormForced;
+	int		dormViolations;
+	int		awakeNear2k;
+	int		awakeNear4k;
+	int		awakeNear8k;
+	int		awakeFar;
+	int		dormCatchUps;
 	//puncho end
 };
 //puncho start - ai-combat: the block is summed and differenced as an int array (idAI::Think, RunAIStats); the count keeps a
 // member of another size out, a float of the same size still needs the reader's eye (an X-macro list would close that)
-#define AI_TIC_STAT_INTS	78
+#define AI_TIC_STAT_INTS	93
 compile_time_assert( sizeof( aiTicStats_t ) == AI_TIC_STAT_INTS * sizeof( int ) );
 //puncho end
 
@@ -192,6 +207,9 @@ struct mapGameStats_t
 	int pvsMilliseconds;
 	unsigned int clipTrans, clipRot, clipMotion, clipContents, clipContacts, clipGathers, clipCandidates, clipRmt, clipUs;
 	unsigned int allocGameTic;
+	int entityHighWater, spawnStaticsSkipped;
+	int64 entityRefused, aasCacheBytes, aasCacheEvictions, aasTravelSaturated;
+	int budgetLive[4], budgetEvicted[4], budgetRefused[4];
 };
 
 // The last tic's record for the com_showFPS 3 window, the aistats: line and the CSV (§2.5). POD on

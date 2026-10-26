@@ -33,6 +33,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "RenderCommon.h"
 #include "CmdlineProgressbar.h"
+#include "../idlib/hashing/CRC32.h"
 #include "../framework/Common_local.h" // commonLocal.WaitGameThread();
 
 #include <sys/DeviceManager.h>
@@ -46,14 +47,40 @@ const byte LGRID_VERSION = 3;
 
 
 
-static const byte BLGRID_VERSION = 4;
+static const byte BLGRID_VERSION = 5;
 static const unsigned int BLGRID_MAGIC = ( 'P' << 24 ) | ( 'R' << 16 ) | ( 'O' << 8 ) | BLGRID_VERSION;
 
+
+idCVar r_bakeStaleGuard( "r_bakeStaleGuard", "1", CVAR_RENDERER | CVAR_BOOL, "reject baked caches for a different map layout" );
+static idCVar r_lightGridBudgetMB( "r_lightGridBudgetMB", "512", CVAR_RENDERER | CVAR_INTEGER, "warn when light grid atlas bytes exceed this map budget; 0 disables" );
+static idCVar r_lightGridAtlasEdgeRule( "r_lightGridAtlasEdgeRule", "1", CVAR_RENDERER | CVAR_BOOL, "coarsen light grids to fit the texture atlas edge limit" );
+static const int MAX_LIGHTGRID_ATLAS_EDGE = 16384;
 
 static const int MAX_LIGHTGRID_ATLAS_SIZE	= 2048;
 static const int MAX_AREA_LIGHTGRID_POINTS	= ( MAX_LIGHTGRID_ATLAS_SIZE / LIGHTGRID_IRRADIANCE_SIZE ) * ( MAX_LIGHTGRID_ATLAS_SIZE / LIGHTGRID_IRRADIANCE_SIZE );
 
 static idVec3 defaultLightGridSize = idVec3( 64, 64, 128 );
+
+static unsigned int LightGridMapCRC( int numAreas, const portalArea_t* areas )
+{
+	unsigned int crc;
+	CRC32_InitChecksum( crc );
+	CRC32_UpdateChecksum( crc, &numAreas, sizeof( numAreas ) );
+	for( int a = 0; a < numAreas; a++ )
+	{
+		for( int side = 0; side < 2; side++ )
+		{
+			for( int axis = 0; axis < 3; axis++ )
+			{
+				const float coordinate = areas[a].globalBounds[side][axis];
+				CRC32_UpdateChecksum( crc, &coordinate, sizeof( coordinate ) );
+			}
+		}
+	}
+	CRC32_FinishChecksum( crc );
+	return crc;
+}
+
 
 LightGrid::LightGrid()
 {
@@ -87,7 +114,9 @@ void LightGrid::SetupLightGrid( const idBounds& bounds, const char* mapName, con
 	}
 
 	int numGridPoints = maxGridPoints + 1;
-	while( numGridPoints > maxGridPoints )
+	bool atlasTooWide = false;
+	bool coarsenedForAtlas = false;
+	while( numGridPoints > maxGridPoints || atlasTooWide )
 	{
 		for( int i = 0; i < 3; i++ )
 		{
@@ -98,10 +127,20 @@ void LightGrid::SetupLightGrid( const idBounds& bounds, const char* mapName, con
 
 		numGridPoints = lightGridBounds[0] * lightGridBounds[1] * lightGridBounds[2];
 
-		if( numGridPoints > maxGridPoints )
+		atlasTooWide = r_lightGridAtlasEdgeRule.GetBool() &&
+			( ( int64 )lightGridBounds[0] * lightGridBounds[2] * LIGHTGRID_IRRADIANCE_SIZE > MAX_LIGHTGRID_ATLAS_EDGE ||
+			  ( int64 )lightGridBounds[1] * LIGHTGRID_IRRADIANCE_SIZE > MAX_LIGHTGRID_ATLAS_EDGE );
+		coarsenedForAtlas |= atlasTooWide;
+
+		if( numGridPoints > maxGridPoints || atlasTooWide )
 		{
 			lightGridSize[ j++ % 3 ] += 16.0f;
 		}
+	}
+
+	if( coarsenedForAtlas && printToConsole )
+	{
+		idLib::Printf( "light grid area %i coarsened for atlas edge %i\n", area, MAX_LIGHTGRID_ATLAS_EDGE );
 	}
 
 	if( numGridPoints > 0 )
@@ -410,6 +449,19 @@ void idRenderWorldLocal::SetupLightGrid()
 		idLib::Printf( "----------------------------------\n" );
 		idLib::Printf( "Total valid light grid points %i\n", totalGridPoints );
 	}
+	int64 totalAtlasBytes = 0;
+	int totalPoints = 0;
+	for( int i = 0; i < numPortalAreas; i++ )
+	{
+		const LightGrid& grid = portalAreas[i].lightGrid;
+		totalPoints += grid.lightGridPoints.Num();
+		totalAtlasBytes += ( int64 )grid.lightGridBounds[0] * grid.lightGridBounds[1] * grid.lightGridBounds[2] * grid.imageSingleProbeSize * grid.imageSingleProbeSize;
+	}
+	idLib::Printf( "light grid: %i areas, %i points, %" PRIuSIZE " KB\n", numPortalAreas, totalPoints, ( size_t )( totalAtlasBytes >> 10 ) );
+	if( r_lightGridBudgetMB.GetInteger() > 0 && totalAtlasBytes > ( int64 )r_lightGridBudgetMB.GetInteger() * 1024 * 1024 )
+	{
+		common->Warning( "light grid map atlas budget exceeds %i MB", r_lightGridBudgetMB.GetInteger() );
+	}
 }
 
 void idRenderWorldLocal::LoadLightGridImages()
@@ -473,8 +525,8 @@ void idRenderWorldLocal::WriteLightGridsToFile( const char* filename )
 	// write file id and version
 	fp->WriteFloatString( "%s \"%i\"\n\n", LGRID_FILEID, BLGRID_VERSION );
 
-	// write the map file crc
-	//fp->WriteFloatString( "%u\n\n", mapFileCRC );
+	// Bind the layout to the area order and bounds used by SetupLightGrid.
+	fp->WriteFloatString( "mapcrc 0x%08x\n\n", LightGridMapCRC( numPortalAreas, portalAreas ) );
 
 	for( int i = 0; i < numPortalAreas; i++ )
 	{
@@ -527,7 +579,7 @@ bool idRenderWorldLocal::LoadLightGridFile( const char* name )
 {
 	idToken token;
 	idLexer* src;
-	//unsigned int crc;
+	const unsigned int mapCRC = LightGridMapCRC( numPortalAreas, portalAreas );
 
 	// load it
 	idStrStatic< MAX_OSPATH > fileName = name;
@@ -554,9 +606,24 @@ bool idRenderWorldLocal::LoadLightGridFile( const char* name )
 		file->ReadBig( magic );
 		file->ReadBig( storedTimeStamp );
 		file->ReadBig( numEntries );
-		if( ( magic == BLGRID_MAGIC ) && ( sourceTimeStamp == storedTimeStamp || sourceTimeStamp == 0 ) && ( numEntries > 0 ) )
+		unsigned int storedCRC = 0;
+		if( magic == BLGRID_MAGIC )
+		{
+			file->ReadBig( storedCRC );
+		}
+		const int oldMagic = ( 'P' << 24 ) | ( 'R' << 16 ) | ( 'O' << 8 ) | 4;
+		const bool stale = magic == BLGRID_MAGIC && r_bakeStaleGuard.GetBool() && storedCRC != mapCRC;
+		if( stale )
+		{
+			common->Warning( "%s is out of date for this map; rebake", generatedFileName.c_str() );
+		}
+		if( !stale && ( magic == BLGRID_MAGIC || magic == oldMagic ) && ( sourceTimeStamp == storedTimeStamp || sourceTimeStamp == 0 ) && ( numEntries > 0 ) )
 		{
 			loaded = true;
+			if( magic == oldMagic )
+			{
+				common->Warning( "%s has no map CRC", generatedFileName.c_str() );
+			}
 
 			for( int i = 0; i < numEntries; i++ )
 			{
@@ -595,6 +662,7 @@ bool idRenderWorldLocal::LoadLightGridFile( const char* name )
 			outputFile->WriteBig( magic );
 			outputFile->WriteBig( sourceTimeStamp );
 			outputFile->WriteBig( numEntries );
+			outputFile->WriteBig( mapCRC );
 		}
 
 		if( !src->ExpectTokenString( LGRID_FILEID ) )
@@ -630,27 +698,31 @@ bool idRenderWorldLocal::LoadLightGridFile( const char* name )
 			lightGridVersion = atoi( token );
 		}
 
-		if( lightGridVersion != LGRID_VERSION && lightGridVersion != 4 )
+		if( lightGridVersion != LGRID_VERSION && lightGridVersion != 4 && lightGridVersion != 5 )
 		{
 			common->Warning( "%s has version %i instead of %i", fileName.c_str(), lightGridVersion, LGRID_VERSION );
 			delete src;
 			return false;
 		}
 
-		//if( !src->ExpectTokenType( TT_NUMBER, TT_INTEGER, &token ) )
-		//{
-		//	common->Warning( "%s has no map file CRC", fileName.c_str() );
-		//	delete src;
-		//	return false;
-		//}
-
-		//crc = token.GetUnsignedLongValue();
-		//if( mapFileCRC && crc != mapFileCRC )
-		//{
-		//	common->Printf( "%s is out of date\n", fileName.c_str() );
-		//	delete src;
-		//	return false;
-		//}
+		if( lightGridVersion == 5 )
+		{
+			if( !src->ExpectTokenString( "mapcrc" ) || !src->ExpectTokenType( TT_NUMBER, TT_INTEGER, &token ) )
+			{
+				delete src;
+				return false;
+			}
+			if( r_bakeStaleGuard.GetBool() && token.GetUnsignedLongValue() != mapCRC )
+			{
+				common->Warning( "%s is out of date for this map; rebake", fileName.c_str() );
+				delete src;
+				return false;
+			}
+		}
+		else
+		{
+			common->Warning( "%s has no map CRC", fileName.c_str() );
+		}
 
 		// parse the file
 		while( 1 )
@@ -681,6 +753,7 @@ bool idRenderWorldLocal::LoadLightGridFile( const char* name )
 			outputFile->WriteBig( magic );
 			outputFile->WriteBig( sourceTimeStamp );
 			outputFile->WriteBig( numEntries );
+			outputFile->WriteBig( mapCRC );
 		}
 	}
 
@@ -737,6 +810,12 @@ void idRenderWorldLocal::ParseLightGridPoints( idLexer* src, idFile* fileOut )
 	for( int i = 0; i < 3; i++ )
 	{
 		area->lightGrid.lightGridBounds[i] = src->ParseInt();
+	}
+
+	if( ( int64 )area->lightGrid.lightGridBounds[0] * area->lightGrid.lightGridBounds[2] * imageProbeSize > MAX_LIGHTGRID_ATLAS_EDGE ||
+		( int64 )area->lightGrid.lightGridBounds[1] * imageProbeSize > MAX_LIGHTGRID_ATLAS_EDGE )
+	{
+		common->Warning( "light grid area %i stored atlas exceeds edge %i; rebake", areaIndex, MAX_LIGHTGRID_ATLAS_EDGE );
 	}
 
 	area->lightGrid.lightGridPoints.SetNum( numLightGridPoints );
@@ -828,6 +907,12 @@ void idRenderWorldLocal::ReadBinaryLightGridPoints( idFile* file )
 	file->ReadBig( area->lightGrid.lightGridOrigin );
 	file->ReadBig( area->lightGrid.lightGridSize );
 	file->ReadBigArray( area->lightGrid.lightGridBounds, 3 );
+	if( ( int64 )area->lightGrid.lightGridBounds[0] * area->lightGrid.lightGridBounds[2] * imageProbeSize > MAX_LIGHTGRID_ATLAS_EDGE ||
+		( int64 )area->lightGrid.lightGridBounds[1] * imageProbeSize > MAX_LIGHTGRID_ATLAS_EDGE )
+	{
+		common->Warning( "light grid area %i stored atlas exceeds edge %i; rebake", areaIndex, MAX_LIGHTGRID_ATLAS_EDGE );
+	}
+
 
 	area->lightGrid.lightGridPoints.SetNum( numLightGridPoints );
 
@@ -1149,6 +1234,54 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 
 	const viewDef_t primary = *tr.primaryView;
 
+	// Offline authoring data only; runtime consumes the existing light-grid cell size.
+	idList<idVec3, TAG_RENDER> areaGridSizes;
+	idList<int, TAG_RENDER> areaGridLimits;
+	idList<int, TAG_RENDER> areaHintEntities;
+	areaGridSizes.SetNum( tr.primaryWorld->NumAreas() );
+	areaGridLimits.SetNum( tr.primaryWorld->NumAreas() );
+	areaHintEntities.SetNum( tr.primaryWorld->NumAreas() );
+	for( int a = 0; a < tr.primaryWorld->NumAreas(); a++ )
+	{
+		areaGridSizes[a] = gridSize;
+		areaGridLimits[a] = limit;
+		areaHintEntities[a] = -1;
+	}
+	idMapFile hintMap;
+	idStr hintName = baseName;
+	hintName.SetFileExtension( "map" );
+	if( hintMap.Parse( hintName ) )
+	{
+		for( int e = 0; e < hintMap.GetNumEntities(); e++ )
+		{
+			const idDict& args = hintMap.GetEntity( e )->epairs;
+			if( idStr::Cmp( args.GetString( "classname" ), "info_lightgrid_hint" ) != 0 )
+			{
+				continue;
+			}
+			const int area = tr.primaryWorld->PointInArea( args.GetVector( "origin" ) );
+			const idVec3 size = args.GetVector( "gridSize", "0 0 0" );
+			if( area < 0 || size.x <= 0.0f || size.y <= 0.0f || size.z <= 0.0f )
+			{
+				common->Warning( "light-grid hint entity %d has invalid area/gridSize", e );
+				continue;
+			}
+			if( areaHintEntities[area] >= 0 )
+			{
+				common->Warning( "light-grid hint entity %d ignored: area %d already uses entity %d", e, area, areaHintEntities[area] );
+				continue;
+			}
+			areaHintEntities[area] = e;
+			areaGridSizes[area] = size;
+			areaGridLimits[area] = args.GetInt( "limit", va( "%d", limit ) );
+			if( areaGridLimits[area] <= 0 )
+			{
+				areaGridLimits[area] = limit;
+			}
+			common->Printf( "light-grid hint entity %d area %d grid %.0f %.0f %.0f limit %d\n", e, area, size.x, size.y, size.z, areaGridLimits[area] );
+		}
+	}
+
 	int totalProcessedAreas = 0;
 	int totalProcessedProbes = 0;
 	int	totalStart = Sys_Milliseconds();
@@ -1160,7 +1293,15 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 		{
 			portalArea_t* area = &tr.primaryWorld->portalAreas[a];
 
-			area->lightGrid.SetupLightGrid( area->globalBounds, tr.primaryWorld->mapName, tr.primaryWorld, gridSize, a, tr.primaryWorld->NumAreas(), limit, false );
+			area->lightGrid.SetupLightGrid( area->globalBounds, tr.primaryWorld->mapName, tr.primaryWorld, areaGridSizes[a], a, tr.primaryWorld->NumAreas(), areaGridLimits[a], false );
+
+			const int64 checkedAtlasWidth = ( int64 )area->lightGrid.lightGridBounds[0] * area->lightGrid.lightGridBounds[2] * LIGHTGRID_IRRADIANCE_SIZE;
+			const int64 checkedAtlasHeight = ( int64 )area->lightGrid.lightGridBounds[1] * LIGHTGRID_IRRADIANCE_SIZE;
+			if( r_lightGridAtlasEdgeRule.GetBool() && ( checkedAtlasWidth > MAX_LIGHTGRID_ATLAS_EDGE || checkedAtlasHeight > MAX_LIGHTGRID_ATLAS_EDGE ) )
+			{
+				idLib::Warning( "light grid area %i refused: atlas exceeds %i (lg_refused 1)", a, MAX_LIGHTGRID_ATLAS_EDGE );
+				continue;
+			}
 
 			int numGridPoints = area->lightGrid.CountValidGridPoints();
 			if( numGridPoints == 0 )
@@ -1194,7 +1335,15 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 		{
 			portalArea_t* area = &tr.primaryWorld->portalAreas[a];
 
-			area->lightGrid.SetupLightGrid( area->globalBounds, tr.primaryWorld->mapName, tr.primaryWorld, gridSize, a, tr.primaryWorld->NumAreas(), limit, true );
+			area->lightGrid.SetupLightGrid( area->globalBounds, tr.primaryWorld->mapName, tr.primaryWorld, areaGridSizes[a], a, tr.primaryWorld->NumAreas(), areaGridLimits[a], true );
+
+			const int64 checkedAtlasWidth = ( int64 )area->lightGrid.lightGridBounds[0] * area->lightGrid.lightGridBounds[2] * LIGHTGRID_IRRADIANCE_SIZE;
+			const int64 checkedAtlasHeight = ( int64 )area->lightGrid.lightGridBounds[1] * LIGHTGRID_IRRADIANCE_SIZE;
+			if( r_lightGridAtlasEdgeRule.GetBool() && ( checkedAtlasWidth > MAX_LIGHTGRID_ATLAS_EDGE || checkedAtlasHeight > MAX_LIGHTGRID_ATLAS_EDGE ) )
+			{
+				idLib::Warning( "light grid area %i refused: atlas exceeds %i (lg_refused 1)", a, MAX_LIGHTGRID_ATLAS_EDGE );
+				continue;
+			}
 
 			int numGridPoints = area->lightGrid.CountValidGridPoints();
 			if( numGridPoints == 0 )

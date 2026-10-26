@@ -32,6 +32,7 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "Common_local.h"
+#include "Prefetch.h"
 #include "../renderer/Image.h"
 
 // RB begin
@@ -109,13 +110,13 @@ void FormatMapRows( char rows[6][256], bool high[6] )
 	}
 	const int cap = cvarSystem->GetCVarInteger( "net_maxSkipReplicatedStatics" );
 	idStr::snPrintf( rows[0], 256, "MAP static vtx %llu/%llu idx %llu/%llu KB frame %llu/65536 KB", ( unsigned long long )( r.staticVertexBytes / 1024 ), ( unsigned long long )( r.staticVertexCapacity / 1024 ), ( unsigned long long )( r.staticIndexBytes / 1024 ), ( unsigned long long )( r.staticIndexCapacity / 1024 ), ( unsigned long long )( r.frameBytes / 1024 ) );
-	idStr::snPrintf( rows[1], 256, "MAP handles entities %d/10000 lights %d/10000 probes %d/10000 interactions %llu KB %dx%d", r.entityDefs, r.lightDefs, r.envprobeDefs, ( unsigned long long )( r.interactionBytes / 1024 ), r.interactionWidth, r.interactionHeight );
+	idStr::snPrintf( rows[1], 256, "MAP handles entities %d/%d lights %d/%d probes %d/%d interactions %llu KB %dx%d", r.entityDefs, r.entityCapacity, r.lightDefs, r.lightCapacity, r.envprobeDefs, r.probeCapacity, ( unsigned long long )( r.interactionBytes / 1024 ), r.interactionWidth, r.interactionHeight );
 	idStr::snPrintf( rows[2], 256, "MAP world areas %d portals %d/20800 pvs %llu KB %d ms lightgrid %llu KB", r.areas, r.portals, ( unsigned long long )( g.pvsBytes / 1024 ), g.pvsMilliseconds, ( unsigned long long )( r.lightGridBytes / 1024 ) );
 	idStr::snPrintf( rows[3], 256, "MAP game entities %d/16384 active %d nonrep %d/256 cm %d/2048 statics %d/%d", g.entities, g.activeEntities, g.nonReplicated, g.cmModels, g.skipStatics, cap );
 	idStr::snPrintf( rows[4], 256, "MAP clip/tic trans %u rot %u motion %u cont %u contacts %u gathers %u cand %u rmt %u us %u", g.clipTrans, g.clipRot, g.clipMotion, g.clipContents, g.clipContacts, g.clipGathers, g.clipCandidates, g.clipRmt, g.clipUs );
-	idStr::snPrintf( rows[5], 256, "MAP alloc game %u/tic main %u/frame", g.allocGameTic, mapMainAllocations );
+	idStr::snPrintf( rows[5], 256, "MAP alloc game %u/tic main %u/frame ent_hw %i refused %lld aasCache %lld KB evictions %lld saturated %lld", g.allocGameTic, mapMainAllocations, g.entityHighWater, ( long long )g.entityRefused, ( long long )( g.aasCacheBytes / 1024 ), ( long long )g.aasCacheEvictions, ( long long )g.aasTravelSaturated );
 	high[0] = r.staticVertexBytes * 4 >= r.staticVertexCapacity * 3 || r.staticIndexBytes * 4 >= r.staticIndexCapacity * 3 || r.frameBytes >= 48 * 1024 * 1024;
-	high[1] = r.entityDefs >= 7500 || r.lightDefs >= 7500 || r.envprobeDefs >= 7500;
+	high[1] = ( r.entityCapacity > 0 && r.entityDefs * 4 >= r.entityCapacity * 3 ) || ( r.lightCapacity > 0 && r.lightDefs * 4 >= r.lightCapacity * 3 ) || ( r.probeCapacity > 0 && r.envprobeDefs * 4 >= r.probeCapacity * 3 );
 	high[2] = r.portals >= 15600;
 	high[3] = g.entities >= 12288 || g.nonReplicated >= 192 || g.cmModels >= 1536 || ( cap > 0 && g.skipStatics * 4 >= cap * 3 );
 	high[4] = high[5] = false;
@@ -156,7 +157,7 @@ void idCommonLocal::LogMapRows( int tics )
 				com_mapRowsLog.SetString( "" ); return;
 			}
 			idStr::Copynz( mapRowsName, name, sizeof( mapRowsName ) );
-			mapRowsFile->Printf( "frame,ms,tics,usFrameBusy,usFrameIdle,usGameRF,usGame,usRF,usRB,usGPU,usMOC,views,draws,tris,shadowViews,shadowDraws,shadowTris,atlasPct,viewEntities,shadowEntities,viewLights,staticVtxKB,staticIdxKB,frameKB,entityDefs,lightDefs,envprobeDefs,interactionKB,areas,portals,pvsKB,lightGridKB,entities,activeEntities,nonReplicated,cmModels,clipTrans,clipRot,clipMotion,clipContents,clipContacts,clipGathers,clipCandidates,clipUs,allocGameTic,allocMainFrame,probesConsidered,drawSurfs,drawSurfsClamped,atlasFailed,lightRefsWalked,contactedCapHits,skipStatics\n" );
+			mapRowsFile->Printf( "frame,ms,tics,usFrameBusy,usFrameIdle,usGameRF,usGame,usRF,usRB,usGPU,usMOC,views,draws,tris,shadowViews,shadowDraws,shadowTris,atlasPct,viewEntities,shadowEntities,viewLights,staticVtxKB,staticIdxKB,frameKB,entityDefs,lightDefs,envprobeDefs,interactionKB,areas,portals,pvsKB,lightGridKB,entities,activeEntities,nonReplicated,cmModels,clipTrans,clipRot,clipMotion,clipContents,clipContacts,clipGathers,clipCandidates,clipUs,allocGameTic,allocMainFrame,probesConsidered,drawSurfs,drawSurfsClamped,atlasFailed,lightRefsWalked,contactedCapHits,skipStatics,usFindView,usAddLights,cullDistEntities,cullPixelEntities,cullLights,fadedLights,cullShadowSkips,lightRefsWalkedMax,gatherAreas,gatherMismatch,lodEntities1,lodEntities2,lodEntities3,lodTrisSaved,lodSwitches,lodThrash,lodCacheBuilds,mocOccluderTris,mocSkippedSize,mocSkippedBudget,mocSpotTests,mocSpotCulls,viewEntsUnder4px,viewEntsUnder16px,viewEntsBeyond8k,ent_highWater,ent_refused,spawnStaticsSkipped,aasCacheBytes,aasCacheEvictions,aasTravelSaturated,bud_debris_live,bud_debris_evicted,bud_debris_refused,bud_fx_live,bud_fx_evicted,bud_fx_refused,bud_item_live,bud_item_evicted,bud_item_refused,bud_gib_live,bud_gib_evicted,bud_gib_refused,itab_mode,itab_entries,itab_capacity,itab_maxProbe,itab_mismatches,itab_lateInserts,gai_ms\n" );
 			mapRowsFlushTime = Sys_Milliseconds();
 			Printf( "MAP CSV opened: %s\n", path );
 		}
@@ -190,7 +191,56 @@ void idCommonLocal::LogMapRows( int tics )
 		( int64 )( g.pvsBytes / 1024 ), ( int64 )( r.lightGridBytes / 1024 ), g.entities, g.activeEntities, g.nonReplicated, g.cmModels,
 		g.clipTrans, g.clipRot, g.clipMotion, g.clipContents, g.clipContacts, g.clipGathers, g.clipCandidates, g.clipUs, g.allocGameTic, mapMainAllocations,
 		stats_frontend.c_probesConsidered, stats_frontend.c_drawSurfs, stats_frontend.c_drawSurfsClamped, stats_backend.c_shadowAtlasFailed,
-		stats_frontend.c_lightRefsWalked, stats_frontend.c_contactedCapHits, g.skipStatics
+		stats_frontend.c_lightRefsWalked, stats_frontend.c_contactedCapHits, g.skipStatics,
+		( int64 )stats_frontend.usFindView, ( int64 )stats_frontend.usAddLights,
+		stats_frontend.c_cullDistEntities,
+		stats_frontend.c_cullPixelEntities,
+		stats_frontend.c_cullLights,
+		stats_frontend.c_fadedLights,
+		stats_frontend.c_cullShadowSkips,
+		stats_frontend.c_lightRefsWalkedMax,
+		stats_frontend.c_gatherAreas,
+		stats_frontend.c_gatherMismatch,
+		stats_frontend.c_lodEntities1,
+		stats_frontend.c_lodEntities2,
+		stats_frontend.c_lodEntities3,
+		stats_frontend.c_lodTrisSaved,
+		stats_frontend.c_lodSwitches,
+		stats_frontend.c_lodThrash,
+		stats_frontend.c_lodCacheBuilds,
+		stats_frontend.c_mocOccluderTris,
+		stats_frontend.c_mocSkippedSize,
+		stats_frontend.c_mocSkippedBudget,
+		stats_frontend.c_mocSpotTests,
+		stats_frontend.c_mocSpotCulls,
+		stats_frontend.c_viewEntsUnder4px,
+		stats_frontend.c_viewEntsUnder16px,
+		stats_frontend.c_viewEntsBeyond8k,
+		g.entityHighWater,
+		g.entityRefused,
+		g.spawnStaticsSkipped,
+		g.aasCacheBytes,
+		g.aasCacheEvictions,
+		g.aasTravelSaturated,
+		g.budgetLive[0],
+		g.budgetEvicted[0],
+		g.budgetRefused[0],
+		g.budgetLive[1],
+		g.budgetEvicted[1],
+		g.budgetRefused[1],
+		g.budgetLive[2],
+		g.budgetEvicted[2],
+		g.budgetRefused[2],
+		g.budgetLive[3],
+		g.budgetEvicted[3],
+		g.budgetRefused[3],
+		r.interactionMode,
+		r.interactionEntries,
+		r.interactionCapacity,
+		r.interactionMaxProbe,
+		r.interactionMismatches,
+		r.interactionLateInserts,
+		r.interactionGenerateMS
 	};
 	char row[2048];
 	int length = 0;
@@ -1093,6 +1143,7 @@ void idCommonLocal::Frame()
 		// This may block if the game is taking longer than the render back end
 		gameThread.WaitForThread();
 		DrainPrintRelay();
+		Prefetch_Pump();
 
 		// SRS - Use finishSyncTime_EndFrame to record timing just after gameThread.WaitForThread()
 		frameTiming.finishSyncTime_EndFrame = Sys_Microseconds();

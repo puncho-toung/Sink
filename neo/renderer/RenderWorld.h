@@ -188,6 +188,10 @@ typedef struct renderEntity_s
 	int						forceUpdate;			// force an update (NOTE: not a bool to keep this struct a multiple of 4 bytes)
 	int						timeGroup;
 	int						xrayIndex;
+	float					maxVisDist;
+	float					minVisPixels;
+	int						cullShadow;
+	float					lodScale;
 } renderEntity_t;
 
 
@@ -235,6 +239,8 @@ typedef struct renderLight_s
 	float					shaderParms[MAX_ENTITY_SHADER_PARMS];		// can be used in any way by shader
 	idSoundEmitter* 		referenceSound;		// for shader sound tables, allowing effects to vary with sounds
 	mathLightData_t         mathLight;
+	float					maxVisDist;
+	float					minVisPixels;
 } renderLight_t;
 
 

@@ -195,7 +195,7 @@ mapTri_t* TriListForSide( const side_t* s, const idWinding* w )
 	}
 
 	// don't create faces for non-visible sides
-	if( !si->SurfaceCastsShadow() && !si->IsDrawn() )
+	if( !si->SurfaceCastsShadow() && !si->IsDrawn() && !si->IsOccluder() )
 	{
 		return NULL;
 	}

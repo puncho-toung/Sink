@@ -1378,6 +1378,7 @@ public:
 			SYSTEM_FIELD_CRT_POSTFX,
 			// RB end
 			SYSTEM_FIELD_BRIGHTNESS,
+			SYSTEM_FIELD_VIEWDISTANCE,
 			SYSTEM_FIELD_VOLUME,
 			MAX_SYSTEM_FIELDS
 		};
@@ -1407,6 +1408,8 @@ public:
 		int originalAntialias;
 		int originalVsync;
 		float originalBrightness;
+		float originalViewDistance;
+		bool originalDistanceCull;
 		float originalVolume;
 		// RB begin
 		//int originalShadowMapping; // TODO use for quality of shadowmaps?

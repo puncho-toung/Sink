@@ -26,3 +26,11 @@ textures/editor/aasportal
 	trigger
 	noshadows
 }
+// Render-only conservative occlusion proxy. No collision or AAS contents.
+textures/editor/occluder
+{
+	qer_editorimage textures/common/occlusion.tga
+	nonsolid
+	noshadows
+	occlusion
+}

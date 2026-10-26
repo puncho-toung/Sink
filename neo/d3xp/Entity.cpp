@@ -239,6 +239,12 @@ void idGameEdit::ParseSpawnArgsToRenderEntity( const idDict* args, renderEntity_
 	const idDeclModelDef* modelDef;
 
 	memset( renderEntity, 0, sizeof( *renderEntity ) );
+	const float distanceScale = gameLocal.world != NULL ? gameLocal.world->spawnArgs.GetFloat( "maxVisDistScale", "1" ) : 1.0f;
+	const float pixelScale = gameLocal.world != NULL ? gameLocal.world->spawnArgs.GetFloat( "minVisPixelsScale", "1" ) : 1.0f;
+	renderEntity->maxVisDist = Max( 0.0f, args->GetFloat( "maxVisDist", "0" ) * distanceScale );
+	renderEntity->minVisPixels = Max( 0.0f, args->GetFloat( "minVisPixels", "0" ) * pixelScale );
+	renderEntity->cullShadow = args->GetBool( "cullShadow", "0" ) ? 1 : 0;
+	renderEntity->lodScale = args->GetFloat( "lodScale", "1" );
 
 	temp = args->GetString( "model" );
 
@@ -516,6 +522,8 @@ idEntity::idEntity():
 	entityNumber	= ENTITYNUM_NONE;
 	entityDefNumber = -1;
 
+	budgetNode.SetOwner( this );
+	budgetClass = -1;
 	spawnNode.SetOwner( this );
 	activeNode.SetOwner( this );
 
@@ -526,6 +534,11 @@ idEntity::idEntity():
 
 	thinkFlags		= 0;
 	dormantStart	= 0;
+	dormantRadius = 0.0f;
+	dormantHysteresis = 1024.0f;
+	dormantEngagedScale = 2.0f;
+	dormantWakeDeferredAt = 0;
+	dormantWakeRequested = false;
 	cinematic		= false;
 	renderView		= NULL;
 	cameraTarget	= NULL;
@@ -649,6 +662,11 @@ void idEntity::Spawn()
 
 	fl.solidForTeam = spawnArgs.GetBool( "solidForTeam", "0" );
 	fl.neverDormant = spawnArgs.GetBool( "neverDormant", "0" );
+	dormantRadius = Max( 0.0f, spawnArgs.GetFloat( "dormant_radius", "0" ) );
+	dormantHysteresis = Max( 0.0f, spawnArgs.GetFloat( "dormant_hysteresis", "1024" ) );
+	dormantEngagedScale = Max( 0.0f, spawnArgs.GetFloat( "dormant_engagedScale", "2" ) );
+	dormantWakeDeferredAt = 0;
+	dormantWakeRequested = false;
 	fl.hidden = spawnArgs.GetBool( "hide", "0" );
 	if( fl.hidden )
 	{
@@ -905,6 +923,11 @@ void idEntity::Restore( idRestoreGame* savefile )
 
 	savefile->ReadInt( thinkFlags );
 	savefile->ReadInt( dormantStart );
+	dormantRadius = Max( 0.0f, spawnArgs.GetFloat( "dormant_radius", "0" ) );
+	dormantHysteresis = Max( 0.0f, spawnArgs.GetFloat( "dormant_hysteresis", "1024" ) );
+	dormantEngagedScale = Max( 0.0f, spawnArgs.GetFloat( "dormant_engagedScale", "2" ) );
+	dormantWakeDeferredAt = 0;
+	dormantWakeRequested = false;
 	savefile->ReadBool( cinematic );
 
 	savefile->ReadObject( reinterpret_cast<idClass*&>( cameraTarget ) );
@@ -933,6 +956,13 @@ void idEntity::Restore( idRestoreGame* savefile )
 	savefile->ReadSkin( xraySkin );
 
 	savefile->ReadRenderEntity( renderEntity );
+	const float distanceScale = gameLocal.world != NULL ? gameLocal.world->spawnArgs.GetFloat( "maxVisDistScale", "1" ) : 1.0f;
+	const float pixelScale = gameLocal.world != NULL ? gameLocal.world->spawnArgs.GetFloat( "minVisPixelsScale", "1" ) : 1.0f;
+	renderEntity.maxVisDist = Max( 0.0f, spawnArgs.GetFloat( "maxVisDist", "0" ) * distanceScale );
+	renderEntity.minVisPixels = Max( 0.0f, spawnArgs.GetFloat( "minVisPixels", "0" ) * pixelScale );
+	renderEntity.cullShadow = spawnArgs.GetBool( "cullShadow", "0" ) ? 1 : 0;
+	renderEntity.lodScale = spawnArgs.GetFloat( "lodScale", "1" );
+
 	savefile->ReadRenderHandle( modelDefHandle, "idEntity::modelDefHandle" );	//puncho - saves (P1-m10b)
 	savefile->ReadRefSound( refSound );
 
@@ -1053,8 +1083,18 @@ Monsters and other expensive entities that are completely closed
 off from the player can skip all of their work
 ================
 */
+float idEntity::DormantRadiusScale() const
+{
+	return 1.0f;
+}
+
+void idEntity::DormantCatchUp( int elapsedMs )
+{
+}
+
 bool idEntity::DoDormantTests()
 {
+	gameLocal.aiStats.dormTests++;
 
 	if( fl.neverDormant )
 	{
@@ -1064,6 +1104,12 @@ bool idEntity::DoDormantTests()
 	// if the monster area is not topologically connected to a player
 	if( !gameLocal.InPlayerConnectedArea( this ) )
 	{
+		gameLocal.aiStats.dormClosedOff++;
+		dormantWakeDeferredAt = 0;
+		if( g_showDormancy.GetInteger() > 0 )
+		{
+			gameRenderWorld->DebugBounds( colorYellow, GetPhysics()->GetAbsBounds() );
+		}
 		if( dormantStart == 0 )
 		{
 			dormantStart = gameLocal.time;
@@ -1077,6 +1123,116 @@ bool idEntity::DoDormantTests()
 	}
 	else
 	{
+		if( g_dormantDistance.GetBool() && dormantRadius > 0.0f )
+		{
+			const float scale = Max( 0.0f, g_dormantRadiusScale.GetFloat() ) * DormantRadiusScale();
+			const float radius = dormantRadius * scale;
+			const float outerRadius = radius + dormantHysteresis * scale;
+			float distanceSqr = idMath::INFINITUM;
+			for( int i = 0; i < gameLocal.numDormantSources; i++ )
+			{
+				distanceSqr = Min( distanceSqr, ( GetPhysics()->GetOrigin() - gameLocal.dormantSources[i] ).LengthSqr() );
+			}
+			const float distance = idMath::Sqrt( distanceSqr );
+			const int ticMs = Max( 1, gameLocal.time - gameLocal.previousTime );
+			if( ( fl.hasAwakened && !fl.isDormant && distance > outerRadius && dormantStart > 0 &&
+				gameLocal.time - dormantStart > DELAY_DORMANT_TIME + ticMs ) ||
+				( fl.isDormant && distance < radius && dormantWakeDeferredAt > 0 &&
+				gameLocal.time - dormantWakeDeferredAt > 250 + ticMs ) )
+			{
+				gameLocal.aiStats.dormViolations++;
+			}
+
+			if( g_showDormancy.GetInteger() > 0 )
+			{
+				const idVec4& color = dormantWakeDeferredAt != 0 ? colorRed : ( distance >= radius ? colorBlue : colorGreen );
+				gameRenderWorld->DebugBounds( color, GetPhysics()->GetAbsBounds() );
+				if( g_showDormancy.GetInteger() > 1 )
+				{
+					gameRenderWorld->DrawText( va( "%.0f / %.0f", distance, radius ), GetPhysics()->GetOrigin(), 0.2f, color, mat3_identity );
+				}
+			}
+			if( fl.hasAwakened && !fl.isDormant )
+			{
+				dormantWakeRequested = false;
+				if( distance > outerRadius )
+				{
+					if( dormantStart == 0 )
+					{
+						dormantStart = gameLocal.time;
+					}
+					if( gameLocal.time - dormantStart >= DELAY_DORMANT_TIME )
+					{
+						gameLocal.aiStats.dormFar++;
+						return true;
+					}
+				}
+				else
+				{
+					dormantStart = 0;
+				}
+				if( g_dormantStats.GetBool() )
+				{
+					if( distance < 2048.0f )
+					{
+						gameLocal.aiStats.awakeNear2k++;
+					}
+					else if( distance < 4096.0f )
+					{
+						gameLocal.aiStats.awakeNear4k++;
+					}
+					else if( distance < 8192.0f )
+					{
+						gameLocal.aiStats.awakeNear8k++;
+					}
+					else
+					{
+						gameLocal.aiStats.awakeFar++;
+					}
+				}
+				return false;
+			}
+			if( !dormantWakeRequested )
+			{
+				if( !fl.hasAwakened && !gameLocal.InPlayerPVS( this ) )
+				{
+					gameLocal.aiStats.dormUnseen++;
+					dormantWakeDeferredAt = 0;
+					return true;
+				}
+				if( distance >= radius )
+				{
+					gameLocal.aiStats.dormFar++;
+					dormantWakeDeferredAt = 0;
+					return true;
+				}
+			}
+			const bool forced = dormantWakeRequested || distance < g_dormantWakeUrgent.GetFloat() ||
+				( dormantWakeDeferredAt != 0 && gameLocal.time - dormantWakeDeferredAt >= Max( 0, g_dormantWakeMaxDelay.GetInteger() ) );
+			if( !forced && g_dormantWakeBudget.GetInteger() > 0 && gameLocal.dormantWakesRemaining == 0 )
+			{
+				if( dormantWakeDeferredAt == 0 )
+				{
+					dormantWakeDeferredAt = Max( 1, gameLocal.time );
+				}
+				gameLocal.aiStats.dormDeferred++;
+				return true;
+			}
+			if( forced )
+			{
+				gameLocal.aiStats.dormForced++;
+			}
+			else if( gameLocal.dormantWakesRemaining > 0 )
+			{
+				gameLocal.dormantWakesRemaining--;
+			}
+			dormantStart = 0;
+			dormantWakeDeferredAt = 0;
+			dormantWakeRequested = false;
+			fl.hasAwakened = true;
+			return false;
+		}
+
 		// the monster area is topologically connected to a player, but if
 		// the monster hasn't been woken up before, do the more precise PVS check
 		if( !fl.hasAwakened )
@@ -1106,16 +1262,26 @@ bool idEntity::CheckDormant()
 {
 	bool dormant;
 
+	const int sleepStart = dormantStart;
+	const bool catchUp = fl.hasAwakened && fl.isDormant && !dormantWakeRequested && sleepStart > 0;
 	dormant = DoDormantTests();
+	gameLocal.aiStats.dormAsleep += dormant;
 	if( dormant && !fl.isDormant )
 	{
 		fl.isDormant = true;
+		gameLocal.aiStats.dormSleeps++;
 		DormantBegin();
 	}
 	else if( !dormant && fl.isDormant )
 	{
 		fl.isDormant = false;
+		gameLocal.aiStats.dormWakes++;
 		DormantEnd();
+		const int elapsed = gameLocal.time - sleepStart - DELAY_DORMANT_TIME;
+		if( catchUp && g_dormantCatchUp.GetBool() && elapsed >= g_dormantCatchUpMinMs.GetInteger() )
+		{
+			DormantCatchUp( elapsed );
+		}
 	}
 
 	return dormant;
