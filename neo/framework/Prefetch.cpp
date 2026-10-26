@@ -30,6 +30,9 @@ static int mapEntryCount;
 static int entryCount, resolveIndex, completedCount, hitCount, missCount, skippedCount;
 static uint64 reservedBytes, hitBytes, maxSliceUs;
 static uint64 maxResolveUs, maxResolveStepUs, maxCompletionUs, maxPublishUs, maxRequestUs;
+// Admission history survives requests; reporting maxima below still describe one request.
+// Forgetting earlier slow descriptors lets a new map's cheap prefix overfill its slice.
+static uint64 admissionResolveStepUs, admissionCompletionUs, admissionPublishUs;
 static int sliceOverruns, resolveOverruns, completionOverruns;
 static char requestedMap[MAX_OSPATH];
 static char pendingMap[MAX_OSPATH];
@@ -134,8 +137,9 @@ static void Prefetch_Drain( int limit = MAX_PREFETCH_ENTRIES, uint64 deadline = 
 		if( deadline != 0 )
 		{
 			if( start >= deadline ) { break; }
-			const bool initialProbe = drained == 0 && deadline - start > sliceBudget / 2;
-			if( !initialProbe && ( maxCompletionUs == 0 || start + 2 * maxCompletionUs + 1 >= deadline ) ) { break; }
+			const bool initialProbe = drained == 0 && deadline - start > sliceBudget / 2 &&
+				( admissionCompletionUs == 0 || admissionCompletionUs >= sliceBudget || start + admissionCompletionUs + 1 < deadline );
+			if( !initialProbe && ( admissionCompletionUs == 0 || start + 2 * admissionCompletionUs + 1 >= deadline ) ) { break; }
 		}
 		prefetchEntry_t& entry = prefetchEntries[completionRing[tail % MAX_PREFETCH_ENTRIES]];
 		entry.ready = entry.error == 0;
@@ -151,6 +155,7 @@ static void Prefetch_Drain( int limit = MAX_PREFETCH_ENTRIES, uint64 deadline = 
 		{
 			const uint64 elapsed = Sys_Microseconds() - start;
 			maxCompletionUs = Max( maxCompletionUs, elapsed );
+			admissionCompletionUs = Max( admissionCompletionUs, elapsed );
 			completionOverruns += elapsed > sliceBudget;
 		}
 	}
@@ -172,6 +177,7 @@ void Prefetch_StopWorker()
 	// Report outside the timed pump; the final slice includes all drain/order/publish work.
 	common->Printf( "PREFETCH done %s complete=%d skipped=%d bytes=%llu maxSliceUs=%llu resolved=%d entries=%d cancelled=%d\n", requestedMap, completedCount, skippedCount, ( unsigned long long )reservedBytes, ( unsigned long long )maxSliceUs, resolveIndex, entryCount, !completedBeforeStop );
 	common->Printf( "PREFETCH budget maxResolveUs=%llu maxResolveStepUs=%llu maxCompletionUs=%llu maxPublishUs=%llu maxRequestUs=%llu sliceOverruns=%d resolveOverruns=%d completionOverruns=%d\n", ( unsigned long long )maxResolveUs, ( unsigned long long )maxResolveStepUs, ( unsigned long long )maxCompletionUs, ( unsigned long long )maxPublishUs, ( unsigned long long )maxRequestUs, sliceOverruns, resolveOverruns, completionOverruns );
+	common->Printf( "PREFETCH admission resolveStepUs=%llu completionUs=%llu publishUs=%llu\n", ( unsigned long long )admissionResolveStepUs, ( unsigned long long )admissionCompletionUs, ( unsigned long long )admissionPublishUs );
 }
 
 void Prefetch_Clear()
@@ -335,8 +341,9 @@ void Prefetch_Pump()
 		// high-water cost, plus publication, rather than starting with a few us left.
 		// One initial probe makes progress when there is no estimate (or one call
 		// itself exceeds the budget); it still reports its full measured duration.
-		const bool initialProbe = attempts == 0 && elapsed < Max( ( uint64 )1, sliceBudget / 2 );
-		if( elapsed >= sliceBudget || ( !initialProbe && ( maxResolveStepUs == 0 || elapsed + 2 * maxResolveStepUs + maxPublishUs + 1 >= sliceBudget ) ) )
+		const bool initialProbe = attempts == 0 && elapsed < Max( ( uint64 )1, sliceBudget / 2 ) &&
+			( admissionResolveStepUs == 0 || admissionResolveStepUs >= sliceBudget || elapsed + admissionResolveStepUs + admissionPublishUs + 1 < sliceBudget );
+		if( elapsed >= sliceBudget || ( !initialProbe && ( admissionResolveStepUs == 0 || elapsed + 2 * admissionResolveStepUs + admissionPublishUs + 1 >= sliceBudget ) ) )
 		{
 			break;
 		}
@@ -370,7 +377,9 @@ void Prefetch_Pump()
 			batch[j] = index;
 			batchCount++;
 		}
-		maxResolveStepUs = Max( maxResolveStepUs, Sys_Microseconds() - stepStart );
+		const uint64 stepUs = Sys_Microseconds() - stepStart;
+		maxResolveStepUs = Max( maxResolveStepUs, stepUs );
+		admissionResolveStepUs = Max( admissionResolveStepUs, stepUs );
 		if( firstEstimate ) { break; }
 	}
 	const uint64 publishStart = Sys_Microseconds();
@@ -385,7 +394,9 @@ void Prefetch_Pump()
 	{
 		prefetchActive = false;
 	}
-	maxPublishUs = Max( maxPublishUs, Sys_Microseconds() - publishStart );
+	const uint64 publishUs = Sys_Microseconds() - publishStart;
+	maxPublishUs = Max( maxPublishUs, publishUs );
+	admissionPublishUs = Max( admissionPublishUs, publishUs );
 	const uint64 elapsed = Sys_Microseconds() - start;
 	maxSliceUs = Max( maxSliceUs, elapsed );
 	sliceOverruns += elapsed > sliceBudget;
