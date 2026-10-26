@@ -29,6 +29,9 @@ If you have questions concerning this license or the applicable additional terms
 #ifndef __RENDERMATRIX_H__
 #define __RENDERMATRIX_H__
 
+// ID_REVERSED_Z and CLIP_SPACE_D3D: every includer of idLib sees the same depth convention
+#include "../DepthConvention.h"
+
 static const int NUM_FRUSTUM_CORNERS	= 8;
 
 struct frustumCorners_t
@@ -513,11 +516,23 @@ idRenderMatrix::ApplyDepthHack
 */
 ID_INLINE void idRenderMatrix::ApplyDepthHack( idRenderMatrix& src )
 {
+	// The frontend ( R_AddSingleModel ), the MOC copy ( R_RenderSingleModel ) and the GUI model
+	// all apply the hack through here, so the depth prepass and the EQUAL shading passes see
+	// the same matrix: change the convention here, never at a caller.
+#if ID_REVERSED_Z
+	// squeeze projected z 75% of the way toward the near plane, which is z = w:
+	// z' = 0.25 * z + 0.75 * w, so ndc' = 0.25 * ndc + 0.75
+	src.m[2 * 4 + 0] = src.m[2 * 4 + 0] * 0.25f + src.m[3 * 4 + 0] * 0.75f;
+	src.m[2 * 4 + 1] = src.m[2 * 4 + 1] * 0.25f + src.m[3 * 4 + 1] * 0.75f;
+	src.m[2 * 4 + 2] = src.m[2 * 4 + 2] * 0.25f + src.m[3 * 4 + 2] * 0.75f;
+	src.m[2 * 4 + 3] = src.m[2 * 4 + 3] * 0.25f + src.m[3 * 4 + 3] * 0.75f;
+#else
 	// scale projected z by 25%
 	src.m[2 * 4 + 0] *= 0.25f;
 	src.m[2 * 4 + 1] *= 0.25f;
 	src.m[2 * 4 + 2] *= 0.25f;
 	src.m[2 * 4 + 3] *= 0.25f;
+#endif
 }
 
 /*
@@ -527,8 +542,12 @@ idRenderMatrix::ApplyModelDepthHack
 */
 ID_INLINE void idRenderMatrix::ApplyModelDepthHack( idRenderMatrix& src, float value )
 {
-	// offset projected z
+	// offset projected z toward the near plane ( the value is computed in R_EntityDefDynamicModel )
+#if ID_REVERSED_Z
+	src.m[2 * 4 + 3] += value;
+#else
 	src.m[2 * 4 + 3] -= value;
+#endif
 }
 
 /*

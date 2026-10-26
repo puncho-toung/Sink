@@ -56,7 +56,12 @@ If you have questions concerning this license or the applicable additional terms
 // RB: DX12 & Vulkan require the clip space Z is in the range [0, 1]
 // This change is especially important for all kinds of light bounding box -> clip space transformations so
 // the depth bounding tests clipping tests work properly
-#define CLIP_SPACE_D3D	1
+// CLIP_SPACE_D3D and ID_REVERSED_Z come from the shared depth-convention header ( also read by the shaders )
+#include "../DepthConvention.h"
+
+#if ID_REVERSED_Z && !defined( CLIP_SPACE_D3D )
+	#error "reversed-Z needs the D3D [0, W] clip space"
+#endif
 
 /*
 ================================================================================================
@@ -138,6 +143,18 @@ static const __m128 vector_float_one						= { 1.0f, 1.0f, 1.0f, 1.0f };
 static const __m128 vector_float_pos_one					= { +1.0f, +1.0f, +1.0f, +1.0f };
 static const __m128 vector_float_neg_one					= { -1.0f, -1.0f, -1.0f, -1.0f };
 static const __m128 vector_float_last_one					= { 0.0f, 0.0f, 0.0f, 1.0f };
+#endif
+
+// The depth reported for a point behind the eye ( W <= 0 ): it touches the near plane, which is the
+// minimum depth in the forward convention and the maximum ( Z = W ) under reversed-Z.
+#if ID_REVERSED_Z
+#define RENDER_MATRIX_BEHIND_EYE_DEPTH				( RENDER_MATRIX_INFINITY )
+#else
+#define RENDER_MATRIX_BEHIND_EYE_DEPTH				( -RENDER_MATRIX_INFINITY )
+#endif
+
+#if defined(USE_INTRINSICS_SSE)
+static const __m128 vector_float_behind_eye_depth			= { RENDER_MATRIX_BEHIND_EYE_DEPTH, RENDER_MATRIX_BEHIND_EYE_DEPTH, RENDER_MATRIX_BEHIND_EYE_DEPTH, RENDER_MATRIX_BEHIND_EYE_DEPTH };
 #endif
 
 
@@ -716,11 +733,16 @@ void idRenderMatrix::CreateProjectionMatrix( float xMin, float xMax, float yMin,
 		// this is the far-plane-at-infinity formulation
 		out[2][0] = 0.0f;
 		out[2][1] = 0.0f;
+#if ID_REVERSED_Z
+		// reversed-Z: near -> 1, infinity -> 0 exactly ( ndc z = zNear / distance )
+		out[2][2] = 0.0f;
+		out[2][3] = zNear;
+#elif defined( CLIP_SPACE_D3D )
 		out[2][2] = -1.0f;
-#if defined( CLIP_SPACE_D3D )
 		// the D3D clip space Z is in range [0,1] instead of [-1,1]
 		out[2][3] = -zNear;
 #else
+		out[2][2] = -1.0f;
 		out[2][3] = -2.0f * zNear;
 #endif
 	}
@@ -728,7 +750,11 @@ void idRenderMatrix::CreateProjectionMatrix( float xMin, float xMax, float yMin,
 	{
 		out[2][0] = 0.0f;
 		out[2][1] = 0.0f;
-#if defined( CLIP_SPACE_D3D )
+#if ID_REVERSED_Z
+		// reversed-Z: near -> 1, far -> 0
+		out[2][2] = zNear / ( zFar - zNear );
+		out[2][3] = ( zFar * zNear ) / ( zFar - zNear );
+#elif defined( CLIP_SPACE_D3D )
 		// the D3D clip space Z is in range [0,1] instead of [-1,1]
 		out[2][2] = -( zFar ) / ( zFar - zNear );
 		out[2][3] = -( zFar * zNear ) / ( zFar - zNear );
@@ -770,16 +796,27 @@ void idRenderMatrix::CreateProjectionMatrixFov( float xFovDegrees, float yFovDeg
 }
 
 // SP
+// NOTE: no caller ( only the reversed-Z self-test could reach it ); unlike the rest of this class it is
+// laid out for row vectors ( left-handed, w = view z ), so it is the transpose of CreateProjectionMatrix's form
 void idRenderMatrix::CreateProjD3DStyle( float verticalFov, float aspect, float zNear, float zFar, idRenderMatrix& out )
 {
 	float yScale = 1.0f / tanf( 0.5f * verticalFov );
 	float xScale = yScale / aspect;
 	float zScale = 1.0f / ( zFar - zNear );
+#if ID_REVERSED_Z
+	// reversed-Z: z = zNear -> 1, z = zFar -> 0
+	out = idRenderMatrix(
+			  xScale, 0, 0, 0,
+			  0, yScale, 0, 0,
+			  0, 0, -zNear * zScale, 1,
+			  0, 0, zNear * zFar * zScale, 0 );
+#else
 	out = idRenderMatrix(
 			  xScale, 0, 0, 0,
 			  0, yScale, 0, 0,
 			  0, 0, zFar * zScale, 1,
 			  0, 0, -zNear * zFar * zScale, 0 );
+#endif
 }
 
 /*
@@ -1751,6 +1788,7 @@ bool idRenderMatrix::CullPointToMVPbits( const idRenderMatrix& mvp, const idVec3
 	const float minW = zeroToOne ? 0.0f : -c[3];
 	const float maxW = c[3];
 #if defined( CLIP_SPACE_D3D )	// the D3D clip space Z is in the range [0,1] so always compare Z vs zero whether 'zeroToOne' is true or false
+	// reversed-Z needs no change: [0, W] is symmetric, only bits 4 and 5 swap meaning ( near <-> far ) and nothing outside these functions reads them
 	const float minZ = 0.0f;
 #else
 	const float minZ = minW;
@@ -1862,6 +1900,7 @@ bool idRenderMatrix::CullBoundsToMVPbits( const idRenderMatrix& mvp, const idBou
 	__m128 minW0 = _mm_mul_ps( w0, minMul );
 	__m128 minW1 = _mm_mul_ps( w1, minMul );
 #if defined( CLIP_SPACE_D3D )	// the D3D clip space Z is in the range [0,1] so always compare Z vs zero whether 'zeroToOne' is true or false
+	// reversed-Z needs no change: [0, W] is symmetric, only bits 4 and 5 swap meaning ( near <-> far ) and nothing outside these functions reads them
 	__m128 minZ0 = vector_float_zero;
 	__m128 minZ1 = vector_float_zero;
 #else
@@ -1929,6 +1968,7 @@ bool idRenderMatrix::CullBoundsToMVPbits( const idRenderMatrix& mvp, const idBou
 				const float minW = zeroToOne ? 0.0f : -c[3];
 				const float maxW = c[3];
 #if defined( CLIP_SPACE_D3D )	// the D3D clip space Z is in the range [0,1] so always compare Z vs zero whether 'zeroToOne' is true or false
+				// reversed-Z needs no change: [0, W] is symmetric, only bits 4 and 5 swap meaning ( near <-> far ) and nothing outside these functions reads them
 				const float minZ = 0.0f;
 #else
 				const float minZ = minW;
@@ -2058,6 +2098,7 @@ bool idRenderMatrix::CullExtrudedBoundsToMVPbits( const idRenderMatrix& mvp, con
 		__m128 minW0 = _mm_mul_ps( w0, minMul );
 		__m128 minW1 = _mm_mul_ps( w1, minMul );
 #if defined( CLIP_SPACE_D3D )	// the D3D clip space Z is in the range [0,1] so always compare Z vs zero whether 'zeroToOne' is true or false
+		// reversed-Z needs no change: [0, W] is symmetric, only bits 4 and 5 swap meaning ( near <-> far ) and nothing outside these functions reads them
 		__m128 minZ0 = vector_float_zero;
 		__m128 minZ1 = vector_float_zero;
 #else
@@ -2166,6 +2207,7 @@ bool idRenderMatrix::CullExtrudedBoundsToMVPbits( const idRenderMatrix& mvp, con
 		__m128 minW0 = _mm_mul_ps( w0, minMul );
 		__m128 minW1 = _mm_mul_ps( w1, minMul );
 #if defined( CLIP_SPACE_D3D )	// the D3D clip space Z is in the range [0,1] so always compare Z vs zero whether 'zeroToOne' is true or false
+		// reversed-Z needs no change: [0, W] is symmetric, only bits 4 and 5 swap meaning ( near <-> far ) and nothing outside these functions reads them
 		__m128 minZ0 = vector_float_zero;
 		__m128 minZ1 = vector_float_zero;
 #else
@@ -2251,6 +2293,7 @@ bool idRenderMatrix::CullExtrudedBoundsToMVPbits( const idRenderMatrix& mvp, con
 					const float minW = zeroToOne ? 0.0f : -c[3];
 					const float maxW = c[3];
 #if defined( CLIP_SPACE_D3D )	// the D3D clip space Z is in the range [0,1] so always compare Z vs zero whether 'zeroToOne' is true or false
+					// reversed-Z needs no change: [0, W] is symmetric, only bits 4 and 5 swap meaning ( near <-> far ) and nothing outside these functions reads them
 					const float minZ = 0.0f;
 #else
 					const float minZ = minW;
@@ -2306,6 +2349,9 @@ If the given bounding box is W=0 clipped then the projected bounds will cover th
 Note that while projected[0][1] will be set to the minimum when the given bounding box is W=0 clipped,
 projected[1][1] will still be valid and will NOT be set to the maximum when the given bounding box
 is W=0 clipped.
+Under reversed-Z the near plane is Z = W, so with 'windowSpace' true a W=0 clipped box sets the maximum
+Z instead and the minimum Z stays valid. With 'windowSpace' false ( the world-space derives of entity,
+light and area bounds, where Z is not a depth ) the forward meaning is kept.
 ========================
 */
 void idRenderMatrix::ProjectedBounds( idBounds& projected, const idRenderMatrix& mvp, const idBounds& bounds, bool windowSpace )
@@ -2407,11 +2453,23 @@ void idRenderMatrix::ProjectedBounds( idBounds& projected, const idRenderMatrix&
 
 	minX = _mm_sel_ps( minX, vector_float_neg_infinity, s0 );
 	minY = _mm_sel_ps( minY, vector_float_neg_infinity, s0 );
+#if ID_REVERSED_Z
+	if( windowSpace )
+	{
+		// the near side is max Z, and min Z is valid either way
+		maxZ = _mm_sel_ps( maxZ, vector_float_pos_infinity, s0 );
+	}
+	else
+	{
+		minZ = _mm_sel_ps( minZ, vector_float_neg_infinity, s0 );
+	}
+#else
 	minZ = _mm_sel_ps( minZ, vector_float_neg_infinity, s0 );
+#endif
 
 	maxX = _mm_sel_ps( maxX, vector_float_pos_infinity, s0 );
 	maxY = _mm_sel_ps( maxY, vector_float_pos_infinity, s0 );
-	// NOTE: maxZ is valid either way
+	// NOTE: maxZ is valid either way ( forward convention )
 
 	if( windowSpace )
 	{
@@ -2472,7 +2530,19 @@ void idRenderMatrix::ProjectedBounds( idBounds& projected, const idRenderMatrix&
 				{
 					projected[0][0] = -RENDER_MATRIX_INFINITY;
 					projected[0][1] = -RENDER_MATRIX_INFINITY;
+#if ID_REVERSED_Z
+					if( windowSpace )
+					{
+						// the near side is max Z, and min Z is valid either way
+						projected[1][2] = RENDER_MATRIX_INFINITY;
+					}
+					else
+					{
+						projected[0][2] = -RENDER_MATRIX_INFINITY;
+					}
+#else
 					projected[0][2] = -RENDER_MATRIX_INFINITY;
+#endif
 					projected[1][0] = RENDER_MATRIX_INFINITY;
 					projected[1][1] = RENDER_MATRIX_INFINITY;
 					// NOTE: projected[1][1] is still valid
@@ -2619,7 +2689,12 @@ void idRenderMatrix::ProjectedNearClippedBounds( idBounds& projected, const idRe
 	const __m128 z_5674 = _mm_perm_ps( z_4567, _MM_SHUFFLE( 0, 3, 2, 1 ) );
 	const __m128 w_5674 = _mm_perm_ps( w_4567, _MM_SHUFFLE( 0, 3, 2, 1 ) );
 
-#if defined( CLIP_SPACE_D3D )	// the D3D near plane is at Z=0 instead of Z=-1
+#if ID_REVERSED_Z	// the reversed near plane is at Z=W: the distance to it is W - Z
+	const __m128 d_0123 = _mm_sub_ps( w_0123, z_0123 );
+	const __m128 d_4567 = _mm_sub_ps( w_4567, z_4567 );
+	const __m128 d_1230 = _mm_sub_ps( w_1230, z_1230 );
+	const __m128 d_5674 = _mm_sub_ps( w_5674, z_5674 );
+#elif defined( CLIP_SPACE_D3D )	// the D3D near plane is at Z=0 instead of Z=-1
 	const __m128 d_0123 = z_0123;
 	const __m128 d_4567 = z_4567;
 	const __m128 d_1230 = z_1230;
@@ -2855,7 +2930,16 @@ void idRenderMatrix::ProjectedNearClippedBounds( idBounds& projected, const idRe
 		const idVec4& p6 = projectedPoints[6];
 		const idVec4& p7 = projectedPoints[7];
 
-#if defined( CLIP_SPACE_D3D )	// the D3D near plane is at Z=0 instead of Z=-1
+#if ID_REVERSED_Z	// the reversed near plane is at Z=W: the distance to it is W - Z
+		const float d0 = p0.w - p0.z;
+		const float d1 = p1.w - p1.z;
+		const float d2 = p2.w - p2.z;
+		const float d3 = p3.w - p3.z;
+		const float d4 = p4.w - p4.z;
+		const float d5 = p5.w - p5.z;
+		const float d6 = p6.w - p6.z;
+		const float d7 = p7.w - p7.z;
+#elif defined( CLIP_SPACE_D3D )	// the D3D near plane is at Z=0 instead of Z=-1
 		const float d0 = p0.z;
 		const float d1 = p1.z;
 		const float d2 = p2.z;
@@ -3023,8 +3107,9 @@ void idRenderMatrix::ProjectedNearClippedBounds( idBounds& projected, const idRe
 			projBnds[1][2] = idMath::ClampFloat( 0.0f, 1.0f, projBnds[1][2] );
 		}
 
-		assert( projected[0].Compare( projBnds[0], 0.01f ) );
-		assert( projected[1].Compare( projBnds[1], 0.01f ) );
+		// this is the path every non-SSE build runs, so it must write its result ( it used to only
+		// assert against 'projected', which nothing had written )
+		projected = projBnds;
 	}
 
 #else
@@ -3062,7 +3147,10 @@ void idRenderMatrix::ProjectedNearClippedBounds( idBounds& projected, const idRe
 			const idVec4 p0 = projectedPoints[offset0 + ( ( j + 0 ) & 3 )];
 			const idVec4 p1 = projectedPoints[offset1 + ( ( j + offset3 ) & 3 )];
 
-#if defined( CLIP_SPACE_D3D )	// the D3D near plane is at Z=0 instead of Z=-1
+#if ID_REVERSED_Z	// the reversed near plane is at Z=W: the distance to it is W - Z
+			const float d0 = p0.w - p0.z;
+			const float d1 = p1.w - p1.z;
+#elif defined( CLIP_SPACE_D3D )	// the D3D near plane is at Z=0 instead of Z=-1
 			const float d0 = p0.z;
 			const float d1 = p1.z;
 #else
@@ -3168,13 +3256,19 @@ static idVec3 LocalViewOriginFromMVP( const idRenderMatrix& mvp )
 LocalNearClipCenterFromMVP
 
 Based on whether the depth range is [0,1] or [-1,1], either transform (0,0,0) or (0,0,-1) with the inverse MVP.
+Under reversed-Z the near plane is at Z=1, so (0,0,1) is transformed.
 ========================
 */
 static idVec3 LocalNearClipCenterFromMVP( const idRenderMatrix& mvp )
 {
 	idRenderMatrix inverseMVP;
 	idRenderMatrix::Inverse( mvp, inverseMVP );
-#if defined( CLIP_SPACE_D3D )	// the D3D near plane is at Z=0 instead of Z=-1
+#if ID_REVERSED_Z	// the reversed near plane is at Z=1: inverseMVP * (0,0,1,1)
+	const float x = inverseMVP[0][3] + inverseMVP[0][2];
+	const float y = inverseMVP[1][3] + inverseMVP[1][2];
+	const float z = inverseMVP[2][3] + inverseMVP[2][2];
+	const float w = inverseMVP[3][3] + inverseMVP[3][2];
+#elif defined( CLIP_SPACE_D3D )	// the D3D near plane is at Z=0 instead of Z=-1
 	const float x = inverseMVP[0][3];
 	const float y = inverseMVP[1][3];
 	const float z = inverseMVP[2][3];
@@ -3332,6 +3426,7 @@ static int ClipHomogeneousPolygonToUnitCube_SSE2( idVec4* points, int numPoints 
 	ALIGNTYPE16 idVec4 newPoints[16 * 2];
 
 #if defined( CLIP_SPACE_D3D )	// the D3D near plane is at Z=0 instead of Z=-1
+	// reversed-Z needs no change: the two Z sides clip [0, W] either way, the comments just swap ( Z = 0 is far, Z = W near )
 	ClipHomogeneousPolygonToSide_SSE2( newPoints, points, numPoints, 2, vector_float_neg_one, vector_float_zero );	// near
 #else
 	ClipHomogeneousPolygonToSide_SSE2( newPoints, points, numPoints, 2, vector_float_neg_one, vector_float_one );	// near
@@ -3422,6 +3517,7 @@ static int ClipHomogeneousPolygonToUnitCube_Generic( idVec4* points, int numPoin
 	ALIGNTYPE16 idVec4 newPoints[2 * 16];	// the C clip code temporarily doubles the points
 
 #if defined( CLIP_SPACE_D3D )	// the D3D near plane is at Z=0 instead of Z=-1
+	// reversed-Z needs no change: the two Z sides clip [0, W] either way, the comments just swap ( Z = 0 is far, Z = W near )
 	numPoints = ClipHomogeneousPolygonToSide_Generic( newPoints, points, numPoints, 2, -1.0f, 0.0f );	// near
 #else
 	numPoints = ClipHomogeneousPolygonToSide_Generic( newPoints, points, numPoints, 2, -1.0f, 1.0f );	// near
@@ -3525,11 +3621,20 @@ void idRenderMatrix::ProjectedFullyClippedBounds( idBounds& projected, const idR
 
 	__m128 minX = vector_float_pos_infinity;
 	__m128 minY = vector_float_pos_infinity;
+#if ID_REVERSED_Z
+	// the near plane is the maximum Z
+	__m128 minZ = vector_float_pos_infinity;
+#else
 	__m128 minZ = inside ? vector_float_neg_one : vector_float_pos_infinity;
+#endif
 
 	__m128 maxX = vector_float_neg_infinity;
 	__m128 maxY = vector_float_neg_infinity;
+#if ID_REVERSED_Z
+	__m128 maxZ = inside ? vector_float_one : vector_float_neg_infinity;
+#else
 	__m128 maxZ = vector_float_neg_infinity;
+#endif
 
 	for( int i = 0; i < numClippedPoints; i += 4 )
 	{
@@ -3655,7 +3760,12 @@ void idRenderMatrix::ProjectedFullyClippedBounds( idBounds& projected, const idR
 	}
 	if( inside )
 	{
+#if ID_REVERSED_Z
+		// the near plane is the maximum Z
+		projected[1][2] = 1.0f;
+#else
 		projected[0][2] = -1.0f;
+#endif
 	}
 
 	for( int i = 0; i < numClippedPoints; i++ )
@@ -3756,14 +3866,14 @@ void idRenderMatrix::DepthBoundsForBounds( float& min, float& max, const idRende
 
 	__m128 rw0 = _mm_rcp32_ps( w0 );
 	z0 = _mm_mul_ps( z0, rw0 );
-	z0 = _mm_sel_ps( z0, vector_float_neg_infinity, s0 );
+	z0 = _mm_sel_ps( z0, vector_float_behind_eye_depth, s0 );
 
 	__m128 s1 = _mm_cmpgt_ps( vector_float_smallest_non_denorm, w1 );
 	w1 = _mm_or_ps( w1, _mm_and_ps( vector_float_smallest_non_denorm, s1 ) );
 
 	__m128 rw1 = _mm_rcp32_ps( w1 );
 	z1 = _mm_mul_ps( z1, rw1 );
-	z1 = _mm_sel_ps( z1, vector_float_neg_infinity, s1 );
+	z1 = _mm_sel_ps( z1, vector_float_behind_eye_depth, s1 );
 
 	__m128 minv = _mm_min_ps( z0, z1 );
 	__m128 maxv = _mm_max_ps( z0, z1 );
@@ -3812,7 +3922,7 @@ void idRenderMatrix::DepthBoundsForBounds( float& min, float& max, const idRende
 				}
 				else
 				{
-					tz = -RENDER_MATRIX_INFINITY;
+					tz = RENDER_MATRIX_BEHIND_EYE_DEPTH;
 				}
 
 				localMin = Min( localMin, tz );
@@ -3825,13 +3935,17 @@ void idRenderMatrix::DepthBoundsForBounds( float& min, float& max, const idRende
 	{
 		// convert to window coords
 #if !defined( CLIP_SPACE_D3D )	// the D3D clip space Z is already in the range [0,1]
-		min = localMin * 0.5f + 0.5f;
-		max = localMax * 0.5f + 0.5f;
+		localMin = localMin * 0.5f + 0.5f;
+		localMax = localMax * 0.5f + 0.5f;
 #endif
 		// clamp to the [0, 1] range
-		min = Max( min, 0.0f );
-		max = Min( max, 1.0f );
+		localMin = Max( localMin, 0.0f );
+		localMax = Min( localMax, 1.0f );
 	}
+
+	// every non-SSE build runs this path: under CLIP_SPACE_D3D it used to return the caller's values
+	min = localMin;
+	max = localMax;
 
 #endif
 }
@@ -3893,14 +4007,14 @@ void idRenderMatrix::DepthBoundsForExtrudedBounds( float& min, float& max, const
 
 		__m128 rw0 = _mm_rcp32_ps( w0 );
 		z0 = _mm_mul_ps( z0, rw0 );
-		z0 = _mm_sel_ps( z0, vector_float_neg_infinity, s0 );
+		z0 = _mm_sel_ps( z0, vector_float_behind_eye_depth, s0 );
 
 		__m128 s1 = _mm_cmpgt_ps( vector_float_smallest_non_denorm, w1 );
 		w1 = _mm_or_ps( w1, _mm_and_ps( vector_float_smallest_non_denorm, s1 ) );
 
 		__m128 rw1 = _mm_rcp32_ps( w1 );
 		z1 = _mm_mul_ps( z1, rw1 );
-		z1 = _mm_sel_ps( z1, vector_float_neg_infinity, s1 );
+		z1 = _mm_sel_ps( z1, vector_float_behind_eye_depth, s1 );
 
 		minv = _mm_min_ps( z0, z1 );
 		maxv = _mm_max_ps( z0, z1 );
@@ -3972,14 +4086,14 @@ void idRenderMatrix::DepthBoundsForExtrudedBounds( float& min, float& max, const
 
 		__m128 rw0 = _mm_rcp32_ps( w0 );
 		z0 = _mm_mul_ps( z0, rw0 );
-		z0 = _mm_sel_ps( z0, vector_float_neg_infinity, s0 );
+		z0 = _mm_sel_ps( z0, vector_float_behind_eye_depth, s0 );
 
 		__m128 s1 = _mm_cmpgt_ps( vector_float_smallest_non_denorm, w1 );
 		w1 = _mm_or_ps( w1, _mm_and_ps( vector_float_smallest_non_denorm, s1 ) );
 
 		__m128 rw1 = _mm_rcp32_ps( w1 );
 		z1 = _mm_mul_ps( z1, rw1 );
-		z1 = _mm_sel_ps( z1, vector_float_neg_infinity, s1 );
+		z1 = _mm_sel_ps( z1, vector_float_behind_eye_depth, s1 );
 
 		minv = _mm_min_ps( minv, z0 );
 		maxv = _mm_max_ps( maxv, z0 );
@@ -4049,7 +4163,7 @@ void idRenderMatrix::DepthBoundsForExtrudedBounds( float& min, float& max, const
 					}
 					else
 					{
-						tz = -RENDER_MATRIX_INFINITY;
+						tz = RENDER_MATRIX_BEHIND_EYE_DEPTH;
 					}
 
 					localMin = Min( localMin, tz );
@@ -4063,13 +4177,17 @@ void idRenderMatrix::DepthBoundsForExtrudedBounds( float& min, float& max, const
 	{
 		// convert to window coords
 #if !defined( CLIP_SPACE_D3D )	// the D3D clip space Z is already in the range [0,1]
-		min = localMin * 0.5f + 0.5f;
-		max = localMax * 0.5f + 0.5f;
+		localMin = localMin * 0.5f + 0.5f;
+		localMax = localMax * 0.5f + 0.5f;
 #endif
 		// clamp to the [0, 1] range
-		min = Max( min, 0.0f );
-		max = Min( max, 1.0f );
+		localMin = Max( localMin, 0.0f );
+		localMax = Min( localMax, 1.0f );
 	}
+
+	// every non-SSE build runs this path: under CLIP_SPACE_D3D it used to return the caller's values
+	min = localMin;
+	max = localMax;
 
 #endif
 }
@@ -4270,8 +4388,14 @@ void idRenderMatrix::DepthBoundsForShadowBounds( float& min, float& max, const i
 	const idVec3 localNearClipCenter = LocalNearClipCenterFromMVP( mvp );
 	const bool inside = PointInsideInfiniteShadow( bounds, localLightOrigin, localNearClipCenter, RENDER_MATRIX_PROJECTION_EPSILON );
 
+#if ID_REVERSED_Z
+	// the near plane is the maximum Z
+	__m128 minZ = vector_float_pos_infinity;
+	__m128 maxZ = inside ? vector_float_one : vector_float_neg_infinity;
+#else
 	__m128 minZ = inside ? vector_float_neg_one : vector_float_pos_infinity;
 	__m128 maxZ = vector_float_neg_infinity;
+#endif
 
 	for( int i = 0; i < numClippedPoints; i += 4 )
 	{
@@ -4394,8 +4518,14 @@ void idRenderMatrix::DepthBoundsForShadowBounds( float& min, float& max, const i
 	const idVec3 localNearClipCenter = LocalNearClipCenterFromMVP( mvp );
 	const bool inside = PointInsideInfiniteShadow( bounds, localLightOrigin, localNearClipCenter, RENDER_MATRIX_PROJECTION_EPSILON );
 
+#if ID_REVERSED_Z
+	// the near plane is the maximum Z
+	min = RENDER_MATRIX_INFINITY;
+	max = inside ? 1.0f : - RENDER_MATRIX_INFINITY;
+#else
 	min = inside ? -1.0f : RENDER_MATRIX_INFINITY;
 	max = - RENDER_MATRIX_INFINITY;
+#endif
 
 	for( int i = 0; i < numClippedPoints; i++ )
 	{
@@ -4439,6 +4569,12 @@ void idRenderMatrix::GetFrustumPlanes( idPlane planes[6], const idRenderMatrix& 
 	//			We cannot just assume that it's an D3D MVP matrix when
 	//			zeroToOne = false and CLIP_SPACE_D3D is defined because
 	//			this code may be called for non-MVP matrices.
+	//
+	// Under reversed-Z ( ID_REVERSED_Z ) a view MVP with zeroToOne = false gives a plane 5 ( "far",
+	// z < w ) that is the true near plane, and a plane 4 ( "near", z > -w ) that sits zNear behind
+	// the eye. The portal flood reads planes 0-4 and the subview code planes 0-3, so both stay
+	// conservative. Never call this with zeroToOne = true on a view MVP: its row 2 is ( 0, 0, 0, zNear )
+	// and plane 4 would get a zero normal.
 	const bool isZeroOneZ = false;
 
 	if( zeroToOne )

@@ -70,7 +70,13 @@ viewEnvprobe_t* R_SetEnvprobeDefViewEnvprobe( RenderEnvprobeLocal* probe )
 
 	// copy data used by backend
 	// RB: this would normaly go into R_AddSingleEnvprobe
-	vProbe->globalOrigin = probe->parms.origin;
+	// the origin is stored relative to this view's render origin, once; the bounds and the
+	// projection stay absolute ( nothing live reads them )
+	vProbe->originRel = probe->parms.origin;
+	if( !tr.viewDef->renderOrigin.IsZero() )
+	{
+		vProbe->originRel = ( idVec3d( probe->parms.origin ) - tr.viewDef->renderOrigin ).ToVec3();
+	}
 	vProbe->globalProbeBounds = probe->globalProbeBounds;
 	vProbe->inverseBaseProbeProject = probe->inverseBaseProbeProject;
 
@@ -946,12 +952,26 @@ void CalculateRadianceJob(calcEnvprobeParms_t* parms)
 REGISTER_PARALLEL_JOB( CalculateIrradianceJob, "CalculateIrradianceJob" );
 REGISTER_PARALLEL_JOB( CalculateRadianceJob, "CalculateRadianceJob" );
 
-static float LinearizeProbeDepth(float hwDepth, int face, int pixel, int size)
-{
-	const float zNear = 3.0f;		// fill near plane 
-	const float zFar = 16384.0f;	// fill far plane
+// The farthest probe distance: what the decode reports for a pixel with no geometry ( the depth
+// clear ) and for anything farther, and the G channel's scale. The R channel, the linear distance
+// the IBL shaders read, is R11F, which saturates at 65024 ( f32_to_uf11 ), so nothing farther can be
+// stored anyway. Nothing reads the G channel ( ( distance / PROBE_DEPTH_FAR )^2 ) at runtime.
+static const float PROBE_DEPTH_FAR = 65024.0f;
 
-	float zEye = (zNear * zFar) / (zFar - hwDepth * (zFar - zNear));	
+//puncho - camera-relative WP-CRV: not static, so dumpProbeDepth (RenderVerify.cpp) prints the bake's own decode
+// zNear is the near plane R_SetupProjectionMatrix gave the capture ( r_znear, a quarter of it with cramZNear )
+float LinearizeProbeDepth(float hwDepth, float zNear, int face, int pixel, int size)
+{
+	// the exact inverse of the capture's infinite-far projection; the threshold also catches the
+	// depth clear, which the half-float read-back cannot tell from the farthest geometry
+#if ID_REVERSED_Z
+	// reversed: ndc z = zNear / distance, cleared to 0
+	const float zEye = ( hwDepth * PROBE_DEPTH_FAR > zNear ) ? ( zNear / hwDepth ) : PROBE_DEPTH_FAR;
+#else
+	// forward with the -0.999 crunch: ndc z = 0.999 - zNear / distance, cleared to 1
+	const float farDepth = 0.999f - hwDepth;
+	const float zEye = ( farDepth * PROBE_DEPTH_FAR > zNear ) ? ( zNear / farDepth ) : PROBE_DEPTH_FAR;
+#endif
 
 	int    x = pixel % size, y = pixel / size;
 	idVec3 dir = MapXYSToDirection(x, y, face, size, size);
@@ -1179,6 +1199,9 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 		byte* buffers[6];
 		byte* depthBuffers[6];
 
+		// the near plane of every face: the faces copy primary.renderView, cramZNear included
+		const float captureZNear = ( primary.renderView.cramZNear ) ? ( r_znear.GetFloat() * 0.25f ) : r_znear.GetFloat();
+
 		int areaNum = tr.primaryWorld->PointInArea( def->parms.origin );
 		idVec3 point = def->parms.origin;
 		point.SnapInt();
@@ -1240,7 +1263,7 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 				const halfFloat_t* dsrc = (const halfFloat_t*)depthPacked;
 				for (int p = 0; p < captureSize * captureSize; p++)
 				{
-					dist[p] = LinearizeProbeDepth(F16toF32(dsrc[p * 3 + 0]), j, p, captureSize);
+					dist[p] = LinearizeProbeDepth(F16toF32(dsrc[p * 3 + 0]), captureZNear, j, p, captureSize);
 				}
 #if 0 // TEMP: validate depth read-back — delete once confirmed
 				if (i == 0)	// first probe only -> 6 files, not hundreds
@@ -1285,7 +1308,7 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 		depthName.Format("env/%s_depth", fullname.c_str());
 
 		const byte* depthFaces[6];
-		const float invZFar = 1.0f / 16384.0f;		// must match zFar in LinearizeProbeDepth
+		const float invZFar = 1.0f / PROBE_DEPTH_FAR;	// G channel scale; nothing reads G at runtime
 		const int   outSize = 64;					// occluder-field resolution
 		const int   block = captureSize / outSize;	// 4:1 per axis at 256 -> 64
 		assert(captureSize% outSize == 0);			// captureSize is ENVPROBE_CAPTURE_SIZE = 256 (Framebuffer.h:41)

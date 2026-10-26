@@ -59,7 +59,7 @@ void R_LocalVectorToGlobal( const float modelMatrix[16], const idVec3& in, idVec
 void R_GlobalPlaneToLocal( const float modelMatrix[16], const idPlane& in, idPlane& out );
 void R_LocalPlaneToGlobal( const float modelMatrix[16], const idPlane& in, idPlane& out );
 
-void R_SetupViewMatrix( viewDef_t* viewDef );
+void R_SetupViewMatrix( viewDef_t* viewDef, const idVec3d& origin );	// the view relative to origin; zero = absolute
 void R_SetupProjectionMatrix( viewDef_t* viewDef, bool doJitter );
 
 // RB begin
@@ -71,5 +71,6 @@ void R_MatrixFullInverse( const float in[16], float r[16] );
 // SP begin
 void R_ObliqueProjection( viewDef_t* viewDef );
 // SP end
+void R_ObliqueNearPlane( float projectionMatrix[16], const idVec4& clipPlane );	// camera-space plane, both depth conventions
 
 #endif /* !__GLMATRIX_H__ */

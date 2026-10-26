@@ -455,12 +455,24 @@ void idPlayerView::SingleView( const renderView_t* view, idMenuHandler_HUD* hudM
 	if( gameLocal.portalSkyEnt.GetEntity() && gameLocal.IsPortalSkyAcive() && g_enablePortalSky.GetBool() )
 	{
 		renderView_t portalView = hackedView;
-		portalView.vieworg = gameLocal.portalSkyEnt.GetEntity()->GetPhysics()->GetOrigin();
+		idEntity* skyEnt = gameLocal.portalSkyEnt.GetEntity();
+		if( skyEnt->IsType( idPortalSky::Type ) )
+		{
+			portalView.vieworg = static_cast<idPortalSky*>( skyEnt )->SkyViewOrigin( hackedView.vieworg );
+		}
+		else
+		{
+			portalView.vieworg = skyEnt->GetPhysics()->GetOrigin();
+		}
 		gameRenderWorld->RenderScene( &portalView );
 		renderSystem->CaptureRenderToImage( "_currentRender" );
 
 		hackedView.forceUpdate = true;				// FIX: for smoke particles not drawing when portalSky present
 	}
+
+	// only the player's own view is the main view, never the portal sky view copied above; the renderer
+	// keeps the previous-frame state for motion vectors and TAA history from this view alone
+	hackedView.rdflags |= RDF_MAINVIEW;
 
 	// process the frame
 	fxManager->Process( &hackedView );
@@ -786,6 +798,13 @@ idPlayerView::RenderPlayerView
 void idPlayerView::RenderPlayerView( idMenuHandler_HUD* hudManager )
 {
 	const renderView_t* view = player->GetRenderView();
+
+	// before the portal sky's RenderScene: every view of this game frame shares one smoke model,
+	// anchored near the eye of the first player view rendered in the frame
+	if( view != NULL )
+	{
+		gameLocal.smokeParticles->UpdateAnchor( view->vieworg, gameLocal.framenum );
+	}
 #if 0
 	if( renderSystem->GetStereo3DMode() != STEREO3D_OFF )
 	{

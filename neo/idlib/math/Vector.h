@@ -1000,6 +1000,81 @@ struct idTupleSize< idVec3 >
 
 //===============================================================
 //
+//	idVec3d - 3D vector in double precision
+//
+//===============================================================
+
+// The renderer's bridge between the absolute float world and the eye-relative frame:
+// a float position is widened to double, the large render origin is subtracted in double,
+// and the small result is rounded back to float once ( ToVec3 ). Never subtract a
+// float( origin ): that brings the large-coordinate rounding back.
+// Deliberately minimal: no SIMD and no arithmetic beyond that subtraction and its inverse.
+class idVec3d
+{
+public:
+	double			x;
+	double			y;
+	double			z;
+
+	idVec3d();									// zero, unlike idVec3: idVec3d() is the "no origin" value
+	idVec3d( const double x, const double y, const double z );
+	explicit idVec3d( const idVec3& a );		// exact, every float is a double
+
+	void			Zero();
+	bool			IsZero() const;				// exact compare, -0 counts as zero
+
+	idVec3d			operator-( const idVec3d& a ) const;
+	idVec3d			operator+( const idVec3d& a ) const;
+
+	idVec3			ToVec3() const;				// rounds each component to float once
+};
+
+ID_INLINE idVec3d::idVec3d()
+{
+	x = y = z = 0.0;
+}
+
+ID_INLINE idVec3d::idVec3d( const double x, const double y, const double z )
+{
+	this->x = x;
+	this->y = y;
+	this->z = z;
+}
+
+ID_INLINE idVec3d::idVec3d( const idVec3& a )
+{
+	x = a.x;
+	y = a.y;
+	z = a.z;
+}
+
+ID_INLINE void idVec3d::Zero()
+{
+	x = y = z = 0.0;
+}
+
+ID_INLINE bool idVec3d::IsZero() const
+{
+	return ( x == 0.0 && y == 0.0 && z == 0.0 );
+}
+
+ID_INLINE idVec3d idVec3d::operator-( const idVec3d& a ) const
+{
+	return idVec3d( x - a.x, y - a.y, z - a.z );
+}
+
+ID_INLINE idVec3d idVec3d::operator+( const idVec3d& a ) const
+{
+	return idVec3d( x + a.x, y + a.y, z + a.z );
+}
+
+ID_INLINE idVec3 idVec3d::ToVec3() const
+{
+	return idVec3( float( x ), float( y ), float( z ) );
+}
+
+//===============================================================
+//
 //	idVec4 - 4D vector
 //
 //===============================================================

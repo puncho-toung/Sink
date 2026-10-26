@@ -33,6 +33,9 @@ If you have questions concerning this license or the applicable additional terms
 
 static const char* smokeParticle_SnapshotName = "_SmokeParticle_Snapshot_";
 
+// multiples of 4096 are exact in float anywhere in the world, so the anchor never rounds
+static const float SMOKE_ANCHOR_GRID = 4096.0f;
+
 /*
 ================
 idSmokeParticles::idSmokeParticles
@@ -43,6 +46,8 @@ idSmokeParticles::idSmokeParticles()
 	initialized = false;
 	memset( &renderEntity, 0, sizeof( renderEntity ) );
 	renderEntityHandle = -1;
+	anchor.Zero();
+	anchorFrame = -1;
 	memset( smokes, 0, sizeof( smokes ) );
 	freeSmokes = NULL;
 	numActiveSmokes = 0;
@@ -87,9 +92,13 @@ void idSmokeParticles::Init()
 	// we certainly don't want particle shadows
 	renderEntity.noShadow = 1;
 
-	// huge bounds, so it will be present in every world area
-	renderEntity.bounds.AddPoint( idVec3( -100000, -100000, -100000 ) );
-	renderEntity.bounds.AddPoint( idVec3( 100000,  100000,  100000 ) );
+	// the whole world, so it will be present in every world area; UpdateAnchor keeps it the
+	// whole world wherever the anchor moves
+	anchor.Zero();
+	anchorFrame = -1;
+	renderEntity.origin = anchor;
+	renderEntity.bounds[0] = idVec3( MIN_WORLD_COORD ) - anchor;
+	renderEntity.bounds[1] = idVec3( MAX_WORLD_COORD ) - anchor;
 
 	renderEntity.callback = idSmokeParticles::ModelCallback;
 	// add to renderer list
@@ -119,6 +128,45 @@ void idSmokeParticles::Shutdown()
 		renderEntity.hModel = NULL;
 	}
 	initialized = false;
+}
+
+/*
+================
+idSmokeParticles::UpdateAnchor
+
+The model holds every live smoke in the world at once, so its vertices are built relative to an
+anchor near the eye rather than the world origin, which keeps them small. The model is built once
+per game frame and shared by every view of the frame (the portal sky first, then the main view and
+its subviews), so the anchor may move only between frames: the first call of a frame moves it, the
+rest return. It snaps to a coarse grid because each move re-links the entity into every area.
+================
+*/
+void idSmokeParticles::UpdateAnchor( const idVec3& eye, const int frameNum )
+{
+	if( !initialized || frameNum == anchorFrame )
+	{
+		return;
+	}
+	anchorFrame = frameNum;
+
+	idVec3 snapped;
+	for( int i = 0; i < 3; i++ )
+	{
+		snapped[i] = SMOKE_ANCHOR_GRID * idMath::Floor( eye[i] / SMOKE_ANCHOR_GRID + 0.5f );
+	}
+	if( snapped == anchor )
+	{
+		return;
+	}
+	anchor = snapped;
+
+	renderEntity.origin = anchor;
+	renderEntity.bounds[0] = idVec3( MIN_WORLD_COORD ) - anchor;
+	renderEntity.bounds[1] = idVec3( MAX_WORLD_COORD ) - anchor;
+	gameRenderWorld->UpdateEntityDef( renderEntityHandle, &renderEntity );
+
+	// the model may already hold smoke for this view time, built relative to the old anchor
+	currentParticleTime = -1;
 }
 
 /*
@@ -386,13 +434,9 @@ bool idSmokeParticles::UpdateRenderEntity( renderEntity_s* renderEntity, const r
 		tri->numIndexes = quads * 6;
 		tri->numVerts = quads * 4;
 
-		// just always draw the particles
-		tri->bounds[0][0] =
-			tri->bounds[0][1] =
-				tri->bounds[0][2] = -99999;
-		tri->bounds[1][0] =
-			tri->bounds[1][1] =
-				tri->bounds[1][2] = 99999;
+		// just always draw the particles: the whole world, in the anchor's frame
+		tri->bounds[0] = idVec3( MIN_WORLD_COORD ) - renderEntity->origin;
+		tri->bounds[1] = idVec3( MAX_WORLD_COORD ) - renderEntity->origin;
 
 		tri->numVerts = 0;
 		for( last = NULL, smoke = active->smokes; smoke; smoke = next )
@@ -428,7 +472,8 @@ bool idSmokeParticles::UpdateRenderEntity( renderEntity_s* renderEntity, const r
 			g.index = smoke->index;
 			g.random = smoke->random;
 
-			g.origin = smoke->origin;
+			// relative to the anchor the entity is placed at (its axis is the identity)
+			g.origin = smoke->origin - renderEntity->origin;
 			g.axis = smoke->axis;
 
 			g.originalRandom = g.random;

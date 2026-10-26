@@ -166,7 +166,8 @@ float3 reconstructCSPosition( float2 S, float depth )
 {
 	// derive clip space from the depth buffer and screen position
 	float2 uv = S * pc.rpWindowCoord.xy;
-	float3 ndc = float3( uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth );
+	// the sky test comes before the division ( the Hi-Z mips keep the farthest depth, so sky too )
+	float3 ndc = float3( uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, SkyGuardedDepth( depth, pc.rpProjectionMatrixZ ) );
 	float clipW = -pc.rpProjectionMatrixZ.w / ( -pc.rpProjectionMatrixZ.z - ndc.z );
 
 	float4 clip = float4( ndc * clipW, clipW );

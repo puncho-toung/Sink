@@ -76,6 +76,9 @@ option(FLATPAK
 option(REPRODUCIBLE_BUILD
 		"Replace __DATE__ and __TIME__ by hardcoded values for reproducible builds" OFF)
 
+option(REVERSED_Z
+		"Reversed-Z depth (D32S8, near at 1, infinite far at 0); shaders go to renderprogs2/<api>_rz" ON)
+
 #set(NVRHI_INSTALL OFF)
 
 set(CPU_TYPE "" CACHE STRING "When set, passes this string as CPU-ID which will be embedded into the binary.")
@@ -307,6 +310,14 @@ endif()
 if(REPRODUCIBLE_BUILD OR FLATPAK)
 	# don't use __DATE__ and __TIME__ macros so builds are reproducible
 	add_definitions(-DID_REPRODUCIBLE_BUILD)
+endif()
+
+# the depth convention for idlib, rbdmap and the engine ( idlib/DepthConvention.h defaults to 1 );
+# compileshaders.cmake passes the same value to the shaders and picks their output directory
+if(REVERSED_Z)
+	add_definitions(-DID_REVERSED_Z=1)
+else()
+	add_definitions(-DID_REVERSED_Z=0)
 endif()
 
 # SRS - on Apple set find_package() to prefer dylibs over macOS frameworks and xcframeworks
@@ -689,6 +700,8 @@ set(GAMED3XP_SOURCES
 	d3xp/EnvironmentProbe.cpp
 	d3xp/Fx.cpp
 	d3xp/GameEdit.cpp
+	d3xp/GameSpawnVerify.cpp
+	d3xp/GameVerify.cpp
 	d3xp/Game_local.cpp
 	d3xp/Game_network.cpp
 	d3xp/Grabber.cpp

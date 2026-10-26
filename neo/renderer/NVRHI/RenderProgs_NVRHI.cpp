@@ -162,6 +162,18 @@ void idRenderProgManager::LoadShader( shader_t& shader )
 
 	idStr adjustedName = shader.name;
 	adjustedName.StripFileExtension();
+#if ID_REVERSED_Z
+	// the reversed-Z blobs have their own directories ( compileshaders.cmake ), so a reversed build
+	// given forward blobs stops at GetBytecode's missing-file FatalError instead of rendering wrong
+	if( deviceManager->GetGraphicsAPI() == nvrhi::GraphicsAPI::D3D12 )
+	{
+		adjustedName = idStr( "renderprogs2/dxil_rz/" ) + adjustedName + "." + stage + ".bin";
+	}
+	else if( deviceManager->GetGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN )
+	{
+		adjustedName = idStr( "renderprogs2/spirv_rz/" ) + adjustedName + "." + stage + ".bin";
+	}
+#else
 	if( deviceManager->GetGraphicsAPI() == nvrhi::GraphicsAPI::D3D12 )
 	{
 		adjustedName = idStr( "renderprogs2/dxil/" ) + adjustedName + "." + stage + ".bin";
@@ -170,6 +182,7 @@ void idRenderProgManager::LoadShader( shader_t& shader )
 	{
 		adjustedName = idStr( "renderprogs2/spirv/" ) + adjustedName + "." + stage + ".bin";
 	}
+#endif
 	else
 	{
 		common->FatalError( "Unsupported graphics api" );

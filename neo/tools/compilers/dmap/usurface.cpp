@@ -61,7 +61,8 @@ static void AddTriListToArea( uEntity_t* e, mapTri_t* triList, int planeNum, int
 	{
 		if( group->material == triList->material
 				&& group->planeNum == planeNum
-				&& group->mergeGroup == triList->mergeGroup )
+				&& group->mergeGroup == triList->mergeGroup
+				&& group->stBase == triList->stBase )	//puncho - camera-relative dmap st: the optimizer shares st between the tris of a group
 		{
 			// check the texture vectors
 			for( i = 0 ; i < 2 ; i++ )
@@ -103,6 +104,7 @@ static void AddTriListToArea( uEntity_t* e, mapTri_t* triList, int planeNum, int
 		group->material = triList->material;
 		group->nextGroup = area->groups;
 		group->texVec = *texVec;
+		group->stBase = triList->stBase;	//puncho - camera-relative dmap st
 		area->groups = group;
 	}
 
@@ -172,6 +174,10 @@ TriListForSide
 #define	SNAP_FLOAT_TO_INT	256
 #define	SNAP_INT_TO_FLOAT	(1.0/SNAP_FLOAT_TO_INT)
 
+//puncho start - camera-relative dmap st: a power of two, so subtracting a multiple of it from a nearby xyz is exact
+#define	ST_CELL_SIZE		8192.0f
+//puncho end
+
 mapTri_t* TriListForSide( const side_t* s, const idWinding* w )
 {
 	int				i, j;
@@ -194,6 +200,61 @@ mapTri_t* TriListForSide( const side_t* s, const idWinding* w )
 		return NULL;
 	}
 
+	//puncho start - camera-relative dmap st
+	// idDrawVert keeps st as half floats, which resolve about 1/1024 of their magnitude
+	// (and F32toF16 truncates), so a side textured far from the origin loses up to a
+	// whole tile, as does every vertex that light carving, t-junction fixing and the
+	// optimizer later interpolate from it.  So texture each side as if it sat within
+	// ST_CELL_SIZE / 2 of the origin: evaluate the projection about stOrigin, the
+	// multiple of ST_CELL_SIZE nearest the centre of the side, and keep the whole tiles
+	// the projection has at stOrigin out of the half floats in stBase, which mapTri_t
+	// and optimizeGroup_t carry and ShareMapTriVerts adds back, so the .proc keeps the
+	// absolute st.  The side goes through the same float arithmetic it would get at the
+	// origin, so one moved by a multiple of ST_CELL_SIZE stores the same half floats,
+	// and one centred within ST_CELL_SIZE / 2 of the origin on every axis gets a zero
+	// stOrigin and the original arithmetic exactly, so maps near the origin compile
+	// byte-identical.  The base is per side, not per fragment, so the fragments of a
+	// side still share an optimize group.
+	idVec3	stOrigin;
+	idVec2	stBase( 0.0f, 0.0f );
+	float	stOffset[2] = { s->texVec.v[0][3], s->texVec.v[1][3] };
+
+	stOrigin.Zero();
+	if( s->winding )
+	{
+		const idVec3 center = s->winding->GetCenter();
+		for( i = 0 ; i < 3 ; i++ )
+		{
+			stOrigin[i] = ST_CELL_SIZE * idMath::Floor( center[i] / ST_CELL_SIZE + 0.5f );
+		}
+	}
+
+	if( stOrigin != vec3_origin )
+	{
+		for( i = 0 ; i < 2 ; i++ )
+		{
+			const idVec3 axis = s->texVec.v[i].ToVec3();
+			const double size = s->texValve220 ? s->texSize[i] : 1.0;
+
+			// in double, so the whole tiles split off exactly
+			const double tiles = ( ( double )stOrigin.x * axis.x + ( double )stOrigin.y * axis.y + ( double )stOrigin.z * axis.z ) / size;
+			stBase[i] = ( float )floor( tiles + 0.5 );
+
+			// ComputeAxisBase builds the axes with float trig (sin( M_PI ) is not 0), so a
+			// world aligned texture still leaves a fraction of about 2^-24 * |stOrigin| * |axis|
+			// here.  Kept, it would move st that sit exactly on a half float step to just
+			// below it in magnitude, where the truncating F32toF16 drops them a whole step;
+			// 2^-20 leaves a margin of 16 over that noise
+			double frac = tiles - stBase[i];
+			if( fabs( frac ) <= stOrigin.Length() * axis.Length() / size * ( 1.0 / ( 1 << 20 ) ) )
+			{
+				frac = 0.0;
+			}
+			stOffset[i] = ( float )( s->texVec.v[i][3] + frac * size );
+		}
+	}
+	//puncho end
+
 	if( 1 )
 	{
 		// triangle fan using only the outer verts
@@ -204,6 +265,7 @@ mapTri_t* TriListForSide( const side_t* s, const idWinding* w )
 		{
 			tri = AllocTri();
 			tri->material = si;
+			tri->stBase = stBase;	//puncho - camera-relative dmap st
 			tri->next = triList;
 			triList = tri;
 
@@ -234,9 +296,12 @@ mapTri_t* TriListForSide( const side_t* s, const idWinding* w )
 #endif
 
 				// calculate texture s/t from brush primitive texture matrix
+				//puncho start - camera-relative dmap st: about stOrigin, see above
+				const idVec3 local = dv->xyz - stOrigin;
 				idVec2 st;
-				st.x = ( dv->xyz * s->texVec.v[0].ToVec3() ) + s->texVec.v[0][3];
-				st.y = ( dv->xyz * s->texVec.v[1].ToVec3() ) + s->texVec.v[1][3];
+				st.x = ( local * s->texVec.v[0].ToVec3() ) + stOffset[0];
+				st.y = ( local * s->texVec.v[1].ToVec3() ) + stOffset[1];
+				//puncho end
 
 				// RB: support Valve 220 projection
 				if( s->texValve220 )
@@ -267,6 +332,7 @@ mapTri_t* TriListForSide( const side_t* s, const idWinding* w )
 
 			tri = AllocTri();
 			tri->material = si;
+			tri->stBase = stBase;	//puncho - camera-relative dmap st
 			tri->next = triList;
 			triList = tri;
 
@@ -290,9 +356,12 @@ mapTri_t* TriListForSide( const side_t* s, const idWinding* w )
 				dv->xyz = *vec;
 
 				// calculate texture s/t from brush primitive texture matrix
+				//puncho start - camera-relative dmap st: about stOrigin, see above
+				const idVec3 local = dv->xyz - stOrigin;
 				idVec2 st;
-				st.x = ( dv->xyz * s->texVec.v[0].ToVec3() ) + s->texVec.v[0][3];
-				st.y = ( dv->xyz * s->texVec.v[1].ToVec3() ) + s->texVec.v[1][3];
+				st.x = ( local * s->texVec.v[0].ToVec3() ) + stOffset[0];
+				st.y = ( local * s->texVec.v[1].ToVec3() ) + stOffset[1];
+				//puncho end
 
 				// RB: support Valve 220 projection
 				if( s->texValve220 )

@@ -55,9 +55,10 @@ public:
 	// allocates memory for verts and indexes in frame-temporary buffer memory
 	void		BeginFrame();
 
-	void		EmitToCurrentView( float modelMatrix[16], bool depthHack );
+	// the model matrix in both frames: absolute, and relative to tr.viewDef->renderOrigin
+	void		EmitToCurrentView( float modelMatrixAbs[16], float modelMatrixRel[16], bool depthHack );
 	void		EmitFullScreen( Framebuffer* renderTarget = nullptr );
-	void		EmitSurfaces( float modelMatrix[16], float modelViewMatrix[16], bool depthHack, bool allowFullScreenStereoDepth, bool linkAsEntity );
+	void		EmitSurfaces( float modelMatrixAbs[16], float modelMatrixRel[16], float modelViewMatrix[16], bool depthHack, bool allowFullScreenStereoDepth, bool linkAsEntity );
 
 	// RB
 	void		EmitImGui( ImDrawData* drawData );

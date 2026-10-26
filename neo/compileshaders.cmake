@@ -49,6 +49,14 @@ function(compile_shaders)
 
     message( STATUS "Shader include path ${SHADER_INCLUDE_DIR}" )
 
+    # the depth convention ( REVERSED_Z option in neo/CMakeLists.txt, idlib/DepthConvention.h ):
+    # always passed explicitly, because the header defaults to reversed
+    if (REVERSED_Z)
+        set(DEPTH_CONVENTION_DEFINE ID_REVERSED_Z=1)
+    else()
+        set(DEPTH_CONVENTION_DEFINE ID_REVERSED_Z=0)
+    endif()
+
     # just add the source files to the project as documents, they are built by the script
     set_source_files_properties(${params_SOURCES} PROPERTIES VS_TOOL_OVERRIDE "None") 
 
@@ -75,6 +83,7 @@ function(compile_shaders)
                                    --binaryBlob
                                    --outputExt=.bin
                                    -I ${SHADER_INCLUDE_DIR}
+                                   -D ${DEPTH_CONVENTION_DEFINE}
                                    ${CFLAGS}
                                    --compiler=${DXC_PATH})
     endif()
@@ -98,6 +107,7 @@ function(compile_shaders)
                                    --binaryBlob
                                    --outputExt=.bin
                                    -I ${SHADER_INCLUDE_DIR}
+                                   -D ${DEPTH_CONVENTION_DEFINE}
                                    ${CFLAGS}
                                    --compiler=${FXC_PATH})
     endif()
@@ -123,6 +133,7 @@ function(compile_shaders)
                                    --retryCount=20				# SRS - allow 20 retries to recover from any macOS/linux command shell failures during multi-threaded compilation
                                    -I ${SHADER_INCLUDE_DIR}
                                    -D SPIRV
+                                   -D ${DEPTH_CONVENTION_DEFINE}
                                    ${CFLAGS}
                                    --compiler=${DXC_SPIRV_PATH})
     endif()
@@ -153,13 +164,21 @@ function(compile_shaders_all_platforms)
         message(FATAL_ERROR "compile_shaders_all_platforms: OUTPUT_BASE argument missing")
     endif()
 
+    # reversed-Z blobs get their own directories ( renderprogs2/<api>_rz, read by
+    # idRenderProgManager::LoadShader ), so a build mismatched with its blobs fails to load them
+    if (REVERSED_Z)
+        set(DEPTH_CONVENTION_SUFFIX _rz)
+    else()
+        set(DEPTH_CONVENTION_SUFFIX "")
+    endif()
+
     compile_shaders(TARGET ${params_TARGET}
                     CONFIG ${params_CONFIG}
                     FOLDER ${params_FOLDER}
                     CFLAGS ${params_CFLAGS}
-                    DXBC ${params_OUTPUT_BASE}/dxbc
-                    DXIL ${params_OUTPUT_BASE}/dxil
-                    SPIRV_DXC ${params_OUTPUT_BASE}/spirv
+                    DXBC ${params_OUTPUT_BASE}/dxbc${DEPTH_CONVENTION_SUFFIX}
+                    DXIL ${params_OUTPUT_BASE}/dxil${DEPTH_CONVENTION_SUFFIX}
+                    SPIRV_DXC ${params_OUTPUT_BASE}/spirv${DEPTH_CONVENTION_SUFFIX}
                     SOURCES ${params_SOURCES})
 
 endfunction()

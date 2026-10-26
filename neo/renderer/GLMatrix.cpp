@@ -220,11 +220,15 @@ void R_GlobalToNormalizedDeviceCoordinates( const idVec3& global, idVec3& ndc )
 	// _D3XP use tr.primaryView when there is no tr.viewDef
 	const viewDef_t* viewDef = ( tr.viewDef != NULL ) ? tr.viewDef : tr.primaryView;
 
+	// the view matrix is relative to the view's render origin and the point is absolute:
+	// subtract in double and round once ( a zero origin uses the point as it is )
+	const idVec3 point = viewDef->renderOrigin.IsZero() ? global : ( idVec3d( global ) - viewDef->renderOrigin ).ToVec3();
+
 	for( int i = 0; i < 4; i ++ )
 	{
-		view[i] = 	viewDef->worldSpace.modelViewMatrix[i + 0 * 4] * global[0] +
-					viewDef->worldSpace.modelViewMatrix[i + 1 * 4] * global[1] +
-					viewDef->worldSpace.modelViewMatrix[i + 2 * 4] * global[2] +
+		view[i] = 	viewDef->worldSpace.modelViewMatrix[i + 0 * 4] * point[0] +
+					viewDef->worldSpace.modelViewMatrix[i + 1 * 4] * point[1] +
+					viewDef->worldSpace.modelViewMatrix[i + 2 * 4] * point[2] +
 					viewDef->worldSpace.modelViewMatrix[i + 3 * 4];
 	}
 
@@ -348,9 +352,15 @@ WORLD/VIEW/PROJECTION MATRIX SETUP
 R_SetupViewMatrix
 
 Sets up the world to view matrix for a given viewParm
+
+The view is built relative to origin: the eye goes in as vieworg - origin, subtracted in
+double and rounded once, through the same float expression as always. A zero origin skips
+the subtraction, so the matrix is the absolute view bit for bit; origin = vieworg gives a
+rotation-only view. The origin is a parameter, never a cvar or tr. state, because rbdmap
+compiles this file too.
 ======================
 */
-void R_SetupViewMatrix( viewDef_t* viewDef )
+void R_SetupViewMatrix( viewDef_t* viewDef, const idVec3d& origin )
 {
 	static float s_flipMatrix[16] =
 	{
@@ -366,29 +376,43 @@ void R_SetupViewMatrix( viewDef_t* viewDef )
 	memset( world, 0, sizeof( *world ) );
 
 	// the model matrix is an identity
-	world->modelMatrix[0 * 4 + 0] = 1.0f;
-	world->modelMatrix[1 * 4 + 1] = 1.0f;
-	world->modelMatrix[2 * 4 + 2] = 1.0f;
+	world->modelMatrixAbs[0 * 4 + 0] = 1.0f;
+	world->modelMatrixAbs[1 * 4 + 1] = 1.0f;
+	world->modelMatrixAbs[2 * 4 + 2] = 1.0f;
 
-	// transform by the camera placement
-	const idVec3& origin = viewDef->renderView.vieworg;
+	// relative to the origin it is [ I | -origin ]. [15] stays 0 at a zero origin, as it always
+	// was, because the backend uploads this row as MODELMATRIX_W
+	world->modelMatrixRel[0 * 4 + 0] = 1.0f;
+	world->modelMatrixRel[1 * 4 + 1] = 1.0f;
+	world->modelMatrixRel[2 * 4 + 2] = 1.0f;
+	if( !origin.IsZero() )
+	{
+		world->modelMatrixRel[3 * 4 + 0] = float( -origin.x );
+		world->modelMatrixRel[3 * 4 + 1] = float( -origin.y );
+		world->modelMatrixRel[3 * 4 + 2] = float( -origin.z );
+		world->modelMatrixRel[3 * 4 + 3] = 1.0f;
+	}
+
+	// transform by the camera placement, relative to the origin
+	const idVec3& vieworg = viewDef->renderView.vieworg;
+	const idVec3 eye = origin.IsZero() ? vieworg : ( idVec3d( vieworg ) - origin ).ToVec3();
 	const idMat3& axis = viewDef->renderView.viewaxis;
 
 	float viewerMatrix[16];
 	viewerMatrix[0 * 4 + 0] = axis[0][0];
 	viewerMatrix[1 * 4 + 0] = axis[0][1];
 	viewerMatrix[2 * 4 + 0] = axis[0][2];
-	viewerMatrix[3 * 4 + 0] = - origin[0] * axis[0][0] - origin[1] * axis[0][1] - origin[2] * axis[0][2];
+	viewerMatrix[3 * 4 + 0] = - eye[0] * axis[0][0] - eye[1] * axis[0][1] - eye[2] * axis[0][2];
 
 	viewerMatrix[0 * 4 + 1] = axis[1][0];
 	viewerMatrix[1 * 4 + 1] = axis[1][1];
 	viewerMatrix[2 * 4 + 1] = axis[1][2];
-	viewerMatrix[3 * 4 + 1] = - origin[0] * axis[1][0] - origin[1] * axis[1][1] - origin[2] * axis[1][2];
+	viewerMatrix[3 * 4 + 1] = - eye[0] * axis[1][0] - eye[1] * axis[1][1] - eye[2] * axis[1][2];
 
 	viewerMatrix[0 * 4 + 2] = axis[2][0];
 	viewerMatrix[1 * 4 + 2] = axis[2][1];
 	viewerMatrix[2 * 4 + 2] = axis[2][2];
-	viewerMatrix[3 * 4 + 2] = - origin[0] * axis[2][0] - origin[1] * axis[2][1] - origin[2] * axis[2][2];
+	viewerMatrix[3 * 4 + 2] = - eye[0] * axis[2][0] - eye[1] * axis[2][1] - eye[2] * axis[2][2];
 
 	viewerMatrix[0 * 4 + 3] = 0.0f;
 	viewerMatrix[1 * 4 + 3] = 0.0f;
@@ -398,6 +422,9 @@ void R_SetupViewMatrix( viewDef_t* viewDef )
 	// convert from our coordinate system (looking down X)
 	// to OpenGL's coordinate system (looking down -Z)
 	R_MatrixMultiply( viewerMatrix, s_flipMatrix, world->modelViewMatrix );
+
+	// the eye in the world space's local coords, as every viewEntity_t producer computes it
+	R_GlobalPointToLocal( world->modelMatrixRel, eye, world->localViewOrigin );
 }
 
 /*
@@ -471,6 +498,17 @@ void R_SetupProjectionMatrix( viewDef_t* viewDef, bool doJitter )
 	projectionMatrix[2 * 4 + 1] = yoffset;
 	projectionMatrix[3 * 4 + 1] = 0.0f;
 
+#if ID_REVERSED_Z
+	// reversed-Z with the far plane exactly at infinity: z_clip = zNear and w_clip = distance,
+	// so ndc z = zNear / distance, 1 at the near plane and 0 at infinity. Points at infinity
+	// ( w = 0 ) land on z = 0, inside the clip volume and equal to the depth clear, which the
+	// GREATER_EQUAL test passes, so no crunch is needed
+	projectionMatrix[0 * 4 + 2] = 0.0f;
+	projectionMatrix[1 * 4 + 2] = 0.0f;
+	projectionMatrix[2 * 4 + 2] = 0.0f;
+
+	projectionMatrix[3 * 4 + 2] = zNear;
+#else
 	// this is the far-plane-at-infinity formulation, and
 	// crunches the Z range slightly so w=0 vertexes do not
 	// rasterize right at the wraparound point
@@ -481,6 +519,7 @@ void R_SetupProjectionMatrix( viewDef_t* viewDef, bool doJitter )
 	// RB: was -2.0f * zNear
 	// the transformation into window space has changed from [-1 .. 1] to [0 .. 1]
 	projectionMatrix[3 * 4 + 2] = -1.0f * zNear;
+#endif
 
 	projectionMatrix[0 * 4 + 3] = 0.0f;
 	projectionMatrix[1 * 4 + 3] = 0.0f;
@@ -733,20 +772,59 @@ void R_ObliqueProjection( viewDef_t* parms )
 	R_GlobalPlaneToLocal( mvt, pB, cp );
 
 	// oblique projection adjustment code
-	idVec4 clipPlane( cp[0], cp[1], cp[2], cp[3] );
-	idVec4 q;
-	q[0] = ( ( clipPlane[0] < 0.0f ? -1.0f : clipPlane[0] > 0.0f ? 1.0f : 0.0f ) + parms->projectionMatrix[8] ) / parms->projectionMatrix[0];
-	q[1] = ( ( clipPlane[1] < 0.0f ? -1.0f : clipPlane[1] > 0.0f ? 1.0f : 0.0f ) + parms->projectionMatrix[9] ) / parms->projectionMatrix[5];
-	q[2] = -1.0f;
-	q[3] = ( 1.0f + parms->projectionMatrix[10] ) / parms->projectionMatrix[14];
-
-	// scaled plane vector
-	float d = 2.0f / ( clipPlane * q );
-
-	// Replace the third row of the projection matrix
-	parms->projectionMatrix[2] = clipPlane[0] * d;
-	parms->projectionMatrix[6] = clipPlane[1] * d;
-	parms->projectionMatrix[10] = clipPlane[2] * d + 1.0f;
-	parms->projectionMatrix[14] = clipPlane[3] * d;
+	R_ObliqueNearPlane( parms->projectionMatrix, idVec4( cp[0], cp[1], cp[2], cp[3] ) );
 }
 // SP end
+
+/*
+=====================
+R_ObliqueNearPlane
+
+Replaces the z row of a perspective projection so that its near clip lies exactly on the
+camera-space plane C ( Lengyel's oblique near-plane clipping, re-derived for the D3D clip
+volume 0 <= z <= w; the points on the positive side of C are kept ).
+
+The matrix is column-major: row r is [r], [4 + r], [8 + r], [12 + r]. Let M4 be the w row
+( 0, 0, -1, 0 ) and Q the camera-space corner of the original frustum opposite C, on its far
+plane: Q = P^-1 * ( sgn( Cx ), sgn( Cy ), farNdc, 1 ), which for this matrix shape is
+Qx = ( sgn( Cx ) + P[8] ) / P[0], Qy = ( sgn( Cy ) + P[9] ) / P[5], Qz = -1 and
+Qw = ( farNdc + P[10] ) / P[14] ( 0 for the exactly infinite reversed projection, a direction;
+slightly off 0 for the forward -0.999 crunch, which keeps infinity just inside ).
+With a = ( M4 . Q ) / ( C . Q ):
+- forward ( near z = 0, far z = w ): z row = a * C. The near clip z >= 0 is a * ( C . p ) >= 0,
+  exactly the plane C; the far clip z <= w is ( M4 - a * C ) . p >= 0, a plane through Q, so all
+  of the original frustum on the kept side of C stays inside.
+- reversed ( near z = w, far z = 0 ): z row = M4 - a * C. The near clip z <= w is
+  a * ( C . p ) >= 0, the same plane C; the far clip z >= 0 is the same plane through Q.
+The kept side is the old code's. Its row was Lengyel's GL form 2 * a * C - M4, whose near plane
+under D3D clipping is 2 * a * ( C . p ) = w, not C . p = 0: head on, a portal plane 5 units ahead
+clipped at 10. Head on ( C = ( 0, 0, -1, -D ) ) the reversed row gives ndc z = D / d exactly and the
+forward row a * ( 1 - D / d ) with a just under 1: the infinite projections with their near plane at D.
+=====================
+*/
+void R_ObliqueNearPlane( float projectionMatrix[16], const idVec4& clipPlane )
+{
+	idVec4 q;
+	q[0] = ( ( clipPlane[0] < 0.0f ? -1.0f : clipPlane[0] > 0.0f ? 1.0f : 0.0f ) + projectionMatrix[8] ) / projectionMatrix[0];
+	q[1] = ( ( clipPlane[1] < 0.0f ? -1.0f : clipPlane[1] > 0.0f ? 1.0f : 0.0f ) + projectionMatrix[9] ) / projectionMatrix[5];
+	q[2] = -1.0f;
+	q[3] = ( DEPTH_CONVENTION_FAR_NDC + projectionMatrix[10] ) / projectionMatrix[14];
+
+	const idVec4 rowW( projectionMatrix[3], projectionMatrix[7], projectionMatrix[11], projectionMatrix[15] );
+
+	// the scale that puts the far clip through q
+	const float a = ( rowW * q ) / ( clipPlane * q );
+
+	// Replace the third row of the projection matrix
+#if ID_REVERSED_Z
+	projectionMatrix[2] = rowW[0] - clipPlane[0] * a;
+	projectionMatrix[6] = rowW[1] - clipPlane[1] * a;
+	projectionMatrix[10] = rowW[2] - clipPlane[2] * a;
+	projectionMatrix[14] = rowW[3] - clipPlane[3] * a;
+#else
+	projectionMatrix[2] = clipPlane[0] * a;
+	projectionMatrix[6] = clipPlane[1] * a;
+	projectionMatrix[10] = clipPlane[2] * a;
+	projectionMatrix[14] = clipPlane[3] * a;
+#endif
+}

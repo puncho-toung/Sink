@@ -70,7 +70,8 @@ float3 ReconstructPositionCS( int2 hitPixel )
 	float2 uv = hitPixel * pc.rpWindowCoord.xy;
 
 	// derive clip space from the depth buffer and screen position
-	float3 ndc = float3( uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth );
+	// the sky test comes before the division
+	float3 ndc = float3( uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, SkyGuardedDepth( depth, pc.rpProjectionMatrixZ ) );
 	float clipW = -pc.rpProjectionMatrixZ.w / ( -pc.rpProjectionMatrixZ.z - ndc.z );
 
 	float4 clip = float4( ndc * clipW, clipW );
@@ -340,6 +341,8 @@ void main( PS_IN fragment, out PS_OUT result )
 	globalNormal = normalize( float3( screenNormalWS.xy + globalNormal.xy, screenNormalWS.z * globalNormal.z ) );
 
 
+	// globalPosition, rpGlobalEyePos and the probe parms (rpWobbleSky*, rpTexGen0*) are relative
+	// to the render origin (eye-centred world axes)
 	float3 globalPosition = fragment.texcoord5.xyz;
 
 	float3 globalView = normalize( globalPosition - pc.rpGlobalEyePos.xyz );

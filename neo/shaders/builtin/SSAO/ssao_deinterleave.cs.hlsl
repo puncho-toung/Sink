@@ -83,6 +83,15 @@ void main( uint3 globalId : SV_DispatchThreadID )
 
 			linearDepth *= -1.0f; // now we have something similar to Doom units = inches
 			linearDepth *= DOOM_TO_METERS;
+
+#if ID_REVERSED_Z
+			// the depth clear ( sky ) is at infinity ( viewPos.w = 0 ): make it negative, which is
+			// what the forward clear decodes to and what ssao_compute skips as no sample
+			if( depth == DEPTH_CONVENTION_CLEAR )
+			{
+				linearDepth = -1.0f;
+			}
+#endif
 #endif
 
 			depths[y * 4 + x] = linearDepth;

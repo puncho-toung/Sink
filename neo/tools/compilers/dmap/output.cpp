@@ -128,7 +128,8 @@ MatchVert
 #define	ST_EPSILON	0.001
 #define	COSINE_EPSILON	0.999
 
-static bool MatchVert( const idDrawVert* a, const idDrawVert* b, const bool compareColor )
+//puncho - camera-relative dmap st: aST and bST are the full st, the half floats of a and b are relative to their triangle's stBase
+static bool MatchVert( const idDrawVert* a, const idVec2& aST, const idDrawVert* b, const idVec2& bST, const bool compareColor )
 {
 	if( idMath::Fabs( a->xyz[0] - b->xyz[0] ) > XYZ_EPSILON )
 	{
@@ -143,11 +144,11 @@ static bool MatchVert( const idDrawVert* a, const idDrawVert* b, const bool comp
 		return false;
 	}
 
-	if( idMath::Fabs( a->GetTexCoordS() - b->GetTexCoordS() ) > ST_EPSILON )
+	if( idMath::Fabs( aST.x - bST.x ) > ST_EPSILON )	//puncho - camera-relative dmap st
 	{
 		return false;
 	}
-	if( idMath::Fabs( a->GetTexCoordT() - b->GetTexCoordT() ) > ST_EPSILON )
+	if( idMath::Fabs( aST.y - bST.y ) > ST_EPSILON )
 	{
 		return false;
 	}
@@ -189,9 +190,12 @@ A surface under the cap is built exactly as it was before the cap existed.
 
 The colour is copied always and only tells verts apart when carriesColor is set,
 the surfaces written with PROC_VERTEX_FORMAT_COLOR.
+
+texCoords gets the full st of each shared vertex: the half floats in
+uTri->verts hold only what is left after the triangle's stBase
 ====================
 */
-srfTriangles_t*	ShareMapTriVerts( const mapTri_t* tris, const int maxVerts, const mapTri_t** rest, const bool carriesColor )
+srfTriangles_t*	ShareMapTriVerts( const mapTri_t* tris, const int maxVerts, const mapTri_t** rest, const bool carriesColor, idList<idVec2>& texCoords )
 {
 	const mapTri_t*	step;
 	int			count;
@@ -215,6 +219,7 @@ srfTriangles_t*	ShareMapTriVerts( const mapTri_t* tris, const int maxVerts, cons
 	uTri = R_AllocStaticTriSurf();
 	R_AllocStaticTriSurfVerts( uTri, Min( count * 3, maxVerts + 3 ) );
 	R_AllocStaticTriSurfIndexes( uTri, count * 3 );
+	texCoords.SetNum( Min( count * 3, maxVerts + 3 ) );	//puncho - camera-relative dmap st: one per vertex slot
 
 	numVerts = 0;
 	numIndexes = 0;
@@ -232,11 +237,12 @@ srfTriangles_t*	ShareMapTriVerts( const mapTri_t* tris, const int maxVerts, cons
 			const idDrawVert*	dv;
 
 			dv = &step->v[i];
+			const idVec2 st = dv->GetTexCoord() + step->stBase;	//puncho - camera-relative dmap st: the absolute st, rounded only to float
 
 			// search for a match
 			for( j = 0 ; j < numVerts ; j++ )
 			{
-				if( MatchVert( &uTri->verts[j], dv, carriesColor ) )
+				if( MatchVert( &uTri->verts[j], texCoords[j], dv, st, carriesColor ) )
 				{
 					break;
 				}
@@ -251,6 +257,7 @@ srfTriangles_t*	ShareMapTriVerts( const mapTri_t* tris, const int maxVerts, cons
 				uTri->verts[j].SetTexCoordS( dv->GetTexCoordS() );
 				uTri->verts[j].SetTexCoordT( dv->GetTexCoordT() );
 				uTri->verts[j].SetColor( dv->GetColor() );
+				texCoords[j] = st;	//puncho - camera-relative dmap st
 			}
 
 			uTri->indexes[numIndexes++] = j;
@@ -267,6 +274,7 @@ srfTriangles_t*	ShareMapTriVerts( const mapTri_t* tris, const int maxVerts, cons
 
 	uTri->numVerts = numVerts;
 	uTri->numIndexes = numIndexes;
+	texCoords.SetNum( numVerts );	//puncho - camera-relative dmap st
 
 	return uTri;
 }
@@ -297,7 +305,7 @@ Writes text verts and indexes to procfile: PROC_VERTEX_FORMAT_BASIC writes 8 flo
 vertex (xyz st normal), PROC_VERTEX_FORMAT_COLOR adds the colour as 4 more (rgba 0..1)
 ====================
 */
-static void WriteUTriangles( idFile* procFile, const srfTriangles_t* uTris, const idVec3& offsetOrigin, const int vertexFormat )
+static void WriteUTriangles( idFile* procFile, const srfTriangles_t* uTris, const idList<idVec2>& texCoords, const idVec3& offsetOrigin, const int vertexFormat )
 {
 	int			col;
 	int			i;
@@ -328,9 +336,8 @@ static void WriteUTriangles( idFile* procFile, const srfTriangles_t* uTris, cons
 		vec[1] = dv->xyz[1] - offsetOrigin.y;
 		vec[2] = dv->xyz[2] - offsetOrigin.z;
 
-		idVec2 st = dv->GetTexCoord();
-		vec[3] = st.x;
-		vec[4] = st.y;
+		vec[3] = texCoords[i].x;	//puncho - camera-relative dmap st: from ShareMapTriVerts, dv holds only half floats
+		vec[4] = texCoords[i].y;
 
 		idVec3 normal = dv->GetNormal();
 		vec[5] = normal.x;
@@ -382,7 +389,7 @@ static void WriteUTriangles( idFile* procFile, const srfTriangles_t* uTris, cons
 }
 
 // RB begin
-static void WriteObjTriangles( idFile* objFile, int area, const srfTriangles_t* uTris, const idMat4& entityToWorldTransform, const char* materialName )
+static void WriteObjTriangles( idFile* objFile, int area, const srfTriangles_t* uTris, const idList<idVec2>& texCoords, const idMat4& entityToWorldTransform, const char* materialName )
 {
 	idVec4 c = PickDebugColor( area );
 
@@ -394,7 +401,7 @@ static void WriteObjTriangles( idFile* objFile, int area, const srfTriangles_t* 
 		const idDrawVert* dv = &uTris->verts[i];
 
 		idVec3 pos = ( entityToWorldTransform * idVec4( dv->xyz[0], dv->xyz[1], dv->xyz[2], 1 ) ).ToVec3();
-		idVec2 st = dv->GetTexCoord();
+		idVec2 st = texCoords[i];	//puncho - camera-relative dmap st
 		idVec3 n = dv->GetNormal();
 
 		objFile->Printf( "v %1.6f %1.6f %1.6f %1.6f %1.6f %1.6f\n", pos.x, pos.y, pos.z, c.x, c.y, c.z );
@@ -473,6 +480,7 @@ static void WriteOutputSurfaces( int entityNum, int areaNum, idFile* procFile, i
 		const idMaterial*	material;
 		srfTriangles_t*		tri;
 		int					vertexFormat;
+		idList<idVec2>		texCoords;		//puncho - camera-relative dmap st: the full st of each vertex of tri
 	} outputSurface_t;
 
 	idList<outputSurface_t>	surfaces;
@@ -542,7 +550,7 @@ static void WriteOutputSurfaces( int entityNum, int areaNum, idFile* procFile, i
 		{
 			outputSurface_t& surface = surfaces.Alloc();
 			surface.material = ambient->material;
-			surface.tri = ShareMapTriVerts( tris, maxVerts, &tris, group->vertexColor );
+			surface.tri = ShareMapTriVerts( tris, maxVerts, &tris, group->vertexColor, surface.texCoords );
 			surface.vertexFormat = group->vertexColor ? PROC_VERTEX_FORMAT_COLOR : PROC_VERTEX_FORMAT_BASIC;
 			totalVerts += surface.tri->numVerts;
 		}
@@ -586,7 +594,7 @@ static void WriteOutputSurfaces( int entityNum, int areaNum, idFile* procFile, i
 		procFile->WriteFloatString( "\"%s\" ", matName );
 
 		CleanupUTriangles( uTri );
-		WriteUTriangles( procFile, uTri, entity->originOffset, surfaces[surfaceNum].vertexFormat );
+		WriteUTriangles( procFile, uTri, surfaces[surfaceNum].texCoords, entity->originOffset, surfaces[surfaceNum].vertexFormat );
 
 		// RB
 		if( objFile )
@@ -637,7 +645,7 @@ static void WriteOutputSurfaces( int entityNum, int areaNum, idFile* procFile, i
 			}
 
 			int debugArea = ( entityNum == 0 ) ? areaNum : -1;
-			WriteObjTriangles( objFile, debugArea, uTri, entityToWorldTransform, matName );
+			WriteObjTriangles( objFile, debugArea, uTri, surfaces[surfaceNum].texCoords, entityToWorldTransform, matName );
 		}
 		// RB end
 

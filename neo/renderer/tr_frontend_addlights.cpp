@@ -93,6 +93,61 @@ bool idRenderEntityLocal::IsDirectlyVisible() const
 
 /*
 ===================
+R_TranslateViewLight
+
+Re-expresses the positional fields just copied from the light def relative to the view's
+render origin: one translation by -origin, computed in double and rounded to float once, so
+the large map coordinates cancel before anything is stored. The light def stays absolute,
+because the def-level culls and the interaction caches read it for every view.
+
+Returns at once on a zero origin, so with r_cameraRelative 0 the copies stay bit-identical
+( and a -0 never becomes +0 ).
+
+idRenderMatrix is row-major ( m[row][col], translation in column 3 ) and idPlane's raw
+constant is [3] ( = -Dist() ). For an absolute point x = x' + origin:
+	globalLightOrigin			x' = x - origin
+	lightProject[i]				n.x + d = n.x' + ( d + n.origin )
+	baseLightProject			B T(+origin): column 3 gains B[r][0..2] . origin, all four rows
+	inverseBaseLightProject		T(-origin) Inv: rows 0..2 lose origin[r] times row 3, all four columns
+A spot light's row 3 is not ( 0, 0, 0, 1 ), so neither matrix reduces to its translation.
+idRenderMatrix::Multiply is float and would bring the cancellation back.
+===================
+*/
+static void R_TranslateViewLight( viewLight_t* vLight, const idVec3d& origin )
+{
+	if( origin.IsZero() )
+	{
+		return;
+	}
+
+	const double o[3] = { origin.x, origin.y, origin.z };
+
+	vLight->globalLightOrigin = ( idVec3d( vLight->globalLightOrigin ) - origin ).ToVec3();
+
+	for( int i = 0; i < 4; i++ )
+	{
+		idPlane& plane = vLight->lightProject[i];
+		plane[3] = float( double( plane[3] ) + ( double( plane[0] ) * o[0] + double( plane[1] ) * o[1] + double( plane[2] ) * o[2] ) );
+	}
+
+	idRenderMatrix& project = vLight->baseLightProject;
+	for( int r = 0; r < 4; r++ )
+	{
+		project[r][3] = float( double( project[r][3] ) + ( double( project[r][0] ) * o[0] + double( project[r][1] ) * o[1] + double( project[r][2] ) * o[2] ) );
+	}
+
+	idRenderMatrix& inverseProject = vLight->inverseBaseLightProject;
+	for( int r = 0; r < 3; r++ )
+	{
+		for( int c = 0; c < 4; c++ )
+		{
+			inverseProject[r][c] = float( double( inverseProject[r][c] ) - o[r] * double( inverseProject[3][c] ) );
+		}
+	}
+}
+
+/*
+===================
 R_AddSingleLight
 
 May be run in parallel.
@@ -209,17 +264,6 @@ static void R_AddSingleLight( viewLight_t* vLight )
 	vLight->lightProject[2] = light->lightProject[2];
 	vLight->lightProject[3] = light->lightProject[3];
 
-	// the fog plane is the light far clip plane
-	idPlane fogPlane(	light->baseLightProject[2][0] - light->baseLightProject[3][0],
-						light->baseLightProject[2][1] - light->baseLightProject[3][1],
-						light->baseLightProject[2][2] - light->baseLightProject[3][2],
-						light->baseLightProject[2][3] - light->baseLightProject[3][3] );
-	const float planeScale = idMath::InvSqrt( fogPlane.Normal().LengthSqr() );
-	vLight->fogPlane[0] = fogPlane[0] * planeScale;
-	vLight->fogPlane[1] = fogPlane[1] * planeScale;
-	vLight->fogPlane[2] = fogPlane[2] * planeScale;
-	vLight->fogPlane[3] = fogPlane[3] * planeScale;
-
 	// copy the matrix for deforming the 'zeroOneCubeModel' to exactly cover the light volume in world space
 	vLight->inverseBaseLightProject = light->inverseBaseLightProject;
 
@@ -229,6 +273,21 @@ static void R_AddSingleLight( viewLight_t* vLight )
 	vLight->parallel = light->parms.parallel;
 	vLight->lightCenter = light->parms.lightCenter;
 	// RB end
+
+	// from here on vLight-> is relative to the view's render origin and light-> stays absolute;
+	// the culls below pair light-> only with absolute data ( the worldCull matrices, vieworg )
+	R_TranslateViewLight( vLight, viewDef->renderOrigin );
+
+	// the fog plane is the light far clip plane, taken from the relative projection
+	idPlane fogPlane(	vLight->baseLightProject[2][0] - vLight->baseLightProject[3][0],
+						vLight->baseLightProject[2][1] - vLight->baseLightProject[3][1],
+						vLight->baseLightProject[2][2] - vLight->baseLightProject[3][2],
+						vLight->baseLightProject[2][3] - vLight->baseLightProject[3][3] );
+	const float planeScale = idMath::InvSqrt( fogPlane.Normal().LengthSqr() );
+	vLight->fogPlane[0] = fogPlane[0] * planeScale;
+	vLight->fogPlane[1] = fogPlane[1] * planeScale;
+	vLight->fogPlane[2] = fogPlane[2] * planeScale;
+	vLight->fogPlane[3] = fogPlane[3] * planeScale;
 
 	//puncho start
 	//thread safety
@@ -246,7 +305,7 @@ static void R_AddSingleLight( viewLight_t* vLight )
 		// Calculate the matrix that projects the zero-to-one cube to exactly cover the
 		// light frustum in clip space.
 		idRenderMatrix invProjectMVPMatrix;
-		idRenderMatrix::Multiply( viewDef->worldSpace.mvp, light->inverseBaseLightProject, invProjectMVPMatrix );
+		idRenderMatrix::Multiply( viewDef->worldCullMVP, light->inverseBaseLightProject, invProjectMVPMatrix );
 
 		// Calculate the projected bounds, either not clipped at all, near clipped, or fully clipped.
 		idBounds projected;
@@ -301,7 +360,13 @@ static void R_AddSingleLight( viewLight_t* vLight )
 			// draw light volume 1 percentage bigger to avoid flickering
 			// right before entering the volume with the camera
 			const float mocLightScale = 0.99f;
-			idRenderMatrix scaledInverseBaseLightProject = light->inverseBaseLightProject;
+			// F1 ( impl/BUILD-AND-G0.md 10 ): this test is formed in the render-origin frame, the relative
+			// inverse ( vLight->, translated by R_TranslateViewLight ) times the relative unjittered MVP, not
+			// light-> times worldCullUnjitteredMVP like the culls above. The absolute product cancels two
+			// world-sized translations in float, and at 120000 units a light volume whose face lies on an
+			// occluder ( a spot light ending on the floor ) lands behind it and is culled; the old build does
+			// the same. At r_cameraRelative 0 the origin is zero and both products are the same bits.
+			idRenderMatrix scaledInverseBaseLightProject = vLight->inverseBaseLightProject;
 			scaledInverseBaseLightProject[0][0] *= mocLightScale;
 			scaledInverseBaseLightProject[0][1] *= mocLightScale;
 			scaledInverseBaseLightProject[0][2] *= mocLightScale;
@@ -370,9 +435,15 @@ static void R_AddSingleLight( viewLight_t* vLight )
 				float y1 = -1.0f + ( float( vLight->scissorRect.y1 ) / screenHeight ) * 2.0f;
 				float y2 = -1.0f + ( float( vLight->scissorRect.y2 ) / screenHeight ) * 2.0f;
 
+#if ID_REVERSED_Z
+				// the nearest depth of the light volume is zmax, and it already is the reversed
+				// depth ( about zNear / distance ) that the forward branch builds from 1 - zmin
+				float zmin = vLight->scissorRect.zmax;
+#else
 				float zmin = vLight->scissorRect.zmin;
 				//zmin = 2.0f * zmin -1.0f;
 				zmin = 1.0 - zmin; // reverse depth
+#endif
 				float wmin2 = ( 1.0 / zmin );
 				wmin2 *= wmin;
 				wmin2 = Max( wmin2, 0.0f );
@@ -612,7 +683,7 @@ static void R_AddSingleLight( viewLight_t* vLight )
 
 			// this doesn't say that the shadow can't effect anything, only that it can't
 			// effect anything in the view, so we shouldn't set up a view entity
-			if( idRenderMatrix::CullBoundsToMVP( viewDef->worldSpace.mvp, shadowBounds ) )
+			if( idRenderMatrix::CullBoundsToMVP( viewDef->worldCullMVP, shadowBounds ) )
 			{
 				continue;
 			}

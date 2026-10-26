@@ -293,7 +293,7 @@ private:
 	void				DBG_ColorByStencilBuffer();
 	void				DBG_ShowOverdraw();
 	void				DBG_ShowIntensity();
-	void				DBG_ShowDepthBuffer();
+	void				DBG_ShowDepth();
 	void				DBG_ShowLightCount();
 //	void				DBG_EnterWeaponDepthHack();
 //	void				DBG_EnterModelDepthHack( float depth );
@@ -351,6 +351,7 @@ private:
 	bool				currentRenderCopied;	// true if any material has already referenced _currentRender
 
 	idRenderMatrix		prevMVP[2];				// world MVP from previous frame for motion blur
+	idVec3d				prevRenderOrigin[2];	// the render origin prevMVP is relative to, per eye like prevMVP
 	bool				prevViewsValid;
 
 	// RB begin

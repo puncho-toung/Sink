@@ -250,6 +250,8 @@ void idRenderBackend::Init()
 
 	prevMVP[0] = renderMatrix_identity;
 	prevMVP[1] = renderMatrix_identity;
+	prevRenderOrigin[0].Zero();
+	prevRenderOrigin[1].Zero();
 	prevViewsValid = false;
 
 	currentVertexBuffer = nullptr;
@@ -457,7 +459,26 @@ void idRenderBackend::DrawElementsWithCounters( const drawSurf_t* surf, bool sha
 	}
 
 	const int program = renderProgManager.CurrentProgram();
+#if ID_REVERSED_Z
+	// The depth bias is part of the PSO key, so the reversed sign and magnitude are substituted
+	// here, before the key is built: a new r_offsetUnitsReversed then builds new pipelines. The
+	// GL_PolygonOffset callers keep passing forward values; only reversed attachments
+	// ( R_IsReversedDepth ) are substituted, the D32 shadow maps keep the bias they were given.
+	// Scaling the units by r_offsetUnitsReversed / |r_offsetUnits| keeps each material's
+	// polygonOffset factor, so a decal's reversed bias is r_offsetUnitsReversed * polygonOffset.
+	float keyDepthBias = depthBias;
+	float keySlopeBias = slopeScaleBias;
+	if( ( glStateBits & GLS_POLYGON_OFFSET ) && R_IsReversedDepth( currentFrameBuffer ) )
+	{
+		const float forwardUnits = idMath::Fabs( r_offsetUnits.GetFloat() );
+		const float unitsScale = ( forwardUnits > 0.0f ) ? ( r_offsetUnitsReversed.GetFloat() / forwardUnits ) : 1.0f;
+		keyDepthBias = DEPTH_CONVENTION_BIAS_SIGN * depthBias * unitsScale;
+		keySlopeBias = DEPTH_CONVENTION_BIAS_SIGN * slopeScaleBias;
+	}
+	const PipelineKey key{ glStateBits, program, static_cast<int>( keyDepthBias ), keySlopeBias, currentFrameBuffer };
+#else
 	const PipelineKey key{ glStateBits, program, static_cast<int>( depthBias ), slopeScaleBias, currentFrameBuffer };
+#endif
 	const auto pipeline = pipelineCache.GetOrCreatePipeline( key );
 
 	if( currentPipeline != pipeline )
@@ -2274,7 +2295,16 @@ void idRenderBackend::GL_Clear( bool color, bool depth, bool stencil, byte stenc
 		const nvrhi::FramebufferAttachment& attDepth = framebuffer->getDesc().depthAttachment;
 		if( attDepth.texture )
 		{
+#if ID_REVERSED_Z
+			// clear to the far plane of the attachment's own convention ( the shadow maps are
+			// cleared elsewhere, to 1.0 )
+			const float clearDepth = R_IsReversedDepth( Framebuffer::GetActiveFramebuffer() ) ? DEPTH_CONVENTION_CLEAR : 1.0f;
+			assert( attDepth.texture->getDesc().format != nvrhi::Format::D24S8 );
+			assert( clearDepth == ( ( attDepth.texture->getDesc().format == nvrhi::Format::D32S8 ) ? 0.0f : 1.0f ) );
+			commandList->clearDepthStencilTexture( attDepth.texture, nvrhi::AllSubresources, depth, clearDepth, stencil, stencilValue );
+#else
 			commandList->clearDepthStencilTexture( attDepth.texture, nvrhi::AllSubresources, depth, 1.0f, stencil, stencilValue );
+#endif
 		}
 	}
 }

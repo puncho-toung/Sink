@@ -113,7 +113,8 @@ void idRenderBackend::DBG_SimpleWorldSetup()
 	currentSpace = &viewDef->worldSpace;
 
 	// RB begin
-	RB_SetMVP( viewDef->worldSpace.mvp );
+	// the debug lines and polygons are absolute
+	RB_SetMVP( viewDef->worldCullMVP );
 	// RB end
 
 	// RB: (0, 0) starts in the upper left corner compared to OpenGL!
@@ -291,13 +292,79 @@ void idRenderBackend::DBG_ShowIntensity()
 
 /*
 ===================
-idRenderBackend::DBG_ShowDepthBuffer
+idRenderBackend::DBG_ShowDepth
 
-Draw the depth buffer as colors
+r_showDepth: one depth source drawn over the view as linear distance ( a grey ramp, the depth clear in
+red, see builtin/debug/depth.ps.hlsl ). 1 = the main depth, 2 = what the active SSAO path decodes,
+3 = the Hi-Z mip 0, 4 = the last probe capture. The shader decodes with the view's projection z row,
+which the probe capture shares as long as its near plane is the view's ( r_znear, no cramZNear ).
+
+Modes 1 and 2 read _currentDepth while it is the bound framebuffer's depth attachment, as the retro
+post-process already does; the depth test and writes are off for this draw.
 ===================
 */
-void idRenderBackend::DBG_ShowDepthBuffer()
+void idRenderBackend::DBG_ShowDepth()
 {
+	extern idCVar r_useNewSsaoPass;
+
+	idImage* source = NULL;
+	switch( r_showDepth.GetInteger() )
+	{
+		case 1:
+			source = globalImages->currentDepthImage;
+			break;
+
+		case 2:
+			// SsaoPass reads the main depth; the legacy pass reads the Hi-Z mips when they are built
+			source = ( !r_useNewSsaoPass.GetBool() && R_UseHiZ() ) ? globalImages->hierarchicalZbufferImage : globalImages->currentDepthImage;
+			break;
+
+		case 3:
+			// without Hi-Z the image holds nothing of this frame
+			if( R_UseHiZ() )
+			{
+				source = globalImages->hierarchicalZbufferImage;
+			}
+			break;
+
+		case 4:
+			source = globalImages->envprobeDepthImage;
+			break;
+
+		default:
+			break;
+	}
+
+	if( source == NULL )
+	{
+		return;
+	}
+
+	GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO | GLS_DEPTHMASK | GLS_DEPTHFUNC_ALWAYS | GLS_CULL_TWOSIDED );
+
+	// the decode reads rpProjectionMatrixZ
+	renderProgManager.SetRenderParms( RENDERPARM_PROJMATRIX_X, viewDef->projectionRenderMatrix[0], 4 );
+
+	// every slot of BINDING_LAYOUT_POST_PROCESS_FINAL2 is bound, so none keeps a stale image
+	GL_SelectTexture( 0 );
+	globalImages->blackImage->Bind();
+
+	GL_SelectTexture( 1 );
+	globalImages->blueNoiseImage256->Bind();
+
+	GL_SelectTexture( 2 );
+	globalImages->gbufferNormalsRoughnessImage->Bind();
+
+	GL_SelectTexture( 3 );
+	source->Bind();
+
+	// the vertex shader puts the unit square straight into clip space, no MVP
+	renderProgManager.BindShader_DebugDepth();
+
+	DrawElementsWithCounters( &unitSquareSurface );
+
+	GL_SelectTexture( 0 );
+	renderProgManager.Unbind();
 }
 
 /*
@@ -762,8 +829,14 @@ void idRenderBackend::DBG_ShowViewEntitys( viewEntity_t* vModels )
 		// transform the upper bounds corner into global space
 		if( r_showViewEntitys.GetInteger() >= 2 )
 		{
+			// DrawText takes an absolute point: add the render origin back in double
+			// ( the backend reads the relative frame only, never the def's matrix )
 			idVec3 corner;
-			R_LocalPointToGlobal( vModel->modelMatrix, edef->localReferenceBounds[1], corner );
+			R_LocalPointToGlobal( vModel->modelMatrixRel, edef->localReferenceBounds[1], corner );
+			if( !viewDef->renderOrigin.IsZero() )
+			{
+				corner = ( idVec3d( corner ) + viewDef->renderOrigin ).ToVec3();
+			}
 
 			tr.primaryWorld->DrawText(
 				va( "%i:%s", edef->index, edef->parms.hModel->Name() ),
@@ -1012,11 +1085,13 @@ void idRenderBackend::DBG_ShowViewEnvprobes()
 		idMat3 axis;
 		axis.Identity();
 
+		// originRel is already relative to the render origin ( R_SetEnvprobeDefViewEnvprobe ):
+		// no second subtraction; it pairs with worldSpace.mvp and the relative eye below
 		float modelMatrix[16];
-		R_AxisToModelMatrix( axis, vProbe->globalOrigin, modelMatrix );
+		R_AxisToModelMatrix( axis, vProbe->originRel, modelMatrix );
 
 		idRenderMatrix modelRenderMatrix;
-		idRenderMatrix::CreateFromOriginAxis( vProbe->globalOrigin, axis, modelRenderMatrix );
+		idRenderMatrix::CreateFromOriginAxis( vProbe->originRel, axis, modelRenderMatrix );
 
 		// calculate the matrix that transforms the unit cube to exactly cover the model in world space
 		const float size = 16.0f;
@@ -1037,7 +1112,7 @@ void idRenderBackend::DBG_ShowViewEnvprobes()
 		globalViewOrigin.w = 1.0f;
 
 		//inverseBaseModelProject.TransformPoint( globalViewOrigin, localViewOrigin );
-		R_GlobalPointToLocal( modelMatrix, viewDef->renderView.vieworg, localViewOrigin.ToVec3() );
+		R_GlobalPointToLocal( modelMatrix, R_RelativeEye( viewDef ), localViewOrigin.ToVec3() );
 
 		renderProgManager.SetUniformValue( RENDERPARM_LOCALVIEWORIGIN, localViewOrigin.ToFloatPtr() ); // rpLocalViewOrigin
 
@@ -1191,7 +1266,7 @@ void idRenderBackend::DBG_ShowViewEnvprobes()
 			idRenderMatrix::OffsetScaleForBounds( modelRenderMatrix, debugBounds, inverseBaseModelProject );
 
 			idRenderMatrix invProjectMVPMatrix;
-			idRenderMatrix::Multiply( viewDef->worldSpace.mvp, inverseBaseModelProject, invProjectMVPMatrix );
+			idRenderMatrix::Multiply( viewDef->worldCullMVP, inverseBaseModelProject, invProjectMVPMatrix );
 			RB_SetMVP( invProjectMVPMatrix );
 
 			DrawElementsWithCounters( &zeroOneSphereSurface );
@@ -1212,7 +1287,7 @@ void idRenderBackend::DBG_ShowViewEnvprobes()
 			idRenderMatrix::OffsetScaleForBounds( modelRenderMatrix, debugBounds, inverseBaseModelProject );
 
 			idRenderMatrix invProjectMVPMatrix;
-			idRenderMatrix::Multiply( viewDef->worldSpace.mvp, inverseBaseModelProject, invProjectMVPMatrix );
+			idRenderMatrix::Multiply( viewDef->worldCullMVP, inverseBaseModelProject, invProjectMVPMatrix );
 			RB_SetMVP( invProjectMVPMatrix );
 
 			DrawElementsWithCounters( &zeroOneSphereSurface );
@@ -1254,8 +1329,14 @@ void idRenderBackend::DBG_ShowLightGrid()
 
 		portalArea_t* area = &tr.primaryWorld->portalAreas[a];
 
-		// use rpGlobalLightOrigin for lightGrid center
-		idVec4 lightGridOrigin( area->lightGrid.lightGridOrigin.x, area->lightGrid.lightGridOrigin.y, area->lightGrid.lightGridOrigin.z, 1.0f );
+		// use rpGlobalLightOrigin for lightGrid center, relative to the render origin as the
+		// sphere matrices below are ( subtracted once, in double, skipped at zero )
+		idVec3 gridOrigin = area->lightGrid.lightGridOrigin;
+		if( !viewDef->renderOrigin.IsZero() )
+		{
+			gridOrigin = ( idVec3d( area->lightGrid.lightGridOrigin ) - viewDef->renderOrigin ).ToVec3();
+		}
+		idVec4 lightGridOrigin( gridOrigin.x, gridOrigin.y, gridOrigin.z, 1.0f );
 		idVec4 lightGridSize( area->lightGrid.lightGridSize.x, area->lightGrid.lightGridSize.y, area->lightGrid.lightGridSize.z, 1.0f );
 		idVec4 lightGridBounds( area->lightGrid.lightGridBounds[0], area->lightGrid.lightGridBounds[1], area->lightGrid.lightGridBounds[2], 1.0f );
 
@@ -1292,8 +1373,16 @@ void idRenderBackend::DBG_ShowLightGrid()
 			}
 #endif
 
+			// the matrices below take the point relative to the render origin, for worldSpace.mvp
+			// and the relative grid origin; the distance cull above stays absolute
+			idVec3 pointOrigin = gridPoint->origin;
+			if( !viewDef->renderOrigin.IsZero() )
+			{
+				pointOrigin = ( idVec3d( gridPoint->origin ) - viewDef->renderOrigin ).ToVec3();
+			}
+
 			// move center into the cube so we can void using negative results with GetBaseGridCoord
-			idVec3 gridPointOrigin = gridPoint->origin + idVec3( 4, 4, 4 );
+			idVec3 gridPointOrigin = pointOrigin + idVec3( 4, 4, 4 );
 
 			idVec4 localViewOrigin( 1.0f );
 			idVec4 globalViewOrigin;
@@ -1305,7 +1394,7 @@ void idRenderBackend::DBG_ShowLightGrid()
 			float modelMatrix[16];
 			R_AxisToModelMatrix( axis, gridPointOrigin, modelMatrix );
 
-			R_GlobalPointToLocal( modelMatrix, viewDef->renderView.vieworg, localViewOrigin.ToVec3() );
+			R_GlobalPointToLocal( modelMatrix, R_RelativeEye( viewDef ), localViewOrigin.ToVec3() );
 
 			renderProgManager.SetUniformValue( RENDERPARM_LOCALVIEWORIGIN, localViewOrigin.ToFloatPtr() ); // rpLocalViewOrigin
 
@@ -1362,7 +1451,7 @@ void idRenderBackend::DBG_ShowLightGrid()
 #endif
 
 			idRenderMatrix modelRenderMatrix;
-			idRenderMatrix::CreateFromOriginAxis( gridPoint->origin, axis, modelRenderMatrix );
+			idRenderMatrix::CreateFromOriginAxis( pointOrigin, axis, modelRenderMatrix );
 
 			// calculate the matrix that transforms the unit cube to exactly cover the model in world space
 			const float size = 3.0f;
@@ -1417,7 +1506,7 @@ void idRenderBackend::DBG_ShowLightGrid()
 			idRenderMatrix::OffsetScaleForBounds( modelRenderMatrix, debugBounds, inverseBaseModelProject );
 
 			idRenderMatrix invProjectMVPMatrix;
-			idRenderMatrix::Multiply( viewDef->worldSpace.mvp, inverseBaseModelProject, invProjectMVPMatrix );
+			idRenderMatrix::Multiply( viewDef->worldCullMVP, inverseBaseModelProject, invProjectMVPMatrix );
 			RB_SetMVP( invProjectMVPMatrix );
 
 			DrawElementsWithCounters( &zeroOneSphereSurface );
@@ -1516,7 +1605,7 @@ void idRenderBackend::DBG_ShowLightGrid()
 			idRenderMatrix::OffsetScaleForBounds( modelRenderMatrix, debugBounds, inverseBaseModelProject );
 
 			idRenderMatrix invProjectMVPMatrix;
-			idRenderMatrix::Multiply( viewDef->worldSpace.mvp, inverseBaseModelProject, invProjectMVPMatrix );
+			idRenderMatrix::Multiply( viewDef->worldCullMVP, inverseBaseModelProject, invProjectMVPMatrix );
 			RB_SetMVP( invProjectMVPMatrix );
 
 			DrawElementsWithCounters( &zeroOneSphereSurface );
@@ -1536,7 +1625,7 @@ void idRenderBackend::DBG_ShowLightGrid()
 		idRenderMatrix::OffsetScaleForBounds( modelRenderMatrix, debugBounds, inverseBaseModelProject );
 
 		idRenderMatrix invProjectMVPMatrix;
-		idRenderMatrix::Multiply( viewDef->worldSpace.mvp, inverseBaseModelProject, invProjectMVPMatrix );
+		idRenderMatrix::Multiply( viewDef->worldCullMVP, inverseBaseModelProject, invProjectMVPMatrix );
 		RB_SetMVP( invProjectMVPMatrix );
 
 		DrawElementsWithCounters( &zeroOneSphereSurface );
@@ -2492,7 +2581,7 @@ void idRenderBackend::DBG_RenderDebugTools( drawSurf_t** drawSurfs, int numDrawS
 	DBG_TestImage();
 	DBG_ShowPortals();
 	DBG_ShowSilhouette();
-	DBG_ShowDepthBuffer();
+	DBG_ShowDepth();
 	DBG_ShowIntensity();
 	DBG_ShowCenterOfProjection();
 	DBG_ShowLines();

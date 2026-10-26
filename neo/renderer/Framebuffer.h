@@ -111,6 +111,13 @@ public:
 		return apiObject;
 	}
 
+#if ID_REVERSED_Z
+	nvrhi::Format			GetDepthFormat() const
+	{
+		return apiObject->getFramebufferInfo().depthFormat;
+	}
+#endif
+
 	idScreenRect			GetViewPortInfo() const;
 
 private:
@@ -163,5 +170,23 @@ struct globalFramebuffers_t
 };
 
 extern globalFramebuffers_t globalFramebuffers;
+
+#if ID_REVERSED_Z
+/*
+================
+R_IsReversedDepth
+
+The depth convention is keyed to the depth attachment's format, never to the switch alone:
+every D32S8 attachment ( _hdr, _ldr, _gbuffer on _currentDepth, _envprobeRender, _guiEdit ) is
+reversed, the D32 shadow maps ( _shadowMap*, _shadowAtlas ) keep forward-Z because their
+comparison samplers are hard-coded to LESS in NVRHI. Only the reversed build has this key: the
+forward build can also get D32S8 ( Vulkan without D24S8 ) and stays forward there.
+================
+*/
+ID_INLINE bool R_IsReversedDepth( const Framebuffer* framebuffer )
+{
+	return framebuffer->GetDepthFormat() == nvrhi::Format::D32S8;
+}
+#endif
 
 #endif // __FRAMEBUFFER_H__

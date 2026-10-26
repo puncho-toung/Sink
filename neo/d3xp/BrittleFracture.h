@@ -119,6 +119,7 @@ private:
 	idPhysics_StaticMulti		physicsObj;
 	idList<shard_t*, TAG_PHYSICS_BRITTLE>	shards;
 	idBounds					bounds;
+	idVec3						fractureAnchor;			// render origin, set by CreateFractures (not saved)
 	bool						disableFracture;
 
 	// for rendering

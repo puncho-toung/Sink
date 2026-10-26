@@ -361,22 +361,28 @@ struct viewLight_t
 	};
 	byte* 					entityInteractionState;		// [numEntities]
 
-	idVec3					globalLightOrigin;			// global light origin used by backend
-	idPlane					lightProject[4];			// light project used by backend
-	idPlane					fogPlane;					// fog plane for backend fog volume rendering
+	// the positional fields ( globalLightOrigin, lightProject, fogPlane, baseLightProject,
+	// shadowV / shadowP, inverseBaseLightProject ) are relative to the view's renderOrigin:
+	// R_AddSingleLight copies them from the absolute light def and translates them once
+	// ( R_TranslateViewLight ), and the backend builds shadowV / shadowP from them. Pair them
+	// only with relative data ( worldSpace, modelMatrixRel ), never with the light def's.
+	// lightCenter is an offset from the light origin and is not translated
+	idVec3					globalLightOrigin;			// light origin used by backend ( relative )
+	idPlane					lightProject[4];			// light project used by backend ( relative )
+	idPlane					fogPlane;					// fog plane for backend fog volume rendering ( relative )
 	// RB: added for shadow mapping
-	idRenderMatrix			baseLightProject;			// global xyz1 to projected light strq
+	idRenderMatrix			baseLightProject;			// relative xyz1 to projected light strq
 	bool					pointLight;					// otherwise a projection light (should probably invert the sense of this, because points are way more common)
 	bool					parallel;					// lightCenter gives the direction to the light at infinity
 	idVec3					lightCenter;				// offset the lighting direction for shading and
 	int						shadowLOD;					// level of detail for shadowmap selection
 	float					shadowFadeOut;				// blending from last shadow LOD to invisible
-	idRenderMatrix			shadowV[6];					// shadow depth view matrix for lighting pass
-	idRenderMatrix			shadowP[6];					// shadow depth projection matrix for lighting pass
+	idRenderMatrix			shadowV[6];					// shadow depth view matrix for lighting pass ( from relative coords )
+	idRenderMatrix			shadowP[6];					// shadow depth projection matrix for lighting pass ( shadowP x shadowV takes relative coords )
 	idVec2i					imageSize;
 	idVec2i					imageAtlasOffset[6];
 	// RB end
-	idRenderMatrix			inverseBaseLightProject;	// the matrix for deforming the 'zeroOneCubeModel' to exactly cover the light volume in world space
+	idRenderMatrix			inverseBaseLightProject;	// the matrix for deforming the 'zeroOneCubeModel' to exactly cover the light volume in world space ( relative )
 	const idMaterial* 		lightShader;				// light shader used by backend
 	const float*				shaderRegisters;			// shader registers used by backend
 	idImage* 				falloffImage;				// falloff image used by backend
@@ -423,8 +429,12 @@ struct viewEntity_t
 	bool					weaponDepthHack;
 	float					modelDepthHack;
 
-	float					modelMatrix[16];		// local coords to global coords
-	float					modelViewMatrix[16];	// local coords to eye coords
+	// two frames ( viewDef_t::renderOrigin ): the backend reads only the relative one
+	float					modelMatrixAbs[16];		// local coords to absolute map coords, the def's matrix; frontend only
+	float					modelMatrixRel[16];		// local coords to coords relative to viewDef->renderOrigin
+	float					modelViewMatrix[16];	// local coords to eye coords ( modelMatrixRel x the relative view )
+
+	idVec3					localViewOrigin;		// the eye in local coords, from modelMatrixRel and the relative eye
 
 	idRenderMatrix			mvp;
 	idRenderMatrix			unjitteredMVP;			// no TAA subpixel jittering
@@ -455,10 +465,10 @@ struct viewEnvprobe_t
 	// R_AddSingleEnvprobe() determined that the light isn't actually needed
 	bool					removeFromList;
 
-	idVec3					globalOrigin;				// global envprobe origin used by backend
-	idBounds				globalProbeBounds;
+	idVec3					originRel;					// envprobe origin used by backend, relative to the view's renderOrigin
+	idBounds				globalProbeBounds;			// absolute; unread
 
-	idRenderMatrix			inverseBaseProbeProject;	// the matrix for deforming the 'zeroOneCubeModel' to exactly cover the light volume in world space
+	idRenderMatrix			inverseBaseProbeProject;	// absolute; unread ( the only reader is #if 0 ): the matrix for deforming the 'zeroOneCubeModel' to exactly cover the light volume in world space
 	idImage* 				irradianceImage;			// cubemap image used for diffuse IBL by backend
 	idImage* 				radianceImage;				// cubemap image used for specular IBL by backend
 };
@@ -548,6 +558,10 @@ struct viewDef_t
 	// specified in the call to DrawScene()
 	renderView_t		renderView;
 
+	// every relative quantity of this view is measured from here, subtracted in double:
+	// renderView.vieworg with r_cameraRelative 1 ( the eye is then exactly at 0 ), zero with 0
+	idVec3d				renderOrigin;
+
 	float				projectionMatrix[16];
 	idRenderMatrix		projectionRenderMatrix;	// tech5 version of projectionMatrix
 
@@ -562,7 +576,13 @@ struct viewDef_t
 	idRenderMatrix		unprojectionToWorldRenderMatrix;
 	// RB end
 
-	viewEntity_t		worldSpace;
+	viewEntity_t		worldSpace;				// relative to renderOrigin: a rotation-only view when it is vieworg
+
+	// absolute ( map space ) projection x view, built as worldSpace.mvp / unjitteredMVP are
+	// at a zero renderOrigin: the frontend culls against absolute bounds and light projections,
+	// frustums[FRUSTUM_PRIMARY] and the world and def-level debug draws use these
+	idRenderMatrix		worldCullMVP;
+	idRenderMatrix		worldCullUnjitteredMVP;	// no TAA subpixel jittering
 
 	idRenderWorldLocal* renderWorld;
 
@@ -582,6 +602,8 @@ struct viewDef_t
 
 	bool				isEditor;
 	bool				is2Dgui;
+	bool				isMainView;				// the game's main player view ( RDF_MAINVIEW ), assigned on every R_RenderView, false on subviews
+	bool				invalidateHistory;		// first main view after a map load: the backend drops previous-frame state
 
 	bool                isObliqueProjection;    // true if this view has an oblique projection
 	int					numClipPlanes;			// mirrors will often use a single clip plane
@@ -611,9 +633,10 @@ struct viewDef_t
 	// not have any viewEntities
 
 	// RB begin
-	frustum_t			frustums[MAX_FRUSTUMS];					// positive sides face outward, [4] is the front clip plane
+	frustum_t			frustums[MAX_FRUSTUMS];					// positive sides face outward, [4] is the front clip plane; [FRUSTUM_PRIMARY] is absolute, the cascade planes are relative
 	float				frustumSplitDistances[MAX_FRUSTUMS];
-	idRenderMatrix		frustumMVPs[MAX_FRUSTUMS];
+	idRenderMatrix		frustumMVPs[MAX_FRUSTUMS];				// relative to renderOrigin ( from worldSpace.modelViewMatrix )
+	float				shadowCascadeFar;						// view-space far of the last sun cascade; beyond it surfaces are lit; frame data, uploaded for the cascade select
 	// RB end
 
 	int					areaNum;				// -1 = not in a valid area
@@ -627,20 +650,41 @@ struct viewDef_t
 	viewEnvprobe_t*		viewEnvprobes;
 
 	// RB: nearest 3 probes for now
-	idBounds			globalProbeBounds;
+	// the bounds and positions are relative to renderOrigin: R_FindClosestEnvironmentProbes converts
+	// them after their last write, unless the bounds are cleared ( no usable probe; never converted )
+	idBounds			probeBoundsRel;
 	idRenderMatrix		inverseBaseEnvProbeProject;	// the matrix for deforming the 'zeroOneCubeModel' to exactly cover the environent probe volume in world space
 	idImage* 			irradianceImage;			// cubemap image used for diffuse IBL by backend
 	idImage* 			radianceImages[3];			// cubemap image used for specular IBL by backend
 	idImage*			depthImage;					// env-probe distance cube to combat light leakage
 	idImage*			probeDepthImages[2];		// distance cubes between probes 1 and 2 (probe 0 of the blend = depthImage)
 	idVec4				radianceImageBlends;		// blending weights
-	idVec4				probePositions[3];			// only used by parallax correction
+	idVec4				probePositionsRel[3];		// .w keeps its meaning ( depth-cube valid flag ); only used by parallax correction
 	idVec4				shIrradiance[9];			// CPU pre-blended L2 SH for envprobe diffuse path
 
 	Framebuffer*		targetRender;				// SP: The framebuffer to render to
 
 	int					taaFrameCount;				// RB: so we have the same frame index in frontend and backend
 };
+
+/*
+====================
+R_RelativeEye
+
+The eye in the frame of the view's relative data ( viewLight_t, worldSpace, frustumMVPs ):
+vieworg itself at a zero renderOrigin, so r_cameraRelative 0 reads exactly today's value,
+else vieworg - renderOrigin subtracted in double and rounded once ( exactly 0 when the
+origin is the eye ). Pair it only with relative data; absolute data keeps vieworg.
+====================
+*/
+ID_INLINE idVec3 R_RelativeEye( const viewDef_t* viewDef )
+{
+	if( viewDef->renderOrigin.IsZero() )
+	{
+		return viewDef->renderView.vieworg;
+	}
+	return ( idVec3d( viewDef->renderView.vieworg ) - viewDef->renderOrigin ).ToVec3();
+}
 
 
 // complex light / surface interactions are broken up into multiple passes of a
@@ -1004,6 +1048,7 @@ public:
 
 	bool					takingScreenshot;
 	bool					takingEnvprobe;
+	bool					invalidateViewHistory;	// set by InitFromMap, consumed by the next main view ( viewDef_t::invalidateHistory )
 
 	int						frameCount;		// incremented every frame
 	int						viewCount;		// incremented every view (twice a scene if subviewed)
@@ -1109,10 +1154,14 @@ extern idCVar r_fullscreen;					// 0 = windowed, 1 = full screen
 extern idCVar r_antiAliasing;				// anti aliasing mode, SMAA, TXAA, MSAA etc.
 
 extern idCVar r_znear;						// near Z clip plane
+extern idCVar r_cameraRelative;				// 1 = per-view matrices relative to the eye ( viewDef_t::renderOrigin )
 
 extern idCVar r_swapInterval;				// changes wglSwapIntarval
 extern idCVar r_offsetFactor;				// polygon offset parameter
 extern idCVar r_offsetUnits;				// polygon offset parameter
+#if ID_REVERSED_Z
+extern idCVar r_offsetUnitsReversed;		// polygon offset magnitude on reversed-Z depth buffers
+#endif
 extern idCVar r_singleTriangle;				// only draw a single triangle per primitive
 extern idCVar r_clear;						// force screen clear every frame
 extern idCVar r_subviewOnly;				// 1 = don't render main view, allowing subviews to be debugged
@@ -1189,7 +1238,7 @@ extern idCVar r_showUpdates;				// report entity and light updates and ref count
 extern idCVar r_showDynamic;				// report stats on dynamic surface generation
 extern idCVar r_showIntensity;				// draw the screen colors based on intensity, red = 0, green = 128, blue = 255
 extern idCVar r_showTrace;					// show the intersection of an eye trace with the world
-extern idCVar r_showDepth;					// display the contents of the depth buffer and the depth range
+extern idCVar r_showDepth;					// 1 = main depth as linear distance, 2 = SSAO input, 3 = Hi-Z mip 0, 4 = probe capture
 extern idCVar r_showTris;					// enables wireframe rendering of the world
 extern idCVar r_showSurfaceInfo;			// show surface material name under crosshair
 extern idCVar r_showNormals;				// draws wireframe normals
@@ -1254,6 +1303,7 @@ extern idCVar r_shadowMapRandomizeJitter;
 extern idCVar r_shadowMapSamples;
 extern idCVar r_shadowMapSplits;
 extern idCVar r_shadowMapSplitWeight;
+extern idCVar r_shadowMapSplitFar;
 extern idCVar r_shadowMapLodScale;
 extern idCVar r_shadowMapLodBias;
 extern idCVar r_shadowMapPolygonFactor;
