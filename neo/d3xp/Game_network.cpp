@@ -44,6 +44,10 @@ static const int SNAP_ENTITIES = SNAP_PLAYERSTATE_END;
 static const int SNAP_ENTITIES_END = SNAP_ENTITIES + MAX_GENTITIES;
 static const int SNAP_LAST_CLIENT_FRAME = SNAP_ENTITIES_END;
 static const int SNAP_LAST_CLIENT_FRAME_END = SNAP_LAST_CLIENT_FRAME + MAX_PLAYERS;
+static const int SNAP_PORTALS_EXTRA = SNAP_LAST_CLIENT_FRAME_END;
+static const int PORTALS_PER_SNAP_OBJECT = 1300;
+static const int MAX_PORTAL_CHUNKS = 16;
+compile_time_assert( SNAP_PORTALS_EXTRA + MAX_PORTAL_CHUNKS - MAX_GENTITIES <= MAX_NET_FIXED_OBJECTS );
 //puncho - P0-m9: the objects other than entities fit the snapshot layer's budget for them (sys/sys_session.h)
 compile_time_assert( SNAP_LAST_CLIENT_FRAME_END - MAX_GENTITIES <= MAX_NET_FIXED_OBJECTS );
 
@@ -753,11 +757,25 @@ void idGameLocal::ServerWriteSnapshot( idSnapShot& ss )
 	//puncho end
 	int numPortals = gameRenderWorld->NumPortals();
 	msg.WriteLong( numPortals );
-	for( int i = 0; i < numPortals; i++ )
+	for( int i = 0; i < Min( numPortals, PORTALS_PER_SNAP_OBJECT ); i++ )
 	{
 		msg.WriteBits( gameRenderWorld->GetPortalState( ( qhandle_t )( i + 1 ) ) , NUM_RENDER_PORTAL_BITS );
 	}
 	ss.S_AddObject( SNAP_PORTALS, ~0U, msg, "Portal State" );
+	for( int chunk = 1; chunk * PORTALS_PER_SNAP_OBJECT < numPortals; chunk++ )
+	{
+		msg.InitWrite( buffer, sizeof( buffer ) );
+		if( snapTrace != NULL )
+		{
+			snapTrace->Object( SNAP_PORTALS_EXTRA + chunk - 1, "<portals-extra>", msg, false );
+		}
+		for( int i = chunk * PORTALS_PER_SNAP_OBJECT; i < Min( numPortals, ( chunk + 1 ) * PORTALS_PER_SNAP_OBJECT ); i++ )
+		{
+			msg.WriteBits( gameRenderWorld->GetPortalState( i + 1 ), NUM_RENDER_PORTAL_BITS );
+		}
+		ss.S_AddObject( SNAP_PORTALS_EXTRA + chunk - 1, ~0U, msg, "Portal State Extra" );
+	}
+
 
 	idEntity* skyEnt = portalSkyEnt.GetEntity();
 	pvsHandle_t	portalSkyPVS;
@@ -1305,8 +1323,11 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 		{
 			// update portals for opened doors
 			int numPortals = msg.ReadLong();
-			assert( numPortals == gameRenderWorld->NumPortals() );
-			for( int i = 0; i < numPortals; i++ )
+			if( numPortals != gameRenderWorld->NumPortals() || numPortals < 0 || numPortals > PORTALS_PER_SNAP_OBJECT * MAX_PORTAL_CHUNKS )
+			{
+				Error( "snapshot portal count %d, this map has %d", numPortals, gameRenderWorld->NumPortals() );
+			}
+			for( int i = 0; i < Min( numPortals, PORTALS_PER_SNAP_OBJECT ); i++ )
 			{
 				gameRenderWorld->SetPortalState( ( qhandle_t )( i + 1 ), msg.ReadBits( NUM_RENDER_PORTAL_BITS ) );
 			}
@@ -1352,6 +1373,20 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 			}
 
 			usercmdLastClientMilliseconds[playerNumber] = msg.ReadLong();
+			continue;
+		}
+		if( snapObjectNum >= SNAP_PORTALS_EXTRA && snapObjectNum < SNAP_PORTALS_EXTRA + MAX_PORTAL_CHUNKS - 1 )
+		{
+			const int first = ( snapObjectNum - SNAP_PORTALS_EXTRA + 1 ) * PORTALS_PER_SNAP_OBJECT;
+			const int count = gameRenderWorld->NumPortals();
+			if( first >= count )
+			{
+				Error( "snapshot portal chunk starts at %d, this map has %d", first, count );
+			}
+			for( int i = first; i < Min( count, first + PORTALS_PER_SNAP_OBJECT ); i++ )
+			{
+				gameRenderWorld->SetPortalState( i + 1, msg.ReadBits( NUM_RENDER_PORTAL_BITS ) );
+			}
 			continue;
 		}
 		if( snapObjectNum < SNAP_ENTITIES || snapObjectNum >= SNAP_ENTITIES_END )
@@ -1771,6 +1806,8 @@ idGameLocal::ClientRunFrame
 */
 void idGameLocal::ClientRunFrame( idUserCmdMgr& cmdMgr, bool lastPredictFrame, gameReturn_t& ret )
 {
+	clip.GetMapStatistics( mapClipStart );
+	mapAllocStart = Mem_GetAllocationCount();
 	idEntity* ent;
 
 	// update the game time

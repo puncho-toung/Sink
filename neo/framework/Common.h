@@ -39,6 +39,42 @@ If you have questions concerning this license or the applicable additional terms
 ==============================================================
 */
 
+enum loadPhase_t
+{
+	LOAD_MOVE,
+	LOAD_BEGIN,
+	LOAD_UNLOAD,
+	LOAD_PURGE,
+	LOAD_LOADGUI,
+	LOAD_PRELOAD,
+	LOAD_RENDER_WORLD,
+	LOAD_MAP_PARSE,
+	LOAD_CM,
+	LOAD_GAME_INIT,
+	LOAD_PVS,
+	LOAD_AAS,
+	LOAD_MEDIA,
+	LOAD_SCRIPT,
+	LOAD_SPAWN,
+	LOAD_POST_SPAWN,
+	LOAD_RESTORE,
+	LOAD_SESSION,
+	LOAD_FIRST_FRAME,
+	LOAD_END_RENDER,
+	LOAD_END_SOUND,
+	LOAD_END_DECL,
+	LOAD_END_UI,
+	LOAD_END_FS,
+	LOAD_SETTLE,
+	LOAD_AUTOSAVE,
+	LOAD_INTERACTIONS,
+	LOAD_FINISH,
+	LOAD_PHASE_COUNT
+};
+
+void FormatMapRows( char rows[6][256], bool high[6] );
+bool ValidDiagnosticName( const char* name );
+
 extern idCVar com_engineHz;
 extern float com_engineHz_latched;
 extern const int64 com_engineHz_numerator;
@@ -276,6 +312,8 @@ enum currentGame_t
 class idCommon
 {
 public:
+	virtual void LoadPhase( loadPhase_t phase ) {}
+
 	virtual						~idCommon() {}
 
 	// Initialize everything.

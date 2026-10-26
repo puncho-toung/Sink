@@ -30,6 +30,10 @@ If you have questions concerning this license or the applicable additional terms
 #include "precompiled.h"
 #pragma hdrstop
 
+thread_local bool fileReadContainer;
+static idSysInterlockedInteger fileReadBytes;
+unsigned int FileReadBytes() { return ( unsigned int )fileReadBytes.GetValue(); }
+
 #include "Unzip.h"
 
 
@@ -1396,6 +1400,10 @@ int idFile_Permanent::Read( void* buffer, int len )
 			common->FatalError( "idFile_Permanent::Read: -1 bytes read from %s", name.c_str() );
 		}
 
+		if( !fileReadContainer && read > 0 )
+		{
+			fileReadBytes.Add( read );
+		}
 		remaining -= read;
 		buf += read;
 	}
@@ -1764,6 +1772,10 @@ Properly handles partial reads
 int idFile_InZip::Read( void* buffer, int len )
 {
 	int l = unzReadCurrentFile( z, buffer, len );
+	if( l > 0 )
+	{
+		fileReadBytes.Add( l );
+	}
 	return l;
 }
 
@@ -1960,6 +1972,10 @@ int idFile_InnerResource::Read( void* buffer, int len )
 		}
 	}
 
+	if( read > 0 )
+	{
+		fileReadBytes.Add( read );
+	}
 	internalFilePos += read;
 
 	return read;

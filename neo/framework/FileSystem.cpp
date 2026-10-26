@@ -407,7 +407,12 @@ int idFileSystemLocal::ReadFromBGL( idFile* _resourceFile, void* _buffer, int _o
 	{
 		_resourceFile->Seek( _offset, FS_SEEK_SET );
 	}
-	return _resourceFile->Read( _buffer, _len );
+	extern thread_local bool fileReadContainer;
+	const bool previous = fileReadContainer;
+	fileReadContainer = true;
+	const int result = _resourceFile->Read( _buffer, _len );
+	fileReadContainer = previous;
+	return result;
 }
 
 /*

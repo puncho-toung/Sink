@@ -843,6 +843,31 @@ void Cmd_GetViewpos_f( const idCmdArgs& args )
 Cmd_SetViewpos_f
 =================
 */
+static void Cmd_ListMapStatics_f( const idCmdArgs& args )
+{
+	gameLocal.ListMapStatics();
+}
+
+static void Cmd_SaveTestView_f( const idCmdArgs& args )
+{
+	cvarSystem->SetCVarString( "g_testSpawnView", "" );
+	idPlayer* player = gameLocal.GetLocalPlayer();
+	if( common->IsMultiplayer() || player == NULL )
+	{
+		gameLocal.Printf( "saveTestView: no single-player view; testmap uses its start\n" );
+		return;
+	}
+	if( !cvarSystem->GetCVarBool( "developer" ) && !gameLocal.CheatsOk() )
+	{
+		return;
+	}
+	const idVec3& origin = player->GetPhysics()->GetOrigin();
+	idStr view;
+	view.Format( "%.9g %.9g %.9g %.9g %.9g", origin.x, origin.y, origin.z, player->viewAngles.yaw, player->viewAngles.pitch );
+	cvarSystem->SetCVarString( "g_testSpawnView", view );
+	gameLocal.Printf( "testmap saved view %s\n", view.c_str() );
+}
+
 void Cmd_SetViewpos_f( const idCmdArgs& args )
 {
 	idVec3		origin;
@@ -3791,8 +3816,112 @@ Let the system know about all of our commands
 so it can perform tab completion
 =================
 */
+static void Cmd_ListMap_f( const idCmdArgs& args )
+{
+	char rows[6][256];
+	bool high[6];
+	FormatMapRows( rows, high );
+	for( int i = 0; i < 6; i++ )
+	{
+		gameLocal.Printf( "%s\n", rows[i] );
+	}
+	unsigned int digest;
+	CRC32_InitChecksum( digest );
+	int open = 0;
+	for( int i = 1; i <= gameRenderWorld->NumPortals(); i++ )
+	{
+		const int state = gameRenderWorld->GetPortalState( i );
+		CRC32_UpdateChecksum( digest, &state, sizeof( state ) );
+		if( state == 0 )
+		{
+			open++;
+		}
+	}
+	CRC32_FinishChecksum( digest );
+	gameLocal.Printf( "portals %d open %d digest 0x%08x\n", gameRenderWorld->NumPortals(), open, digest );
+	int slots = 0;
+	for( int i = 0; i < idProjectile::MAX_SIMULATED_PROJECTILES; i++ )
+	{
+		if( idProjectile::projectilesToSimulate[i].projectile != NULL )
+		{
+			slots++;
+		}
+	}
+	gameLocal.Printf( "catchUp slots %d/64 dropped %d\n", slots, idProjectile::simulationDropped );
+	// The command may allocate; the per-tic and per-frame samplers never do.
+	struct classCount_t
+	{
+		const char* name;
+		int count;
+	};
+	classCount_t* classes = ( classCount_t* )Mem_ClearedAlloc( MAX_GENTITIES * sizeof( classCount_t ), TAG_GAME );
+	int count = 0;
+	for( int i = 0; i < MAX_GENTITIES; i++ )
+	{
+		idEntity* ent = gameLocal.entities[i];
+		if( ent == NULL )
+		{
+			continue;
+		}
+		const char* name = ent->GetType()->classname;
+		int j;
+		for( j = 0; j < count && idStr::Cmp( classes[j].name, name ); j++ )
+		{
+		}
+		if( j == count )
+		{
+			classes[count++].name = name;
+		}
+		classes[j].count++;
+	}
+	for( int i = 0; i < Min( 40, count ); i++ )
+	{
+		int best = i;
+		for( int j = i + 1; j < count; j++ )
+		{
+			if( classes[j].count > classes[best].count || ( classes[j].count == classes[best].count && idStr::Cmp( classes[j].name, classes[best].name ) < 0 ) )
+			{
+				best = j;
+			}
+		}
+		const classCount_t temp = classes[i];
+		classes[i] = classes[best];
+		classes[best] = temp;
+		gameLocal.Printf( "MAP class %d %s\n", classes[i].count, classes[i].name );
+	}
+	Mem_Free( classes );
+	renderSystem->ListMapLightGrids();
+}
+
+static void Cmd_WorldTime_f( const idCmdArgs& args )
+{
+	gameLocal.Printf( "worldTime %lld base %lld map %s time %d\n", ( long long )gameLocal.GetWorldTime(), ( long long )gameLocal.worldTimeBase, gameLocal.GetMapName(), gameLocal.time );
+}
+
+static void Cmd_CMSelfTest_f( const idCmdArgs& args )
+{
+	if( !gameLocal.CheatsOk() )
+	{
+		return;
+	}
+	collisionModelManager->SelfTest( args.Argc() > 1 ? atoi( args.Argv( 1 ) ) : 10000, args.Argc() > 2 ? atoi( args.Argv( 2 ) ) : 1 );
+}
+
+static void Cmd_ClipSelfTest_f( const idCmdArgs& args )
+{
+	if( !gameLocal.CheatsOk() )
+	{
+		return;
+	}
+	gameLocal.clip.SelfTest( args.Argc() > 1 ? atoi( args.Argv( 1 ) ) : 10000, args.Argc() > 2 ? atoi( args.Argv( 2 ) ) : 1 );
+}
+
 void idGameLocal::InitConsoleCommands()
 {
+	cmdSystem->AddCommand( "listMap", Cmd_ListMap_f, CMD_FL_GAME, "list MAP resource rows, portal digest and entity classes" );
+	cmdSystem->AddCommand( "worldTime", Cmd_WorldTime_f, CMD_FL_GAME, "print the unscaled world clock" );
+	cmdSystem->AddCommand( "cm_selfTest", Cmd_CMSelfTest_f, CMD_FL_GAME | CMD_FL_CHEAT, "seeded collision bounds, contents, rotation and wrap tests" );
+	cmdSystem->AddCommand( "clipSelfTest", Cmd_ClipSelfTest_f, CMD_FL_GAME | CMD_FL_CHEAT, "seeded clip gather wrap test" );
 	cmdSystem->AddCommand( "game_memory",			idClass::DisplayInfo_f,		CMD_FL_GAME,				"displays game class info" );
 	cmdSystem->AddCommand( "listClasses",			idClass::ListClasses_f,		CMD_FL_GAME,				"lists game classes" );
 	cmdSystem->AddCommand( "listThreads",			idThread::ListThreads_f,	CMD_FL_GAME | CMD_FL_CHEAT,	"lists script threads" );
@@ -3810,6 +3939,8 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "notarget",				Cmd_Notarget_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"disables the player as a target" );
 	cmdSystem->AddCommand( "noclip",				Cmd_Noclip_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"disables collision detection for the player" );
 	cmdSystem->AddCommand( "where",					Cmd_GetViewpos_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"prints the current view position" );
+	cmdSystem->AddCommand( "listMapStatics", Cmd_ListMapStatics_f, CMD_FL_GAME, "list static spawn-skip eligibility and retained entity numbers" );
+	cmdSystem->AddCommand( "saveTestView", Cmd_SaveTestView_f, CMD_FL_GAME, "save a single-player view for the next testmap" );
 	cmdSystem->AddCommand( "getviewpos",			Cmd_GetViewpos_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"prints the current view position" );
 	cmdSystem->AddCommand( "setviewpos",			Cmd_SetViewpos_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"sets the current view position" );
 	cmdSystem->AddCommand( "teleport",				Cmd_Teleport_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"teleports the player to an entity location", idGameLocal::ArgCompletion_EntityName );

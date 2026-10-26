@@ -75,6 +75,146 @@ idCVar net_drawDebugHud( "net_drawDebugHud", "0", CVAR_SYSTEM | CVAR_INTEGER, "0
 
 idCVar timescale( "timescale", "1", CVAR_SYSTEM | CVAR_FLOAT, "Number of game frames to run per render frame", 0.001f, 100.0f );
 
+
+idCVar com_mapRowsLog( "com_mapRowsLog", "", CVAR_SYSTEM, "write per-frame MAP counters to maprows/<plain name>.csv" );
+static idFile* mapRowsFile;
+static char mapRowsName[128];
+static char mapRowsBuffer[65536];
+static int mapRowsUsed;
+static int mapRowsFlushTime;
+static unsigned int mapMainAllocations;
+
+bool ValidDiagnosticName( const char* name )
+{
+	if( !name[0] || strlen( name ) >= 128 )
+	{
+		return false;
+	}
+	for( const char* p = name; *p; p++ )
+	{
+		if( !( ( *p >= 'a' && *p <= 'z' ) || ( *p >= 'A' && *p <= 'Z' ) ||
+			( *p >= '0' && *p <= '9' ) || *p == '_' || *p == '-' ) ) { return false; }
+	}
+	return true;
+}
+
+void FormatMapRows( char rows[6][256], bool high[6] )
+{
+	renderMapStats_t r = {};
+	mapGameStats_t g = {};
+	renderSystem->GetMapStats( r );
+	if( game != NULL )
+	{
+		game->GetMapStats( g );
+	}
+	const int cap = cvarSystem->GetCVarInteger( "net_maxSkipReplicatedStatics" );
+	idStr::snPrintf( rows[0], 256, "MAP static vtx %llu/%llu idx %llu/%llu KB frame %llu/65536 KB", ( unsigned long long )( r.staticVertexBytes / 1024 ), ( unsigned long long )( r.staticVertexCapacity / 1024 ), ( unsigned long long )( r.staticIndexBytes / 1024 ), ( unsigned long long )( r.staticIndexCapacity / 1024 ), ( unsigned long long )( r.frameBytes / 1024 ) );
+	idStr::snPrintf( rows[1], 256, "MAP handles entities %d/10000 lights %d/10000 probes %d/10000 interactions %llu KB %dx%d", r.entityDefs, r.lightDefs, r.envprobeDefs, ( unsigned long long )( r.interactionBytes / 1024 ), r.interactionWidth, r.interactionHeight );
+	idStr::snPrintf( rows[2], 256, "MAP world areas %d portals %d/20800 pvs %llu KB %d ms lightgrid %llu KB", r.areas, r.portals, ( unsigned long long )( g.pvsBytes / 1024 ), g.pvsMilliseconds, ( unsigned long long )( r.lightGridBytes / 1024 ) );
+	idStr::snPrintf( rows[3], 256, "MAP game entities %d/16384 active %d nonrep %d/256 cm %d/2048 statics %d/%d", g.entities, g.activeEntities, g.nonReplicated, g.cmModels, g.skipStatics, cap );
+	idStr::snPrintf( rows[4], 256, "MAP clip/tic trans %u rot %u motion %u cont %u contacts %u gathers %u cand %u rmt %u us %u", g.clipTrans, g.clipRot, g.clipMotion, g.clipContents, g.clipContacts, g.clipGathers, g.clipCandidates, g.clipRmt, g.clipUs );
+	idStr::snPrintf( rows[5], 256, "MAP alloc game %u/tic main %u/frame", g.allocGameTic, mapMainAllocations );
+	high[0] = r.staticVertexBytes * 4 >= r.staticVertexCapacity * 3 || r.staticIndexBytes * 4 >= r.staticIndexCapacity * 3 || r.frameBytes >= 48 * 1024 * 1024;
+	high[1] = r.entityDefs >= 7500 || r.lightDefs >= 7500 || r.envprobeDefs >= 7500;
+	high[2] = r.portals >= 15600;
+	high[3] = g.entities >= 12288 || g.nonReplicated >= 192 || g.cmModels >= 1536 || ( cap > 0 && g.skipStatics * 4 >= cap * 3 );
+	high[4] = high[5] = false;
+}
+
+void idCommonLocal::CloseMapRowsLog()
+{
+	if( mapRowsFile != NULL )
+	{
+		mapRowsFile->Write( mapRowsBuffer, mapRowsUsed );
+		fileSystem->CloseFile( mapRowsFile );
+		mapRowsFile = NULL;
+		Printf( "MAP CSV closed: %s\n", mapRowsName );
+	}
+	mapRowsName[0] = 0;
+	mapRowsUsed = 0;
+}
+
+void idCommonLocal::LogMapRows( int tics )
+{
+	const char* name = com_mapRowsLog.GetString();
+	if( idStr::Cmp( name, mapRowsName ) )
+	{
+		CloseMapRowsLog();
+		if( name[0] )
+		{
+			if( !ValidDiagnosticName( name ) )
+			{
+				Warning( "com_mapRowsLog requires a plain name" );
+				com_mapRowsLog.SetString( "" );
+				return;
+			}
+			char path[160];
+			idStr::snPrintf( path, sizeof( path ), "maprows/%s.csv", name );
+			mapRowsFile = fileSystem->OpenFileWrite( path, "fs_savepath" );
+			if( mapRowsFile == NULL )
+			{
+				com_mapRowsLog.SetString( "" ); return;
+			}
+			idStr::Copynz( mapRowsName, name, sizeof( mapRowsName ) );
+			mapRowsFile->Printf( "frame,ms,tics,usFrameBusy,usFrameIdle,usGameRF,usGame,usRF,usRB,usGPU,usMOC,views,draws,tris,shadowViews,shadowDraws,shadowTris,atlasPct,viewEntities,shadowEntities,viewLights,staticVtxKB,staticIdxKB,frameKB,entityDefs,lightDefs,envprobeDefs,interactionKB,areas,portals,pvsKB,lightGridKB,entities,activeEntities,nonReplicated,cmModels,clipTrans,clipRot,clipMotion,clipContents,clipContacts,clipGathers,clipCandidates,clipUs,allocGameTic,allocMainFrame,probesConsidered,drawSurfs,drawSurfsClamped,atlasFailed,lightRefsWalked,contactedCapHits,skipStatics\n" );
+			mapRowsFlushTime = Sys_Milliseconds();
+			Printf( "MAP CSV opened: %s\n", path );
+		}
+	}
+	if( mapRowsFile == NULL )
+	{
+		return;
+	}
+	renderMapStats_t r = {};
+	mapGameStats_t g = {};
+	renderSystem->GetMapStats( r );
+	if( game != NULL )
+	{
+		game->GetMapStats( g );
+	}
+	const int64 values[] = {
+		idLib::frameNumber, Sys_Milliseconds(), tics,
+		( int64 )frameTiming.finishSyncTime - ( int64 )mainFrameTiming.startGameTime,
+		( int64 )mainFrameTiming.startGameTime - ( int64 )mainFrameTiming.finishSyncTime,
+		( int64 )mainFrameTiming.finishDrawTime - ( int64 )mainFrameTiming.startGameTime,
+		( int64 )mainFrameTiming.finishGameTime - ( int64 )mainFrameTiming.startGameTime,
+		( int64 )mainFrameTiming.finishDrawTime - ( int64 )mainFrameTiming.finishGameTime,
+		( int64 )GetRendererBackEndMicroseconds(), ( int64 )GetRendererGPUMicroseconds(), ( int64 )GetRendererMaskedOcclusionRasterizationMicroseconds(),
+		stats_frontend.c_numViews, stats_backend.c_drawElements + stats_backend.c_shadowElements,
+		( stats_backend.c_drawIndexes + stats_backend.c_shadowIndexes ) / 3,
+		stats_backend.c_shadowViews, stats_backend.c_shadowElements, stats_backend.c_shadowIndexes / 3,
+		( int64 )( 100.0 * stats_backend.c_shadowAtlasUsage / Square( r_shadowMapAtlasSize.GetInteger() ) ),
+		stats_frontend.c_visibleViewEntities, stats_frontend.c_shadowViewEntities, stats_frontend.c_viewLights,
+		( int64 )( r.staticVertexBytes / 1024 ), ( int64 )( r.staticIndexBytes / 1024 ), ( int64 )( r.frameBytes / 1024 ),
+		r.entityDefs, r.lightDefs, r.envprobeDefs, ( int64 )( r.interactionBytes / 1024 ), r.areas, r.portals,
+		( int64 )( g.pvsBytes / 1024 ), ( int64 )( r.lightGridBytes / 1024 ), g.entities, g.activeEntities, g.nonReplicated, g.cmModels,
+		g.clipTrans, g.clipRot, g.clipMotion, g.clipContents, g.clipContacts, g.clipGathers, g.clipCandidates, g.clipUs, g.allocGameTic, mapMainAllocations,
+		stats_frontend.c_probesConsidered, stats_frontend.c_drawSurfs, stats_frontend.c_drawSurfsClamped, stats_backend.c_shadowAtlasFailed,
+		stats_frontend.c_lightRefsWalked, stats_frontend.c_contactedCapHits, g.skipStatics
+	};
+	char row[2048];
+	int length = 0;
+	for( int i = 0; i < ( int )( sizeof( values ) / sizeof( values[0] ) ); i++ )
+	{
+		length += idStr::snPrintf( row + length, sizeof( row ) - length, "%s%lld", i ? "," : "", ( long long )values[i] );
+	}
+	row[length++] = '\n';
+	if( mapRowsUsed + length > ( int )sizeof( mapRowsBuffer ) )
+	{
+		mapRowsFile->Write( mapRowsBuffer, mapRowsUsed );
+		mapRowsUsed = 0;
+	}
+	memcpy( mapRowsBuffer + mapRowsUsed, row, length );
+	mapRowsUsed += length;
+	if( Sys_Milliseconds() - mapRowsFlushTime >= 1000 )
+	{
+		mapRowsFile->Write( mapRowsBuffer, mapRowsUsed );
+		mapRowsFile->Flush();
+		mapRowsUsed = 0;
+		mapRowsFlushTime = Sys_Milliseconds();
+	}
+}
+
 extern idCVar in_useJoystick;
 extern idCVar in_joystickRumble;
 
@@ -86,8 +226,11 @@ Run in a background thread for performance, but can also
 be called directly in the foreground thread for comparison.
 ===============
 */
+extern void RunPrintRelayTest();
+
 int idGameThread::Run()
 {
+	RunPrintRelayTest();
 	commonLocal.frameTiming.startGameTime = Sys_Microseconds();
 
 	threadScratchStack = &commonLocal.gameScratchStack;	//puncho - MP-A4 (K27): the main thread's arena too; the two never run game code at once
@@ -113,6 +256,7 @@ int idGameThread::Run()
 			if( userCmdMgr )
 			{
 				game->ClientRunFrame( *userCmdMgr, ( i == numGameFrames - 1 ), ret );
+				game->FinishMapTicStats();
 				commonLocal.gameScratchStack.EndTic();	//puncho - MP-A4 (K28)
 			}
 			if( ret.syncNextGameFrame || ret.sessionCommand[0] != 0 )
@@ -130,6 +274,7 @@ int idGameThread::Run()
 			if( userCmdMgr )
 			{
 				game->RunFrame( *userCmdMgr, ret );
+				game->FinishMapTicStats();
 				commonLocal.gameScratchStack.EndTic();	//puncho - MP-A4 (K28)
 			}
 			if( ret.syncNextGameFrame || ret.sessionCommand[0] != 0 )
@@ -447,6 +592,7 @@ void idCommonLocal::UpdateScreen( bool captureToImage, bool releaseMouse )
 
 	// make sure the game / draw thread has completed
 	gameThread.WaitForThread();
+	DrainPrintRelay();
 
 	// release the mouse capture back to the desktop
 	if( releaseMouse )
@@ -502,6 +648,14 @@ void idCommonLocal::ProcessGameReturn( const gameReturn_t& ret )
 		idCmdArgs args;
 
 		args.TokenizeString( ret.sessionCommand, false );
+		if( cvarSystem->GetCVarBool( "net_refuseMapWithPeers" ) && IsMultiplayer() &&
+			session->GetActivePlatformLobbyBase().HasActivePeers() &&
+			( !idStr::Icmp( args.Argv( 0 ), "map" ) || !idStr::Icmp( args.Argv( 0 ), "devmap" ) ) )
+		{
+			Warning( "map change to '%s' refused: peers in the session (co-op transitions are P2.3.5)", args.Argv( 1 ) );
+			return;
+		}
+
 
 		if( !idStr::Icmp( args.Argv( 0 ), "map" ) )
 		{
@@ -541,6 +695,7 @@ idCommonLocal::Frame
 */
 void idCommonLocal::Frame()
 {
+	const unsigned int frameAllocStart = Mem_GetAllocationCount();
 	try
 	{
 		SCOPED_PROFILE_EVENT( "Common::Frame" );
@@ -817,6 +972,7 @@ void idCommonLocal::Frame()
 			ExecuteMapChange();
 			mapSpawnData.savegameFile = NULL;
 			mapSpawnData.persistentPlayerInfo.Clear();
+			mapSpawnData.worldTimeBase = 0;
 			return;
 		}
 		else if( session->GetState() != idSession::INGAME && mapSpawned )
@@ -926,6 +1082,7 @@ void idCommonLocal::Frame()
 		// make sure the game / draw thread has completed
 		// This may block if the game is taking longer than the render back end
 		gameThread.WaitForThread();
+		DrainPrintRelay();
 
 		// SRS - Use finishSyncTime_EndFrame to record timing just after gameThread.WaitForThread()
 		frameTiming.finishSyncTime_EndFrame = Sys_Microseconds();
@@ -996,12 +1153,15 @@ void idCommonLocal::Frame()
 			FatalError( "idCommon::Frame: the FPU stack is not empty at the end of the frame\n" );
 		}
 
+		mapMainAllocations = Mem_GetAllocationCount() - frameAllocStart;
+		LogMapRows( numGameFrames );
 		mainFrameTiming = frameTiming;
 
 		session->GetSaveGameManager().Pump();
 	}
 	catch( idException& )
 	{
+		DrainPrintRelay();
 		// an ERP_DROP was thrown
 #if defined(USE_DOOMCLASSIC)
 		if( currentGame == DOOM_CLASSIC || currentGame == DOOM2_CLASSIC )

@@ -78,8 +78,9 @@ with anything below, the surrounding code wins. **Never reformat existing code.*
   `MAX_` value) means "none," and is always checked.
 - **One teardown choke point.** Route every invalidation path (destroy, move/reshape, global reset)
   through a single `Free…DerivedData` rather than scattering teardown.
-- **No exceptions** (`-fno-exceptions`): use return codes, `-1`/`NULL` sentinels, or a hard stop via
-  `common->Error` / `common->FatalError`. `assert` guards programmer errors in debug only.
+- **Exceptions and RTTI are on** (`USE_EXCEPTIONS`); new code never throws, catches or casts dynamically,
+  except a test explicitly exercising existing exception handling. Use return codes, `-1`/`NULL` sentinels,
+  or `common->Error` / `common->FatalError`. `assert` guards programmer errors in debug only.
 - **Restrained templates/RTTI; shallow call stacks; C-style where clearer** (C casts, raw loops,
   `memset`/`memcpy` on POD). A profiler trace should map directly to what's happening.
 - **Version rule (MD13).** Every save or wire format change adds a `BUILD_NUMBER_SAVE_VERSION_*` constant

@@ -38,6 +38,118 @@ If you have questions concerning this license or the applicable additional terms
 #define LAUNCH_TITLE_DOOM_EXECUTABLE		"doom1.exe"
 #define LAUNCH_TITLE_DOOM2_EXECUTABLE		"doom2.exe"
 
+
+idCVar com_loadTimeline( "com_loadTimeline", "0", CVAR_SYSTEM | CVAR_BOOL, "print the 28 map transition phases" );
+idCVar com_loadTimelineLog( "com_loadTimelineLog", "", CVAR_SYSTEM, "append load phases to loadtimeline/<plain name>.csv" );
+struct loadTimelineRow_t
+{
+	uint64 us;
+	uint64 readBytes;
+	int64 imageBytes, vertexBytes, indexBytes;
+};
+static loadTimelineRow_t loadRows[LOAD_PHASE_COUNT];
+static int loadCurrentPhase = -1;
+static int loadIndex;
+static uint64 loadPhaseStart;
+static unsigned int loadReadStart;
+static renderMapStats_t loadResourceStart;
+static char loadPreviousMap[MAX_OSPATH];
+static bool loadWasSavegame;
+static const char* loadPhaseNames[LOAD_PHASE_COUNT] = {
+	"MOVE", "BEGIN", "UNLOAD", "PURGE", "LOADGUI", "PRELOAD", "RENDER_WORLD", "MAP_PARSE", "CM", "GAME_INIT", "PVS", "AAS", "MEDIA", "SCRIPT", "SPAWN", "POST_SPAWN", "RESTORE", "SESSION", "FIRST_FRAME", "END_RENDER", "END_SOUND", "END_DECL", "END_UI", "END_FS", "SETTLE", "AUTOSAVE", "INTERACTIONS", "FINISH"
+};
+
+void idCommonLocal::LoadPhase( loadPhase_t phase )
+{
+	if( !com_loadTimeline.GetBool() && !com_loadTimelineLog.GetString()[0] )
+	{
+		loadCurrentPhase = -1;
+		return;
+	}
+	if( phase == LOAD_MOVE || ( phase == LOAD_BEGIN && loadCurrentPhase != LOAD_MOVE ) )
+	{
+		memset( loadRows, 0, sizeof( loadRows ) );
+		loadCurrentPhase = -1;
+	}
+	const uint64 now = Sys_Microseconds();
+	const unsigned int reads = fileSystem->GetReadBytes();
+	renderMapStats_t resources = {};
+	renderSystem->GetMapStats( resources );
+	if( loadCurrentPhase >= 0 )
+	{
+		loadTimelineRow_t& row = loadRows[loadCurrentPhase];
+		row.us += now - loadPhaseStart;
+		row.readBytes += ( unsigned int )( reads - loadReadStart );
+		row.imageBytes += ( int64 )resources.imageBytes - ( int64 )loadResourceStart.imageBytes;
+		row.vertexBytes += ( int64 )resources.staticVertexBytes - ( int64 )loadResourceStart.staticVertexBytes;
+		row.indexBytes += ( int64 )resources.staticIndexBytes - ( int64 )loadResourceStart.staticIndexBytes;
+	}
+	if( phase == LOAD_BEGIN )
+	{
+		loadIndex++;
+		idStr::Copynz( loadPreviousMap, currentMapName.c_str(), sizeof( loadPreviousMap ) );
+		loadWasSavegame = mapSpawnData.savegameFile != NULL;
+	}
+	loadCurrentPhase = phase == LOAD_PHASE_COUNT ? -1 : phase;
+	loadPhaseStart = now;
+	loadReadStart = reads;
+	loadResourceStart = resources;
+}
+
+void idCommonLocal::FinishLoadTimeline()
+{
+	if( loadCurrentPhase < 0 )
+	{
+		return;
+	}
+	LoadPhase( LOAD_PHASE_COUNT );
+	idFile* csv = NULL;
+	const char* name = com_loadTimelineLog.GetString();
+	if( name[0] )
+	{
+		if( !ValidDiagnosticName( name ) )
+		{
+			Warning( "com_loadTimelineLog requires a plain name" );
+			com_loadTimelineLog.SetString( "" );
+		}
+		else
+		{
+			char path[160];
+			idStr::snPrintf( path, sizeof( path ), "loadtimeline/%s.csv", name );
+			csv = fileSystem->OpenFileAppend( path, true, "fs_savepath" );
+			if( csv != NULL && csv->Length() == 0 )
+			{
+				csv->Printf( "loadIndex,map,previousMap,savegame,phase,name,us,readBytes,imageBytes,vertexBytes,indexBytes\n" );
+			}
+		}
+	}
+	uint64 total = 0;
+	for( int i = 0; i < LOAD_PHASE_COUNT; i++ )
+	{
+		const loadTimelineRow_t& row = loadRows[i];
+		if( i != LOAD_MOVE )
+		{
+			total += row.us;
+		}
+		if( com_loadTimeline.GetBool() )
+		{
+			Printf( "LOAD %02d %-14s %llu us read %llu image %lld vertex %lld index %lld\n", i, loadPhaseNames[i], ( unsigned long long )row.us, ( unsigned long long )row.readBytes, ( long long )row.imageBytes, ( long long )row.vertexBytes, ( long long )row.indexBytes );
+		}
+		if( csv != NULL )
+		{
+			csv->Printf( "%d,%s,%s,%d,%d,%s,%llu,%llu,%lld,%lld,%lld\n", loadIndex, currentMapName.c_str(), loadPreviousMap, loadWasSavegame ? 1 : 0, i, loadPhaseNames[i], ( unsigned long long )row.us, ( unsigned long long )row.readBytes, ( long long )row.imageBytes, ( long long )row.vertexBytes, ( long long )row.indexBytes );
+		}
+	}
+	if( csv != NULL )
+	{
+		fileSystem->CloseFile( csv );
+	}
+	if( com_loadTimeline.GetBool() )
+	{
+		Printf( "LOAD total %llu us (BEGIN..FINISH)\n", ( unsigned long long )total );
+	}
+}
+
 idCVar com_wipeSeconds( "com_wipeSeconds", "1", CVAR_SYSTEM, "" );
 idCVar com_disableAutoSaves( "com_disableAutoSaves", "0", CVAR_SYSTEM | CVAR_BOOL, "" );
 idCVar com_disableAllSaves( "com_disableAllSaves", "0", CVAR_SYSTEM | CVAR_BOOL, "" );
@@ -182,6 +294,8 @@ Single player transition from one map to another
 */
 void idCommonLocal::MoveToNewMap( const char* mapName, bool devmap )
 {
+	LoadPhase( LOAD_MOVE );
+	mapSpawnData.worldTimeBase = devmap ? 0 : game->GetWorldTime();
 	idMatchParameters matchParameters;
 	matchParameters.numSlots = 1;
 	matchParameters.gameMode = GAME_MODE_SINGLEPLAYER;
@@ -442,6 +556,7 @@ void idCommonLocal::ExecuteMapChange()
 	}
 
 	int start = Sys_Milliseconds();
+	LoadPhase( LOAD_BEGIN );
 
 	for( int i = 0; i < MAX_INPUT_DEVICES; i++ )
 	{
@@ -482,6 +597,7 @@ void idCommonLocal::ExecuteMapChange()
 
 	int sm = Sys_Milliseconds();
 	// shut down the existing game if it is running
+	LoadPhase( LOAD_UNLOAD );
 	UnloadMap();
 	int ms = Sys_Milliseconds() - sm;
 	common->Printf( "%6d msec to unload map\n", ms );
@@ -489,6 +605,7 @@ void idCommonLocal::ExecuteMapChange()
 	// Free media from previous level and
 	// note which media we are going to need to load
 	sm = Sys_Milliseconds();
+	LoadPhase( LOAD_PURGE );
 	renderSystem->BeginLevelLoad();
 	soundSystem->BeginLevelLoad();
 	declManager->BeginLevelLoad();
@@ -500,6 +617,7 @@ void idCommonLocal::ExecuteMapChange()
 
 	// load / program a gui to stay up on the screen while loading
 	// set the loading gui that we will wipe to
+	LoadPhase( LOAD_LOADGUI );
 	bool hellMap = false;
 	LoadLoadingGui( currentMapName, hellMap );
 
@@ -507,6 +625,7 @@ void idCommonLocal::ExecuteMapChange()
 	ClearWipe();
 
 
+	LoadPhase( LOAD_PRELOAD );
 	if( fileSystem->UsingResourceFiles() )
 	{
 		idStrStatic< MAX_OSPATH > manifestName = currentMapName;
@@ -543,6 +662,7 @@ void idCommonLocal::ExecuteMapChange()
 	Sys_GrabMouseCursor( false );
 
 	// let the renderSystem load all the geometry
+	LoadPhase( LOAD_RENDER_WORLD );
 	if( !renderWorld->InitFromMap( fullMapName ) )
 	{
 		common->Error( "couldn't load %s", fullMapName.c_str() );
@@ -571,9 +691,11 @@ void idCommonLocal::ExecuteMapChange()
 			game->SetPersistentPlayerInfo( 0, mapSpawnData.persistentPlayerInfo );
 		}
 		game->SetServerInfo( matchParameters.serverInfo );
+		game->SetWorldTimeBase( mapSpawnData.worldTimeBase );
 		game->InitFromNewMap( fullMapName, renderWorld, soundWorld, matchParameters.gameMode, Sys_Milliseconds() );
 	}
 
+	LoadPhase( LOAD_SESSION );
 	game->Shell_CreateMenu( true );
 
 	// Reset some values important to multiplayer
@@ -596,6 +718,7 @@ void idCommonLocal::ExecuteMapChange()
 
 	if( !mapSpawnData.savegameFile )
 	{
+		LoadPhase( LOAD_FIRST_FRAME );
 		// run a single frame to catch any resources that are referenced by events posted in spawn
 		idUserCmdMgr emptyCommandManager;
 		gameReturn_t emptyGameReturn;
@@ -613,14 +736,20 @@ void idCommonLocal::ExecuteMapChange()
 		}
 	}
 
+	LoadPhase( LOAD_END_RENDER );
 	renderSystem->EndLevelLoad();
+	LoadPhase( LOAD_END_SOUND );
 	soundSystem->EndLevelLoad();
+	LoadPhase( LOAD_END_DECL );
 	declManager->EndLevelLoad();
+	LoadPhase( LOAD_END_UI );
 	uiManager->EndLevelLoad( currentMapName );
+	LoadPhase( LOAD_END_FS );
 	fileSystem->EndLevelLoad();
 
 	if( !mapSpawnData.savegameFile && !IsMultiplayer() )
 	{
+		LoadPhase( LOAD_SETTLE );
 		common->Printf( "----- Running initial game frames -----\n" );
 
 		// In single player, run a bunch of frames to make sure ragdolls are settled
@@ -636,14 +765,17 @@ void idCommonLocal::ExecuteMapChange()
 		}
 
 		// kick off an auto-save of the game (so we can always continue in this map if we die before hitting an autosave)
+		LoadPhase( LOAD_AUTOSAVE );
 		common->Printf( "----- Saving Game -----\n" );
 		SaveGame( "autosave" );
 	}
 
+	LoadPhase( LOAD_INTERACTIONS );
 	common->Printf( "----- Generating Interactions -----\n" );
 
 	// let the renderSystem generate interactions now that everything is spawned
 	renderWorld->GenerateAllInteractions();
+	LoadPhase( LOAD_FINISH );
 
 	{
 		int vertexMemUsedKB = vertexCache.staticData.vertexMemUsed.GetValue() / 1024;
@@ -696,6 +828,7 @@ void idCommonLocal::ExecuteMapChange()
 
 
 	int	msec = Sys_Milliseconds() - start;
+	FinishLoadTimeline();
 	common->Printf( "%6d msec to load %s\n", msec, currentMapName.c_str() );
 	//Sys_DumpMemory( false );
 
@@ -1601,6 +1734,24 @@ Common_TestMap_f
 CONSOLE_COMMAND( testmap, "tests a map", idCmdSystem::ArgCompletion_MapName )
 {
 	idStr map, string;
+	bool noAAS = false;
+	bool keepView = false;
+	for( int i = 2; i < args.Argc(); i++ )
+	{
+		if( idStr::Icmp( args.Argv( i ), "noAAS" ) == 0 )
+		{
+			noAAS = true;
+		}
+		else if( idStr::Icmp( args.Argv( i ), "keepView" ) == 0 )
+		{
+			keepView = true;
+		}
+		else
+		{
+			common->Printf( "usage: testmap <map> [noAAS] [keepView]\n" );
+			return;
+		}
+	}
 
 	map = args.Argv( 1 );
 	if( !map.Length() )
@@ -1609,9 +1760,20 @@ CONSOLE_COMMAND( testmap, "tests a map", idCmdSystem::ArgCompletion_MapName )
 	}
 	map.StripFileExtension();
 
+	if( common->IsMultiplayer() )
+	{
+		common->Warning( "testmap is single-player only" );
+		return;
+	}
+	cvarSystem->SetCVarString( "g_testSpawnView", "" );
+	if( keepView )
+	{
+		cmdSystem->BufferCommandText( CMD_EXEC_NOW, "saveTestView" );
+	}
+
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "disconnect" );
 
-	sprintf( string, "dmap maps/%s.map", map.c_str() );
+	sprintf( string, "dmap %smaps/%s.map", noAAS ? "noAAS " : "", map.c_str() );
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, string );
 
 	sprintf( string, "devmap %s", map.c_str() );

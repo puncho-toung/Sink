@@ -454,6 +454,7 @@ public:
 	// SRS end
 
 	// RB begin
+	virtual void LoadPhase( loadPhase_t phase );
 	virtual void				LoadPacifierInfo( VERIFY_FORMAT_STRING const char* fmt, ... );
 	virtual void				LoadPacifierProgressTotal( int total );
 	virtual void				LoadPacifierProgressIncrement( int step );
@@ -554,6 +555,7 @@ private:
 		idFile_SaveGame* 	savegameFile;				// Used for loading a save game
 		idFile_SaveGame* 	stringTableFile;			// String table read from save game loaded
 		idFile_SaveGamePipelined* pipelineFile;
+		int64				worldTimeBase;
 		int					savegameVersion;			// Version of the save game we're loading
 		idDict				persistentPlayerInfo;		// Used for transitioning from map to map
 	};
@@ -725,6 +727,10 @@ private:
 	void	ParseCommandLine( int argc, const char* const* argv );
 	bool	SafeMode();
 	void	CloseLogFile();
+	void	DrainPrintRelay();
+	void	CloseMapRowsLog();
+	void	LogMapRows( int tics );
+	void FinishLoadTimeline();
 	void	WriteConfiguration();
 	void	DumpWarnings();
 	void	LoadGameDLL();

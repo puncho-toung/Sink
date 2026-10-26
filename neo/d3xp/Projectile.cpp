@@ -46,6 +46,15 @@ idCVar g_projectileDebug( "g_projectileDebug", "0", CVAR_BOOL, "Debug projectile
 // This is used in MP to simulate frames to catchup a projectile's state. Similiar to how players work much lighter weight.
 
 // This is used in MP to simulate frames to catchup a projectile's state. Similiar to how players work much lighter weight.
+idCVar g_projectileCatchUp( "g_projectileCatchUp", "0", CVAR_GAME | CVAR_BOOL, "server projectile catch-up; actors are never rewound" );
+int idProjectile::simulationDropped;
+
+void idProjectile::ClearSimulationQueue()
+{
+	projectilesToSimulate.Zero();
+	simulationDropped = 0;
+}
+
 idArray< idProjectile::simulatedProjectile_t, idProjectile::MAX_SIMULATED_PROJECTILES >	idProjectile::projectilesToSimulate;
 
 static const int BFG_DAMAGE_FREQUENCY			= 333;
@@ -293,6 +302,15 @@ idProjectile::~idProjectile
 */
 idProjectile::~idProjectile()
 {
+	for( int i = 0; i < MAX_SIMULATED_PROJECTILES; i++ )
+	{
+		if( projectilesToSimulate[i].projectile == this )
+		{
+			projectilesToSimulate[i].projectile = NULL;
+			projectilesToSimulate[i].startTime = 0;
+		}
+	}
+
 	StopSound( SND_CHANNEL_ANY, false );
 	FreeLightDef();
 }
@@ -1744,7 +1762,10 @@ void idProjectile::QueueToSimulate( int startTime )
 		}
 	}
 
-	idLib::Warning( "Unable to simulate more projectiles this frame" );
+	if( simulationDropped++ == 0 )
+	{
+		idLib::Warning( "Unable to simulate more projectiles this frame" );
+	}
 }
 
 /*

@@ -600,6 +600,14 @@ public:
 	virtual bool			Draw( int clientNum );
 	//puncho start - ai-harness
 	virtual const aiHudStats_t*	GetAIStats() const;
+	virtual void GetMapStats( mapGameStats_t& stats ) const;
+	virtual void FinishMapTicStats() { mapAllocTic = Mem_GetAllocationCount() - mapAllocStart; }
+	clipStats_t mapClipStart;
+	unsigned int mapAllocStart, mapAllocTic;
+	virtual int64 GetWorldTime() const { return worldTimeBase + fast.time; }
+	virtual void SetWorldTimeBase( int64 base ) { worldTimeBase = base; }
+	int64 worldTimeBase;
+	int skipReplicatedStatics;
 	//puncho end
 	virtual bool			HandlePlayerGuiEvent( const sysEvent_t* ev );
 	virtual void			ServerWriteSnapshot( idSnapShot& ss );
@@ -647,6 +655,7 @@ public:
 	}
 	//puncho end
 	const char* 			GetMapName() const;
+	void					ListMapStatics() const;
 
 	int						NumAAS() const;
 	idAAS* 					GetAAS( int num ) const;

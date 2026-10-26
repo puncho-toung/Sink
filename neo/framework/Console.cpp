@@ -347,8 +347,8 @@ float idConsoleLocal::DrawFPS( float y )
 	if( ImGuiHook::IsReadyToRender() )
 	{
 		// start smaller
-		int32 statsWindowWidth = 320;
-		int32 statsWindowHeight = 370;		//puncho: +40 for the Int(tex)/Int(math) rows
+		int32 statsWindowWidth = com_showFPS.GetInteger() >= 5 ? 850 : 320;
+		int32 statsWindowHeight = 370 + ( com_showFPS.GetInteger() >= 5 ? 120 : 0 );		//puncho: +40 for the Int(tex)/Int(math) rows
 
 		//puncho start - ai-harness (plans/ai-harness/00-PLAN.md §2.5): the host's AI census of the last tic, read in
 		// place with no copy and no lock because the game thread is idle or has just finished when this draws (on the
@@ -487,6 +487,16 @@ float idConsoleLocal::DrawFPS( float y )
 
 		ImGui::TextColored( colorCyan, "API: %s, AA[%i, %i]: %s, R: %s", API, width, height, aaMode, retroRenderMode );
 
+		if( com_showFPS.GetInteger() >= 5 )
+		{
+			char rows[6][256];
+			bool high[6];
+			FormatMapRows( rows, high );
+			for( int i = 0; i < 6; i++ )
+			{
+				ImGui::TextColored( high[i] ? ImVec4( 1, 0.2f, 0.2f, 1 ) : colorLtGrey, "%s", rows[i] );
+			}
+		}
 		ImGui::TextColored( colorGold, "Device: %s", deviceManager->GetRendererString() );
 		ImGui::TextColored( colorPastelMagenta, "VRAM Usage: %llu MB", commonLocal.GetRendererGpuMemoryMB() );
 
@@ -498,11 +508,11 @@ float idConsoleLocal::DrawFPS( float y )
 		if( com_showFPS.GetInteger() > 2 )
 		{
 			int atlasPercentage = idMath::Ftoi( 100.0f * ( commonLocal.stats_backend.c_shadowAtlasUsage / ( float )Square( r_shadowMapAtlasSize.GetInteger() ) ) );
-			ImGui::TextColored( colorLtGrey, "SHADOWS: atlas usage:%2i%% views:%i draws:%i tris:%i",
+			ImGui::TextColored( colorLtGrey, "SHADOWS: atlas usage:%2i%% views:%i draws:%i tris:%i failed:%i",
 								atlasPercentage,
 								commonLocal.stats_backend.c_shadowViews,
 								commonLocal.stats_backend.c_shadowElements,
-								commonLocal.stats_backend.c_shadowIndexes / 3 );
+								commonLocal.stats_backend.c_shadowIndexes / 3, commonLocal.stats_backend.c_shadowAtlasFailed );
 
 			ImGui::TextColored( colorLtGrey, "DYNAMIC: callback:%-2i md5:%i dfrmVerts:%i dfrmTris:%i tangTris:%i guis:%i",
 								commonLocal.stats_frontend.c_entityDefCallbacks,

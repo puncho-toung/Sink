@@ -184,6 +184,16 @@ struct snapStats_t
 	int		sequence;				// snapshots written; 0 until the first
 };
 
+// MAP sampling never allocates; caller owns this snapshot.
+struct mapGameStats_t
+{
+	int entities, activeEntities, nonReplicated, cmModels, skipStatics;
+	uint64 pvsBytes;
+	int pvsMilliseconds;
+	unsigned int clipTrans, clipRot, clipMotion, clipContents, clipContacts, clipGathers, clipCandidates, clipRmt, clipUs;
+	unsigned int allocGameTic;
+};
+
 // The last tic's record for the com_showFPS 3 window, the aistats: line and the CSV (§2.5). POD on
 // purpose (the worst AI's name is a fixed char array) so the block copies with memcpy.
 struct aiHudStats_t
@@ -310,6 +320,10 @@ public:
 
 	//puncho start - ai-harness: the last tic's AI census for the com_showFPS 3 window; NULL on a client or with g_aiStats 0
 	virtual const aiHudStats_t*	GetAIStats() const = 0;
+	virtual void GetMapStats( mapGameStats_t& stats ) const = 0;
+	virtual void FinishMapTicStats() = 0;
+	virtual int64 GetWorldTime() const = 0;
+	virtual void SetWorldTimeBase( int64 base ) = 0;
 	//puncho end
 
 	virtual bool				HandlePlayerGuiEvent( const sysEvent_t* ev ) = 0;
@@ -526,7 +540,7 @@ extern idGameEdit* 				gameEdit;
 ===============================================================================
 */
 
-const int GAME_API_VERSION		= 9;		//puncho: 9 = idGame::GetAIStats (ai-harness)
+const int GAME_API_VERSION		= 10; // P2 stage 0: GetMapStats, LoadPhase, GetWorldTime/SetWorldTimeBase
 
 typedef struct
 {

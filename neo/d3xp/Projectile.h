@@ -96,6 +96,8 @@ public :
 	virtual bool			ClientReceiveEvent( int event, int time, const idBitMsg& msg );
 
 	void					QueueToSimulate( int startTime );
+	static void ClearSimulationQueue();
+	static int simulationDropped;
 	virtual void			SimulateProjectileFrame( int msec, int endTime );
 	virtual void			PostSimulate( int endTime );
 

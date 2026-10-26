@@ -74,6 +74,10 @@ const char* idGameLocal::sufaceTypeNames[ MAX_SURFACE_TYPES ] =
 idCVar net_usercmd_timing_debug( "net_usercmd_timing_debug", "0", CVAR_BOOL, "Print messages about usercmd timing." );
 
 
+idCVar net_refuseMapWithPeers( "net_refuseMapWithPeers", "1", CVAR_GAME | CVAR_BOOL, "refuse legacy game-driven map changes while session peers are connected" );
+idCVar net_maxSkipReplicatedStatics( "net_maxSkipReplicatedStatics", "128", CVAR_GAME | CVAR_INTEGER, "map-spawn nonreplicated entity budget; 0 disables", 0, 256 );
+extern idCVar g_projectileCatchUp;
+
 // List of all defs used by the player that will stay on the fast timeline
 static const char* fastEntityList[] =
 {
@@ -204,6 +208,11 @@ idGameLocal::Clear
 */
 void idGameLocal::Clear()
 {
+	memset( &mapClipStart, 0, sizeof( mapClipStart ) );
+	mapAllocStart = 0;
+	mapAllocTic = 0;
+	worldTimeBase = 0;
+	skipReplicatedStatics = 0;
 	int i;
 
 	serverInfo.Clear();
@@ -627,6 +636,8 @@ void idGameLocal::SaveGame( idFile* f, idFile* strings )
 	savegame.WriteInt( framenum );
 	savegame.WriteInt( previousTime );
 	savegame.WriteInt( time );
+	savegame.WriteInt( ( int )( ( uint64 )worldTimeBase >> 32 ) );
+	savegame.WriteInt( ( int )( ( uint64 )worldTimeBase & 0xFFFFFFFFu ) );
 
 	savegame.WriteInt( vacuumAreaNum );
 
@@ -995,6 +1006,7 @@ Initializes all map variables common to both save games and spawned games.
 */
 void idGameLocal::LoadMap( const char* mapName, int randseed )
 {
+	common->LoadPhase( LOAD_MAP_PARSE );
 	bool sameMap = ( mapFile && idStr::Icmp( mapFileName, mapName ) == 0 );
 
 	// clear the sound system
@@ -1036,8 +1048,10 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	}
 
 	// load the collision map
+	common->LoadPhase( LOAD_CM );
 	collisionModelManager->LoadMap( mapFile, false );
 	collisionModelManager->Preload( mapName );
+	common->LoadPhase( LOAD_GAME_INIT );
 
 	numClients = 0;
 
@@ -1116,6 +1130,7 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	cinematicMaxSkipTime = 0;
 
 	clip.Init();
+	memset( &mapClipStart, 0, sizeof( mapClipStart ) );
 	maxObstacleRadius = 0.0f;	//puncho - ai-avoidance (WP-A4): grown by every actor and moveable the map spawns or restores
 	//puncho start - ai-avoidance (WP-A5): no grid until the first tic builds one
 	aiNeighborTic = -1;
@@ -1130,6 +1145,7 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 
 	common->UpdateLevelLoadPacifier();
 
+	common->LoadPhase( LOAD_PVS );
 	pvs.Init();
 
 	common->UpdateLevelLoadPacifier();
@@ -1137,12 +1153,14 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	playerPVS.i = -1;
 	playerConnectedAreas.i = -1;
 
+	common->LoadPhase( LOAD_AAS );
 	// load navigation system for all the different monster sizes
 	for( int i = 0; i < aasNames.Num(); i++ )
 	{
 		aasList[ i ]->Init( idStr( mapFileName ).SetFileExtension( aasNames[ i ] ).c_str(), mapFile->GetGeometryCRC() );
 	}
 
+	common->LoadPhase( LOAD_MEDIA );
 	// clear the smoke particle free list
 	smokeParticles->Init();
 
@@ -1462,11 +1480,19 @@ void idGameLocal::InitFromNewMap( const char* mapName, idRenderWorld* renderWorl
 		g_skill.SetInteger( idMath::ClampInt( 0, 3, g_skill.GetInteger() ) );
 	}
 
+	if( common->IsMultiplayer() && renderWorld->NumPortals() > 20800 )
+	{
+		Error( "map %s has %d portals; multiplayer supports at most 20800", mapName, renderWorld->NumPortals() );
+	}
+	skipReplicatedStatics = 0;
 	LoadMap( mapName, randseed );
 
+	common->LoadPhase( LOAD_SCRIPT );
 	InitScriptForMap();
 
+	common->LoadPhase( LOAD_SPAWN );
 	MapPopulate( NULL );	//puncho - identity (P1-A2)
+	common->LoadPhase( LOAD_POST_SPAWN );
 
 	// RB
 	PopulateEnvironmentProbes();
@@ -1535,6 +1561,7 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 
 	// load the map needed for this savegame
 	LoadMap( mapName, 0 );
+	common->LoadPhase( LOAD_RESTORE );
 
 	//puncho start - saves (P0-m5): the owner frees the pipelined file on every way out, the refused-script return and
 	// every Error's unwind included; declared before the idRestoreGame that reads through it, so it outlives the reader.
@@ -1684,6 +1711,15 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 	savegame.ReadInt( framenum );
 	savegame.ReadInt( previousTime );
 	savegame.ReadInt( time );
+	worldTimeBase = 0;
+	if( savegame.GetBuildNumber() >= BUILD_NUMBER_SAVE_VERSION_WORLD_CLOCK )
+	{
+		int high, low;
+		savegame.ReadInt( high );
+		savegame.ReadInt( low );
+		worldTimeBase = ( int64 )( ( ( uint64 )( unsigned int )high << 32 ) | ( unsigned int )low );
+	}
+
 
 	savegame.ReadInt( vacuumAreaNum );
 
@@ -1889,6 +1925,7 @@ idGameLocal::MapShutdown
 */
 void idGameLocal::MapShutdown()
 {
+	idProjectile::ClearSimulationQueue();
 	Printf( "--------- Game Map Shutdown ----------\n" );
 
 	gamestate = GAMESTATE_SHUTDOWN;
@@ -2857,6 +2894,8 @@ idGameLocal::RunFrame
 */
 void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 {
+	clip.GetMapStatistics( mapClipStart );
+	mapAllocStart = Mem_GetAllocationCount();
 	SCOPED_PROFILE_EVENT( "RunFrame" );
 
 	idEntity* 	ent;
@@ -3068,11 +3107,13 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			// Run catch-up for any client projectiles.
 			// This is done after the main think so that all projectiles will be up-to-date
 			// when snapshots are created.
-			//if ( common->IsMultiplayer() ) {
-			//while ( SimulateProjectiles() ) {
-			//clientGame.gameLibEffects.Update( clientGame.GetGameMs(), clientGame.GetGameMsPerFrame(), clientGame.GetServerGameTime() );
-			//}
-			//}
+			if( common->IsMultiplayer() && common->IsServer() && g_projectileCatchUp.GetBool() )
+			{
+				while( SimulateProjectiles() )
+				{
+				}
+			}
+
 
 
 			// remove any entities that have stopped thinking
@@ -3547,6 +3588,15 @@ void idGameLocal::BuildReturnValue( gameReturn_t& ret )
 	// see if a target_sessionCommand has forced a changelevel
 	if( sessionCommand.Length() )
 	{
+		idCmdArgs args( sessionCommand, false );
+		if( net_refuseMapWithPeers.GetBool() && common->IsMultiplayer() &&
+			session->GetActivePlatformLobbyBase().HasActivePeers() &&
+			( !idStr::Icmp( args.Argv( 0 ), "map" ) || !idStr::Icmp( args.Argv( 0 ), "devmap" ) ) )
+		{
+			Warning( "map change to '%s' refused: peers in the session (co-op transitions are P2.3.5)", args.Argv( 1 ) );
+			sessionCommand.Clear();
+			return;
+		}
 		strncpy( ret.sessionCommand, sessionCommand, sizeof( ret.sessionCommand ) );
 		sessionCommand.Clear();	// Fixes a double loading bug for the e3 demo.  Since we run the game thread in SMP mode, we could run this twice and re-set the ret.sessionCommand to a stale sessionCommand (since that doesn't get cleared until LoadMap is called!)
 	}
@@ -4348,6 +4398,16 @@ void idGameLocal::RegisterEntity( idEntity* ent, int forceSpawnId, const idDict&
 	int spawn_entnum;
 
 	ent->fl.skipReplication = spawnArgsToCopy.GetBool( "net_skip_replication", false );
+	if( common->IsMultiplayer() && common->IsServer() && gamestate == GAMESTATE_STARTUP && ent->fl.skipReplication )
+	{
+		skipReplicatedStatics++;
+		const int cap = net_maxSkipReplicatedStatics.GetInteger();
+		if( cap > 0 && skipReplicatedStatics > cap )
+		{
+			Error( "map %s spawns more than %d net_skip_replication entities; the 256 non-replicated slots also hold client-predicted projectiles", GetMapName(), cap );
+		}
+	}
+
 
 	if( !spawnArgsToCopy.GetInt( "spawn_entnum", "0", spawn_entnum ) )
 	{
@@ -4745,6 +4805,150 @@ idGameLocal::SpawnMapEntities
 Parses textual entity definitions out of an entstring and spawns gentities.
 ==============
 */
+static idCVar g_spawnSkipStatics( "g_spawnSkipStatics", "-1", CVAR_GAME | CVAR_INTEGER, "SP static skip override: -1 map key, 0 off, 1 on" );
+
+struct mapStaticReference_t
+{
+	const idKeyValue* value;
+	int entity;
+};
+
+static void BuildMapStaticReferences( const idMapFile* map, idHashIndex& hash, idList<mapStaticReference_t, TAG_GAME>& refs )
+{
+	int count = 0;
+	for( int e = 0; e < map->GetNumEntities(); e++ )
+	{
+		count += map->GetEntity( e )->epairs.GetNumKeyVals();
+	}
+	refs.SetNum( count );
+	hash.Clear( 1024, count );
+	int index = 0;
+	for( int e = 0; e < map->GetNumEntities(); e++ )
+	{
+		const idDict& args = map->GetEntity( e )->epairs;
+		for( int k = 0; k < args.GetNumKeyVals(); k++ )
+		{
+			refs[index].value = args.GetKeyVal( k );
+			refs[index].entity = e;
+			hash.Add( hash.GenerateKey( refs[index].value->GetValue(), false ), index );
+			index++;
+		}
+	}
+}
+
+static bool MapStaticCanSkip( const idMapFile* map, int entity, const idHashIndex& hash, const idList<mapStaticReference_t, TAG_GAME>& refs, idStr& reason )
+{
+	const idDict& args = map->GetEntity( entity )->epairs;
+	const char* classname = args.GetString( "classname" );
+	if( idStr::Icmp( classname, "func_static" ) != 0 && idStr::Icmp( classname, "misc_model" ) != 0 )
+	{
+		reason = "not static";
+		return false;
+	}
+	static const char* keys[] = { "classname", "name", "origin", "angle", "angles", "rotation", "model", "inline", "solid", "noclipmodel", "modelscale", "modelscale_vec" };
+	for( int k = 0; k < args.GetNumKeyVals(); k++ )
+	{
+		const idStr& key = args.GetKeyVal( k )->GetKey();
+		bool allowed = key.Icmpn( "_tb_", 4 ) == 0;
+		for( int i = 0; i < sizeof( keys ) / sizeof( keys[0] ); i++ )
+		{
+			allowed |= key.Icmp( keys[i] ) == 0;
+		}
+		if( !allowed )
+		{
+			reason.Format( "key %s", key.c_str() );
+			return false;
+		}
+	}
+	const idStr name = args.GetString( "name" );
+	const idStr model = args.GetString( "model" );
+	if( model.IsEmpty() || model.Icmp( name ) == 0 )
+	{
+		reason = "brush static: consider func_group";
+		return false;
+	}
+	const bool inlineAll = map->GetEntity( 0 )->epairs.GetBool( "inlineAllStatics" );
+	if( !args.GetBool( "inline" ) && !inlineAll )
+	{
+		reason = "not inlined";
+		return false;
+	}
+	if( inlineAll )
+	{
+		idStr extension;
+		model.ExtractFileExtension( extension );
+		if( extension.Icmp( "glb" ) && extension.Icmp( "gltf" ) && extension.Icmp( "lwo" ) && extension.Icmp( "ase" ) && extension.Icmp( "ma" ) && extension.Icmp( "obj" ) )
+		{
+			reason = "not inlined: unsupported extension";
+			return false;
+		}
+	}
+	const idDict* def = gameLocal.FindEntityDefDict( classname, false );
+	if( args.GetBool( "solid", def ? def->GetString( "solid", "1" ) : "1" ) &&
+		!args.GetBool( "noclipmodel", def ? def->GetString( "noclipmodel", "0" ) : "0" ) )
+	{
+		reason = "solid";
+		return false;
+	}
+	if( !name.IsEmpty() )
+	{
+		for( int r = hash.First( hash.GenerateKey( name, false ) ); r != -1; r = hash.Next( r ) )
+		{
+			if( refs[r].entity != entity && refs[r].value->GetValue().Icmp( name ) == 0 )
+			{
+				reason.Format( "referenced by map entity %i", refs[r].entity );
+				return false;
+			}
+		}
+		const int prefix = idStr::Length( classname );
+		const char* suffix = name.c_str() + Min( prefix, name.Length() );
+		if( *suffix == '_' )
+		{
+			suffix++;
+		}
+		bool generated = name.Icmpn( classname, prefix ) == 0 && *suffix != '\0';
+		for( ; *suffix != '\0'; suffix++ )
+		{
+			generated &= *suffix >= '0' && *suffix <= '9';
+		}
+		if( !generated )
+		{
+			reason = "named";
+			return false;
+		}
+	}
+	reason = "eligible";
+	return true;
+}
+
+void idGameLocal::ListMapStatics() const
+{
+	if( mapFile == NULL )
+	{
+		Printf( "listMapStatics: no map loaded\n" );
+		return;
+	}
+	idHashIndex references;
+	idList<mapStaticReference_t, TAG_GAME> refs;
+	BuildMapStaticReferences( mapFile, references, refs );
+	int eligible = 0;
+	for( int e = 1; e < mapFile->GetNumEntities(); e++ )
+	{
+		const idDict& args = mapFile->GetEntity( e )->epairs;
+		const char* classname = args.GetString( "classname" );
+		if( idStr::Icmp( classname, "func_static" ) != 0 && idStr::Icmp( classname, "misc_model" ) != 0 )
+		{
+			continue;
+		}
+		idStr reason;
+		const bool canSkip = MapStaticCanSkip( mapFile, e, references, refs, reason );
+		eligible += canSkip;
+		idEntity* live = FindEntity( args.GetString( "name" ) );
+		Printf( "map static %i %s entity %i: %s\n", e, args.GetString( "name" ), live ? live->entityNumber : -1, reason.c_str() );
+	}
+	Printf( "map statics: %i eligible for collision-free inline skip\n", eligible );
+}
+
 void idGameLocal::SpawnMapEntities()
 {
 	int			i;
@@ -4780,6 +4984,19 @@ void idGameLocal::SpawnMapEntities()
 
 	num = 1;
 	inhibit = 0;
+	int skippedStatics = 0;
+	bool skipStatics = mapFile->GetEntity( 0 )->epairs.GetBool( "spawnSkipStatics" );
+	if( !common->IsMultiplayer() && g_spawnSkipStatics.GetInteger() >= 0 )
+	{
+		skipStatics = g_spawnSkipStatics.GetInteger() != 0;
+	}
+	idHashIndex references;
+	idList<mapStaticReference_t, TAG_GAME> refs;
+	if( skipStatics )
+	{
+		BuildMapStaticReferences( mapFile, references, refs );
+		Printf( "map static reference scan %" PRIuSIZE " bytes\n", references.Allocated() + refs.Allocated() );
+	}
 
 	for( i = 1 ; i < numEntities ; i++ )
 	{
@@ -4795,6 +5012,14 @@ void idGameLocal::SpawnMapEntities()
 			continue;
 		}
 		//puncho end
+
+		idStr skipReason;
+		if( skipStatics && MapStaticCanSkip( mapFile, i, references, refs, skipReason ) )
+		{
+			inhibit++;
+			skippedStatics++;
+			continue;
+		}
 
 		if( !InhibitEntitySpawn( args ) )
 		{
@@ -4813,7 +5038,7 @@ void idGameLocal::SpawnMapEntities()
 		}
 	}
 
-	Printf( "...%i entities spawned, %i inhibited\n\n", num, inhibit );
+	Printf( "...%i entities spawned, %i inhibited (%i statics skipped)\n\n", num, inhibit, skippedStatics );
 
 	//puncho start - P1-m3: the use_aas advice, game policy over the map merge's records. LoadMap has loaded the AAS
 	// files; a monster needs the one of its size, and the AAS compiler builds only the sizes the map uses, so a patch
@@ -6803,7 +7028,7 @@ bool idGameLocal::SimulateProjectiles()
 	// Simulate projectiles
 	for( int i = 0; i < idProjectile::MAX_SIMULATED_PROJECTILES; i++ )
 	{
-		if( idProjectile::projectilesToSimulate[i].projectile != NULL && idProjectile::projectilesToSimulate[i].startTime != 0 )
+		if( idProjectile::projectilesToSimulate[i].projectile != NULL )
 		{
 			const int startTime = idProjectile::projectilesToSimulate[i].startTime;
 			const int startFrame = MSEC_TO_FRAME_FLOOR( startTime );
@@ -6833,3 +7058,39 @@ bool idGameLocal::SimulateProjectiles()
 }
 
 
+
+void idGameLocal::GetMapStats( mapGameStats_t& stats ) const
+{
+	memset( &stats, 0, sizeof( stats ) );
+	for( int i = 0; i < MAX_GENTITIES; i++ )
+	{
+		if( entities[i] != NULL )
+		{
+			stats.entities++;
+			if( entities[i]->thinkFlags != 0 )
+			{
+				stats.activeEntities++;
+			}
+			if( i >= ENTITYNUM_FIRST_NON_REPLICATED && i < ENTITYNUM_MAX_NORMAL )
+			{
+				stats.nonReplicated++;
+			}
+		}
+	}
+	stats.cmModels = collisionModelManager->GetNumModels();
+	stats.skipStatics = skipReplicatedStatics;
+	stats.pvsBytes = pvs.GetMapBytes();
+	stats.pvsMilliseconds = pvs.GetInitMilliseconds();
+	clipStats_t current;
+	clip.GetMapStatistics( current );
+	stats.clipTrans = current.numTranslations - mapClipStart.numTranslations;
+	stats.clipRot = current.numRotations - mapClipStart.numRotations;
+	stats.clipMotion = current.numMotions - mapClipStart.numMotions;
+	stats.clipContents = current.numContents - mapClipStart.numContents;
+	stats.clipContacts = current.numContacts - mapClipStart.numContacts;
+	stats.clipGathers = current.numGathers - mapClipStart.numGathers;
+	stats.clipCandidates = current.numGatherCandidates - mapClipStart.numGatherCandidates;
+	stats.clipRmt = current.numRenderModelTraces - mapClipStart.numRenderModelTraces;
+	stats.clipUs = current.usQueries - mapClipStart.usQueries;
+	stats.allocGameTic = mapAllocTic;
+}

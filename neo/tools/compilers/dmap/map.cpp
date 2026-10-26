@@ -93,6 +93,8 @@ The contents on all sides of a brush should be the same
 Sets contentsShader, contents, opaque
 ===========
 */
+static int c_side0NonOpaque;
+
 static void SetBrushContents( uBrush_t* b )
 {
 	int			contents, c2;
@@ -129,6 +131,12 @@ static void SetBrushContents( uBrush_t* b )
 		{
 			b->opaque = false;
 		}
+	}
+
+	if( b->opaque && b->sides[0].material->Coverage() != MC_OPAQUE )
+	{
+		b->opaque = false;
+		c_side0NonOpaque++;
 	}
 
 	if( contents & CONTENTS_AREAPORTAL )
@@ -878,6 +886,7 @@ bool LoadDMapFile( const char* filename )
 	dmapGlobals.numEntities = 0;
 	c_numMapPatches = 0;
 	c_areaportals = 0;
+	c_side0NonOpaque = 0;
 	c_dmapOnlyEntities = 0;
 
 	size = dmapGlobals.dmapFile->GetNumEntities() * sizeof( dmapGlobals.uEntities[0] );
@@ -926,6 +935,7 @@ bool LoadDMapFile( const char* filename )
 	}
 
 	common->Printf( "%5i total world brushes\n", brushes );
+	common->Printf( "%5i brushes made non-opaque by side 0\n", c_side0NonOpaque );
 	common->Printf( "%5i total world triSurfs\n", triSurfs );
 	common->Printf( "%5i patches\n", c_numMapPatches );
 	common->Printf( "%5i entities\n", dmapGlobals.numEntities );

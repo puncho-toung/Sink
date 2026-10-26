@@ -254,10 +254,12 @@ int idSysThread::ThreadProc( idSysThread* thread )
 	}
 	catch( idException& ex )
 	{
-		idLib::Warning( "Fatal error in thread %s: %s", thread->GetName(), ex.GetError() );
+		Sys_Printf( "Fatal error in thread %s: %s\n", thread->GetName(), ex.GetError() );
+		fflush( stdout );
+		fflush( stderr );
 
 		// We don't handle threads terminating unexpectedly very well, so just terminate the whole process
-		exit( 0 );
+		exit( 1 );
 	}
 
 	thread->isRunning = false;

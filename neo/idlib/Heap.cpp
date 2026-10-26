@@ -31,6 +31,11 @@ If you have questions concerning this license or the applicable additional terms
 #include "precompiled.h"
 #pragma hdrstop
 
+// Native POD TLS is constant-initialized even for allocations during static initialization.
+// ID_TLS wraps pthread/TlsGetValue calls and a dynamically initialized key on this branch.
+static thread_local unsigned int threadAllocationCount;
+unsigned int Mem_GetAllocationCount() { return threadAllocationCount; }
+
 //===============================================================
 //
 //	memory allocation all in one place
@@ -52,6 +57,7 @@ void* Mem_Alloc16( const size_t size, const memTag_t tag )
 	{
 		return NULL;
 	}
+	threadAllocationCount++;
 	const size_t paddedSize = ( size + 15 ) & ~15;
 #ifdef _WIN32
 	// this should work with MSVC and mingw, as long as __MSVCRT_VERSION__ >= 0x0700

@@ -35,6 +35,80 @@ idCVar com_logFile( "logFile", "0", CVAR_SYSTEM | CVAR_NOCHEAT, "1 = buffer log,
 idCVar com_logFileName( "logFileName", "qconsole.log", CVAR_SYSTEM | CVAR_NOCHEAT, "name of log file, if empty, qconsole.log will be used" );
 idCVar com_timestampPrints( "com_timestampPrints", "0", CVAR_SYSTEM, "print time with each console print, 1 = msec, 2 = sec", 0, 2, idCmdSystem::ArgCompletion_Integer<0, 2> );
 
+// Fixed storage: worker diagnostics must not allocate or touch console/filesystem state.
+idCVar com_printRelay( "com_printRelay", "1", CVAR_SYSTEM | CVAR_BOOL, "relay worker diagnostics to the console and logfile" );
+static const int PRINT_RELAY_LINES = 256;
+static const int PRINT_RELAY_LINE_BYTES = 1024;
+struct printRelayLine_t
+{
+	char text[PRINT_RELAY_LINE_BYTES];
+	bool warning;
+};
+static printRelayLine_t printRelay[PRINT_RELAY_LINES];
+static idSysMutex printRelayMutex;
+static int printRelayHead, printRelayCount, printRelayDropped, printRelayTruncated;
+static bool printRelayDraining;
+
+static void QueuePrintRelay( const char* text, bool warning )
+{
+	printRelayMutex.Lock();
+	if( printRelayCount == PRINT_RELAY_LINES )
+	{
+		printRelayDropped++;
+		printRelayMutex.Unlock();
+		Sys_Printf( "%s%s", warning ? "WARNING: " : "", text );
+		return;
+	}
+	printRelayLine_t& line = printRelay[( printRelayHead + printRelayCount ) % PRINT_RELAY_LINES];
+	if( strlen( text ) >= PRINT_RELAY_LINE_BYTES )
+	{
+		printRelayTruncated++;
+	}
+	idStr::Copynz( line.text, text, sizeof( line.text ) );
+	line.warning = warning;
+	printRelayCount++;
+	printRelayMutex.Unlock();
+}
+
+void idCommonLocal::DrainPrintRelay()
+{
+	if( !idLib::IsMainThread() || printRelayDraining )
+	{
+		return;
+	}
+	printRelayDraining = true;
+	for( ;; )
+	{
+		printRelayLine_t line;
+		printRelayMutex.Lock();
+		if( printRelayCount == 0 )
+		{
+			const int dropped = printRelayDropped;
+			const int truncated = printRelayTruncated;
+			printRelayDropped = printRelayTruncated = 0;
+			printRelayMutex.Unlock();
+			if( dropped || truncated )
+			{
+				Printf( "print relay: %d lines dropped to stdout, %d truncated\n", dropped, truncated );
+			}
+			break;
+		}
+		line = printRelay[printRelayHead];
+		printRelayHead = ( printRelayHead + 1 ) % PRINT_RELAY_LINES;
+		printRelayCount--;
+		printRelayMutex.Unlock();
+		if( line.warning )
+		{
+			Warning( "%s", line.text );
+		}
+		else
+		{
+			Printf( "%s", line.text );
+		}
+	}
+	printRelayDraining = false;
+}
+
 #ifndef ID_RETAIL
 	idCVar com_printFilter( "com_printFilter", "", CVAR_SYSTEM, "only print lines that contain this, add multiple filters with a ; delimeter" );
 #endif
@@ -81,6 +155,8 @@ idCommonLocal::CloseLogFile
 */
 void idCommonLocal::CloseLogFile()
 {
+	DrainPrintRelay();
+	CloseMapRowsLog();
 	if( logFile )
 	{
 		com_logFile.SetBool( false ); // make sure no further VPrintf attempts to open the log file again
@@ -120,7 +196,7 @@ void idCommonLocal::VPrintf( const char* fmt, va_list args )
 	int timeLength = 0;
 	char msg[MAX_PRINT_MSG_SIZE];
 	msg[ 0 ] = '\0';
-	if( com_timestampPrints.GetInteger() )
+	if( com_timestampPrints.GetInteger() && !( idLib::IsMainThread() && printRelayDraining ) )
 	{
 		int	t = Sys_Milliseconds();
 		if( com_timestampPrints.GetInteger() == 1 )
@@ -139,6 +215,12 @@ void idCommonLocal::VPrintf( const char* fmt, va_list args )
 		msg[sizeof( msg ) - 2] = '\n';
 		msg[sizeof( msg ) - 1] = '\0'; // avoid output garbling
 		Sys_Printf( "idCommon::VPrintf: truncated to %d characters\n", strlen( msg ) - 1 );
+	}
+
+	if( !idLib::IsMainThread() && com_printRelay.GetBool() )
+	{
+		QueuePrintRelay( msg, false );
+		return;
 	}
 
 	if( rd_buffer )
@@ -325,6 +407,11 @@ void idCommonLocal::DPrintf( const char* fmt, ... )
 	msg[sizeof( msg ) - 1] = '\0';
 
 	// never refresh the screen, which could cause reentrency problems
+	if( !idLib::IsMainThread() )
+	{
+		Printf( S_COLOR_RED "%s", msg );
+		return;
+	}
 	bool temp = com_refreshOnPrint;
 	com_refreshOnPrint = false;
 
@@ -370,15 +457,19 @@ void idCommonLocal::Warning( const char* fmt, ... )
 	va_list		argptr;
 	char		msg[MAX_PRINT_MSG_SIZE];
 
-	if( !idLib::IsMainThread() )
-	{
-		return;	// not thread safe!
-	}
-
 	va_start( argptr, fmt );
 	idStr::vsnPrintf( msg, sizeof( msg ), fmt, argptr );
 	va_end( argptr );
 	msg[sizeof( msg ) - 1] = 0;
+
+	if( !idLib::IsMainThread() )
+	{
+		if( com_printRelay.GetBool() )
+		{
+			QueuePrintRelay( msg, true );
+		}
+		return;
+	}
 
 	Printf( S_COLOR_YELLOW "WARNING: " S_COLOR_RED "%s\n", msg );
 
@@ -647,4 +738,42 @@ void idCommonLocal::FatalError( const char* fmt, ... )
 
 	Sys_Error( "%s", errorMessage );
 
+}
+
+static void PrintRelayTestJob( void* data )
+{
+	const int count = *( const int* )data;
+	if( count < 0 )
+	{
+		throw idException( "print relay test" );
+	}
+	for( int i = 0; i < count; i++ )
+	{
+		common->Printf( "print relay test job %d\n", i );
+	}
+}
+REGISTER_PARALLEL_JOB( PrintRelayTestJob, "PrintRelayTestJob" );
+idCVar com_printRelayTest( "com_printRelayTest", "0", CVAR_SYSTEM | CVAR_INTEGER, "developer: emit N worker lines and two game-thread lines; -1 tests fatal thread handling" );
+
+void RunPrintRelayTest()
+{
+	static bool gameLinesPending;
+	if( gameLinesPending )
+	{
+		common->Printf( "print relay test game Printf\n" );
+		common->DPrintf( "print relay test game DPrintf\n" );
+		gameLinesPending = false;
+	}
+	const int count = com_printRelayTest.GetInteger();
+	if( count == 0 || !com_developer.GetBool() )
+	{
+		return;
+	}
+	com_printRelayTest.SetInteger( 0 );
+	idParallelJobList* jobs = parallelJobManager->AllocJobList( JOBLIST_UTILITY, JOBLIST_PRIORITY_LOW, 1, 0, NULL );
+	jobs->AddJob( PrintRelayTestJob, ( void* )&count );
+	jobs->Submit();
+	jobs->Wait();
+	parallelJobManager->FreeJobList( jobs );
+	gameLinesPending = true;
 }

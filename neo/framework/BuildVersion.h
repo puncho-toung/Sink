@@ -43,5 +43,8 @@ const int BUILD_NUMBER_SAVE_VERSION_NET_CONTENT_LAYERS          = 1413;	// conte
 const int BUILD_NUMBER_SAVE_VERSION_DAMAGABLE_SNAPSHOT          = 1414;	// P0-m10: idDamagable (func_damagable) is networkSync and writes its break to snapshots
 const int BUILD_NUMBER_SAVE_VERSION_SNAPSHOT_CLASS_DATA_BIT     = 1415;	// F4-m1: a snapshot entity's header ends with a bit saying whether its class data follows
 
-const int BUILD_NUMBER = BUILD_NUMBER_SAVE_VERSION_SNAPSHOT_CLASS_DATA_BIT;
+const int BUILD_NUMBER_SAVE_VERSION_PORTAL_SNAPSHOT_OBJECTS = 1416; // P2.0.7: portal state chunk objects
+const int BUILD_NUMBER_SAVE_VERSION_WORLD_CLOCK = 1417; // P2.0.8: saved unscaled world-time base
+
+const int BUILD_NUMBER = BUILD_NUMBER_SAVE_VERSION_WORLD_CLOCK;
 const int BUILD_NUMBER_MINOR = 0;

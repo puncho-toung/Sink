@@ -4206,7 +4206,11 @@ void idWeapon::Event_LaunchProjectiles( int num_projectiles, float spread, float
 				proj->Launch( muzzle_pos, dir, pushVelocity, fuseOffset, launchPower, dmgPower );
 
 				// predictively spawned, but no need to simulate - was needed for correct processing of client mines when spawned on the server (because we're futzing with the clip models)
-				proj->QueueToSimulate( startTime );
+				extern idCVar g_projectileCatchUp;
+				if( g_projectileCatchUp.GetBool() )
+				{
+					proj->QueueToSimulate( startTime );
+				}
 
 				if( cg_predictedSpawn_debug.GetBool() )
 				{
