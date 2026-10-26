@@ -127,6 +127,7 @@ class idSoundSample
 {
 public:
 	idSoundSample();
+	int lastUseLoad = 0;
 
 	~idSoundSample(); // destructor should be public so lists of  soundsamples can be destroyed etc
 

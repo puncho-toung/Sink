@@ -136,8 +136,11 @@ void idUserInterfaceManagerLocal::Preload( const char* mapName )
 	}
 }
 
+static int guiLevelLoadCount;
+
 void idUserInterfaceManagerLocal::BeginLevelLoad()
 {
+	guiLevelLoadCount++;
 	for( int i = 0; i < guis.Num(); i++ )
 	{
 		guis[ i ]->ClearRefs();
@@ -147,9 +150,14 @@ void idUserInterfaceManagerLocal::BeginLevelLoad()
 void idUserInterfaceManagerLocal::EndLevelLoad( const char* mapName )
 {
 	int c = guis.Num();
+	int purged = 0;
 	for( int i = 0; i < c; i++ )
 	{
-		if( guis[i]->GetRefs() == 0 )
+		if( guis[i]->GetRefs() > 0 )
+		{
+			guis[i]->lastUseLoad = guiLevelLoadCount;
+		}
+		if( guis[i]->GetRefs() == 0 && guiLevelLoadCount - guis[i]->lastUseLoad >= common->LevelKeepGrace() )
 		{
 			//common->Printf( "purging %s.\n", guis[i]->GetSourceFile() );
 
@@ -170,6 +178,7 @@ void idUserInterfaceManagerLocal::EndLevelLoad( const char* mapName )
 				guis.RemoveIndex( i );
 				i--;
 				c--;
+				purged++;
 			}
 		}
 		common->UpdateLevelLoadPacifier();
@@ -181,6 +190,7 @@ void idUserInterfaceManagerLocal::EndLevelLoad( const char* mapName )
 		delete f;
 	}
 
+	common->ReportLevelCache( 3, 0, guis.Num(), purged, 0, 0 );
 	dcOld.Init();
 	dcOptimized.Init();
 }

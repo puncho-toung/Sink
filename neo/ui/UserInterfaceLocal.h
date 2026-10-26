@@ -33,6 +33,7 @@ class idUserInterfaceLocal : public idUserInterface
 	friend class idUserInterfaceManagerLocal;
 public:
 	idUserInterfaceLocal();
+	int lastUseLoad = 0;
 	virtual						~idUserInterfaceLocal();
 
 	virtual const char* 		Name() const;

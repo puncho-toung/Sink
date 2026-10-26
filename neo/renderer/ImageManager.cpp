@@ -797,8 +797,12 @@ idImageManager::BeginLevelLoad
 Frees all images used by the previous level
 ====================
 */
+static int imageLevelLoadCount;
+
 void idImageManager::BeginLevelLoad()
 {
+	imageLevelLoadCount++;
+	const int grace = common->LevelKeepGrace();
 	insideLevelLoad = true;
 
 	for( int i = 0 ; i < images.Num() ; i++ )
@@ -811,7 +815,7 @@ void idImageManager::BeginLevelLoad()
 			continue;
 		}
 
-		if( !image->referencedOutsideLevelLoad && image->IsLoaded() )
+		if( grace == 0 && !image->referencedOutsideLevelLoad && image->IsLoaded() )
 		{
 			image->PurgeImage();
 			//idLib::Printf( "purging %s\n", image->GetName() );
@@ -861,7 +865,7 @@ void idImageManager::Preload( const idPreloadManifest& manifest, const bool& map
 	{
 		// preload this levels images
 		common->Printf( "Preloading images...\n" );
-		preloadingMapImages = mapPreload;
+		preloadingMapImages = mapPreload && common->LevelKeepGrace() == 0;
 		int	start = Sys_Milliseconds();
 		int numLoaded = 0;
 
@@ -978,6 +982,27 @@ void idImageManager::EndLevelLoad()
 	common->Printf( "----- idImageManager::EndLevelLoad -----\n" );
 	int start = Sys_Milliseconds();
 	int	loadCount = LoadLevelImages( true );
+	const int grace = common->LevelKeepGrace();
+	int kept = 0, purged = 0, pinned = 0;
+	int64 bytes = 0;
+	for( int i = 0; i < images.Num(); i++ )
+	{
+		idImage* image = images[i];
+		const bool pin = image->IsLoaded() && common->IsLevelAssetPinned( PRELOAD_IMAGE, image->GetName(), image->filter, image->repeat, image->usage, image->cubeFiles );
+		if( image->levelLoadReferenced || pin )
+		{
+			image->lastUseLoad = imageLevelLoadCount;
+		}
+		pinned += pin ? 1 : 0;
+		if( grace > 0 && !image->levelLoadReferenced && !pin && !image->generatorFunction && !image->referencedOutsideLevelLoad && image->IsLoaded() && imageLevelLoadCount - image->lastUseLoad >= grace )
+		{
+			image->PurgeImage();
+			purged++;
+		}
+		kept += image->IsLoaded() ? 1 : 0;
+		bytes += image->IsLoaded() ? image->StorageSize() : 0;
+	}
+	common->ReportLevelCache( 0, loadCount, kept, purged, pinned, bytes );
 
 	int	end = Sys_Milliseconds();
 	common->Printf( "%5i images loaded in %5.1f seconds\n", loadCount, ( end - start ) * 0.001 );

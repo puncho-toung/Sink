@@ -546,8 +546,11 @@ cinData_t idSoundSystemLocal::ImageForTime( const int milliseconds, const bool w
 idSoundSystemLocal::BeginLevelLoad
 ========================
 */
+static int soundLevelLoadCount;
+
 void idSoundSystemLocal::BeginLevelLoad()
 {
+	soundLevelLoadCount++;
 	insideLevelLoad = true;
 	for( int i = 0; i < samples.Num(); i++ )
 	{
@@ -555,7 +558,10 @@ void idSoundSystemLocal::BeginLevelLoad()
 		{
 			continue;
 		}
-		samples[i]->FreeData();
+		if( common->LevelKeepGrace() == 0 )
+		{
+			samples[i]->FreeData();
+		}
 		samples[i]->ResetLevelLoadReferenced();
 	}
 }
@@ -636,6 +642,7 @@ void idSoundSystemLocal::EndLevelLoad()
 	common->Printf( "----- idSoundSystemLocal::EndLevelLoad -----\n" );
 	int		start = Sys_Milliseconds();
 	int		keepCount = 0;
+	int purgeCount = 0, pinnedCount = 0;
 	int		loadCount = 0;
 
 	idList< preloadSort_t > preloadSort;
@@ -649,6 +656,17 @@ void idSoundSystemLocal::EndLevelLoad()
 		if( samples[i]->GetNeverPurge() )
 		{
 			continue;
+		}
+		const bool pinned = samples[i]->IsLoaded() && common->IsLevelAssetPinned( PRELOAD_SAMPLE, samples[i]->GetName() );
+		pinnedCount += pinned ? 1 : 0;
+		if( samples[i]->GetLevelLoadReferenced() || pinned )
+		{
+			samples[i]->lastUseLoad = soundLevelLoadCount;
+		}
+		else if( samples[i]->IsLoaded() && !pinned && soundLevelLoadCount - samples[i]->lastUseLoad >= common->LevelKeepGrace() )
+		{
+			samples[i]->FreeData();
+			purgeCount++;
 		}
 		if( samples[i]->IsLoaded() )
 		{
@@ -685,6 +703,17 @@ void idSoundSystemLocal::EndLevelLoad()
 	}
 	int	end = Sys_Milliseconds();
 
+	int resident = 0;
+	int64 bytes = 0;
+	for( int i = 0; i < samples.Num(); i++ )
+	{
+		if( samples[i]->IsLoaded() )
+		{
+			resident++;
+			bytes += samples[i]->BufferSize();
+		}
+	}
+	common->ReportLevelCache( 2, loadCount, resident, purgeCount, pinnedCount, bytes );
 	common->Printf( "%5i sounds loaded in %5.1f seconds\n", loadCount, ( end - start ) * 0.001 );
 	common->Printf( "----------------------------------------\n" );
 }

@@ -38,6 +38,7 @@ class idSoundSample_XAudio2
 {
 public:
 	idSoundSample_XAudio2();
+	int lastUseLoad = 0;
 
 	// Loads and initializes the resource based on the name.
 	virtual void	 LoadResource();

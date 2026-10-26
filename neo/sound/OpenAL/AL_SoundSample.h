@@ -39,6 +39,7 @@ class idSoundSample_OpenAL
 {
 public:
 	idSoundSample_OpenAL();
+	int lastUseLoad = 0;
 
 	// Loads and initializes the resource based on the name.
 	virtual void	 LoadResource();

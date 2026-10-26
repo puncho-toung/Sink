@@ -150,6 +150,135 @@ void idCommonLocal::FinishLoadTimeline()
 	}
 }
 
+idCVar com_levelKeep( "com_levelKeep", "0", CVAR_SYSTEM | CVAR_INTEGER, "game-driven asset grace in map loads (0 = legacy purge)", 0, 1000 );
+idCVar com_levelKeepAll( "com_levelKeepAll", "0", CVAR_SYSTEM | CVAR_BOOL, "test asset grace on console loads too" );
+struct levelCacheStats_t
+{
+	int loaded, kept, purged, pinned;
+	int64 bytes;
+};
+static levelCacheStats_t levelCacheStats[4];
+static const char* levelCacheNames[4] = { "images", "models", "sounds", "guis" };
+
+void idCommonLocal::ReportLevelCache( int manager, int loaded, int kept, int purged, int pinned, int64 bytes )
+{
+	assert( manager >= 0 && manager < 4 );
+	levelCacheStats_t& s = levelCacheStats[manager];
+	s.loaded = loaded;
+	s.kept = kept;
+	s.purged = purged;
+	s.pinned = pinned;
+	s.bytes = bytes;
+	Printf( "LEVELCACHE %s loaded=%d resident=%d purged=%d pinned=%d bytes=%lld\n", levelCacheNames[manager], loaded, kept, purged, pinned, ( long long )bytes );
+}
+
+CONSOLE_COMMAND( listLevelCache, "show the last completed load's asset inventory", NULL )
+{
+	for( int i = 0; i < 4; i++ )
+	{
+		const levelCacheStats_t& s = levelCacheStats[i];
+		common->Printf( "LEVELCACHE %s loaded=%d resident=%d purged=%d pinned=%d bytes=%lld\n", levelCacheNames[i], s.loaded, s.kept, s.purged, s.pinned, ( long long )s.bytes );
+	}
+}
+
+static const int MAX_LEVEL_PINS = 4;
+static idPreloadManifest levelPins[MAX_LEVEL_PINS];
+static bool levelPinActive[MAX_LEVEL_PINS];
+
+void idCommon::PreloadManifestName( const char* map, idStr& result )
+{
+	idStr base;
+	idStr( map ).ExtractFileBase( base );
+	result = "maps/";
+	result += base;
+	result += ".preload";
+}
+
+int idCommonLocal::LevelKeepGrace() const
+{
+	return ( IsGameDrivenLoad() || com_levelKeepAll.GetBool() ) ? com_levelKeep.GetInteger() : 0;
+}
+
+bool idCommonLocal::IsLevelAssetPinned( int type, const char* name, int filter, int repeat, int usage, int cubeMap ) const
+{
+	if( LevelKeepGrace() == 0 )
+	{
+		return false;
+	}
+	for( int i = 0; i < MAX_LEVEL_PINS; i++ )
+	{
+		if( !levelPinActive[i] )
+		{
+			continue;
+		}
+		for( int j = 0; j < levelPins[i].NumResources(); j++ )
+		{
+			const preloadEntry_s& p = levelPins[i].GetPreloadByIndex( j );
+			if( p.resType == type && p.resourceName.Icmp( name ) == 0 &&
+				( type != PRELOAD_IMAGE || ( p.imgData.filter == filter && p.imgData.repeat == repeat && p.imgData.usage == usage && p.imgData.cubeMap == cubeMap ) ) )
+			{
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+CONSOLE_COMMAND( pinMap, "pin resident assets in a map preload manifest (four slots)", idCmdSystem::ArgCompletion_MapName )
+{
+	if( args.Argc() != 2 )
+	{
+		common->Printf( "usage: pinMap <map>\n" );
+		return;
+	}
+	idStr name;
+	idCommon::PreloadManifestName( args.Argv( 1 ), name );
+	int slot = -1;
+	for( int i = 0; i < MAX_LEVEL_PINS; i++ )
+	{
+		if( levelPinActive[i] && name.Icmp( levelPins[i].GetManifestName() ) == 0 )
+		{
+			return;
+		}
+		if( !levelPinActive[i] && slot == -1 )
+		{
+			slot = i;
+		}
+	}
+	if( slot == -1 )
+	{
+		common->Warning( "pinMap: all %d slots occupied", MAX_LEVEL_PINS );
+		return;
+	}
+	levelPinActive[slot] = levelPins[slot].LoadManifest( name );
+	common->Printf( "PIN %s %s\n", name.c_str(), levelPinActive[slot] ? "active (resident assets only)" : "missing; nothing pinned" );
+}
+
+CONSOLE_COMMAND( unpinMap, "remove a map's asset pin", idCmdSystem::ArgCompletion_MapName )
+{
+	idStr name;
+	idCommon::PreloadManifestName( args.Argv( 1 ), name );
+	for( int i = 0; i < MAX_LEVEL_PINS; i++ )
+	{
+		if( levelPinActive[i] && name.Icmp( levelPins[i].GetManifestName() ) == 0 )
+		{
+			levelPinActive[i] = false;
+			common->Printf( "PIN %s removed\n", name.c_str() );
+		}
+	}
+}
+
+CONSOLE_COMMAND( listPins, "list resident-only map asset pins", NULL )
+{
+	for( int i = 0; i < MAX_LEVEL_PINS; i++ )
+	{
+		if( levelPinActive[i] )
+		{
+			common->Printf( "PIN %d %s %d entries\n", i, levelPins[i].GetManifestName(), levelPins[i].NumResources() );
+		}
+	}
+}
+
 idCVar com_transitionWipeMs( "com_transitionWipeMs", "1000", CVAR_SYSTEM | CVAR_INTEGER, "game-driven total presentation budget; -1 uses legacy held wipes", -1, 10000 );
 idCVar com_transitionOverlayMs( "com_transitionOverlayMs", "50", CVAR_SYSTEM | CVAR_INTEGER, "game-driven loading overlay delay after fade; -1 draws immediately", -1, 10000 );
 idCVar com_transitionKeepInput( "com_transitionKeepInput", "0", CVAR_SYSTEM | CVAR_BOOL, "preserve held buttons and toggles across game-driven changes" );
@@ -647,10 +776,8 @@ void idCommonLocal::ExecuteMapChange()
 	LoadPhase( LOAD_PRELOAD );
 	if( fileSystem->UsingResourceFiles() )
 	{
-		idStrStatic< MAX_OSPATH > manifestName = currentMapName;
-		manifestName.Replace( "game/", "maps/" );
-		manifestName.Replace( "/mp/", "/" );
-		manifestName += ".preload";
+		idStr manifestName;
+		PreloadManifestName( currentMapName, manifestName );
 		idPreloadManifest manifest;
 		manifest.LoadManifest( manifestName );
 		renderSystem->Preload( manifest, currentMapName );

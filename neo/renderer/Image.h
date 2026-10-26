@@ -483,6 +483,7 @@ private:
 	bool				isLoaded;
 	bool				referencedOutsideLevelLoad;
 	bool				levelLoadReferenced;	// for determining if it needs to be purged
+	int					lastUseLoad = 0;
 	bool				defaulted;				// true if the default image was generated because a file couldn't be loaded
 	ID_TIME_T			sourceFileTime;			// the most recent of all images used in creation, for reloadImages command
 	ID_TIME_T			binaryFileTime;			// the time stamp of the binary file
