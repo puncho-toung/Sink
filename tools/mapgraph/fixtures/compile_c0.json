@@ -1,0 +1,148 @@
+{
+  "links": [
+    [
+      "entry.east",
+      "leaf.west"
+    ]
+  ],
+  "name": "_test/mgc/c0",
+  "nodes": [
+    {
+      "choices": [
+        {
+          "segment": "room_a",
+          "weight": 1
+        }
+      ],
+      "id": "entry",
+      "translation": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "choices": [
+        {
+          "segment": "room_b",
+          "weight": 3
+        },
+        {
+          "segment": "room_a",
+          "weight": 1,
+          "when": {
+            "flags_all": [
+              "extra_start"
+            ],
+            "triggers_none": [
+              "boss_dead"
+            ]
+          }
+        }
+      ],
+      "id": "leaf",
+      "translation": [
+        256,
+        0,
+        0
+      ]
+    }
+  ],
+  "segments": {
+    "cap_east": {
+      "map": "cap_east.map",
+      "sockets": {}
+    },
+    "cap_west": {
+      "map": "cap_west.map",
+      "sockets": {}
+    },
+    "room_a": {
+      "map": "room_a.map",
+      "sockets": {
+        "east": {
+          "cap": "cap_east",
+          "center": [
+            256,
+            0,
+            48
+          ],
+          "kind": "door64",
+          "normal": [
+            1,
+            0,
+            0
+          ],
+          "size": [
+            0,
+            64,
+            96
+          ]
+        },
+        "west": {
+          "cap": "cap_west",
+          "center": [
+            0,
+            0,
+            48
+          ],
+          "kind": "door64",
+          "normal": [
+            -1,
+            0,
+            0
+          ],
+          "size": [
+            0,
+            64,
+            96
+          ]
+        }
+      }
+    },
+    "room_b": {
+      "map": "room_b.map",
+      "sockets": {
+        "east": {
+          "cap": "cap_east",
+          "center": [
+            256,
+            0,
+            48
+          ],
+          "kind": "door64",
+          "normal": [
+            1,
+            0,
+            0
+          ],
+          "size": [
+            0,
+            64,
+            96
+          ]
+        },
+        "west": {
+          "cap": "cap_west",
+          "center": [
+            0,
+            0,
+            48
+          ],
+          "kind": "door64",
+          "normal": [
+            -1,
+            0,
+            0
+          ],
+          "size": [
+            0,
+            64,
+            96
+          ]
+        }
+      }
+    }
+  },
+  "version": 1
+}

@@ -1,0 +1,179 @@
+{
+  "links": [
+    [
+      "entry.east",
+      "leaf.west"
+    ]
+  ],
+  "name": "_test/mgc/c1",
+  "nodes": [
+    {
+      "choices": [
+        {
+          "segment": "room_a",
+          "weight": 1
+        }
+      ],
+      "id": "entry",
+      "translation": [
+        -1024,
+        512,
+        128
+      ]
+    },
+    {
+      "choices": [
+        {
+          "segment": "room_detail",
+          "weight": 1
+        }
+      ],
+      "id": "leaf",
+      "translation": [
+        -768,
+        512,
+        128
+      ]
+    }
+  ],
+  "segments": {
+    "cap_east": {
+      "map": "cap_east.map",
+      "sockets": {}
+    },
+    "cap_west": {
+      "map": "cap_west.map",
+      "sockets": {}
+    },
+    "room_a": {
+      "map": "room_a.map",
+      "sockets": {
+        "east": {
+          "cap": "cap_east",
+          "center": [
+            256,
+            0,
+            48
+          ],
+          "kind": "door64",
+          "normal": [
+            1,
+            0,
+            0
+          ],
+          "size": [
+            0,
+            64,
+            96
+          ]
+        },
+        "west": {
+          "cap": "cap_west",
+          "center": [
+            0,
+            0,
+            48
+          ],
+          "kind": "door64",
+          "normal": [
+            -1,
+            0,
+            0
+          ],
+          "size": [
+            0,
+            64,
+            96
+          ]
+        }
+      }
+    },
+    "room_b": {
+      "map": "room_b.map",
+      "sockets": {
+        "east": {
+          "cap": "cap_east",
+          "center": [
+            256,
+            0,
+            48
+          ],
+          "kind": "door64",
+          "normal": [
+            1,
+            0,
+            0
+          ],
+          "size": [
+            0,
+            64,
+            96
+          ]
+        },
+        "west": {
+          "cap": "cap_west",
+          "center": [
+            0,
+            0,
+            48
+          ],
+          "kind": "door64",
+          "normal": [
+            -1,
+            0,
+            0
+          ],
+          "size": [
+            0,
+            64,
+            96
+          ]
+        }
+      }
+    },
+    "room_detail": {
+      "map": "room_detail.map",
+      "sockets": {
+        "east": {
+          "cap": "cap_east",
+          "center": [
+            256,
+            0,
+            48
+          ],
+          "kind": "door64",
+          "normal": [
+            1,
+            0,
+            0
+          ],
+          "size": [
+            0,
+            64,
+            96
+          ]
+        },
+        "west": {
+          "cap": "cap_west",
+          "center": [
+            0,
+            0,
+            48
+          ],
+          "kind": "door64",
+          "normal": [
+            -1,
+            0,
+            0
+          ],
+          "size": [
+            0,
+            64,
+            96
+          ]
+        }
+      }
+    }
+  },
+  "version": 1
+}

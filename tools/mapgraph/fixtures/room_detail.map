@@ -1,0 +1,255 @@
+Version 2
+{
+"classname" "worldspawn"
+{
+brushDef3
+{
+( -1 0 0 -16 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 1 0 0 -272 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 -1 0 -144 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 1 0 -144 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 -1 -16 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 1 0 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+}
+}
+{
+brushDef3
+{
+( -1 0 0 -16 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 1 0 0 -272 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 -1 0 -144 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 1 0 -144 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 -1 128 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 1 -144 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+}
+}
+{
+brushDef3
+{
+( -1 0 0 -16 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 1 0 0 -272 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 -1 0 -144 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 1 0 128 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 -1 0 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 1 -128 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+}
+}
+{
+brushDef3
+{
+( -1 0 0 -16 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 1 0 0 -272 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 -1 0 128 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 1 0 -144 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 -1 0 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 1 -128 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+}
+}
+{
+brushDef3
+{
+( -1 0 0 -16 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 1 0 0 0 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 -1 0 -128 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 1 0 32 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 -1 0 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 1 -128 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+}
+}
+{
+brushDef3
+{
+( -1 0 0 -16 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 1 0 0 0 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 -1 0 32 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 1 0 -128 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 -1 0 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 1 -128 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+}
+}
+{
+brushDef3
+{
+( -1 0 0 -16 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 1 0 0 0 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 -1 0 -32 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 1 0 -32 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 -1 96 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 1 -128 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+}
+}
+{
+brushDef3
+{
+( -1 0 0 256 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 1 0 0 -272 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 -1 0 -128 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 1 0 32 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 -1 0 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 1 -128 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+}
+}
+{
+brushDef3
+{
+( -1 0 0 256 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 1 0 0 -272 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 -1 0 32 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 1 0 -128 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 -1 0 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 1 -128 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+}
+}
+{
+brushDef3
+{
+( -1 0 0 256 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 1 0 0 -272 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 -1 0 -32 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 1 0 -32 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 -1 96 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 1 -128 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+}
+}
+{
+brushDef3
+{
+( -1 0 0 112 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 1 0 0 -144 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 -1 0 64 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 1 0 -96 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 -1 0 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 1 -128 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+}
+}
+}
+{
+"_color" "0.4 0.7 1"
+"classname" "light"
+"light_radius" "256 256 256"
+"name" "lamp"
+"origin" "128 0 96"
+}
+{
+"classname" "func_static"
+"model" "plinth"
+"name" "plinth"
+"origin" "64 72 0"
+{
+brushDef3
+{
+( -1 0 0 -16 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 1 0 0 -16 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 -1 0 -16 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 1 0 -16 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 -1 0 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+( 0 0 1 -48 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+}
+}
+}
+{
+"classname" "func_static"
+"model" "panel"
+"name" "panel"
+"origin" "128 -127 64"
+{
+patchDef3
+{
+"textures/base_wall/lfwall1"
+( 3 3 2 2 0 0 0 )
+(
+( ( 96 -127 32 0 0 ) ( 96 -127 64 0 0.5 ) ( 96 -127 96 0 1 ) )
+( ( 128 -127 32 0.5 0 ) ( 128 -127 64 0.5 0.5 ) ( 128 -127 96 0.5 1 ) )
+( ( 160 -127 32 1 0 ) ( 160 -127 64 1 0.5 ) ( 160 -127 96 1 1 ) )
+)
+}
+}
+}
+{
+"classname" "trigger_once"
+"model" "switch"
+"name" "switch"
+"origin" "32 0 0"
+"target" "lamp"
+{
+brushDef3
+{
+( -1 0 0 -8 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/trigger" 0 0 0
+( 1 0 0 -8 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/trigger" 0 0 0
+( 0 -1 0 -8 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/trigger" 0 0 0
+( 0 1 0 -8 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/trigger" 0 0 0
+( 0 0 -1 0 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/trigger" 0 0 0
+( 0 0 1 -64 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/trigger" 0 0 0
+}
+}
+}
+{
+"classname" "func_static"
+"model" "models/mapobjects/cannister/cannister.ase"
+"name" "cannister"
+"origin" "192 72 8"
+}
+{
+"classname" "info_landmark"
+"entry" "1"
+"exit" "1"
+"kind" "door64"
+"landmark" "outside"
+"name" "exit_marker"
+"radius" "256"
+"required" "0"
+{
+brushDef3
+{
+( -1 0 0 248 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/nodraw" 0 0 0
+( 1 0 0 -256 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/editor/landmark" 0 0 0
+( 0 -1 0 -32 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/nodraw" 0 0 0
+( 0 1 0 -32 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/nodraw" 0 0 0
+( 0 0 -1 0 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/nodraw" 0 0 0
+( 0 0 1 -96 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/nodraw" 0 0 0
+}
+}
+}
+{
+"cap" "64"
+"carry" "all"
+"classname" "trigger_transition"
+"landmark" "outside"
+"name" "carry"
+{
+brushDef3
+{
+( -1 0 0 192 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/trigger" 0 0 0
+( 1 0 0 -256 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/trigger" 0 0 0
+( 0 -1 0 -64 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/trigger" 0 0 0
+( 0 1 0 -64 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/trigger" 0 0 0
+( 0 0 -1 0 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/trigger" 0 0 0
+( 0 0 1 -128 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/trigger" 0 0 0
+}
+}
+}
+{
+"classname" "trigger_changelevel"
+"landmark" "outside"
+"model" "leave"
+"name" "leave"
+"wait_party" "1"
+{
+brushDef3
+{
+( -1 0 0 240 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/trigger" 0 0 0
+( 1 0 0 -256 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/trigger" 0 0 0
+( 0 -1 0 -32 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/trigger" 0 0 0
+( 0 1 0 -32 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/trigger" 0 0 0
+( 0 0 -1 0 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/trigger" 0 0 0
+( 0 0 1 -96 ) ( ( 0.015625 0 0 ) ( 0 0.015625 0 ) ) "textures/common/trigger" 0 0 0
+}
+}
+}
+{
+"classname" "info_landing"
+"index" "0"
+"landmark" "outside"
+"name" "landing"
+"origin" "216 0 8"
+}
