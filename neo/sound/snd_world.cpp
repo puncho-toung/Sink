@@ -43,6 +43,8 @@ idCVar s_unpauseFadeInTime( "s_unpauseFadeInTime", "250", CVAR_INTEGER, "When un
 idCVar s_doorDistanceAdd( "s_doorDistanceAdd", "150", CVAR_FLOAT, "reduce sound volume with this distance when going through a door" );
 idCVar s_drawSounds( "s_drawSounds", "0", CVAR_INTEGER, "", 0, 2, idCmdSystem::ArgCompletion_Integer<0, 2> );
 idCVar s_showVoices( "s_showVoices", "0", CVAR_BOOL, "show active voices" );
+idCVar s_transitionCarry( "s_transitionCarry", "0", CVAR_NOCHEAT | CVAR_BOOL, "carry four global speakers; requires com_levelKeep" );
+
 idCVar s_volume_dB( "s_volume_dB", "0", CVAR_ARCHIVE | CVAR_FLOAT, "volume in dB" );
 
 /*
@@ -52,6 +54,8 @@ idSoundWorldLocal::idSoundWorldLocal
 */
 idSoundWorldLocal::idSoundWorldLocal()
 {
+	memset( transitionEmitters, 0, sizeof( transitionEmitters ) );
+	memset( transitionExpire, 0, sizeof( transitionExpire ) );
 	volumeFade.Clear();
 	for( int i = 0; i < SOUND_MAX_CLASSES; i++ )
 	{
@@ -303,6 +307,24 @@ idSoundWorldLocal::Update
 */
 void idSoundWorldLocal::Update()
 {
+	const int now = Sys_Milliseconds();
+	for( int i = 0; i < 4; i++ )
+	{
+		if( transitionEmitters[i] == NULL || transitionExpire[i] == 0 )
+		{
+			continue;
+		}
+		if( now >= transitionExpire[i] )
+		{
+			transitionEmitters[i]->Free( true );
+			transitionEmitters[i] = NULL;
+		}
+		else if( now >= transitionExpire[i] - 500 )
+		{
+			transitionEmitters[i]->FadeSound( SCHANNEL_ANY, DB_SILENCE, ( transitionExpire[i] - now ) * 0.001f );
+		}
+	}
+
 	// ------------------
 	// Update emitters
 	//
@@ -328,7 +350,7 @@ void idSoundWorldLocal::Update()
 	for( int e = emitters.Num() - 1; e >= 0; e-- )
 	{
 		// check for freeing a one-shot emitter that is finished playing
-		if( emitters[e]->CheckForCompletion( currentTime ) )
+		if( !IsCarriedEmitter( emitters[e] ) && emitters[e]->CheckForCompletion( currentTime ) )
 		{
 			// do a fast list collapse by swapping the last element into
 			// the slot we are deleting
@@ -574,14 +596,95 @@ idSoundEmitter* idSoundWorldLocal::EmitterForIndex( int index )
 idSoundWorldLocal::ClearAllSoundEmitters
 ========================
 */
+bool idSoundWorldLocal::IsCarriedEmitter( const idSoundEmitter* emitter ) const
+{
+	for( int i = 0; i < 4; i++ )
+	{
+		if( transitionEmitters[i] == emitter )
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+bool idSoundWorldLocal::CarryEmitter( idSoundEmitter* emitter, const char* shader )
+{
+	if( !s_transitionCarry.GetBool() || cvarSystem->GetCVarInteger( "com_levelKeep" ) < 1 || emitter == NULL || idStr::Length( shader ) >= 256 )
+	{
+		return false;
+	}
+	for( int i = 0; i < 4; i++ )
+	{
+		if( transitionEmitters[i] == emitter )
+		{
+			return true;
+		}
+		if( transitionEmitters[i] == NULL )
+		{
+			transitionEmitters[i] = static_cast<idSoundEmitterLocal*>( emitter );
+			idStr::Copynz( transitionShaders[i], shader, sizeof( transitionShaders[i] ) );
+			transitionExpire[i] = 0;
+			common->Printf( "transition_carried_emitters slot=%d shader=%s channels=%d start_ms=%d sound_ms=%d\n", i, shader, transitionEmitters[i]->channels.Num(), transitionEmitters[i]->channels.Num() ? transitionEmitters[i]->channels[0]->startTime : -1, GetSoundTime() );
+			return true;
+		}
+	}
+	common->Warning( "transition speaker cap 4 reached" );
+	return false;
+}
+
+idSoundEmitter* idSoundWorldLocal::AdoptCarriedEmitter( const char* shader )
+{
+	if( !common->IsGameDrivenLoad() || !s_transitionCarry.GetBool() )
+	{
+		return NULL;
+	}
+	for( int i = 0; i < 4; i++ )
+	{
+		if( transitionEmitters[i] != NULL && !idStr::Icmp( transitionShaders[i], shader ) )
+		{
+			idSoundEmitterLocal* result = transitionEmitters[i];
+			transitionEmitters[i] = NULL;
+			common->Printf( "transition speaker adopted slot=%d shader=%s channels=%d start_ms=%d sound_ms=%d\n", i, shader, result->channels.Num(), result->channels.Num() ? result->channels[0]->startTime : -1, GetSoundTime() );
+			return result;
+		}
+	}
+	return NULL;
+}
+
+void idSoundWorldLocal::TransitionArrival()
+{
+	for( int i = 0; i < 4; i++ )
+	{
+		if( transitionEmitters[i] != NULL && transitionExpire[i] == 0 )
+		{
+			transitionExpire[i] = Sys_Milliseconds() + 2500;
+		}
+	}
+}
+
 void idSoundWorldLocal::ClearAllSoundEmitters()
 {
+	if( !common->IsGameDrivenLoad() || !s_transitionCarry.GetBool() || cvarSystem->GetCVarInteger( "com_levelKeep" ) < 1 )
+	{
+		memset( transitionEmitters, 0, sizeof( transitionEmitters ) );
+	}
+	int kept = 0;
 	for( int i = 0; i < emitters.Num(); i++ )
 	{
-		emitters[i]->Reset();
-		emitterAllocator.Free( emitters[i] );
+		if( IsCarriedEmitter( emitters[i] ) )
+		{
+			emitters[kept] = emitters[i];
+			emitters[kept]->index = kept;
+			kept++;
+		}
+		else
+		{
+			emitters[i]->Reset();
+			emitterAllocator.Free( emitters[i] );
+		}
 	}
-	emitters.Clear();
+	emitters.SetNum( kept );
 	localSound = AllocSoundEmitter();
 }
 
@@ -1073,4 +1176,15 @@ idSoundWorldLocal::SetEnviroSuit
 void idSoundWorldLocal::SetEnviroSuit( bool active )
 {
 	enviroSuitActive = active;
+}
+
+void idSoundWorldLocal::TouchTransitionMedia()
+{
+	for( int i = 0; i < 4; i++ )
+	{
+		if( transitionEmitters[i] != NULL )
+		{
+			const_cast<idSoundShader*>( declManager->FindSound( transitionShaders[i] ) )->TouchMedia();
+		}
+	}
 }

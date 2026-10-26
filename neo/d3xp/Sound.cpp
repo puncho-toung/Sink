@@ -350,3 +350,12 @@ void idSound::ShowEditingDialog()
 {
 }
 
+
+void idSound::CarryTransitionSound()
+{
+	if( spawnArgs.GetBool( "s_global" ) && spawnArgs.GetBool( "s_transition" ) && refSound.referenceSound != NULL && gameSoundWorld->CarryEmitter( refSound.referenceSound, spawnArgs.GetString( "s_shader" ) ) )
+	{
+		refSound.referenceSound = NULL;
+		renderEntity.referenceSound = NULL;
+	}
+}

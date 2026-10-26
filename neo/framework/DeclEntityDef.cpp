@@ -196,3 +196,13 @@ bool idDeclEntityDef::IsMapOnlyClass( const char* classname )
 	const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, classname, false ) );
 	return ( def != NULL && def->dict.GetBool( "dmapOnly" ) );
 }
+
+void idDeclEntityDef::TouchMedia()
+{
+#if !defined( DMAP )
+	if( !( com_editors & ( EDITOR_AAS | EDITOR_EXPORTDEFS | EDITOR_DMAP ) ) )
+	{
+		game->CacheDictionaryMedia( &dict );
+	}
+#endif
+}

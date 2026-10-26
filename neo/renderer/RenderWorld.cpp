@@ -272,6 +272,10 @@ size_t idRenderWorldLocal::InteractionIndexBytes() const
 
 void idRenderWorldLocal::FreeInteractionIndex()
 {
+	lazyInteractionLights.Clear();
+	lazyInteractionCursor = lazyInteractionCount = 0;
+	lazyInteractionTotalUs = 0;
+	lazyInteractionCommands = nullptr;
 	if( interactionTable != NULL )
 	{
 		R_StaticFree( interactionTable );
@@ -2093,15 +2097,10 @@ Force the generation of all light / surface interactions at the start of a level
 If this isn't called, they will all be dynamically generated
 ===================
 */
-void idRenderWorldLocal::GenerateAllInteractions()
+static idCVar r_lazyInteractionsMs( "r_lazyInteractionsMs", "0.5", CVAR_NOCHEAT | CVAR_RENDERER | CVAR_FLOAT, "post-transition interaction slice budget", 0.0f, 100.0f );
+
+void idRenderWorldLocal::BeginInteractionTable()
 {
-	if( !tr.IsInitialized() )
-	{
-		return;
-	}
-
-	int start = Sys_Milliseconds();
-
 	generateAllInteractionsCalled = false;
 
 	// let the interaction creation code know that it shouldn't
@@ -2159,76 +2158,210 @@ void idRenderWorldLocal::GenerateAllInteractions()
 		interactionIndex = ( interactionIndexSlot_t* )R_ClearedStaticAlloc( ( int )( capacity * sizeof( interactionIndexSlot_t ) ) );
 	}
 
-	tr.commandList->open();
+}
 
-	// iterate through all lights
-	int	count = 0;
-	for( int i = 0; i < this->lightDefs.Num(); i++ )
+int idRenderWorldLocal::GenerateInteractionsForLight( int index, nvrhi::ICommandList* commands, bool initialOnly )
+{
+	int count = 0;
+	idRenderLightLocal*	ldef = this->lightDefs[index];
+	if( ldef == NULL )
 	{
-		idRenderLightLocal*	ldef = this->lightDefs[i];
-		if( ldef == NULL )
+		return 0;
+	}
+
+	// check all areas the light touches
+	for( areaReference_t* lref = ldef->references; lref; lref = lref->ownerNext )
+	{
+		portalArea_t* area = lref->area;
+
+		// check all the models in this area
+		for( areaReference_t* eref = area->entityRefs.areaNext; eref != &area->entityRefs; eref = eref->areaNext )
+		{
+			idRenderEntityLocal* 	edef = eref->entity;
+			if( initialOnly && !edef->transitionInteractionMember )
+			{
+				continue;
+			}
+
+			// scan the doubly linked lists, which may have several dozen entries
+			idInteraction*	inter;
+
+			// we could check either model refs or light refs for matches, but it is
+			// assumed that there will be less lights in an area than models
+			// so the entity chains should be somewhat shorter (they tend to be fairly close).
+			for( inter = edef->firstInteraction; inter != NULL; inter = inter->entityNext )
+			{
+				if( inter->lightDef == ldef )
+				{
+					break;
+				}
+			}
+
+			// if we already have an interaction, we don't need to do anything
+			if( inter != NULL )
+			{
+				SetInteraction( ldef->index, edef->index, inter->IsEmpty() ? INTERACTION_EMPTY : inter );
+				continue;
+			}
+
+			// make an interaction for this light / entity pair
+			// and add a pointer to it in the table
+			inter = idInteraction::AllocAndLink( edef, ldef );
+			count++;
+
+			// the interaction may create geometry
+			inter->CreateStaticInteraction( commands );
+		}
+	}
+	return count;
+}
+
+void idRenderWorldLocal::GenerateAllInteractions()
+{
+	if( !tr.IsInitialized() )
+	{
+		return;
+	}
+	const int start = Sys_Milliseconds();
+	BeginInteractionTable();
+	tr.commandList->open();
+	int count = 0;
+	for( int i = 0; i < lightDefs.Num(); i++ )
+	{
+		count += GenerateInteractionsForLight( i, tr.commandList, false );
+		session->Pump();
+	}
+	tr.commandList->close();
+	deviceManager->GetDevice()->executeCommandList( tr.commandList );
+	interactionGenerateMS = Sys_Milliseconds() - start;
+	common->Printf( "idRenderWorld::GenerateAllInteractions, msec = %i\n", interactionGenerateMS );
+	ListInteractionIndex();
+	common->Printf( "%i interactions take %i bytes\n", count, count * sizeof( idInteraction ) );
+	generateAllInteractionsCalled = true;
+}
+
+void idRenderWorldLocal::GenerateTransitionInteractions( const idVec3* origins, int count )
+{
+	if( count <= 0 )
+	{
+		GenerateAllInteractions(); return;
+	}
+	if( !tr.IsInitialized() )
+	{
+		return;
+	}
+	const uint64 start = Sys_Microseconds();
+	BeginInteractionTable();
+	lazyInteractionLights.Resize( lightDefs.Num() );
+	for( int i = 0; i < entityDefs.Num(); i++ )
+	{
+		if( entityDefs[i] != NULL )
+		{
+			entityDefs[i]->transitionInteractionMember = true;
+		}
+	}
+	int noDynamic = 0;
+	for( int i = 0; i < entityDefs.Num(); i++ )
+	{
+		idRenderEntityLocal* entity = entityDefs[i];
+		if( entity == NULL || !entity->parms.noDynamicInteractions )
 		{
 			continue;
 		}
-
-		// check all areas the light touches
-		for( areaReference_t* lref = ldef->references; lref; lref = lref->ownerNext )
+		bool landing = false;
+		for( areaReference_t* ref = entity->entityRefs; ref != NULL && !landing; ref = ref->ownerNext )
 		{
-			portalArea_t* area = lref->area;
-
-			// check all the models in this area
-			for( areaReference_t* eref = area->entityRefs.areaNext; eref != &area->entityRefs; eref = eref->areaNext )
+			for( int player = 0; player < count; player++ )
 			{
-				idRenderEntityLocal* 	edef = eref->entity;
-
-				// scan the doubly linked lists, which may have several dozen entries
-				idInteraction*	inter;
-
-				// we could check either model refs or light refs for matches, but it is
-				// assumed that there will be less lights in an area than models
-				// so the entity chains should be somewhat shorter (they tend to be fairly close).
-				for( inter = edef->firstInteraction; inter != NULL; inter = inter->entityNext )
+				const int area = PointInArea( origins[player] );
+				if( area >= 0 && AreasAreConnected( ref->area->areaNum, area, PS_BLOCK_VIEW ) )
 				{
-					if( inter->lightDef == ldef )
-					{
-						break;
-					}
+					landing = true; break;
 				}
-
-				// if we already have an interaction, we don't need to do anything
-				if( inter != NULL )
-				{
-					SetInteraction( ldef->index, edef->index, inter->IsEmpty() ? INTERACTION_EMPTY : inter );
-					continue;
-				}
-
-				// make an interaction for this light / entity pair
-				// and add a pointer to it in the table
-				inter = idInteraction::AllocAndLink( edef, ldef );
-				count++;
-
-				// the interaction may create geometry
-				inter->CreateStaticInteraction( tr.commandList );
 			}
 		}
-
-		session->Pump();
+		noDynamic += landing ? 1 : 0;
 	}
+	nvrhi::CommandListParameters parameters;
+	parameters.enableImmediateExecution = false;
+	lazyInteractionCommands = deviceManager->GetDevice()->createCommandList( parameters );
+	lazyInteractionCommands->open();
+	for( int i = 0; i < lightDefs.Num(); i++ )
+	{
+		idRenderLightLocal* light = lightDefs[i];
+		if( light == NULL )
+		{
+			continue;
+		}
+		bool landing = false;
+		for( areaReference_t* ref = light->references; ref != NULL && !landing; ref = ref->ownerNext )
+		{
+			for( int player = 0; player < count; player++ )
+			{
+				const int area = PointInArea( origins[player] );
+				if( area >= 0 && AreasAreConnected( ref->area->areaNum, area, PS_BLOCK_VIEW ) )
+				{
+					landing = true; break;
+				}
+			}
+		}
+		light->transitionInteractionPending = !landing;
+		if( landing )
+		{
+			lazyInteractionCount += GenerateInteractionsForLight( i, lazyInteractionCommands, true );
+		}
+		else
+		{
+			lazyInteractionLights.Append( i );
+		}
+	}
+	lazyInteractionCommands->close();
+	deviceManager->GetDevice()->executeCommandList( lazyInteractionCommands );
+	lazyInteractionTotalUs = Sys_Microseconds() - start;
+	common->ReportTransitionMetric( TRANSITION_INTER_LANDING_US, lazyInteractionTotalUs );
+	common->ReportTransitionMetric( TRANSITION_INTER_TOTAL_US, lazyInteractionTotalUs );
+	common->Printf( "TRANSITION inter_landing_us=%llu deferredLights=%d landingNoDynamic=%d\n", ( unsigned long long )lazyInteractionTotalUs, lazyInteractionLights.Num(), noDynamic );
+	if( lazyInteractionLights.Num() == 0 )
+	{
+		generateAllInteractionsCalled = true;
+	}
+}
 
-	tr.commandList->close();
-	deviceManager->GetDevice()->executeCommandList( tr.commandList );
-
-	int end = Sys_Milliseconds();
-	int	msec = end - start;
-	interactionGenerateMS = msec;
-
-	common->Printf( "idRenderWorld::GenerateAllInteractions, msec = %i\n", msec );
-	common->Printf( "interactionTable size: %" PRIuSIZE " bytes\n", InteractionIndexBytes() );
-	ListInteractionIndex();
-	common->Printf( "%i interactions take %i bytes\n", count, count * sizeof( idInteraction ) );
-
-	// entities flagged as noDynamicInteractions will no longer make any
-	generateAllInteractionsCalled = true;
+void idRenderWorldLocal::FinishInteractionSlice()
+{
+	if( lazyInteractionCursor >= lazyInteractionLights.Num() || r_lazyInteractionsMs.GetFloat() <= 0.0f )
+	{
+		return;
+	}
+	const uint64 start = Sys_Microseconds();
+	const uint64 budget = ( uint64 )( r_lazyInteractionsMs.GetFloat() * 1000.0f );
+	viewDef_t* previousView = tr.viewDef;
+	tr.viewDef = NULL;
+	lazyInteractionCommands->open();
+	while( lazyInteractionCursor < lazyInteractionLights.Num() && Sys_Microseconds() - start < budget )
+	{
+		const int index = lazyInteractionLights[lazyInteractionCursor++];
+		idRenderLightLocal* light = index < lightDefs.Num() ? lightDefs[index] : NULL;
+		if( light != NULL && light->transitionInteractionPending )
+		{
+			light->transitionInteractionPending = false;
+			lazyInteractionCount += GenerateInteractionsForLight( index, lazyInteractionCommands, true );
+		}
+	}
+	lazyInteractionCommands->close();
+	deviceManager->GetDevice()->executeCommandList( lazyInteractionCommands );
+	tr.viewDef = previousView;
+	const uint64 elapsed = Sys_Microseconds() - start;
+	lazyInteractionTotalUs += elapsed;
+	common->ReportTransitionMetric( TRANSITION_INTER_TOTAL_US, lazyInteractionTotalUs );
+	common->Printf( "TRANSITION interaction_slice_us=%llu remaining=%d\n", ( unsigned long long )elapsed, lazyInteractionLights.Num() - lazyInteractionCursor );
+	if( lazyInteractionCursor == lazyInteractionLights.Num() )
+	{
+		generateAllInteractionsCalled = true;
+		interactionGenerateMS = ( int )( lazyInteractionTotalUs / 1000 );
+		ListInteractionIndex();
+		common->Printf( "TRANSITION interactions=%d bytes=%d total_us=%llu\n", lazyInteractionCount, lazyInteractionCount * ( int )sizeof( idInteraction ), ( unsigned long long )lazyInteractionTotalUs );
+	}
 }
 
 /*

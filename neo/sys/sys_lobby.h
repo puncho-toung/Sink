@@ -207,6 +207,8 @@ public:
 	{
 		peer_t()
 		{
+			transitionHold = transitionRelease = transitionMember = false;
+			transitionSequence = 0;
 			loaded					= false;
 			inGame					= false;
 			memset( &contentDigests, 0, sizeof( contentDigests ) );	//puncho - content check (P1-A3b): contentDigests_t is a struct
@@ -250,6 +252,9 @@ public:
 
 		void ResetConnectState()
 		{
+			transitionHold = transitionRelease = transitionMember = false;
+			transitionSequence = 0;
+			transitionHeld.Clear();
 			lastResourceTime		= 0;
 			lastSnapTime			= 0;
 			snapHz					=
@@ -330,6 +335,10 @@ public:
 		connectionState_t	GetConnectionState() const;
 
 		connectionState_t	connectionState;
+		// Fixed per-peer storage: 64 messages, each bounded by the packet processor maximum.
+		idDataQueue<64, 64 * ( idPacketProcessor::MAX_MSG_SIZE + 1 ) + 1> transitionHeld;
+		int transitionSequence;
+		bool transitionHold, transitionRelease, transitionMember;
 		bool				loaded;						// true if this peer has finished loading the map
 		bool				inGame;						// true if this peer received the first snapshot, and is in-game
 		int					lastSnapTime;				// Last time a snapshot was sent on the network to this peer
@@ -525,6 +534,11 @@ public:		// Turning this on for now, for the sake of getting this up and running
 	void								SetPeerConnectionState( int p, connectionState_t newState, bool skipGoodbye = false );
 	void								DisconnectAllPeers();
 
+	virtual void BeginTransitionHold();
+	virtual bool TransitionDrainReady( bool timeout );
+	virtual bool TransitionArrivalReady( bool timeout );
+	virtual void CancelTransitionHold();
+	void FlushTransitionHeld( int p );
 	virtual void						SendReliable( int type, idBitMsg& msg, bool callReceiveReliable = true, peerMask_t sessionUserMask = MAX_UNSIGNED_TYPE( peerMask_t ) );
 	virtual void						SendReliableToLobbyUser( lobbyUserID_t lobbyUserID, int type, idBitMsg& msg );
 	virtual void						SendReliableToHost( int type, idBitMsg& msg );

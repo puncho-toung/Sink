@@ -258,6 +258,10 @@ idCommonLocal::NetReceiveReliable
 */
 void idCommonLocal::NetReceiveReliable( int peer, int type, idBitMsg& msg )
 {
+	if( game->ReceiveMapTransition( type, msg ) )
+	{
+		return;
+	}
 	int clientNum = Game()->MapPeerToClient( peer );
 	// Only servers care about the client num. Band-aid for problems related to the host's peerIndex being -1 on clients.
 	if( common->IsServer() && clientNum == -1 )
@@ -670,7 +674,11 @@ void idCommonLocal::ExecuteReliableMessages()
 	for( int i = 0; i < reliableQueue.Num(); i++ )
 	{
 		reliableMsg_t& reliable = reliableQueue[i];
-		game->ProcessReliableMessage( reliable.client, reliable.type, idBitMsg( ( const byte* )reliable.data, reliable.dataSize ) );
+		const idBitMsg message( ( const byte* )reliable.data, reliable.dataSize );
+		if( !game->ReceiveMapTransition( reliable.type, message ) )
+		{
+			game->ProcessReliableMessage( reliable.client, reliable.type, message );
+		}
 		Mem_Free( reliable.data );
 	}
 	reliableQueue.Clear();

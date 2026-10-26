@@ -171,6 +171,7 @@ class idRenderLightLocal : public idRenderLight
 {
 public:
 	idRenderLightLocal();
+	bool transitionInteractionPending = false;
 
 	virtual void			FreeRenderLight();
 	virtual void			UpdateRenderLight( const renderLight_t* re, bool forceUpdate = false );
@@ -269,6 +270,7 @@ class idRenderEntityLocal : public idRenderEntity
 {
 public:
 	idRenderEntityLocal();
+	bool transitionInteractionMember = false;
 
 	virtual void			FreeRenderEntity();
 	virtual void			UpdateRenderEntity( const renderEntity_t* re, bool forceUpdate = false );

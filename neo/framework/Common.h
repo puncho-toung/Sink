@@ -309,6 +309,15 @@ enum currentGame_t
 #endif
 // RB end
 
+enum transitionMetric_t
+{
+	TRANSITION_IMAGE_US, TRANSITION_MODEL_US, TRANSITION_MODEL_BUFFER_US,
+	TRANSITION_STATIC_UPLOAD_US, TRANSITION_SOUND_US, TRANSITION_GUI_US,
+	TRANSITION_CARRY_US, TRANSITION_INTER_LANDING_US, TRANSITION_INTER_TOTAL_US,
+	TRANSITION_DECL_PARSED, TRANSITION_PF_HIT, TRANSITION_PF_MISS, TRANSITION_PF_KB,
+	TRANSITION_METRIC_COUNT
+};
+
 class idCommon
 {
 public:
@@ -316,6 +325,9 @@ public:
 	virtual bool IsSaveGameLoad() const { return false; }
 	virtual bool IsGameDrivenLoad() const { return false; }
 	virtual void PrefetchMap( const char* name ) {}
+	virtual void ReportTransitionMetric( transitionMetric_t metric, uint64 value ) {}
+	virtual void ListTransitionNetwork() const {}
+	virtual void NotifyMapTransition( unsigned short sequence, const char* map ) {}
 	virtual int LevelKeepGrace() const { return 0; }
 	virtual bool IsLevelAssetPinned( int type, const char* name, int filter = -1, int repeat = -1, int usage = -1, int cubeMap = -1 ) const { return false; }
 	virtual void ReportLevelCache( int manager, int loaded, int kept, int purged, int pinned, int64 bytes ) {}

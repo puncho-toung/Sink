@@ -71,11 +71,13 @@ public:
 	virtual void			WritePrecacheCommands( idFile* file );
 	virtual void			BeginLevelLoad();
 	virtual void			EndLevelLoad();
+	virtual void PurgeUnusedLevelCache();
 	virtual void			Preload( const idPreloadManifest& manifest );
 
 	virtual	void			PrintMemInfo( MemInfo_t* mi );
 
 private:
+	friend bool Prefetch_ModelResident( const char* name );
 	idList<idRenderModel*, TAG_MODEL>	models;
 	idHashIndex							hash;
 	idRenderModel* 						defaultModel;
@@ -98,6 +100,21 @@ private:
 
 idRenderModelManagerLocal	localModelManager;
 idRenderModelManager* 		renderModelManager = &localModelManager;
+
+// Resident-only lookup: no reload or reference side effects.
+bool Prefetch_ModelResident( const char* name )
+{
+	const int key = localModelManager.hash.GenerateKey( name, false );
+	for( int i = localModelManager.hash.First( key ); i != -1; i = localModelManager.hash.Next( i ) )
+	{
+		idRenderModel* model = localModelManager.models[i];
+		if( !idStr::Icmp( name, model->Name() ) )
+		{
+			return model->IsLoaded();
+		}
+	}
+	return false;
+}
 
 /*
 ==============
@@ -981,8 +998,10 @@ idRenderModelManagerLocal::EndLevelLoad
 */
 void idRenderModelManagerLocal::EndLevelLoad()
 {
+	const uint64 transitionMetricStart = Sys_Microseconds();
 	common->Printf( "----- idRenderModelManagerLocal::EndLevelLoad -----\n" );
 
+	uint64 transitionBufferUs = 0, transitionStaticUs = 0;
 	int start = Sys_Milliseconds();
 
 	insideLevelLoad = false;
@@ -1045,7 +1064,9 @@ void idRenderModelManagerLocal::EndLevelLoad()
 	for( int i = 0; i < models.Num(); i++ )
 	{
 		idRenderModel* model = models[i];
+		const uint64 bufferStart = Sys_Microseconds();
 		model->CreateBuffers( commandList );
+		transitionBufferUs += Sys_Microseconds() - bufferStart;
 	}
 
 	// create static vertex/index buffers for all models
@@ -1056,7 +1077,9 @@ void idRenderModelManagerLocal::EndLevelLoad()
 		{
 			for( int j = 0; j < model->NumSurfaces(); j++ )
 			{
+				const uint64 uploadStart = Sys_Microseconds();
 				R_CreateStaticBuffersForTri( *( model->Surface( j )->geometry ), commandList );
+				transitionStaticUs += Sys_Microseconds() - uploadStart;
 			}
 		}
 	}
@@ -1085,6 +1108,9 @@ void idRenderModelManagerLocal::EndLevelLoad()
 		common->Printf( "%5i new models loaded in %5.1f seconds\n", loadCount, ( end - start ) * 0.001 );
 	}
 	common->Printf( "---------------------------------------------------\n" );
+	common->ReportTransitionMetric( TRANSITION_MODEL_BUFFER_US, transitionBufferUs );
+	common->ReportTransitionMetric( TRANSITION_STATIC_UPLOAD_US, transitionStaticUs );
+	common->ReportTransitionMetric( TRANSITION_MODEL_US, Sys_Microseconds() - transitionMetricStart );
 }
 
 /*
@@ -1678,3 +1704,26 @@ void idImportOptions::Init( const char* commandline, const char* ospath )
 }
 
 // RB end
+
+void idRenderModelManagerLocal::PurgeUnusedLevelCache()
+{
+	int purged = 0, resident = 0, pins = 0;
+	int64 bytes = 0;
+	for( int i = 0; i < models.Num(); i++ )
+	{
+		idRenderModel* model = models[i];
+		const bool pinned = model->IsLoaded() && common->IsLevelAssetPinned( PRELOAD_MODEL, model->Name() );
+		if( model->IsLoaded() && model->IsReloadable() && !model->IsLevelLoadReferenced() && !pinned && modelLevelLoadCount - model->lastUseLoad >= 1 )
+		{
+			R_CheckForEntityDefsUsingModel( model );
+			model->PurgeModel();
+			purged++;
+		}
+		pins += pinned ? 1 : 0;
+		if( model->IsLoaded() )
+		{
+			resident++; bytes += model->Memory();
+		}
+	}
+	common->ReportLevelCache( 1, -1, resident, purged, pins, bytes );
+}

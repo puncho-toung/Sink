@@ -533,6 +533,7 @@ public:
 	}
 
 	void TouchImage( idImage* image );
+	void PurgeUnusedLevelCache();
 	void				Init();
 	void				Shutdown();
 

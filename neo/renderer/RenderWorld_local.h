@@ -207,6 +207,10 @@ public:
 	virtual bool			CheckAreaForPortalSky( int areaNum );
 
 	virtual	void			GenerateAllInteractions();
+	virtual void GenerateTransitionInteractions( const idVec3* origins, int count );
+	virtual void FinishInteractionSlice();
+	void BeginInteractionTable();
+	int GenerateInteractionsForLight( int index, nvrhi::ICommandList* commands, bool initialOnly );
 	virtual void			RegenerateWorld();
 
 	virtual void			ProjectDecalOntoWorld( const idFixedWinding& winding, const idVec3& projectionOrigin, const bool parallel, const float fadeDepth, const idMaterial* material, const int startTime );
@@ -311,6 +315,11 @@ public:
 	int						interactionTableHeight;		// lightDefs
 
 	bool					generateAllInteractionsCalled;
+	idList<int, TAG_RENDER> lazyInteractionLights;
+	int lazyInteractionCursor = 0;
+	int lazyInteractionCount = 0;
+	uint64 lazyInteractionTotalUs = 0;
+	nvrhi::CommandListHandle lazyInteractionCommands;
 
 	//-----------------------
 	// RenderWorld_load.cpp

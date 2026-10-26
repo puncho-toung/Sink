@@ -196,6 +196,11 @@ idCommonLocal::idCommonLocal() :
 
 	mapSpawnData.gameDriven = false;
 	transitionLoadStartTime = 0;
+	transitionState = transitionStateTime = 0;
+	transitionArrivalSnapshotTime = -1;
+	transitionSequence = transitionLastAccepted = 0;
+	transitionLoaded = false;
+	transitionMap[0] = 0;
 	transitionGuiDraws = 0;
 	mapSpawnData.worldTimeBase = 0;
 	mapSpawnData.savegameFile = NULL;
@@ -1788,6 +1793,12 @@ idCommonLocal::LeaveGame
 */
 void idCommonLocal::LeaveGame()
 {
+	gameThread.WaitForThread();
+	gameThread.ClearSessionCommand();
+	game->ClearMapTransition();
+	transitionState = 0;
+	transitionLoaded = false;
+	session->GetActingGameStateLobbyBase().CancelTransitionHold();
 	const bool captureToImage = false;
 
 	UpdateScreen( captureToImage );

@@ -7,9 +7,9 @@
 #include <atomic>
 #include <sys/stat.h>
 
-idCVar com_prefetch( "com_prefetch", "0", CVAR_SYSTEM | CVAR_BOOL, "read the next map's cooked bytes on a private worker" );
-idCVar com_prefetchBudgetMB( "com_prefetchBudgetMB", "256", CVAR_SYSTEM | CVAR_INTEGER, "maximum prefetched byte buffers", 1, 2048 );
-idCVar com_prefetchSliceUs( "com_prefetchSliceUs", "150", CVAR_SYSTEM | CVAR_INTEGER, "main-thread prefetch resolution budget", 1, 10000 );
+idCVar com_prefetch( "com_prefetch", "0", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_BOOL, "read the next map's cooked bytes on a private worker" );
+idCVar com_prefetchBudgetMB( "com_prefetchBudgetMB", "256", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "maximum prefetched byte buffers", 1, 2048 );
+idCVar com_prefetchSliceUs( "com_prefetchSliceUs", "150", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "main-thread prefetch resolution budget", 1, 10000 );
 
 static const int MAX_PREFETCH_ENTRIES = 4096;
 struct prefetchEntry_t
@@ -26,6 +26,7 @@ static std::atomic<int> requestHead( 0 ), requestTail( 0 ), completionHead( 0 ),
 static std::atomic<bool> prefetchAbort( false ), requestsDone( false ), workerFinished( true );
 static thread_local bool onPrefetchWorker;
 static bool workerStarted, prefetchActive, prefetchServing;
+static int mapEntryCount;
 static int entryCount, resolveIndex, completedCount, hitCount, missCount, skippedCount;
 static uint64 reservedBytes, hitBytes, maxSliceUs;
 static char requestedMap[MAX_OSPATH];
@@ -228,6 +229,7 @@ void Prefetch_Request( const char* mapName )
 	{
 		for( int i = 0; i < files.NumFiles(); i++ ) { Prefetch_Add( files.GetFileNameByIndex( i ) ); }
 	}
+	mapEntryCount = entryCount;
 	idStr manifestName;
 	idCommon::PreloadManifestName( map, manifestName );
 	idPreloadManifest manifest;
@@ -248,6 +250,7 @@ void Prefetch_Request( const char* mapName )
 		}
 		else if( p.resType == PRELOAD_MODEL )
 		{
+			if( Prefetch_ModelResident( p.resourceName ) ) { continue; }
 			name = "generated/rendermodels/";
 			name += p.resourceName;
 			idStr extension;
@@ -256,6 +259,7 @@ void Prefetch_Request( const char* mapName )
 		}
 		else if( p.resType == PRELOAD_SAMPLE )
 		{
+			if( Prefetch_SampleResident( p.resourceName ) ) { continue; }
 			name = "generated/";
 			name += p.resourceName;
 			name.SetFileExtension( "idwav" );
@@ -288,7 +292,9 @@ void Prefetch_Pump()
 	const uint64 start = Sys_Microseconds();
 	Prefetch_Drain();
 	const uint64 budget = ( uint64 )com_prefetchBudgetMB.GetInteger() * 1024 * 1024;
-	while( resolveIndex < entryCount && Sys_Microseconds() - start < ( uint64 )com_prefetchSliceUs.GetInteger() )
+	int batch[32];
+	int batchCount = 0;
+	while( resolveIndex < entryCount && batchCount < 32 && Sys_Microseconds() - start < ( uint64 )com_prefetchSliceUs.GetInteger() )
 	{
 		const int index = resolveIndex++;
 		prefetchEntry_t& entry = prefetchEntries[index];
@@ -298,10 +304,31 @@ void Prefetch_Pump()
 			continue;
 		}
 		reservedBytes += entry.source.length;
-		const int head = requestHead.load( std::memory_order_relaxed );
-		requestRing[head % MAX_PREFETCH_ENTRIES] = index;
-		requestHead.store( head + 1, std::memory_order_release );
+		batch[batchCount++] = index;
 	}
+	// Preserve map-own priority, then sort only this ready manifest batch.
+	// A batch never waits for the remaining manifest and is bounded to 32 entries.
+	for( int i = 1; i < batchCount; i++ )
+	{
+		const int index = batch[i];
+		int j = i;
+		while( j > 0 && index >= mapEntryCount && batch[j - 1] >= mapEntryCount )
+		{
+			const resolvedFile_t& a = prefetchEntries[index].source;
+			const resolvedFile_t& b = prefetchEntries[batch[j - 1]].source;
+			const int order = idStr::Cmp( a.osPath, b.osPath );
+			if( order > 0 || ( order == 0 && a.offset >= b.offset ) ) { break; }
+			batch[j] = batch[j - 1];
+			j--;
+		}
+		batch[j] = index;
+	}
+	const int head = requestHead.load( std::memory_order_relaxed );
+	for( int i = 0; i < batchCount; i++ )
+	{
+		requestRing[( head + i ) % MAX_PREFETCH_ENTRIES] = batch[i];
+	}
+	requestHead.store( head + batchCount, std::memory_order_release );
 	if( resolveIndex == entryCount ) { requestsDone.store( true, std::memory_order_release ); }
 	maxSliceUs = Max( maxSliceUs, Sys_Microseconds() - start );
 	if( workerFinished.load( std::memory_order_acquire ) )
@@ -352,6 +379,9 @@ void Prefetch_EndLoad()
 	uint64 unused = 0;
 	for( int i = 0; i < entryCount; i++ ) { if( prefetchEntries[i].ready && !prefetchEntries[i].used ) { unused += prefetchEntries[i].source.length; } }
 	common->Printf( "PREFETCH load hit=%d miss=%d kb=%llu unused_kb=%llu\n", hitCount, missCount, ( unsigned long long )( hitBytes / 1024 ), ( unsigned long long )( unused / 1024 ) );
+	common->ReportTransitionMetric( TRANSITION_PF_HIT, hitCount );
+	common->ReportTransitionMetric( TRANSITION_PF_MISS, missCount );
+	common->ReportTransitionMetric( TRANSITION_PF_KB, hitBytes / 1024 );
 	Prefetch_Clear();
 }
 

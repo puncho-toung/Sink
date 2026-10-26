@@ -387,6 +387,8 @@ public:
 	// Force the generation of all light / surface interactions at the start of a level
 	// If this isn't called, they will all be dynamically generated
 	virtual	void			GenerateAllInteractions() = 0;
+	virtual void GenerateTransitionInteractions( const idVec3* origins, int count ) { GenerateAllInteractions(); }
+	virtual void FinishInteractionSlice() {}
 
 	// returns true if this area model needs portal sky to draw
 	virtual bool			CheckAreaForPortalSky( int areaNum ) = 0;

@@ -137,10 +137,14 @@ void idUserInterfaceManagerLocal::Preload( const char* mapName )
 }
 
 static int guiLevelLoadCount;
+static int guiLevelLoads;
+static bool guiInsideLevelLoad;
 
 void idUserInterfaceManagerLocal::BeginLevelLoad()
 {
 	guiLevelLoadCount++;
+	guiLevelLoads = 0;
+	guiInsideLevelLoad = true;
 	for( int i = 0; i < guis.Num(); i++ )
 	{
 		guis[ i ]->ClearRefs();
@@ -149,6 +153,7 @@ void idUserInterfaceManagerLocal::BeginLevelLoad()
 
 void idUserInterfaceManagerLocal::EndLevelLoad( const char* mapName )
 {
+	const uint64 transitionMetricStart = Sys_Microseconds();
 	int c = guis.Num();
 	int purged = 0;
 	for( int i = 0; i < c; i++ )
@@ -192,9 +197,11 @@ void idUserInterfaceManagerLocal::EndLevelLoad( const char* mapName )
 
 	int64 bytes = 0;
 	for( int i = 0; i < guis.Num(); i++ ) { bytes += guis[i]->Size(); }
-	common->ReportLevelCache( 3, 0, guis.Num(), purged, 0, bytes );
+	common->ReportLevelCache( 3, guiLevelLoads, guis.Num(), purged, 0, bytes );
+	guiInsideLevelLoad = false;
 	dcOld.Init();
 	dcOptimized.Init();
+	common->ReportTransitionMetric( TRANSITION_GUI_US, Sys_Microseconds() - transitionMetricStart );
 }
 
 void idUserInterfaceManagerLocal::Reload( bool all )
@@ -486,6 +493,10 @@ bool idUserInterfaceLocal::InitFromFile( const char* qpath, bool rebuild, bool c
 	}
 
 	loading = false;
+	if( guiInsideLevelLoad )
+	{
+		guiLevelLoads++;
+	}
 
 	return true;
 }
@@ -799,3 +810,32 @@ void idUserInterfaceLocal::SetCursor( float x, float y )
 	cursorY = y;
 }
 
+
+void idUserInterfaceManagerLocal::PurgeUnusedLevelCache()
+{
+	int purged = 0;
+	int64 bytes = 0;
+	for( int i = 0; i < guis.Num(); i++ )
+	{
+		bool remove = guis[i]->GetRefs() == 0 && guiLevelLoadCount - guis[i]->lastUseLoad >= 1;
+		for( int j = 0; remove && j < declManager->GetNumDecls( DECL_MATERIAL ); j++ )
+		{
+			const idMaterial* material = static_cast<const idMaterial*>( declManager->DeclByIndex( DECL_MATERIAL, j, false ) );
+			if( material->GlobalGui() == guis[i] )
+			{
+				remove = false;
+			}
+		}
+		if( remove )
+		{
+			delete guis[i];
+			guis.RemoveIndex( i-- );
+			purged++;
+		}
+		else
+		{
+			bytes += guis[i]->Size();
+		}
+	}
+	common->ReportLevelCache( 3, -1, guis.Num(), purged, 0, bytes );
+}

@@ -44,6 +44,7 @@ public:
 
 	virtual size_t			Size() const;
 	virtual const char* 	DefaultDefinition() const;
+	virtual void TouchMedia() override;
 	virtual bool			Parse( const char* text, const int textLength, bool allowBinaryVersion );
 	virtual void			FreeData();
 	virtual void			Print();

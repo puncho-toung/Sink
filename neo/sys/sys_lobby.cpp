@@ -1424,6 +1424,20 @@ void idLobby::QueueReliableMessage( int p, byte type, const byte* data, int data
 		return;
 	}
 
+	if( IsHost() && peer.transitionHold && type >= RELIABLE_GAME_DATA )
+	{
+		if( dataLen < 0 || dataLen >= idPacketProcessor::MAX_MSG_SIZE - 1 || !peer.transitionHeld.Append( peer.transitionSequence++, &type, 1, data, dataLen ) )
+		{
+			idLib::Warning( "transition held reliable overflow peer=%d count=%d bytes=%d", p, peer.transitionHeld.Num(), peer.transitionHeld.GetDataLength() );
+			DisconnectPeerFromSession( p );
+		}
+		else
+		{
+			idLib::Printf( "transition_held_reliables peer=%d count=%d bytes=%d\n", p, peer.transitionHeld.Num(), peer.transitionHeld.GetDataLength() );
+		}
+		return;
+	}
+
 	if( peer.packetProc->NumQueuedReliables() > 2 )
 	{
 		idLib::PrintfIf( false, "NET: peer.packetProc->NumQueuedReliables() > 2: %i (%i / %s)\n", peer.packetProc->NumQueuedReliables(), p, peer.address.ToString() );
@@ -1979,6 +1993,8 @@ void idLobby::VerifyPeerContent( int p )
 
 	if( differs.IsEmpty() )
 	{
+		peer.transitionRelease = true;
+		FlushTransitionHeld( p );
 		NET_VERBOSE_PRINT( "NET: Peer %i (%s) has the host's content (load %u)\n", p, peer.address.ToString(), loadId );	//puncho - content check (P1-A3a)
 		return;
 	}
@@ -2789,6 +2805,12 @@ void idLobby::HandleHelloAck( int p, idBitMsg& msg )
 
 	// Read match parms
 	parms.Read( msg );
+	if( !parms.gameDataValid )
+	{
+		idLib::Warning( "invalid match game data; disconnecting" );
+		Shutdown();
+		return;
+	}
 
 	// Update lobbyBackend with parms
 	if( lobbyBackend != NULL )
@@ -3134,6 +3156,12 @@ void idLobby::HandleReliableMsg( int p, idBitMsg& msg, const lobbyAddress_t* rem
 	else if( reliableType == RELIABLE_MATCH_PARMS )
 	{
 		parms.Read( msg );
+		if( !parms.gameDataValid )
+		{
+			idLib::Warning( "invalid match game data; disconnecting" );
+			Shutdown();
+			return;
+		}
 		// Update lobby with parms
 		if( lobbyBackend != NULL )
 		{
@@ -3308,6 +3336,12 @@ void idLobby::HandleReliableMsg( int p, idBitMsg& msg, const lobbyAddress_t* rem
 
 		// Read match parms, and start loading
 		parms.Read( msg );
+		if( !parms.gameDataValid )
+		{
+			idLib::Warning( "invalid match game data; disconnecting" );
+			Shutdown();
+			return;
+		}
 
 		// Send these new match parms to currently connected peers
 		SendMatchParmsToPeers();
@@ -4773,6 +4807,7 @@ idLobby::ResendReliables
 */
 void idLobby::ResendReliables( int p )
 {
+	FlushTransitionHeld( p );
 
 	peer_t& peer = peers[p];
 
@@ -5185,4 +5220,105 @@ idLobby::peer_t::GetConnectionState
 idLobby::connectionState_t idLobby::peer_t::GetConnectionState() const
 {
 	return connectionState;
+}
+
+void idLobby::BeginTransitionHold()
+{
+	if( !IsHost() )
+	{
+		return;
+	}
+	for( int p = 0; p < peers.Num(); p++ )
+	{
+		peer_t& peer = peers[p];
+		peer.transitionHeld.Clear();
+		peer.transitionSequence = 0;
+		peer.transitionHold = peer.transitionMember = peer.IsConnected();
+		peer.transitionRelease = false;
+	}
+}
+
+void idLobby::CancelTransitionHold()
+{
+	for( int p = 0; p < peers.Num(); p++ )
+	{
+		peer_t& peer = peers[p];
+		peer.transitionHold = peer.transitionRelease = peer.transitionMember = false;
+		peer.transitionHeld.Clear();
+	}
+}
+
+bool idLobby::TransitionDrainReady( bool timeout )
+{
+	bool ready = true;
+	for( int p = 0; p < peers.Num(); p++ )
+	{
+		peer_t& peer = peers[p];
+		if( !peer.transitionMember || !peer.IsConnected() || peer.packetProc->NumQueuedReliables() == 0 )
+		{
+			continue;
+		}
+		if( timeout )
+		{
+			idLib::Warning( "transition ACK timeout peer=%d queued=%d; disconnecting", p, peer.packetProc->NumQueuedReliables() );
+			DisconnectPeerFromSession( p );
+		}
+		else
+		{
+			ready = false;
+		}
+	}
+	return ready;
+}
+
+bool idLobby::TransitionArrivalReady( bool timeout )
+{
+	bool ready = true;
+	for( int p = 0; p < peers.Num(); p++ )
+	{
+		peer_t& peer = peers[p];
+		if( !peer.transitionMember || !peer.IsConnected() || ( peer.loaded && peer.inGame && peer.snapProc != NULL && peer.snapProc->GetFullSnapBaseSequence() >= idSnapshotProcessor::INITIAL_SNAP_SEQUENCE ) )
+		{
+			continue;
+		}
+		if( timeout )
+		{
+			idLib::Warning( "transition arrival timeout peer=%d loaded=%d ingame=%d; disconnecting", p, peer.loaded, peer.inGame );
+			DisconnectPeerFromSession( p );
+		}
+		else
+		{
+			ready = false;
+		}
+	}
+	return ready;
+}
+
+void idLobby::FlushTransitionHeld( int p )
+{
+	peer_t& peer = peers[p];
+	if( !peer.IsConnected() || !peer.transitionHold || !peer.transitionRelease )
+	{
+		return;
+	}
+	// Leave room for lobby control reliables. New game messages append behind the backlog.
+	while( peer.transitionHeld.Num() > 0 && peer.packetProc->NumQueuedReliables() < idPacketProcessor::MAX_RELIABLE_QUEUE - 8 )
+	{
+		if( peer.packetProc->GetReliableDataSize() + peer.transitionHeld.ItemLength( 0 ) >= idPacketProcessor::MAX_MSG_SIZE )
+		{
+			break;
+		}
+		const byte* data = peer.transitionHeld.ItemData( 0 );
+		if( !peer.packetProc->QueueReliableMessage( data[0], data + 1, peer.transitionHeld.ItemLength( 0 ) - 1 ) )
+		{
+			idLib::Warning( "transition held reliable flush overflow peer=%d", p );
+			DisconnectPeerFromSession( p );
+			return;
+		}
+		peer.transitionHeld.RemoveOlderThan( peer.transitionHeld.ItemSequence( 0 ) + 1 );
+	}
+	if( peer.transitionHeld.Num() == 0 )
+	{
+		peer.transitionHold = false;
+	}
 }

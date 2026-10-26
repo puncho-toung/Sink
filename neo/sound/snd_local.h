@@ -308,6 +308,14 @@ public:
 
 	// Called at map start
 	virtual void			ClearAllSoundEmitters();
+	virtual bool CarryEmitter( idSoundEmitter* emitter, const char* shader );
+	virtual idSoundEmitter* AdoptCarriedEmitter( const char* shader );
+	virtual void TransitionArrival();
+	virtual void TouchTransitionMedia();
+	bool IsCarriedEmitter( const idSoundEmitter* emitter ) const;
+	idSoundEmitterLocal* transitionEmitters[4];
+	char transitionShaders[4][256];
+	int transitionExpire[4];
 
 	// stop all playing sounds
 	virtual void			StopAllSounds();
@@ -533,6 +541,7 @@ public:
 
 	// We might want to defer the loading of new sounds to this point
 	virtual	void			EndLevelLoad();
+	virtual void PurgeUnusedLevelCache();
 
 	// prints memory info
 	virtual void			PrintMemInfo( MemInfo_t* mi );

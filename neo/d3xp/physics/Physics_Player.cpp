@@ -2349,3 +2349,16 @@ void idPhysics_Player::ReadFromSnapshot( const idBitMsg& msg )
 
 }
 
+
+void idPhysics_Player::RestoreTransitionCrouch( bool crouched )
+{
+	if( crouched )
+	{
+		command.buttons |= BUTTON_CROUCH;
+	}
+	else
+	{
+		command.buttons &= ~BUTTON_CROUCH;
+	}
+	CheckDuck();
+}

@@ -148,6 +148,7 @@ public:
 	bool					HasSteppedUp() const;
 	float					GetStepUp() const;
 	bool					IsCrouching() const;
+	void					RestoreTransitionCrouch( bool crouched );
 	bool					OnLadder() const;
 	const idVec3& 			PlayerGetOrigin() const;	// != GetOrigin
 

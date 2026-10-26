@@ -124,6 +124,7 @@ public:
 
 	// called only by renderer::EndLevelLoad
 	virtual void			EndLevelLoad() = 0;
+	virtual void PurgeUnusedLevelCache() {}
 
 	// called only by renderer::Preload
 	virtual void			Preload( const idPreloadManifest& manifest ) = 0;

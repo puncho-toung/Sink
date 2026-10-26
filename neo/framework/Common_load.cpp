@@ -30,10 +30,14 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "precompiled.h"
 #pragma hdrstop
+#if defined( __linux__ )
+#include <unistd.h>
+#endif
 
 #include "Common_local.h"
 #include "../sys/sys_lobby_backend.h"
 #include "Prefetch.h"
+#include "../renderer/Image.h"
 
 
 #define LAUNCH_TITLE_DOOM_EXECUTABLE		"doom1.exe"
@@ -51,6 +55,15 @@ struct loadTimelineRow_t
 static loadTimelineRow_t loadRows[LOAD_PHASE_COUNT];
 static int loadCurrentPhase = -1;
 static int loadIndex;
+idCVar com_transitionTimelineLog( "com_transitionTimelineLog", "", CVAR_SYSTEM | CVAR_NOCHEAT, "write transition ready rows to loadtimeline/<plain name>.csv" );
+static uint64 transitionMetrics[TRANSITION_METRIC_COUNT];
+static uint64 transitionTimelineStart, transitionTimelineDraw;
+static bool transitionTimelineArmed;
+static char transitionTimelineKind[16];
+static char transitionTimelineFrom[MAX_OSPATH];
+static int transitionTimelineWipeMs;
+static uint64 transitionTimelineNetUs;
+
 static uint64 loadPhaseStart;
 static unsigned int loadReadStart;
 static renderMapStats_t loadResourceStart;
@@ -62,7 +75,7 @@ static const char* loadPhaseNames[LOAD_PHASE_COUNT] = {
 
 void idCommonLocal::LoadPhase( loadPhase_t phase )
 {
-	if( !com_loadTimeline.GetBool() && !com_loadTimelineLog.GetString()[0] )
+	if( !com_loadTimeline.GetBool() && !com_loadTimelineLog.GetString()[0] && !com_transitionTimelineLog.GetString()[0] )
 	{
 		loadCurrentPhase = -1;
 		return;
@@ -151,8 +164,9 @@ void idCommonLocal::FinishLoadTimeline()
 	}
 }
 
-idCVar com_levelKeep( "com_levelKeep", "0", CVAR_SYSTEM | CVAR_INTEGER, "game-driven asset grace in map loads (0 = legacy purge)", 0, 1000 );
-idCVar com_levelKeepAll( "com_levelKeepAll", "0", CVAR_SYSTEM | CVAR_BOOL, "test asset grace on console loads too" );
+idCVar com_levelKeep( "com_levelKeep", "0", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "game-driven asset grace in map loads (0 = legacy purge)", 0, 1000 );
+idCVar com_levelKeepMB( "com_levelKeepMB", "0", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "retained asset cap; over budget sweeps unreferenced assets once with one-load grace", 0, 16384 );
+idCVar com_levelKeepAll( "com_levelKeepAll", "0", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_BOOL, "test asset grace on console loads too" );
 struct levelCacheStats_t
 {
 	int loaded, kept, purged, pinned;
@@ -165,12 +179,15 @@ void idCommonLocal::ReportLevelCache( int manager, int loaded, int kept, int pur
 {
 	assert( manager >= 0 && manager < 4 );
 	levelCacheStats_t& s = levelCacheStats[manager];
-	s.loaded = loaded;
+	if( loaded >= 0 )
+	{
+		s.loaded = loaded;
+	}
 	s.kept = kept;
-	s.purged = purged;
+	s.purged = loaded < 0 ? s.purged + purged : purged;
 	s.pinned = pinned;
 	s.bytes = bytes;
-	Printf( "LEVELCACHE %s loaded=%d resident=%d purged=%d pinned=%d bytes=%lld\n", levelCacheNames[manager], loaded, kept, purged, pinned, ( long long )bytes );
+	Printf( "LEVELCACHE %s loaded=%d resident=%d purged=%d pinned=%d bytes=%lld\n", levelCacheNames[manager], s.loaded, kept, s.purged, pinned, ( long long )bytes );
 }
 
 CONSOLE_COMMAND( listLevelCache, "show the last completed load's asset inventory", NULL )
@@ -285,10 +302,19 @@ CONSOLE_COMMAND( listPins, "list resident-only map asset pins", NULL )
 	}
 }
 
-idCVar com_transitionWipeMs( "com_transitionWipeMs", "1000", CVAR_SYSTEM | CVAR_INTEGER, "game-driven total presentation budget; -1 uses legacy held wipes", -1, 10000 );
-idCVar com_transitionOverlayMs( "com_transitionOverlayMs", "50", CVAR_SYSTEM | CVAR_INTEGER, "game-driven loading overlay delay after fade; -1 draws immediately", -1, 10000 );
-idCVar com_transitionKeepInput( "com_transitionKeepInput", "0", CVAR_SYSTEM | CVAR_BOOL, "preserve held buttons and toggles across game-driven changes" );
-idCVar com_transitionStrip( "com_transitionStrip", "0", CVAR_SYSTEM | CVAR_INTEGER, "game-driven load bits: 1 skip settle, 4 skip synchronous autosave (checkpoint requires MP-D0)", 0, 7 );
+idCVar net_coopTransitions( "net_coopTransitions", "0", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_BOOL, "keep the whole connected party across game-driven transitions" );
+idCVar net_transitionAckMs( "net_transitionAckMs", "3000", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "transition reliable drain timeout", 1, 60000 );
+idCVar net_transitionWaitMs( "net_transitionWaitMs", "10000", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "client transition session wait timeout", 1, 60000 );
+idCVar net_transitionArriveMs( "net_transitionArriveMs", "15000", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "transition first snapshot timeout", 1, 60000 );
+idCVar com_testLoadDelayMs( "com_testLoadDelayMs", "0", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "test-only client load delay", 0, 60000 );
+
+static int transitionSoundRenderTime = 0;
+static int transitionSoundRenderGap = 0;
+
+idCVar com_transitionWipeMs( "com_transitionWipeMs", "1000", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "game-driven total presentation budget; -1 uses legacy held wipes", -1, 10000 );
+idCVar com_transitionOverlayMs( "com_transitionOverlayMs", "50", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "game-driven loading overlay delay after fade; -1 draws immediately", -1, 10000 );
+idCVar com_transitionKeepInput( "com_transitionKeepInput", "0", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_BOOL, "preserve held buttons and toggles across game-driven changes" );
+idCVar com_transitionStrip( "com_transitionStrip", "0", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "game-driven load bits: 1 skip settle, 2 slice interactions, 4 skip synchronous autosave (checkpoint requires MP-D0)", 0, 7 );
 
 idCVar com_wipeSeconds( "com_wipeSeconds", "1", CVAR_SYSTEM, "" );
 idCVar com_disableAutoSaves( "com_disableAutoSaves", "0", CVAR_SYSTEM | CVAR_BOOL, "" );
@@ -325,9 +351,11 @@ void idCommonLocal::StartWipe( const char* _wipeMaterial, bool hold )
 	int duration = SEC2MS( com_wipeSeconds.GetFloat() );
 	if( IsGameDrivenLoad() && com_transitionWipeMs.GetInteger() >= 0 )
 	{
-		// Loading consumes the presentation budget; never add a held second before IO.
-		duration = hold ? 0 : Max( 0, com_transitionWipeMs.GetInteger() - ( wipeStartTime - transitionLoadStartTime ) );
+		// Reserve one 60 Hz frame for the first visible draw after the fade expires.
+		// Loading consumes the same budget; never add a held second before IO.
+		duration = hold ? 0 : Max( 0, com_transitionWipeMs.GetInteger() - 17 - ( wipeStartTime - transitionLoadStartTime ) );
 	}
+	transitionTimelineWipeMs += duration;
 	wipeStopTime = wipeStartTime + duration;
 	wipeHold = hold;
 }
@@ -370,7 +398,14 @@ idCommonLocal::StartNewGame
 */
 void idCommonLocal::StartNewGame( const char* mapName, bool devmap, int gameMode )
 {
+	gameThread.WaitForThread();
+	gameThread.ClearSessionCommand();
+	game->ClearMapTransition();
+	session->GetActingGameStateLobbyBase().CancelTransitionHold();
+	BeginTransitionTimeline( "newgame" );
 	mapSpawnData.gameDriven = false;
+	transitionState = 0;
+	transitionSequence = transitionLastAccepted = 0;
 	if( session->GetSignInManager().GetMasterLocalUser() == NULL )
 	{
 		// For development make sure a controller is registered
@@ -427,6 +462,11 @@ void idCommonLocal::StartNewGame( const char* mapName, bool devmap, int gameMode
 			if( WaitForSessionState( idSession::GAME_LOBBY ) )
 			{
 				cvarSystem->SetCVarBool( "developer", devmap );
+				if( !PrepareMatchGameData( matchParameters ) )
+				{
+					return;
+				}
+				session->UpdateMatchParms( matchParameters );
 				session->StartMatch();
 			}
 		}
@@ -469,6 +509,11 @@ void idCommonLocal::MoveToNewMap( const char* mapName, bool devmap )
 			session->CreateMatch( matchParameters );
 			if( WaitForSessionState( idSession::GAME_LOBBY ) )
 			{
+				if( !PrepareMatchGameData( matchParameters ) )
+				{
+					return;
+				}
+				session->UpdateMatchParms( matchParameters );
 				session->StartMatch();
 			}
 		}
@@ -603,6 +648,23 @@ void idCommonLocal::LoadLoadingGui( const char* mapName, bool& hellMap )
 			}
 
 			const idMatchParameters& matchParameters = session->GetActingGameStateLobbyBase().GetMatchParms();
+	if( !matchParameters.gameDataValid )
+	{
+		Warning( "map load refused: invalid match game data" );
+		LeaveGame();
+		return;
+	}
+	if( IsClient() )
+	{
+		game->SetMatchGameData( matchParameters.gameData, matchParameters.gameDataSize );
+		const int delayUntil = Sys_Milliseconds() + com_testLoadDelayMs.GetInteger();
+		while( Sys_Milliseconds() < delayUntil )
+		{
+			session->Pump();
+			Sys_Sleep( 1 );
+		}
+	}
+
 			if( matchParameters.gameMode == GAME_MODE_SINGLEPLAYER )
 			{
 				desc = idLocalization::GetString( mapDef->dict.GetString( "desc", "" ) );
@@ -666,6 +728,10 @@ Exits with mapSpawned = true
 */
 void idCommonLocal::ExecuteMapChange()
 {
+	if( transitionTimelineStart == 0 )
+	{
+		BeginTransitionTimeline( "newgame" );
+	}
 	Prefetch_BeginLoad();
 	if( session->GetState() != idSession::LOADING )
 	{
@@ -716,9 +782,21 @@ void idCommonLocal::ExecuteMapChange()
 	console->Close();
 
 	// clear all menu sounds
-	soundWorld->Pause();
-	menuSoundWorld->ClearAllSoundEmitters();
-	soundSystem->SetPlayingSoundWorld( menuSoundWorld );
+	const bool carrySound = IsGameDrivenLoad() && cvarSystem->GetCVarBool( "s_transitionCarry" ) && com_levelKeep.GetInteger() >= 1;
+	transitionSoundRenderTime = 0;
+	transitionSoundRenderGap = 0;
+	if( carrySound )
+	{
+		soundWorld->UnPause();
+		soundSystem->SetPlayingSoundWorld( soundWorld );
+		transitionSoundRenderTime = Sys_Milliseconds();
+	}
+	else
+	{
+		soundWorld->Pause();
+		menuSoundWorld->ClearAllSoundEmitters();
+		soundSystem->SetPlayingSoundWorld( menuSoundWorld );
+	}
 	soundSystem->Render();
 
 	// extract the map name from serverinfo
@@ -743,7 +821,10 @@ void idCommonLocal::ExecuteMapChange()
 	// run the wipe to completion
 	StartWipe( "wipeMaterial", true );
 	CompleteWipe();
-	transitionLoadStartTime = Sys_Milliseconds();
+	if( transitionLoadStartTime == 0 )
+	{
+		transitionLoadStartTime = Sys_Milliseconds();
+	}
 	transitionGuiDraws = 0;
 	if( IsGameDrivenLoad() )
 	{
@@ -862,6 +943,13 @@ void idCommonLocal::ExecuteMapChange()
 
 		while( session->GetState() == idSession::LOADING )
 		{
+			if( transitionState != 0 && Sys_Milliseconds() - transitionStateTime >= net_transitionArriveMs.GetInteger() )
+			{
+				Warning( "transition first snapshot wait timed out during load" );
+				LeaveGame();
+				return;
+			}
+			UpdateLevelLoadPacifier();
 			Sys_GenerateEvents();
 			session->UpdateSignInManager();
 			session->Pump();
@@ -869,7 +957,7 @@ void idCommonLocal::ExecuteMapChange()
 		}
 	}
 
-	if( !mapSpawnData.savegameFile )
+	if( !mapSpawnData.savegameFile && transitionState == 0 )
 	{
 		LoadPhase( LOAD_FIRST_FRAME );
 		// run a single frame to catch any resources that are referenced by events posted in spawn
@@ -892,11 +980,28 @@ void idCommonLocal::ExecuteMapChange()
 	LoadPhase( LOAD_END_RENDER );
 	renderSystem->EndLevelLoad();
 	LoadPhase( LOAD_END_SOUND );
+	if( carrySound )
+	{
+		soundWorld->TouchTransitionMedia();
+	}
 	soundSystem->EndLevelLoad();
 	LoadPhase( LOAD_END_DECL );
 	declManager->EndLevelLoad();
 	LoadPhase( LOAD_END_UI );
 	uiManager->EndLevelLoad( currentMapName );
+	int64 cacheBytes = 0;
+	for( int i = 0; i < 4; i++ )
+	{
+		cacheBytes += levelCacheStats[i].bytes;
+	}
+	if( LevelKeepGrace() > 1 && com_levelKeepMB.GetInteger() > 0 && cacheBytes > ( int64 )com_levelKeepMB.GetInteger() * 1024 * 1024 )
+	{
+		Printf( "LEVELCACHE cap=%d MB resident=%lld bytes: rerun sweep grace=1\n", com_levelKeepMB.GetInteger(), ( long long )cacheBytes );
+		renderModelManager->PurgeUnusedLevelCache();
+		globalImages->PurgeUnusedLevelCache();
+		soundSystem->PurgeUnusedLevelCache();
+		uiManager->PurgeUnusedLevelCache();
+	}
 	LoadPhase( LOAD_END_FS );
 	fileSystem->EndLevelLoad();
 
@@ -939,7 +1044,16 @@ void idCommonLocal::ExecuteMapChange()
 	common->Printf( "----- Generating Interactions -----\n" );
 
 	// let the renderSystem generate interactions now that everything is spawned
-	renderWorld->GenerateAllInteractions();
+	if( IsGameDrivenLoad() && ( com_transitionStrip.GetInteger() & 2 ) )
+	{
+		idVec3 origins[MAX_PLAYERS];
+		const int count = game->GetPlayerOrigins( origins, MAX_PLAYERS );
+		renderWorld->GenerateTransitionInteractions( origins, count );
+	}
+	else
+	{
+		renderWorld->GenerateAllInteractions();
+	}
 	LoadPhase( LOAD_FINISH );
 
 	{
@@ -987,11 +1101,27 @@ void idCommonLocal::ExecuteMapChange()
 
 
 	// capture the current screen and start a wipe
-	StartWipe( "wipe2Material" );
+	if( transitionState == 0 )
+	{
+		StartWipe( "wipe2Material" );
+	}
 
 	// we are valid for game draws now
 	insideExecuteMapChange = false;
 	mapSpawned = true;
+	transitionTimelineArmed = true;
+	if( transitionState != 0 )
+	{
+		transitionLoaded = true;
+		transitionStateTime = Sys_Milliseconds();
+	}
+	if( carrySound )
+	{
+		soundWorld->TransitionArrival();
+		transitionSoundRenderGap = Max( transitionSoundRenderGap, Sys_Milliseconds() - transitionSoundRenderTime );
+		Printf( "snd_render_gap_max_ms=%d\n", transitionSoundRenderGap );
+	}
+	transitionSoundRenderTime = 0;
 	if( !IsGameDrivenLoad() || !com_transitionKeepInput.GetBool() )
 	{
 		Sys_ClearEvents();
@@ -1000,7 +1130,10 @@ void idCommonLocal::ExecuteMapChange()
 	{
 		Printf( "TRANSITION guiDraws=%d\n", transitionGuiDraws );
 	}
-	transitionLoadStartTime = 0;
+	if( transitionState == 0 )
+	{
+		transitionLoadStartTime = 0;
+	}
 
 	int	msec = Sys_Milliseconds() - start;
 	FinishLoadTimeline();
@@ -1030,6 +1163,12 @@ void idCommonLocal::UpdateLevelLoadPacifier()
 	const int sessionUpdateTime = common->IsMultiplayer() ? 16 : 100;
 
 	const int time = Sys_Milliseconds();
+	if( transitionSoundRenderTime != 0 && time - transitionSoundRenderTime >= 16 )
+	{
+		transitionSoundRenderGap = Max( transitionSoundRenderGap, time - transitionSoundRenderTime );
+		soundSystem->Render();
+		transitionSoundRenderTime = time;
+	}
 
 	// Throttle session pumps.
 	if( time - lastPacifierSessionTime >= sessionUpdateTime )
@@ -1315,6 +1454,11 @@ idCommonLocal::SaveGame
 */
 bool idCommonLocal::SaveGame( const char* saveName )
 {
+	if( transitionState != 0 || game->IsMapTransitionActive() )
+	{
+		Warning( "save refused while a map transition is pending" );
+		return false;
+	}
 	if( pipelineFile != NULL )
 	{
 		// We're already in the middle of a save. Leave us alone.
@@ -1515,6 +1659,11 @@ idCommonLocal::LoadGame
 */
 bool idCommonLocal::LoadGame( const char* saveName )
 {
+	if( transitionState != 0 || game->IsMapTransitionActive() )
+	{
+		Warning( "load refused while a map transition is pending; retry after arrival" );
+		return false;
+	}
 	if( IsMultiplayer() )
 	{
 		common->Printf( "Can't load during net play.\n" );
@@ -1772,6 +1921,11 @@ void idCommonLocal::OnLoadFilesCompleted( idSaveLoadParms& parms )
 					session->CreateMatch( matchParameters );
 					if( WaitForSessionState( idSession::GAME_LOBBY ) )
 					{
+						if( !PrepareMatchGameData( matchParameters ) )
+						{
+							return;
+						}
+						session->UpdateMatchParms( matchParameters );
 						session->StartMatch();
 						return;
 					}
@@ -1984,3 +2138,327 @@ CONSOLE_COMMAND( bakemap, "loads a map and bakes environment probes", idCmdSyste
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, string );
 }
 #endif
+
+CONSOLE_COMMAND( comparePreload, "compare two maps' shared cooked asset manifests", idCmdSystem::ArgCompletion_MapName )
+{
+	if( args.Argc() != 3 )
+	{
+		common->Printf( "usage: comparePreload <map-a> <map-b>\n" );
+		return;
+	}
+	idPreloadManifest a, b;
+	idStr nameA, nameB;
+	idCommon::PreloadManifestName( args.Argv( 1 ), nameA );
+	idCommon::PreloadManifestName( args.Argv( 2 ), nameB );
+	if( !a.LoadManifest( nameA ) || !b.LoadManifest( nameB ) )
+	{
+		common->Warning( "comparePreload: missing manifest" );
+		return;
+	}
+	int shared[3] = {};
+	uint64 bytes[3] = {};
+	for( int i = 0; i < a.NumResources(); i++ )
+	{
+		const preloadEntry_s& entry = a.GetPreloadByIndex( i );
+		if( entry.resType < PRELOAD_IMAGE || entry.resType > PRELOAD_SAMPLE )
+		{
+			continue;
+		}
+		for( int j = 0; j < b.NumResources(); j++ )
+		{
+			const preloadEntry_s& other = b.GetPreloadByIndex( j );
+			if( entry.resType != other.resType || entry.resourceName.Icmp( other.resourceName ) != 0 || ( entry.resType == PRELOAD_IMAGE && !( entry.imgData == other.imgData ) ) )
+			{
+				continue;
+			}
+			idStr path;
+			if( entry.resType == PRELOAD_IMAGE )
+			{
+				idStr generated = entry.resourceName;
+				idImage::GetGeneratedName( generated, ( textureUsage_t )entry.imgData.usage, ( cubeFiles_t )entry.imgData.cubeMap );
+				path = "generated/images/";
+				path += generated;
+				path += ".bimage";
+				path.Replace( "(", "/" );
+				path.Replace( ",", "/" );
+				path.Replace( ")", "" );
+				path.Replace( " ", "" );
+			}
+			else if( entry.resType == PRELOAD_MODEL )
+			{
+				path = "generated/rendermodels/";
+				path += entry.resourceName;
+				idStr extension;
+				path.ExtractFileExtension( extension );
+				path.SetFileExtension( va( "b%s", extension.c_str() ) );
+			}
+			else
+			{
+				path = "generated/";
+				path += entry.resourceName;
+				path.SetFileExtension( "idwav" );
+			}
+			resolvedFile_t source;
+			const uint64 size = fileSystem->ResolveForRead( path, source ) ? source.length : 0;
+			shared[entry.resType]++;
+			bytes[entry.resType] += size;
+			common->Printf( "PRELOAD shared type=%d cooked_bytes=%llu %s\n", entry.resType, ( unsigned long long )size, entry.resourceName.c_str() );
+			break;
+		}
+	}
+	for( int type = 0; type < 3; type++ )
+	{
+		common->Printf( "PRELOAD type=%d shared=%d cooked_bytes=%llu\n", type, shared[type], ( unsigned long long )bytes[type] );
+	}
+}
+
+// These states are engine-owned; the game thread only supplies the committed command.
+// 0 idle, 1 host draining, 2 host arrival, 3 client waiting/loading.
+bool idCommonLocal::PrepareMatchGameData( idMatchParameters& parms )
+{
+	const int bytes = game->WriteMatchGameData( parms.mapName, parms.gameData, MAX_MATCH_GAME_DATA );
+	if( bytes < 0 || bytes > MAX_MATCH_GAME_DATA )
+	{
+		Warning( "map load refused: game recipe exceeds %d bytes", MAX_MATCH_GAME_DATA );
+		return false;
+	}
+	parms.gameDataSize = bytes;
+	parms.gameDataValid = true;
+	if( net_coopTransitions.GetBool() && parms.numSlots > 1 )
+	{
+		parms.matchFlags |= MATCH_REQUIRE_PARTY_LOBBY;
+	}
+	return true;
+}
+
+bool idCommonLocal::BeginCoopTransition( const char* map )
+{
+	idLobbyBase& lobby = session->GetActingGameStateLobbyBase();
+	if( !net_coopTransitions.GetBool() || !lobby.IsHost() || transitionState != 0 )
+	{
+		return false;
+	}
+	if( !( session->GetGameLobbyBase().GetMatchParms().matchFlags & MATCH_REQUIRE_PARTY_LOBBY ) )
+	{
+		Warning( "co-op transition requires a match hosted with net_coopTransitions 1" );
+		return false;
+	}
+	if( transitionSequence == 65535 )
+	{
+		Warning( "transition sequence exhausted; start a new match" );
+		return false;
+	}
+	idStr::Copynz( transitionMap, map, sizeof( transitionMap ) );
+	BeginTransitionTimeline( "coop" );
+	transitionSequence++;
+	game->BroadcastMapTransition( transitionSequence, transitionMap );
+	lobby.BeginTransitionHold();
+	transitionState = 1;
+	transitionStateTime = Sys_Milliseconds();
+	transitionLoaded = false;
+	mapSpawnData.gameDriven = true;
+	mapSpawnData.worldTimeBase = game->GetWorldTime();
+	transitionLoadStartTime = transitionStateTime;
+	StartWipe( "wipeMaterial", true );
+	Printf( "transition_drain seq=%u map=%s\n", transitionSequence, transitionMap );
+	return true;
+}
+
+void idCommonLocal::NotifyMapTransition( unsigned short sequence, const char* map )
+{
+	if( !IsClient() )
+	{
+		return;
+	}
+	if( sequence <= transitionLastAccepted )
+	{
+		Printf( "transition_stale_seq=%u last=%u\n", sequence, transitionLastAccepted );
+		return;
+	}
+	if( !map[0] || idStr::Length( map ) > 63 || strstr( map, ".." ) != NULL )
+	{
+		return;
+	}
+	BeginTransitionTimeline( "coop" );
+	transitionLastAccepted = sequence;
+	idStr::Copynz( transitionMap, map, sizeof( transitionMap ) );
+	transitionState = 3;
+	transitionStateTime = Sys_Milliseconds();
+	transitionLoaded = false;
+	transitionArrivalSnapshotTime = -1;
+	mapSpawnData.gameDriven = true;
+	transitionLoadStartTime = transitionStateTime;
+	Prefetch_Request( map );
+	StartWipe( "wipeMaterial", true );
+	Printf( "transition_pending seq=%u map=%s\n", sequence, map );
+}
+
+void idCommonLocal::PumpMapTransition()
+{
+	if( transitionState == 0 )
+	{
+		return;
+	}
+	idLobbyBase& lobby = session->GetActingGameStateLobbyBase();
+	const int elapsed = Sys_Milliseconds() - transitionStateTime;
+	if( transitionState == 1 && lobby.TransitionDrainReady( elapsed >= net_transitionAckMs.GetInteger() ) )
+	{
+		idMatchParameters parms = session->GetGameLobbyBase().GetMatchParms();
+		parms.mapName = transitionMap;
+		if( !PrepareMatchGameData( parms ) )
+		{
+			LeaveGame();
+			return;
+		}
+		transitionTimelineNetUs += ( uint64 )elapsed * 1000;
+		session->EndMatch();
+		session->UpdateMatchParms( parms );
+		transitionState = 2;
+		transitionStateTime = Sys_Milliseconds();
+		session->StartMatch();
+		Printf( "transition_loading seq=%u\n", transitionSequence );
+	}
+	else if( transitionState == 2 && transitionLoaded && lobby.TransitionArrivalReady( elapsed >= net_transitionArriveMs.GetInteger() ) )
+	{
+		transitionTimelineNetUs += ( uint64 )elapsed * 1000;
+		transitionState = 0;
+		mapSpawnData.gameDriven = true;
+		StartWipe( "wipe2Material" );
+		mapSpawnData.gameDriven = false;
+		Printf( "transition_release seq=%u\n", transitionSequence );
+	}
+	else if( transitionState == 3 )
+	{
+		if( transitionLoaded && session->GetState() == idSession::INGAME && transitionArrivalSnapshotTime < 0 )
+		{
+			transitionArrivalSnapshotTime = game->GetSSEndTime();
+		}
+		if( transitionLoaded && session->GetState() == idSession::INGAME && game->GetSSEndTime() > transitionArrivalSnapshotTime )
+		{
+			transitionState = 0;
+			mapSpawnData.gameDriven = true;
+			StartWipe( "wipe2Material" );
+			mapSpawnData.gameDriven = false;
+			Printf( "transition_client_arrived seq=%u\n", transitionLastAccepted );
+		}
+		else if( elapsed >= ( transitionLoaded ? net_transitionArriveMs.GetInteger() : net_transitionWaitMs.GetInteger() ) )
+		{
+			Warning( "transition client wait timeout seq=%u", transitionLastAccepted );
+			LeaveGame();
+		}
+	}
+}
+
+void idCommonLocal::ListTransitionNetwork() const
+{
+	common->Printf( "transition network state=%d seq=%u accepted=%u loaded=%d map=%s elapsed=%d\n", transitionState, transitionSequence, transitionLastAccepted, transitionLoaded, transitionMap, transitionState != 0 ? Sys_Milliseconds() - transitionStateTime : 0 );
+}
+
+void idCommonLocal::ReportTransitionMetric( transitionMetric_t metric, uint64 value )
+{
+	if( metric >= 0 && metric < TRANSITION_METRIC_COUNT )
+	{
+		transitionMetrics[metric] = value;
+	}
+}
+
+void idCommonLocal::BeginTransitionTimeline( const char* kind )
+{
+	const uint64 carry = transitionMetrics[TRANSITION_CARRY_US];
+	memset( transitionMetrics, 0, sizeof( transitionMetrics ) );
+	if( idStr::Cmp( kind, "newgame" ) != 0 )
+	{
+		transitionMetrics[TRANSITION_CARRY_US] = carry;
+	}
+	transitionTimelineStart = Sys_Microseconds();
+	transitionLoadStartTime = Sys_Milliseconds();
+	transitionTimelineDraw = 0;
+	transitionTimelineArmed = false;
+	transitionTimelineWipeMs = 0;
+	transitionTimelineNetUs = 0;
+	idStr::Copynz( transitionTimelineKind, kind, sizeof( transitionTimelineKind ) );
+	idStr::Copynz( transitionTimelineFrom, currentMapName, sizeof( transitionTimelineFrom ) );
+}
+
+void idCommonLocal::RecordTransitionDraw()
+{
+	// Called by Draw; consumed only after the game/draw thread joins.
+	if( transitionTimelineArmed && transitionTimelineDraw == 0 && mapSpawned && transitionState == 0 && !wipeHold && Sys_Milliseconds() >= wipeStopTime )
+	{
+		transitionTimelineDraw = Sys_Microseconds();
+	}
+}
+
+void idCommonLocal::FlushTransitionTimeline()
+{
+	if( transitionTimelineDraw == 0 || transitionTimelineStart == 0 )
+	{
+		return;
+	}
+	const double hitch = ( transitionTimelineDraw - transitionTimelineStart ) * 0.001;
+	Printf( "TRANSITION_READY kind=%s map=%s hitch_ms=%.3f wipe_ms=%d pf_hit=%llu\n", transitionTimelineKind, currentMapName.c_str(), hitch, transitionTimelineWipeMs, ( unsigned long long )transitionMetrics[TRANSITION_PF_HIT] );
+	const char* name = com_transitionTimelineLog.GetString();
+	if( name[0] && ValidDiagnosticName( name ) )
+	{
+		char path[160];
+		idStr::snPrintf( path, sizeof( path ), "loadtimeline/%s.csv", name );
+		idFile* file = fileSystem->OpenFileAppend( path, true, "fs_savepath" );
+		if( file != NULL )
+		{
+			if( file->Length() == 0 )
+			{
+				file->Printf( "build,run,from,to,kind,prefetched,levelKeep,strip,hitch_ms,session_ms,wipe_ms,unload_ms,purge_ms,loadgui_ms,preload_ms,proc_ms,mapfile_ms,cm_ms,pvs_ms,aas_ms,script_ms,spawn_ms,carry_ms,netwait_ms,frame1_ms,img_ms,model_ms,model_buf_ms,static_up_ms,snd_ms,gui_ms,settle_ms,save_ms,inter_landing_ms,inter_ms,tail_ms,read_kb,img_up_kb,static_up_kb,img_loaded,img_kept,img_purged,model_loaded,model_kept,snd_loaded,snd_kept,decl_parsed,pf_hit,pf_miss,pf_kb,rss_kb\n" );
+			}
+			uint64 readBytes = 0;
+			int64 imageBytes = 0, staticBytes = 0;
+			for( int i = 0; i < LOAD_PHASE_COUNT; i++ )
+			{
+				readBytes += loadRows[i].readBytes;
+				imageBytes += Max( ( int64 )0, loadRows[i].imageBytes );
+				staticBytes += Max( ( int64 )0, loadRows[i].vertexBytes + loadRows[i].indexBytes );
+			}
+			long rssKB = -1;
+#if defined( __linux__ )
+			FILE* statm = fopen( "/proc/self/statm", "r" );
+			if( statm != NULL )
+			{
+				unsigned long totalPages, residentPages;
+				if( fscanf( statm, "%lu %lu", &totalPages, &residentPages ) == 2 )
+				{
+					rssKB = residentPages * ( sysconf( _SC_PAGESIZE ) / 1024 );
+				}
+				fclose( statm );
+			}
+#endif
+			file->Printf( "%d,%d,%s,%s,%s,%d,%d,%d", BUILD_NUMBER, loadIndex, transitionTimelineFrom, currentMapName.c_str(), transitionTimelineKind, transitionMetrics[TRANSITION_PF_HIT] != 0, com_levelKeep.GetInteger(), com_transitionStrip.GetInteger() );
+			const double values[] = {
+				hitch, loadRows[LOAD_SESSION].us * .001, ( double )transitionTimelineWipeMs,
+				loadRows[LOAD_UNLOAD].us * .001, loadRows[LOAD_PURGE].us * .001, loadRows[LOAD_LOADGUI].us * .001,
+				loadRows[LOAD_PRELOAD].us * .001, loadRows[LOAD_RENDER_WORLD].us * .001, loadRows[LOAD_MAP_PARSE].us * .001,
+				loadRows[LOAD_CM].us * .001, loadRows[LOAD_PVS].us * .001, loadRows[LOAD_AAS].us * .001,
+				loadRows[LOAD_SCRIPT].us * .001, loadRows[LOAD_SPAWN].us * .001,
+				transitionMetrics[TRANSITION_CARRY_US] * .001, transitionTimelineNetUs * .001,
+				loadRows[LOAD_FIRST_FRAME].us * .001, transitionMetrics[TRANSITION_IMAGE_US] * .001,
+				transitionMetrics[TRANSITION_MODEL_US] * .001, transitionMetrics[TRANSITION_MODEL_BUFFER_US] * .001,
+				transitionMetrics[TRANSITION_STATIC_UPLOAD_US] * .001, transitionMetrics[TRANSITION_SOUND_US] * .001,
+				transitionMetrics[TRANSITION_GUI_US] * .001, loadRows[LOAD_SETTLE].us * .001,
+				loadRows[LOAD_AUTOSAVE].us * .001, transitionMetrics[TRANSITION_INTER_LANDING_US] * .001,
+				transitionMetrics[TRANSITION_INTER_TOTAL_US] * .001, loadRows[LOAD_FINISH].us * .001,
+				readBytes / 1024.0, imageBytes / 1024.0, staticBytes / 1024.0,
+				( double )levelCacheStats[0].loaded, ( double )levelCacheStats[0].kept, ( double )levelCacheStats[0].purged,
+				( double )levelCacheStats[1].loaded, ( double )levelCacheStats[1].kept,
+				( double )levelCacheStats[2].loaded, ( double )levelCacheStats[2].kept,
+				( double )transitionMetrics[TRANSITION_DECL_PARSED], ( double )transitionMetrics[TRANSITION_PF_HIT],
+				( double )transitionMetrics[TRANSITION_PF_MISS], ( double )transitionMetrics[TRANSITION_PF_KB], ( double )rssKB
+			};
+			for( int i = 0; i < ( int )( sizeof( values ) / sizeof( values[0] ) ); i++ )
+			{
+				file->Printf( ",%.3f", values[i] );
+			}
+			file->Printf( "\n" );
+			fileSystem->CloseFile( file );
+		}
+	}
+	transitionTimelineStart = transitionTimelineDraw = 0;
+	transitionTimelineArmed = false;
+}

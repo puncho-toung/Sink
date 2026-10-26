@@ -197,6 +197,10 @@ public:
 
 	// call at each map start
 	virtual void			ClearAllSoundEmitters() = 0;
+	virtual bool CarryEmitter( idSoundEmitter* emitter, const char* shader ) { return false; }
+	virtual idSoundEmitter* AdoptCarriedEmitter( const char* shader ) { return NULL; }
+	virtual void TransitionArrival() {}
+	virtual void TouchTransitionMedia() {}
 	virtual void			StopAllSounds() = 0;
 
 	// get a new emitter that can play sounds in this world
@@ -315,6 +319,7 @@ public:
 
 	// Load all sounds marked as used this level
 	virtual	void			EndLevelLoad() = 0;
+	virtual void PurgeUnusedLevelCache() {}
 
 	virtual void			Preload( idPreloadManifest& preload ) = 0;
 

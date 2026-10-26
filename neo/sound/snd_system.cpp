@@ -452,6 +452,24 @@ void idSoundSystemLocal::FreeVoice( idSoundVoice* voice )
 idSoundSystemLocal::LoadSample
 ========================
 */
+bool Prefetch_SampleResident( const char* name )
+{
+	idStrStatic<MAX_OSPATH> canonical = name;
+	canonical.ToLower();
+	canonical.BackSlashesToSlashes();
+	canonical.StripFileExtension();
+	const int key = idStr::Hash( canonical );
+	for( int i = soundSystemLocal.sampleHash.First( key ); i != -1; i = soundSystemLocal.sampleHash.Next( i ) )
+	{
+		const idSoundSample* sample = soundSystemLocal.samples[i];
+		if( !idStr::Cmp( sample->GetName(), canonical ) )
+		{
+			return sample->IsLoaded();
+		}
+	}
+	return false;
+}
+
 idSoundSample* idSoundSystemLocal::LoadSample( const char* name )
 {
 	DeclMediaLookup();
@@ -637,6 +655,7 @@ idSoundSystemLocal::EndLevelLoad
 */
 void idSoundSystemLocal::EndLevelLoad()
 {
+	const uint64 transitionMetricStart = Sys_Microseconds();
 
 	insideLevelLoad = false;
 
@@ -717,6 +736,7 @@ void idSoundSystemLocal::EndLevelLoad()
 	common->ReportLevelCache( 2, loadCount, resident, purgeCount, pinnedCount, bytes );
 	common->Printf( "%5i sounds loaded in %5.1f seconds\n", loadCount, ( end - start ) * 0.001 );
 	common->Printf( "----------------------------------------\n" );
+	common->ReportTransitionMetric( TRANSITION_SOUND_US, Sys_Microseconds() - transitionMetricStart );
 }
 
 
@@ -728,4 +748,26 @@ idSoundSystemLocal::FreeVoice
 */
 void idSoundSystemLocal::PrintMemInfo( MemInfo_t* mi )
 {
+}
+
+void idSoundSystemLocal::PurgeUnusedLevelCache()
+{
+	int purged = 0, resident = 0, pins = 0;
+	int64 bytes = 0;
+	for( int i = 0; i < samples.Num(); i++ )
+	{
+		idSoundSample* sample = samples[i];
+		const bool pinned = sample->IsLoaded() && common->IsLevelAssetPinned( PRELOAD_SAMPLE, sample->GetName() );
+		if( sample->IsLoaded() && !sample->GetNeverPurge() && !sample->GetLevelLoadReferenced() && !pinned && soundLevelLoadCount - sample->lastUseLoad >= 1 )
+		{
+			sample->FreeData();
+			purged++;
+		}
+		pins += pinned ? 1 : 0;
+		if( sample->IsLoaded() )
+		{
+			resident++; bytes += sample->BufferSize();
+		}
+	}
+	common->ReportLevelCache( 2, -1, resident, purged, pins, bytes );
 }

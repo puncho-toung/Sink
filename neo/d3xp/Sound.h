@@ -50,6 +50,7 @@ public:
 	virtual void	UpdateChangeableSpawnArgs( const idDict* source );
 
 	void			Spawn();
+	void			CarryTransitionSound();
 
 	void			ToggleOnOff( idEntity* other, idEntity* activator );
 	void			Think();

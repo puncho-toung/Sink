@@ -130,6 +130,7 @@ public:
 
 	virtual void				BeginLevelLoad() = 0;
 	virtual void				EndLevelLoad( const char* mapName ) = 0;
+	virtual void PurgeUnusedLevelCache() {}
 	virtual void				Preload( const char* mapName ) = 0;
 
 	// Reloads changed guis, or all guis.

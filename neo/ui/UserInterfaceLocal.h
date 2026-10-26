@@ -181,6 +181,7 @@ public:
 	virtual void				SetSize( float width, float height );
 	virtual void				BeginLevelLoad();
 	virtual void				EndLevelLoad( const char* mapName );
+	virtual void PurgeUnusedLevelCache();
 	virtual void				Preload( const char* mapName );
 	virtual void				Reload( bool all );
 	virtual void				ListGuis() const;

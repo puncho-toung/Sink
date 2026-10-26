@@ -998,6 +998,7 @@ idImageManager::EndLevelLoad
 #if !defined( DMAP )
 void idImageManager::EndLevelLoad()
 {
+	const uint64 transitionMetricStart = Sys_Microseconds();
 	insideLevelLoad = false;
 
 	common->Printf( "----- idImageManager::EndLevelLoad -----\n" );
@@ -1029,6 +1030,7 @@ void idImageManager::EndLevelLoad()
 	common->Printf( "%5i images loaded in %5.1f seconds\n", loadCount, ( end - start ) * 0.001 );
 	common->Printf( "----------------------------------------\n" );
 	//R_ListImages_f( idCmdArgs( "sorted sorted", false ) );
+	common->ReportTransitionMetric( TRANSITION_IMAGE_US, Sys_Microseconds() - transitionMetricStart );
 }
 #endif
 
@@ -1219,4 +1221,26 @@ void idImageManager::TouchImage( idImage* image )
 			image->ActuallyLoadImage( false, nullptr );
 		}
 	}
+}
+
+void idImageManager::PurgeUnusedLevelCache()
+{
+	int purged = 0, resident = 0, pins = 0;
+	int64 bytes = 0;
+	for( int i = 0; i < images.Num(); i++ )
+	{
+		idImage* image = images[i];
+		const bool pinned = image->IsLoaded() && common->IsLevelAssetPinned( PRELOAD_IMAGE, image->GetName(), image->filter, image->repeat, image->usage, image->cubeFiles );
+		if( image->IsLoaded() && !image->levelLoadReferenced && !pinned && !image->generatorFunction && !image->referencedOutsideLevelLoad && imageLevelLoadCount - image->lastUseLoad >= 1 )
+		{
+			image->PurgeImage();
+			purged++;
+		}
+		pins += pinned ? 1 : 0;
+		if( image->IsLoaded() )
+		{
+			resident++; bytes += image->StorageSize();
+		}
+	}
+	common->ReportLevelCache( 0, -1, resident, purged, pins, bytes );
 }

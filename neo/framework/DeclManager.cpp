@@ -1338,7 +1338,7 @@ void idDeclManagerLocal::Reload( bool force )
 idDeclManagerLocal::BeginLevelLoad
 ===================
 */
-static idCVar decl_keepInWorld( "decl_keepInWorld", "0", CVAR_SYSTEM | CVAR_INTEGER, "retain parsed decls: 1 game-driven, 2 all except save loads", 0, 2 );
+static idCVar decl_keepInWorld( "decl_keepInWorld", "0", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "retain parsed decls: 1 game-driven, 2 all except save loads", 0, 2 );
 static thread_local int declParsingType = -1;
 static int declParsedCount, declTouchMissing;
 static bool declMissingReported[DECL_MAX_TYPES];
@@ -1352,7 +1352,7 @@ void DeclMediaLookup()
 	switch( declParsingType )
 	{
 		case DECL_MATERIAL: case DECL_SOUND: case DECL_PARTICLE: case DECL_SKIN:
-		case DECL_MODELDEF: case DECL_FX: case DECL_VIDEO: case DECL_AUDIO: case DECL_PDA:
+		case DECL_MAPDEF: case DECL_ENTITYDEF: case DECL_MODELDEF: case DECL_FX: case DECL_VIDEO: case DECL_AUDIO: case DECL_PDA:
 			return;
 	}
 	declTouchMissing++;
@@ -1398,6 +1398,7 @@ idDeclManagerLocal::EndLevelLoad
 */
 void idDeclManagerLocal::EndLevelLoad()
 {
+	common->ReportTransitionMetric( TRANSITION_DECL_PARSED, declParsedCount );
 	common->Printf( "DECLCACHE decl_parsed=%d decl_touch_missing=%d\n", declParsedCount, declTouchMissing );
 	insideLevelLoad = false;
 
@@ -1667,6 +1668,8 @@ const idDecl* idDeclManagerLocal::FindType( declType_t type, const char* name, b
 
 	decl->AllocateSelf();
 
+	const bool retainedParsed = decl->declState == DS_PARSED;
+
 	// if it hasn't been parsed yet, parse it now
 	if( decl->declState == DS_UNPARSED )
 	{
@@ -1680,6 +1683,8 @@ const idDecl* idDeclManagerLocal::FindType( declType_t type, const char* name, b
 			idLib::Error( "Attempted to load %s decl '%s' from game thread!", GetDeclNameFromType( type ), name );
 		}
 #endif
+		// Recursive media references must not touch a declaration being parsed.
+		decl->referencedThisLevel = true;
 		decl->ParseLocal();
 
 		// SRS - set non-purgeable flag only after ParseLocal(), don't reset if declState is parsed or defaulted
@@ -1687,7 +1692,7 @@ const idDecl* idDeclManagerLocal::FindType( declType_t type, const char* name, b
 	}
 
 	// Mark before touching: skins, materials and alternate sounds may form cycles.
-	if( decl_keepInWorld.GetInteger() && decl->declState == DS_PARSED && !decl->referencedThisLevel )
+	if( decl_keepInWorld.GetInteger() && retainedParsed && !decl->referencedThisLevel )
 	{
 		decl->referencedThisLevel = true;
 		decl->self->TouchMedia();
