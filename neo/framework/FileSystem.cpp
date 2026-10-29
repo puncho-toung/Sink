@@ -171,7 +171,8 @@ public:
 	virtual void			RemoveFile( const char* relativePath );
 	virtual	bool			RemoveDir( const char* relativePath );
 	virtual bool			RenameFile( const char* relativePath, const char* newName, const char* basePath = "fs_savepath" );
-	virtual void MountPrefetchResource( const char* name ) { AddResourceFile( name ); }
+	virtual void MountPrefetchResource( const char* name );
+	virtual void ReleasePrefetchResource();
 	virtual bool ResolveForRead( const char* path, resolvedFile_t& out, const char* gamedir = NULL );
 	virtual idFile* 		OpenFileReadFlags( const char* relativePath, int searchFlags, bool allowCopyFiles = true, const char* gamedir = NULL );
 	virtual idFile* 		OpenFileRead( const char* relativePath, bool allowCopyFiles = true, const char* gamedir = NULL );
@@ -327,6 +328,11 @@ private:
 	int		resourceBufferSize;
 	int		resourceBufferAvailable;
 	int		numFilesOpenedAsCached;
+
+	//puncho - transitions (stage 3 review): the predicted map's container, opened for ResolveForRead only, outside the
+	// search order, so it neither stays mounted nor shadows the current map's container for on-demand loads
+	idResourceContainer*	prefetchResource = NULL;
+	int						prefetchResourceLayer = -1;
 
 	// RB: shortcut
 	bool	resourceFilesFound = false;
@@ -3458,6 +3464,46 @@ idVec2i idFileSystemLocal::AddResourceFile( const char* resourceFileName )
 
 /*
 ================
+idFileSystemLocal::MountPrefetchResource
+
+The container AddResourceFile would append to the last search path at the map's load, opened privately so ResolveForRead
+yields the descriptors that load will see. A container already in the search order (a map loaded before) needs nothing:
+the load adds no container, so the current resolution is the load's.
+================
+*/
+void idFileSystemLocal::MountPrefetchResource( const char* name )
+{
+	ReleasePrefetchResource();
+	idStrStatic< MAX_OSPATH > resourceFile = va( "maps/%s", name );
+	const idVec2i idx = FindResourceFile( resourceFile );
+	if( ( idx[0] != -1 && idx[1] != -1 ) || searchPaths.Num() == 0 )
+	{
+		return;
+	}
+	idResourceContainer* rc = new idResourceContainer();
+	if( !rc->Init( resourceFile ) )
+	{
+		delete rc;
+		return;
+	}
+	prefetchResource = rc;
+	prefetchResourceLayer = searchPaths[searchPaths.Num() - 1].layer;
+}
+
+/*
+================
+idFileSystemLocal::ReleasePrefetchResource
+================
+*/
+void idFileSystemLocal::ReleasePrefetchResource()
+{
+	delete prefetchResource;
+	prefetchResource = NULL;
+	prefetchResourceLayer = -1;
+}
+
+/*
+================
 idFileSystemLocal::FindResourceFile
 ================
 */
@@ -4195,20 +4241,20 @@ bool idFileSystemLocal::ResolveForRead( const char* path, resolvedFile_t& out, c
 				if( UsingZipFiles() && GetZipCacheEntry( path, zip, layer ) )
 				{
 					idStr::Copynz( out.osPath, zip.owner->GetFileName(), sizeof( out.osPath ) );
-					unzFile handle = unzOpen( out.osPath );
+					//puncho - transitions (stage 3 review): one open per resolve. OpenFile, as any VFS open does, positions
+					// the container's parsed handle on the entry, which then gives its descriptor; a separate unzOpen
+					// re-read the archive's end of central directory for every resolve and every prefetch hit
+					idFile* file = zip.owner->OpenFile( zip, path );
 					unz_file_info64 info;
-					if( handle == NULL ) { return false; }
-					const bool valid = unzSetOffset64( handle, zip.offset ) == UNZ_OK && unzGetCurrentFileInfo64( handle, &info, out.entryName, sizeof( out.entryName ), NULL, 0, NULL, 0 ) == UNZ_OK;
-					unzClose( handle );
+					const bool valid = unzGetCurrentFileInfo64( zip.owner->zipFileHandle, &info, out.entryName, sizeof( out.entryName ), NULL, 0, NULL, 0 ) == UNZ_OK;
+					out.timestamp = file->Timestamp();
+					delete file;
 					if( !valid ) { return false; }
 					out.kind = 2;
 					out.offset = zip.offset;
 					out.length = info.uncompressed_size;
 					out.compressedSize = info.compressed_size;
 					out.crc = info.crc;
-					idFile* file = zip.owner->OpenFile( zip, path );
-					out.timestamp = file->Timestamp();
-					delete file;
 					struct stat st;
 					if( stat( out.osPath, &st ) != 0 ) { return false; }
 					out.archiveTime = st.st_mtime;
@@ -4216,7 +4262,25 @@ bool idFileSystemLocal::ResolveForRead( const char* path, resolvedFile_t& out, c
 					return true;
 				}
 				idResourceCacheEntry resource;
-				if( UsingResourceFiles() && GetResourceCacheEntry( path, resource, layer ) )
+				// The predicted map's private container resolves first in the last search path's layer, where its load
+				// appends it (newest first); GetResourceCacheEntry then finds the same entry once the load mounts it.
+				bool predicted = false;
+				if( UsingResourceFiles() && prefetchResource != NULL && layer == prefetchResourceLayer && strchr( path, ':' ) == NULL )
+				{
+					idStrStatic< MAX_OSPATH > canonical = path;
+					canonical.BackSlashesToSlashes();
+					canonical.ToLower();
+					const int key = prefetchResource->cacheHash.GenerateKey( canonical, false );
+					for( int index = prefetchResource->cacheHash.GetFirst( key ); index != idHashIndex::NULL_INDEX && !predicted; index = prefetchResource->cacheHash.GetNext( index ) )
+					{
+						if( idStr::Icmp( prefetchResource->cacheTable[index].filename, canonical ) == 0 )
+						{
+							resource = prefetchResource->cacheTable[index];
+							predicted = true;
+						}
+					}
+				}
+				if( predicted || ( UsingResourceFiles() && GetResourceCacheEntry( path, resource, layer ) ) )
 				{
 					out.kind = 1;
 					idStr::Copynz( out.osPath, resource.owner->resourceFile->GetFullPath(), sizeof( out.osPath ) );
@@ -4305,7 +4369,7 @@ idFile* idFileSystemLocal::OpenFileReadFlags( const char* relativePath, int sear
 	assert( !Prefetch_IsWorker() );
 	if( !fs_buildResources.GetBool() && !fs_copyfiles.GetBool() )
 	{
-		idFile* prefetched = Prefetch_Open( relativePath, gamedir );
+		idFile* prefetched = Prefetch_Open( relativePath, ( searchFlags & FSFLAG_SEARCH_DIRS ) != 0, gamedir );
 		if( prefetched != NULL ) { return prefetched; }
 	}
 

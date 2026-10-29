@@ -328,6 +328,7 @@ public:
 	virtual void ReportTransitionMetric( transitionMetric_t metric, uint64 value ) {}
 	virtual void ListTransitionNetwork() const {}
 	virtual void NotifyMapTransition( unsigned short sequence, const char* map ) {}
+	virtual bool IsTransitionDraining() const { return false; }	//puncho - transitions (stage 3 review): the host still runs the departure map
 	virtual int LevelKeepGrace() const { return 0; }
 	virtual bool IsLevelAssetPinned( int type, const char* name, int filter = -1, int repeat = -1, int usage = -1, int cubeMap = -1 ) const { return false; }
 	virtual void ReportLevelCache( int manager, int loaded, int kept, int purged, int pinned, int64 bytes ) {}

@@ -163,6 +163,7 @@ public:
 	// A 0 byte will always be appended at the end, so string ops are safe.
 	// The buffer should be considered read-only, because it may be cached for other uses.
 	virtual void MountPrefetchResource( const char* name ) {}
+	virtual void ReleasePrefetchResource() {}
 	virtual bool ResolveForRead( const char* path, resolvedFile_t& out, const char* gamedir = NULL ) { return false; }
 	virtual int				ReadFile( const char* relativePath, void** buffer, ID_TIME_T* timestamp = NULL ) = 0;
 

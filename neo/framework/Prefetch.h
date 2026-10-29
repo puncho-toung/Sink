@@ -17,7 +17,7 @@ struct resolvedFile_t
 ID_INLINE bool Prefetch_IsWorker() { return false; }
 ID_INLINE void Prefetch_Clear() {}
 ID_INLINE void Prefetch_EndLoad() {}
-ID_INLINE idFile* Prefetch_Open( const char*, const char* ) { return NULL; }
+ID_INLINE idFile* Prefetch_Open( const char*, bool, const char* ) { return NULL; }
 #else
 bool Prefetch_ModelResident( const char* name );
 bool Prefetch_SampleResident( const char* name );
@@ -28,7 +28,7 @@ void Prefetch_StopWorker();
 void Prefetch_BeginLoad();
 void Prefetch_EndLoad();
 void Prefetch_Clear();
-idFile* Prefetch_Open( const char* path, const char* gamedir );
+idFile* Prefetch_Open( const char* path, bool searchDirs, const char* gamedir );
 bool Prefetch_IsWorker();
 #endif
 #endif

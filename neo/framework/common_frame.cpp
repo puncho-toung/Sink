@@ -729,15 +729,21 @@ void idCommonLocal::ProcessGameReturn( const gameReturn_t& ret )
 			if( !BeginCoopTransition( args.Argv( 1 ) ) )
 			{
 				Warning( "co-op transition request refused" );
+				//puncho - transitions (stage 3 review): the game committed this crossing; a refusal releases it, or every
+				// later exit and save is refused and each respawn restores the departure inventory
+				game->ClearMapTransition();
 			}
 			return;
 		}
 
+		//puncho - transitions (stage 3 review): the acting game-state lobby, as the co-op branch above, the transition hold
+		// and the game's BeginMapTransition use, and a refusal releases the committed crossing
 		if( cvarSystem->GetCVarBool( "net_refuseMapWithPeers" ) && IsMultiplayer() &&
-			session->GetActivePlatformLobbyBase().HasActivePeers() &&
+			session->GetActingGameStateLobbyBase().HasActivePeers() &&
 			( !idStr::Icmp( args.Argv( 0 ), "map" ) || !idStr::Icmp( args.Argv( 0 ), "transition" ) || !idStr::Icmp( args.Argv( 0 ), "devmap" ) ) )
 		{
 			Warning( "map change to '%s' refused: peers in the session (co-op transitions are P2.3.5)", args.Argv( 1 ) );
+			game->ClearMapTransition();
 			return;
 		}
 

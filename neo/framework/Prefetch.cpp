@@ -10,6 +10,7 @@
 idCVar com_prefetch( "com_prefetch", "0", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_BOOL, "read the next map's cooked bytes on a private worker" );
 idCVar com_prefetchBudgetMB( "com_prefetchBudgetMB", "256", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "maximum prefetched byte buffers", 1, 2048 );
 idCVar com_prefetchSliceUs( "com_prefetchSliceUs", "150", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "main-thread prefetch resolution budget", 1, 10000 );
+idCVar com_prefetchHoldMs( "com_prefetchHoldMs", "30000", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "free a prefetched store no load has used after this many ms; 0 keeps it until the next request or load", 0, 600000 );
 
 static const int MAX_PREFETCH_ENTRIES = 4096;
 struct prefetchEntry_t
@@ -20,7 +21,9 @@ struct prefetchEntry_t
 	bool ready, used;
 	int error;
 };
-static prefetchEntry_t prefetchEntries[MAX_PREFETCH_ENTRIES];
+//puncho - transitions (stage 3 review): 4096 MAX_OSPATH paths and descriptors are 16 MiB. Allocated on the first request,
+// so a process at com_prefetch 0 never holds it, and only [0, entryCount) is touched: Add initialises each entry
+static prefetchEntry_t* prefetchEntries;
 static int requestRing[MAX_PREFETCH_ENTRIES], completionRing[MAX_PREFETCH_ENTRIES];
 static std::atomic<int> requestHead( 0 ), requestTail( 0 ), completionHead( 0 ), completionTail( 0 );
 static std::atomic<bool> prefetchAbort( false ), requestsDone( false ), workerFinished( true );
@@ -30,14 +33,19 @@ static int mapEntryCount;
 static int entryCount, resolveIndex, completedCount, hitCount, missCount, skippedCount;
 static uint64 reservedBytes, hitBytes, maxSliceUs;
 static uint64 maxResolveUs, maxResolveStepUs, maxCompletionUs, maxPublishUs, maxRequestUs;
-// Admission history survives requests; reporting maxima below still describe one request.
-// Forgetting earlier slow descriptors lets a new map's cheap prefix overfill its slice.
-static uint64 admissionResolveStepUs, admissionCompletionUs, admissionPublishUs;
+//puncho - transitions (stage 3 review): admission step costs are decaying maxima that survive requests, so one slow OS
+// call (a cold stat or unzOpen, a preemption, a large Mem_Free) raises the next slices' reservation for a few steps; as
+// process-lifetime maxima it held every later pump to one resolve and one completion. The reporting maxima are per request
+static uint64 admissionResolveStepUs, admissionCompletionUs;
 static int sliceOverruns, resolveOverruns, completionOverruns;
 static char requestedMap[MAX_OSPATH];
 static char pendingMap[MAX_OSPATH];
 static bool pendingRequest;
 static idHashIndex prefetchHash;
+// The preload manifest's walk (an asset lookup and string building per entry) runs in pump slices, not in the request.
+static idPreloadManifest preloadManifest;
+static int preloadIndex;
+static int requestTime;
 
 bool Prefetch_IsWorker()
 {
@@ -50,7 +58,9 @@ public:
 	virtual int Run()
 	{
 		onPrefetchWorker = true;
-		while( !prefetchAbort.load( std::memory_order_acquire ) )
+		//puncho - transitions (stage 3 review): IsTerminating as well, so the static object's destructor (FatalError's
+		// exit() runs it without fileSystem->Shutdown) can join a worker that is waiting for requestsDone
+		while( !prefetchAbort.load( std::memory_order_acquire ) && !IsTerminating() )
 		{
 			const int tail = requestTail.load( std::memory_order_relaxed );
 			if( tail == requestHead.load( std::memory_order_acquire ) )
@@ -82,7 +92,7 @@ public:
 						info.compressed_size == source.compressedSize && info.uncompressed_size == source.length )
 					{
 						opened = unzOpenCurrentFile( zip ) == UNZ_OK;
-						while( opened && read < source.length && !prefetchAbort.load( std::memory_order_relaxed ) )
+						while( opened && read < source.length && !prefetchAbort.load( std::memory_order_relaxed ) && !IsTerminating() )
 						{
 							const int amount = ( int )Min( ( uint64 )65536, source.length - read );
 							const int got = unzReadCurrentFile( zip, entry.bytes + read, amount );
@@ -100,7 +110,7 @@ public:
 					{
 						if( fseek( file, ( long )source.offset, SEEK_SET ) == 0 )
 						{
-							while( read < source.length && !prefetchAbort.load( std::memory_order_relaxed ) )
+							while( read < source.length && !prefetchAbort.load( std::memory_order_relaxed ) && !IsTerminating() )
 							{
 								const int amount = ( int )Min( ( uint64 )65536, source.length - read );
 								const size_t got = fread( entry.bytes + read, 1, amount, file );
@@ -126,7 +136,20 @@ public:
 };
 static idPrefetchThread prefetchThread;
 
-static void Prefetch_Drain( int limit = MAX_PREFETCH_ENTRIES, uint64 deadline = 0, uint64 sliceBudget = 0 )
+static uint64 Prefetch_DecayEstimate( uint64 estimate, uint64 sample )
+{
+	return Max( sample, estimate - ( estimate >> 2 ) );
+}
+
+static int Prefetch_AdmitCount( uint64 remainingUs, uint64 estimateUs )
+{
+	// Admission by count: the steps the estimate fits in what is left of the slice, at least one so a slow medium
+	// still progresses, at most one batch. The pump's deadline only stops a run the estimate underrated.
+	return ( int )Max( ( uint64 )1, Min( ( uint64 )32, remainingUs / Max( ( uint64 )1, estimateUs ) ) );
+}
+
+// limit is the admitted count; deadline (0 for the unmeasured final drain) stops after the first step
+static void Prefetch_Drain( int limit, uint64 deadline, uint64 sliceBudget )
 {
 	int tail = completionTail.load( std::memory_order_relaxed );
 	const int head = completionHead.load( std::memory_order_acquire );
@@ -134,12 +157,9 @@ static void Prefetch_Drain( int limit = MAX_PREFETCH_ENTRIES, uint64 deadline = 
 	while( tail != head && drained < limit )
 	{
 		const uint64 start = deadline != 0 ? Sys_Microseconds() : 0;
-		if( deadline != 0 )
+		if( deadline != 0 && drained > 0 && start >= deadline )
 		{
-			if( start >= deadline ) { break; }
-			const bool initialProbe = drained == 0 && deadline - start > sliceBudget / 2 &&
-				( admissionCompletionUs == 0 || admissionCompletionUs >= sliceBudget || start + admissionCompletionUs + 1 < deadline );
-			if( !initialProbe && ( admissionCompletionUs == 0 || start + 2 * admissionCompletionUs + 1 >= deadline ) ) { break; }
+			break;
 		}
 		prefetchEntry_t& entry = prefetchEntries[completionRing[tail % MAX_PREFETCH_ENTRIES]];
 		entry.ready = entry.error == 0;
@@ -155,7 +175,7 @@ static void Prefetch_Drain( int limit = MAX_PREFETCH_ENTRIES, uint64 deadline = 
 		{
 			const uint64 elapsed = Sys_Microseconds() - start;
 			maxCompletionUs = Max( maxCompletionUs, elapsed );
-			admissionCompletionUs = Max( admissionCompletionUs, elapsed );
+			admissionCompletionUs = Prefetch_DecayEstimate( admissionCompletionUs, elapsed );
 			completionOverruns += elapsed > sliceBudget;
 		}
 	}
@@ -173,18 +193,17 @@ void Prefetch_StopWorker()
 	// Join before any buffer can be reclaimed, even when an OS read exceeds the diagnostic timeout.
 	prefetchThread.StopThread( true );
 	workerStarted = false;
-	Prefetch_Drain();
+	Prefetch_Drain( MAX_PREFETCH_ENTRIES, 0, 0 );
 	// Report outside the timed pump; the final slice includes all drain/order/publish work.
 	common->Printf( "PREFETCH done %s complete=%d skipped=%d bytes=%llu maxSliceUs=%llu resolved=%d entries=%d cancelled=%d\n", requestedMap, completedCount, skippedCount, ( unsigned long long )reservedBytes, ( unsigned long long )maxSliceUs, resolveIndex, entryCount, !completedBeforeStop );
 	common->Printf( "PREFETCH budget maxResolveUs=%llu maxResolveStepUs=%llu maxCompletionUs=%llu maxPublishUs=%llu maxRequestUs=%llu sliceOverruns=%d resolveOverruns=%d completionOverruns=%d\n", ( unsigned long long )maxResolveUs, ( unsigned long long )maxResolveStepUs, ( unsigned long long )maxCompletionUs, ( unsigned long long )maxPublishUs, ( unsigned long long )maxRequestUs, sliceOverruns, resolveOverruns, completionOverruns );
-	common->Printf( "PREFETCH admission resolveStepUs=%llu completionUs=%llu publishUs=%llu\n", ( unsigned long long )admissionResolveStepUs, ( unsigned long long )admissionCompletionUs, ( unsigned long long )admissionPublishUs );
+	common->Printf( "PREFETCH admission resolveStepUs=%llu completionUs=%llu\n", ( unsigned long long )admissionResolveStepUs, ( unsigned long long )admissionCompletionUs );
 }
 
 void Prefetch_Clear()
 {
 	Prefetch_StopWorker();
 	for( int i = 0; i < entryCount; i++ ) { Mem_Free( prefetchEntries[i].bytes ); }
-	memset( prefetchEntries, 0, sizeof( prefetchEntries ) );
 	entryCount = resolveIndex = completedCount = hitCount = missCount = skippedCount = 0;
 	reservedBytes = hitBytes = maxSliceUs = 0;
 	maxResolveUs = maxResolveStepUs = maxCompletionUs = maxPublishUs = maxRequestUs = 0;
@@ -194,12 +213,17 @@ void Prefetch_Clear()
 	prefetchHash.Clear();
 	prefetchActive = prefetchServing = false;
 	pendingRequest = false;
+	preloadManifest.Clear();
+	preloadIndex = 0;
+	requestedMap[0] = 0;
+	// The predicted map's container was opened only to resolve against; the load mounts its own.
+	fileSystem->ReleasePrefetchResource();
 }
 
 static void Prefetch_Add( const char* path )
 {
 	if( entryCount == MAX_PREFETCH_ENTRIES || idStr::Length( path ) >= MAX_OSPATH ) { skippedCount++; return; }
-	idStr name = path;
+	idStrStatic< MAX_OSPATH > name = path;
 	name.BackSlashesToSlashes();
 	name.ToLower();
 	const int key = prefetchHash.GenerateKey( name, false );
@@ -207,8 +231,51 @@ static void Prefetch_Add( const char* path )
 	{
 		if( name == prefetchEntries[i].path ) { return; }
 	}
-	idStr::Copynz( prefetchEntries[entryCount].path, name, MAX_OSPATH );
+	// source stays unset until ResolveForRead fills it; nothing reads it before ready
+	prefetchEntry_t& entry = prefetchEntries[entryCount];
+	idStr::Copynz( entry.path, name, MAX_OSPATH );
+	entry.bytes = NULL;
+	entry.ready = entry.used = false;
+	entry.error = 0;
 	prefetchHash.Add( key, entryCount++ );
+}
+
+static void Prefetch_AddPreload( const preloadEntry_s& p )
+{
+	idStr name;
+	if( p.resType == PRELOAD_IMAGE )
+	{
+		idImage* image = globalImages->GetImageWithParameters( p.resourceName, ( textureFilter_t )p.imgData.filter, ( textureRepeat_t )p.imgData.repeat, ( textureUsage_t )p.imgData.usage, ( cubeFiles_t )p.imgData.cubeMap );
+		if( image != NULL && image->IsLoaded() ) { return; }
+		name = p.resourceName;
+		idImage::GetGeneratedName( name, ( textureUsage_t )p.imgData.usage, ( cubeFiles_t )p.imgData.cubeMap );
+		idStr generated;
+		idBinaryImage::GetGeneratedFileName( generated, name );
+		name = generated;
+	}
+	else if( p.resType == PRELOAD_MODEL )
+	{
+		if( Prefetch_ModelResident( p.resourceName ) ) { return; }
+		name = "generated/rendermodels/";
+		name += p.resourceName;
+		idStr extension;
+		name.ExtractFileExtension( extension );
+		name.SetFileExtension( va( "b%s", extension.c_str() ) );
+	}
+	else if( p.resType == PRELOAD_SAMPLE )
+	{
+		if( Prefetch_SampleResident( p.resourceName ) ) { return; }
+		name = "generated/";
+		name += p.resourceName;
+		name.SetFileExtension( "idwav" );
+	}
+	else if( p.resType == PRELOAD_PARTICLE )
+	{
+		name = "generated/particles/";
+		name += p.resourceName;
+		name += ".bprt";
+	}
+	if( !name.IsEmpty() ) { Prefetch_Add( name ); }
 }
 
 void Prefetch_Queue( const char* mapName )
@@ -222,19 +289,30 @@ void Prefetch_Request( const char* mapName )
 {
 	assert( !Prefetch_IsWorker() );
 	if( !com_prefetch.GetBool() ) { common->Printf( "PREFETCH disabled\n" ); return; }
-	Prefetch_Clear();
 	idStr map = mapName;
 	map.BackSlashesToSlashes();
 	map.StripLeadingOnce( "maps/" );
 	map.StripFileExtension();
 	if( map.IsEmpty() || map.Find( ".." ) >= 0 || map.Find( ':' ) >= 0 ) { common->Warning( "invalid prefetch map" ); return; }
+	//puncho - transitions (stage 3 review): the store is keyed by the predicted map; a repeated prediction (a resent
+	// reliable, the intent after its prefetch) keeps the work done and restarts the hold, a new map replaces it
+	if( !prefetchServing && requestedMap[0] && !map.Icmp( requestedMap ) )
+	{
+		requestTime = Sys_Milliseconds();
+		return;
+	}
+	Prefetch_Clear();
+	if( prefetchEntries == NULL )
+	{
+		prefetchEntries = ( prefetchEntry_t* )Mem_Alloc( MAX_PREFETCH_ENTRIES * sizeof( prefetchEntry_t ), TAG_IDFILE );
+	}
 	idStr::Copynz( requestedMap, map, sizeof( requestedMap ) );
+	requestTime = Sys_Milliseconds();
 	idStr base;
 	map.ExtractFileBase( base );
 	if( fileSystem->UsingResourceFiles() )
 	{
 		fileSystem->MountPrefetchResource( va( "%s.resources", base.c_str() ) );
-		common->Printf( "PREFETCH early mount %s.resources affects current-map on-demand precedence\n", base.c_str() );
 	}
 	Prefetch_Add( va( "maps/%s.map", map.c_str() ) );
 	Prefetch_Add( va( "generated/maps/%s.bproc", map.c_str() ) );
@@ -261,100 +339,79 @@ void Prefetch_Request( const char* mapName )
 	mapEntryCount = entryCount;
 	idStr manifestName;
 	idCommon::PreloadManifestName( map, manifestName );
-	idPreloadManifest manifest;
-	manifest.LoadManifest( manifestName );
-	for( int i = 0; i < manifest.NumResources(); i++ )
-	{
-		const preloadEntry_s& p = manifest.GetPreloadByIndex( i );
-		idStr name;
-		if( p.resType == PRELOAD_IMAGE )
-		{
-			idImage* image = globalImages->GetImageWithParameters( p.resourceName, ( textureFilter_t )p.imgData.filter, ( textureRepeat_t )p.imgData.repeat, ( textureUsage_t )p.imgData.usage, ( cubeFiles_t )p.imgData.cubeMap );
-			if( image != NULL && image->IsLoaded() ) { continue; }
-			name = p.resourceName;
-			idImage::GetGeneratedName( name, ( textureUsage_t )p.imgData.usage, ( cubeFiles_t )p.imgData.cubeMap );
-			idStr generated;
-			idBinaryImage::GetGeneratedFileName( generated, name );
-			name = generated;
-		}
-		else if( p.resType == PRELOAD_MODEL )
-		{
-			if( Prefetch_ModelResident( p.resourceName ) ) { continue; }
-			name = "generated/rendermodels/";
-			name += p.resourceName;
-			idStr extension;
-			name.ExtractFileExtension( extension );
-			name.SetFileExtension( va( "b%s", extension.c_str() ) );
-		}
-		else if( p.resType == PRELOAD_SAMPLE )
-		{
-			if( Prefetch_SampleResident( p.resourceName ) ) { continue; }
-			name = "generated/";
-			name += p.resourceName;
-			name.SetFileExtension( "idwav" );
-		}
-		else if( p.resType == PRELOAD_PARTICLE )
-		{
-			name = "generated/particles/";
-			name += p.resourceName;
-			name += ".bprt";
-		}
-		if( !name.IsEmpty() ) { Prefetch_Add( name ); }
-	}
+	// LoadManifest leaves the entries alone when the file is missing
+	preloadManifest.Clear();
+	preloadManifest.LoadManifest( manifestName );
+	preloadIndex = 0;
 	prefetchAbort.store( false );
 	requestsDone.store( false );
 	workerFinished.store( false );
 	workerStarted = prefetchThread.StartThread( "map-prefetch", CORE_ANY, THREAD_BELOW_NORMAL );
 	prefetchActive = workerStarted;
 	if( !workerStarted ) { workerFinished.store( true ); common->Warning( "prefetch worker creation failed" ); }
-	common->Printf( "PREFETCH request %s entries=%d budget=%d MB\n", requestedMap, entryCount, com_prefetchBudgetMB.GetInteger() );
+	common->Printf( "PREFETCH request %s entries=%d preload=%d budget=%d MB\n", requestedMap, entryCount, preloadManifest.NumResources(), com_prefetchBudgetMB.GetInteger() );
 }
 
 void Prefetch_Pump()
 {
-	if( !pendingRequest && !prefetchActive ) { return; }
-	const uint64 start = Sys_Microseconds();
-	const uint64 sliceBudget = ( uint64 )com_prefetchSliceUs.GetInteger();
-	if( pendingRequest )
+	if( !pendingRequest && !prefetchActive )
 	{
-		pendingRequest = false;
-		Prefetch_Request( pendingMap );
-		maxRequestUs = Max( maxRequestUs, Sys_Microseconds() - start );
-	}
-	if( !prefetchActive )
-	{
-		const uint64 elapsed = Sys_Microseconds() - start;
-		maxSliceUs = Max( maxSliceUs, elapsed );
-		sliceOverruns += elapsed > sliceBudget;
+		//puncho - transitions (stage 3 review): a speculative store no load has consumed (up to com_prefetchBudgetMB) is
+		// freed after com_prefetchHoldMs instead of staying resident until the next request or load
+		if( entryCount > 0 && !prefetchServing && com_prefetchHoldMs.GetInteger() > 0 && Sys_Milliseconds() - requestTime >= com_prefetchHoldMs.GetInteger() )
+		{
+			common->Printf( "PREFETCH expired %s after %d ms\n", requestedMap, Sys_Milliseconds() - requestTime );
+			Prefetch_Clear();
+		}
 		return;
 	}
-	Prefetch_Drain( 32, start + sliceBudget, sliceBudget );
-	const uint64 budget = ( uint64 )com_prefetchBudgetMB.GetInteger() * 1024 * 1024;
-	int batch[32];
-	int batchCount = 0;
-	int attempts = 0;
-	while( resolveIndex < entryCount && batchCount < 32 && attempts < 32 )
+	if( pendingRequest )
 	{
-		const uint64 stepStart = Sys_Microseconds();
-		const uint64 elapsed = stepStart - start;
-		// Resolution contains indivisible OS calls. Reserve twice the observed step
-		// high-water cost, plus publication, rather than starting with a few us left.
-		// One initial probe makes progress when there is no estimate (or one call
-		// itself exceeds the budget); it still reports its full measured duration.
-		const bool initialProbe = attempts == 0 && elapsed < Max( ( uint64 )1, sliceBudget / 2 ) &&
-			( admissionResolveStepUs == 0 || admissionResolveStepUs >= sliceBudget || elapsed + admissionResolveStepUs + admissionPublishUs + 1 < sliceBudget );
-		if( elapsed >= sliceBudget || ( !initialProbe && ( admissionResolveStepUs == 0 || elapsed + 2 * admissionResolveStepUs + admissionPublishUs + 1 >= sliceBudget ) ) )
+		//puncho - transitions (stage 3 review): the request (the store's first allocation, two manifest reads, the
+		// worker's start) takes a frame of its own outside the resolution slice; its preload walk is sliced below
+		const uint64 requestStart = Sys_Microseconds();
+		pendingRequest = false;
+		Prefetch_Request( pendingMap );
+		maxRequestUs = Max( maxRequestUs, Sys_Microseconds() - requestStart );
+		return;
+	}
+	const uint64 start = Sys_Microseconds();
+	const uint64 sliceBudget = ( uint64 )com_prefetchSliceUs.GetInteger();
+	const uint64 deadline = start + sliceBudget;
+	Prefetch_Drain( Prefetch_AdmitCount( sliceBudget, admissionCompletionUs ), deadline, sliceBudget );
+	// The preload walk: up to 32 entries, within the first half of the slice after the first.
+	for( int walked = 0; preloadIndex < preloadManifest.NumResources() && walked < 32; walked++ )
+	{
+		if( walked > 0 && Sys_Microseconds() - start >= sliceBudget / 2 )
 		{
 			break;
 		}
-		const bool firstEstimate = maxResolveStepUs == 0;
+		Prefetch_AddPreload( preloadManifest.GetPreloadByIndex( preloadIndex++ ) );
+	}
+	const bool walkDone = preloadIndex >= preloadManifest.NumResources();
+	if( walkDone && preloadManifest.NumResources() > 0 )
+	{
+		preloadManifest.Clear();
+		preloadIndex = 0;
+	}
+	const uint64 budget = ( uint64 )com_prefetchBudgetMB.GetInteger() * 1024 * 1024;
+	const uint64 walkedUs = Sys_Microseconds() - start;
+	const int admitted = Prefetch_AdmitCount( sliceBudget - Min( walkedUs, sliceBudget ), admissionResolveStepUs );
+	int batch[32];
+	int batchCount = 0;
+	for( int attempts = 0; resolveIndex < entryCount && attempts < admitted; attempts++ )
+	{
+		const uint64 stepStart = Sys_Microseconds();
+		if( attempts > 0 && stepStart >= deadline )
+		{
+			break;
+		}
 		const int index = resolveIndex++;
 		prefetchEntry_t& entry = prefetchEntries[index];
 		const bool resolved = fileSystem->ResolveForRead( entry.path, entry.source );
 		const uint64 resolveUs = Sys_Microseconds() - stepStart;
 		maxResolveUs = Max( maxResolveUs, resolveUs );
 		resolveOverruns += resolveUs > sliceBudget;
-		attempts++;
 		if( !resolved || entry.source.length == 0 || entry.source.length > INT_MAX || entry.source.length > budget - Min( reservedBytes, budget ) )
 		{
 			skippedCount++;
@@ -379,8 +436,7 @@ void Prefetch_Pump()
 		}
 		const uint64 stepUs = Sys_Microseconds() - stepStart;
 		maxResolveStepUs = Max( maxResolveStepUs, stepUs );
-		admissionResolveStepUs = Max( admissionResolveStepUs, stepUs );
-		if( firstEstimate ) { break; }
+		admissionResolveStepUs = Prefetch_DecayEstimate( admissionResolveStepUs, stepUs );
 	}
 	const uint64 publishStart = Sys_Microseconds();
 	const int head = requestHead.load( std::memory_order_relaxed );
@@ -389,14 +445,13 @@ void Prefetch_Pump()
 		requestRing[( head + i ) % MAX_PREFETCH_ENTRIES] = batch[i];
 	}
 	requestHead.store( head + batchCount, std::memory_order_release );
-	if( resolveIndex == entryCount ) { requestsDone.store( true, std::memory_order_release ); }
+	// Until the walk is done it can still add entries the resolver has caught up with.
+	if( resolveIndex == entryCount && walkDone ) { requestsDone.store( true, std::memory_order_release ); }
 	if( workerFinished.load( std::memory_order_acquire ) && completionTail.load( std::memory_order_relaxed ) == completionHead.load( std::memory_order_acquire ) )
 	{
 		prefetchActive = false;
 	}
-	const uint64 publishUs = Sys_Microseconds() - publishStart;
-	maxPublishUs = Max( maxPublishUs, publishUs );
-	admissionPublishUs = Max( admissionPublishUs, publishUs );
+	maxPublishUs = Max( maxPublishUs, Sys_Microseconds() - publishStart );
 	const uint64 elapsed = Sys_Microseconds() - start;
 	maxSliceUs = Max( maxSliceUs, elapsed );
 	sliceOverruns += elapsed > sliceBudget;
@@ -409,10 +464,10 @@ void Prefetch_BeginLoad()
 	prefetchServing = com_prefetch.GetBool() && entryCount > 0;
 }
 
-idFile* Prefetch_Open( const char* path, const char* gamedir )
+idFile* Prefetch_Open( const char* path, bool searchDirs, const char* gamedir )
 {
 	if( !prefetchServing ) { return NULL; }
-	idStr name = path;
+	idStrStatic< MAX_OSPATH > name = path;
 	name.BackSlashesToSlashes();
 	name.ToLower();
 	const int key = prefetchHash.GenerateKey( name, false );
@@ -421,10 +476,17 @@ idFile* Prefetch_Open( const char* path, const char* gamedir )
 		prefetchEntry_t& entry = prefetchEntries[i];
 		if( name != entry.path ) { continue; }
 		resolvedFile_t current;
-		if( entry.ready && fileSystem->ResolveForRead( path, current, gamedir ) && memcmp( &current, &entry.source, sizeof( current ) ) == 0 )
+		// A loose file serves only a caller that searches directories, as OpenLayerFile does.
+		if( entry.ready && ( searchDirs || entry.source.kind != 0 ) && fileSystem->ResolveForRead( path, current, gamedir ) && memcmp( &current, &entry.source, sizeof( current ) ) == 0 )
 		{
+			//puncho - transitions (stage 3 review): the file takes the buffer (TakeDataOwnership frees it with Mem_Free,
+			// as it was allocated), so an opener that keeps it past EndLevelLoad (a RoQ cinematic) never reads freed
+			// bytes; a second open of the path goes to the VFS
 			idFile_Memory* file = new( TAG_IDFILE ) idFile_Memory( path, ( const char* )entry.bytes, ( int )entry.source.length );
+			file->TakeDataOwnership();
 			file->SetTimestamp( entry.source.timestamp );
+			entry.bytes = NULL;
+			entry.ready = false;
 			entry.used = true;
 			hitCount++;
 			hitBytes += entry.source.length;
@@ -440,7 +502,7 @@ void Prefetch_EndLoad()
 {
 	if( !prefetchServing ) { return; }
 	uint64 unused = 0;
-	for( int i = 0; i < entryCount; i++ ) { if( prefetchEntries[i].ready && !prefetchEntries[i].used ) { unused += prefetchEntries[i].source.length; } }
+	for( int i = 0; i < entryCount; i++ ) { if( prefetchEntries[i].ready ) { unused += prefetchEntries[i].source.length; } }
 	common->Printf( "PREFETCH load hit=%d miss=%d kb=%llu unused_kb=%llu\n", hitCount, missCount, ( unsigned long long )( hitBytes / 1024 ), ( unsigned long long )( unused / 1024 ) );
 	common->ReportTransitionMetric( TRANSITION_PF_HIT, hitCount );
 	common->ReportTransitionMetric( TRANSITION_PF_MISS, missCount );

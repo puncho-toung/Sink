@@ -466,6 +466,7 @@ public:
 	void FlushTransitionTimeline();
 	virtual void ListTransitionNetwork() const;
 	virtual void NotifyMapTransition( unsigned short sequence, const char* map );
+	virtual bool IsTransitionDraining() const { return transitionState == 1; }
 	bool BeginCoopTransition( const char* map );
 	void PumpMapTransition();
 	bool PrepareMatchGameData( idMatchParameters& parms );

@@ -45,6 +45,7 @@ struct transitionState_t
 	transitionPlayer_t players[MAX_CLIENTS];
 	transitionCarry_t carry[MAX_TRANSITION_CARRY];
 	int count, fallback, rotationIgnored;
+	int arrivalStart;	// Sys_Milliseconds of the first placement on the arrival map, 0 before it
 	bool pending, active, relative, carryApplied;
 };
 static transitionState_t transitionState;
@@ -80,6 +81,44 @@ static int TransitionPlayerIndex( int client )
 	}
 	return -1;
 }
+
+//puncho start - transitions (stage 3 review): arrival ends once every departing roster slot is placed or dropped (its
+// lobby user left the session). The last placement made the carry's final attempt, so a record that still cannot spawn
+// is dropped rather than held pending; pending, it refused every later exit and save and made each respawn restore the
+// departure inventory for the rest of the map
+static bool TransitionPartyPlaced()
+{
+	for( int i = 0; i < MAX_CLIENTS; i++ )
+	{
+		if( transitionState.players[i].valid && !transitionState.players[i].placed )
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+static void EndTransitionArrival()
+{
+	int unapplied = 0;
+	for( int i = 0; i < transitionState.count; i++ )
+	{
+		unapplied += transitionState.carry[i].applied ? 0 : 1;
+	}
+	if( unapplied > 0 )
+	{
+		gameLocal.Warning( "transition: %d carried records could not spawn; dropped", unapplied );
+	}
+	transitionState.active = false;
+	// The departure dictionaries are dead once arrival ends. Emptying them also keeps this file-static's idDicts from
+	// freeing into idDict's global pools, another translation unit's statics, at exit
+	for( int i = 0; i < MAX_CLIENTS; i++ )
+	{
+		transitionState.players[i].info.Clear();
+	}
+	gameLocal.Printf( "transition_arrived carry=%d fallback=%d rotation_ignored=%d\n", transitionState.count, transitionState.fallback, transitionState.rotationIgnored );
+}
+//puncho end
 
 void idGameLocal::ClearMapTransition()
 {
@@ -119,7 +158,9 @@ bool idGameLocal::BeginMapTransition( const mapTransition_t& request )
 		Warning( "transition refused: invalid map name" );
 		return false;
 	}
-	if( common->IsMultiplayer() && session->GetActivePlatformLobbyBase().HasActivePeers() && ( !cvarSystem->GetCVarBool( "net_coopTransitions" ) || !( session->GetGameLobbyBase().GetMatchParms().matchFlags & MATCH_REQUIRE_PARTY_LOBBY ) ) )
+	//puncho - transitions (stage 3 review): the acting game-state lobby, as ProcessGameReturn and the transition hold use,
+	// so the game never commits a crossing that common then decides differently about
+	if( common->IsMultiplayer() && session->GetActingGameStateLobbyBase().HasActivePeers() && ( !cvarSystem->GetCVarBool( "net_coopTransitions" ) || !( session->GetGameLobbyBase().GetMatchParms().matchFlags & MATCH_REQUIRE_PARTY_LOBBY ) ) )
 	{
 		Warning( "transition refused: net_coopTransitions is disabled" );
 		return false;
@@ -219,6 +260,35 @@ void idGameLocal::CommitMapTransition()
 			}
 		}
 	}
+	//puncho start - transitions (stage 3 review): a departing peer that never comes back must not hold arrival open. Each
+	// host tic on the arrival map drops slots whose lobby user has left (the acting lobby common's hold uses), and a party
+	// not placed within twice net_transitionArriveMs of the first placement is released
+	if( transitionState.active && common->IsMultiplayer() && !common->IsClient() && !common->IsTransitionDraining() )
+	{
+		idLobbyBase& lobby = session->GetActingGameStateLobbyBase();
+		for( int i = 0; i < MAX_CLIENTS; i++ )
+		{
+			transitionPlayer_t& record = transitionState.players[i];
+			if( record.valid && !record.placed && !lobby.IsLobbyUserValid( record.user ) )
+			{
+				Printf( "transition_player_left slot=%d\n", i );
+				record.valid = false;
+				record.info.Clear();
+			}
+		}
+		const int timeout = 2 * cvarSystem->GetCVarInteger( "net_transitionArriveMs" );
+		const bool timedOut = transitionState.arrivalStart != 0 && Sys_Milliseconds() - transitionState.arrivalStart >= timeout;
+		if( timedOut )
+		{
+			Warning( "transition: party not placed within %d ms; arrival released", timeout );
+		}
+		if( timedOut || TransitionPartyPlaced() )
+		{
+			ApplyTransitionCarry();
+			EndTransitionArrival();
+		}
+	}
+	//puncho end
 	if( !transitionState.pending || common->IsClient() )
 	{
 		return;
@@ -227,6 +297,7 @@ void idGameLocal::CommitMapTransition()
 	transitionState.pending = false;
 	transitionState.active = true;
 	transitionState.count = transitionState.fallback = transitionState.rotationIgnored = 0;
+	transitionState.arrivalStart = 0;
 	transitionState.carryApplied = false;
 	const landmark_t* depart = worldStore.FindLandmark( transitionState.request.departLandmark );
 	if( transitionTestPlacementPending )
@@ -530,7 +601,8 @@ static bool TransitionPositionClear( const transitionPlayer_t& record, const idV
 bool idGameLocal::SelectTransitionSpawn( idPlayer* player, idVec3& origin, idAngles& angles )
 {
 	const int index = TransitionPlayerIndex( player->entityNumber );
-	if( !transitionState.active || !transitionState.relative || index < 0 || transitionState.players[index].placed )
+	//puncho - transitions (stage 3 review): a respawn on the departure map during the co-op drain is not an arrival
+	if( !transitionState.active || !transitionState.relative || index < 0 || transitionState.players[index].placed || common->IsTransitionDraining() )
 	{
 		return false;
 	}
@@ -605,13 +677,17 @@ bool idGameLocal::RestoreTransitionPlayerInfo( int clientNum )
 void idGameLocal::FinishTransitionSpawn( idPlayer* player )
 {
 	const int index = TransitionPlayerIndex( player->entityNumber );
-	if( !transitionState.active || index < 0 || transitionState.players[index].placed )
+	if( !transitionState.active || index < 0 || transitionState.players[index].placed || common->IsTransitionDraining() )
 	{
 		return;
 	}
 	transitionPlayer_t& record = transitionState.players[index];
 	record.actual = player->GetPhysics()->GetOrigin();
 	record.placed = true;
+	if( transitionState.arrivalStart == 0 )
+	{
+		transitionState.arrivalStart = Max( 1, Sys_Milliseconds() );
+	}
 	if( record.selected )
 	{
 		player->GetPhysics()->SetLinearVelocity( record.velocity );
@@ -619,15 +695,9 @@ void idGameLocal::FinishTransitionSpawn( idPlayer* player )
 	}
 	Printf( "transition_player_arrive slot=%d selected=%d positionExact=%d velocityExact=%d healthMatch=%d expected=%.9g,%.9g,%.9g actual=%.9g,%.9g,%.9g\n", player->entityNumber, record.selected, record.selected && record.expected.Compare( record.actual ), record.selected && record.velocity.Compare( player->GetPhysics()->GetLinearVelocity() ), player->health == record.info.GetInt( "health", "100" ), record.expected.x, record.expected.y, record.expected.z, record.actual.x, record.actual.y, record.actual.z );
 	ApplyTransitionCarry();
-	bool complete = transitionState.carryApplied || transitionState.count == 0;
-	for( int i = 0; i < MAX_CLIENTS; i++ )
+	if( TransitionPartyPlaced() )
 	{
-		complete &= !transitionState.players[i].valid || transitionState.players[i].placed;
-	}
-	if( complete )
-	{
-		transitionState.active = false;
-		Printf( "transition_arrived carry=%d fallback=%d rotation_ignored=%d\n", transitionState.count, transitionState.fallback, transitionState.rotationIgnored );
+		EndTransitionArrival();
 	}
 }
 

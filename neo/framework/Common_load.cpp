@@ -513,6 +513,8 @@ void idCommonLocal::MoveToNewMap( const char* mapName, bool devmap )
 			{
 				if( !PrepareMatchGameData( matchParameters ) )
 				{
+					//puncho - transitions (stage 3 review): the committed crossing is refused here too; release it
+					game->ClearMapTransition();
 					return;
 				}
 				session->UpdateMatchParms( matchParameters );
@@ -718,7 +720,6 @@ void idCommonLocal::ExecuteMapChange()
 	{
 		BeginTransitionTimeline( "newgame" );
 	}
-	Prefetch_BeginLoad();
 	if( session->GetState() != idSession::LOADING )
 	{
 		idLib::Warning( "Session state is not LOADING in ExecuteMapChange" );
@@ -746,6 +747,10 @@ void idCommonLocal::ExecuteMapChange()
 		idLib::Warning( "numSlots <= 0 in ExecuteMapChange" );
 		return;
 	}
+
+	//puncho - transitions (stage 3 review): after the refusals above, which return without the fileSystem->EndLevelLoad
+	// that ends serving, so a refused load cannot leave the store serving and resident
+	Prefetch_BeginLoad();
 
 	insideExecuteMapChange = true;
 
@@ -945,12 +950,24 @@ void idCommonLocal::ExecuteMapChange()
 	{
 		// Notify session we are done loading
 		session->LoadingFinished();
+		//puncho - transitions (stage 3 review): net_transitionArriveMs measures the wait for the party, not this machine's
+		// own load; the host's timer started on entering state 2 and the client's on the intent, both before the load
+		if( transitionState != 0 )
+		{
+			transitionStateTime = Sys_Milliseconds();
+		}
 
 		while( session->GetState() == idSession::LOADING )
 		{
 			if( transitionState != 0 && Sys_Milliseconds() - transitionStateTime >= net_transitionArriveMs.GetInteger() )
 			{
 				Warning( "transition first snapshot wait timed out during load" );
+				//puncho - transitions (stage 3 review): the error path's teardown (Frame's catch) plus the file system's end
+				// of load: LeaveGame never deletes loadGUI, which Draw checks before the shell, and EndLevelLoad ends
+				// prefetch serving and releases its store and the resource block buffer
+				delete loadGUI;
+				loadGUI = NULL;
+				fileSystem->EndLevelLoad();
 				LeaveGame();
 				return;
 			}
