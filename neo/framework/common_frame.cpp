@@ -77,15 +77,21 @@ idCVar net_drawDebugHud( "net_drawDebugHud", "0", CVAR_SYSTEM | CVAR_INTEGER, "0
 idCVar timescale( "timescale", "1", CVAR_SYSTEM | CVAR_FLOAT, "Number of game frames to run per render frame", 0.001f, 100.0f );
 
 
-idCVar com_gateLines( "com_gateLines", "0", CVAR_SYSTEM | CVAR_BOOL, "print the stage-0 gate lines to the console" );
+idCVar com_gateLines( "com_gateLines", "0", CVAR_SYSTEM | CVAR_BOOL, "print the gate lines to the console" );
 idCVar com_gateTimingLog( "com_gateTimingLog", "", CVAR_SYSTEM, "write per-frame timing to gatetiming/<plain name>.csv" );
 static idFile* gateTimingFile;
 static char gateTimingName[128];
 static char gateTimingBuffer[65536];
 static int gateTimingUsed;
-static int gateTimingRows;
 static int gateTimingFlushTime;
 
+/*
+========================
+CloseGateTimingLog
+
+Writes the buffered tail and closes; also called from idCommonLocal::CloseLogFile.
+========================
+*/
 void CloseGateTimingLog()
 {
 	if( gateTimingFile != NULL )
@@ -107,10 +113,17 @@ One row per frame of DrawFPS's timing arithmetic (Console.cpp) and nothing else.
 code is patched into every binary a gate compares, so it must cost the same in each; it
 runs on the main thread after WaitForThread, before mainFrameTiming takes this frame, so
 the game columns are the previous frame's (as on the HUD) while tics is this frame's.
+usRB/usGPU are the last swap's (an out-of-sequence UpdateScreen re-latches them).
 ========================
 */
 static void LogGateTiming( int tics )
 {
+	// registration and every Set mark the cvar modified, so the default costs two inline tests
+	if( gateTimingFile == NULL && !com_gateTimingLog.IsModified() )
+	{
+		return;
+	}
+	com_gateTimingLog.ClearModified();
 	const char* name = com_gateTimingLog.GetString();
 	if( idStr::Cmp( name, gateTimingName ) )
 	{
@@ -140,7 +153,6 @@ static void LogGateTiming( int tics )
 			idStr::Copynz( gateTimingName, name, sizeof( gateTimingName ) );
 			// into the buffer, not idFile::Printf, which allocates and writes \r\n
 			gateTimingUsed = idStr::snPrintf( gateTimingBuffer, sizeof( gateTimingBuffer ), "frame,ms,tics,usFrameBusy,usFrameIdle,usGameRF,usGame,usRF,usRB,usGPU\n" );
-			gateTimingRows = 0;
 			gateTimingFlushTime = Sys_Milliseconds();
 			common->Printf( "gate timing CSV opened: %s\n", path );
 		}
@@ -166,7 +178,7 @@ static void LogGateTiming( int tics )
 	const int64 frameIdleTime = int64( m.startGameTime ) - int64( m.finishSyncTime );
 	const int64 frameBusyTime = int64( f.finishSyncTime ) - int64( m.startGameTime );
 	const int now = Sys_Milliseconds();
-	gateTimingUsed += idStr::snPrintf( gateTimingBuffer + gateTimingUsed, 256, "%d,%d,%d,%lld,%lld,%lld,%lld,%lld,%lld,%lld\n", gateTimingRows++, now, tics, ( long long )frameBusyTime, ( long long )frameIdleTime, ( long long )gameThreadTotalTime, ( long long )gameThreadGameTime, ( long long )gameThreadRenderTime, ( long long )rendererBackEndTime, ( long long )rendererGPUTime );
+	gateTimingUsed += idStr::snPrintf( gateTimingBuffer + gateTimingUsed, 256, "%d,%d,%d,%lld,%lld,%lld,%lld,%lld,%lld,%lld\n", idLib::frameNumber, now, tics, ( long long )frameBusyTime, ( long long )frameIdleTime, ( long long )gameThreadTotalTime, ( long long )gameThreadGameTime, ( long long )gameThreadRenderTime, ( long long )rendererBackEndTime, ( long long )rendererGPUTime );
 	// Write without Flush: Flush is FlushFileBuffers on Windows, a disk sync inside the next frame
 	if( now - gateTimingFlushTime >= 1000 )
 	{

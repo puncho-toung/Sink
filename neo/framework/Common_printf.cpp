@@ -172,13 +172,13 @@ void idCommonLocal::EndRedirect()
 	rd_flush = NULL;
 }
 
+extern void CloseGateTimingLog();
+
 /*
 ==================
 idCommonLocal::CloseLogFile
 ==================
 */
-extern void CloseGateTimingLog();
-
 void idCommonLocal::CloseLogFile()
 {
 	DrainPrintRelay();
