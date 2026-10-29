@@ -506,7 +506,11 @@ void idInteraction::UnlinkAndFree()
 	idRenderWorldLocal* renderWorld = this->lightDef->world;
 
 	const idInteraction* indexed = renderWorld->GetInteraction( lightDef->index, entityDef->index );
-	if( indexed != NULL && indexed != this && indexed != INTERACTION_EMPTY )
+	//puncho - interaction index (P2 review): a dense cell must still hold this interaction, as stock checked. Only the
+	// sparse index (it refuses inserts once generated) or a def outside the table's rows and columns can lack it
+	const bool denseCell = renderWorld->interactionTable != NULL && !renderWorld->interactionIndexSparse &&
+						   lightDef->index < renderWorld->interactionTableHeight && entityDef->index < renderWorld->interactionTableWidth;
+	if( ( indexed == NULL && denseCell ) || ( indexed != NULL && indexed != this && indexed != INTERACTION_EMPTY ) )
 	{
 		common->Error( "idInteraction::UnlinkAndFree: interaction index wasn't set" );
 	}

@@ -1574,6 +1574,7 @@ void Cmd_TestFx_f( const idCmdArgs& args )
 	dict.Set( "origin", offset.ToString() );
 	dict.Set( "test", "1" );
 	dict.Set( "fx", name );
+	dict.SetBool( "essential", true );	//puncho - entity budgets (P2 review): testFx is a raw pointer; g_budgetFx must never evict it
 	gameLocal.testFx = ( idEntityFx* )gameLocal.SpawnEntityType( idEntityFx::Type, &dict );
 }
 

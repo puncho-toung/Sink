@@ -46,21 +46,30 @@ If you have questions concerning this license or the applicable additional terms
 
 	// there are a lot more static indexes than vertexes, because interactions are just new
 	// index lists that reference existing vertexes
+	//puncho - vertex cache (P2 review): only the index set had a measured need (178 MB on the 64K fixture); vertices
+	// used 13 MB there, so their set stays at the 124 MB this fork had
 	const int STATIC_INDEX_MEMORY = 256 * 1024 * 1024;
-	const int STATIC_VERTEX_MEMORY = 256 * 1024 * 1024;	// make sure it fits in VERTCACHE_OFFSET_MASK!
+	const int STATIC_VERTEX_MEMORY = 4 * 31 * 1024 * 1024;	// make sure it fits in VERTCACHE_OFFSET_MASK!
 
 	// vertCacheHandle_t packs size, offset, and frame number into 64 bits
 	typedef uint64 vertCacheHandle_t;
 	const int VERTCACHE_STATIC = 1;						// in the static set, not the per-frame set
 
+	//puncho start - vertex cache (P2 review): the frame field keeps its 13 bits, because persistent handles exist
+	// (jointsInvertedBuffer, the cached dynamic surfaces) and a stale one passes CacheIsCurrent at every wrap. The
+	// 256 MB index set needs 28 offset bits, so the size field gives up one: 4 MB per block, which ActuallyAlloc
+	// enforces. With 16-bit indexes no block nears it: 65536 verts are 2 MB, the GUI's 80000 verts 2.5 MB
 	const int VERTCACHE_SIZE_SHIFT = 1;
-	const int VERTCACHE_SIZE_MASK = 0x7fffff;			// 23 bits = 8 megs
+	const int VERTCACHE_SIZE_MASK = 0x3fffff;			// 22 bits = 4 megs
 
-	const int VERTCACHE_OFFSET_SHIFT = 24;
-	const int VERTCACHE_OFFSET_MASK = 0x1fffffff;	// 29 bits = 512 megs
+	const int VERTCACHE_OFFSET_SHIFT = 23;
+	const int VERTCACHE_OFFSET_MASK = 0xfffffff;		// 28 bits = 256 megs
 
-	const int VERTCACHE_FRAME_SHIFT = 53;
-	const int VERTCACHE_FRAME_MASK = 0x7ff;			// 11 bits = 2047 frames to wrap around
+	const int VERTCACHE_FRAME_SHIFT = 51;
+	const int VERTCACHE_FRAME_MASK = 0x1fff;			// 13 bits = 8191 frames to wrap around
+
+	compile_time_assert( STATIC_INDEX_MEMORY <= VERTCACHE_OFFSET_MASK + 1 && STATIC_VERTEX_MEMORY <= VERTCACHE_OFFSET_MASK + 1 );
+	//puncho end
 
 
 #else

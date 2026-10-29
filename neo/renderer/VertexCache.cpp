@@ -218,6 +218,12 @@ vertCacheHandle_t idVertexCache::ActuallyAlloc( geoBufferSet_t& vcs, const void*
 	// SRS - enforce cache alignment without read beyond boundary for each cache type below
 	//assert( ( bytes & 15 ) == 0 );
 
+	//puncho - vertex cache (P2 review): the handle keeps 22 bits of size; a larger block would be referenced short
+	if( bytes > VERTCACHE_SIZE_MASK )
+	{
+		idLib::Error( "idVertexCache::ActuallyAlloc: %i bytes exceeds the %i byte block limit", bytes, VERTCACHE_SIZE_MASK );
+	}
+
 	int	endPos = 0;
 	int offset = 0;
 
