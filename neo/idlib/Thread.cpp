@@ -28,6 +28,8 @@ If you have questions concerning this license or the applicable additional terms
 #include "precompiled.h"
 #pragma hdrstop
 
+void DumpPrintRelay();	//puncho - print-relay (P2 review): framework/Common_printf.cpp, as Sys_Printf lives in the engine
+
 /*
 ================================================================================================
 Contains the vartious ThreadingClass implementations.
@@ -254,6 +256,9 @@ int idSysThread::ThreadProc( idSysThread* thread )
 	}
 	catch( idException& ex )
 	{
+		//puncho - print-relay (P2 review): the main thread will never drain what this worker queued, its "ERROR:" line
+		// among them, so it goes to stdout before the process ends
+		DumpPrintRelay();
 		Sys_Printf( "Fatal error in thread %s: %s\n", thread->GetName(), ex.GetError() );
 		fflush( stdout );
 		fflush( stderr );

@@ -369,7 +369,9 @@ public:
 	idClipModel* 			DefaultClipModel();
 
 	// stats and debug drawing
-	void					SelfTest( int count, int seed );
+#if !defined( ID_RETAIL )
+	void					SelfTest( int count, int seed );	//puncho - dev guard (P2 review): clipSelfTest
+#endif
 	void					PrintStatistics();
 	//puncho start - ai-harness: copies all nine counters without zeroing them
 	void					GetStatistics( clipStats_t& stats ) const;

@@ -584,6 +584,8 @@ void idCollisionModelManagerLocal::DebugOutput( const idVec3& origin )
 	testend = NULL;
 }
 
+//puncho - dev guard (P2 review): cm_selfTest rewrites the live checkCount; test scaffolding stays out of retail builds
+#if !defined( ID_RETAIL )
 // Hash only defined, portable fields, never padding, pointers or feature identifiers.
 static void CM_TestContactCRC( unsigned int& crc, const contactInfo_t& contact )
 {
@@ -756,3 +758,4 @@ void idCollisionModelManagerLocal::SelfTest( int count, int seed )
 		boundsFailures, count, pointFailures, count, contentsFailures, count, chordFailures, count, digest, equal ? "equal" : "DIFFERENT", numMergesRefused, numPolygonsRefused );
 	common->Printf( "%s\n", ( boundsFailures || pointFailures || contentsFailures || chordFailures || !equal ) ? "FAIL" : "PASS" );
 }
+#endif

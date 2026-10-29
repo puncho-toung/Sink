@@ -2298,6 +2298,7 @@ bool idClip::DrawModelContactFeature( const contactInfo_t& contact, const idClip
 	return true;
 }
 
+#if !defined( ID_RETAIL )	//puncho - dev guard (P2 review): clipSelfTest rewrites the live touchCount; test scaffolding
 void idClip::SelfTest( int count, int seed )
 {
 	if( clipSectors == NULL )
@@ -2338,6 +2339,7 @@ void idClip::SelfTest( int count, int seed )
 	}
 	gameLocal.Printf( "clipSelfTest: gathers %d digest 0x%08x wrap %s\n", count, digests[0], digests[0] == digests[1] ? "equal" : "DIFFERENT" );
 }
+#endif
 
 uint64 idClip::BeginQuery() const
 {

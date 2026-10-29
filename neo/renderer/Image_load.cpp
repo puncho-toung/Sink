@@ -35,6 +35,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "../framework/Common_local.h"
 #include "RenderCommon.h"
+#include <atomic>
 
 /*
 ================
@@ -536,11 +537,13 @@ void idImage::GetGeneratedName( idStr& _name, const textureUsage_t& _usage, cons
 	}
 }
 
-static uint64 imageLoadBytes;
+//puncho - instruments (P2 review): the frontend (the game thread under smp) and the backend both load images, so the
+// sum is atomic; std::atomic because idSysInterlockedInteger is 32 bits and a session can load more than 4 GB
+static std::atomic<uint64> imageLoadBytes( 0 );
 
 uint64 R_GetImageLoadBytes()
 {
-	return imageLoadBytes;
+	return imageLoadBytes.load( std::memory_order_relaxed );
 }
 
 /*
@@ -908,7 +911,7 @@ void idImage::ActuallyLoadImage( bool fromBackEnd, nvrhi::ICommandList* commandL
 #endif
 
 	isLoaded = true;
-	imageLoadBytes += StorageSize();
+	imageLoadBytes.fetch_add( ( uint64 )StorageSize(), std::memory_order_relaxed );
 }
 
 void idImage::DeferredLoadImage()

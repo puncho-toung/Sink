@@ -333,8 +333,10 @@ class idCollisionModelManagerLocal : public idCollisionModelManager
 {
 public:
 	int GetNumModels() const { return numModels; }
+#if !defined( ID_RETAIL )
 	void SelfTest( int count, int seed );
 	unsigned int SelfTestDigest( int count, int seed );
+#endif
 	// load collision models from a map file
 	void			LoadMap( const idMapFile* mapFile, bool ignoreOldCollisionFile );
 	// frees all the collision models
@@ -442,8 +444,10 @@ private:			// CollisionMap_trace.cpp
 	void			TraceTrmThroughNode( cm_traceWork_t* tw, cm_node_t* node );
 	void			TraceThroughAxialBSPTree_r( cm_traceWork_t* tw, cm_node_t* node, float p1f, float p2f, idVec3& p1, idVec3& p2 );
 	void			TraceThroughModel( cm_traceWork_t* tw );
+#if !defined( ID_RETAIL )
 	void			TraceAllNodes_r( cm_traceWork_t* tw, cm_node_t* node );
 	static bool		selfTestFullTraversal;
+#endif
 	void			RecurseProcBSP_r( trace_t* results, int parentNodeNum, int nodeNum, float p1f, float p2f, const idVec3& p1, const idVec3& p2 );
 
 private:			// CollisionMap_load.cpp

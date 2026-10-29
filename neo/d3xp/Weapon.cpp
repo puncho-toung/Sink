@@ -143,6 +143,7 @@ idCVar g_useWeaponDepthHack( "g_useWeaponDepthHack", "1", CVAR_BOOL, "Crunch z d
 idCVar g_weaponShadows( "g_weaponShadows", "1", CVAR_BOOL | CVAR_ARCHIVE, "UNUSED: Cast shadows from weapons" );
 
 extern idCVar cg_predictedSpawn_debug;
+extern idCVar g_projectileCatchUp;	// Projectile.cpp
 
 /***********************************************************************
 
@@ -4207,7 +4208,6 @@ void idWeapon::Event_LaunchProjectiles( int num_projectiles, float spread, float
 				proj->Launch( muzzle_pos, dir, pushVelocity, fuseOffset, launchPower, dmgPower );
 
 				// predictively spawned, but no need to simulate - was needed for correct processing of client mines when spawned on the server (because we're futzing with the clip models)
-				extern idCVar g_projectileCatchUp;
 				if( g_projectileCatchUp.GetBool() )
 				{
 					proj->QueueToSimulate( startTime );

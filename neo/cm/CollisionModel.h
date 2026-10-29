@@ -150,7 +150,9 @@ public:
 	virtual int				PointContents( const idVec3 p, cmHandle_t model ) = 0;
 
 	virtual int GetNumModels() const = 0;
-	virtual void SelfTest( int count, int seed ) = 0;
+#if !defined( ID_RETAIL )
+	virtual void SelfTest( int count, int seed ) = 0;	//puncho - dev guard (P2 review): cm_selfTest is test scaffolding
+#endif
 
 	// Tests collision detection.
 	virtual void			DebugOutput( const idVec3& origin ) = 0;

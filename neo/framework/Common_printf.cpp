@@ -56,19 +56,43 @@ static void QueuePrintRelay( const char* text, bool warning )
 	{
 		printRelayDropped++;
 		printRelayMutex.Unlock();
-		Sys_Printf( "%s%s", warning ? "WARNING: " : "", text );
+		//puncho - print-relay (P2 review): plain printf, as stock wrote worker lines; posix Sys_Printf's tty_Hide and
+		// tty_Show would race the main console. A warning has no newline until Warning prints it at drain time
+		printf( warning ? "WARNING: %s\n" : "%s", text );
 		return;
 	}
 	printRelayLine_t& line = printRelay[( printRelayHead + printRelayCount ) % PRINT_RELAY_LINES];
-	if( strlen( text ) >= PRINT_RELAY_LINE_BYTES )
+	const size_t length = strlen( text );
+	idStr::Copynz( line.text, text, sizeof( line.text ) );
+	if( length >= PRINT_RELAY_LINE_BYTES )
 	{
 		printRelayTruncated++;
+		// a cut line keeps its end of line, or it runs into the next one (P2 review)
+		if( text[length - 1] == '\n' )
+		{
+			line.text[PRINT_RELAY_LINE_BYTES - 2] = '\n';
+		}
 	}
-	idStr::Copynz( line.text, text, sizeof( line.text ) );
 	line.warning = warning;
 	printRelayCount++;
 	printRelayMutex.Unlock();
 }
+
+//puncho start - print-relay (P2 review): idSysThread::ThreadProc calls this when a worker's exception ends the
+// process. stdout only, with plain printf: the console and the log file belong to the main thread
+void DumpPrintRelay()
+{
+	printRelayMutex.Lock();
+	for( ; printRelayCount > 0; printRelayCount-- )
+	{
+		const printRelayLine_t& line = printRelay[printRelayHead];
+		printf( line.warning ? "WARNING: %s\n" : "%s", line.text );
+		printRelayHead = ( printRelayHead + 1 ) % PRINT_RELAY_LINES;
+	}
+	printRelayMutex.Unlock();
+	fflush( stdout );
+}
+//puncho end
 
 void idCommonLocal::DrainPrintRelay()
 {
@@ -740,6 +764,9 @@ void idCommonLocal::FatalError( const char* fmt, ... )
 
 }
 
+//puncho - dev guard (P2 review): test scaffolding; common_frame.cpp's game-thread hook stays and returns at once in
+// retail builds, as GameVerify's do
+#ifndef ID_RETAIL
 static void PrintRelayTestJob( void* data )
 {
 	const int count = *( const int* )data;
@@ -754,9 +781,11 @@ static void PrintRelayTestJob( void* data )
 }
 REGISTER_PARALLEL_JOB( PrintRelayTestJob, "PrintRelayTestJob" );
 idCVar com_printRelayTest( "com_printRelayTest", "0", CVAR_SYSTEM | CVAR_INTEGER, "developer: emit N worker lines and two game-thread lines; -1 tests fatal thread handling" );
+#endif
 
 void RunPrintRelayTest()
 {
+#ifndef ID_RETAIL
 	static bool gameLinesPending;
 	if( gameLinesPending )
 	{
@@ -776,4 +805,5 @@ void RunPrintRelayTest()
 	jobs->Wait();
 	parallelJobManager->FreeJobList( jobs );
 	gameLinesPending = true;
+#endif
 }

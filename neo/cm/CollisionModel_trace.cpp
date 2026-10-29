@@ -240,6 +240,7 @@ void idCollisionModelManagerLocal::TraceThroughAxialBSPTree_r( cm_traceWork_t* t
 	idCollisionModelManagerLocal::TraceThroughAxialBSPTree_r( tw, node->children[side ^ 1], midf, p2f, mid, p2 );
 }
 
+#if !defined( ID_RETAIL )	//puncho - dev guard (P2 review): cm_selfTest's oracle, not tested on every trace in retail
 /*
 ================
 idCollisionModelManagerLocal::TraceAllNodes_r
@@ -260,6 +261,7 @@ void idCollisionModelManagerLocal::TraceAllNodes_r( cm_traceWork_t* tw, cm_node_
 		TraceAllNodes_r( tw, node->children[1] );
 	}
 }
+#endif
 
 /*
 ================
@@ -273,11 +275,13 @@ void idCollisionModelManagerLocal::TraceThroughModel( cm_traceWork_t* tw )
 	idVec3 start, end;
 	idRotation rot;
 
+#if !defined( ID_RETAIL )
 	if( selfTestFullTraversal )
 	{
 		TraceAllNodes_r( tw, tw->model->node );
 		return;
 	}
+#endif
 
 	if( !tw->rotation )
 	{
@@ -290,7 +294,9 @@ void idCollisionModelManagerLocal::TraceThroughModel( cm_traceWork_t* tw )
 		// total length covered along circle
 		d = tw->radius * DEG2RAD( idMath::Fabs( tw->angle ) );
 		// if more than one step
-		if( d > CIRCLE_APPROXIMATION_LENGTH )
+		//puncho - collision (P2 review): only a point steps; a trm's extents already span its whole rotation bounds
+		// (Rotation), so one straight walk from start to end meets every candidate the steps would
+		if( tw->pointTrace && d > CIRCLE_APPROXIMATION_LENGTH )
 		{
 			// number of steps for the approximation
 			numSteps = ( int )idMath::Ceil( d / CIRCLE_APPROXIMATION_LENGTH );

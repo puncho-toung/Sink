@@ -7378,20 +7378,19 @@ bool idGameLocal::SimulateProjectiles()
 void idGameLocal::GetMapStats( mapGameStats_t& stats ) const
 {
 	memset( &stats, 0, sizeof( stats ) );
-	for( int i = 0; i < MAX_GENTITIES; i++ )
+	//puncho - instruments (P2 review): the live list, not all MAX_GENTITIES slots; com_showFPS 5 runs this in Draw on the
+	// game thread, inside the usGameRF figure it reports
+	for( const idEntity* ent = spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
 	{
-		if( entities[i] != NULL )
+		stats.entities++;
+		stats.corpseLive += ent->IsType( idCorpse::Type ) ? 1 : 0;
+		if( ent->thinkFlags != 0 )
 		{
-			stats.entities++;
-			stats.corpseLive += entities[i]->IsType( idCorpse::Type ) ? 1 : 0;
-			if( entities[i]->thinkFlags != 0 )
-			{
-				stats.activeEntities++;
-			}
-			if( i >= ENTITYNUM_FIRST_NON_REPLICATED && i < ENTITYNUM_MAX_NORMAL )
-			{
-				stats.nonReplicated++;
-			}
+			stats.activeEntities++;
+		}
+		if( ent->entityNumber >= ENTITYNUM_FIRST_NON_REPLICATED && ent->entityNumber < ENTITYNUM_MAX_NORMAL )
+		{
+			stats.nonReplicated++;
 		}
 	}
 	stats.dungeonTransitions = idMapGraphDirector::transitions;

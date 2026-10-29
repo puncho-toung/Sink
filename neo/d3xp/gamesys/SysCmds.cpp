@@ -3910,6 +3910,7 @@ static void Cmd_WorldTime_f( const idCmdArgs& args )
 	gameLocal.Printf( "worldTime %lld base %lld map %s time %d\n", ( long long )gameLocal.GetWorldTime(), ( long long )gameLocal.worldTimeBase, gameLocal.GetMapName(), gameLocal.time );
 }
 
+#if !defined( ID_RETAIL )	//puncho - dev guard (P2 review): the collision and clip self-tests are test scaffolding
 static void Cmd_CMSelfTest_f( const idCmdArgs& args )
 {
 	if( !gameLocal.CheatsOk() )
@@ -3927,6 +3928,7 @@ static void Cmd_ClipSelfTest_f( const idCmdArgs& args )
 	}
 	gameLocal.clip.SelfTest( args.Argc() > 1 ? atoi( args.Argv( 1 ) ) : 10000, args.Argc() > 2 ? atoi( args.Argv( 2 ) ) : 1 );
 }
+#endif
 
 static void Cmd_CheckPVSAreas_f( const idCmdArgs& args )
 {
@@ -4294,8 +4296,10 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "setWorldTime", Cmd_SetWorldTime_f, CMD_FL_GAME | CMD_FL_CHEAT, "set unscaled world clock in milliseconds" );
 	cmdSystem->AddCommand( "listMap", Cmd_ListMap_f, CMD_FL_GAME, "list MAP resource rows, portal digest and entity classes" );
 	cmdSystem->AddCommand( "worldTime", Cmd_WorldTime_f, CMD_FL_GAME, "print the unscaled world clock" );
+#if !defined( ID_RETAIL )
 	cmdSystem->AddCommand( "cm_selfTest", Cmd_CMSelfTest_f, CMD_FL_GAME | CMD_FL_CHEAT, "seeded collision bounds, contents, rotation and wrap tests" );
 	cmdSystem->AddCommand( "clipSelfTest", Cmd_ClipSelfTest_f, CMD_FL_GAME | CMD_FL_CHEAT, "seeded clip gather wrap test" );
+#endif
 	cmdSystem->AddCommand( "game_memory",			idClass::DisplayInfo_f,		CMD_FL_GAME,				"displays game class info" );
 	cmdSystem->AddCommand( "listClasses",			idClass::ListClasses_f,		CMD_FL_GAME,				"lists game classes" );
 	cmdSystem->AddCommand( "listThreads",			idThread::ListThreads_f,	CMD_FL_GAME | CMD_FL_CHEAT,	"lists script threads" );
