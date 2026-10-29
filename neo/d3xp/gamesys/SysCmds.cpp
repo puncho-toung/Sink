@@ -360,23 +360,16 @@ void Cmd_KillRagdolls_f( const idCmdArgs& args )
 
 /*
 ==================
-Cmd_Give_f
+GiveToPlayer
 
-Give items to a client
+Give items to a player: give's body over its player, so giveClient shares it (P2b.0.1e); args as give's, the item in argv 1
 ==================
 */
-void Cmd_Give_f( const idCmdArgs& args )
+static void GiveToPlayer( idPlayer* player, const idCmdArgs& args )	//puncho - P2b.0.1e: Cmd_Give_f's body over its player
 {
 	const char* name;
 	int			i;
 	bool		give_all;
-	idPlayer*	player;
-
-	player = gameLocal.GetLocalPlayer();
-	if( !player || !gameLocal.CheatsOk() )
-	{
-		return;
-	}
 
 	name = args.Argv( 1 );
 
@@ -550,6 +543,66 @@ void Cmd_Give_f( const idCmdArgs& args )
 		gameLocal.Printf( "unknown item\n" );
 	}
 }
+
+//puncho start - P2b.0.1e: give on the local player and giveClient on any, one body
+/*
+==================
+Cmd_Give_f
+
+Give items to a client
+==================
+*/
+void Cmd_Give_f( const idCmdArgs& args )
+{
+	idPlayer* player = gameLocal.GetLocalPlayer();
+	if( !player || !gameLocal.CheatsOk() )
+	{
+		return;
+	}
+	GiveToPlayer( player, args );
+}
+
+#if !defined( ID_RETAIL )
+/*
+==================
+Cmd_GiveClient_f
+
+giveClient <clientNum> <item> ...: give for any player, run on the host (P2b.0.1e, G-STORM). give acts on the local
+player of the process that runs it, and a client's inventory is overwritten by the host's snapshot, so a host arms a
+joiner with this; the weapons line is the host-side read of what it now holds
+==================
+*/
+static void Cmd_GiveClient_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 3 )
+	{
+		gameLocal.Printf( "usage: giveClient <clientNum> <item> ...\n" );
+		return;
+	}
+	if( !gameLocal.CheatsOk( false ) )
+	{
+		return;
+	}
+	const int clientNum = atoi( args.Argv( 1 ) );
+	idEntity* ent = ( clientNum >= 0 && clientNum < MAX_CLIENTS ) ? gameLocal.entities[ clientNum ] : NULL;
+	if( ent == NULL || !ent->IsType( idPlayer::Type ) )
+	{
+		gameLocal.Printf( "giveClient: no player %s\n", args.Argv( 1 ) );
+		return;
+	}
+	idPlayer* player = static_cast< idPlayer* >( ent );
+
+	// the client number dropped: argv 0 is ignored by the body, which reads its item from argv 1 as give does
+	idCmdArgs giveArgs;
+	for( int i = 1; i < args.Argc(); i++ )
+	{
+		giveArgs.AppendArg( args.Argv( i ) );
+	}
+	GiveToPlayer( player, giveArgs );
+	gameLocal.Printf( "giveClient %d %s: weapons 0x%08x health %d\n", clientNum, args.Argv( 2 ), player->inventory.weapons, player->health );
+}
+#endif
+//puncho end
 
 /*
 ==================
@@ -4312,6 +4365,9 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "sayTeam",				Cmd_SayTeam_f,				CMD_FL_GAME,				"team text chat" );
 	cmdSystem->AddCommand( "addChatLine",			Cmd_AddChatLine_f,			CMD_FL_GAME,				"internal use - core to game chat lines" );
 	cmdSystem->AddCommand( "give",					Cmd_Give_f,					CMD_FL_GAME | CMD_FL_CHEAT,	"gives one or more items" );
+#if !defined( ID_RETAIL )
+	cmdSystem->AddCommand( "giveClient",			Cmd_GiveClient_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"giveClient <clientNum> <item> ...: give for any player (a host arming a joiner)" );	//puncho - P2b.0.1e
+#endif
 	cmdSystem->AddCommand( "centerview",			Cmd_CenterView_f,			CMD_FL_GAME,				"centers the view" );
 	cmdSystem->AddCommand( "god",					Cmd_God_f,					CMD_FL_GAME | CMD_FL_CHEAT,	"enables god mode" );
 	cmdSystem->AddCommand( "notarget",				Cmd_Notarget_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"disables the player as a target" );

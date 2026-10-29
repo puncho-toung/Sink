@@ -51,6 +51,11 @@ idCVar in_joystickRumble( "in_joystickRumble", "1", CVAR_SYSTEM | CVAR_ARCHIVE |
 idCVar in_invertLook( "in_invertLook", "0", CVAR_ARCHIVE | CVAR_BOOL, "inverts the look controls so the forward looks up (flight controls) - the proper way to play games!" );
 idCVar in_mouseInvertLook( "in_mouseInvertLook", "0", CVAR_ARCHIVE | CVAR_BOOL, "inverts the look controls so the forward looks up (flight controls) - the proper way to play games!" );
 
+#if !defined( ID_RETAIL )	//puncho - P2b.0.1e (G-STORM): a loopback gate fires from the console; a cheat, so a multiplayer map load resets both
+idCVar net_testAttack( "net_testAttack", "0", CVAR_SYSTEM | CVAR_BOOL | CVAR_CHEAT, "test hook: holds BUTTON_ATTACK in every usercmd, focused or not" );
+idCVar net_testImpulse( "net_testImpulse", "0", CVAR_SYSTEM | CVAR_INTEGER | CVAR_CHEAT, "test hook: sends this impulse once in the next usercmd, then resets to 0", 0, 255 );
+#endif
+
 /*
 ================
 usercmd_t::ByteSwap
@@ -1181,6 +1186,22 @@ void idUsercmdGenLocal::MakeCurrent()
 		mouseDx = 0;
 		mouseDy = 0;
 	}
+
+#if !defined( ID_RETAIL )
+	//puncho start - P2b.0.1e (G-STORM): outside the Inhibited() test, because focus loss pauses (com_pause) and so
+	// inhibits a loopback peer; the impulse is latched as Key() latches one, and stored back below
+	if( net_testAttack.GetBool() )
+	{
+		cmd.buttons |= BUTTON_ATTACK;
+	}
+	if( net_testImpulse.GetInteger() != 0 )
+	{
+		cmd.impulse = net_testImpulse.GetInteger();
+		cmd.impulseSequence++;
+		net_testImpulse.SetInteger( 0 );
+	}
+	//puncho end
+#endif
 
 	for( int i = 0; i < 3; i++ )
 	{
