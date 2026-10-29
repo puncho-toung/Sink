@@ -407,6 +407,7 @@ idCVar com_disableAllSaves( "com_disableAllSaves", "0", CVAR_SYSTEM | CVAR_BOOL,
 
 
 extern idCVar sys_lang;
+extern idCVar com_gateLines;
 
 extern idCVar g_demoMode;
 
@@ -1635,6 +1636,11 @@ bool idCommonLocal::SaveGame( const char* saveName )
 		renderSystem->BeginAutomaticBackgroundSwaps( AUTORENDER_DIALOGICON );
 	}
 
+	//puncho - P2b.0.1g (M3): the SAVE gate line times the synchronous save, serialising through SaveGameSync, which
+	// waits for the write; off, no clock is read
+	const bool saveGateLine = com_gateLines.GetBool();
+	const uint64 saveStartUs = saveGateLine ? Sys_Microseconds() : 0;
+
 	// Make sure the file is writable and the contents are cleared out (Set to write from the start of file)
 	saveFile.MakeWritable();
 	saveFile.Clear( false );
@@ -1677,7 +1683,24 @@ bool idCommonLocal::SaveGame( const char* saveName )
 	files.Append( &stringsFile );
 	files.Append( &saveFile );
 
+	//puncho - P2b.0.1g (M3): stream is the length SaveGame.cpp's 4 MB check reads, the compressed bytes written so far,
+	// final now that Finish flushed the last block; read here, as SaveGameSync's completion (OnSaveCompleted) deletes
+	// pipelineFile
+	const int saveStreamBytes = saveGateLine ? pipelineFile->Length() : 0;
+	const int saveStringBytes = saveGateLine ? stringsFile.Length() : 0;
+
 	session->SaveGameSync( gameDetails.slotName, files, gameDetails );
+
+	//puncho start - P2b.0.1g (M3): wsto is the world store's bytes after the commit this save made
+	// (mapGameStats_t::recordBytes)
+	if( saveGateLine )
+	{
+		const uint64 saveUs = Sys_Microseconds() - saveStartUs;
+		mapGameStats_t stats = {};
+		game->GetMapStats( stats );
+		Printf( "SAVE %s stream %d strings %d wsto %d ms %.3f\n", gameDetails.slotName.c_str(), saveStreamBytes, saveStringBytes, stats.recordBytes, saveUs * 0.001 );
+	}
+	//puncho end
 
 	if( !insideExecuteMapChange )
 	{

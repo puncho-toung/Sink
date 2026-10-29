@@ -2370,10 +2370,24 @@ uint32 idMapGraphDirector::WorldDigest() const
 	}
 	static idStr cachedName;
 	static uint32 cachedText = 0, cachedCRC = 0;
+	//puncho start - P2b.0.1g (M4): com_gateLines prints the WORLD digest line, timing the uncached path; off, nothing is
+	// counted and no clock is read
+	const bool gateLine = cvarSystem->GetCVarBool( "com_gateLines" );
+	int gateMaps = 0;
+	for( int k = 0; gateLine && k < decl->kinds.Num(); k++ )
+	{
+		gateMaps += decl->kinds[k].maps.Num();
+	}
 	if( cachedName == decl->GetName() && cachedText == decl->textCRC )
 	{
+		if( gateLine )
+		{
+			gameLocal.Printf( "WORLD digest graph %s maps %d ms 0.000 cached 1\n", decl->GetName(), gateMaps );
+		}
 		return cachedCRC;
 	}
+	const uint64 gateStartUs = gateLine ? Sys_Microseconds() : 0;
+	//puncho end
 	uint32 crc;
 	CRC32_InitChecksum( crc );
 	CRC32_UpdateChecksum( crc, decl->GetName(), idStr::Length( decl->GetName() ) + 1 );
@@ -2424,6 +2438,10 @@ uint32 idMapGraphDirector::WorldDigest() const
 	cachedName = decl->GetName();
 	cachedText = decl->textCRC;
 	cachedCRC = crc;
+	if( gateLine )
+	{
+		gameLocal.Printf( "WORLD digest graph %s maps %d ms %.3f cached 0\n", decl->GetName(), gateMaps, ( Sys_Microseconds() - gateStartUs ) * 0.001 );	//puncho - P2b.0.1g (M4)
+	}
 	return crc;
 }
 void idMapGraphDirector::Dump( idFile* file ) const

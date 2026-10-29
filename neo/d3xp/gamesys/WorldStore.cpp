@@ -1048,7 +1048,14 @@ void idWorldStore::Commit( bool leaving )
 	name.StripFileExtension();
 	name.ToLower();
 	RecordString( record, name );
-	record.WriteUnsignedInt( map->GetEntitiesCRC() );
+	//puncho - P2b.0.1g (M2): the CRC spans count only inside a timed load: a console map change commits in UNLOAD; a
+	// game-driven transition commits before the load begins (Game_transition.cpp), untimed
+	unsigned int entitiesCRC;
+	{
+		idLoadSpanScope crcSpan( SPAN_REC_MAPCRC );
+		entitiesCRC = map->GetEntitiesCRC();
+	}
+	record.WriteUnsignedInt( entitiesCRC );
 	record.WriteUnsignedInt( map->GetGeometryCRC() );
 	record.WriteUnsignedShort( map->GetNumEntities() );
 	Record64( record, gameLocal.GetWorldTime() );
@@ -1099,7 +1106,12 @@ void idWorldStore::Commit( bool leaving )
 			continue;
 		}
 		record.WriteUnsignedShort( row.ordinal );
-		record.WriteUnsignedInt( map->GetEntityCRC( row.ordinal ) );
+		unsigned int entityCRC;
+		{
+			idLoadSpanScope crcSpan( SPAN_REC_ENTCRC );	// one call per row written
+			entityCRC = map->GetEntityCRC( row.ordinal );
+		}
+		record.WriteUnsignedInt( entityCRC );
 		RecordString( record, map->GetEntity( row.ordinal )->epairs.GetString( "name" ) );
 		record.WriteUnsignedShort( out.aspects );
 		record.WriteUnsignedShort( out.length );
@@ -1283,7 +1295,12 @@ void idWorldStore::ApplyCurrentMap()
 		remains = applyingReset ? 0 : savedRemains;
 		idList<idEntity*, TAG_GAME> deleted;
 		idMapFile* map = gameLocal.mapFile;
-		const bool identical = entitiesCRC == map->GetEntitiesCRC() && numEntities == map->GetNumEntities();
+		unsigned int mapEntitiesCRC;
+		{
+			idLoadSpanScope crcSpan( SPAN_REC_MAPCRC );	//puncho - P2b.0.1g (M2)
+			mapEntitiesCRC = map->GetEntitiesCRC();
+		}
+		const bool identical = entitiesCRC == mapEntitiesCRC && numEntities == map->GetNumEntities();
 		//puncho start - P2.4 (bug review 2026-10-28): one lookup per record row, not a scan of the map and the rows. A
 		// claimed bit per map ordinal, the spawned row by binary search (rows are in ordinal order), and on an edited map
 		// each entity's CRC computed once (implementer E's request: GetEntityCRC walks every pair on each call) with the
@@ -1296,6 +1313,8 @@ void idWorldStore::ApplyCurrentMap()
 		idHashIndex entityNames( 4096, numMapEntities ), entityHashes( 4096, numMapEntities );
 		if( !identical )
 		{
+			// an unedited map checks each row's CRC in the loop below instead; this span is the edited map's pass
+			idLoadSpanScope crcSpan( SPAN_REC_ENTCRC );	//puncho - P2b.0.1g (M2)
 			entityCRCs.SetNum( numMapEntities );
 			for( int j = numMapEntities - 1; j >= 1; j-- )
 			{

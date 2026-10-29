@@ -77,7 +77,9 @@ idCVar net_drawDebugHud( "net_drawDebugHud", "0", CVAR_SYSTEM | CVAR_INTEGER, "0
 idCVar timescale( "timescale", "1", CVAR_SYSTEM | CVAR_FLOAT, "Number of game frames to run per render frame", 0.001f, 100.0f );
 
 
-idCVar com_gateLines( "com_gateLines", "0", CVAR_SYSTEM | CVAR_BOOL, "print the gate lines to the console" );
+//puncho - P2b.0.1g: NOCHEAT, as a cvar without it is a cheat that every multiplayer map load resets, before the joiner
+// computes its WORLD digest line
+idCVar com_gateLines( "com_gateLines", "0", CVAR_SYSTEM | CVAR_BOOL | CVAR_NOCHEAT, "print the gate lines to the console" );
 idCVar com_gateTimingLog( "com_gateTimingLog", "", CVAR_SYSTEM, "write per-frame timing to gatetiming/<plain name>.csv" );
 static idFile* gateTimingFile;
 static char gateTimingName[128];
@@ -273,7 +275,7 @@ void idCommonLocal::LogMapRows( int tics )
 				com_mapRowsLog.SetString( "" ); return;
 			}
 			idStr::Copynz( mapRowsName, name, sizeof( mapRowsName ) );
-			mapRowsFile->Printf( "frame,ms,tics,usFrameBusy,usFrameIdle,usGameRF,usGame,usRF,usRB,usGPU,usMOC,views,draws,tris,shadowViews,shadowDraws,shadowTris,atlasPct,viewEntities,shadowEntities,viewLights,staticVtxKB,staticIdxKB,frameKB,entityDefs,lightDefs,envprobeDefs,interactionKB,areas,portals,pvsKB,lightGridKB,entities,activeEntities,nonReplicated,cmModels,clipTrans,clipRot,clipMotion,clipContents,clipContacts,clipGathers,clipCandidates,clipUs,allocGameTic,allocMainFrame,probesConsidered,drawSurfs,drawSurfsClamped,atlasFailed,lightRefsWalked,contactedCapHits,skipStatics,usFindView,usAddLights,cullDistEntities,cullPixelEntities,cullLights,fadedLights,cullShadowSkips,lightRefsWalkedMax,gatherAreas,gatherMismatch,lodEntities1,lodEntities2,lodEntities3,lodTrisSaved,lodSwitches,lodThrash,lodCacheBuilds,mocOccluderTris,mocSkippedSize,mocSkippedBudget,mocSpotTests,mocSpotCulls,viewEntsUnder4px,viewEntsUnder16px,viewEntsBeyond8k,ent_highWater,ent_refused,spawnStaticsSkipped,aasCacheBytes,aasCacheEvictions,aasTravelSaturated,bud_debris_live,bud_debris_evicted,bud_debris_refused,bud_fx_live,bud_fx_evicted,bud_fx_refused,bud_item_live,bud_item_evicted,bud_item_refused,bud_gib_live,bud_gib_evicted,bud_gib_refused,itab_mode,itab_entries,itab_capacity,itab_maxProbe,itab_mismatches,itab_lateInserts,gai_ms,rec_maps,rec_entries,rec_created,rec_bytes,rec_dropped,rec_commitUs,rec_applyUs,corpse_live,corpse_evicted,dg_transitions,dg_refused,dg_inhibited,dg_prefetches\n" );
+			mapRowsFile->Printf( "frame,ms,tics,usFrameBusy,usFrameIdle,usGameRF,usGame,usRF,usRB,usGPU,usMOC,views,draws,tris,shadowViews,shadowDraws,shadowTris,atlasPct,viewEntities,shadowEntities,viewLights,staticVtxKB,staticIdxKB,frameKB,entityDefs,lightDefs,envprobeDefs,interactionKB,areas,portals,pvsKB,lightGridKB,entities,activeEntities,nonReplicated,cmModels,clipTrans,clipRot,clipMotion,clipContents,clipContacts,clipGathers,clipCandidates,clipUs,allocGameTic,allocMainFrame,probesConsidered,drawSurfs,drawSurfsClamped,atlasFailed,lightRefsWalked,contactedCapHits,skipStatics,usFindView,usAddLights,cullDistEntities,cullPixelEntities,cullLights,fadedLights,cullShadowSkips,lightRefsWalkedMax,gatherAreas,gatherMismatch,lodEntities1,lodEntities2,lodEntities3,lodTrisSaved,lodSwitches,lodThrash,lodCacheBuilds,mocOccluderTris,mocSkippedSize,mocSkippedBudget,mocSpotTests,mocSpotCulls,viewEntsUnder4px,viewEntsUnder16px,viewEntsBeyond8k,ent_highWater,ent_refused,spawnStaticsSkipped,aasCacheBytes,aasCacheEvictions,aasTravelSaturated,bud_debris_live,bud_debris_evicted,bud_debris_refused,bud_fx_live,bud_fx_evicted,bud_fx_refused,bud_item_live,bud_item_evicted,bud_item_refused,bud_gib_live,bud_gib_evicted,bud_gib_refused,itab_mode,itab_entries,itab_capacity,itab_maxProbe,itab_mismatches,itab_lateInserts,gai_ms,rec_maps,rec_entries,rec_created,rec_bytes,rec_dropped,rec_commitUs,rec_applyUs,corpse_live,corpse_evicted,dg_transitions,dg_refused,dg_inhibited,dg_prefetches,md5Skins\n" );
 			mapRowsFlushTime = Sys_Milliseconds();
 			Printf( "MAP CSV opened: %s\n", path );
 		}
@@ -359,7 +361,8 @@ void idCommonLocal::LogMapRows( int tics )
 		r.interactionGenerateMS,
 		g.recordMaps, g.recordEntries, g.recordCreated, g.recordBytes, g.recordDropped,
 		g.recordCommitUs, g.recordApplyUs, g.corpseLive, g.corpseEvicted,
-		g.dungeonTransitions, g.dungeonRefused, g.dungeonInhibited, g.dungeonPrefetches
+		g.dungeonTransitions, g.dungeonRefused, g.dungeonInhibited, g.dungeonPrefetches,
+		stats_frontend.c_generateMd5	//puncho - P2b.0.1g: md5Skins, md5 skinnings (InstantiateDynamicModel) this frame
 	};
 	char row[2048];
 	int length = 0;
