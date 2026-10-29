@@ -714,6 +714,9 @@ void idWorldStore::CommitCurrentMap()
 		return;
 	}
 	const uint64 commitStart = Sys_Microseconds();
+	// The dungeon records are stored first so this commit budgets against their current size, at a map leave as
+	// much as at a save; Save() writes whatever is in the list.
+	mapGraphDirector.StoreRecord();
 	// Expire before collecting pointers or enumerating canonical save objects.
 	// Entity-slot traversal remains valid when deletion also removes attachments.
 	const int64 now = gameLocal.GetWorldTime();
@@ -785,7 +788,7 @@ void idWorldStore::CommitCurrentMap()
 	idStr recordMap = gameLocal.GetMapName();
 	recordMap.StripFileExtension();
 	recordMap.ToLower();
-	int otherRecordBytes = 0;
+	int otherRecordBytes = StoreFixedBytes();
 	for( int i = 0; i < records.Num(); i++ )
 	{
 		if( records[i].world != worldName || records[i].instance != instanceId || records[i].node != currentNode || records[i].map != recordMap )
@@ -927,7 +930,7 @@ void idWorldStore::CommitCurrentMap()
 	}
 	candidates.SortWithTemplate( idSortCreatedTime() );
 	int evicted = 0;
-	int otherBytes = 0;
+	int otherBytes = StoreFixedBytes();
 	for( int i = 0; i < records.Num(); i++ )
 	{
 		if( records[i].world != worldName || records[i].instance != instanceId || records[i].node != currentNode || records[i].map != name )
@@ -985,6 +988,14 @@ void idWorldStore::CommitCurrentMap()
 	}
 	record.WriteUnsignedInt( count );
 	record.Write( created.GetDataPtr(), created.Length() );
+	// The world budget bounds the whole saved store (StoreFixedBytes plus every record), so a record that cannot
+	// fit never enters it and Save() cannot overflow MAX_WORLD_BYTES. This map keeps its previous record: the
+	// overflow fails before replacing the previous save instead of raising Error inside SaveGame.
+	if( record.Length() > g_recordBytesWorld.GetInteger() - otherBytes - 64 )
+	{
+		gameLocal.Warning( "record commit refused: %s needs %d bytes, %d left in the world budget; previous record kept", name.c_str(), record.Length(), g_recordBytesWorld.GetInteger() - otherBytes - 64 );
+		return;
+	}
 	int index = -1;
 	for( int i = 0; i < records.Num(); i++ )
 	{
@@ -1180,6 +1191,19 @@ void idWorldStore::ApplyCurrentMap()
 	}
 }
 
+// Bytes of the saved store that belong to no map record: the WSTO header, the dungeon records and the
+// ordinal table with its chunk header. The commit budget adds this to the other records so the whole
+// store, not just the records, stays under the world budget.
+int idWorldStore::StoreFixedBytes() const
+{
+	int bytes = 22 + 8 + 2 + 10 * mapSpawned.Num();
+	for( int i = 0; i < dungeonRecords.Num(); i++ )
+	{
+		bytes += dungeonRecords[i].Num() + 8;
+	}
+	return bytes;
+}
+
 void idWorldStore::PrepareSave()
 {
 	// A save can precede the first departure. Capture namespace and current map
@@ -1191,7 +1215,38 @@ void idWorldStore::PrepareSave()
 
 void idWorldStore::Save( idSaveGame* save )
 {
-	mapGraphDirector.StoreRecord();
+	// PrepareSave committed the current map under the world budget, which bounds the whole store; the store can
+	// still exceed MAX_WORLD_BYTES when the dungeon records grew after other maps' records were committed, or when
+	// g_recordBytesWorld was lowered. Shed records, largest first and the current map's only when nothing else is
+	// left, rather than fail the save: a shed map repopulates from its baseline on the next visit, and every drop
+	// is logged.
+	idStr currentMap = gameLocal.GetMapName();
+	currentMap.StripFileExtension();
+	currentMap.ToLower();
+	int total = StoreFixedBytes();
+	for( int i = 0; i < records.Num(); i++ )
+	{
+		total += records[i].bytes.Num() + 8;
+	}
+	while( total > MAX_WORLD_BYTES && records.Num() > 0 )
+	{
+		int largest = -1;
+		for( int pass = 0; pass < 2 && largest < 0; pass++ )
+		{
+			for( int i = 0; i < records.Num(); i++ )
+			{
+				const bool current = records[i].world == worldName && records[i].instance == instanceId && records[i].node == currentNode && records[i].map == currentMap;
+				if( ( pass == 1 || !current ) && ( largest < 0 || records[i].bytes.Num() > records[largest].bytes.Num() ) )
+				{
+					largest = i;
+				}
+			}
+		}
+		gameLocal.Warning( "world records exceed %d bytes; dropping the %d-byte record of %s", MAX_WORLD_BYTES, records[largest].bytes.Num(), records[largest].map.c_str() );
+		total -= records[largest].bytes.Num() + 8;
+		records.RemoveIndex( largest );
+	}
+	recordMaps = records.Num();
 	idFile_Memory body;
 	body.WriteUnsignedShort( 3 );
 	Record64( body, nextCreatedId );
@@ -1217,6 +1272,8 @@ void idWorldStore::Save( idSaveGame* save )
 	RecordChunk( out, WSTO_TAG, body.GetDataPtr(), body.Length() );
 	if( out.Length() > MAX_WORLD_BYTES )
 	{
+		// every map record was shed and the two dungeon records are 512 KiB each at most, so this is a
+		// programmer error in the byte accounting above, not a content size
 		gameLocal.Error( "World records exceed %d bytes", MAX_WORLD_BYTES );
 	}
 	save->WriteInt( out.Length() );

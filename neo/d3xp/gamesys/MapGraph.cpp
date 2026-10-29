@@ -34,6 +34,22 @@ static bool GraphNumber( idLexer& src, uint32& value, uint32 min, uint32 max )
 	value = ( uint32 )n;
 	return true;
 }
+// The one spelling of a map name that every comparison and file path in the graph uses: lower case, forward
+// slashes, no extension, always under maps/. The match parameters carry the bare name ("mg_hub") while
+// gameLocal.GetMapName() carries "maps/mg_hub.map"; with two spellings the host memoized its recipe under one
+// and the client looked its node up under the other, so they inhibited different variants and desynced.
+static idStr GraphMapName( const char* name )
+{
+	idStr map = name;
+	map.ToLower();
+	map.BackSlashesToSlashes();
+	map.StripFileExtension();
+	if( map.Icmpn( "maps/", 5 ) != 0 )
+	{
+		map = "maps/" + map;
+	}
+	return map;
+}
 size_t idDeclMapGraph::Size() const
 {
 	return sizeof( *this );
@@ -204,8 +220,7 @@ bool idDeclMapGraph::Parse( const char* text, int textLength, bool allowBinaryVe
 					{
 						return false;
 					}
-					m.name.ToLower();
-					m.name.StripFileExtension();
+					m.name = GraphMapName( m.name );
 					while( src.ReadToken( &t ) && t != "}" )
 					{
 						if( t == "weight" )
@@ -1180,14 +1195,6 @@ static const idDeclMapGraph* FindGraph( const char* name )
 	}
 	const idDeclMapGraph* decl = static_cast<const idDeclMapGraph*>( declManager->FindType( DECL_MAPGRAPH, name, false ) );
 	return decl && decl->GetState() != DS_DEFAULTED ? decl : NULL;
-}
-static idStr GraphMapName( const char* name )
-{
-	idStr map = name;
-	map.ToLower();
-	map.BackSlashesToSlashes();
-	map.StripFileExtension();
-	return map;
 }
 static bool GraphMapFingerprint( const char* name, uint32& geometry, uint32& landmarks )
 {

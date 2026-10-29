@@ -1346,6 +1346,10 @@ idGameLocal::MapPopulate
 */
 void idGameLocal::MapPopulate( const int* slotGenBeforeRestart )	//puncho - identity (P1-A2)
 {
+	//puncho - P2.0.10 (bug review 2026-10-28): the count is per population. LocalMapRestart repopulates under
+	// GAMESTATE_STARTUP, so a count carried over from the first population doubled on the GAMEON restart and tripped
+	// the cap on the game thread, where Error() has no catch and the host exited
+	skipReplicatedStatics = 0;
 
 	if( common->IsMultiplayer() )
 	{
@@ -1512,7 +1516,6 @@ void idGameLocal::InitFromNewMap( const char* mapName, idRenderWorld* renderWorl
 	{
 		Error( "map %s has %d portals; multiplayer supports at most 20800", mapName, renderWorld->NumPortals() );
 	}
-	skipReplicatedStatics = 0;
 	LoadMap( mapName, randseed );
 
 	common->LoadPhase( LOAD_SCRIPT );

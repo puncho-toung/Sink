@@ -84,6 +84,7 @@ public:
 	idEntity* SpawnCreated( idFile_Memory& in, const idMat3& rotation, const idVec3& landmark );
 	void PrepareSave();
 	void Save( idSaveGame* save );
+	int StoreFixedBytes() const;
 	void Restore( idRestoreGame* save );
 	void RestoreOrdinals();
 	void ListRecords() const;
