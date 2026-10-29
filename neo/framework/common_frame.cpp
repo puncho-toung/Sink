@@ -77,6 +77,105 @@ idCVar net_drawDebugHud( "net_drawDebugHud", "0", CVAR_SYSTEM | CVAR_INTEGER, "0
 idCVar timescale( "timescale", "1", CVAR_SYSTEM | CVAR_FLOAT, "Number of game frames to run per render frame", 0.001f, 100.0f );
 
 
+idCVar com_gateLines( "com_gateLines", "0", CVAR_SYSTEM | CVAR_BOOL, "print the stage-0 gate lines to the console" );
+idCVar com_gateTimingLog( "com_gateTimingLog", "", CVAR_SYSTEM, "write per-frame timing to gatetiming/<plain name>.csv" );
+static idFile* gateTimingFile;
+static char gateTimingName[128];
+static char gateTimingBuffer[65536];
+static int gateTimingUsed;
+static int gateTimingRows;
+static int gateTimingFlushTime;
+
+void CloseGateTimingLog()
+{
+	if( gateTimingFile != NULL )
+	{
+		gateTimingFile->Write( gateTimingBuffer, gateTimingUsed );
+		fileSystem->CloseFile( gateTimingFile );
+		gateTimingFile = NULL;
+		common->Printf( "gate timing CSV closed: %s\n", gateTimingName );
+	}
+	gateTimingName[0] = 0;
+	gateTimingUsed = 0;
+}
+
+/*
+========================
+LogGateTiming
+
+One row per frame of DrawFPS's timing arithmetic (Console.cpp) and nothing else. The same
+code is patched into every binary a gate compares, so it must cost the same in each; it
+runs on the main thread after WaitForThread, before mainFrameTiming takes this frame, so
+the game columns are the previous frame's (as on the HUD) while tics is this frame's.
+========================
+*/
+static void LogGateTiming( int tics )
+{
+	const char* name = com_gateTimingLog.GetString();
+	if( idStr::Cmp( name, gateTimingName ) )
+	{
+		CloseGateTimingLog();
+		if( name[0] )
+		{
+			// ValidDiagnosticName's rule, carried here because the base binary lacks it
+			bool plain = strlen( name ) < sizeof( gateTimingName );
+			for( const char* p = name; plain && *p; p++ )
+			{
+				plain = ( *p >= 'a' && *p <= 'z' ) || ( *p >= 'A' && *p <= 'Z' ) || ( *p >= '0' && *p <= '9' ) || *p == '_' || *p == '-';
+			}
+			if( !plain )
+			{
+				common->Warning( "com_gateTimingLog requires a plain name" );
+				com_gateTimingLog.SetString( "" );
+				return;
+			}
+			char path[160];
+			idStr::snPrintf( path, sizeof( path ), "gatetiming/%s.csv", name );
+			gateTimingFile = fileSystem->OpenFileWrite( path, "fs_savepath" );
+			if( gateTimingFile == NULL )
+			{
+				com_gateTimingLog.SetString( "" );
+				return;
+			}
+			idStr::Copynz( gateTimingName, name, sizeof( gateTimingName ) );
+			// into the buffer, not idFile::Printf, which allocates and writes \r\n
+			gateTimingUsed = idStr::snPrintf( gateTimingBuffer, sizeof( gateTimingBuffer ), "frame,ms,tics,usFrameBusy,usFrameIdle,usGameRF,usGame,usRF,usRB,usGPU\n" );
+			gateTimingRows = 0;
+			gateTimingFlushTime = Sys_Milliseconds();
+			common->Printf( "gate timing CSV opened: %s\n", path );
+		}
+	}
+	if( gateTimingFile == NULL )
+	{
+		return;
+	}
+	// a row is at most 183 characters
+	if( gateTimingUsed + 256 > ( int )sizeof( gateTimingBuffer ) )
+	{
+		gateTimingFile->Write( gateTimingBuffer, gateTimingUsed );
+		gateTimingUsed = 0;
+	}
+	// DrawFPS's arithmetic under DrawFPS's names (Console.cpp)
+	const frameTiming_t& m = commonLocal.mainFrameTiming;
+	const frameTiming_t& f = commonLocal.frameTiming;
+	const uint64 gameThreadTotalTime = m.finishDrawTime - m.startGameTime;
+	const uint64 gameThreadGameTime = m.finishGameTime - m.startGameTime;
+	const uint64 gameThreadRenderTime = m.finishDrawTime - m.finishGameTime;
+	const uint64 rendererBackEndTime = commonLocal.GetRendererBackEndMicroseconds();
+	const uint64 rendererGPUTime = commonLocal.GetRendererGPUMicroseconds();
+	const int64 frameIdleTime = int64( m.startGameTime ) - int64( m.finishSyncTime );
+	const int64 frameBusyTime = int64( f.finishSyncTime ) - int64( m.startGameTime );
+	const int now = Sys_Milliseconds();
+	gateTimingUsed += idStr::snPrintf( gateTimingBuffer + gateTimingUsed, 256, "%d,%d,%d,%lld,%lld,%lld,%lld,%lld,%lld,%lld\n", gateTimingRows++, now, tics, ( long long )frameBusyTime, ( long long )frameIdleTime, ( long long )gameThreadTotalTime, ( long long )gameThreadGameTime, ( long long )gameThreadRenderTime, ( long long )rendererBackEndTime, ( long long )rendererGPUTime );
+	// Write without Flush: Flush is FlushFileBuffers on Windows, a disk sync inside the next frame
+	if( now - gateTimingFlushTime >= 1000 )
+	{
+		gateTimingFile->Write( gateTimingBuffer, gateTimingUsed );
+		gateTimingUsed = 0;
+		gateTimingFlushTime = now;
+	}
+}
+
 idCVar com_mapRowsLog( "com_mapRowsLog", "", CVAR_SYSTEM, "write per-frame MAP counters to maprows/<plain name>.csv" );
 static idFile* mapRowsFile;
 static char mapRowsName[128];
@@ -1273,6 +1372,7 @@ void idCommonLocal::Frame()
 
 		mapMainAllocations = Mem_GetAllocationCount() - frameAllocStart;
 		LogMapRows( numGameFrames );
+		LogGateTiming( numGameFrames );
 		mainFrameTiming = frameTiming;
 
 		session->GetSaveGameManager().Pump();
