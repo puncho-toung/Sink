@@ -216,7 +216,10 @@ void idCommonLocal::FinishLoadTimeline()
 			csv->Printf( "%d,%s,%s,%d,%d,%s,%llu,%llu,%lld,%lld,%lld\n", loadIndex, currentMapName.c_str(), loadPreviousMap, loadWasSavegame ? 1 : 0, i, loadPhaseNames[i], ( unsigned long long )row.us, ( unsigned long long )row.readBytes, ( long long )row.imageBytes, ( long long )row.vertexBytes, ( long long )row.indexBytes );
 		}
 	}
-	// the spans go to their own file after the phase rows, so P2.0.6's file keeps its layout
+	// the spans go to their own file after the phase rows, so P2.0.6's file keeps its layout. REC_MAPCRC and REC_ENTCRC
+	// hold the console path only (P2b.0.1g): a game-driven transition commits in the leaving tic, before LOAD_MOVE, with
+	// the switch off, and a console load's rows hold the leaving map's commit under the arriving map's name; the record
+	// commit line carries both paths' CRC costs under com_gateLines
 	idFile* spans = NULL;
 	if( csv != NULL )
 	{
@@ -1682,8 +1685,8 @@ bool idCommonLocal::SaveGame( const char* saveName )
 		renderSystem->BeginAutomaticBackgroundSwaps( AUTORENDER_DIALOGICON );
 	}
 
-	//puncho - P2b.0.1g (M3): the SAVE gate line times the synchronous save, serialising through SaveGameSync, which
-	// waits for the write; off, no clock is read
+	//puncho - P2b.0.1g (M3): the SAVE gate line's ms times the save's own work, MakeWritable through pipelineFile->Finish;
+	// SaveGameSync's write, its 10 ms polling sleeps and the saved-games refresh are left out; off, no clock is read
 	const bool saveGateLine = com_gateLines.GetBool();
 	const uint64 saveStartUs = saveGateLine ? Sys_Microseconds() : 0;
 
@@ -1715,6 +1718,7 @@ bool idCommonLocal::SaveGame( const char* saveName )
 	game->SaveGame( pipelineFile, &stringsFile );
 
 	pipelineFile->Finish();
+	const uint64 saveUs = saveGateLine ? Sys_Microseconds() - saveStartUs : 0;	//puncho - P2b.0.1g (M3)
 
 	idSaveGameDetails gameDetails;
 	game->GetSaveGameDetails( gameDetails );
@@ -1729,19 +1733,18 @@ bool idCommonLocal::SaveGame( const char* saveName )
 	files.Append( &stringsFile );
 	files.Append( &saveFile );
 
-	//puncho - P2b.0.1g (M3): stream is the length SaveGame.cpp's 4 MB check reads, the compressed bytes written so far,
-	// final now that Finish flushed the last block; read here, as SaveGameSync's completion (OnSaveCompleted) deletes
-	// pipelineFile
+	//puncho - P2b.0.1g (M3): stream is the compressed length, final now that Finish flushed the last block; SaveGame.cpp's
+	// 4 MB check reads it before Finish, at most this value. Read here, as SaveGameSync's completion (OnSaveCompleted)
+	// deletes pipelineFile
 	const int saveStreamBytes = saveGateLine ? pipelineFile->Length() : 0;
 	const int saveStringBytes = saveGateLine ? stringsFile.Length() : 0;
 
-	session->SaveGameSync( gameDetails.slotName, files, gameDetails );
+	const saveGameHandle_t saveHandle = session->SaveGameSync( gameDetails.slotName, files, gameDetails );
 
-	//puncho start - P2b.0.1g (M3): wsto is the world store's bytes after the commit this save made
-	// (mapGameStats_t::recordBytes)
-	if( saveGateLine )
+	//puncho start - P2b.0.1g (M3): wsto is the world store chunk's length, which idWorldStore::Save checked against
+	// MAX_WORLD_BYTES (mapGameStats_t::recordBytes); no line for a save that never started (handle 0)
+	if( saveGateLine && saveHandle != 0 )
 	{
-		const uint64 saveUs = Sys_Microseconds() - saveStartUs;
 		mapGameStats_t stats = {};
 		game->GetMapStats( stats );
 		Printf( "SAVE %s stream %d strings %d wsto %d ms %.3f\n", gameDetails.slotName.c_str(), saveStreamBytes, saveStringBytes, stats.recordBytes, saveUs * 0.001 );

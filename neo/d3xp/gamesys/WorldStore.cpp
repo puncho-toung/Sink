@@ -1048,13 +1048,22 @@ void idWorldStore::Commit( bool leaving )
 	name.StripFileExtension();
 	name.ToLower();
 	RecordString( record, name );
-	//puncho - P2b.0.1g (M2): the CRC spans count only inside a timed load: a console map change commits in UNLOAD; a
-	// game-driven transition commits before the load begins (Game_transition.cpp), untimed
-	unsigned int entitiesCRC;
+	//puncho start - P2b.0.1g (M2): the leaving map's two CRC costs, on local clocks read only while com_gateLines prints
+	// them in the record commit line or a timed load adds them to the REC_* spans. A game-driven transition commits in the
+	// leaving tic, before LOAD_MOVE, with the span switch off, so only the line carries its costs; a console map change
+	// commits in UNLOAD, where the spans count them too, in the arriving map's rows
+	const bool crcLine = cvarSystem->GetCVarBool( "com_gateLines" );
+	const bool crcSpans = loadSpanTiming.load( std::memory_order_relaxed );
+	const bool crcClock = crcLine || crcSpans;
+	uint64 crcStartUs = crcClock ? Sys_Microseconds() : 0;
+	const unsigned int entitiesCRC = map->GetEntitiesCRC();
+	const uint64 mapCrcUs = crcClock ? Sys_Microseconds() - crcStartUs : 0;
+	if( crcSpans )
 	{
-		idScopedLoadSpan crcSpan( SPAN_REC_MAPCRC );
-		entitiesCRC = map->GetEntitiesCRC();
+		common->LoadSpanAdd( SPAN_REC_MAPCRC, mapCrcUs, 0, 0, 0, 0 );	// a CRC reads no file and draws no pacifier
 	}
+	uint64 entCrcUs = 0;
+	//puncho end
 	record.WriteUnsignedInt( entitiesCRC );
 	record.WriteUnsignedInt( map->GetGeometryCRC() );
 	record.WriteUnsignedShort( map->GetNumEntities() );
@@ -1106,16 +1115,25 @@ void idWorldStore::Commit( bool leaving )
 			continue;
 		}
 		record.WriteUnsignedShort( row.ordinal );
-		unsigned int entityCRC;
+		//puncho - P2b.0.1g (M2): each row's CRC on a local clock pair, summed; the stamps are whole microseconds, and the
+		// sum of their differences is unbiased however short each CRC is
+		crcStartUs = crcClock ? Sys_Microseconds() : 0;
+		const unsigned int entityCRC = map->GetEntityCRC( row.ordinal );
+		if( crcClock )
 		{
-			idScopedLoadSpan crcSpan( SPAN_REC_ENTCRC );	// one call per row written
-			entityCRC = map->GetEntityCRC( row.ordinal );
+			entCrcUs += Sys_Microseconds() - crcStartUs;
 		}
 		record.WriteUnsignedInt( entityCRC );
 		RecordString( record, map->GetEntity( row.ordinal )->epairs.GetString( "name" ) );
 		record.WriteUnsignedShort( out.aspects );
 		record.WriteUnsignedShort( out.length );
 		record.Write( rowPayloads.GetDataPtr() + out.offset, out.length );
+	}
+	//puncho - P2b.0.1g (M2): one add per commit after the loop, so no row pays a span; calls counts commits (the rows are
+	// the line's entries)
+	if( crcSpans )
+	{
+		common->LoadSpanAdd( SPAN_REC_ENTCRC, entCrcUs, 0, 0, 0, 0 );
 	}
 	idList<createdCandidate_t, TAG_GAME> candidates;
 	for( idEntity* ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
@@ -1245,7 +1263,15 @@ void idWorldStore::Commit( bool leaving )
 		corpseEvicted += evicted;
 	}
 	commitUs = ( unsigned int )( Sys_Microseconds() - commitStart );
-	gameLocal.Printf( "record commit map=%s entries=%d created=%d bytes=%d dropped=%d us=%u\n", name.c_str(), recordEntries, recordCreated, record.Length(), evicted, commitUs );
+	if( crcLine )
+	{
+		//puncho - P2b.0.1g (M2): the gate form adds the CRC costs measured above
+		gameLocal.Printf( "record commit map=%s entries=%d created=%d bytes=%d dropped=%d us=%u mapCrcUs=%llu entCrcUs=%llu\n", name.c_str(), recordEntries, recordCreated, record.Length(), evicted, commitUs, ( unsigned long long )mapCrcUs, ( unsigned long long )entCrcUs );
+	}
+	else
+	{
+		gameLocal.Printf( "record commit map=%s entries=%d created=%d bytes=%d dropped=%d us=%u\n", name.c_str(), recordEntries, recordCreated, record.Length(), evicted, commitUs );
+	}
 }
 
 void idWorldStore::ApplyCurrentMap()
@@ -1519,6 +1545,8 @@ void idWorldStore::Save( idSaveGame* save )
 		// programmer error in the byte accounting above, not a content size
 		gameLocal.Error( "World records exceed %d bytes", MAX_WORLD_BYTES );
 	}
+	//puncho - P2b.0.1g (M3): the stats and the SAVE line's wsto report the bytes this check bounded, after any shed
+	recordBytes = out.Length();
 	save->WriteInt( out.Length() );
 	save->Write( out.GetDataPtr(), out.Length() );
 }

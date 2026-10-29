@@ -77,10 +77,10 @@ idCVar net_drawDebugHud( "net_drawDebugHud", "0", CVAR_SYSTEM | CVAR_INTEGER, "0
 idCVar timescale( "timescale", "1", CVAR_SYSTEM | CVAR_FLOAT, "Number of game frames to run per render frame", 0.001f, 100.0f );
 
 
-//puncho - P2b.0.1g: NOCHEAT, as a cvar without it is a cheat that every multiplayer map load resets, before the joiner
-// computes its WORLD digest line
+//puncho - P2b.0.1g: NOCHEAT, as a cvar without it is a cheat that every multiplayer map load resets
+// (ResetFlaggedVariables( CVAR_CHEAT )): mid-way through a loopback gate's logs, before a joiner's gate lines
 idCVar com_gateLines( "com_gateLines", "0", CVAR_SYSTEM | CVAR_BOOL | CVAR_NOCHEAT, "print the gate lines to the console" );
-idCVar com_gateTimingLog( "com_gateTimingLog", "", CVAR_SYSTEM, "write per-frame timing to gatetiming/<plain name>.csv" );
+idCVar com_gateTimingLog( "com_gateTimingLog", "", CVAR_SYSTEM | CVAR_NOCHEAT, "write per-frame timing to gatetiming/<plain name>.csv" );
 static idFile* gateTimingFile;
 static char gateTimingName[128];
 static char gateTimingBuffer[65536];
@@ -190,7 +190,8 @@ static void LogGateTiming( int tics )
 	}
 }
 
-idCVar com_mapRowsLog( "com_mapRowsLog", "", CVAR_SYSTEM, "write per-frame MAP counters to maprows/<plain name>.csv" );
+//puncho - P2b.0.1g: NOCHEAT, as the gate cvars above
+idCVar com_mapRowsLog( "com_mapRowsLog", "", CVAR_SYSTEM | CVAR_NOCHEAT, "write per-frame MAP counters to maprows/<plain name>.csv" );
 static idFile* mapRowsFile;
 static char mapRowsName[128];
 static char mapRowsBuffer[65536];
@@ -362,7 +363,7 @@ void idCommonLocal::LogMapRows( int tics )
 		g.recordMaps, g.recordEntries, g.recordCreated, g.recordBytes, g.recordDropped,
 		g.recordCommitUs, g.recordApplyUs, g.corpseLive, g.corpseEvicted,
 		g.dungeonTransitions, g.dungeonRefused, g.dungeonInhibited, g.dungeonPrefetches,
-		stats_frontend.c_generateMd5	//puncho - P2b.0.1g: md5Skins, md5 skinnings (InstantiateDynamicModel) this frame
+		stats_frontend.c_generateMd5	//puncho - P2b.0.1g: md5Skins, one frame behind like every stats_frontend column; a plain int incremented from parallel R_AddSingleModel jobs
 	};
 	char row[2048];
 	int length = 0;

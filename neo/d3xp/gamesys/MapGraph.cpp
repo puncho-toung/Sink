@@ -2370,23 +2370,24 @@ uint32 idMapGraphDirector::WorldDigest() const
 	}
 	static idStr cachedName;
 	static uint32 cachedText = 0, cachedCRC = 0;
-	//puncho start - P2b.0.1g (M4): com_gateLines prints the WORLD digest line, timing the uncached path; off, nothing is
-	// counted and no clock is read
+	//puncho start - P2b.0.1g (M4): com_gateLines prints the WORLD digest line, timing both paths from before the memo test.
+	// "cached" names this memo, one per process, never the page cache: a warm measurement is cached 0 in a fresh process
+	// whose page cache holds the files. Off, nothing is counted and no clock is read
 	const bool gateLine = cvarSystem->GetCVarBool( "com_gateLines" );
 	int gateMaps = 0;
 	for( int k = 0; gateLine && k < decl->kinds.Num(); k++ )
 	{
 		gateMaps += decl->kinds[k].maps.Num();
 	}
+	const uint64 gateStartUs = gateLine ? Sys_Microseconds() : 0;
 	if( cachedName == decl->GetName() && cachedText == decl->textCRC )
 	{
 		if( gateLine )
 		{
-			gameLocal.Printf( "WORLD digest graph %s maps %d ms 0.000 cached 1\n", decl->GetName(), gateMaps );
+			gameLocal.Printf( "WORLD digest graph %s maps %d ms %.3f cached 1\n", decl->GetName(), gateMaps, ( Sys_Microseconds() - gateStartUs ) * 0.001 );
 		}
 		return cachedCRC;
 	}
-	const uint64 gateStartUs = gateLine ? Sys_Microseconds() : 0;
 	//puncho end
 	uint32 crc;
 	CRC32_InitChecksum( crc );
