@@ -1172,6 +1172,13 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	// load navigation system for all the different monster sizes
 	for( int i = 0; i < aasNames.Num(); i++ )
 	{
+		//puncho - P2b.0.4b: a span per type; a ninth type gets LOAD_SPAN_COUNT, which LoadSpanAdd and LoadSpanName drop
+		const loadSpan_t aasSpan = i <= SPAN_AAS_7 - SPAN_AAS_0 ? ( loadSpan_t )( SPAN_AAS_0 + i ) : LOAD_SPAN_COUNT;
+		if( loadSpanTiming )
+		{
+			common->LoadSpanName( aasSpan, va( "AAS_%s", aasNames[ i ].c_str() ) );
+		}
+		idLoadSpanScope aasScope( aasSpan );
 		aasList[ i ]->Init( idStr( mapFileName ).SetFileExtension( aasNames[ i ] ).c_str(), mapFile->GetGeometryCRC() );
 	}
 
@@ -1923,6 +1930,7 @@ idGameLocal::MapClear
 */
 void idGameLocal::MapClear( bool clearClients )
 {
+	idLoadSpanScope freeSpan( SPAN_FREE_ENTS );
 	int i;
 
 	for( i = ( clearClients ? 0 : MAX_CLIENTS ); i < MAX_GENTITIES; i++ )

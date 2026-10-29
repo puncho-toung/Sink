@@ -459,6 +459,7 @@ idCollisionModelManagerLocal::FreeMap
 */
 void idCollisionModelManagerLocal::FreeMap()
 {
+	idLoadSpanScope freeSpan( SPAN_FREE_CM );
 	int i;
 
 	if( !loaded )

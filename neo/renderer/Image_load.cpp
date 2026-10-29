@@ -556,6 +556,25 @@ On exit, the idImage will have a valid OpenGL texture number that can be bound
 */
 void idImage::ActuallyLoadImage( bool fromBackEnd, nvrhi::ICommandList* commandList )
 {
+	//puncho - P2b.0.4b: every call is a span, the already-loaded return included; the kind is read off the name only
+	// while spans run. imageBytes is the image's share of imageLoadBytes, so the IMG_* rows sum to the phase rows
+	idLoadSpanScope imageSpan( SPAN_IMG_MAT );
+	if( imageSpan.IsOn() )
+	{
+		if( imgName.Find( "_lightgrid_", false ) >= 0 )
+		{
+			imageSpan.span = SPAN_IMG_GRID;
+		}
+		else if( imgName.Find( "_envprobe_", false ) >= 0 )
+		{
+			imageSpan.span = SPAN_IMG_PROBE;
+		}
+		else if( generatorFunction )
+		{
+			imageSpan.span = SPAN_IMG_GEN;
+		}
+	}
+
 	// RB: might have been called doubled by nested LoadDeferredImages
 	if( isLoaded )
 	{
@@ -911,7 +930,8 @@ void idImage::ActuallyLoadImage( bool fromBackEnd, nvrhi::ICommandList* commandL
 #endif
 
 	isLoaded = true;
-	imageLoadBytes.fetch_add( ( uint64 )StorageSize(), std::memory_order_relaxed );
+	imageSpan.imageBytes = StorageSize();
+	imageLoadBytes.fetch_add( ( uint64 )imageSpan.imageBytes, std::memory_order_relaxed );
 }
 
 void idImage::DeferredLoadImage()

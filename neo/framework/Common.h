@@ -72,6 +72,39 @@ enum loadPhase_t
 	LOAD_PHASE_COUNT
 };
 
+//puncho - P2b.0.4b: load and free spans, after the phase rows in loadtimeline/<name>_spans.csv. Inclusive: IMG_* nest in
+// RW_PROC, LIGHTGRID_IMAGES, PROBE_DEFS only outside a level load (inside one, images wait for END_RENDER); FREE_RW nests in
+// RW_PROC (InitFromMap frees the old world), FREE_AAS in AAS_<type> (Init frees the old file). Sum spans that do not nest
+enum loadSpan_t
+{
+	SPAN_RW_PROC,
+	SPAN_LIGHTGRID_FILE,
+	SPAN_LIGHTGRID_IMAGES,
+	SPAN_PROBE_DEFS,
+	SPAN_IMG_GRID,
+	SPAN_IMG_PROBE,
+	SPAN_IMG_GEN,
+	SPAN_IMG_MAT,
+	SPAN_MDL_LOAD,
+	SPAN_AAS_0,			// one per aas_types entry, named AAS_<type> by LoadSpanName; a ninth type has no span
+	SPAN_AAS_1,
+	SPAN_AAS_2,
+	SPAN_AAS_3,
+	SPAN_AAS_4,
+	SPAN_AAS_5,
+	SPAN_AAS_6,
+	SPAN_AAS_7,
+	SPAN_REC_MAPCRC,
+	SPAN_REC_ENTCRC,
+	SPAN_FREE_RW,
+	SPAN_FREE_IMG,
+	SPAN_FREE_STATIC,
+	SPAN_FREE_CM,
+	SPAN_FREE_AAS,
+	SPAN_FREE_ENTS,
+	LOAD_SPAN_COUNT
+};
+
 void FormatMapRows( char rows[6][256], bool high[6] );
 bool ValidDiagnosticName( const char* name );
 
@@ -322,6 +355,8 @@ class idCommon
 {
 public:
 	virtual void LoadPhase( loadPhase_t phase ) {}
+	virtual void LoadSpanAdd( loadSpan_t span, uint64 us, int64 readBytes, int64 readUs, int64 imageBytes ) {}
+	virtual void LoadSpanName( loadSpan_t span, const char* name ) {}
 	virtual bool IsSaveGameLoad() const { return false; }
 	virtual bool IsGameDrivenLoad() const { return false; }
 	virtual void PrefetchMap( const char* name ) {}
@@ -505,5 +540,52 @@ public:
 };
 
 extern idCommon* 		common;
+
+//puncho - P2b.0.4b: a load span's scope guard. Off, it costs a test at each end (of loadSpanTiming, then of its copy):
+// no clock, no counter, no call.
+// LoadPhase turns the switch on while a timed load runs (rbdmap never does); then the guard reads the clock and this
+// thread's file counters at both ends, so a span holds only its own thread's reads, and adds through LoadSpanAdd. The
+// switch, Start and Finish live in framework/File.cpp beside the counters, since rbdmap compiles it, not Common_load.cpp
+extern bool				loadSpanTiming;
+
+class idLoadSpanScope
+{
+public:
+	explicit			idLoadSpanScope( loadSpan_t span_ ) : span( span_ ), imageBytes( 0 ), on( loadSpanTiming )
+	{
+		if( on )
+		{
+			Start();
+		}
+	}
+	~idLoadSpanScope()
+	{
+		End();
+	}
+	bool				IsOn() const
+	{
+		return on;
+	}
+	// adds the span now instead of at the end of the scope (RW_PROC stops before SetupLightGrid); once
+	void				End()
+	{
+		if( on )
+		{
+			Finish();
+		}
+	}
+
+	loadSpan_t			span;			// a caller may pick the kind once IsOn(), as ActuallyLoadImage does
+	int64				imageBytes;		// set by the caller that loads one image: StorageSize, the phase rows' measure
+
+private:
+	void				Start();
+	void				Finish();
+
+	bool				on;
+	uint64				startUs;
+	uint64				startReadBytes;
+	uint64				startReadUs;
+};
 
 #endif /* !__COMMON_H__ */

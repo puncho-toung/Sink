@@ -42,6 +42,8 @@ idRenderWorldLocal::FreeWorld
 */
 void idRenderWorldLocal::FreeWorld()
 {
+	idLoadSpanScope freeSpan( SPAN_FREE_RW );
+
 	// this will free all the lightDefs and entityDefs
 	FreeDefs();
 
@@ -873,6 +875,7 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 	idLexer* 		src;
 	idToken			token;
 	idRenderModel* 	lastModel;
+	idLoadSpanScope	procSpan( SPAN_RW_PROC );	// ends before SetupLightGrid, whose spans are LIGHTGRID_*
 
 	// if this is an empty world, initialize manually
 	if( !name || !name[0] )
@@ -905,6 +908,7 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 			TouchWorldModels();
 			AddWorldModelEntities();
 			ClearPortalStates();
+			procSpan.End();
 			SetupLightGrid();
 
 			// a map restart is a camera cut too: the next main view drops the TAA history
@@ -1155,6 +1159,7 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 
 	AddWorldModelEntities();
 	ClearPortalStates();
+	procSpan.End();
 	SetupLightGrid();
 
 	// the next main view drops the previous map's motion vector and TAA history; the loader never

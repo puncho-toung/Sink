@@ -831,6 +831,7 @@ ENVPROBE DEFS
 
 void R_DeriveEnvprobeData( RenderEnvprobeLocal* probe )
 {
+	idLoadSpanScope probeSpan( SPAN_PROBE_DEFS );
 	idStr basename = probe->world->mapName;
 	basename.StripFileExtension();
 

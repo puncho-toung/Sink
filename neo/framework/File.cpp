@@ -34,6 +34,30 @@ thread_local bool fileReadContainer;
 static idSysInterlockedInteger fileReadBytes;
 unsigned int FileReadBytes() { return ( unsigned int )fileReadBytes.GetValue(); }
 
+//puncho - P2b.0.4b: the load spans' switch and this thread's twins of fileReadBytes and of the time inside reads, which
+// stays process-global for the phase rows. Here because rbdmap compiles this file and never sets the switch; LoadPhase
+// sets it while a timed load runs, and only then is the clock read around a read
+bool loadSpanTiming;
+static thread_local uint64 fileThreadReadBytes;
+static thread_local uint64 fileThreadReadUs;
+uint64 FileThreadReadBytes() { return fileThreadReadBytes; }
+uint64 FileReadUs() { return fileThreadReadUs; }
+
+void idLoadSpanScope::Start()
+{
+	startUs = Sys_Microseconds();
+	startReadBytes = fileSystem->GetThreadReadBytes();
+	startReadUs = fileSystem->GetReadUs();
+}
+
+void idLoadSpanScope::Finish()
+{
+	// every read this thread timed since Start lies inside [startUs, now] on one monotonic clock, so readUs <= us
+	on = false;
+	const uint64 now = Sys_Microseconds();
+	common->LoadSpanAdd( span, now - startUs, ( int64 )( fileSystem->GetThreadReadBytes() - startReadBytes ), ( int64 )( fileSystem->GetReadUs() - startReadUs ), imageBytes );
+}
+
 #include "Unzip.h"
 
 
@@ -1362,12 +1386,15 @@ int idFile_Permanent::Read( void* buffer, int len )
 
 	buf = ( byte* )buffer;
 
+	// a read inside ReadFromBGL is timed and counted by the idFile_InnerResource that asked for it
+	const bool timed = loadSpanTiming && !fileReadContainer;
 	remaining = len;
 	tries = 0;
 	while( remaining )
 	{
 		block = remaining;
 
+		const uint64 readStart = timed ? Sys_Microseconds() : 0;
 		// RB begin
 #if defined(_WIN32)
 		DWORD bytesRead;
@@ -1380,6 +1407,10 @@ int idFile_Permanent::Read( void* buffer, int len )
 		read = fread( buf, 1, block, o );
 #endif
 		// RB end
+		if( timed )
+		{
+			fileThreadReadUs += Sys_Microseconds() - readStart;
+		}
 
 		if( read == 0 )
 		{
@@ -1403,6 +1434,10 @@ int idFile_Permanent::Read( void* buffer, int len )
 		if( !fileReadContainer && read > 0 )
 		{
 			fileReadBytes.Add( read );
+			if( timed )
+			{
+				fileThreadReadBytes += read;
+			}
 		}
 		remaining -= read;
 		buf += read;
@@ -1771,10 +1806,21 @@ Properly handles partial reads
 */
 int idFile_InZip::Read( void* buffer, int len )
 {
+	// a .resources opened from a .pk4 is read through ReadFromBGL; its idFile_InnerResource times and counts it
+	const bool timed = loadSpanTiming && !fileReadContainer;
+	const uint64 readStart = timed ? Sys_Microseconds() : 0;
 	int l = unzReadCurrentFile( z, buffer, len );
+	if( timed )
+	{
+		fileThreadReadUs += Sys_Microseconds() - readStart;
+	}
 	if( l > 0 )
 	{
 		fileReadBytes.Add( l );
+		if( timed )
+		{
+			fileThreadReadBytes += l;
+		}
 	}
 	return l;
 }
@@ -1958,6 +2004,8 @@ int idFile_InnerResource::Read( void* buffer, int len )
 	}
 
 	int read = 0; //fileSystem->ReadFromBGL( resourceFile, (byte*)buffer, offset + internalFilePos, len );
+	// a .resources inside a .resources: only the outermost idFile_InnerResource times and counts the read
+	const bool timed = loadSpanTiming && !fileReadContainer;
 
 	if( read != len )
 	{
@@ -1968,13 +2016,22 @@ int idFile_InnerResource::Read( void* buffer, int len )
 		}
 		else
 		{
+			const uint64 readStart = timed ? Sys_Microseconds() : 0;
 			read = fileSystem->ReadFromBGL( resourceFile, buffer, offset + internalFilePos, len );
+			if( timed )
+			{
+				fileThreadReadUs += Sys_Microseconds() - readStart;
+			}
 		}
 	}
 
 	if( read > 0 )
 	{
 		fileReadBytes.Add( read );
+		if( timed )
+		{
+			fileThreadReadBytes += read;
+		}
 	}
 	internalFilePos += read;
 

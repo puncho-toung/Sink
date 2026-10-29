@@ -583,7 +583,7 @@ extern idGameEdit* 				gameEdit;
 ===============================================================================
 */
 
-const int GAME_API_VERSION		= 11; // P2: transition and dungeon recipe interfaces
+const int GAME_API_VERSION		= 12; // P2b stage 0: idCommon::LoadSpanAdd/LoadSpanName, idFileSystem::GetReadUs/GetThreadReadBytes
 
 typedef struct
 {

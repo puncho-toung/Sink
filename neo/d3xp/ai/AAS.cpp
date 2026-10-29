@@ -120,6 +120,7 @@ idAASLocal::Shutdown
 */
 void idAASLocal::Shutdown()
 {
+	idLoadSpanScope freeSpan( SPAN_FREE_AAS );
 	if( file )
 	{
 		ShutdownRouting();

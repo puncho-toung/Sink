@@ -927,7 +927,10 @@ void idRenderModelManagerLocal::BeginLevelLoad()
 	}
 
 #if !defined( DMAP )
-	vertexCache.FreeStaticData();
+	{
+		idLoadSpanScope freeSpan( SPAN_FREE_STATIC );
+		vertexCache.FreeStaticData();
+	}
 #endif
 }
 
@@ -1066,6 +1069,7 @@ void idRenderModelManagerLocal::EndLevelLoad()
 		if( model->IsLevelLoadReferenced() && !model->IsLoaded() && model->IsReloadable() )
 		{
 			loadCount++;
+			idLoadSpanScope modelSpan( SPAN_MDL_LOAD );
 			model->LoadModel();
 		}
 	}
