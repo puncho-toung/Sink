@@ -1464,14 +1464,9 @@ const dungeonRecipe_t& idMapGraphDirector::RecipeForLoad( const char* map )
 	}
 	return recipe;
 }
-int idMapGraphDirector::WriteMatchGameData( const char* map, byte* out, int max )
+//puncho - P2b.1.0: the recipe's wire bytes; WriteMatchGameData's encoder and recordDump's
+static int WriteRecipeBytes( const dungeonRecipe_t& r, byte* out, int max )
 {
-	if( !clientRecipe && !worldStore.continueNextLoad )
-	{
-		recipeValid = false;
-		recipeNewWorld = true;
-	}
-	const dungeonRecipe_t& r = RecipeForLoad( map );
 	if( r.worldName.IsEmpty() )
 	{
 		return 0;
@@ -1494,6 +1489,24 @@ int idMapGraphDirector::WriteMatchGameData( const char* map, byte* out, int max 
 	memcpy( out, bytes.Ptr(), bytes.Num() );
 	return bytes.Num();
 }
+int idMapGraphDirector::WriteMatchGameData( const char* map, byte* out, int max )
+{
+	if( !clientRecipe && !worldStore.continueNextLoad )
+	{
+		recipeValid = false;
+		recipeNewWorld = true;
+	}
+	return WriteRecipeBytes( RecipeForLoad( map ), out, max );
+}
+#if !defined( ID_RETAIL )
+//puncho - P2b.1.0: the bytes WriteMatchGameData sends for the recipe this map loaded with. A copy resolves it, so the
+// live director's recipe cache and the new-world latch, which belong to the next load, stay as they are
+int idMapGraphDirector::PeekMatchGameData( const char* map, byte* out, int max ) const
+{
+	idMapGraphDirector probe = *this;
+	return WriteRecipeBytes( probe.RecipeForLoad( map ), out, max );
+}
+#endif
 bool idMapGraphDirector::SetMatchGameData( const byte* data, int size )
 {
 	Clear();

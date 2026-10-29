@@ -97,6 +97,9 @@ public:
 	void Restore( idRestoreGame* save );
 	void RestoreOrdinals();
 	void ListRecords() const;
+#if !defined( ID_RETAIL )
+	void DumpRecords( idFile* out ) const;	//puncho - P2b.1.0: recordDump
+#endif
 	void DrawDebug() const;
 	void TestCodec();
 	void RetireInstanceAfterActivation( uint64 identity, const char* destination );

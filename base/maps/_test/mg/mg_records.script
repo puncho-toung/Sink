@@ -1,0 +1,17 @@
+// maps/_test/mg/mg_records.script, written by plans/map-graph/gates-2b/s1/gen_mg_records.py: the scripted edges of
+// the records fixture, each a global void function with no argument for runScriptFunction (records.cfg calls them)
+
+void mg_records_lock_door()
+{
+	$door_locked.lock( 1 );
+}
+
+void mg_records_reveal_item()
+{
+	$item_revealed.show();
+}
+
+void mg_records_move_mover()
+{
+	$mover.moveToPos( '0 0 48' );
+}

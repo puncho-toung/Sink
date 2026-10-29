@@ -108,6 +108,9 @@ public:
 	void OpenTownPortalFor( idEntity* caster );
 	const dungeonRecipe_t& RecipeForLoad( const char* map );
 	int WriteMatchGameData( const char* map, byte* out, int max );
+#if !defined( ID_RETAIL )
+	int PeekMatchGameData( const char* map, byte* out, int max ) const;	//puncho - P2b.1.0: recordDump's recipe bytes
+#endif
 	bool SetMatchGameData( const byte* data, int size );
 	bool InhibitSpawn( const idDict& args, const idMapFile* map ) const;
 	bool GetResetPolicy( const char* map, int& policy, uint32& seconds ) const;

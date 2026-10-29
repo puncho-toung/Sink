@@ -4202,6 +4202,56 @@ static void Cmd_SetWorldTime_f( const idCmdArgs& args )
 	gameLocal.SetWorldTimeBase( value - gameLocal.fast.time );
 }
 
+//puncho start - P2b.1.0: the reference instruments. A row after its ordinal: Phase 2's columns with their text kept, then
+// the physics axis as a compressed quaternion and the record states, each empty where the entity's class has none
+static void DumpMapStateRow( idFile* out, idEntity* ent )
+{
+	const idVec3& origin = ent->GetPhysics()->GetOrigin();
+	const idCQuat axis = ent->GetPhysics()->GetAxis().ToCQuat();
+	out->Printf( "%s,%s,%d,%d,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,", ent->name.c_str(), ent->GetEntityDefName(), ent->health, ent->IsHidden(), origin.x, origin.y, origin.z, axis.x, axis.y, axis.z );
+	if( ent->IsType( idMover_Binary::Type ) )
+	{
+		out->Printf( "%d,%d,", static_cast<idMover_Binary*>( ent )->RecordMoverState(), ent->spawnArgs.GetInt( "locked" ) );
+	}
+	else
+	{
+		out->Printf( ",," );
+	}
+	if( ent->IsType( idDamagable::Type ) )
+	{
+		out->Printf( "%d,", static_cast<idDamagable*>( ent )->RecordBroken() );
+	}
+	else
+	{
+		out->Printf( "," );
+	}
+	if( ent->IsType( idElevator::Type ) )
+	{
+		out->Printf( "%d", static_cast<idElevator*>( ent )->RecordFloor() );
+	}
+	out->Printf( "\n" );
+}
+
+struct dumpCreatedRow_t
+{
+	uint64		id;
+	idEntity*	ent;
+};
+
+class idSortDumpCreated : public idSort_Quick<dumpCreatedRow_t, idSortDumpCreated>
+{
+public:
+	int Compare( const dumpCreatedRow_t& a, const dumpCreatedRow_t& b ) const
+	{
+		if( a.id != b.id )
+		{
+			return a.id < b.id ? -1 : 1;
+		}
+		return a.ent->entityNumber - b.ent->entityNumber;
+	}
+};
+//puncho end
+
 static void Cmd_DumpMapState_f( const idCmdArgs& args )
 {
 	if( args.Argc() != 2 )
@@ -4213,21 +4263,61 @@ static void Cmd_DumpMapState_f( const idCmdArgs& args )
 	{
 		return;
 	}
-	out->Printf( "ordinal,name,def,health,hidden,x,y,z\n" );
+	out->Printf( "ordinal,name,def,health,hidden,x,y,z,qx,qy,qz,moverPos,locked,broken,floor\n" );	//puncho - P2b.1.0: seven state columns
 	for( int i = 0; i < worldStore.mapSpawned.Num(); i++ )
 	{
 		const mapSpawnRow_t& row = worldStore.mapSpawned[i];
 		idEntity* ent = gameLocal.entities[row.entityNumber];
 		if( ent == NULL || gameLocal.GetSpawnId( ent ) != row.spawnId )
 		{
-			out->Printf( "%d,REMOVED,,,,,,\n", row.ordinal );
+			out->Printf( "%d,REMOVED,,,,,,,,,,,,,\n", row.ordinal );
 			continue;
 		}
-		const idVec3& origin = ent->GetPhysics()->GetOrigin();
-		out->Printf( "%d,%s,%s,%d,%d,%.9g,%.9g,%.9g\n", row.ordinal, ent->name.c_str(), ent->GetEntityDefName(), ent->health, ent->IsHidden(), origin.x, origin.y, origin.z );
+		out->Printf( "%d,", row.ordinal );
+		DumpMapStateRow( out, ent );
 	}
+	//puncho start - P2b.1.0: a row per created entity, by created id, after the map rows; an authored entity a carry
+	// stamped with a created id keeps its map row only
+	idList<dumpCreatedRow_t, TAG_GAME> created;
+	for( idEntity* ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
+	{
+		const uint64 id = strtoull( ent->spawnArgs.GetString( "_worldCreatedId", "0" ), NULL, 10 );
+		if( ent->mapSpawnIndex < 0 && id != 0 )
+		{
+			dumpCreatedRow_t& row = created.Alloc();
+			row.id = id;
+			row.ent = ent;
+		}
+	}
+	created.SortWithTemplate( idSortDumpCreated() );
+	for( int i = 0; i < created.Num(); i++ )
+	{
+		out->Printf( "C%llu,", ( unsigned long long )created[i].id );
+		DumpMapStateRow( out, created[i].ent );
+	}
+	//puncho end
 	fileSystem->CloseFile( out );
 }
+
+#if !defined( ID_RETAIL )
+//puncho - P2b.1.0: the world store's chunks raw and decoded, with the recipe bytes; idWorldStore::DumpRecords has the format
+static void Cmd_RecordDump_f( const idCmdArgs& args )
+{
+	if( args.Argc() != 2 )
+	{
+		gameLocal.Printf( "usage: recordDump <file under fs_savepath>\n" );
+		return;
+	}
+	idFile* out = fileSystem->OpenFileWrite( args.Argv( 1 ) );
+	if( out == NULL )
+	{
+		gameLocal.Printf( "recordDump: can't write %s\n", args.Argv( 1 ) );
+		return;
+	}
+	worldStore.DumpRecords( out );
+	fileSystem->CloseFile( out );
+}
+#endif
 
 static void Cmd_ListTransition_f( const idCmdArgs& args )
 {
@@ -4299,6 +4389,7 @@ void idGameLocal::InitConsoleCommands()
 #if !defined( ID_RETAIL )
 	cmdSystem->AddCommand( "cm_selfTest", Cmd_CMSelfTest_f, CMD_FL_GAME | CMD_FL_CHEAT, "seeded collision bounds, contents, rotation and wrap tests" );
 	cmdSystem->AddCommand( "clipSelfTest", Cmd_ClipSelfTest_f, CMD_FL_GAME | CMD_FL_CHEAT, "seeded clip gather wrap test" );
+	cmdSystem->AddCommand( "recordDump", Cmd_RecordDump_f, CMD_FL_GAME, "write the world store's records, raw and decoded, and the recipe bytes" );	//puncho - P2b.1.0
 #endif
 	cmdSystem->AddCommand( "game_memory",			idClass::DisplayInfo_f,		CMD_FL_GAME,				"displays game class info" );
 	cmdSystem->AddCommand( "listClasses",			idClass::ListClasses_f,		CMD_FL_GAME,				"lists game classes" );

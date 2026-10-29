@@ -234,6 +234,10 @@ public:
 	virtual bool			HandleSingleGuiCommand( idEntity* entityGui, idLexer* src );
 	void					Event_GotoFloor( int floor );
 	floorInfo_s* 			GetFloorInfo( int floor );
+	int						RecordFloor() const	//puncho - P2b.1.0: dumpMapState's floor column
+	{
+		return currentFloor;
+	}
 
 protected:
 	virtual void			DoneMoving();
@@ -300,6 +304,10 @@ public:
 
 	bool RecordAtPosition2() const;
 	void ApplyRecordState( bool position2, bool locked );
+	moverState_t RecordMoverState() const	//puncho - P2b.1.0: dumpMapState's moverPos column, the moving states included
+	{
+		return moverState;
+	}
 	idMover_Binary();
 	~idMover_Binary();
 

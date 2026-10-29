@@ -405,6 +405,70 @@ idCVar	fs_enableBackgroundCaching( "fs_enableBackgroundCaching", "1", CVAR_SYSTE
 idFileSystemLocal	fileSystemLocal;
 idFileSystem* 		fileSystem = &fileSystemLocal;
 
+//puncho start - P2b.1.0: fs_traceOpens <file> writes a line for each read open OpenFileReadFlags serves, "<source>
+// <path> <length>" with the source loose, zip, resource or prefetch, and for each ResolveForRead, "resolve <kind> <path>
+// <length>", so a load's opens, their sources and the resolves per open can be counted and compared. Opens come from
+// several threads; the lock orders the lines, and a comparison reads them as a sorted set as well as in order
+#if !defined( ID_RETAIL )
+static idSysMutex	traceOpensLock;
+static idFile*		traceOpensFile;	// NULL while not tracing
+static int			traceOpensLines;
+#endif
+
+static void TraceOpensLine( const char* source, const char* path, int64 length )
+{
+#if !defined( ID_RETAIL )
+	idScopedCriticalSection lock( traceOpensLock );
+	if( traceOpensFile != NULL )
+	{
+		traceOpensFile->Printf( "%s %s %lld\n", source, path, ( long long )length );
+		traceOpensLines++;
+	}
+#endif
+}
+
+static idFile* TraceOpen( const char* source, const char* path, idFile* file )
+{
+#if !defined( ID_RETAIL )
+	if( file != NULL )
+	{
+		TraceOpensLine( source, path, file->Length() );
+	}
+#endif
+	return file;
+}
+
+#if !defined( ID_RETAIL )
+// fs_traceOpens <file under fs_savepath> starts a trace, closing the one before; no argument ends it
+static void TraceOpens_f( const idCmdArgs& args )
+{
+	idFile* next = NULL;
+	if( args.Argc() > 1 )
+	{
+		next = fileSystem->OpenFileWrite( args.Argv( 1 ) );
+		if( next == NULL )
+		{
+			common->Printf( "fs_traceOpens: can't write %s\n", args.Argv( 1 ) );
+		}
+	}
+	idFile* previous;
+	int lines;
+	{
+		idScopedCriticalSection lock( traceOpensLock );
+		previous = traceOpensFile;
+		lines = traceOpensLines;
+		traceOpensFile = next;
+		traceOpensLines = 0;
+	}
+	if( previous != NULL )
+	{
+		common->Printf( "fs_traceOpens: %d lines in %s\n", lines, previous->GetName() );
+		fileSystem->CloseFile( previous );
+	}
+}
+#endif
+//puncho end
+
 /*
 ================
 idFileSystemLocal::ReadFromBGL
@@ -3826,6 +3890,9 @@ void idFileSystemLocal::Startup()
 
 	cmdSystem->AddCommand( "generateResourceCRCs", GenerateResourceCRCs_f, CMD_FL_SYSTEM, "Generates CRC checksums for all the resource files." );
 	cmdSystem->AddCommand( "listModConflicts", ListModConflicts_f, CMD_FL_SYSTEM, "lists every file that more than one content layer holds" );	//puncho - MP-A5 (K43)
+#if !defined( ID_RETAIL )
+	cmdSystem->AddCommand( "fs_traceOpens", TraceOpens_f, CMD_FL_SYSTEM, "trace every read open and resolve to a file under fs_savepath; no argument ends the trace" );	//puncho - P2b.1.0
+#endif
 
 	// print the current search paths
 	Path_f( idCmdArgs() );
@@ -3941,6 +4008,11 @@ void idFileSystemLocal::Shutdown( bool reloading )
 	cmdSystem->RemoveCommand( "dir" );
 	cmdSystem->RemoveCommand( "dirtree" );
 	cmdSystem->RemoveCommand( "touchFile" );
+#if !defined( ID_RETAIL )
+	//puncho - P2b.1.0: a trace ends with the search paths it traced
+	cmdSystem->RemoveCommand( "fs_traceOpens" );
+	TraceOpens_f( idCmdArgs() );
+#endif
 }
 
 /*
@@ -4259,6 +4331,7 @@ bool idFileSystemLocal::ResolveForRead( const char* path, resolvedFile_t& out, c
 					if( stat( out.osPath, &st ) != 0 ) { return false; }
 					out.archiveTime = st.st_mtime;
 					out.archiveSize = st.st_size;
+					TraceOpensLine( "resolve zip", path, out.length );	//puncho - P2b.1.0
 					return true;
 				}
 				idResourceCacheEntry resource;
@@ -4290,6 +4363,7 @@ bool idFileSystemLocal::ResolveForRead( const char* path, resolvedFile_t& out, c
 					if( stat( out.osPath, &st ) != 0 ) { return false; }
 					out.archiveTime = st.st_mtime;
 					out.archiveSize = st.st_size;
+					TraceOpensLine( "resolve resource", path, out.length );	//puncho - P2b.1.0
 					return true;
 				}
 			}
@@ -4318,11 +4392,13 @@ bool idFileSystemLocal::ResolveForRead( const char* path, resolvedFile_t& out, c
 					delete file;
 					out.archiveTime = out.timestamp;
 					out.archiveSize = out.length;
+					TraceOpensLine( "resolve loose", path, out.length );	//puncho - P2b.1.0
 					return true;
 				}
 			}
 		}
 	}
+	TraceOpensLine( "resolve miss", path, 0 );	//puncho - P2b.1.0
 	return false;
 }
 
@@ -4370,7 +4446,7 @@ idFile* idFileSystemLocal::OpenFileReadFlags( const char* relativePath, int sear
 	if( !fs_buildResources.GetBool() && !fs_copyfiles.GetBool() )
 	{
 		idFile* prefetched = Prefetch_Open( relativePath, ( searchFlags & FSFLAG_SEARCH_DIRS ) != 0, gamedir );
-		if( prefetched != NULL ) { return prefetched; }
+		if( prefetched != NULL ) { return TraceOpen( "prefetch", relativePath, prefetched ); }	//puncho - P2b.1.0
 	}
 
 	//puncho start - MP-A5 (K21a): files are served layer by layer, top down, so a packed file in a higher layer beats
@@ -4409,7 +4485,7 @@ idFile* idFileSystemLocal::OpenLayerFile( const char* relativePath, int searchFl
 		idFile* rf = GetZipFile( relativePath, ( searchFlags & FSFLAG_RETURN_FILE_MEM ) != 0, layer );
 		if( rf != NULL )
 		{
-			return rf;
+			return TraceOpen( "zip", relativePath, rf );	//puncho - P2b.1.0
 		}
 	}
 	// RB end
@@ -4419,7 +4495,7 @@ idFile* idFileSystemLocal::OpenLayerFile( const char* relativePath, int searchFl
 		idFile* rf = GetResourceFile( relativePath, ( searchFlags & FSFLAG_RETURN_FILE_MEM ) != 0, layer );
 		if( rf != NULL )
 		{
-			return rf;
+			return TraceOpen( "resource", relativePath, rf );	//puncho - P2b.1.0
 		}
 	}
 
@@ -4549,10 +4625,10 @@ idFile* idFileSystemLocal::OpenLayerFile( const char* relativePath, int searchFl
 				file->Read( ( void* )memFile->GetDataPtr(), file->fileSize );
 				delete file;
 				memFile->TakeDataOwnership();
-				return memFile;
+				return TraceOpen( "loose", relativePath, memFile );	//puncho - P2b.1.0
 			}
 
-			return file;
+			return TraceOpen( "loose", relativePath, file );	//puncho - P2b.1.0
 		}
 	}
 
@@ -4562,7 +4638,7 @@ idFile* idFileSystemLocal::OpenLayerFile( const char* relativePath, int searchFl
 		idFile* rf = GetZipFile( relativePath, ( searchFlags & FSFLAG_RETURN_FILE_MEM ) != 0, layer );
 		if( rf != NULL )
 		{
-			return rf;
+			return TraceOpen( "zip", relativePath, rf );	//puncho - P2b.1.0
 		}
 	}
 	// RB end
@@ -4572,7 +4648,7 @@ idFile* idFileSystemLocal::OpenLayerFile( const char* relativePath, int searchFl
 		idFile* rf = GetResourceFile( relativePath, ( searchFlags & FSFLAG_RETURN_FILE_MEM ) != 0, layer );
 		if( rf != NULL )
 		{
-			return rf;
+			return TraceOpen( "resource", relativePath, rf );	//puncho - P2b.1.0
 		}
 	}
 

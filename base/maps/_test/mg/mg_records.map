@@ -1,0 +1,457 @@
+Version 2
+// entity 0
+{
+"classname" "worldspawn"
+"world_reset" "never"
+// primitive 0
+{
+ brushDef3
+ {
+  ( 0 0 1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 1 0 -544 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 1 0 0 -544 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 0 -1 -32 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 -1 0 -544 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( -1 0 0 -544 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+ }
+}
+// primitive 1
+{
+ brushDef3
+ {
+  ( 0 0 1 -352 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 1 0 -544 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 1 0 0 -544 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 0 -1 320 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 -1 0 -544 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( -1 0 0 -544 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+ }
+}
+// primitive 2
+{
+ brushDef3
+ {
+  ( 0 0 1 -320 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 1 0 -544 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 1 0 0 512 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 -1 0 -544 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( -1 0 0 -544 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+ }
+}
+// primitive 3
+{
+ brushDef3
+ {
+  ( 0 0 1 -320 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 1 0 -544 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 1 0 0 -544 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 -1 0 -544 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( -1 0 0 512 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+ }
+}
+// primitive 4
+{
+ brushDef3
+ {
+  ( 0 0 1 -320 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 1 0 512 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 1 0 0 -512 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 -1 0 -544 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( -1 0 0 -512 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+ }
+}
+// primitive 5
+{
+ brushDef3
+ {
+  ( 0 0 1 -320 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 1 0 -544 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 1 0 0 -512 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 -1 0 512 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( -1 0 0 -512 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+ }
+}
+}
+// entity 1
+{
+"classname" "info_player_start"
+"origin" "0 0 8"
+"angle" "0"
+}
+// entity 2
+{
+"classname" "info_player_deathmatch"
+"origin" "-64 0 8"
+"angle" "0"
+}
+// entity 3
+{
+"classname" "info_player_deathmatch"
+"origin" "64 0 8"
+"angle" "180"
+}
+// entity 4
+{
+"classname" "light"
+"origin" "0 0 260"
+"light_radius" "700 700 500"
+"_color" "0.8 0.85 1"
+}
+// entity 5
+{
+"classname" "target_endlevel"
+"name" "leave"
+"nextMap" "_test/mg/hub"
+}
+// entity 6
+{
+"classname" "info_landmark"
+"name" "back"
+"landmark" "back"
+"kind" "door128"
+"angle" "180"
+"entry" "1"
+"exit" "1"
+"required" "0"
+// primitive 0
+{
+ brushDef3
+ {
+  ( 0 0 1 -128 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/nodraw" 0 0 0
+  ( 0 1 0 -64 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/nodraw" 0 0 0
+  ( 1 0 0 396 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/nodraw" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/nodraw" 0 0 0
+  ( 0 -1 0 -64 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/nodraw" 0 0 0
+  ( -1 0 0 -404 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/editor/landmark" 0 0 0
+ }
+}
+}
+// entity 7
+{
+"classname" "info_landing"
+"name" "back_landing_0"
+"landmark" "back"
+"index" "0"
+"origin" "-400 160 32"
+"dmapOnly" "1"
+}
+// entity 8
+{
+"classname" "info_landing"
+"name" "back_landing_1"
+"landmark" "back"
+"index" "1"
+"origin" "-400 240 32"
+"dmapOnly" "1"
+}
+// entity 9
+{
+"classname" "trigger_changelevel"
+"name" "back_trigger"
+"landmark" "back"
+// primitive 0
+{
+ brushDef3
+ {
+  ( 0 0 1 -128 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 0 1 0 -64 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 1 0 0 392 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 0 -1 0 -64 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( -1 0 0 -408 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+ }
+}
+}
+// entity 10
+{
+"classname" "trigger_transition"
+"name" "back_carry"
+"landmark" "back"
+// primitive 0
+{
+ brushDef3
+ {
+  ( 0 0 1 -192 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 0 1 0 -128 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 1 0 0 304 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 0 -1 0 -128 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( -1 0 0 -496 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+ }
+}
+}
+// entity 11
+{
+"classname" "info_landmark"
+"name" "forward"
+"landmark" "forward"
+"kind" "door128"
+"angle" "0"
+"entry" "1"
+"exit" "1"
+"required" "0"
+// primitive 0
+{
+ brushDef3
+ {
+  ( 0 0 1 -128 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/nodraw" 0 0 0
+  ( 0 1 0 -64 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/nodraw" 0 0 0
+  ( 1 0 0 -404 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/editor/landmark" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/nodraw" 0 0 0
+  ( 0 -1 0 -64 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/nodraw" 0 0 0
+  ( -1 0 0 396 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/nodraw" 0 0 0
+ }
+}
+}
+// entity 12
+{
+"classname" "info_landing"
+"name" "forward_landing_0"
+"landmark" "forward"
+"index" "0"
+"origin" "400 160 32"
+"dmapOnly" "1"
+}
+// entity 13
+{
+"classname" "info_landing"
+"name" "forward_landing_1"
+"landmark" "forward"
+"index" "1"
+"origin" "400 240 32"
+"dmapOnly" "1"
+}
+// entity 14
+{
+"classname" "trigger_changelevel"
+"name" "forward_trigger"
+"landmark" "forward"
+// primitive 0
+{
+ brushDef3
+ {
+  ( 0 0 1 -128 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 0 1 0 -64 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 1 0 0 -408 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 0 -1 0 -64 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( -1 0 0 392 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+ }
+}
+}
+// entity 15
+{
+"classname" "trigger_transition"
+"name" "forward_carry"
+"landmark" "forward"
+// primitive 0
+{
+ brushDef3
+ {
+  ( 0 0 1 -192 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 0 1 0 -128 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 1 0 0 -496 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( 0 -1 0 -128 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+  ( -1 0 0 304 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/common/trigger" 0 0 0
+ }
+}
+}
+// entity 16
+{
+"classname" "func_damagable"
+"name" "dmg_broken"
+"model" "dmg_broken"
+"broken" "models/mapobjects/cannister/cannister.ase"
+"health" "1"
+"forcestate" "1"
+// primitive 0
+{
+ brushDef3
+ {
+  ( 0 0 1 -32 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 1 0 288 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 1 0 0 288 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 -1 0 -320 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( -1 0 0 -320 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+ }
+}
+}
+// entity 17
+{
+"classname" "func_damagable"
+"name" "dmg_broken_hidden"
+"model" "dmg_broken_hidden"
+"broken" "models/mapobjects/cannister/cannister.ase"
+"health" "5"
+"forcestate" "1"
+"hideWhenBroken" "1"
+"wait" "100000"
+// primitive 0
+{
+ brushDef3
+ {
+  ( 0 0 1 -32 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 1 0 288 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 1 0 0 208 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 -1 0 -320 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( -1 0 0 -240 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+ }
+}
+}
+// entity 18
+{
+"classname" "func_door"
+"name" "door_start_open"
+"model" "door_start_open"
+"angle" "0"
+"start_open" "1"
+"no_touch" "1"
+"wait" "-1"
+"speed" "400"
+// primitive 0
+{
+ brushDef3
+ {
+  ( 0 0 1 -128 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 1 0 464 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 1 0 0 320 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 -1 0 -480 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( -1 0 0 -448 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+ }
+}
+}
+// entity 19
+{
+"classname" "func_door"
+"name" "door_locked"
+"model" "door_locked"
+"angle" "0"
+"no_touch" "1"
+"wait" "-1"
+"speed" "400"
+// primitive 0
+{
+ brushDef3
+ {
+  ( 0 0 1 -128 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 1 0 464 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 1 0 0 -328 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 -1 0 -480 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( -1 0 0 200 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+ }
+}
+}
+// entity 20
+{
+"classname" "item_medkit_small"
+"name" "item_revealed"
+"origin" "-300 300 16"
+"hide" "1"
+}
+// entity 21
+{
+"classname" "item_medkit_small"
+"name" "item_hidden"
+"origin" "-200 300 16"
+"hide" "1"
+}
+// entity 22
+{
+"classname" "func_bobbing"
+"name" "bobber"
+"model" "bobber"
+"height" "16"
+"speed" "4"
+// primitive 0
+{
+ brushDef3
+ {
+  ( 0 0 1 -96 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 1 0 -132 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 1 0 0 416 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 0 -1 64 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 -1 0 100 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( -1 0 0 -448 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+ }
+}
+}
+// entity 23
+{
+"classname" "func_mover"
+"name" "mover"
+"model" "mover"
+// primitive 0
+{
+ brushDef3
+ {
+  ( 0 0 1 -32 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 1 0 168 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 1 0 0 416 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 -1 0 -200 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( -1 0 0 -448 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+ }
+}
+}
+// entity 24
+{
+"classname" "func_elevator"
+"name" "elevator"
+"model" "elevator"
+"floor" "1"
+"floorPos_1" "0 0 0"
+"floorPos_2" "0 0 64"
+"trigger" "1"
+"triggerFloor" "2"
+// primitive 0
+{
+ brushDef3
+ {
+  ( 0 0 1 -16 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 1 0 236 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 1 0 0 -164 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( 0 -1 0 -300 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+  ( -1 0 0 100 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/base_wall/lfwall1" 0 0 0
+ }
+}
+}
+// entity 25
+{
+"classname" "monster_zombie_maint"
+"name" "monster_rec"
+"origin" "100 300 8"
+"hide" "1"
+"persist_lifetime" "-1"
+}
+// entity 26
+{
+"classname" "moveable_cannister"
+"name" "crate_pushed"
+"origin" "-100 -200 128"
+}
+// entity 27
+{
+"classname" "moveable_cannister"
+"name" "carry_crate_child"
+"origin" "350 60 128"
+"bind" "carry_crate"
+"bindOrientated" "1"
+"transition" "1"
+}
+// entity 28
+{
+"classname" "moveable_cannister"
+"name" "carry_crate"
+"origin" "350 0 128"
+"transition" "1"
+}

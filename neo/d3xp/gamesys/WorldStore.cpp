@@ -1685,6 +1685,149 @@ void idWorldStore::ListRecords() const
 	}
 }
 
+#if !defined( ID_RETAIL )
+//puncho start - P2b.1.0: recordDump, the reference the record-layer commits are held to. Text only, in store, ordinal and
+// created-id order, with no pointer, address or wall-clock time, so two runs of one tic sequence write the same bytes
+static const int RECORD_DUMP_ASPECTS = 10;
+static const char* const recordDumpAspectNames[RECORD_DUMP_ASPECTS] = { "REMOVED", "MOVED", "MOVER", "HEALTH", "BROKEN", "HIDDEN", "CORPSE", "MOTION", "BIND", "SHOWN" };
+compile_time_assert( RECORD_SHOWN == BIT( RECORD_DUMP_ASPECTS - 1 ) );
+
+// 64 bytes a line, offset first, so a moved byte shows as one changed line
+static void RecordDumpHex( idFile* out, const char* label, const byte* bytes, int length )
+{
+	static const char digits[] = "0123456789abcdef";
+	char line[64 * 2 + 1];
+	for( int offset = 0; offset < length; offset += 64 )
+	{
+		const int count = Min( 64, length - offset );
+		for( int i = 0; i < count; i++ )
+		{
+			line[i * 2] = digits[bytes[offset + i] >> 4];
+			line[i * 2 + 1] = digits[bytes[offset + i] & 15];
+		}
+		line[count * 2] = '\0';
+		out->Printf( "%s %06x %s\n", label, offset, line );
+	}
+}
+
+static void RecordDumpAspects( idFile* out, unsigned short aspects )
+{
+	out->Printf( "aspects=%04x", aspects );
+	const char* separator = " ";
+	for( int i = 0; i < RECORD_DUMP_ASPECTS; i++ )
+	{
+		if( aspects & BIT( i ) )
+		{
+			out->Printf( "%s%s", separator, recordDumpAspectNames[i] );
+			separator = "|";
+		}
+	}
+}
+
+// The decoded listing of one MREC v2 payload: the header, each authored row and created entry, and per aspect the
+// number of entries with it set and clear (authored and created apart), added into the totals. The record layer's
+// commits replace this one function when the payload becomes sections and field bits.
+static void RecordDumpMap( idFile* out, int index, const byte* data, int length, int totals[2][2][RECORD_DUMP_ASPECTS] )
+{
+	idFile_Memory in( "recordDump", ( const char* )data, length );
+	unsigned short version, flags, entities, remains, node = 0;
+	unsigned int entitiesCRC, geometryCRC, count;
+	uint64 instance, left, cleared;
+	idStr world, map;
+	if( in.ReadUnsignedShort( version ) != 2 || in.ReadUnsignedShort( flags ) != 2 || !RecordReadString( in, world ) || !RecordRead64( in, instance ) || ( version >= 2 && in.ReadUnsignedShort( node ) != 2 ) || !RecordReadString( in, map ) || in.ReadUnsignedInt( entitiesCRC ) != 4 || in.ReadUnsignedInt( geometryCRC ) != 4 || in.ReadUnsignedShort( entities ) != 2 || !RecordRead64( in, left ) || !RecordRead64( in, cleared ) || in.ReadUnsignedShort( remains ) != 2 || in.ReadUnsignedInt( count ) != 4 )
+	{
+		out->Printf( "map %d malformed header\n", index );
+		return;
+	}
+	out->Printf( "map %d header version=%u flags=%u world=%s map=%s instance=%llu node=%u entitiesCRC=%08x geometryCRC=%08x entities=%u left=%lld cleared=%lld remains=%u rows=%u\n", index, version, flags, world.c_str(), map.c_str(), ( unsigned long long )instance, node, entitiesCRC, geometryCRC, entities, ( long long )left, ( long long )cleared, remains, count );
+	int counts[2][2][RECORD_DUMP_ASPECTS];
+	memset( counts, 0, sizeof( counts ) );
+	for( int kind = 0; kind < 2; kind++ )
+	{
+		if( kind == 1 && in.ReadUnsignedInt( count ) != 4 )
+		{
+			out->Printf( "map %d malformed created count\n", index );
+			return;
+		}
+		for( unsigned int i = 0; i < count; i++ )
+		{
+			unsigned short ordinal = 0, aspects, size;
+			unsigned int crc = 0;
+			uint64 id = 0, when = 0;
+			idStr name;
+			const bool good = kind == 0 ?
+							  ( in.ReadUnsignedShort( ordinal ) == 2 && in.ReadUnsignedInt( crc ) == 4 && RecordReadString( in, name ) ) :
+							  ( RecordRead64( in, id ) && RecordReadString( in, name ) && RecordRead64( in, when ) );
+			if( !good || in.ReadUnsignedShort( aspects ) != 2 || in.ReadUnsignedShort( size ) != 2 || size > in.Length() - in.Tell() )
+			{
+				out->Printf( "map %d malformed %s %u\n", index, kind == 0 ? "row" : "created", i );
+				return;
+			}
+			if( kind == 0 )
+			{
+				out->Printf( "map %d row ordinal=%u crc=%08x name=%s ", index, ordinal, crc, name.c_str() );
+			}
+			else
+			{
+				out->Printf( "map %d created id=%llu def=%s time=%llu ", index, ( unsigned long long )id, name.c_str(), ( unsigned long long )when );
+			}
+			RecordDumpAspects( out, aspects );
+			out->Printf( " size=%u\n", size );
+			for( int a = 0; a < RECORD_DUMP_ASPECTS; a++ )
+			{
+				counts[kind][( aspects & BIT( a ) ) ? 0 : 1][a]++;
+			}
+			in.Seek( size, FS_SEEK_CUR );
+		}
+	}
+	for( int a = 0; a < RECORD_DUMP_ASPECTS; a++ )
+	{
+		out->Printf( "map %d aspect %s rows set=%d clear=%d created set=%d clear=%d\n", index, recordDumpAspectNames[a], counts[0][0][a], counts[0][1][a], counts[1][0][a], counts[1][1][a] );
+		for( int kind = 0; kind < 2; kind++ )
+		{
+			totals[kind][0][a] += counts[kind][0][a];
+			totals[kind][1][a] += counts[kind][1][a];
+		}
+	}
+	if( in.Tell() != in.Length() )
+	{
+		out->Printf( "map %d trailing %d bytes\n", index, in.Length() - in.Tell() );
+	}
+}
+
+void idWorldStore::DumpRecords( idFile* out ) const
+{
+	out->Printf( "recordDump 1\n" );
+	out->Printf( "store world=%s instance=%llu node=%u nextCreatedId=%llu maps=%d dungeon=%d spawned=%d map=%s worldTime=%lld\n", worldName.c_str(), ( unsigned long long )instanceId, currentNode, ( unsigned long long )nextCreatedId, records.Num(), dungeonRecords.Num(), mapSpawned.Num(), gameLocal.GetMapName(), ( long long )gameLocal.GetWorldTime() );
+	byte recipe[128];
+	const int recipeLength = mapGraphDirector.PeekMatchGameData( gameLocal.GetMapName(), recipe, sizeof( recipe ) );
+	out->Printf( "recipe bytes=%d\n", recipeLength );
+	RecordDumpHex( out, "recipe", recipe, Max( 0, recipeLength ) );
+	char label[32];
+	for( int i = 0; i < dungeonRecords.Num(); i++ )
+	{
+		out->Printf( "drec %d bytes=%d\n", i, dungeonRecords[i].Num() );
+		idStr::snPrintf( label, sizeof( label ), "drec %d", i );
+		RecordDumpHex( out, label, dungeonRecords[i].Ptr(), dungeonRecords[i].Num() );
+	}
+	int totals[2][2][RECORD_DUMP_ASPECTS];
+	memset( totals, 0, sizeof( totals ) );
+	for( int i = 0; i < records.Num(); i++ )
+	{
+		const worldMapRecord_t& record = records[i];
+		out->Printf( "map %d world=%s map=%s instance=%llu node=%u bytes=%d\n", i, record.world.c_str(), record.map.c_str(), ( unsigned long long )record.instance, record.node, record.bytes.Num() );
+		idStr::snPrintf( label, sizeof( label ), "mrec %d", i );
+		RecordDumpHex( out, label, record.bytes.Ptr(), record.bytes.Num() );
+		RecordDumpMap( out, i, record.bytes.Ptr(), record.bytes.Num(), totals );
+	}
+	for( int a = 0; a < RECORD_DUMP_ASPECTS; a++ )
+	{
+		out->Printf( "total aspect %s rows set=%d clear=%d created set=%d clear=%d\n", recordDumpAspectNames[a], totals[0][0][a], totals[0][1][a], totals[1][0][a], totals[1][1][a] );
+	}
+}
+//puncho end
+#endif
+
 void idWorldStore::TestCodec()
 {
 	PrepareSave();
