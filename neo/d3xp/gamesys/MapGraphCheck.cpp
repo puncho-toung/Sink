@@ -277,9 +277,38 @@ void MapGraphCheck_f( const idCmdArgs& args )
 					}
 					if( !idStr::Icmp( keys.GetString( "classname" ), "target_levelTrigger" ) )
 					{
+						//puncho - P2.4 (bug review 2026-10-28): resolve levelName as the runtime matches it (MapGraph.cpp
+						// GraphEffectMatches): a bare stock name is the graph map with that base name, a path is maps/<path>
+						idStr level = keys.GetString( "levelName" );
+						level.ToLower();
+						level.BackSlashesToSlashes();
+						level.StripFileExtension();
+						if( level.Find( '/' ) < 0 )
+						{
+							idStr resolved;
+							for( int kk = 0; kk < decl->kinds.Num() && resolved.IsEmpty(); kk++ )
+							{
+								for( int mm = 0; mm < decl->kinds[kk].maps.Num() && resolved.IsEmpty(); mm++ )
+								{
+									const idStr& node = decl->kinds[kk].maps[mm].name;
+									if( idStr::Cmp( node.c_str() + node.Last( '/' ) + 1, level ) == 0 )
+									{
+										resolved = node;
+									}
+								}
+							}
+							if( !resolved.IsEmpty() )
+							{
+								level = resolved;
+							}
+						}
+						else if( level.Icmpn( "maps/", 5 ) != 0 )
+						{
+							level = "maps/" + level;
+						}
 						idMapFile target;
 						int matches = 0;
-						if( target.Parse( keys.GetString( "levelName" ) ) )
+						if( target.Parse( level ) )
 						{
 							for( int j = 1; j < target.GetNumEntities(); j++ )
 							{

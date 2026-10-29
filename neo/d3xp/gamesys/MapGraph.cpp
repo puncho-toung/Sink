@@ -50,6 +50,28 @@ static idStr GraphMapName( const char* name )
 	}
 	return map;
 }
+//puncho start - P2.4 (bug review 2026-10-28): the map a pending effect names. A stock target_levelTrigger names the bare
+// map ("mg_hub"), which idPlayer::Event_LevelTrigger matches against the base name of whatever map loads, in any
+// folder; world mode queued it as "maps/mg_hub" and never matched a map under a subfolder. A bare name keeps the stock
+// meaning; a name with a path is a node map in GraphMapName's spelling and matches only that path. QueueEffect's node
+// lookup and ApplyPending both match through GraphEffectMatches, so the two sides cannot disagree.
+static idStr GraphEffectMapName( const char* name )
+{
+	idStr map = name;
+	map.ToLower();
+	map.BackSlashesToSlashes();
+	map.StripFileExtension();
+	return map.Find( '/' ) < 0 ? map : GraphMapName( map );
+}
+static bool GraphEffectMatches( const idStr& target, const idStr& graphMap )
+{
+	if( target.Find( '/' ) >= 0 )
+	{
+		return target == graphMap;
+	}
+	return idStr::Cmp( graphMap.c_str() + graphMap.Last( '/' ) + 1, target ) == 0;
+}
+//puncho end
 size_t idDeclMapGraph::Size() const
 {
 	return sizeof( *this );
@@ -452,6 +474,9 @@ void idMapGraphDirector::Clear()
 	recipe.instanceId = recipe.rootSeed = recipe.variantFlags = 0;
 	recipe.graphCRC = 0;
 	recipe.currentNode = recipe.nodeVisits = 0;
+	predictedMap.Clear();
+	predictedFrame = -1;
+	predictionPending = false;
 }
 const graphMap_t* idMapGraphDirector::NodeMap( const idDeclMapGraph* decl, int node ) const
 {
@@ -1196,19 +1221,41 @@ static const idDeclMapGraph* FindGraph( const char* name )
 	const idDeclMapGraph* decl = static_cast<const idDeclMapGraph*>( declManager->FindType( DECL_MAPGRAPH, name, false ) );
 	return decl && decl->GetState() != DS_DEFAULTED ? decl : NULL;
 }
-static bool GraphMapFingerprint( const char* name, uint32& geometry, uint32& landmarks )
+//puncho start - P2.4 (bug review 2026-10-28): a node map's fingerprint parsed the whole .map on the game thread, inside
+// the trigger touch, at every Start (once per distinct node map) and at every in-instance transition. It is kept per
+// map with the parsed file's timestamp and re-parsed only when the file on disk changed; every map load also stores
+// the fingerprint of the map it parsed, from the tables it already read (MapLoaded). A Start of a graph whose maps
+// were neither loaded nor fingerprinted in this process still parses each once.
+struct graphFingerprint_t
 {
-	idMapFile map;
-	if( !map.Parse( idStr( name ) + ".map", false, false, false, -1, false ) )
+	idStr map;
+	ID_TIME_T timestamp;
+	uint32 geometry, landmarks;
+};
+static idList<graphFingerprint_t, TAG_GAME> graphFingerprints;
+static void GraphStoreFingerprint( const idStr& map, ID_TIME_T timestamp, uint32 geometry, uint32 landmarks )
+{
+	int index = -1;
+	for( int i = 0; i < graphFingerprints.Num() && index < 0; i++ )
 	{
-		return false;
+		index = graphFingerprints[i].map == map ? i : -1;
 	}
-	geometry = map.GetGeometryCRC();
-	idWorldStore data;
-	data.ReadMapData( &map );
+	graphFingerprint_t& entry = index >= 0 ? graphFingerprints[index] : graphFingerprints.Alloc();
+	entry.map = map;
+	entry.timestamp = timestamp;
+	entry.geometry = geometry;
+	entry.landmarks = landmarks;
+}
+//puncho end
+static bool GraphTablesFingerprint( const idWorldStore& data, uint32& landmarks )
+{
 	idList<int, TAG_GAME> order;
 	for( int i = 0; i < data.landmarks.Num(); i++ )
 	{
+		if( data.landmarks[i].ordinal < 0 )
+		{
+			continue; // the town portal MapLoaded adds is no part of the map
+		}
 		int at = 0;
 		while( at < order.Num() && data.landmarks[order[at]].id.Cmp( data.landmarks[i].id ) < 0 )
 		{
@@ -1265,6 +1312,38 @@ static bool GraphMapFingerprint( const char* name, uint32& geometry, uint32& lan
 		return false;
 	}
 	landmarks = CRC32_BlockChecksum( bytes.Ptr(), bytes.Num() );
+	return true;
+}
+static bool GraphMapFingerprint( const char* name, uint32& geometry, uint32& landmarks )
+{
+	ID_TIME_T timestamp = FILE_NOT_FOUND_TIMESTAMP;
+	fileSystem->ReadFile( idStr( name ) + ".map", NULL, &timestamp );
+	for( int i = 0; i < graphFingerprints.Num(); i++ )
+	{
+		if( graphFingerprints[i].map == name )
+		{
+			if( timestamp != FILE_NOT_FOUND_TIMESTAMP && graphFingerprints[i].timestamp == timestamp )
+			{
+				geometry = graphFingerprints[i].geometry;
+				landmarks = graphFingerprints[i].landmarks;
+				return true;
+			}
+			break;
+		}
+	}
+	idMapFile map;
+	if( !map.Parse( idStr( name ) + ".map", false, false, false, -1, false ) )
+	{
+		return false;
+	}
+	geometry = map.GetGeometryCRC();
+	idWorldStore data;
+	data.ReadMapData( &map );
+	if( !GraphTablesFingerprint( data, landmarks ) )
+	{
+		return false;
+	}
+	GraphStoreFingerprint( name, map.GetFileTime(), geometry, landmarks );
 	return true;
 }
 const dungeonRecipe_t& idMapGraphDirector::RecipeForLoad( const char* map )
@@ -1445,6 +1524,9 @@ void idMapGraphDirector::BeginMap( const char* map )
 	recipe = loadRecipe;
 	recipeValid = true;
 	recipeMap = GraphMapName( map );
+	predictedMap.Clear();
+	predictedFrame = -1;
+	predictionPending = false;
 	worldStore.worldName = recipe.worldName;
 	worldStore.instanceId = recipe.instanceId;
 	if( !clientRecipe && !suspended )
@@ -1779,7 +1861,7 @@ void idMapGraphDirector::SetFlag( const char* name, int value )
 		return;
 	}
 	flagValues[index] = idMath::ClampInt( 0, 65535, value );
-	UpdateExitDoors();
+	UpdateExitDoors( false );
 	PredictNext();
 }
 void idMapGraphDirector::SetExitLocked( const char* landmark, bool locked )
@@ -1796,7 +1878,7 @@ void idMapGraphDirector::SetExitLocked( const char* landmark, bool locked )
 							 : 2;
 		}
 	}
-	UpdateExitDoors();
+	UpdateExitDoors( false );
 	PredictNext();
 }
 int idMapGraphDirector::GetNodeVisits() const
@@ -1855,22 +1937,48 @@ void idMapGraphDirector::PredictNext()
 			}
 		}
 	}
-	if( !predicted.IsEmpty() )
+	//puncho start - P2.4 (bug review 2026-10-28): Prefetch_Request restarts the prefetch, and every SetFlag and
+	// SetExitLocked sent the reliable, so a script setting flags in a loop could overflow the peer's 63-entry reliable
+	// queue and drop it. Only a change of the predicted map is announced, at most once per game frame; a change made
+	// later in the same frame waits for RunFrame, which announces whatever the prediction is then
+	if( predicted.IsEmpty() || predicted == predictedMap )
 	{
-		prefetches++;
-		gameLocal.PrefetchMap( predicted );
-		if( common->IsMultiplayer() )
-		{
-			byte buffer[64];
-			idBitMsg message;
-			message.InitWrite( buffer, sizeof( buffer ) );
-			message.BeginWriting();
-			message.WriteString( predicted );
-			session->GetActingGameStateLobbyBase().SendReliable( GAME_RELIABLE_MESSAGE_PREFETCH, message, false );
-		}
+		predictionPending = false;
+		return;
+	}
+	if( predictedFrame == gameLocal.framenum )
+	{
+		predictionPending = true;
+		return;
+	}
+	predictedMap = predicted;
+	predictedFrame = gameLocal.framenum;
+	predictionPending = false;
+	//puncho end
+	prefetches++;
+	gameLocal.PrefetchMap( predicted );
+	if( common->IsMultiplayer() )
+	{
+		byte buffer[64];
+		idBitMsg message;
+		message.InitWrite( buffer, sizeof( buffer ) );
+		message.BeginWriting();
+		message.WriteString( predicted );
+		session->GetActingGameStateLobbyBase().SendReliable( GAME_RELIABLE_MESSAGE_PREFETCH, message, false );
 	}
 }
-void idMapGraphDirector::UpdateExitDoors()
+// Once per game frame on the server, after the events (idGameLocal::RunFrame).
+void idMapGraphDirector::RunFrame()
+{
+	if( predictionPending && predictedFrame != gameLocal.framenum )
+	{
+		PredictNext();
+	}
+}
+// atLoad snaps a sealed exit shut while the map populates, before anyone stands in it. At runtime a flag or a lock
+// change goes through the door's own Lock(): its sounds, and the normal close path that stops for a player in the
+// doorway, where the load-time snap teleported the door shut through them.
+void idMapGraphDirector::UpdateExitDoors( bool atLoad )
 {
 	if( common->IsClient() || !worldStore.IsActive() )
 	{
@@ -1890,18 +1998,40 @@ void idMapGraphDirector::UpdateExitDoors()
 		}
 		idDoor* door = static_cast<idDoor*>( entity );
 		const bool open = suspended || !instanceId ? !lm.link.IsEmpty() : ResolveLink( partyNode, lm.id ) >= 0 || ( partyNode == 0 && lm.kind == instanceEndKind );
-		if( open )
+		if( atLoad )
 		{
-			door->ApplyRecordLock( false );
+			if( open )
+			{
+				door->ApplyRecordLock( false );
+			}
+			else
+			{
+				door->ApplyRecordState( false, true );
+			}
 		}
-		else
+		else if( open )
 		{
-			door->ApplyRecordState( false, true );
+			if( door->IsLocked() )
+			{
+				door->Lock( 0 );
+			}
+		}
+		else if( !door->IsLocked() || door->IsOpen() )
+		{
+			door->Lock( 1 );
 		}
 	}
 }
 void idMapGraphDirector::MapLoaded()
 {
+	// MapPopulate and a restore call this while the map loads; OpenTownPortalFor calls it in play
+	const bool atLoad = gameLocal.GameState() != GAMESTATE_ACTIVE;
+	const idMapFile* loaded = gameLocal.GetLoadedMap();
+	uint32 loadedLandmarks;
+	if( atLoad && loaded != NULL && GraphTablesFingerprint( worldStore, loadedLandmarks ) )
+	{
+		GraphStoreFingerprint( GraphMapName( gameLocal.GetMapName() ), loaded->GetFileTime(), loaded->GetGeometryCRC(), loadedLandmarks );
+	}
 	if( !common->IsClient() && !suspended && portalNode != 0xffff && portalNode == partyNode && partyNode < nodes.Num() && GraphMapName( gameLocal.GetMapName() ) == nodes[partyNode].map )
 	{
 		for( int i = worldStore.landmarks.Num() - 1; i >= 0; i-- )
@@ -1948,7 +2078,7 @@ void idMapGraphDirector::MapLoaded()
 			gameLocal.SpawnEntityDef( args );
 		}
 	}
-	UpdateExitDoors();
+	UpdateExitDoors( atLoad );
 	PredictNext();
 }
 bool idMapGraphDirector::GetResetPolicy( const char* map, int& policy, uint32& seconds ) const
@@ -2043,20 +2173,20 @@ bool idMapGraphDirector::QueueEffect( const char* map, const char* entity, const
 		return false;
 	}
 	dungeonPending_t p;
-	p.targetMap = GraphMapName( map );
+	p.targetMap = GraphEffectMapName( map );
 	p.targetName = entity;
 	p.targetNode = 0xffff;
 	p.action = !idStr::Icmp( action, "activate" ) ? 0 : !idStr::Icmp( action, "remove" ) ? 1
 			   : !idStr::Icmp( action, "show" )	 ? 2
 			   : !idStr::Icmp( action, "hide" )	 ? 3
 			   : 255;
-	if( p.action == 255 || p.targetMap.IsEmpty() )
+	if( p.action == 255 || p.targetMap.IsEmpty() || p.targetMap.Length() > 63 )
 	{
 		return false;
 	}
 	for( int i = 0; i < nodes.Num(); i++ )
 	{
-		if( nodes[i].map == p.targetMap )
+		if( GraphEffectMatches( p.targetMap, nodes[i].map ) )
 		{
 			p.targetNode = i;
 			break;
@@ -2113,15 +2243,27 @@ void idMapGraphDirector::ApplyPending()
 			hub.WriteRecord( persistentHub );
 		}
 	}
+	//puncho - P2.4 (bug review 2026-10-28): an ACTIVATE is posted with a live player as activator, 1 ms out, as stock
+	// idPlayer::Event_LevelTrigger does. MapPopulate calls this before any player exists, before the events and the
+	// map's main(); an ACTIVATE then stays pending until a player's spawn calls this again (idPlayer::Event_LevelTrigger)
+	idEntity* activator = NULL;
+	for( int n = 0; n < MAX_CLIENTS; n++ )
+	{
+		if( gameLocal.entities[n] && gameLocal.entities[n]->health > 0 )
+		{
+			activator = gameLocal.entities[n];
+			break;
+		}
+	}
 	for( int i = 0; i < pending.Num(); )
 	{
 		const dungeonPending_t p = pending[i];
-		if( p.targetMap != current || ( p.targetNode != 0xffff && p.targetNode != partyNode ) )
+		if( !GraphEffectMatches( p.targetMap, current ) || ( p.targetNode != 0xffff && p.targetNode != partyNode ) || ( p.action == 0 && activator == NULL ) )
 		{
 			i++;
 			continue;
 		}
-		// Consume before dispatch: activation can synchronously queue another effect.
+		// Consume before dispatch, so a dispatch that queues another effect cannot meet this one again.
 		pending.RemoveIndex( i );
 		idEntity* ent = gameLocal.FindEntity( p.targetName );
 		if( !ent )
@@ -2131,16 +2273,7 @@ void idMapGraphDirector::ApplyPending()
 		}
 		if( p.action == 0 )
 		{
-			idEntity* activator = NULL;
-			for( int n = 0; n < MAX_CLIENTS; n++ )
-			{
-				if( gameLocal.entities[n] && gameLocal.entities[n]->health > 0 )
-				{
-					activator = gameLocal.entities[n];
-					break;
-				}
-			}
-			ent->ProcessEvent( &EV_Activate, activator );
+			ent->PostEventMS( &EV_Activate, 1, activator );
 		}
 		else if( p.action == 1 )
 		{

@@ -43,8 +43,13 @@ enum recordAspect_t
 	RECORD_HIDDEN = BIT( 5 ),
 	RECORD_CORPSE = BIT( 6 ),
 	RECORD_MOTION = BIT( 7 ),
-	RECORD_BIND = BIT( 8 )
+	RECORD_BIND = BIT( 8 ),
+	RECORD_SHOWN = BIT( 9 ) //puncho - P2.4 (bug review 2026-10-28): HIDDEN or SHOWN, a visibility that differs from the "hide" key
 };
+
+//puncho - P2.4 (bug review 2026-10-28): the removed bits are indexed by map ordinal, which the host and every client
+// share, not by spawned row, which differs when one side skips or fails a spawn; BeginSpawn bounds ordinals by 65535
+static const int MAX_WORLD_MAP_ORDINALS = 65536;
 
 struct mapSpawnRow_t
 {
@@ -75,8 +80,10 @@ public:
 	}
 	void BeginSpawn();
 	void TrackSpawn( int ordinal, idEntity* ent );
+	int FindSpawnRow( int ordinal ) const;
 	void EntityRemoved( idEntity* ent );
 	void MarkDeparted( idEntity* ent );
+	void MarkTaken( idEntity* ent );
 	void CommitCurrentMap();
 	void ApplyCurrentMap();
 	void BindCreatedRecords();
@@ -105,12 +112,13 @@ public:
 	idList<landmark_t, TAG_GAME> landmarks;
 	idList<transitionVolume_t, TAG_GAME> transitionVolumes;
 	idList<mapSpawnRow_t, TAG_GAME> mapSpawned;
-	byte removed[( MAX_GENTITIES + 7 ) / 8];
+	byte removed[MAX_WORLD_MAP_ORDINALS / 8];
 	idList<idList<byte, TAG_GAME>, TAG_GAME> dungeonRecords;
 	unsigned short remains;
 	void ReplaceMapEntity( idEntity* oldEntity, idEntity* replacement );
 
 private:
+	void Commit( bool leaving );
 	idList<worldMapRecord_t, TAG_GAME> records;
 	uint64 nextCreatedId;
 	uint64 retiringInstance;
@@ -123,4 +131,5 @@ private:
 extern idWorldStore worldStore;
 extern idCVar g_worldRecords;
 extern idCVar g_worldName;
+extern idCVar g_recordCapCorpses;
 #endif

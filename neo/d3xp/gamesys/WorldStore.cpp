@@ -96,7 +96,7 @@ static bool RecordRead64( idFile& f, uint64& value )
 
 static bool ValidateAspectBytes( unsigned short aspects, const char* data, int length )
 {
-	if( aspects & ~( RECORD_REMOVED | RECORD_MOVED | RECORD_MOVER | RECORD_HEALTH | RECORD_BROKEN | RECORD_HIDDEN | RECORD_CORPSE | RECORD_MOTION | RECORD_BIND ) )
+	if( ( aspects & ~( RECORD_REMOVED | RECORD_MOVED | RECORD_MOVER | RECORD_HEALTH | RECORD_BROKEN | RECORD_HIDDEN | RECORD_CORPSE | RECORD_MOTION | RECORD_BIND | RECORD_SHOWN ) ) || ( aspects & ( RECORD_HIDDEN | RECORD_SHOWN ) ) == ( RECORD_HIDDEN | RECORD_SHOWN ) )
 	{
 		return false;
 	}
@@ -393,12 +393,36 @@ void idWorldStore::TrackSpawn( int ordinal, idEntity* ent )
 	ent->mapSpawnIndex = mapSpawned.Append( row );
 }
 
+// The rows are in ascending ordinal order: MapPopulate tracks them in map order and ORDT is validated ascending.
+int idWorldStore::FindSpawnRow( int ordinal ) const
+{
+	int low = 0, high = mapSpawned.Num() - 1;
+	while( low <= high )
+	{
+		const int middle = ( low + high ) >> 1;
+		if( mapSpawned[middle].ordinal < ordinal )
+		{
+			low = middle + 1;
+		}
+		else if( mapSpawned[middle].ordinal > ordinal )
+		{
+			high = middle - 1;
+		}
+		else
+		{
+			return middle;
+		}
+	}
+	return -1;
+}
+
 void idWorldStore::EntityRemoved( idEntity* ent )
 {
 	const int index = ent->mapSpawnIndex;
 	if( IsActive() && index >= 0 && index < mapSpawned.Num() )
 	{
-		removed[index >> 3] |= 1 << ( index & 7 );
+		const int ordinal = mapSpawned[index].ordinal;
+		removed[ordinal >> 3] |= 1 << ( ordinal & 7 );
 	}
 }
 
@@ -409,6 +433,42 @@ void idWorldStore::MarkDeparted( idEntity* ent )
 		mapSpawned[ent->mapSpawnIndex].departed = true;
 	}
 	ent->spawnArgs.SetBool( "_worldDeparted", true );
+}
+
+//puncho - P2.4 (bug review 2026-10-28): idItem::Pickup marks the item it gave, and the record removes a marked item on
+// revisit. Taken was inferred from IsHidden before, so an authored hide-until-triggered item counted as taken and was
+// deleted for good when the player left before revealing it
+void idWorldStore::MarkTaken( idEntity* ent )
+{
+	if( IsActive() )
+	{
+		ent->spawnArgs.SetBool( "_worldTaken", true );
+	}
+}
+
+// The pose a map entity spawns with, from the keys idEntity::Spawn reads (ParseSpawnArgsToRenderEntity's origin and
+// rotation, plus an origin brush's offset for an entity with a model). A model scale or a key this misses makes the
+// live pose differ, which only writes a MOVED the entity did not need: the safe direction.
+static void RecordSpawnPose( const idEntity* ent, idVec3& origin, idMat3& axis )
+{
+	const idDict& args = ent->spawnArgs;
+	origin = args.GetVector( "origin" );
+	if( args.GetString( "model" )[0] != '\0' )
+	{
+		origin += ent->GetOriginBrushOffset();
+	}
+	idAngles angles;
+	if( !args.GetMatrix( "rotation", "1 0 0 0 1 0 0 0 1", axis ) )
+	{
+		if( args.GetAngles( "angles", "0 0 0", angles ) )
+		{
+			axis = angles.ToMat3();
+		}
+		else
+		{
+			axis = idAngles( 0.0f, args.GetFloat( "angle" ), 0.0f ).ToMat3();
+		}
+	}
 }
 
 static unsigned short WriteAspects( idEntity* ent, idFile_Memory& payload, const idVec3& landmark, bool motion )
@@ -455,20 +515,39 @@ static unsigned short WriteAspects( idEntity* ent, idFile_Memory& payload, const
 		static_cast<idCorpse*>( ent )->WritePose( &payload );
 		return RECORD_MOVED | RECORD_CORPSE;
 	}
-	unsigned short aspects = RECORD_MOVED | RECORD_HEALTH;
-	if( ent->IsHidden() )
+	//puncho start - P2.4 (bug review 2026-10-28): an authored row is a delta over the .map. MOVED only for an entity at
+	// rest off its spawn pose, and never for a parametric mover: SetOrigin resets its extrapolation base, so a
+	// func_bobbing or func_pendulum recentred its swing on the commit phase and ratcheted on every revisit (binary
+	// movers keep their MOVER aspect). A bound entity follows its master, and SetOrigin would take the world position
+	// as its offset. A created entity has no spawn pose, so it always carries one. HEALTH only when it changed
+	unsigned short aspects = 0;
+	bool moved = motion;
+	if( !motion && ent->GetBindMaster() == NULL && !ent->GetPhysics()->IsType( idPhysics_Parametric::Type ) && ent->GetPhysics()->IsAtRest() )
 	{
-		aspects |= RECORD_HIDDEN;
+		idVec3 spawnOrigin;
+		idMat3 spawnAxis;
+		RecordSpawnPose( ent, spawnOrigin, spawnAxis );
+		moved = ( ent->GetPhysics()->GetOrigin() - spawnOrigin ).LengthSqr() > 1.0f || !ent->GetPhysics()->GetAxis().Compare( spawnAxis, 0.001f );
 	}
-	const idVec3 origin = ent->GetPhysics()->GetOrigin() - landmark;
-	const idCQuat rotation = ent->GetPhysics()->GetAxis().ToCQuat();
-	for( int i = 0; i < 3; i++ )
+	// visibility against the "hide" key the entity spawns with: a hide-until-triggered entity revealed in play comes
+	// back shown, and one never revealed comes back as authored
+	if( ent->IsHidden() != ent->spawnArgs.GetBool( "hide" ) )
 	{
-		payload.WriteFloat( origin[i] );
+		aspects |= ent->IsHidden() ? RECORD_HIDDEN : RECORD_SHOWN;
 	}
-	for( int i = 0; i < 3; i++ )
+	if( moved )
 	{
-		payload.WriteFloat( rotation[i] );
+		aspects |= RECORD_MOVED;
+		const idVec3 origin = ent->GetPhysics()->GetOrigin() - landmark;
+		const idCQuat rotation = ent->GetPhysics()->GetAxis().ToCQuat();
+		for( int i = 0; i < 3; i++ )
+		{
+			payload.WriteFloat( origin[i] );
+		}
+		for( int i = 0; i < 3; i++ )
+		{
+			payload.WriteFloat( rotation[i] );
+		}
 	}
 	if( ent->IsType( idMover_Binary::Type ) )
 	{
@@ -476,7 +555,12 @@ static unsigned short WriteAspects( idEntity* ent, idFile_Memory& payload, const
 		payload.WriteUnsignedChar( static_cast<idMover_Binary*>( ent )->RecordAtPosition2() );
 		payload.WriteUnsignedChar( ent->spawnArgs.GetInt( "locked" ) != 0 );
 	}
-	payload.WriteInt( ent->health );
+	if( ent->health != ent->spawnArgs.GetInt( "health" ) )
+	{
+		aspects |= RECORD_HEALTH;
+		payload.WriteInt( ent->health );
+	}
+	//puncho end
 	if( ent->IsType( idDamagable::Type ) && static_cast<idDamagable*>( ent )->RecordBroken() )
 	{
 		aspects |= RECORD_BROKEN;
@@ -511,7 +595,7 @@ static unsigned short WriteAspects( idEntity* ent, idFile_Memory& payload, const
 static bool ApplyAspects( idEntity* ent, unsigned short aspects, idFile_Memory& payload, const idMat3& rotation, const idVec3& landmark )
 {
 	const int expected = ( ( aspects & RECORD_MOVED ) ? 24 : 0 ) + ( ( aspects & RECORD_MOVER ) ? 2 : 0 ) + ( ( aspects & RECORD_HEALTH ) ? 4 : 0 ) + ( ( aspects & RECORD_MOTION ) ? 24 : 0 ) + ( ( aspects & RECORD_BIND ) ? 13 : 0 );
-	if( ( aspects & ~( RECORD_REMOVED | RECORD_MOVED | RECORD_MOVER | RECORD_HEALTH | RECORD_BROKEN | RECORD_HIDDEN | RECORD_MOTION | RECORD_BIND ) ) != 0 || payload.Length() != expected )
+	if( ( aspects & ~( RECORD_REMOVED | RECORD_MOVED | RECORD_MOVER | RECORD_HEALTH | RECORD_BROKEN | RECORD_HIDDEN | RECORD_MOTION | RECORD_BIND | RECORD_SHOWN ) ) != 0 || payload.Length() != expected )
 	{
 		return false;
 	}
@@ -553,6 +637,10 @@ static bool ApplyAspects( idEntity* ent, unsigned short aspects, idFile_Memory& 
 	if( aspects & RECORD_HIDDEN )
 	{
 		ent->Hide();
+	}
+	else if( aspects & RECORD_SHOWN )
+	{
+		ent->Show();
 	}
 	if( aspects & RECORD_MOTION )
 	{
@@ -709,6 +797,41 @@ idEntity* idWorldStore::SpawnCreated( idFile_Memory& in, const idMat3& rotation,
 
 void idWorldStore::CommitCurrentMap()
 {
+	Commit( true );
+}
+
+//puncho start - P2.4 (bug review 2026-10-28): a commit builds this map's record from the live game and never changes
+// the live game. Expired entities, corpses over the cap or the byte budget and taken items are left out of the record
+// (an authored row becomes REMOVED), not deleted: every save and autosave commits too, and deleting there made corpses
+// vanish in front of the player. At a leave the map is torn down right after, so leaving them out is the eviction;
+// leaving only decides whether the drops count in the stats, so repeated saves do not count one corpse again.
+static void RecordExclude( byte* excluded, const idEntity* ent )
+{
+	excluded[ent->entityNumber >> 3] |= 1 << ( ent->entityNumber & 7 );
+}
+
+// A child of a left-out entity is left out with it, as deleting the master would have removed it.
+static bool RecordExcluded( const byte* excluded, const idEntity* ent )
+{
+	for( int depth = 0; ent != NULL && depth < MAX_GENTITIES; depth++, ent = ent->GetBindMaster() )
+	{
+		if( excluded[ent->entityNumber >> 3] & ( 1 << ( ent->entityNumber & 7 ) ) )
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+struct recordRow_t
+{
+	int offset, length;
+	unsigned short aspects;
+};
+//puncho end
+
+void idWorldStore::Commit( bool leaving )
+{
 	if( !IsActive() || committed || common->IsClient() || gameLocal.gamestate != GAMESTATE_ACTIVE || gameLocal.mapFile == NULL )
 	{
 		return;
@@ -717,8 +840,9 @@ void idWorldStore::CommitCurrentMap()
 	// The dungeon records are stored first so this commit budgets against their current size, at a map leave as
 	// much as at a save; Save() writes whatever is in the list.
 	mapGraphDirector.StoreRecord();
-	// Expire before collecting pointers or enumerating canonical save objects.
-	// Entity-slot traversal remains valid when deletion also removes attachments.
+	byte excluded[( MAX_GENTITIES + 7 ) / 8];
+	memset( excluded, 0, sizeof( excluded ) );
+	// Expire before sizing any row.
 	const int64 now = gameLocal.GetWorldTime();
 	for( int i = MAX_CLIENTS; i < MAX_GENTITIES; i++ )
 	{
@@ -747,7 +871,7 @@ void idWorldStore::CommitCurrentMap()
 		}
 		if( now >= born && now - born >= ( int64 )lifetime * 1000 )
 		{
-			delete ent;
+			RecordExclude( excluded, ent );
 		}
 	}
 	idMapFile* map = gameLocal.mapFile;
@@ -759,7 +883,7 @@ void idWorldStore::CommitCurrentMap()
 		{
 			isCleared = false;
 		}
-		if( ent->IsType( idCorpse::Type ) )
+		if( ent->IsType( idCorpse::Type ) && !RecordExcluded( excluded, ent ) )
 		{
 			createdCandidate_t body;
 			body.ent = ent;
@@ -770,6 +894,7 @@ void idWorldStore::CommitCurrentMap()
 		}
 	}
 	bodies.SortWithTemplate( idSortCreatedTime() );
+	int evicted = 0;
 	int bodyCount = bodies.Num();
 	for( int i = 0; i < bodies.Num() && g_recordCapCorpses.GetInteger() > 0 && bodyCount > g_recordCapCorpses.GetInteger(); i++ )
 	{
@@ -777,8 +902,8 @@ void idWorldStore::CommitCurrentMap()
 		{
 			continue;
 		}
-		corpseEvicted++;
-		delete bodies[i].ent;
+		evicted++;
+		RecordExclude( excluded, bodies[i].ent );
 		bodies[i].ent = NULL;
 		bodyCount--;
 	}
@@ -798,16 +923,27 @@ void idWorldStore::CommitCurrentMap()
 	}
 	const int authoredLimit = Min( g_recordBytesMap.GetInteger(), g_recordBytesWorld.GetInteger() - otherRecordBytes - 64 );
 	int authoredBytes = 52 + worldName.Length() + recordMap.Length();
+	// Each row's aspects are written once, here; the record below copies them. An entity that matches its spawn
+	// state writes no row at all.
+	idList<recordRow_t, TAG_GAME> rows;
+	rows.SetNum( mapSpawned.Num() );
+	idFile_Memory rowPayloads;
 	for( int i = 0; i < mapSpawned.Num(); i++ )
 	{
 		const mapSpawnRow_t& row = mapSpawned[i];
 		idEntity* ent = row.departed ? NULL : RecordEntity( row );
-		idFile_Memory payload;
-		if( ent != NULL )
+		if( ent != NULL && ( RecordExcluded( excluded, ent ) || ent->spawnArgs.GetBool( "_worldTaken" ) ) )
 		{
-			WriteAspects( ent, payload, vec3_origin, false );
+			ent = NULL;
 		}
-		authoredBytes += 11 + idStr::Length( map->GetEntity( row.ordinal )->epairs.GetString( "name" ) ) + payload.Length();
+		recordRow_t& out = rows[i];
+		out.offset = rowPayloads.Length();
+		out.aspects = ent == NULL ? RECORD_REMOVED : WriteAspects( ent, rowPayloads, vec3_origin, false );
+		out.length = rowPayloads.Length() - out.offset;
+		if( out.aspects != 0 )
+		{
+			authoredBytes += 11 + idStr::Length( map->GetEntity( row.ordinal )->epairs.GetString( "name" ) ) + out.length;
+		}
 	}
 	for( int i = 0; i < bodies.Num() && authoredBytes > authoredLimit; i++ )
 	{
@@ -820,12 +956,18 @@ void idWorldStore::CommitCurrentMap()
 		{
 			continue;
 		}
-		idFile_Memory payload;
-		WriteAspects( ent, payload, vec3_origin, false );
-		authoredBytes -= payload.Length();
-		corpseEvicted++;
-		delete ent;
+		recordRow_t& out = rows[ent->mapSpawnIndex];
+		authoredBytes -= out.length;
+		out.aspects = RECORD_REMOVED;
+		out.length = 0;
+		evicted++;
+		RecordExclude( excluded, ent );
 		bodies[i].ent = NULL;
+	}
+	int rowCount = 0;
+	for( int i = 0; i < rows.Num(); i++ )
+	{
+		rowCount += rows[i].aspects != 0 ? 1 : 0;
 	}
 	idFile_Memory record;
 	record.WriteUnsignedShort( 2 );
@@ -878,29 +1020,27 @@ void idWorldStore::CommitCurrentMap()
 	}
 	Record64( record, clearedTime );
 	record.WriteUnsignedShort( remains );
-	record.WriteUnsignedInt( mapSpawned.Num() );
+	record.WriteUnsignedInt( rowCount );
 	for( int i = 0; i < mapSpawned.Num(); i++ )
 	{
 		const mapSpawnRow_t& row = mapSpawned[i];
-		idEntity* ent = row.departed ? NULL : RecordEntity( row );
-		if( ent != NULL && ( ent->IsType( idItem::Type ) || ent->IsType( idMoveableItem::Type ) ) && ent->IsHidden() && !ent->spawnArgs.GetBool( "inv_carry" ) && !ent->spawnArgs.GetBool( "inv_objective" ) )
+		const recordRow_t& out = rows[i];
+		if( out.aspects == 0 )
 		{
-			ent = NULL;
+			continue;
 		}
 		record.WriteUnsignedShort( row.ordinal );
 		record.WriteUnsignedInt( map->GetEntityCRC( row.ordinal ) );
 		RecordString( record, map->GetEntity( row.ordinal )->epairs.GetString( "name" ) );
-		idFile_Memory payload;
-		const unsigned short aspects = ent == NULL ? RECORD_REMOVED : WriteAspects( ent, payload, vec3_origin, false );
-		record.WriteUnsignedShort( aspects );
-		record.WriteUnsignedShort( payload.Length() );
-		record.Write( payload.GetDataPtr(), payload.Length() );
+		record.WriteUnsignedShort( out.aspects );
+		record.WriteUnsignedShort( out.length );
+		record.Write( rowPayloads.GetDataPtr() + out.offset, out.length );
 	}
 	idList<createdCandidate_t, TAG_GAME> candidates;
 	for( idEntity* ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
 	{
 		const int lifetime = ent->spawnArgs.GetInt( "persist_lifetime", ent->spawnArgs.GetBool( "dropped" ) ? "-1" : "0" );
-		if( ent->mapSpawnIndex >= 0 || ( ent->GetBindMaster() != NULL && ( ent->spawnArgs.GetString( "_worldCreatedId", "0" )[0] == '0' || ent->GetBindMaster()->spawnArgs.GetString( "_worldCreatedId", "0" )[0] == '0' ) ) || ent->IsType( idPlayer::Type ) || ent->spawnArgs.GetBool( "_worldDeparted" ) || lifetime == 0 )
+		if( ent->mapSpawnIndex >= 0 || ( ent->GetBindMaster() != NULL && ( ent->spawnArgs.GetString( "_worldCreatedId", "0" )[0] == '0' || ent->GetBindMaster()->spawnArgs.GetString( "_worldCreatedId", "0" )[0] == '0' ) ) || ent->IsType( idPlayer::Type ) || ent->spawnArgs.GetBool( "_worldDeparted" ) || lifetime == 0 || RecordExcluded( excluded, ent ) || ent->spawnArgs.GetBool( "_worldTaken" ) )
 		{
 			continue;
 		}
@@ -929,7 +1069,6 @@ void idWorldStore::CommitCurrentMap()
 		candidates.Append( row );
 	}
 	candidates.SortWithTemplate( idSortCreatedTime() );
-	int evicted = 0;
 	int otherBytes = StoreFixedBytes();
 	for( int i = 0; i < records.Num(); i++ )
 	{
@@ -964,8 +1103,6 @@ void idWorldStore::CommitCurrentMap()
 		if( !candidates[i].noCap && !item && candidates[i].ent->IsType( idCorpse::Type ) && overBytes )
 		{
 			createdBytes -= candidates[i].encoded.Num();
-			delete candidates[i].ent;
-			corpseEvicted++;
 			candidates.RemoveIndex( i );
 			evicted++;
 		}
@@ -984,7 +1121,7 @@ void idWorldStore::CommitCurrentMap()
 	}
 	if( evicted > 0 || record.Length() + created.Length() > byteLimit * 3 / 4 )
 	{
-		gameLocal.Warning( "record: %s %d bytes, evicted %d; authored and nocap entries retained", name.c_str(), record.Length() + created.Length(), evicted );
+		gameLocal.Warning( "record: %s %d bytes, left out %d corpses; authored and nocap entries retained", name.c_str(), record.Length() + created.Length(), evicted );
 	}
 	record.WriteUnsignedInt( count );
 	record.Write( created.GetDataPtr(), created.Length() );
@@ -1018,10 +1155,14 @@ void idWorldStore::CommitCurrentMap()
 	committed = true;
 	resetApplied = false;
 	recordMaps = records.Num();
-	recordEntries = mapSpawned.Num();
+	recordEntries = rowCount;
 	recordCreated = count;
 	recordBytes = otherBytes + record.Length();
-	recordDropped += evicted;
+	if( leaving )
+	{
+		recordDropped += evicted;
+		corpseEvicted += evicted;
+	}
 	commitUs = ( unsigned int )( Sys_Microseconds() - commitStart );
 	gameLocal.Printf( "record commit map=%s entries=%d created=%d bytes=%d dropped=%d us=%u\n", name.c_str(), recordEntries, recordCreated, record.Length(), evicted, commitUs );
 }
@@ -1209,7 +1350,7 @@ void idWorldStore::PrepareSave()
 	// A save can precede the first departure. Capture namespace and current map
 	// without suppressing the later leave commit after gameplay resumes.
 	committed = false;
-	CommitCurrentMap();
+	Commit( false );
 	committed = false;
 }
 
@@ -1447,7 +1588,8 @@ void idWorldStore::RestoreOrdinals()
 		}
 		else
 		{
-			removed[i >> 3] |= 1 << ( i & 7 );
+			const int ordinal = mapSpawned[i].ordinal;
+			removed[ordinal >> 3] |= 1 << ( ordinal & 7 );
 		}
 	}
 }
@@ -1568,6 +1710,12 @@ void idWorldStore::ReadMapData( idMapFile* map )
 		idBounds bounds;
 		bounds.Clear();
 		idVec3 center = args.GetVector( "origin" );
+		//puncho - P2.4 (bug review 2026-10-28, stage 4b): the parsed brush planes are relative to the "origin" key in every
+		// format (brushDef3 is written that way; brushDef and Valve 220 subtract the key on parse), so the key turns them
+		// into world space. originOffset is an origin brush's pivot inside that same frame (CalculateBrushOrigin reads the
+		// parsed planes), not a term of it: adding it misplaced a Valve 220 origin-brush landmark by its pivot, and leaving
+		// the key out read every composed or hand-made brush landmark and carry volume with an origin key at local position
+		const idVec3 entityOrigin = center;
 		idVec3 forward = idAngles( 0, args.GetFloat( "angle" ), 0 ).ToForward();
 		for( int p = 0; p < ent->GetNumPrimitives(); p++ )
 		{
@@ -1588,7 +1736,7 @@ void idWorldStore::ReadMapData( idMapFile* map )
 				}
 				for( int v = 0; v < winding.GetNumPoints(); v++ )
 				{
-					bounds.AddPoint( winding[v].ToVec3() + ent->originOffset );
+					bounds.AddPoint( winding[v].ToVec3() + entityOrigin );
 				}
 				if( isLandmark && idStr::Icmp( brush->GetSide( side )->GetMaterial(), "textures/editor/landmark" ) == 0 && winding.GetNumPoints() >= 3 )
 				{
@@ -1617,7 +1765,7 @@ void idWorldStore::ReadMapData( idMapFile* map )
 					{
 						for( int axis = 0; axis < 3; axis++ )
 						{
-							center[axis] = sum[axis] / areaSum + ent->originOffset[axis];
+							center[axis] = sum[axis] / areaSum + entityOrigin[axis];
 						}
 					}
 					forward = brush->GetSide( side )->GetPlane().Normal();

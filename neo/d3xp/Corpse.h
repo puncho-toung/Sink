@@ -28,6 +28,8 @@ public:
 
 private:
 	void FreeHead();
+	void EnforceLiveCap();
+	idLinkList<idCorpse> corpseNode; //puncho - P2.4 (bug review 2026-10-28): the live corpses in creation order, for the live cap
 	idStr sourceName;
 	idList<byte, TAG_GAME> poseBytes;
 	int64 deathTime;

@@ -323,9 +323,12 @@ class idTrigger_ChangeLevel : public idTrigger_Multi
 {
 public:
 	CLASS_PROTOTYPE( idTrigger_ChangeLevel );
+	idTrigger_ChangeLevel();
 private:
+	bool Transition( idEntity* activator );
 	void Event_TransitionTouch( idEntity* other, trace_t* trace );
 	void Event_TransitionActivate( idEntity* activator );
+	int refusedTouchTime; // not saved: a load re-arms the latch, costing at most one more refusal
 };
 
 #endif /* !__GAME_TRIGGER_H__ */

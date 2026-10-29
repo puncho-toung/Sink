@@ -47,7 +47,7 @@ static const int SNAP_LAST_CLIENT_FRAME = SNAP_ENTITIES_END;
 static const int SNAP_LAST_CLIENT_FRAME_END = SNAP_LAST_CLIENT_FRAME + MAX_PLAYERS;
 static const int SNAP_PORTALS_EXTRA = SNAP_LAST_CLIENT_FRAME_END;
 static const int SNAP_MAP_REMOVED = SNAP_LAST_CLIENT_FRAME_END + 64;
-static const int MAP_REMOVED_CHUNKS = ( MAX_GENTITIES + 3999 ) / 4000;
+static const int MAP_REMOVED_CHUNKS = ( MAX_WORLD_MAP_ORDINALS + 3999 ) / 4000;	//puncho - P2.4 (bug review 2026-10-28): one bit per map ordinal
 compile_time_assert( SNAP_MAP_REMOVED + MAP_REMOVED_CHUNKS - MAX_GENTITIES <= MAX_NET_FIXED_OBJECTS );
 static const int PORTALS_PER_SNAP_OBJECT = 1300;
 static const int MAX_PORTAL_CHUNKS = 16;
@@ -1439,6 +1439,15 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 		{
 			const int first = ( snapObjectNum - SNAP_MAP_REMOVED ) * 500;
 			const int bytes = Min( 500, ( int )sizeof( worldStore.removed ) - first );
+			//puncho start - P2.4 (bug review 2026-10-28): a deleted object arrives with size 0, as for entities. The host
+			// deletes a chunk when its bits clear, which BeginSpawn does on a world-mode LocalMapRestart; that is a clear,
+			// not a malformed message, and the Error dropped the client
+			if( msg.GetSize() == 0 )
+			{
+				memset( worldStore.removed + first, 0, bytes );
+				continue;
+			}
+			//puncho end
 			if( !worldStore.IsActive() || msg.GetSize() != bytes )
 			{
 				Error( "Invalid removed-map snapshot" );
@@ -1450,8 +1459,9 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 				worldStore.removed[first+i] |= bits;
 				for( int bit = 0; bit < 8; bit++ )
 				{
-					const int index = ( first + i ) * 8 + bit;
-					if( !( fresh & ( 1 << bit ) ) || index >= worldStore.mapSpawned.Num() )
+					//puncho - P2.4 (bug review 2026-10-28): the bit is a map ordinal; the row is this client's spawn of it, if any
+					const int index = ( fresh & ( 1 << bit ) ) ? worldStore.FindSpawnRow( ( first + i ) * 8 + bit ) : -1;
+					if( index < 0 )
 					{
 						continue;
 					}

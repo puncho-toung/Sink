@@ -7,11 +7,16 @@ idCVar g_corpses( "g_corpses", "1", CVAR_GAME | CVAR_BOOL | CVAR_ARCHIVE, "Keep 
 CLASS_DECLARATION( idAFEntity_Base, idCorpse )
 END_CLASS
 
+static idLinkList<idCorpse> liveCorpses;
+
 idCorpse::idCorpse()
 {
 	deathTime = 0;
 	headHandle = -1;
 	memset( &headRender, 0, sizeof( headRender ) );
+	// creation order; the node unlinks itself when the corpse is deleted
+	corpseNode.SetOwner( this );
+	corpseNode.AddToEnd( liveCorpses );
 }
 
 idCorpse::~idCorpse()
@@ -50,7 +55,38 @@ bool idCorpse::Capture( idAI* actor )
 		return false;
 	}
 	spawnArgs.SetInt( "persist_lifetime", actor->spawnArgs.GetInt( "persist_lifetime", "-1" ) );
+	EnforceLiveCap();
 	return true;
+}
+
+//puncho - P2.4 (bug review 2026-10-28): the commit only bounds what a record keeps, so a horde fight piled up corpses
+// (about twenty clip models and two render entities each, plus a snapshot object) until the map was left. As each new
+// corpse settles, the oldest unprotected ones go, under the same cap the record uses; deleting a map row's corpse
+// marks its ordinal removed for the clients and the record
+void idCorpse::EnforceLiveCap()
+{
+	const int cap = g_recordCapCorpses.GetInteger();
+	if( cap <= 0 || common->IsClient() )
+	{
+		return;
+	}
+	for( int count = liveCorpses.Num(); count > cap; count-- )
+	{
+		idCorpse* oldest = NULL;
+		for( idCorpse* corpse = liveCorpses.Next(); corpse != NULL; corpse = corpse->corpseNode.Next() )
+		{
+			if( corpse != this && !corpse->spawnArgs.GetBool( "persist_nocap" ) && ( oldest == NULL || corpse->deathTime < oldest->deathTime ) )
+			{
+				oldest = corpse;
+			}
+		}
+		if( oldest == NULL )
+		{
+			break;
+		}
+		worldStore.corpseEvicted++;
+		delete oldest;
+	}
 }
 
 bool idCorpse::WriteActorPose( idAI* actor, idFile_Memory& pose )
@@ -185,6 +221,10 @@ bool idCorpse::Build( const idDeclEntityDef* source, idFile_Memory& pose )
 			af.GetPhysics()->SetAxis( axis.ToMat3(), body );
 		}
 		af.GetPhysics()->PutToRest();
+		//puncho - P2.4 (bug review 2026-10-28): the pose is static. An impulse (RadiusPush, a projectile) woke the AF and
+		// moved the body away from the static head render entity, made the corpse a thinker and left poseBytes, the
+		// saves, the record and the clients behind; impact off also makes it unpushable by movers
+		af.GetPhysics()->DisableImpact();
 		af.UpdateAnimation();
 	}
 	else

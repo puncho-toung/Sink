@@ -1591,33 +1591,59 @@ EVENT( EV_Touch, idTrigger_ChangeLevel::Event_TransitionTouch )
 EVENT( EV_Activate, idTrigger_ChangeLevel::Event_TransitionActivate )
 END_CLASS
 
+idTrigger_ChangeLevel::idTrigger_ChangeLevel()
+{
+	refusedTouchTime = -1;
+}
+
+//puncho start - P2.4 (bug review 2026-10-28): EV_Touch replaces idTrigger_Multi's and so dropped its wait throttle, and
+// a refused exit was requested again on every touch frame: a director copy, a Printf and a tip each time, and inside
+// an instance a fingerprint check of the destination. A refusal now latches the trigger until no player has touched
+// it for a frame, so stepping out and back in asks again (the exit may have opened meanwhile)
 void idTrigger_ChangeLevel::Event_TransitionTouch( idEntity* other, trace_t* trace )
 {
-	if( other != NULL && other->IsType( idPlayer::Type ) && other->health > 0 )
+	if( other == NULL || !other->IsType( idPlayer::Type ) || other->health <= 0 || common->IsClient() )
 	{
-		Event_TransitionActivate( other );
+		return;
+	}
+	if( refusedTouchTime >= 0 && refusedTouchTime >= gameLocal.previousTime )
+	{
+		refusedTouchTime = gameLocal.time;
+		return;
+	}
+	refusedTouchTime = -1;
+	if( !Transition( other ) )
+	{
+		refusedTouchTime = gameLocal.time;
 	}
 }
 
 void idTrigger_ChangeLevel::Event_TransitionActivate( idEntity* activator )
 {
+	Transition( activator );
+}
+
+// False only when the transition was asked for and refused; a party still gathering is not a refusal, so the
+// trigger keeps polling while the others walk in.
+bool idTrigger_ChangeLevel::Transition( idEntity* activator )
+{
 	if( common->IsClient() )
 	{
-		return;
+		return true;
 	}
 	const char* landmark = spawnArgs.GetString( "landmark" );
 	if( spawnArgs.GetBool( "wait_party", "1" ) && !gameLocal.TransitionPartyReady( landmark ) )
 	{
-		return;
+		return true;
 	}
 	if( worldStore.IsActive() )
 	{
-		mapGraphDirector.RequestTransition( landmark );
-		return;
+		return mapGraphDirector.RequestTransition( landmark );
 	}
 	mapTransition_t transition;
 	transition.nextMap = spawnArgs.GetString( "nextMap" );
 	transition.departLandmark = landmark;
 	transition.arrivalLandmark = spawnArgs.GetString( "arrivalLandmark", landmark );
-	gameLocal.BeginMapTransition( transition );
+	return gameLocal.BeginMapTransition( transition );
 }
+//puncho end

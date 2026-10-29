@@ -119,6 +119,7 @@ public:
 	void Dump( idFile* file ) const;
 	int ResolveLink( int node, const char* landmark ) const;
 	void PredictNext();
+	void RunFrame();
 	static uint64 Mix64( uint64 x );
 	static uint64 Hash( uint64 a, uint64 b, uint64 c, uint64 d );
 
@@ -135,7 +136,7 @@ public:
 	int sealedRequired;
 
 private:
-	void UpdateExitDoors();
+	void UpdateExitDoors( bool atLoad );
 	int AddNode( const idDeclMapGraph* decl, int kind, int depth );
 	const graphMap_t* NodeMap( const idDeclMapGraph* decl, int node ) const;
 	bool AddChild( const idDeclMapGraph* decl, int node, const graphLandmark_t& exit, const graphRule_t& rule );
@@ -144,6 +145,9 @@ private:
 	bool recipeValid, clientRecipe, suspended, recipeNewWorld, portalOpen;
 	idVec3 portalOrigin;
 	idList<byte, TAG_GAME> persistentHub;
+	idStr predictedMap; // last prediction sent; cleared per map load so each load announces its own
+	int predictedFrame;
+	bool predictionPending;
 };
 extern idMapGraphDirector mapGraphDirector;
 #endif

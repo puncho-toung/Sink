@@ -2188,7 +2188,7 @@ void idPlayer::Spawn()
 	tipUp = false;
 	objectiveUp = false;
 
-	if( inventory.levelTriggers.Num() )
+	if( inventory.levelTriggers.Num() || worldStore.IsActive() )	//puncho - P2.4 (bug review 2026-10-28): world mode keeps its level triggers in the director
 	{
 		PostEventMS( &EV_Player_LevelTrigger, 0 );
 	}
@@ -12561,6 +12561,12 @@ void idPlayer::Event_LevelTrigger()
 				ent->PostEventMS( &EV_Activate, 1, this );
 			}
 		}
+	}
+	//puncho - P2.4 (bug review 2026-10-28): the director's ACTIVATE effects for this map wait for a live player, which
+	// MapPopulate does not have yet; this is the stock point where a level trigger fires on arrival
+	if( worldStore.IsActive() )
+	{
+		mapGraphDirector.ApplyPending();
 	}
 }
 
