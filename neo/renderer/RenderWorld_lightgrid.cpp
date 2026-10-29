@@ -59,6 +59,13 @@ static const int MAX_LIGHTGRID_ATLAS_EDGE = 16384;
 static const int MAX_LIGHTGRID_ATLAS_SIZE	= 2048;
 static const int MAX_AREA_LIGHTGRID_POINTS	= ( MAX_LIGHTGRID_ATLAS_SIZE / LIGHTGRID_IRRADIANCE_SIZE ) * ( MAX_LIGHTGRID_ATLAS_SIZE / LIGHTGRID_IRRADIANCE_SIZE );
 
+//puncho - light-grid hints (P2 review): one atlas edge test for the bake's refusal, the stored-grid loaders and the
+// image load; the atlas lays x * z probes along its width and y down its height
+static bool LightGridAtlasTooLarge( const int gridBounds[3], int probeSize )
+{
+	return ( int64 )gridBounds[0] * gridBounds[2] * probeSize > MAX_LIGHTGRID_ATLAS_EDGE || ( int64 )gridBounds[1] * probeSize > MAX_LIGHTGRID_ATLAS_EDGE;
+}
+
 static idVec3 defaultLightGridSize = idVec3( 64, 64, 128 );
 
 static unsigned int LightGridMapCRC( int numAreas, const portalArea_t* areas )
@@ -125,7 +132,10 @@ void LightGrid::SetupLightGrid( const idBounds& bounds, const char* mapName, con
 			lightGridBounds[i] = ( maxs[i] - lightGridOrigin[i] ) / lightGridSize[i] + 1;
 		}
 
-		numGridPoints = lightGridBounds[0] * lightGridBounds[1] * lightGridBounds[2];
+		//puncho - light-grid hints (P2 review): saturate, as a small cell over an open area overflows the int product
+		// when r_lightGridAtlasEdgeRule is off; INT_MAX keeps the loop coarsening
+		const int64 gridPoints = ( int64 )lightGridBounds[0] * lightGridBounds[1] * lightGridBounds[2];
+		numGridPoints = gridPoints > INT_MAX ? INT_MAX : ( int )gridPoints;
 
 		atlasTooWide = r_lightGridAtlasEdgeRule.GetBool() &&
 			( ( int64 )lightGridBounds[0] * lightGridBounds[2] * LIGHTGRID_IRRADIANCE_SIZE > MAX_LIGHTGRID_ATLAS_EDGE ||
@@ -481,6 +491,14 @@ void idRenderWorldLocal::LoadLightGridImages()
 	{
 		portalArea_t* area = &portalAreas[i];
 
+		//puncho - light-grid hints (P2 review): no texture this wide can be created; the area renders without its
+		// grid until rebaked ( the loaders warned )
+		if( LightGridAtlasTooLarge( area->lightGrid.lightGridBounds, area->lightGrid.imageSingleProbeSize ) )
+		{
+			area->lightGrid.irradianceImage = NULL;
+			continue;
+		}
+
 		if( !area->lightGrid.irradianceImage )
 		{
 			filename.Format( "env/%s/area%i_lightgrid_amb", baseName.c_str(), i );
@@ -812,10 +830,9 @@ void idRenderWorldLocal::ParseLightGridPoints( idLexer* src, idFile* fileOut )
 		area->lightGrid.lightGridBounds[i] = src->ParseInt();
 	}
 
-	if( ( int64 )area->lightGrid.lightGridBounds[0] * area->lightGrid.lightGridBounds[2] * imageProbeSize > MAX_LIGHTGRID_ATLAS_EDGE ||
-		( int64 )area->lightGrid.lightGridBounds[1] * imageProbeSize > MAX_LIGHTGRID_ATLAS_EDGE )
+	if( LightGridAtlasTooLarge( area->lightGrid.lightGridBounds, imageProbeSize ) )
 	{
-		common->Warning( "light grid area %i stored atlas exceeds edge %i; rebake", areaIndex, MAX_LIGHTGRID_ATLAS_EDGE );
+		common->Warning( "light grid area %i stored atlas exceeds edge %i; its image is skipped, rebake", areaIndex, MAX_LIGHTGRID_ATLAS_EDGE );
 	}
 
 	area->lightGrid.lightGridPoints.SetNum( numLightGridPoints );
@@ -907,10 +924,9 @@ void idRenderWorldLocal::ReadBinaryLightGridPoints( idFile* file )
 	file->ReadBig( area->lightGrid.lightGridOrigin );
 	file->ReadBig( area->lightGrid.lightGridSize );
 	file->ReadBigArray( area->lightGrid.lightGridBounds, 3 );
-	if( ( int64 )area->lightGrid.lightGridBounds[0] * area->lightGrid.lightGridBounds[2] * imageProbeSize > MAX_LIGHTGRID_ATLAS_EDGE ||
-		( int64 )area->lightGrid.lightGridBounds[1] * imageProbeSize > MAX_LIGHTGRID_ATLAS_EDGE )
+	if( LightGridAtlasTooLarge( area->lightGrid.lightGridBounds, imageProbeSize ) )
 	{
-		common->Warning( "light grid area %i stored atlas exceeds edge %i; rebake", areaIndex, MAX_LIGHTGRID_ATLAS_EDGE );
+		common->Warning( "light grid area %i stored atlas exceeds edge %i; its image is skipped, rebake", areaIndex, MAX_LIGHTGRID_ATLAS_EDGE );
 	}
 
 
@@ -1271,14 +1287,22 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 				common->Warning( "light-grid hint entity %d ignored: area %d already uses entity %d", e, area, areaHintEntities[area] );
 				continue;
 			}
-			areaHintEntities[area] = e;
-			areaGridSizes[area] = size;
-			areaGridLimits[area] = args.GetInt( "limit", va( "%d", limit ) );
-			if( areaGridLimits[area] <= 0 )
+			//puncho start - light-grid hints (P2 review): a cell under 16 units drives the grid counts of an open area
+			// toward overflow, and a limit below 100 was silently the default and had no ceiling; clamp both to what
+			// SetupLightGrid and the atlas can take, and say so. No limit key keeps the bake's own limit
+			const idVec3 cellSize( Max( 16.0f, size.x ), Max( 16.0f, size.y ), Max( 16.0f, size.z ) );
+			const idKeyValue* limitKey = args.FindKey( "limit" );
+			const int hintLimit = limitKey != NULL ? atoi( limitKey->GetValue() ) : limit;
+			const int cellLimit = limitKey != NULL ? idMath::ClampInt( 100, MAX_AREA_LIGHTGRID_POINTS, hintLimit ) : limit;
+			if( cellSize != size || cellLimit != hintLimit )
 			{
-				areaGridLimits[area] = limit;
+				common->Warning( "light-grid hint entity %d clamped to gridSize >= 16 and limit %d to %d", e, 100, MAX_AREA_LIGHTGRID_POINTS );
 			}
-			common->Printf( "light-grid hint entity %d area %d grid %.0f %.0f %.0f limit %d\n", e, area, size.x, size.y, size.z, areaGridLimits[area] );
+			areaHintEntities[area] = e;
+			areaGridSizes[area] = cellSize;
+			areaGridLimits[area] = cellLimit;
+			common->Printf( "light-grid hint entity %d area %d grid %.0f %.0f %.0f limit %d\n", e, area, cellSize.x, cellSize.y, cellSize.z, areaGridLimits[area] );
+			//puncho end
 		}
 	}
 
@@ -1295,11 +1319,13 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 
 			area->lightGrid.SetupLightGrid( area->globalBounds, tr.primaryWorld->mapName, tr.primaryWorld, areaGridSizes[a], a, tr.primaryWorld->NumAreas(), areaGridLimits[a], false );
 
-			const int64 checkedAtlasWidth = ( int64 )area->lightGrid.lightGridBounds[0] * area->lightGrid.lightGridBounds[2] * LIGHTGRID_IRRADIANCE_SIZE;
-			const int64 checkedAtlasHeight = ( int64 )area->lightGrid.lightGridBounds[1] * LIGHTGRID_IRRADIANCE_SIZE;
-			if( r_lightGridAtlasEdgeRule.GetBool() && ( checkedAtlasWidth > MAX_LIGHTGRID_ATLAS_EDGE || checkedAtlasHeight > MAX_LIGHTGRID_ATLAS_EDGE ) )
+			//puncho - light-grid hints (P2 review): with r_lightGridAtlasEdgeRule on SetupLightGrid has already coarsened
+			// the grid to fit, so only the rule's off position reaches this; drop the points so the file stores no
+			// unbaked probes for the area, and the loaders skip its oversized bounds
+			if( LightGridAtlasTooLarge( area->lightGrid.lightGridBounds, LIGHTGRID_IRRADIANCE_SIZE ) )
 			{
 				idLib::Warning( "light grid area %i refused: atlas exceeds %i (lg_refused 1)", a, MAX_LIGHTGRID_ATLAS_EDGE );
+				area->lightGrid.lightGridPoints.Clear();
 				continue;
 			}
 
@@ -1337,11 +1363,13 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 
 			area->lightGrid.SetupLightGrid( area->globalBounds, tr.primaryWorld->mapName, tr.primaryWorld, areaGridSizes[a], a, tr.primaryWorld->NumAreas(), areaGridLimits[a], true );
 
-			const int64 checkedAtlasWidth = ( int64 )area->lightGrid.lightGridBounds[0] * area->lightGrid.lightGridBounds[2] * LIGHTGRID_IRRADIANCE_SIZE;
-			const int64 checkedAtlasHeight = ( int64 )area->lightGrid.lightGridBounds[1] * LIGHTGRID_IRRADIANCE_SIZE;
-			if( r_lightGridAtlasEdgeRule.GetBool() && ( checkedAtlasWidth > MAX_LIGHTGRID_ATLAS_EDGE || checkedAtlasHeight > MAX_LIGHTGRID_ATLAS_EDGE ) )
+			//puncho - light-grid hints (P2 review): with r_lightGridAtlasEdgeRule on SetupLightGrid has already coarsened
+			// the grid to fit, so only the rule's off position reaches this; drop the points so the file stores no
+			// unbaked probes for the area, and the loaders skip its oversized bounds
+			if( LightGridAtlasTooLarge( area->lightGrid.lightGridBounds, LIGHTGRID_IRRADIANCE_SIZE ) )
 			{
 				idLib::Warning( "light grid area %i refused: atlas exceeds %i (lg_refused 1)", a, MAX_LIGHTGRID_ATLAS_EDGE );
+				area->lightGrid.lightGridPoints.Clear();
 				continue;
 			}
 

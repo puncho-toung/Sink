@@ -189,7 +189,7 @@ void idMenuScreen_Shell_SystemOptions::Initialize( idMenuHandler* data )
 	control = new( TAG_SWF ) idMenuWidget_ControlButton();
 	control->SetOptionType( OPTION_SLIDER_BAR );
 	control->SetLabel( "View Distance" );
-	control->SetDescription( "Full detail from 1024 to 8192 units. Adjusting enables distance culling; distant lights fade beyond this radius." );
+	control->SetDescription( "Full detail from 1024 to 8192 units; distant lights fade beyond this radius. The top notch turns distance culling off." );
 	control->SetDataSource( &systemData, idMenuDataSource_SystemSettings::SYSTEM_FIELD_VIEWDISTANCE );
 	control->SetupEvents( 2, options->GetChildren().Num() );
 	control->AddEventAction( WIDGET_EVENT_PRESS ).Set( WIDGET_ACTION_COMMAND, idMenuDataSource_SystemSettings::SYSTEM_FIELD_VIEWDISTANCE );
@@ -695,8 +695,12 @@ void idMenuScreen_Shell_SystemOptions::idMenuDataSource_SystemSettings::AdjustFi
 		}
 		case SYSTEM_FIELD_VIEWDISTANCE:
 		{
-			r_viewDistance.SetFloat( idMath::ClampFloat( 1024.0f, 8192.0f, r_viewDistance.GetFloat() + adjustAmount * 71.68f ) );
-			r_distanceCull.SetBool( true );
+			//puncho - view distance (P2 review): whole notches, so a step always lands on the top one, and the top notch
+			// is r_distanceCull 0, the stock image; it used to switch the archived cull on for good and still cut at 9420
+			const int notch = r_distanceCull.GetBool() ? idMath::Ftoi( LinearAdjust( r_viewDistance.GetFloat(), 1024.0f, 8192.0f, 0.0f, 100.0f ) + 0.5f ) : 100;
+			const int adjusted = idMath::ClampInt( 0, 100, notch + adjustAmount );
+			r_viewDistance.SetFloat( LinearAdjust( ( float )adjusted, 0.0f, 100.0f, 1024.0f, 8192.0f ) );
+			r_distanceCull.SetBool( adjusted < 100 );
 			break;
 		}
 		case SYSTEM_FIELD_VOLUME:
@@ -891,7 +895,8 @@ idSWFScriptVar idMenuScreen_Shell_SystemOptions::idMenuDataSource_SystemSettings
 			return LinearAdjust( r_exposure.GetFloat(), 0.0f, 1.0f, 0.0f, 100.0f );
 
 		case SYSTEM_FIELD_VIEWDISTANCE:
-			return LinearAdjust( r_viewDistance.GetFloat(), 1024.0f, 8192.0f, 0.0f, 100.0f );
+			// the top notch is distance culling off, whatever r_viewDistance holds
+			return r_distanceCull.GetBool() ? LinearAdjust( r_viewDistance.GetFloat(), 1024.0f, 8192.0f, 0.0f, 100.0f ) : 100.0f;
 
 		case SYSTEM_FIELD_VOLUME:
 		{

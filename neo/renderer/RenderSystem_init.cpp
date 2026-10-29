@@ -118,7 +118,7 @@ idCVar r_mocTriangleBudget( "r_mocTriangleBudget", "0", CVAR_RENDERER | CVAR_INT
 idCVar r_mocFixes( "r_mocFixes", "0", CVAR_RENDERER | CVAR_INTEGER, "MOC fixes: 1 spot depth, 2 whole tiles, 4 near-plane proxies, 8 culled-light log" );
 idCVar r_lightGatherGrid( "r_lightGatherGrid", "0", CVAR_RENDERER | CVAR_INTEGER, "minimum area refs for spatial light gather; zero off" );
 idCVar r_lightGatherCell( "r_lightGatherCell", "1024", CVAR_RENDERER | CVAR_FLOAT, "minimum light-gather XY cell extent" );
-idCVar r_lightGatherCompare( "r_lightGatherCompare", "0", CVAR_RENDERER | CVAR_BOOL, "validate spatial gather exclusions with exact light bounds test" );
+idCVar r_lightGatherCompare( "r_lightGatherCompare", "0", CVAR_RENDERER | CVAR_BOOL, "count refs the spatial gather drops that the plain walk would pass at its table or light bounds test" );
 idCVar r_modelLod( "r_modelLod", "0", CVAR_RENDERER | CVAR_BOOL, "discover model LOD siblings at next map load" );
 idCVar r_modelLodPixels( "r_modelLodPixels", "256 128 64", CVAR_RENDERER | 0, "LOD projected diameter thresholds" );
 idCVar r_modelLodScale( "r_modelLodScale", "1", CVAR_RENDERER | CVAR_FLOAT, "scale model LOD thresholds" );
@@ -128,7 +128,7 @@ idCVar r_distanceCull( "r_distanceCull", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVA
 idCVar r_cullDistanceScale( "r_cullDistanceScale", "1", CVAR_RENDERER | CVAR_FLOAT, "scale authored visibility distances" );
 idCVar r_cullPixelsScale( "r_cullPixelsScale", "1", CVAR_RENDERER | CVAR_FLOAT, "scale authored minimum projected sizes" );
 idCVar r_cullFadeFraction( "r_cullFadeFraction", "0.15", CVAR_RENDERER | CVAR_FLOAT, "fraction of light visibility range faded" );
-idCVar r_showDistanceCull( "r_showDistanceCull", "0", CVAR_RENDERER | CVAR_INTEGER, "1: counters, 2: culled entity bounds" );
+idCVar r_showDistanceCull( "r_showDistanceCull", "0", CVAR_RENDERER | CVAR_INTEGER, "1: print the cull counters each frame, 2: also draw culled entity bounds" );
 idCVar r_showOpenStats( "r_showOpenStats", "0", CVAR_RENDERER | CVAR_BOOL, "collect open-space projected-size census" );
 idCVar r_lodBias( "r_lodBias", "0.5", CVAR_RENDERER | CVAR_ARCHIVE, "UNUSED: image lod bias" );
 // RB end

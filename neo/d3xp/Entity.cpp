@@ -835,6 +835,11 @@ idEntity::~idEntity()
 idEntity::Save
 ================
 */
+//puncho - dormancy (P2 review): the wake request and the wake deferral time ride the save from the build after
+// BUILD_NUMBER_SAVE_VERSION_CORPSE_POLICY (asked of BuildVersion.h's owner as BUILD_NUMBER_SAVE_VERSION_DORMANT_WAKE).
+// Save tests it as well as Restore, so until BUILD_NUMBER reaches it neither side touches the stream
+static const int SAVE_VERSION_DORMANT_WAKE = BUILD_NUMBER_SAVE_VERSION_CORPSE_POLICY + 1;
+
 void idEntity::Save( idSaveGame* savefile ) const
 {
 	int i, j;
@@ -849,6 +854,14 @@ void idEntity::Save( idSaveGame* savefile ) const
 
 	savefile->WriteInt( thinkFlags );
 	savefile->WriteInt( dormantStart );
+	//puncho start - dormancy (P2 review): a wake requested after the entity's own think, saved before the next tic,
+	// must survive the load, or the entity sleeps on while unseen or outside its radius
+	if( savefile->GetBuildNumber() >= SAVE_VERSION_DORMANT_WAKE )
+	{
+		savefile->WriteBool( dormantWakeRequested );
+		savefile->WriteInt( dormantWakeDeferredAt );
+	}
+	//puncho end
 	savefile->WriteBool( cinematic );
 
 	savefile->WriteObject( cameraTarget );
@@ -934,6 +947,13 @@ void idEntity::Restore( idRestoreGame* savefile )
 	dormantEngagedScale = Max( 0.0f, spawnArgs.GetFloat( "dormant_engagedScale", "2" ) );
 	dormantWakeDeferredAt = 0;
 	dormantWakeRequested = false;
+	//puncho start - dormancy (P2 review)
+	if( savefile->GetBuildNumber() >= SAVE_VERSION_DORMANT_WAKE )
+	{
+		savefile->ReadBool( dormantWakeRequested );
+		savefile->ReadInt( dormantWakeDeferredAt );
+	}
+	//puncho end
 	savefile->ReadBool( cinematic );
 
 	savefile->ReadObject( reinterpret_cast<idClass*&>( cameraTarget ) );

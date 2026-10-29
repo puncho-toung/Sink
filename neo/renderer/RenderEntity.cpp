@@ -54,6 +54,7 @@ idRenderEntityLocal::idRenderEntityLocal()
 	globalReferenceBounds	= bounds_zero;
 	viewCount				= 0;
 	viewEntity				= NULL;
+	cullCountView			= 0;
 	decals					= NULL;
 	overlays				= NULL;
 	entityRefs				= NULL;
@@ -107,6 +108,7 @@ idRenderLightLocal::idRenderLightLocal()
 	globalLightOrigin		= vec3_zero;
 	viewCount				= 0;
 	viewLight				= NULL;
+	cullCountView			= 0;
 	references				= NULL;
 	foggedPortals			= NULL;
 	firstInteraction		= NULL;

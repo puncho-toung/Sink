@@ -1014,10 +1014,11 @@ void R_RenderView( viewDef_t* parms )
 
 	// identify all the visible portal areas, and create view lights and view entities
 	// for all the the entityDefs and lightDefs that are in the visible portal areas
+	//puncho - instruments (P2 review): summed over the frame's views like the other tr.pc counters (zeroed per
+	// frame); subviews render inside this R_RenderView, and assigning let a camera screen's cost replace the view's
 	const uint64 findViewStart = Sys_Microseconds();
 	static_cast<idRenderWorldLocal*>( parms->renderWorld )->FindViewLightsAndEntities();
-	tr.pc.usFindView = Sys_Microseconds() - findViewStart;
-	tr.pc.c_viewEntsUnder4px = tr.pc.c_viewEntsUnder16px = tr.pc.c_viewEntsBeyond8k = 0;
+	tr.pc.usFindView += Sys_Microseconds() - findViewStart;
 	if( r_showOpenStats.GetBool() )
 	{
 		for( const viewEntity_t* entity = tr.viewDef->viewEntitys; entity != NULL; entity = entity->next )
@@ -1041,7 +1042,7 @@ void R_RenderView( viewDef_t* parms )
 	// add any pre-generated light shadows, and calculate the light shader values
 	const uint64 addLightsStart = Sys_Microseconds();
 	R_AddLights();
-	tr.pc.usAddLights = Sys_Microseconds() - addLightsStart;
+	tr.pc.usAddLights += Sys_Microseconds() - addLightsStart;
 
 	// adds ambient surfaces and create any necessary interaction surfaces to add to the light lists
 	R_AddModels();

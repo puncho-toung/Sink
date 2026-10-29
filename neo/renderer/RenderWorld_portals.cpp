@@ -335,6 +335,13 @@ void idRenderWorldLocal::AddAreaViewEntities( int areaNum, const portalStack_t* 
 		int cullReason;
 		if( R_CullEntityDistance( entity, tr.viewDef, cullReason ) )
 		{
+			//puncho - instruments (P2 review): the cull depends on the entity and the view, not the portal chain,
+			// so count it once per view, not once per area visit
+			if( entity->cullCountView == tr.viewCount )
+			{
+				continue;
+			}
+			entity->cullCountView = tr.viewCount;
 			if( cullReason == 1 )
 			{
 				tr.pc.c_cullDistEntities++;
@@ -491,7 +498,12 @@ void idRenderWorldLocal::AddAreaViewLights( int areaNum, const portalStack_t* ps
 			fade = R_VisibilityFade( light->globalLightBounds, light->parms.maxVisDist, light->parms.minVisPixels, tr.viewDef, reason );
 			if( fade <= 0.0f )
 			{
-				tr.pc.c_cullLights++;
+				//puncho - instruments (P2 review): once per light and view, as for entities
+				if( light->cullCountView != tr.viewCount )
+				{
+					light->cullCountView = tr.viewCount;
+					tr.pc.c_cullLights++;
+				}
 				continue;
 			}
 		}

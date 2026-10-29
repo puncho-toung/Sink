@@ -143,7 +143,7 @@ two or more lights.
 ===================
 */
 #if defined(USE_INTRINSICS_SSE)
-void R_RenderSingleModel( viewEntity_t* vEntity )
+void R_RenderSingleModel( viewEntity_t* vEntity, int& occluderTris )
 {
 	// we will add all interaction surfs here, to be chained to the lights in later serial code
 	vEntity->drawSurfs = NULL;
@@ -416,12 +416,12 @@ void R_RenderSingleModel( viewEntity_t* vEntity )
 					}
 				}
 				const int triangles = tri->numIndexes / 3;
-				if( r_mocTriangleBudget.GetInteger() > 0 && triangles > r_mocTriangleBudget.GetInteger() - tr.pc.c_mocOccluderTris )
+				if( r_mocTriangleBudget.GetInteger() > 0 && triangles > r_mocTriangleBudget.GetInteger() - occluderTris )
 				{
 					tr.pc.c_mocSkippedBudget++;
 					continue;
 				}
-				tr.pc.c_mocOccluderTris += triangles;
+				occluderTris += triangles;
 				tr.pc.c_mocIndexes += tri->numIndexes;
 				tr.pc.c_mocVerts += tri->numIndexes;
 
@@ -660,6 +660,9 @@ void R_FillMaskedOcclusionBufferWithModels( viewDef_t* viewDef )
 	else
 	*/
 	{
+		//puncho - MOC occluders (P2 review): the triangle budget is the fill's own state, kept here and not in the
+		// perf counter it is reported through, so it holds whatever reads or resets tr.pc
+		int occluderTris = 0;
 		for( viewEntity_t* vEntity = tr.viewDef->viewEntitys; vEntity != NULL; vEntity = vEntity->next )
 		{
 			const idRenderModel* model = vEntity->entityDef->parms.hModel;
@@ -670,8 +673,9 @@ void R_FillMaskedOcclusionBufferWithModels( viewDef_t* viewDef )
 				//continue;
 			}
 
-			R_RenderSingleModel( vEntity );
+			R_RenderSingleModel( vEntity, occluderTris );
 		}
+		tr.pc.c_mocOccluderTris = occluderTris;
 	}
 
 #if MOC_MULTITHREADED

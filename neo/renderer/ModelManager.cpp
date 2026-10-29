@@ -85,7 +85,8 @@ private:
 	idRenderModel* 						spriteModel;
 	bool								modelLodEnabled;
 	bool								loadingLods;
-	void								LoadModelLods( idRenderModel* model );
+	idList<int, TAG_MODEL>				lodResolvedLoad;		// parallel to models: modelLevelLoadCount of its last LoadModelLods
+	void								LoadModelLods( int modelIndex );
 	bool								insideLevelLoad;		// don't actually load now
 	nvrhi::CommandListHandle			commandList;
 
@@ -100,6 +101,8 @@ private:
 
 idRenderModelManagerLocal	localModelManager;
 idRenderModelManager* 		renderModelManager = &localModelManager;
+
+static int modelLevelLoadCount;
 
 // Resident-only lookup: no reload or reference side effects.
 bool Prefetch_ModelResident( const char* name )
@@ -321,6 +324,7 @@ idRenderModelManagerLocal::Shutdown
 void idRenderModelManagerLocal::Shutdown()
 {
 	models.DeleteContents( true );
+	lodResolvedLoad.Clear();
 	hash.Free();
 	commandList.Reset();
 }
@@ -330,9 +334,17 @@ void idRenderModelManagerLocal::Shutdown()
 idRenderModelManagerLocal::GetModel
 =================
 */
-void idRenderModelManagerLocal::LoadModelLods( idRenderModel* model )
+void idRenderModelManagerLocal::LoadModelLods( int modelIndex )
 {
-	if( loadingLods || !insideLevelLoad || !modelLodEnabled || model->IsDefaultModel() || model->IsStaticWorldModel() || !model->IsReloadable() )
+	if( loadingLods || !insideLevelLoad || !modelLodEnabled || lodResolvedLoad[modelIndex] == modelLevelLoadCount )
+	{
+		return;
+	}
+	//puncho - model LOD (P2 review): resolve each model once per level load; every GetModel hit used to reset the
+	// chain and probe the filesystem for a missing _lod1 again. The sibling loads below may grow both lists
+	lodResolvedLoad[modelIndex] = modelLevelLoadCount;
+	idRenderModel* model = models[modelIndex];
+	if( model->IsDefaultModel() || model->IsStaticWorldModel() || !model->IsReloadable() )
 	{
 		return;
 	}
@@ -468,7 +480,7 @@ idRenderModel* idRenderModelManagerLocal::GetModel( const char* _modelName, bool
 			}
 
 			model->SetLevelLoadReferenced( true );
-			LoadModelLods( model );
+			LoadModelLods( i );
 			return model;
 		}
 	}
@@ -649,7 +661,7 @@ idRenderModel* idRenderModelManagerLocal::GetModel( const char* _modelName, bool
 	// RB end
 
 	AddModel( model );
-	LoadModelLods( model );
+	LoadModelLods( models.Num() - 1 );
 
 	return model;
 }
@@ -739,6 +751,7 @@ idRenderModelManagerLocal::AddModel
 void idRenderModelManagerLocal::AddModel( idRenderModel* model )
 {
 	hash.Add( hash.GenerateKey( model->Name(), false ), models.Append( model ) );
+	lodResolvedLoad.Append( 0 );
 }
 
 /*
@@ -753,6 +766,7 @@ void idRenderModelManagerLocal::RemoveModel( idRenderModel* model )
 	{
 		hash.RemoveIndex( hash.GenerateKey( model->Name(), false ), index );
 		models.RemoveIndex( index );
+		lodResolvedLoad.RemoveIndex( index );
 	}
 }
 
@@ -887,8 +901,6 @@ void idRenderModelManagerLocal::FreeModelVertexCaches()
 idRenderModelManagerLocal::BeginLevelLoad
 =================
 */
-static int modelLevelLoadCount;
-
 void idRenderModelManagerLocal::BeginLevelLoad()
 {
 	modelLevelLoadCount++;

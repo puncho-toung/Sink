@@ -636,6 +636,22 @@ static void R_AddSingleLight( viewLight_t* vLight )
 		}
 
 		const lightGatherArea_t* grid = viewDef->lightGatherAreas != NULL ? &viewDef->lightGatherAreas[area->areaNum] : NULL;
+		//puncho start - light gather (P2 review): a light over most of a gridded area ( a huge or parallel light ) costs
+		// more through the count, fill and sort below than through the plain walk, which visits the same refs in the
+		// same order, so it takes the plain walk
+		if( grid != NULL && grid->refs != NULL )
+		{
+			const idBounds& lightBounds = light->globalLightBounds;
+			const float gridWidth = grid->width * grid->cellSize;
+			const float gridHeight = grid->height * grid->cellSize;
+			const float coverX = Min( lightBounds[1].x, grid->origin.x + gridWidth ) - Max( lightBounds[0].x, grid->origin.x );
+			const float coverY = Min( lightBounds[1].y, grid->origin.y + gridHeight ) - Max( lightBounds[0].y, grid->origin.y );
+			if( coverX > 0.0f && coverY > 0.0f && coverX * coverY * 2.0f > gridWidth * gridHeight )
+			{
+				grid = NULL;
+			}
+		}
+		//puncho end
 		int* selected = NULL;
 		int selectedCount = 0;
 		if( grid != NULL && grid->refs != NULL )
@@ -689,7 +705,14 @@ static void R_AddSingleLight( viewLight_t* vLight )
 						continue;
 					}
 					const idRenderEntityLocal* entity = grid->refs[i].entity;
-					if( !R_CullModelBoundsToLight( light, entity->localReferenceBounds, entity->modelRenderMatrix ) )
+					//puncho - light gather (P2 review): mirror the walk's table and bounds tests below. It takes a table
+					// entry without a bounds test, so a dropped ref with a live or EMPTY entry ( bar a static model's
+					// skipped EMPTY ) is a mismatch even when its bounds miss the light: it lights nothing, but it changes
+					// entityInteractionState and the shadow-only list
+					const idInteraction* entry = light->world->GetInteraction( light->index, entity->index );
+					const idRenderModel* entryModel = entity->parms.hModel;
+					const bool boundsTested = entry == NULL || ( entry == INTERACTION_EMPTY && entryModel != NULL && !entryModel->IsDynamicModel() );
+					if( !boundsTested || !R_CullModelBoundsToLight( light, entity->localReferenceBounds, entity->modelRenderMatrix ) )
 					{
 						vLight->gatherMismatch++;
 					}

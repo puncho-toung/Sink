@@ -97,6 +97,14 @@ void idRenderSystemLocal::PrintPerformanceCounters()
 						pc.c_shadowViewEntities, pc.c_viewLights, pc.c_mathViewLights );
 		//puncho end
 	}
+	//puncho start - instruments (P2 review): r_showDistanceCull 1 prints the open-space cull counters, 2 also draws
+	// the culled entities' bounds ( AddAreaViewEntities )
+	if( r_showDistanceCull.GetInteger() > 0 )
+	{
+		common->Printf( "distanceCull entities:%i pixelCull entities:%i  culledLights:%i fadedLights:%i  cullShadowSkips:%i\n",
+						pc.c_cullDistEntities, pc.c_cullPixelEntities, pc.c_cullLights, pc.c_fadedLights, pc.c_cullShadowSkips );
+	}
+	//puncho end
 	if( r_showUpdates.GetBool() )
 	{
 		common->Printf( "entityUpdates:%i  entityRefs:%i  lightUpdates:%i  lightRefs:%i\n",

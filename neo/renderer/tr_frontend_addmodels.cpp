@@ -529,13 +529,16 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 	vEntity->lodLevel = lodLevel;
 	if( lodLevel > 0 )
 	{
+		//puncho - model LOD (P2 review): binary static models may store a surface without geometry
 		for( int i = 0; i < baseGeometry->NumSurfaces(); i++ )
 		{
-			vEntity->lodTrisSaved += baseGeometry->Surface( i )->geometry->numIndexes / 3;
+			const srfTriangles_t* geometry = baseGeometry->Surface( i )->geometry;
+			vEntity->lodTrisSaved += geometry != NULL ? geometry->numIndexes / 3 : 0;
 		}
 		for( int i = 0; i < model->NumSurfaces(); i++ )
 		{
-			vEntity->lodTrisSaved -= model->Surface( i )->geometry->numIndexes / 3;
+			const srfTriangles_t* geometry = model->Surface( i )->geometry;
+			vEntity->lodTrisSaved -= geometry != NULL ? geometry->numIndexes / 3 : 0;
 		}
 		// Static interaction surface indices belong to the base mesh, never to its sibling.
 		for( int i = 0; i < numContactedLights; i++ )

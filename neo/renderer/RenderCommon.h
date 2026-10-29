@@ -211,6 +211,7 @@ public:
 
 	int						viewCount;				// if == tr.viewCount, the light is on the viewDef->viewLights list
 	viewLight_t* 			viewLight;
+	int						cullCountView;			// tr.viewCount of the view that last counted its distance cull
 
 	areaReference_t* 		references;				// each area the light is present in will have a lightRef
 	idInteraction* 			firstInteraction;		// doubly linked list
@@ -317,6 +318,7 @@ public:
 	int						viewCount;				// if tr.viewCount == viewCount, viewEntity is valid,
 	// but the entity may still be off screen
 	viewEntity_t* 			viewEntity;				// in frame temporary memory
+	int						cullCountView;			// tr.viewCount of the view that last counted its distance cull
 
 	idRenderModelDecal* 	decals;					// decals that have been projected on this model
 	idRenderModelOverlay* 	overlays;				// blood overlays on animated models
