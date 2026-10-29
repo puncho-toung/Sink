@@ -835,10 +835,8 @@ idEntity::~idEntity()
 idEntity::Save
 ================
 */
-//puncho - dormancy (P2 review): the wake request and the wake deferral time ride the save from the build after
-// BUILD_NUMBER_SAVE_VERSION_CORPSE_POLICY (asked of BuildVersion.h's owner as BUILD_NUMBER_SAVE_VERSION_DORMANT_WAKE).
-// Save tests it as well as Restore, so until BUILD_NUMBER reaches it neither side touches the stream
-static const int SAVE_VERSION_DORMANT_WAKE = BUILD_NUMBER_SAVE_VERSION_CORPSE_POLICY + 1;
+//puncho - dormancy (P2 review): the wake request and the wake deferral time ride the save from DORMANT_WAKE
+static const int SAVE_VERSION_DORMANT_WAKE = BUILD_NUMBER_SAVE_VERSION_DORMANT_WAKE;
 
 void idEntity::Save( idSaveGame* savefile ) const
 {

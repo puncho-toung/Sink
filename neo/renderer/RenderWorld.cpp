@@ -2356,7 +2356,8 @@ void idRenderWorldLocal::FinishInteractionSlice()
 	const uint64 elapsed = Sys_Microseconds() - start;
 	lazyInteractionTotalUs += elapsed;
 	common->ReportTransitionMetric( TRANSITION_INTER_TOTAL_US, lazyInteractionTotalUs );
-	common->Printf( "TRANSITION interaction_slice_us=%llu remaining=%d\n", ( unsigned long long )elapsed, lazyInteractionLights.Num() - lazyInteractionCursor );
+	//puncho - transitions (stage 3 review): no console line per slice (one every frame while slicing); the completion
+	// line below reports the total
 	if( lazyInteractionCursor == lazyInteractionLights.Num() )
 	{
 		generateAllInteractionsCalled = true;

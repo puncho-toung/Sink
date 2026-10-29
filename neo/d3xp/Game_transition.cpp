@@ -448,7 +448,8 @@ void idGameLocal::CommitMapTransition()
 			for( int i = 0; i < groupCount; i++ )
 			{
 				idFile_Memory bytes;
-				if( !worldStore.WriteCreated( entities[group[i]], depart->origin, bytes ) || bytes.Length() > MAX_TRANSITION_RECORD_BYTES )
+				//puncho - P2.4 (bug review 2026-10-28): sizing only; a rejected team keeps no created identity
+				if( !worldStore.MeasureCreated( entities[group[i]], depart->origin, bytes ) || bytes.Length() > MAX_TRANSITION_RECORD_BYTES )
 				{
 					valid = false; break;
 				}

@@ -161,6 +161,7 @@ private:
 	declType_t					type;					// decl type
 	declState_t					declState;				// decl state
 	int							index;					// index in the per-type list
+	int							lastUseLoad;			//puncho - transitions (stage 3 review): last level load period the decl was referenced in
 
 	bool						parsedOutsideLevelLoad;	// these decls will never be purged
 	bool						everReferenced;			// set to true if the decl was ever used
@@ -1341,6 +1342,7 @@ idDeclManagerLocal::BeginLevelLoad
 static idCVar decl_keepInWorld( "decl_keepInWorld", "0", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "retain parsed decls: 1 game-driven, 2 all except save loads", 0, 2 );
 static thread_local int declParsingType = -1;
 static int declParsedCount, declTouchMissing;
+static int declLevelLoadCount;
 static bool declMissingReported[DECL_MAX_TYPES];
 
 void DeclMediaLookup()
@@ -1370,6 +1372,10 @@ void idDeclManagerLocal::BeginLevelLoad()
 	const bool keep = ( decl_keepInWorld.GetInteger() == 1 && common->IsGameDrivenLoad() ) || ( decl_keepInWorld.GetInteger() == 2 && !common->IsSaveGameLoad() );
 	common->Printf( "DECLCACHE keep=%d\n", keep );
 	insideLevelLoad = true;
+	//puncho - transitions (stage 3 review): a retained decl is purged once unused for the asset grace (at least one load
+	// period), as the image, model, sample and GUI managers age theirs; it had no age bound
+	declLevelLoadCount++;
+	const int keepLoads = Max( 1, common->LevelKeepGrace() );
 
 	// clear all the referencedThisLevel flags and purge all the data
 	// so the next reference will cause a reparse
@@ -1381,7 +1387,18 @@ void idDeclManagerLocal::BeginLevelLoad()
 			idDeclLocal* decl = linearLists[i][j];
 			if( keep )
 			{
-				decl->referencedThisLevel = false;
+				if( decl->referencedThisLevel )
+				{
+					decl->lastUseLoad = declLevelLoadCount - 1;
+				}
+				if( declLevelLoadCount - decl->lastUseLoad > keepLoads )
+				{
+					decl->Purge();
+				}
+				else
+				{
+					decl->referencedThisLevel = false;
+				}
 			}
 			else
 			{
@@ -5448,6 +5465,7 @@ idDeclLocal::idDeclLocal()
 	declState = DS_UNPARSED;
 	parsedOutsideLevelLoad = false;
 	referencedThisLevel = false;
+	lastUseLoad = 0;
 	everReferenced = false;
 	redefinedInReload = false;
 	nextInFile = NULL;

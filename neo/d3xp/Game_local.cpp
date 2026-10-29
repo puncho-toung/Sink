@@ -435,7 +435,7 @@ void idGameLocal::Shutdown()
 
 	MapShutdown();
 	mapGraphDirector.Shutdown();
-	worldStore.Clear();
+	worldStore.Shutdown();	//puncho - P2.4 (bug review 2026-10-28): also frees the landmark and volume tables Clear keeps
 
 	//puncho start - ai-harness: MapShutdown flushed the rows; the file itself lives until the game shuts down
 	if( aiProfileFile != NULL )
@@ -509,7 +509,8 @@ the session may have written some data to the file already
 */
 void idGameLocal::SaveGame( idFile* f, idFile* strings )
 {
-	// Record cap eviction must finish before the save object list captures pointers.
+	// The save commits the current map's record first; that commit leaves corpses over the cap out of the record and
+	// never deletes them from the game being saved.
 	worldStore.PrepareSave();
 	int i;
 	idEntity* ent;
@@ -1968,9 +1969,10 @@ idGameLocal::MapShutdown
 */
 void idGameLocal::MapShutdown()
 {
-	// Clients do not execute the server's transition commit. Preserve their local
-	// emitters at the same pre-delete boundary, only for an actual transition load.
-	if( common->IsClient() && common->IsGameDrivenLoad() && session->GetState() == idSession::LOADING && gameSoundWorld != NULL )
+	//puncho - transitions (stage 3 review): host and clients carry their speakers' emitters here, at the pre-delete
+	// boundary of an accepted transition load; the host no longer detaches them at commit, where a refused change left
+	// them playing ownerless
+	if( common->IsGameDrivenLoad() && session->GetState() == idSession::LOADING && gameSoundWorld != NULL )
 	{
 		CarryTransitionSounds();
 	}
@@ -3214,6 +3216,9 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			SelectTimeGroup( true );
 			idEvent::ServiceFastEvents();
 			SelectTimeGroup( false );
+
+			//puncho - P2.4 (bug review 2026-10-28): announces a prefetch prediction a flag changed after the frame's first
+			mapGraphDirector.RunFrame();
 
 			timer_events.Stop();
 

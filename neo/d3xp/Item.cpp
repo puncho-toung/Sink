@@ -456,6 +456,9 @@ bool idItem::Pickup( idPlayer* player )
 		return false;
 	}
 
+	//puncho - P2.4 (bug review 2026-10-28): the world record removes a taken item on revisit by this mark, not by IsHidden
+	worldStore.MarkTaken( this );
+
 	// trigger our targets
 	ActivateTargets( player );
 
