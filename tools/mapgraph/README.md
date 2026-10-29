@@ -127,7 +127,9 @@ resolve in that segment. `sealed_by` resolves to and rewrites a local entity nam
 Kind names remain global vocabulary. External `link` strings are rejected in v1;
 connect the generated map through the normal external mapGraph declaration.
 The manifest exposes `landmark_ids` for that declaration. Point and brush landmarks
-share the normal entity/primitive transform rules. This does not bypass the engine
+share the normal entity/primitive transform rules: a brush landmark or carry volume
+keeps local planes and moves with its `origin`, and the game reads it at its planes
+plus that origin (`idWorldStore::ReadMapData`). This does not bypass the engine
 kit checker's winding, carry-volume, sealing-door or graph grammar checks.
 
 Three complete recipes `compile_c0.json`, `compile_c1.json`, `compile_c2.json` are
@@ -151,3 +153,17 @@ out of the generated map until a mapGraph transition is configured; it is not an
 internal room-connection cap. These coordinates are intended smoke-test inputs,
 not evidence that the engine has run them. Staging files are copied to the
 manifest's exact canonical destination before dmap/bake, as described above.
+
+## Authoring segments
+
+Segments are Doom 3 `Version 2` maps with `brushDef3` brushes. DarkRadiant writes
+that format; so does a text editor. The project's TrenchBroom configuration reads and
+writes only "Doom3 (Valve)", which is Valve 220 without a `Version` line, and the engine's
+own map writer emits `Version 3`; the composer accepts neither in v1, and no tool
+converts Valve 220 to `brushDef3`. Author segments, and edit the
+`prefabs/landmarks` doorways, in DarkRadiant or by hand until a Valve 220 reader lands.
+Such a reader would translate the three plane points of world and entity brushes alike
+(Valve 220 entity planes are absolute; the engine subtracts the origin), shift a world
+side's offsets by minus the texture axis over its scale dot translation, with no origin
+term (`GetTextureVectors`), keep an entity side's offsets (its local coordinates do not
+change), and drop the `_tb_` group and layer keys.

@@ -3154,6 +3154,10 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 	solidClassNames.AddUnique( "func_group" );
 	solidClassNames.AddUnique( "func_riser" );
 
+	//puncho - P2.4b review: procedural node maps need the brush form (MapGraphCheck K3), which a point class
+	// cannot hold in TrenchBroom; persistent maps may still write the point form by hand
+	solidClassNames.AddUnique( "info_landmark" );
+
 	for( int f = 0; f < filenames.Num(); f++ )
 	{
 		// the classes written to this file

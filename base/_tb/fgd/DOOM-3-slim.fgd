@@ -4205,7 +4205,7 @@ Prefer func_group for unreferenced brush detail. spawnSkipStatics may omit inlin
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
 ]
 
-@PointClass color(0 255 255) = info_landmark : "Map graph doorway; landmark identity survives editor group renames"
+@SolidClass color(0 255 255) = info_landmark : "Map graph doorway; landmark identity survives editor group renames"
 [
 	dmapOnly(string) readonly : "" : "1"
 	radius(float) : "Arrival placement radius" : 256
