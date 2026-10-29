@@ -100,10 +100,12 @@ void R_FreeEntityDefDerivedData( idRenderEntityLocal* def, bool keepDecals, bool
 	{
 		delete def->cachedDynamicModel;
 		def->cachedDynamicModel = NULL;
-		delete def->lodDynamicModel;
-		def->lodDynamicModel = NULL;
-		def->lodDynamicModelFrameCount = 0;
-		def->lodDynamicLevel = 0;
+		for( int i = 0; i < 3; i++ )
+		{
+			delete def->lodDynamicModel[i];
+			def->lodDynamicModel[i] = NULL;
+			def->lodDynamicModelFrameCount[i] = 0;
+		}
 		def->lodLevel = 0;
 	}
 

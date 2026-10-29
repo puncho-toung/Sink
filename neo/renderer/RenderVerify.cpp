@@ -549,7 +549,8 @@ CONSOLE_COMMAND( verifyLodTrace, "trace a model by name using local endpoints: v
 		matched++;
 		idRenderModel* base = R_EntityDefDynamicModel( def );
 		const bool baseIdentity = base != NULL && ( def->parms.hModel->IsDynamicModel() == DM_STATIC ?
-			base == def->parms.hModel : base == def->cachedDynamicModel && base != def->lodDynamicModel );
+			base == def->parms.hModel : base == def->cachedDynamicModel && base != def->lodDynamicModel[0] &&
+			base != def->lodDynamicModel[1] && base != def->lodDynamicModel[2] );
 		int triangles = 0;
 		if( base != NULL )
 		{

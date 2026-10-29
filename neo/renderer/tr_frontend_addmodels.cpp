@@ -81,7 +81,10 @@ void R_ClearEntityDefDynamicModel( idRenderEntityLocal* def )
 	}
 	def->dynamicModelFrameCount = 0;
 	// Retain sibling storage through pose updates, exactly like cachedDynamicModel.
-	def->lodDynamicModelFrameCount = 0;
+	for( int i = 0; i < 3; i++ )
+	{
+		def->lodDynamicModelFrameCount[i] = 0;
+	}
 }
 
 /*
@@ -500,20 +503,17 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 			idRenderModel* sibling = source->Lod( lodLevel );
 			if( sibling->IsDynamicModel() != DM_STATIC )
 			{
-				if( entityDef->lodDynamicLevel != lodLevel )
+				//puncho - model LOD (P2 review): one snapshot per level, skinned once per frame as stock skins
+				// cachedDynamicModel. A view and a subview that pick different levels in one frame each keep their
+				// own, so neither deletes the model the other's drawSurfs point into, nor rebuilds it on the heap
+				const int slot = lodLevel - 1;
+				if( entityDef->lodDynamicModelFrameCount[slot] != tr.frameCount )
 				{
-					delete entityDef->lodDynamicModel;
-					entityDef->lodDynamicModel = NULL;
-					entityDef->lodDynamicModelFrameCount = 0;
-					entityDef->lodDynamicLevel = lodLevel;
+					vEntity->lodCacheBuilds += entityDef->lodDynamicModel[slot] == NULL;
+					entityDef->lodDynamicModel[slot] = sibling->InstantiateDynamicModel( renderEntity, viewDef, entityDef->lodDynamicModel[slot] );
+					entityDef->lodDynamicModelFrameCount[slot] = tr.frameCount;
 				}
-				if( entityDef->lodDynamicModelFrameCount != tr.viewCount )
-				{
-					vEntity->lodCacheBuilds += entityDef->lodDynamicModel == NULL;
-					entityDef->lodDynamicModel = sibling->InstantiateDynamicModel( renderEntity, viewDef, entityDef->lodDynamicModel );
-					entityDef->lodDynamicModelFrameCount = tr.viewCount;
-				}
-				model = entityDef->lodDynamicModel;
+				model = entityDef->lodDynamicModel[slot];
 			}
 			else
 			{

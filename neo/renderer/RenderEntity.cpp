@@ -43,9 +43,11 @@ idRenderEntityLocal::idRenderEntityLocal()
 	dynamicModel			= NULL;
 	dynamicModelFrameCount	= 0;
 	cachedDynamicModel		= NULL;
-	lodDynamicModel = NULL;
-	lodDynamicModelFrameCount = 0;
-	lodDynamicLevel = 0;
+	for( int i = 0; i < 3; i++ )
+	{
+		lodDynamicModel[i] = NULL;
+		lodDynamicModelFrameCount[i] = 0;
+	}
 	lodLevel = 0;
 	lodSwitchFrame = -100;
 	localReferenceBounds	= bounds_zero;

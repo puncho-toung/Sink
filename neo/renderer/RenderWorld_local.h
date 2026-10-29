@@ -307,6 +307,7 @@ public:
 	bool				interactionIndexVerify;
 	mutable idSysInterlockedInteger interactionMismatches;
 	idInteraction*		GetInteraction( int light, int entity ) const;
+	idInteraction*		GetIndexedInteraction( int light, int entity ) const;
 	void					SetInteraction( int light, int entity, idInteraction* value );
 	void					FreeInteractionIndex();
 	size_t				InteractionIndexBytes() const;
@@ -441,6 +442,27 @@ public:
 // the constant INTERACTION_EMPTY will be stored in the interaction table, int contrasts to NULL, which
 // means that the combination has not yet been tested for having surfaces.
 static idInteraction* const INTERACTION_EMPTY = ( idInteraction* )1;
+
+/*
+===================
+idRenderWorldLocal::GetInteraction
+===================
+*/
+//puncho - interaction index (P2 review): the light walk reads this once per entity ref, so the dense table alone,
+// the default and stock case, stays inline; the sparse index and the verify mode that keeps both tables go out of
+// line. Defs added after the table was sized have no row or column, and a world without a table has zero of each
+ID_INLINE idInteraction* idRenderWorldLocal::GetInteraction( int light, int entity ) const
+{
+	if( interactionIndex != NULL )
+	{
+		return GetIndexedInteraction( light, entity );
+	}
+	if( ( unsigned int )light >= ( unsigned int )interactionTableHeight || ( unsigned int )entity >= ( unsigned int )interactionTableWidth )
+	{
+		return NULL;
+	}
+	return interactionTable[( size_t )light * interactionTableWidth + entity];
+}
 
 void R_ListRenderLightDefs_f( const idCmdArgs& args );
 void R_CheckOpenAreas_f( const idCmdArgs& args );

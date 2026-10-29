@@ -730,7 +730,12 @@ static void R_AddSingleLight( viewLight_t* vLight )
 
 			// a large fraction of static entity / light pairs will still have no interactions even though
 			// they are both present in the same area(s)
-			if( eModel != NULL && !eModel->IsDynamicModel() && eModel->NumLods() == 0 && inter == INTERACTION_EMPTY )
+			//puncho - model LOD (P2 review): the cheap table test first, the virtual calls after it. A static model
+			// with LOD siblings may render a sibling whose triangles the empty base interaction never tested, so it
+			// keeps the skip only when its bounds miss the light; dropping the skip for it made every light sharing
+			// an area with a LOD prop contact it and crowd the lights that reach it out of MAX_CONTACTED_LIGHTS
+			if( inter == INTERACTION_EMPTY && eModel != NULL && !eModel->IsDynamicModel() &&
+					( eModel->NumLods() == 0 || R_CullModelBoundsToLight( light, edef->localReferenceBounds, edef->modelRenderMatrix ) ) )
 			{
 				// the interaction was statically checked, and it didn't generate any surfaces,
 				// so there is no need to force the entity onto the view list if it isn't

@@ -300,9 +300,8 @@ public:
 	int						dynamicModelFrameCount;	// continuously animating dynamic models will recreate
 	// dynamicModel if this doesn't == tr.viewCount
 	idRenderModel* 			cachedDynamicModel;
-	idRenderModel*			lodDynamicModel;
-	int						lodDynamicModelFrameCount;
-	int						lodDynamicLevel;
+	idRenderModel*			lodDynamicModel[3];				// a snapshot per sibling level ( idRenderModel::Lod 1-3 )
+	int						lodDynamicModelFrameCount[3];	// tr.frameCount of each, like dynamicModelFrameCount
 	int						lodLevel;
 	int						lodSwitchFrame;
 

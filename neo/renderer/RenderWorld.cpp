@@ -290,7 +290,9 @@ void idRenderWorldLocal::FreeInteractionIndex()
 	interactionTableWidth = interactionTableHeight = 0;
 }
 
-idInteraction* idRenderWorldLocal::GetInteraction( int light, int entity ) const
+//puncho - interaction index (P2 review): the sparse index and the verify mode; GetInteraction ( RenderWorld_local.h )
+// reads the dense table alone inline
+idInteraction* idRenderWorldLocal::GetIndexedInteraction( int light, int entity ) const
 {
 	if( light < 0 || entity < 0 || light >= interactionTableHeight || entity >= interactionTableWidth )
 	{
