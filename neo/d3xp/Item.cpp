@@ -1457,7 +1457,11 @@ void idItemTeam::SpawnNugget( idVec3 pos )
 
 	velocity *= spawnArgs.GetFloat( "nugget_velocity", "1" );
 
-	idEntity* ent = idMoveableItem::DropItem( nuggetName, pos, GetPhysics()->GetAxis(), angle.ToMat3() * idVec3( velocity, velocity, velocity ), 0, spawnArgs.GetInt( "nugget_removedelay" ) );
+	idEntity* ent = idMoveableItem::DropItem( nuggetName, pos, GetPhysics()->GetAxis(), angle.ToMat3() * idVec3( velocity, velocity, velocity ), 0, spawnArgs.GetInt( "nugget_removedelay" ), false );
+	if( ent == NULL )
+	{
+		return;	//puncho - entity budgets (P2 review): a nugget is an optional dropped item, refused at the item cap or the reserve
+	}
 	idPhysics_RigidBody* physics = static_cast<idPhysics_RigidBody*>( ent->GetPhysics() );
 
 	if( physics != NULL && physics->IsType( idPhysics_RigidBody::Type ) )
@@ -2028,13 +2032,19 @@ bool idMoveableItem::Pickup( idPlayer* player )
 idMoveableItem::DropItem
 ================
 */
-idEntity* idMoveableItem::DropItem( const char* classname, const idVec3& origin, const idMat3& axis, const idVec3& velocity, int activateDelay, int removeDelay )
+idEntity* idMoveableItem::DropItem( const char* classname, const idVec3& origin, const idMat3& axis, const idVec3& velocity, int activateDelay, int removeDelay, bool essential )
 {
 	idDict args;
 	idEntity* item;
 
 	args.Set( "classname", classname );
 	args.Set( "dropped", "1" );
+	//puncho - entity budgets (P2 review): a death drop (a zombie's PDA with its door code) spawns as stock did, never
+	// refused by the item cap or the entity reserve; "dropped" alone makes it an optional budgeted item
+	if( essential )
+	{
+		args.SetBool( "essential", true );
+	}
 
 	// we sometimes drop idMoveables here, so set 'nodrop' to 1 so that it doesn't get put on the floor
 	args.Set( "nodrop", "1" );
@@ -2086,7 +2096,7 @@ idMoveableItem::DropItems
   where <X> is an aribtrary string.
 ================
 */
-void idMoveableItem::DropItems( idAnimatedEntity*  ent, const char* type, idList<idEntity*>* list )
+void idMoveableItem::DropItems( idAnimatedEntity*  ent, const char* type, idList<idEntity*>* list, bool essential )
 {
 	const idKeyValue* kv;
 	const char* skinName, *c, *jointName;
@@ -2134,7 +2144,7 @@ void idMoveableItem::DropItems( idAnimatedEntity*  ent, const char* type, idList
 
 			origin += ent->spawnArgs.GetVector( key2, "0 0 0" );
 
-			item = DropItem( kv->GetValue(), origin, axis, vec3_origin, 0, 0 );
+			item = DropItem( kv->GetValue(), origin, axis, vec3_origin, 0, 0, essential );
 			if( list && item )
 			{
 				list->Append( item );

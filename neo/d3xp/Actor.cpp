@@ -1896,7 +1896,7 @@ bool idActor::StartRagdoll()
 	af.GetPhysics()->SetContactFrictionDent( contactFrictionDent, contactFrictionDentStart, contactFrictionDentEnd );
 
 	// drop any items the actor is holding
-	idMoveableItem::DropItems( this, "death", NULL );
+	idMoveableItem::DropItems( this, "death", NULL, true );	//puncho - entity budgets (P2 review): death drops are essential
 
 	// drop any articulated figures the actor is holding
 	idAFEntity_Base::DropAFs( this, "death", NULL );

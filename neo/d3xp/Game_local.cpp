@@ -3658,15 +3658,9 @@ void idGameLocal::BuildReturnValue( gameReturn_t& ret )
 	// see if a target_sessionCommand has forced a changelevel
 	if( sessionCommand.Length() )
 	{
-		idCmdArgs args( sessionCommand, false );
-		if( net_refuseMapWithPeers.GetBool() && common->IsMultiplayer() &&
-			session->GetActivePlatformLobbyBase().HasActivePeers() &&
-			( !idStr::Icmp( args.Argv( 0 ), "map" ) || !idStr::Icmp( args.Argv( 0 ), "devmap" ) ) )
-		{
-			Warning( "map change to '%s' refused: peers in the session (co-op transitions are P2.3.5)", args.Argv( 1 ) );
-			sessionCommand.Clear();
-			return;
-		}
+		//puncho - transitions (P2 review): net_refuseMapWithPeers is decided only on the main thread, in
+		// idCommonLocal::ProcessGameReturn after its co-op branch; a copy here refused the plain "map" a co-op exit emits
+		// with g_transitionLandmarks 0 before BeginCoopTransition could take it
 		strncpy( ret.sessionCommand, sessionCommand, sizeof( ret.sessionCommand ) );
 		sessionCommand.Clear();	// Fixes a double loading bug for the e3 demo.  Since we run the game thread in SMP mode, we could run this twice and re-set the ret.sessionCommand to a stale sessionCommand (since that doesn't get cleared until LoadMap is called!)
 	}
@@ -4537,9 +4531,20 @@ void idGameLocal::ResetEntityBudgets( bool restore )
 			{
 				budgetFreeSlots[i >= ENTITYNUM_FIRST_NON_REPLICATED]--;
 				ent->budgetClass = -1;
-				JoinEntityBudget( ent, GetEntityBudgetClass( *ent->GetType(), ent->spawnArgs ) );
 			}
 		}
+		//puncho start - entity budgets (P2 review): only what a spawn classed rejoins, with the class it saved, in spawn
+		// order (spawnedEntities is saved in order), which is join order. The type ladder would also class the map's
+		// func_fx and debris and the props a load spawned, all unclassed under GAMESTATE_STARTUP, and slot order is not age
+		for( idEntity* ent = spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
+		{
+			const int budget = ent->spawnArgs.GetInt( "_budgetClass", "-1" );
+			if( budget < 4 )
+			{
+				JoinEntityBudget( ent, budget );
+			}
+		}
+		//puncho end
 		budgetHighWater = ENTITYNUM_MAX_NORMAL - MAX_CLIENTS - budgetFreeSlots[0] - budgetFreeSlots[1];
 	}
 }
@@ -4575,6 +4580,7 @@ bool idGameLocal::PrepareBudgetSpawn( int budget, const idDict& args )
 		{
 			oldest->budgetNode.Remove();
 			oldest->budgetClass = -1;
+			oldest->spawnArgs.Delete( "_budgetClass" );	//puncho - entity budgets (P2 review): a save before EV_Remove runs must not rejoin it
 			budgetLive[budget]--;
 			if( budgetEvicted[budget] < INT_MAX )
 			{
@@ -4593,6 +4599,9 @@ void idGameLocal::JoinEntityBudget( idEntity* ent, int budget )
 		ent->budgetClass = budget;
 		ent->budgetNode.AddToEnd( entityBudgets[budget] );
 		budgetLive[budget]++;
+		//puncho - entity budgets (P2 review): budgetClass is never saved; the spawnArgs are, so the class rides there for
+		// ResetEntityBudgets. Four shared pool strings, never a unique value per spawn
+		ent->spawnArgs.SetInt( "_budgetClass", budget );
 	}
 }
 

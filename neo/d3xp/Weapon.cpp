@@ -2111,7 +2111,8 @@ idEntity* idWeapon::DropItem( const idVec3& velocity, int activateDelay, int rem
 	StopSound( SND_CHANNEL_BODY, true );
 	StopSound( SND_CHANNEL_BODY3, true );
 
-	return idMoveableItem::DropItem( classname, worldModel.GetEntity()->GetPhysics()->GetOrigin(), worldModel.GetEntity()->GetPhysics()->GetAxis(), velocity, activateDelay, removeDelay );
+	//puncho - entity budgets (P2 review): the owner's death drop is essential, as idActor's are
+	return idMoveableItem::DropItem( classname, worldModel.GetEntity()->GetPhysics()->GetOrigin(), worldModel.GetEntity()->GetPhysics()->GetAxis(), velocity, activateDelay, removeDelay, died );
 }
 
 /***********************************************************************

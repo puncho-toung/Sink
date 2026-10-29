@@ -1337,7 +1337,7 @@ void idAFEntity_Gibbable::SpawnGibs( const idVec3& dir, const char* damageDefNam
 	idAFEntity_Base::DropAFs( this, "gib", &list );
 
 	// spawn gib items
-	idMoveableItem::DropItems( this, "gib", &list );
+	idMoveableItem::DropItems( this, "gib", &list, false );
 
 	// blow out the gibs in the given direction away from the center of the entity
 	entityCenter = GetPhysics()->GetAbsBounds().GetCenter();

@@ -1300,7 +1300,7 @@ void idProjectile::Explode( const trace_t& collision, idEntity* ignore )
 				gameLocal.SpawnEntityDef( *debris, &ent, false );
 				if( ent == NULL && gameLocal.SpawnRefused() )
 				{
-					return;
+					break;	//puncho - entity budgets (P2 review): not return, the projectile must still post EV_Remove below
 				}
 				if( ent == NULL || !ent->IsType( idDebris::Type ) )
 				{
@@ -1329,7 +1329,7 @@ void idProjectile::Explode( const trace_t& collision, idEntity* ignore )
 				gameLocal.SpawnEntityDef( *debris, &ent, false );
 				if( ent == NULL && gameLocal.SpawnRefused() )
 				{
-					return;
+					break;	//puncho - entity budgets (P2 review): not return, the projectile must still post EV_Remove below
 				}
 				if( ent == NULL || !ent->IsType( idDebris::Type ) )
 				{
@@ -2938,7 +2938,12 @@ void idDebris::Restore( idRestoreGame* savefile )
 	savefile->ReadStaticObject( physicsObj );
 	// Older unlaunched debris saves may contain a NULL physics owner.
 	physicsObj.SetSelf( this );
-	RestorePhysics( &physicsObj );
+	//puncho - entity budgets (P2 review): only Launch gives physicsObj a clip model and makes it current; an unlaunched
+	// debris keeps the defaultPhysicsObj idEntity::Restore relinked, or its physics would be an uninitialised body
+	if( physicsObj.GetClipModel() != NULL )
+	{
+		RestorePhysics( &physicsObj );
+	}
 
 	savefile->ReadParticle( smokeFly );
 	savefile->ReadInt( smokeFlyTime );

@@ -208,8 +208,8 @@ public:
 	virtual bool			Collide( const trace_t& collision, const idVec3& velocity );
 	virtual bool			Pickup( idPlayer* player );
 
-	static void				DropItems( idAnimatedEntity* ent, const char* type, idList<idEntity*>* list );
-	static idEntity*			DropItem( const char* classname, const idVec3& origin, const idMat3& axis, const idVec3& velocity, int activateDelay, int removeDelay );
+	static void				DropItems( idAnimatedEntity* ent, const char* type, idList<idEntity*>* list, bool essential );
+	static idEntity*			DropItem( const char* classname, const idVec3& origin, const idMat3& axis, const idVec3& velocity, int activateDelay, int removeDelay, bool essential );
 
 	virtual void			WriteToSnapshot( idBitMsg& msg ) const;
 	virtual void			ReadFromSnapshot( const idBitMsg& msg );

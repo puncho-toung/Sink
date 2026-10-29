@@ -1324,7 +1324,7 @@ void idExplodingBarrel::Killed( idEntity* inflictor, idEntity* attacker, int dam
 			gameLocal.SpawnEntityDef( *debris_args, &ent, false );
 			if( ent == NULL && gameLocal.SpawnRefused() )
 			{
-				return;
+				break;	//puncho - entity budgets (P2 review): not return, the barrel must still rest, respawn or go, and fire its targets
 			}
 			if( ent == NULL || !ent->IsType( idDebris::Type ) )
 			{
