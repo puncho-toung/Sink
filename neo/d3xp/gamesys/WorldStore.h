@@ -72,6 +72,7 @@ class idWorldStore
 public:
 	idWorldStore();
 	void Clear();
+	void Shutdown();
 	uint64 AllocateInstanceId( uint64 seed );
 	void BeginMap( const char* map );
 	bool IsActive() const
@@ -88,6 +89,7 @@ public:
 	void ApplyCurrentMap();
 	void BindCreatedRecords();
 	bool WriteCreated( idEntity* ent, const idVec3& landmark, idFile_Memory& out );
+	bool MeasureCreated( idEntity* ent, const idVec3& landmark, idFile_Memory& out );
 	idEntity* SpawnCreated( idFile_Memory& in, const idMat3& rotation, const idVec3& landmark );
 	void PrepareSave();
 	void Save( idSaveGame* save );
@@ -119,6 +121,7 @@ public:
 
 private:
 	void Commit( bool leaving );
+	bool EncodeCreated( idEntity* ent, const idVec3& landmark, idFile_Memory& out, bool assign );
 	idList<worldMapRecord_t, TAG_GAME> records;
 	uint64 nextCreatedId;
 	uint64 retiringInstance;

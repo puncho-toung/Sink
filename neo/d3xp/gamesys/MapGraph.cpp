@@ -243,6 +243,12 @@ bool idDeclMapGraph::Parse( const char* text, int textLength, bool allowBinaryVe
 						return false;
 					}
 					m.name = GraphMapName( m.name );
+					//puncho - P2.4 (bug review 2026-10-28): the maps/ prefix can take a 63-byte name past what a record holds
+					if( m.name.Length() > 63 )
+					{
+						src.Warning( "map name %s exceeds 63 bytes under maps/", m.name.c_str() );
+						return false;
+					}
 					while( src.ReadToken( &t ) && t != "}" )
 					{
 						if( t == "weight" )
@@ -393,7 +399,9 @@ bool idDeclMapGraph::Parse( const char* text, int textLength, bool allowBinaryVe
 			return false;
 		}
 	}
-	if( !closed || src.HadError() || ( !persistent && FindKind( root ) < 0 ) )
+	//puncho - P2.4 (bug review 2026-10-28, implementer E's request): an instanceEnd that names no declared landmarkKind
+	// never matches an exit, so the instance would never end; refuse it as a rule's landmark kind is refused below
+	if( !closed || src.HadError() || ( !persistent && FindKind( root ) < 0 ) || ( !instanceEnd.IsEmpty() && landmarkKinds.FindIndex( instanceEnd ) < 0 ) )
 	{
 		return false;
 	}
@@ -701,7 +709,8 @@ bool idMapGraphDirector::Generate( const idDeclMapGraph* decl, uint64 seed )
 			for( int r = 0; r < decl->rules.Num(); r++ )
 			{
 				const graphRule_t& rule = decl->rules[r];
-				if( rule.endcap || rule.from != fromKind || rule.landmark != exit.kind )
+				// kinds are matched without case, as Parse validated rule.from with FindKind
+				if( rule.endcap || rule.from.Icmp( fromKind ) != 0 || rule.landmark != exit.kind )
 				{
 					continue;
 				}
@@ -728,7 +737,7 @@ bool idMapGraphDirector::Generate( const idDeclMapGraph* decl, uint64 seed )
 				for( int r = 0; r < decl->rules.Num(); r++ )
 				{
 					const graphRule_t& rule = decl->rules[r];
-					if( rule.endcap || rule.loop || !rule.flag.IsEmpty() || rule.from != fromKind || rule.landmark != exit.kind )
+					if( rule.endcap || rule.loop || !rule.flag.IsEmpty() || rule.from.Icmp( fromKind ) != 0 || rule.landmark != exit.kind )
 					{
 						continue;
 					}
@@ -793,6 +802,7 @@ public:
 	{
 		if( output )
 		{
+			Reserve( count );
 			for( int i = 0; i < count; i++ )
 			{
 				output->Append( ( byte )( value >> ( i * 8 ) ) );
@@ -832,6 +842,7 @@ public:
 				return;
 			}
 			Put( str.Length(), 1 );
+			Reserve( str.Length() );
 			for( int i = 0; i < str.Length(); i++ )
 			{
 				output->Append( ( byte )str[i] );
@@ -871,6 +882,15 @@ public:
 	}
 
 private:
+	//puncho - P2.4 (bug review 2026-10-28): idList grows by its granularity (16), so a byte-by-byte record of a few
+	// hundred KiB reallocated and copied thousands of times; the capacity doubles instead
+	void Reserve( int count )
+	{
+		if( output->Num() + count > output->NumAllocated() )
+		{
+			output->Resize( Max( 256, ( output->Num() + count ) * 2 ) );
+		}
+	}
 	idList<byte, TAG_GAME>* output;
 	const byte* data;
 	int size, pos;
@@ -1157,15 +1177,18 @@ void idMapGraphDirector::StoreRecord()
 	{
 		return;
 	}
+	//puncho - P2.4 (bug review 2026-10-28): an overlong name keeps the previous record with a warning instead of an
+	// Error at the leave or the save; the parser, ReadMapData and QueueEffect refuse names over 63 bytes
+	idList<byte, TAG_GAME> record;
+	if( !WriteRecord( record ) )
+	{
+		gameLocal.Warning( "dungeon record not stored: a name exceeds 63 bytes; the previous record is kept" );
+		return;
+	}
 	worldStore.dungeonRecords.Clear();
 	if( persistentHub.Num() )
 	{
 		worldStore.dungeonRecords.Append( persistentHub );
-	}
-	idList<byte, TAG_GAME> record;
-	if( !WriteRecord( record ) )
-	{
-		gameLocal.Error( "DREC contains an overlong name" );
 	}
 	worldStore.dungeonRecords.Append( record );
 }
@@ -1646,6 +1669,12 @@ bool idMapGraphDirector::Start( const char* name, uint64 seed, const char* paren
 		*this = previous;
 		worldStore.continueNextLoad = previousContinue;
 		return false;
+	}
+	//puncho - P2.4 (bug review 2026-10-28): started from inside an instance (a suspended one is refused above), the
+	// old instance can never be re-entered; retire its map records on arrival as leaving it through its end does
+	if( previous.instanceId != 0 )
+	{
+		worldStore.RetireInstanceAfterActivation( previous.instanceId, transition.nextMap );
 	}
 	return true;
 }
@@ -2277,7 +2306,9 @@ void idMapGraphDirector::ApplyPending()
 		}
 		else if( p.action == 1 )
 		{
-			delete ent;
+			//puncho - P2.4 (bug review 2026-10-28): posted, as stock remove() is; a synchronous delete could free the
+			// activator inside its own activation chain
+			ent->PostEventMS( &EV_Remove, 0 );
 		}
 		else if( p.action == 2 )
 		{
@@ -2459,6 +2490,8 @@ static void SetDungeonFlag_f( const idCmdArgs& args )
 		mapGraphDirector.SetFlag( args.Argv( 1 ), atoi( args.Argv( 2 ) ) );
 	}
 }
+//puncho - P2.4 (bug review 2026-10-28): the replay and recipe self-test is developer scaffolding, not in retail builds
+#if !defined( ID_RETAIL )
 static void MapGraphTest_f( const idCmdArgs& args )
 {
 	if( args.Argc() < 2 )
@@ -2594,6 +2627,7 @@ static void MapGraphTest_f( const idCmdArgs& args )
 	}
 	common->Printf( "mapGraphTest: %s seeds=%d truncations=%d failures=%d time=%.3fms\n", failures ? "FAIL" : "PASS", seeds, truncations, failures, ( Sys_Microseconds() - start ) * 0.001 );
 }
+#endif
 static void MapGraphPortalTest_f( const idCmdArgs& args )
 {
 	const int player = args.Argc() > 1 ? atoi( args.Argv( 1 ) ) : -1;
@@ -2613,7 +2647,9 @@ void idMapGraphDirector::Init()
 	transitions = refused = inhibited = prefetches = 0;
 	Clear();
 	cmdSystem->AddCommand( "mapGraphPortalTest", MapGraphPortalTest_f, CMD_FL_GAME | CMD_FL_CHEAT, "verify an explicit player portal caster" );
+#if !defined( ID_RETAIL )
 	cmdSystem->AddCommand( "mapGraphTest", MapGraphTest_f, CMD_FL_GAME, "test graph replay and bounded record round trips" );
+#endif
 	cmdSystem->AddCommand( "mapGraphStart", MapGraphStart_f, CMD_FL_GAME | CMD_FL_CHEAT, "start a generated dungeon" );
 	cmdSystem->AddCommand( "mapGraphDump", MapGraphDump_f, CMD_FL_GAME, "dump deterministic graph topology" );
 	cmdSystem->AddCommand( "listMapGraphs", ListMapGraphs_f, CMD_FL_GAME, "list mapGraph declarations" );
@@ -2629,6 +2665,7 @@ void idMapGraphDirector::Shutdown()
 	cmdSystem->RemoveCommand( "listMapGraphs" );
 	cmdSystem->RemoveCommand( "listDungeon" );
 	cmdSystem->RemoveCommand( "setDungeonFlag" );
+	graphFingerprints.Clear();
 	Clear();
 }
 

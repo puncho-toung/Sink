@@ -7,6 +7,11 @@
 // measured frames; no idAI is constructed to obtain either pose representation.
 void CorpseFixture_f( const idCmdArgs& args )
 {
+	//puncho - P2.4 (bug review 2026-10-28): a developer fixture with a hard-coded monster and map, not in retail builds;
+	// the command stays registered (SysCmds.cpp) and only says so
+#if defined( ID_RETAIL )
+	gameLocal.Printf( "corpseFixture is a developer fixture and is not in retail builds\n" );
+#else
 	if( !gameLocal.CheatsOk() || args.Argc() != 3 || idStr::Icmpn( gameLocal.GetMapName(), "maps/_test/mg/", 14 ) != 0 )
 	{
 		gameLocal.Printf( "corpseFixture <anim|af|verify> <0|16|64> requires an mg test map\n" );
@@ -127,4 +132,5 @@ void CorpseFixture_f( const idCmdArgs& args )
 	}
 	delete seed;
 	gameLocal.Printf( "CORPSE_FIXTURE %s mode=%s count=%d\n", built == count ? "READY" : "FAIL", args.Argv( 1 ), built );
+#endif
 }

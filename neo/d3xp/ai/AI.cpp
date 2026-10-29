@@ -6925,3 +6925,15 @@ void idAI::Event_PersistCorpse()
 	}
 	PostEventMS( &EV_Remove, 0 );
 }
+
+//puncho - P2.4 (bug review 2026-10-28): the corpse settle interval Event_StopThinking starts ends in its own event, not
+// in the script's remove(), so an AI raised inside the interval is not deleted by a remove nothing cancelled. A raised
+// (live) AI ignores it; remove() from a script still removes, alive or dead.
+void idAI::Event_SettleCorpse()
+{
+	if( health > 0 )
+	{
+		return;
+	}
+	Event_PersistCorpse();
+}

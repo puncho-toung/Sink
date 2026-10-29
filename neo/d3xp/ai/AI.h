@@ -304,6 +304,7 @@ public:
 		return spawnArgs.GetBool( "transition", "0" );
 	}
 	void Event_PersistCorpse();
+	void Event_SettleCorpse();
 
 	idAI();
 	~idAI();

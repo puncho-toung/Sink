@@ -172,11 +172,13 @@ const idEventDef AI_TriggerFX( "triggerFX", "ss" );
 const idEventDef AI_StartEmitter( "startEmitter", "sss", 'e' );
 const idEventDef AI_GetEmitter( "getEmitter", "s", 'e' );
 const idEventDef AI_StopEmitter( "stopEmitter", "s" );
+const idEventDef AI_SettleCorpse( "<settleCorpse>" );	//puncho - P2.4 (bug review 2026-10-28)
 
 
 
 CLASS_DECLARATION( idActor, idAI )
 EVENT( EV_SafeRemove, idAI::Event_PersistCorpse )
+EVENT( AI_SettleCorpse, idAI::Event_SettleCorpse )
 EVENT( EV_Activate,							idAI::Event_Activate )
 EVENT( EV_Touch,							idAI::Event_Touch )
 EVENT( AI_FindEnemy,						idAI::Event_FindEnemy )
@@ -2400,8 +2402,8 @@ void idAI::Event_StopThinking()
 	// those AF bodies the same settle interval as monster_base::state_Dead.
 	if( !common->IsClient() && worldStore.IsActive() && g_corpses.GetBool() && health <= 0 && spawnArgs.GetInt( "persist_lifetime", "-1" ) != 0 )
 	{
-		CancelEvents( &EV_SafeRemove );
-		PostEventMS( &EV_SafeRemove, 3000 );
+		CancelEvents( &AI_SettleCorpse );
+		PostEventMS( &AI_SettleCorpse, 3000 );
 	}
 	BecomeInactive( TH_THINK );
 	idThread* thread = idThread::CurrentThread();

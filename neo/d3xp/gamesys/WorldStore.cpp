@@ -54,6 +54,8 @@ static void RecordString( idFile& f, const char* value )
 	const int length = idStr::Length( value );
 	if( length > 63 )
 	{
+		// every caller refuses or skips a longer name first (mapGraphCheck K12 at author time); reaching this is a
+		// programmer error, not content
 		gameLocal.Error( "world record name exceeds 63 bytes: %s", value );
 	}
 	f.WriteUnsignedChar( length );
@@ -285,6 +287,9 @@ idWorldStore::idWorldStore()
 	memset( removed, 0, sizeof( removed ) );
 }
 
+// The landmark and volume tables are not cleared here: they belong to the loaded map, which LoadMap reads after a
+// new world's BeginMap and skips on an unchanged same-map reload, and Restore() calls Clear() after LoadMap read
+// them. Shutdown frees them.
 void idWorldStore::Clear()
 {
 	records.Clear();
@@ -304,6 +309,13 @@ void idWorldStore::Clear()
 	recordMaps = recordEntries = recordCreated = recordBytes = recordDropped = corpseEvicted = 0;
 	commitUs = applyUs = 0;
 	memset( removed, 0, sizeof( removed ) );
+}
+
+void idWorldStore::Shutdown()
+{
+	Clear();
+	landmarks.Clear();
+	transitionVolumes.Clear();
 }
 
 void idWorldStore::BeginMap( const char* map )
@@ -471,7 +483,8 @@ static void RecordSpawnPose( const idEntity* ent, idVec3& origin, idMat3& axis )
 	}
 }
 
-static unsigned short WriteAspects( idEntity* ent, idFile_Memory& payload, const idVec3& landmark, bool motion )
+// bindParent is the created identity of the bind master a created record binds to, 0 for none.
+static unsigned short WriteAspects( idEntity* ent, idFile_Memory& payload, const idVec3& landmark, bool motion, uint64 bindParent )
 {
 	if( ent->IsType( idAI::Type ) && ent->health <= 0 )
 	{
@@ -577,17 +590,13 @@ static unsigned short WriteAspects( idEntity* ent, idFile_Memory& payload, const
 			payload.WriteFloat( ent->GetPhysics()->GetAngularVelocity()[i] );
 		}
 	}
-	if( motion && ent->GetBindMaster() != NULL )
+	if( motion && ent->GetBindMaster() != NULL && bindParent != 0 )
 	{
-		const uint64 parent = strtoull( ent->GetBindMaster()->spawnArgs.GetString( "_worldCreatedId", "0" ), NULL, 10 );
-		if( parent != 0 )
-		{
-			aspects |= RECORD_BIND;
-			Record64( payload, parent );
-			payload.WriteShort( ent->GetBindJoint() );
-			payload.WriteShort( ent->GetBindBody() );
-			payload.WriteUnsignedChar( ent->fl.bindOrientated ? 1 : 0 );
-		}
+		aspects |= RECORD_BIND;
+		Record64( payload, bindParent );
+		payload.WriteShort( ent->GetBindJoint() );
+		payload.WriteShort( ent->GetBindBody() );
+		payload.WriteUnsignedChar( ent->fl.bindOrientated ? 1 : 0 );
 	}
 	return aspects;
 }
@@ -675,37 +684,78 @@ static bool ApplyAspects( idEntity* ent, unsigned short aspects, idFile_Memory& 
 
 bool idWorldStore::WriteCreated( idEntity* ent, const idVec3& landmark, idFile_Memory& out )
 {
-	if( ent == NULL || ent->GetEntityDefName()[0] == '\0' || idStr::Length( ent->GetEntityDefName() ) > 63 )
+	return EncodeCreated( ent, landmark, out, true );
+}
+
+//puncho - P2.4 (bug review 2026-10-28): the transition carry sizes each team member before it accepts the team; that
+// pass called WriteCreated, which stamped _worldCreatedId and _worldCreatedTime for good on the members of a team it
+// then rejected and on their bind parents. This writes the same bytes, with placeholder identities of the same size,
+// and stamps nothing
+bool idWorldStore::MeasureCreated( idEntity* ent, const idVec3& landmark, idFile_Memory& out )
+{
+	return EncodeCreated( ent, landmark, out, false );
+}
+
+// assign takes the entity's (and its crossing bind master's) created identity from nextCreatedId and stamps it;
+// without it the identities a write would take are only written.
+bool idWorldStore::EncodeCreated( idEntity* ent, const idVec3& landmark, idFile_Memory& out, bool assign )
+{
+	if( ent == NULL )
 	{
 		return false;
 	}
+	// a corpse records its source def; a name over 63 bytes is refused here, never raised at the write
+	const char* recordName = ent->IsType( idCorpse::Type ) ? static_cast<idCorpse*>( ent )->SourceName() : ent->GetEntityDefName();
+	if( ent->GetEntityDefName()[0] == '\0' || recordName[0] == '\0' || idStr::Length( recordName ) > 63 )
+	{
+		return false;
+	}
+	uint64 nextIdentity = nextCreatedId;
 	uint64 identity = strtoull( ent->spawnArgs.GetString( "_worldCreatedId", "0" ), NULL, 10 );
+	uint64 created = strtoull( ent->spawnArgs.GetString( "_worldCreatedTime", "0" ), NULL, 10 );
 	if( identity == 0 )
 	{
-		identity = nextCreatedId++;
-		ent->spawnArgs.Set( "_worldCreatedId", va( "%llu", ( unsigned long long )identity ) );
-		ent->spawnArgs.Set( "_worldCreatedTime", va( "%lld", ( long long )gameLocal.GetWorldTime() ) );
+		identity = nextIdentity++;
+		created = ( uint64 )gameLocal.GetWorldTime();
+		if( assign )
+		{
+			ent->spawnArgs.Set( "_worldCreatedId", va( "%llu", ( unsigned long long )identity ) );
+			ent->spawnArgs.Set( "_worldCreatedTime", va( "%lld", ( long long )gameLocal.GetWorldTime() ) );
+		}
 	}
+	uint64 parentIdentity = 0;
 	idEntity* parent = ent->GetBindMaster();
-	if( parent != NULL && parent->CanCrossTransition() && parent->spawnArgs.GetString( "_worldCreatedId", "0" )[0] == '0' )
+	if( parent != NULL )
 	{
-		parent->spawnArgs.Set( "_worldCreatedId", va( "%llu", ( unsigned long long )nextCreatedId++ ) );
-		parent->spawnArgs.Set( "_worldCreatedTime", va( "%lld", ( long long )gameLocal.GetWorldTime() ) );
+		parentIdentity = strtoull( parent->spawnArgs.GetString( "_worldCreatedId", "0" ), NULL, 10 );
+		if( parentIdentity == 0 && parent->CanCrossTransition() )
+		{
+			parentIdentity = nextIdentity++;
+			if( assign )
+			{
+				parent->spawnArgs.Set( "_worldCreatedId", va( "%llu", ( unsigned long long )parentIdentity ) );
+				parent->spawnArgs.Set( "_worldCreatedTime", va( "%lld", ( long long )gameLocal.GetWorldTime() ) );
+			}
+		}
+	}
+	if( assign )
+	{
+		nextCreatedId = nextIdentity;
 	}
 	idFile_Memory payload;
-	const unsigned short aspects = WriteAspects( ent, payload, landmark, true );
+	const unsigned short aspects = WriteAspects( ent, payload, landmark, true, parentIdentity );
 	if( !( aspects & RECORD_MOVED ) )
 	{
 		return false;
 	}
 	compile_time_assert( MAX_WORLD_CREATED_CARRY_BYTES <= 160 );
-	if( ent->CanCrossTransition() && 8 + 1 + idStr::Length( ent->GetEntityDefName() ) + 8 + 4 + payload.Length() > MAX_WORLD_CREATED_CARRY_BYTES )
+	if( ent->CanCrossTransition() && 8 + 1 + idStr::Length( recordName ) + 8 + 4 + payload.Length() > MAX_WORLD_CREATED_CARRY_BYTES )
 	{
 		return false;
 	}
 	Record64( out, identity );
-	RecordString( out, ent->IsType( idCorpse::Type ) ? static_cast<idCorpse*>( ent )->SourceName() : ent->GetEntityDefName() );
-	Record64( out, strtoull( ent->spawnArgs.GetString( "_worldCreatedTime", "0" ), NULL, 10 ) );
+	RecordString( out, recordName );
+	Record64( out, created );
 	out.WriteUnsignedShort( aspects );
 	out.WriteUnsignedShort( payload.Length() );
 	out.Write( payload.GetDataPtr(), payload.Length() );
@@ -921,6 +971,13 @@ void idWorldStore::Commit( bool leaving )
 			otherRecordBytes += records[i].bytes.Num() + 8;
 		}
 	}
+	//puncho - P2.4 (bug review 2026-10-28): names over 63 bytes are refused or skipped with a warning, not raised as an
+	// Error at the leave or the save; mapGraphCheck refuses them at author time (K12)
+	if( worldName.Length() > 63 || recordMap.Length() > 63 )
+	{
+		gameLocal.Warning( "record commit refused: world '%s' or map '%s' name exceeds 63 bytes", worldName.c_str(), recordMap.c_str() );
+		return;
+	}
 	const int authoredLimit = Min( g_recordBytesMap.GetInteger(), g_recordBytesWorld.GetInteger() - otherRecordBytes - 64 );
 	int authoredBytes = 52 + worldName.Length() + recordMap.Length();
 	// Each row's aspects are written once, here; the record below copies them. An entity that matches its spawn
@@ -938,11 +995,19 @@ void idWorldStore::Commit( bool leaving )
 		}
 		recordRow_t& out = rows[i];
 		out.offset = rowPayloads.Length();
-		out.aspects = ent == NULL ? RECORD_REMOVED : WriteAspects( ent, rowPayloads, vec3_origin, false );
+		const char* rowName = map->GetEntity( row.ordinal )->epairs.GetString( "name" );
+		if( idStr::Length( rowName ) > 63 )
+		{
+			gameLocal.Warning( "record: %s entity '%s' not recorded: name exceeds 63 bytes", recordMap.c_str(), rowName );
+			out.aspects = 0;
+			out.length = 0;
+			continue;
+		}
+		out.aspects = ent == NULL ? RECORD_REMOVED : WriteAspects( ent, rowPayloads, vec3_origin, false, 0 );
 		out.length = rowPayloads.Length() - out.offset;
 		if( out.aspects != 0 )
 		{
-			authoredBytes += 11 + idStr::Length( map->GetEntity( row.ordinal )->epairs.GetString( "name" ) ) + out.length;
+			authoredBytes += 11 + idStr::Length( rowName ) + out.length;
 		}
 	}
 	for( int i = 0; i < bodies.Num() && authoredBytes > authoredLimit; i++ )
@@ -957,6 +1022,10 @@ void idWorldStore::Commit( bool leaving )
 			continue;
 		}
 		recordRow_t& out = rows[ent->mapSpawnIndex];
+		if( out.aspects == 0 )
+		{
+			continue; // not recorded at all (an overlong name), so leaving it out saves nothing
+		}
 		authoredBytes -= out.length;
 		out.aspects = RECORD_REMOVED;
 		out.length = 0;
@@ -1213,9 +1282,34 @@ void idWorldStore::ApplyCurrentMap()
 		}
 		remains = applyingReset ? 0 : savedRemains;
 		idList<idEntity*, TAG_GAME> deleted;
-		idList<int, TAG_GAME> claimed;
 		idMapFile* map = gameLocal.mapFile;
 		const bool identical = entitiesCRC == map->GetEntitiesCRC() && numEntities == map->GetNumEntities();
+		//puncho start - P2.4 (bug review 2026-10-28): one lookup per record row, not a scan of the map and the rows. A
+		// claimed bit per map ordinal, the spawned row by binary search (rows are in ordinal order), and on an edited map
+		// each entity's CRC computed once (implementer E's request: GetEntityCRC walks every pair on each call) with the
+		// names and CRCs hashed once, added in reverse so a chain yields the lowest ordinal first as the scans did
+		const int numMapEntities = map->GetNumEntities();
+		idList<byte, TAG_GAME> claimed;
+		claimed.SetNum( ( numMapEntities + 7 ) / 8 );
+		memset( claimed.Ptr(), 0, claimed.Num() );
+		idList<unsigned int, TAG_GAME> entityCRCs;
+		idHashIndex entityNames( 4096, numMapEntities ), entityHashes( 4096, numMapEntities );
+		if( !identical )
+		{
+			entityCRCs.SetNum( numMapEntities );
+			for( int j = numMapEntities - 1; j >= 1; j-- )
+			{
+				entityCRCs[j] = map->GetEntityCRC( j );
+				const char* entityName = map->GetEntity( j )->epairs.GetString( "name" );
+				if( entityName[0] != '\0' )
+				{
+					entityNames.Add( entityNames.GenerateKey( entityName ), j );
+				}
+				entityHashes.Add( entityHashes.GenerateKey( ( int )entityCRCs[j] ), j );
+			}
+			entityCRCs[0] = map->GetEntityCRC( 0 );
+		}
+		//puncho end
 		for( unsigned int i = 0; i < count; i++ )
 		{
 			unsigned short ordinal, aspects, length;
@@ -1225,13 +1319,13 @@ void idWorldStore::ApplyCurrentMap()
 				gameLocal.Error( "Malformed MREC entry for %s", mapName.c_str() );
 			}
 			int candidate = -1;
-			if( identical && ordinal < map->GetNumEntities() )
+			if( identical )
 			{
-				candidate = ordinal;
+				candidate = ordinal < numMapEntities ? ordinal : -1;
 			}
 			else if( !name.IsEmpty() )
 			{
-				for( int j = 1; j < map->GetNumEntities(); j++ )
+				for( int j = entityNames.First( entityNames.GenerateKey( name ) ); j != -1; j = entityNames.Next( j ) )
 				{
 					if( name == map->GetEntity( j )->epairs.GetString( "name" ) )
 					{
@@ -1240,15 +1334,15 @@ void idWorldStore::ApplyCurrentMap()
 					}
 				}
 			}
-			else if( ordinal < map->GetNumEntities() && map->GetEntityCRC( ordinal ) == crc )
+			else if( ordinal < numMapEntities && entityCRCs[ordinal] == crc )
 			{
 				candidate = ordinal;
 			}
 			else
 			{
-				for( int j = 1; j < map->GetNumEntities(); j++ )
+				for( int j = entityHashes.First( entityHashes.GenerateKey( ( int )crc ) ); j != -1; j = entityHashes.Next( j ) )
 				{
-					if( claimed.FindIndex( j ) < 0 && map->GetEntityCRC( j ) == crc )
+					if( !( claimed[j >> 3] & ( 1 << ( j & 7 ) ) ) && entityCRCs[j] == crc )
 					{
 						candidate = j;
 						break;
@@ -1257,55 +1351,44 @@ void idWorldStore::ApplyCurrentMap()
 			}
 			idFile_Memory payload( "aspects", ( const char* )in.GetDataPtr() + in.Tell(), length );
 			in.Seek( length, FS_SEEK_CUR );
-			if( candidate < 0 || claimed.FindIndex( candidate ) >= 0 || map->GetEntityCRC( candidate ) != crc )
+			if( candidate < 0 || ( claimed[candidate >> 3] & ( 1 << ( candidate & 7 ) ) ) || ( identical ? map->GetEntityCRC( candidate ) : entityCRCs[candidate] ) != crc )
 			{
 				gameLocal.Warning( "record: %s '%s'#%d dropped: entity changed", mapName.c_str(), name.c_str(), ordinal );
 				continue;
 			}
-			claimed.Append( candidate );
-			for( int row = 0; row < mapSpawned.Num(); row++ )
+			claimed[candidate >> 3] |= 1 << ( candidate & 7 );
+			const int row = FindSpawnRow( candidate );
+			idEntity* ent = row >= 0 ? RecordEntity( mapSpawned[row] ) : NULL;
+			if( ent == NULL || ( applyingReset && !ent->spawnArgs.GetBool( "persist_noreset" ) ) )
 			{
-				if( mapSpawned[row].ordinal != candidate )
+				continue;
+			}
+			if( aspects & RECORD_REMOVED )
+			{
+				deleted.Append( ent );
+			}
+			else if( aspects & RECORD_CORPSE )
+			{
+				idEntity* corpse = SpawnCorpseRecord( ent->GetEntityDefName(), aspects, payload );
+				if( corpse != NULL )
 				{
-					continue;
-				}
-				idEntity* ent = RecordEntity( mapSpawned[row] );
-				if( ent == NULL )
-				{
-					break;
-				}
-				if( applyingReset && !ent->spawnArgs.GetBool( "persist_noreset" ) )
-				{
-					break;
-				}
-				if( aspects & RECORD_REMOVED )
-				{
-					deleted.Append( ent );
-				}
-				else if( aspects & RECORD_CORPSE )
-				{
-					idEntity* corpse = SpawnCorpseRecord( ent->GetEntityDefName(), aspects, payload );
-					if( corpse != NULL )
+					const int lifetime = ent->spawnArgs.GetInt( "persist_lifetime", "-1" );
+					corpse->spawnArgs.SetInt( "persist_lifetime", lifetime );
+					const int64 death = static_cast<idCorpse*>( corpse )->DeathTime();
+					if( lifetime == 0 || ( lifetime > 0 && gameLocal.GetWorldTime() - death >= ( int64 )lifetime * 1000 ) )
 					{
-						const int lifetime = ent->spawnArgs.GetInt( "persist_lifetime", "-1" );
-						corpse->spawnArgs.SetInt( "persist_lifetime", lifetime );
-						const int64 death = static_cast<idCorpse*>( corpse )->DeathTime();
-						if( lifetime == 0 || ( lifetime > 0 && gameLocal.GetWorldTime() - death >= ( int64 )lifetime * 1000 ) )
-						{
-							delete corpse;
-						}
-						else
-						{
-							ReplaceMapEntity( ent, corpse );
-						}
+						delete corpse;
 					}
-					deleted.Append( ent );
+					else
+					{
+						ReplaceMapEntity( ent, corpse );
+					}
 				}
-				else if( !ApplyAspects( ent, aspects, payload, mat3_identity, vec3_origin ) )
-				{
-					gameLocal.Warning( "record: unsupported aspects for %s", name.c_str() );
-				}
-				break;
+				deleted.Append( ent );
+			}
+			else if( !ApplyAspects( ent, aspects, payload, mat3_identity, vec3_origin ) )
+			{
+				gameLocal.Warning( "record: unsupported aspects for %s", name.c_str() );
 			}
 		}
 		if( in.ReadUnsignedInt( count ) != 4 || count > MAX_GENTITIES )
@@ -1772,10 +1855,19 @@ void idWorldStore::ReadMapData( idMapFile* map )
 				}
 			}
 		}
+		//puncho - P2.4 (bug review 2026-10-28): an id over 63 bytes cannot enter a dungeon record or a fingerprint; such a
+		// landmark or volume is skipped with a warning (an exit through it is refused as unknown) and mapGraphCheck
+		// refuses it at author time (K12)
+		const char* id = isLandmark ? args.GetString( "landmark", args.GetString( "name" ) ) : args.GetString( "landmark" );
+		if( idStr::Length( id ) > 63 )
+		{
+			gameLocal.Warning( "%s: landmark id '%s' exceeds 63 bytes; skipped", map->GetName(), id );
+			continue;
+		}
 		if( isLandmark )
 		{
 			landmark_t row;
-			row.id = args.GetString( "landmark", args.GetString( "name" ) );
+			row.id = id;
 			row.kind = args.GetString( "kind" );
 			row.origin = center;
 			row.axis[0] = forward;
@@ -1792,7 +1884,7 @@ void idWorldStore::ReadMapData( idMapFile* map )
 		{
 			transitionVolume_t row;
 			row.bounds = bounds;
-			row.landmark = args.GetString( "landmark" );
+			row.landmark = id;
 			row.cap = idMath::ClampInt( 0, 64, args.GetInt( "cap", "64" ) );
 			row.carryAll = idStr::Icmp( args.GetString( "carry", "all" ), "all" ) == 0;
 			row.ordinal = i;

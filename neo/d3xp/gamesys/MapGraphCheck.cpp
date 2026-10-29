@@ -238,6 +238,16 @@ void MapGraphCheck_f( const idCmdArgs& args )
 			for( int i = 1; i < map.GetNumEntities(); i++ )
 			{
 				const idDict& keys = map.GetEntity( i )->epairs;
+				//puncho - P2.4 (bug review 2026-10-28): a record holds names of 63 bytes at most. The runtime skips a longer
+				// entity name or landmark id with a warning and never records a longer def name; refuse them here
+				const char* lengthKeys[] = { "name", "landmark", "classname", "levelName", "triggerName" };
+				for( int j = 0; j < 5; j++ )
+				{
+					if( idStr::Length( keys.GetString( lengthKeys[j] ) ) > 63 )
+					{
+						KitFailure( csv, authored.name, 12, va( "entity %d %s exceeds 63 bytes", i, lengthKeys[j] ), failures );
+					}
+				}
 				if( !idStr::Icmp( keys.GetString( "classname" ), "trigger_changelevel" ) )
 				{
 					const landmark_t* landmark = tables.FindLandmark( keys.GetString( "landmark" ) );
