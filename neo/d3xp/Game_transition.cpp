@@ -111,7 +111,10 @@ bool idGameLocal::BeginMapTransition( const mapTransition_t& request )
 	normalizedMap.BackSlashesToSlashes();
 	normalizedMap.StripLeading( "maps/" );
 	normalizedMap.StripFileExtension();
-	if( normalizedMap.IsEmpty() || normalizedMap.Length() > 63 || normalizedMap.Find( '"' ) >= 0 || normalizedMap.Find( '\n' ) >= 0 || normalizedMap.Find( ';' ) >= 0 || normalizedMap.Find( ".." ) >= 0 || normalizedMap.Find( ':' ) >= 0 || normalizedMap[0] == '/' )
+	//puncho - transitions (stage 3 review): the 63-character and ':' limits serve the co-op wire name (64 bytes) and the
+	// world records; with no transition feature on, target_endlevel keeps the stock acceptance of any map name
+	const bool transitionFeatures = g_transitionLandmarks.GetBool() || g_transitionCarry.GetBool() || worldStore.IsActive() || ( common->IsMultiplayer() && cvarSystem->GetCVarBool( "net_coopTransitions" ) );
+	if( normalizedMap.IsEmpty() || ( transitionFeatures && ( normalizedMap.Length() > 63 || normalizedMap.Find( ':' ) >= 0 ) ) || normalizedMap.Find( '"' ) >= 0 || normalizedMap.Find( '\n' ) >= 0 || normalizedMap.Find( ';' ) >= 0 || normalizedMap.Find( ".." ) >= 0 || normalizedMap[0] == '/' )
 	{
 		Warning( "transition refused: invalid map name" );
 		return false;

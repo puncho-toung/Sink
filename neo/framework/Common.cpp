@@ -1808,6 +1808,11 @@ void idCommonLocal::LeaveGame()
 	game->ClearMapTransition();
 	transitionState = 0;
 	transitionLoaded = false;
+	//puncho - transitions (stage 3 review): the next load (another server, or CreateMainMenu's level load) is not
+	// game-driven, and a new host's intents restart at sequence 1, so neither the flag nor the old epoch survives
+	mapSpawnData.gameDriven = false;
+	transitionSequence = transitionLastAccepted = 0;
+	transitionLoadStartTime = 0;
 	session->GetActingGameStateLobbyBase().CancelTransitionHold();
 	const bool captureToImage = false;
 

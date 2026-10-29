@@ -669,14 +669,13 @@ void idSoundWorldLocal::ClearAllSoundEmitters()
 	{
 		memset( transitionEmitters, 0, sizeof( transitionEmitters ) );
 	}
+	idSoundEmitterLocal* carried[4];
 	int kept = 0;
 	for( int i = 0; i < emitters.Num(); i++ )
 	{
-		if( IsCarriedEmitter( emitters[i] ) )
+		if( kept < 4 && IsCarriedEmitter( emitters[i] ) )
 		{
-			emitters[kept] = emitters[i];
-			emitters[kept]->index = kept;
-			kept++;
+			carried[kept++] = emitters[i];
 		}
 		else
 		{
@@ -684,8 +683,14 @@ void idSoundWorldLocal::ClearAllSoundEmitters()
 			emitterAllocator.Free( emitters[i] );
 		}
 	}
-	emitters.SetNum( kept );
+	//puncho - transitions (stage 3 review): localSound first, so it keeps index 0, which save/restore skip as the local
+	// emitter (WriteToSaveGame starts at 1, EmitterForIndex( 0 ) is NULL); the carried emitters follow it
+	emitters.SetNum( 0 );
 	localSound = AllocSoundEmitter();
+	for( int i = 0; i < kept; i++ )
+	{
+		carried[i]->index = emitters.Append( carried[i] );
+	}
 }
 
 /*
@@ -988,12 +993,17 @@ void idSoundWorldLocal::WriteToSaveGame( idFile* savefile )
 	for( int e = 1; e < emitters.Num(); e++ )
 	{
 		idSoundEmitterLocal* emitter = emitters[e];
-		savefile->WriteBool( emitter->canFree );
+		//puncho - transitions (stage 3 review): a carried emitter no speaker has adopted belongs only to its transition
+		// slot, which is not saved; it is written as a finished one-shot (freeable, no channels) so a restore frees it
+		// instead of bringing back an unowned loop with no expiry. Same layout, no version change
+		const bool carried = IsCarriedEmitter( emitter );
+		const int numChannels = carried ? 0 : emitter->channels.Num();
+		savefile->WriteBool( emitter->canFree || carried );
 		savefile->WriteVec3( emitter->origin );
 		savefile->WriteInt( emitter->emitterId );
 		helper::WriteShaderParms( savefile, emitter->parms );
-		savefile->WriteInt( emitter->channels.Num() );
-		for( int c = 0; c < emitter->channels.Num(); c++ )
+		savefile->WriteInt( numChannels );
+		for( int c = 0; c < numChannels; c++ )
 		{
 			idSoundChannel* channel = emitter->channels[c];
 			savefile->WriteInt( channel->startTime );

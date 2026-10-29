@@ -311,8 +311,10 @@ idCVar com_testLoadDelayMs( "com_testLoadDelayMs", "0", CVAR_NOCHEAT | CVAR_SYST
 static int transitionSoundRenderTime = 0;
 static int transitionSoundRenderGap = 0;
 
-idCVar com_transitionWipeMs( "com_transitionWipeMs", "1000", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "game-driven total presentation budget; -1 uses legacy held wipes", -1, 10000 );
-idCVar com_transitionOverlayMs( "com_transitionOverlayMs", "50", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "game-driven loading overlay delay after fade; -1 draws immediately", -1, 10000 );
+//puncho - transitions (stage 3 review): P2.3.6a's acceptance requires today's values (-1, -1, 0), bit-identical, so
+// target_endlevel keeps the stock com_wipeSeconds fade and the loading GUI from the start; CD26's 1000/50 are opt-in
+idCVar com_transitionWipeMs( "com_transitionWipeMs", "-1", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "game-driven total presentation budget; -1 uses legacy held wipes", -1, 10000 );
+idCVar com_transitionOverlayMs( "com_transitionOverlayMs", "-1", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "game-driven loading overlay delay after fade; -1 draws immediately", -1, 10000 );
 idCVar com_transitionKeepInput( "com_transitionKeepInput", "0", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_BOOL, "preserve held buttons and toggles across game-driven changes" );
 idCVar com_transitionStrip( "com_transitionStrip", "0", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "game-driven load bits: 1 skip settle, 2 slice interactions, 4 skip synchronous autosave (checkpoint requires MP-D0)", 0, 7 );
 
