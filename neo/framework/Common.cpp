@@ -295,6 +295,8 @@ void idCommonLocal::ParseCommandLine( int argc, const char* const* argv )
 			session->HandleBootableInvite( atol( argv[ i + 1 ] ) );
 #endif
 			// RB end
+			//puncho - startup (stage 0 review): the lobby id is consumed, not appended to the previous command
+			i++;
 		}
 		else if( argv[ i ][ 0 ] == '+' )
 		{

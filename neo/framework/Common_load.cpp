@@ -202,6 +202,9 @@ CONSOLE_COMMAND( listLevelCache, "show the last completed load's asset inventory
 static const int MAX_LEVEL_PINS = 4;
 static idPreloadManifest levelPins[MAX_LEVEL_PINS];
 static bool levelPinActive[MAX_LEVEL_PINS];
+//puncho - transitions (stage 3 review): each pin's entries hashed by name (case-insensitive), built when the pin is set;
+// IsLevelAssetPinned runs for every loaded image, model and sample at every load and scanned every entry with Icmp
+static idHashIndex levelPinHash[MAX_LEVEL_PINS];
 
 void idCommon::PreloadManifestName( const char* map, idStr& result )
 {
@@ -228,13 +231,14 @@ bool idCommonLocal::IsLevelAssetPinned( int type, const char* name, int filter, 
 	{
 		return false;
 	}
+	const int key = idStr::IHash( name );
 	for( int i = 0; i < MAX_LEVEL_PINS; i++ )
 	{
 		if( !levelPinActive[i] )
 		{
 			continue;
 		}
-		for( int j = 0; j < levelPins[i].NumResources(); j++ )
+		for( int j = levelPinHash[i].First( key ); j != -1; j = levelPinHash[i].Next( j ) )
 		{
 			const preloadEntry_s& p = levelPins[i].GetPreloadByIndex( j );
 			if( p.resType == type && p.resourceName.Icmp( name ) == 0 &&
@@ -274,6 +278,11 @@ CONSOLE_COMMAND( pinMap, "pin resident assets in a map preload manifest (four sl
 		return;
 	}
 	levelPinActive[slot] = levelPins[slot].LoadManifest( name );
+	levelPinHash[slot].Clear();
+	for( int i = 0; levelPinActive[slot] && i < levelPins[slot].NumResources(); i++ )
+	{
+		levelPinHash[slot].Add( idStr::IHash( levelPins[slot].GetResourceNameByIndex( i ) ), i );
+	}
 	common->Printf( "PIN %s %s\n", name.c_str(), levelPinActive[slot] ? "active (resident assets only)" : "missing; nothing pinned" );
 }
 
@@ -306,7 +315,10 @@ idCVar net_coopTransitions( "net_coopTransitions", "0", CVAR_NOCHEAT | CVAR_SYST
 idCVar net_transitionAckMs( "net_transitionAckMs", "3000", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "transition reliable drain timeout", 1, 60000 );
 idCVar net_transitionWaitMs( "net_transitionWaitMs", "10000", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "client transition session wait timeout", 1, 60000 );
 idCVar net_transitionArriveMs( "net_transitionArriveMs", "15000", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "transition first snapshot timeout", 1, 60000 );
+//puncho - transitions (stage 3 review): test scaffolding, so not in a retail build
+#if !defined( ID_RETAIL )
 idCVar com_testLoadDelayMs( "com_testLoadDelayMs", "0", CVAR_NOCHEAT | CVAR_SYSTEM | CVAR_INTEGER, "test-only client load delay", 0, 60000 );
+#endif
 
 static int transitionSoundRenderTime = 0;
 static int transitionSoundRenderGap = 0;
@@ -838,12 +850,14 @@ void idCommonLocal::ExecuteMapChange()
 	if( IsClient() )
 	{
 		game->SetMatchGameData( matchParameters.gameData, matchParameters.gameDataSize );
+#if !defined( ID_RETAIL )
 		const int delayUntil = Sys_Milliseconds() + com_testLoadDelayMs.GetInteger();
 		while( Sys_Milliseconds() < delayUntil )
 		{
 			session->Pump();
 			Sys_Sleep( 1 );
 		}
+#endif
 	}
 	int ms = Sys_Milliseconds() - sm;
 	common->Printf( "%6d msec to unload map\n", ms );
@@ -856,6 +870,26 @@ void idCommonLocal::ExecuteMapChange()
 	soundSystem->BeginLevelLoad();
 	declManager->BeginLevelLoad();
 	uiManager->BeginLevelLoad();
+	//puncho start - transitions (stage 3 review): com_levelKeepMB holds for any grace >= 1, and before this load's assets
+	// arrive. Retention purges the old map's unreferenced assets only after the new map's load, so the peak is both
+	// maps; when the previous load left more than the cap resident, they go now, as a legacy load purges them
+	if( LevelKeepGrace() >= 1 && com_levelKeepMB.GetInteger() > 0 )
+	{
+		int64 residentBytes = 0;
+		for( int i = 0; i < 4; i++ )
+		{
+			residentBytes += levelCacheStats[i].bytes;
+		}
+		if( residentBytes > ( int64 )com_levelKeepMB.GetInteger() * 1024 * 1024 )
+		{
+			Printf( "LEVELCACHE cap=%d MB resident=%lld bytes before load: sweep\n", com_levelKeepMB.GetInteger(), ( long long )residentBytes );
+			renderModelManager->PurgeUnusedLevelCache();
+			globalImages->PurgeUnusedLevelCache();
+			soundSystem->PurgeUnusedLevelCache();
+			uiManager->PurgeUnusedLevelCache();
+		}
+	}
+	//puncho end
 	ms = Sys_Milliseconds() - sm;
 	common->Printf( "%6d msec to free assets\n", ms );
 

@@ -1382,6 +1382,10 @@ void idLobby::SetPeerConnectionState( int p, connectionState_t newState, bool sk
 
 	if( !peer.IsActive() )
 	{
+		delete peer.transitionHeld;
+		peer.transitionHeld = NULL;
+		peer.transitionHold = false;
+
 		if( peer.packetProc != NULL )
 		{
 			delete peer.packetProc;
@@ -1426,14 +1430,10 @@ void idLobby::QueueReliableMessage( int p, byte type, const byte* data, int data
 
 	if( IsHost() && peer.transitionHold && type >= RELIABLE_GAME_DATA )
 	{
-		if( dataLen < 0 || dataLen >= idPacketProcessor::MAX_MSG_SIZE - 1 || !peer.transitionHeld.Append( peer.transitionSequence++, &type, 1, data, dataLen ) )
+		if( dataLen < 0 || dataLen >= idPacketProcessor::MAX_MSG_SIZE - 1 || !peer.transitionHeld->Append( peer.transitionSequence++, &type, 1, data, dataLen ) )
 		{
-			idLib::Warning( "transition held reliable overflow peer=%d count=%d bytes=%d", p, peer.transitionHeld.Num(), peer.transitionHeld.GetDataLength() );
+			idLib::Warning( "transition held reliable overflow peer=%d count=%d bytes=%d", p, peer.transitionHeld->Num(), peer.transitionHeld->GetDataLength() );
 			DisconnectPeerFromSession( p );
-		}
-		else
-		{
-			idLib::Printf( "transition_held_reliables peer=%d count=%d bytes=%d\n", p, peer.transitionHeld.Num(), peer.transitionHeld.GetDataLength() );
 		}
 		return;
 	}
@@ -1994,6 +1994,10 @@ void idLobby::VerifyPeerContent( int p )
 	if( differs.IsEmpty() )
 	{
 		peer.transitionRelease = true;
+		if( peer.transitionHeld != NULL )
+		{
+			idLib::Printf( "transition_held_reliables peer=%d count=%d bytes=%d\n", p, peer.transitionHeld->Num(), peer.transitionHeld->GetDataLength() );
+		}
 		FlushTransitionHeld( p );
 		NET_VERBOSE_PRINT( "NET: Peer %i (%s) has the host's content (load %u)\n", p, peer.address.ToString(), loadId );	//puncho - content check (P1-A3a)
 		return;
@@ -2251,6 +2255,9 @@ int idLobby::HandleInitialPeerConnection( idBitMsg& msg, const lobbyAddress_t& p
 		// Assume a peer is trying to reconnect from a non clean disconnect
 		// We want to set the connection back to FREE manually, so we don't send a goodbye
 		existingPeer.connectionState = CONNECTION_FREE;
+		delete existingPeer.transitionHeld;
+		existingPeer.transitionHeld = NULL;
+		existingPeer.transitionHold = false;
 
 		if( existingPeer.packetProc != NULL )
 		{
@@ -5231,7 +5238,12 @@ void idLobby::BeginTransitionHold()
 	for( int p = 0; p < peers.Num(); p++ )
 	{
 		peer_t& peer = peers[p];
-		peer.transitionHeld.Clear();
+		delete peer.transitionHeld;
+		peer.transitionHeld = NULL;
+		if( peer.IsConnected() )
+		{
+			peer.transitionHeld = new( TAG_NETWORKING ) transitionHeld_t;
+		}
 		peer.transitionSequence = 0;
 		peer.transitionHold = peer.transitionMember = peer.IsConnected();
 		peer.transitionRelease = false;
@@ -5244,7 +5256,8 @@ void idLobby::CancelTransitionHold()
 	{
 		peer_t& peer = peers[p];
 		peer.transitionHold = peer.transitionRelease = peer.transitionMember = false;
-		peer.transitionHeld.Clear();
+		delete peer.transitionHeld;
+		peer.transitionHeld = NULL;
 	}
 }
 
@@ -5302,23 +5315,32 @@ void idLobby::FlushTransitionHeld( int p )
 		return;
 	}
 	// Leave room for lobby control reliables. New game messages append behind the backlog.
-	while( peer.transitionHeld.Num() > 0 && peer.packetProc->NumQueuedReliables() < idPacketProcessor::MAX_RELIABLE_QUEUE - 8 )
+	transitionHeld_t* held = peer.transitionHeld;
+	int flushed = 0;
+	while( flushed < held->Num() && peer.packetProc->NumQueuedReliables() < idPacketProcessor::MAX_RELIABLE_QUEUE - 8 )
 	{
-		if( peer.packetProc->GetReliableDataSize() + peer.transitionHeld.ItemLength( 0 ) >= idPacketProcessor::MAX_MSG_SIZE )
+		if( peer.packetProc->GetReliableDataSize() + held->ItemLength( flushed ) >= idPacketProcessor::MAX_MSG_SIZE )
 		{
 			break;
 		}
-		const byte* data = peer.transitionHeld.ItemData( 0 );
-		if( !peer.packetProc->QueueReliableMessage( data[0], data + 1, peer.transitionHeld.ItemLength( 0 ) - 1 ) )
+		const byte* data = held->ItemData( flushed );
+		if( !peer.packetProc->QueueReliableMessage( data[0], data + 1, held->ItemLength( flushed ) - 1 ) )
 		{
 			idLib::Warning( "transition held reliable flush overflow peer=%d", p );
 			DisconnectPeerFromSession( p );
 			return;
 		}
-		peer.transitionHeld.RemoveOlderThan( peer.transitionHeld.ItemSequence( 0 ) + 1 );
+		flushed++;
 	}
-	if( peer.transitionHeld.Num() == 0 )
+	//puncho - transitions (stage 3 review): compact the backlog once per flush; per message it memmoved the whole remainder
+	if( flushed > 0 )
 	{
+		held->RemoveOlderThan( held->ItemSequence( flushed - 1 ) + 1 );
+	}
+	if( held->Num() == 0 )
+	{
+		delete peer.transitionHeld;
+		peer.transitionHeld = NULL;
 		peer.transitionHold = false;
 	}
 }

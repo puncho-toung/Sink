@@ -203,10 +203,13 @@ public:
 		CONNECTION_ESTABLISHED		= 2,		// Connection is established and active
 	};
 
+	typedef idDataQueue<64, 64 * ( idPacketProcessor::MAX_MSG_SIZE + 1 ) + 1> transitionHeld_t;
+
 	struct peer_t
 	{
 		peer_t()
 		{
+			transitionHeld = NULL;
 			transitionHold = transitionRelease = transitionMember = false;
 			transitionSequence = 0;
 			loaded					= false;
@@ -254,7 +257,8 @@ public:
 		{
 			transitionHold = transitionRelease = transitionMember = false;
 			transitionSequence = 0;
-			transitionHeld.Clear();
+			delete transitionHeld;
+			transitionHeld = NULL;
 			lastResourceTime		= 0;
 			lastSnapTime			= 0;
 			snapHz					=
@@ -335,8 +339,8 @@ public:
 		connectionState_t	GetConnectionState() const;
 
 		connectionState_t	connectionState;
-		// Fixed per-peer storage: 64 messages, each bounded by the packet processor maximum.
-		idDataQueue<64, 64 * ( idPacketProcessor::MAX_MSG_SIZE + 1 ) + 1> transitionHeld;
+		//puncho - transitions (stage 3 review): 513 KB, so heap-allocated only while holding; peer_t stays small on the stack, in idList growth and in resets
+		transitionHeld_t*	transitionHeld;
 		int transitionSequence;
 		bool transitionHold, transitionRelease, transitionMember;
 		bool				loaded;						// true if this peer has finished loading the map

@@ -49,6 +49,15 @@ struct transitionState_t
 	bool pending, active, relative, carryApplied;
 };
 static transitionState_t transitionState;
+//puncho - transitions (stage 3 review): CommitMapTransition's carry scratch, 224 KB, off the 1 MB Game/Draw stack; only
+// the game thread commits. rootOf is each entity's candidate root (-1 if none), found once instead of once per group
+static struct
+{
+	idEntity*	touching[MAX_GENTITIES];
+	int			rootOf[MAX_GENTITIES];
+	bool		roots[MAX_GENTITIES];
+	bool		accepted[MAX_GENTITIES];
+} transitionCarryScratch;
 static bool transitionTestPlacementPending;
 static bool transitionTestFarPeer;
 
@@ -369,9 +378,12 @@ void idGameLocal::CommitMapTransition()
 	if( g_transitionCarry.GetBool() && transitionState.relative && worldStore.IsActive() && volume != NULL && volume->carryAll )
 	{
 		// Transition-only fixed scratch. Bound teams are ranked as a unit; no frame allocation.
-		idEntity* touching[MAX_GENTITIES];
-		bool roots[MAX_GENTITIES] = {};
-		bool accepted[MAX_GENTITIES] = {};
+		idEntity** touching = transitionCarryScratch.touching;
+		int* rootOf = transitionCarryScratch.rootOf;
+		bool* roots = transitionCarryScratch.roots;
+		bool* accepted = transitionCarryScratch.accepted;
+		memset( roots, 0, sizeof( transitionCarryScratch.roots ) );
+		memset( accepted, 0, sizeof( transitionCarryScratch.accepted ) );
 		const int touchingCount = clip.EntitiesTouchingBounds( volume->bounds, -1, touching, MAX_GENTITIES );
 		for( int i = 0; i < touchingCount; i++ )
 		{
@@ -380,6 +392,11 @@ void idGameLocal::CommitMapTransition()
 			{
 				roots[root->entityNumber] = true;
 			}
+		}
+		for( int i = MAX_CLIENTS; i < ENTITYNUM_WORLD; i++ )
+		{
+			idEntity* root = entities[i] != NULL ? TransitionBindRoot( entities[i] ) : NULL;
+			rootOf[i] = root != NULL && roots[root->entityNumber] ? root->entityNumber : -1;
 		}
 		const int cap = idMath::ClampInt( 0, MAX_TRANSITION_CARRY, volume->cap );
 		int acceptedCount = 0;
@@ -409,7 +426,7 @@ void idGameLocal::CommitMapTransition()
 			for( int i = MAX_CLIENTS; i < ENTITYNUM_WORLD; i++ )
 			{
 				idEntity* ent = entities[i];
-				if( ent == NULL || TransitionBindRoot( ent ) != entities[best] )
+				if( ent == NULL || rootOf[i] != best )
 				{
 					continue;
 				}
@@ -472,7 +489,9 @@ void idGameLocal::CommitMapTransition()
 			worldStore.MarkDeparted( ent );
 		}
 	}
-	CarryTransitionSounds();
+	//puncho - transitions (stage 3 review): no CarryTransitionSounds here. Detaching at commit, before the map change was
+	// accepted, left a refused change's speakers playing ownerless forever; the host now carries at MapShutdown, inside
+	// the accepted load, as clients do
 	worldStore.continueNextLoad = worldStore.IsActive();
 	worldStore.CommitCurrentMap();
 	common->ReportTransitionMetric( TRANSITION_CARRY_US, Sys_Microseconds() - carryStart );
