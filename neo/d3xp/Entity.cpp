@@ -1289,6 +1289,9 @@ bool idEntity::CheckDormant()
 {
 	bool dormant;
 
+	//puncho - P2b.0.3: timed inside a timed think walk (g_passProfile); otherwise this test and the one at the return
+	const bool passTimed = gameLocal.passTag != PASS_TAG_NONE;
+	const double passStart = passTimed ? Sys_GetClockTicks() : 0.0;
 	const int sleepStart = dormantStart;
 	const bool catchUp = fl.hasAwakened && fl.isDormant && !dormantWakeRequested && sleepStart > 0;
 	dormant = DoDormantTests();
@@ -1310,6 +1313,23 @@ bool idEntity::CheckDormant()
 			DormantCatchUp( elapsed );
 		}
 	}
+
+	//puncho start - P2b.0.3: split by the result, DormantBegin, DormantEnd and the catch-up included
+	if( passTimed )
+	{
+		const double ticks = Sys_GetClockTicks() - passStart;
+		if( dormant )
+		{
+			gameLocal.passStats.tDormantAsleep += ticks;
+			gameLocal.passStats.nDormantAsleep++;
+		}
+		else
+		{
+			gameLocal.passStats.tDormantAwake += ticks;
+			gameLocal.passStats.nDormantAwake++;
+		}
+	}
+	//puncho end
 
 	return dormant;
 }
@@ -1748,6 +1768,10 @@ void idEntity::UpdatePVSAreas()
 	idBounds modelAbsBounds;
 	int i;
 
+	//puncho - P2b.0.3: counted only inside a timed think walk; it also runs lazily from any GetPVSAreas (SetupPlayerPVS, events)
+	const bool passTimed = gameLocal.passTag != PASS_TAG_NONE;
+	const double passStart = passTimed ? Sys_GetClockTicks() : 0.0;
+
 	modelAbsBounds.FromTransformedBounds( renderEntity.bounds, renderEntity.origin, renderEntity.axis );
 	localNumPVSAreas = gameLocal.pvs.GetPVSAreas( modelAbsBounds, localPVSAreas, sizeof( localPVSAreas ) / sizeof( localPVSAreas[0] ) );
 
@@ -1767,6 +1791,14 @@ void idEntity::UpdatePVSAreas()
 	{
 		PVSAreas[ i ] = 0;
 	}
+
+	//puncho start - P2b.0.3
+	if( passTimed )
+	{
+		gameLocal.passStats.tPVSAreas += Sys_GetClockTicks() - passStart;
+		gameLocal.passStats.nPVSAreas++;
+	}
+	//puncho end
 }
 
 /*
@@ -1941,6 +1973,9 @@ void idEntity::Present()
 	{
 		return;
 	}
+	//puncho - P2b.0.3: a present that does work, timed inside a timed think walk; otherwise this test and one at each exit
+	const bool passTimed = gameLocal.passTag != PASS_TAG_NONE;
+	const double passStart = passTimed ? Sys_GetClockTicks() : 0.0;
 	BecomeInactive( TH_UPDATEVISUALS );
 
 	// camera target for remote render views
@@ -1952,9 +1987,18 @@ void idEntity::Present()
 	// if set to invisible, skip
 	if( !renderEntity.hModel || IsHidden() )
 	{
+		//puncho start - P2b.0.3
+		if( passTimed )
+		{
+			gameLocal.passStats.tPresent += Sys_GetClockTicks() - passStart;
+			gameLocal.passStats.nPresent++;
+		}
+		//puncho end
 		return;
 	}
 
+	//puncho - P2b.0.3
+	const double defStart = passTimed ? Sys_GetClockTicks() : 0.0;
 	// add to refresh list
 	if( modelDefHandle == -1 )
 	{
@@ -1964,6 +2008,38 @@ void idEntity::Present()
 	{
 		gameRenderWorld->UpdateEntityDef( modelDefHandle, &renderEntity );
 	}
+
+	//puncho start - P2b.0.3: the renderer call alone, and apart for an entity whose maxVisDist every player view is beyond
+	// (SetupPlayerPVS's dormant sources against the render origin, never nearer than the bounds point R_VisibilityFade
+	// measures to: these include every entity its distance cull skips at r_cullDistanceScale 1)
+	if( passTimed )
+	{
+		const double now = Sys_GetClockTicks();
+		passTicStats_t& ps = gameLocal.passStats;
+		ps.tPresent += now - passStart;
+		ps.nPresent++;
+		ps.tPresentDef += now - defStart;
+		ps.nPresentDef++;
+		const float maxVisDist = renderEntity.maxVisDist;
+		if( maxVisDist > 0.0f )
+		{
+			bool beyond = true;
+			for( int i = 0; i < gameLocal.numDormantSources; i++ )
+			{
+				if( ( renderEntity.origin - gameLocal.dormantSources[ i ] ).LengthSqr() <= maxVisDist * maxVisDist )
+				{
+					beyond = false;
+					break;
+				}
+			}
+			if( beyond )
+			{
+				ps.tPresentFar += now - defStart;
+				ps.nPresentFar++;
+			}
+		}
+	}
+	//puncho end
 }
 
 /*

@@ -2920,6 +2920,10 @@ idGameLocal::RunEntityThink
 */
 void idGameLocal::RunEntityThink( idEntity& ent, idUserCmdMgr& userCmdMgr )
 {
+	//puncho - P2b.0.3: timed inside a timed think walk; any other think costs this test and the one after it
+	const passTag_t tag = passTag;
+	const double passStart = ( tag != PASS_TAG_NONE ) ? Sys_GetClockTicks() : 0.0;
+
 	if( ent.entityNumber < MAX_PLAYERS )
 	{
 		// Players may run more than one think per frame in MP,
@@ -2932,6 +2936,28 @@ void idGameLocal::RunEntityThink( idEntity& ent, idUserCmdMgr& userCmdMgr )
 		// Non-player entities always run one think.
 		ent.Think();
 	}
+
+	//puncho start - P2b.0.3: the walks' thinks sum to usThinkSum, a sleeper's (dormant on return) also to usSleeperThink;
+	// RunTimeGroup2's are taken out of its bracket (usWalkTG2)
+	if( tag != PASS_TAG_NONE )
+	{
+		const double ticks = Sys_GetClockTicks() - passStart;
+		if( tag == PASS_TAG_WALK )
+		{
+			passStats.tThinkSum += ticks;
+			if( ent.fl.isDormant )
+			{
+				passStats.tSleeperThink += ticks;
+				passStats.nSleeperThink++;
+			}
+		}
+		else if( tag == PASS_TAG_TG2 )
+		{
+			passStats.tTG2Thinks += ticks;
+			passStats.nTG2++;
+		}
+	}
+	//puncho end
 }
 
 idCVar g_recordTrace( "g_recordTrace", "0", CVAR_BOOL, "" );
@@ -2957,6 +2983,63 @@ void GameVerify_BeginTic();
 void GameVerify_EndTic();
 //puncho end
 
+//puncho start - P2b.0.3 (plans/map-graph/stages/S2b-0-gates-measurements.md §6): g_passProfile's state outside the
+// per-tic record. The level is read once per tic into passLevel; the per-entity sites test passTag alone.
+static const int	PASS_CALIBRATION_PAIRS = 100000;	// empty clock pairs timed when the level leaves 0
+static const int	PASS_CSV_COLUMNS = 38;				// the appended ai_profileLog columns
+static int			passLevel = 0;						// g_passProfile as read at the start of this tic
+static float		passOverheadNs = 0.0f;				// mean of one empty Sys_GetClockTicks pair, ns
+
+/*
+================
+PassLap
+
+  Adds the clock since mark to accum and moves mark to now, so back-to-back passes share one read.
+================
+*/
+static ID_INLINE void PassLap( double& accum, double& mark )
+{
+	const double now = Sys_GetClockTicks();
+	accum += now - mark;
+	mark = now;
+}
+
+/*
+================
+idGameLocal::PassProfileBeginTic
+
+  Reads g_passProfile once for the tic and decides whether the tic is timed: one whole tic in g_passProfileEvery,
+  so a timed tic's walk, think sum and walk overhead come from the same entities, the players' usercmd thinks
+  included (Astra item 6). Leaving level 0 calibrates the bracket: the mean of PASS_CALIBRATION_PAIRS back-to-back
+  clock reads, about 2 ms once, before the tic's first pass.
+================
+*/
+void idGameLocal::PassProfileBeginTic()
+{
+	passTag = PASS_TAG_NONE;
+	const int level = g_passProfile.GetInteger();
+	if( level != passLevel )
+	{
+		if( passLevel == 0 && level > 0 )
+		{
+			double sum = 0.0;
+			for( int i = 0; i < PASS_CALIBRATION_PAIRS; i++ )
+			{
+				const double start = Sys_GetClockTicks();
+				sum += Sys_GetClockTicks() - start;
+			}
+			passOverheadNs = ( float )( sum / PASS_CALIBRATION_PAIRS * 1.0e9 / Sys_ClockTicksPerSecond() );
+		}
+		passLevel = level;
+	}
+	passTimed = passLevel > 0 && ( framenum % Max( 1, g_passProfileEvery.GetInteger() ) ) == 0;
+	if( passTimed )
+	{
+		memset( &passStats, 0, sizeof( passStats ) );
+	}
+}
+//puncho end
+
 /*
 ================
 idGameLocal::RunFrame
@@ -2973,6 +3056,7 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 	float		ms;
 	idTimer		timer_think, timer_events, timer_singlethink;
 	clipStats_t	clipBefore, clipAfter;	//puncho - ai-harness
+	double		passMark = 0.0;			//puncho - P2b.0.3: the clock at the last pass boundary of a timed tic
 
 	idPlayer*	player;
 	const renderView_t* view;
@@ -3082,11 +3166,32 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			GameVerify_BeginTic();
 			//puncho end
 
+			//puncho start - P2b.0.3: a timed tic brackets the passes from here to the events
+			PassProfileBeginTic();
+			if( passTimed )
+			{
+				passMark = Sys_GetClockTicks();
+			}
+			//puncho end
+
 			// create a merged pvs for all players
 			SetupPlayerPVS();
+			//puncho start - P2b.0.3
+			if( passTimed )
+			{
+				PassLap( passStats.tPVS, passMark );
+			}
+			//puncho end
 
 			// sort the active entity list
 			SortActiveEntityList();
+			//puncho start - P2b.0.3: the walks' entities, counted outside every bracket and outside usTic
+			if( passTimed )
+			{
+				PassLap( passStats.tSort, passMark );
+				passStats.activeEnts = activeEntities.Num();
+			}
+			//puncho end
 
 			//puncho start - ai-harness (00-PLAN.md §2.2, §2.6): the one reset of the live census; snapStats is copied
 			// here rather than read later because ServerWriteSnapshot runs on the main thread between game frames.
@@ -3101,6 +3206,14 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 
 			timer_think.Clear();
 			timer_think.Start();
+
+			//puncho start - P2b.0.3: the think walks alone, their thinks tagged for the per-entity sites
+			if( passTimed )
+			{
+				passMark = Sys_GetClockTicks();
+				passTag = PASS_TAG_WALK;
+			}
+			//puncho end
 
 			// let entities think
 			if( g_timeentities.GetFloat() )
@@ -3156,10 +3269,34 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 				}
 			}
 
+			//puncho start - P2b.0.3
+			if( passTimed )
+			{
+				PassLap( passStats.tThinkWalk, passMark );
+				passTag = PASS_TAG_TG2;
+			}
+			//puncho end
 			RunTimeGroup2( cmdMgr );
+			//puncho start - P2b.0.3
+			if( passTimed )
+			{
+				PassLap( passStats.tTG2, passMark );
+				passTag = PASS_TAG_SHARED;
+			}
+			//puncho end
 // jmarshall
 			RunSharedThink();
 // jmarshall end
+			//puncho start - P2b.0.3: RunSharedThink skips no entity, and one a SharedThink activates is appended and walked
+			// too, so its calls are the list's length after it; counted outside the bracket
+			if( passTimed )
+			{
+				PassLap( passStats.tShared, passMark );
+				passTag = PASS_TAG_NONE;
+				passStats.nShared = activeEntities.Num();
+				passMark = Sys_GetClockTicks();
+			}
+			//puncho end
 			//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md §3.3, WP-A5): the neighbour grid from the positions this
 			// tic's physics produced, read by the next tic's thinks; separation needs it, the obstacle gather uses it when there
 			if( ai_neighborGrid.GetBool() || ai_separation.GetBool() )
@@ -3183,6 +3320,12 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 				{
 				}
 			}
+			//puncho start - P2b.0.3
+			if( passTimed )
+			{
+				PassLap( passStats.tPost, passMark );
+			}
+			//puncho end
 
 
 
@@ -3203,6 +3346,12 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 				//assert( numEntitiesToDeactivate == c );
 				numEntitiesToDeactivate = 0;
 			}
+			//puncho start - P2b.0.3
+			if( passTimed )
+			{
+				PassLap( passStats.tPrune, passMark );
+			}
+			//puncho end
 
 			timer_think.Stop();
 			//puncho start - ai-harness: idClip's share of the think loop
@@ -3216,6 +3365,12 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			//puncho end
 			timer_events.Clear();
 			timer_events.Start();
+			//puncho start - P2b.0.3
+			if( passTimed )
+			{
+				passMark = Sys_GetClockTicks();
+			}
+			//puncho end
 
 			// service any pending events
 			idEvent::ServiceEvents();
@@ -3227,6 +3382,12 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 
 			//puncho - P2.4 (bug review 2026-10-28): announces a prefetch prediction a flag changed after the frame's first
 			mapGraphDirector.RunFrame();
+			//puncho start - P2b.0.3
+			if( passTimed )
+			{
+				PassLap( passStats.tEvents, passMark );
+			}
+			//puncho end
 
 			timer_events.Stop();
 
@@ -3324,7 +3485,12 @@ static const char* const aiProfileCsvHeader =
 	"flowSteps,flowCellsBuilt,flowFieldsOpened,flowPromoted,roleFollowers,"	// ai-avoidance: appended after wallMs; WP-A2/A4 after avoidDropped; WP-A1/A3, WP-A5, WP-A6/A7 after those
 	"attacksMelee,attacksMissile,attacksCharge,projectilesAlive,damageEvents,friendlyDamage,painEvents,deaths,ragdollsActive,"
 	"enemyChanges,enemyLost,noEnemy,canHitTraces,attackPosSearches,coverSearches,usCombatTraces,"	// ai-combat (plans/ai-combat/00-PLAN.md §2.4): appended after roleFollowers
-	"usShooterTokens,shooterCandidates,shooterHolders,shooterGrants,shooterYields,shooterExpired,shooterDenied,shooterTests,shooterSniperAsks,dormTests,dormAsleep,dormClosedOff,dormFar,dormUnseen,dormWakes,dormSleeps,dormDeferred,dormForced,dormViolations,awakeNear2k,awakeNear4k,awakeNear8k,awakeFar,dormCatchUps,aasCacheBytes,aasCacheEvictions,aasTravelSaturated\n";	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): appended after usCombatTraces
+	"usShooterTokens,shooterCandidates,shooterHolders,shooterGrants,shooterYields,shooterExpired,shooterDenied,shooterTests,shooterSniperAsks,dormTests,dormAsleep,dormClosedOff,dormFar,dormUnseen,dormWakes,dormSleeps,dormDeferred,dormForced,dormViolations,awakeNear2k,awakeNear4k,awakeNear8k,awakeFar,dormCatchUps,aasCacheBytes,aasCacheEvictions,aasTravelSaturated,"	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): appended after usCombatTraces
+	// P2b.0.3 (plans/map-graph/stages/S2b-0-gates-measurements.md §6, the contract's order; stage 2's names frozen): g_passProfile
+	"usPassPVS,usPassSort,usPassThinkWalk,usPassEvents,usPassDormant,nPassDormant,usPassPVSAreas,nPassPVSAreas,usPassPresent,nPassPresent,passOverheadNs,activeEnts,spawnedEnts,"
+	"usThinkSum,usWalkTG2,nTG2,usWalkShared,nShared,usSleeperThink,nSleeperThink,usPassDormantAsleep,nPassDormantAsleep,usPassDormantAwake,nPassDormantAwake,usPresentDef,nPresentDef,usPresentFar,nPresentFar,"
+	"usPassPost,usPassPrune,"
+	"l2mThinkWalk,cycThinkWalk,insThinkWalk,l2mEvents,cycEvents,insEvents,l2mPVS,l2mSort\n";
 
 /*
 ================
@@ -3336,6 +3502,11 @@ idGameLocal::ClearAIStats
 void idGameLocal::ClearAIStats()
 {
 	memset( &aiStats, 0, sizeof( aiStats ) );
+	//puncho start - P2b.0.3: the pass record; passLevel and the calibration outlive a map change like the CSV file
+	memset( &passStats, 0, sizeof( passStats ) );
+	passTag = PASS_TAG_NONE;
+	passTimed = false;
+	//puncho end
 	memset( &snapStats, 0, sizeof( snapStats ) );
 	memset( &aiHudStats, 0, sizeof( aiHudStats ) );
 	memset( aiThinkRing, 0, sizeof( aiThinkRing ) );
@@ -3473,8 +3644,9 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 	}
 	if( aiProfileFile != NULL )
 	{
-		char	row[ 1536 ];		//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): 91 columns since 08; 1024 could truncate a row of wide values into a malformed line
+		char	row[ 2048 ];		//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): 91 columns since 08; 1024 could truncate a row of wide values into a malformed line; P2b.0.3: 1536 + pass
 		char	snap[ 128 ];
+		char	pass[ 640 ];		//puncho - P2b.0.3: the PASS_CSV_COLUMNS appended columns
 		const aiTicStats_t& t = aiStats;
 		const snapStats_t& sn = aiHudStats.snap;
 
@@ -3488,6 +3660,34 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 		{
 			idStr::Copynz( snap, ",,,,,", sizeof( snap ) );
 		}
+		//puncho start - P2b.0.3: the pass columns are blank unless this tic was timed, at level 0 too: a blank reads as not
+		// measured (the AI harness's reader takes it as None) where a 0 would read as a pass that cost nothing. Microseconds
+		// with two decimals: a pass of a few hundred ns is common. The level 2 columns are blank below level 2
+		if( passTimed )
+		{
+			const double usPerTick = 1000000.0 / Sys_ClockTicksPerSecond();
+			const passTicStats_t& ps = passStats;
+			idStr::snPrintf( pass, sizeof( pass ),
+							 "%.2f,%.2f,%.2f,%.2f,%.2f,%d,%.2f,%d,%.2f,%d,%.1f,%d,%d,"
+							 "%.2f,%.2f,%d,%.2f,%d,%.2f,%d,%.2f,%d,%.2f,%d,%.2f,%d,%.2f,%d,"
+							 "%.2f,%.2f,"
+							 ",,,,,,,",
+							 ps.tPVS * usPerTick, ps.tSort * usPerTick, ps.tThinkWalk * usPerTick, ps.tEvents * usPerTick,
+							 ( ps.tDormantAsleep + ps.tDormantAwake ) * usPerTick, ps.nDormantAsleep + ps.nDormantAwake,
+							 ps.tPVSAreas * usPerTick, ps.nPVSAreas, ps.tPresent * usPerTick, ps.nPresent,
+							 passOverheadNs, ps.activeEnts, spawnedEntities.Num(),
+							 ps.tThinkSum * usPerTick, ( ps.tTG2 - ps.tTG2Thinks ) * usPerTick, ps.nTG2, ps.tShared * usPerTick, ps.nShared,
+							 ps.tSleeperThink * usPerTick, ps.nSleeperThink,
+							 ps.tDormantAsleep * usPerTick, ps.nDormantAsleep, ps.tDormantAwake * usPerTick, ps.nDormantAwake,
+							 ps.tPresentDef * usPerTick, ps.nPresentDef, ps.tPresentFar * usPerTick, ps.nPresentFar,
+							 ps.tPost * usPerTick, ps.tPrune * usPerTick );
+		}
+		else
+		{
+			memset( pass, ',', PASS_CSV_COLUMNS - 1 );
+			pass[ PASS_CSV_COLUMNS - 1 ] = '\0';
+		}
+		//puncho end
 		int64 aasBytes = 0, aasEvictions = 0, aasSaturated = 0;
 		for( int i = 0; i < aasList.Num(); i++ )
 		{
@@ -3511,7 +3711,8 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 										"%d,%d,%d,%d,"
 										"%d,%d,%d,%d,%d,"
 										"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
-										"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%lld,%lld,%lld\n",	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): the shooter tokens
+										"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%lld,%lld,%lld,"	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): the shooter tokens
+										"%s\n",	//puncho - P2b.0.3: the pass columns
 										framenum, time, usTic, numEnts, t.thinks, t.moveTics,
 										t.usThink, t.usPerceive, t.usScript, t.usMove, t.usMovePath, t.usMoveAvoid, t.usMovePhysics, t.usPath, t.usAnimUpdate, t.usAnimCtl,
 										aiHudStats.worst.usThink, aiHudStats.worstName,
@@ -3526,7 +3727,8 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 										t.flowSteps, t.flowCellsBuilt, t.flowFieldsOpened, t.flowPromoted, t.roleFollowers,
 										t.attacksMelee, t.attacksMissile, t.attacksCharge, t.projectilesAlive, t.damageEvents, t.friendlyDamage, t.painEvents, t.deaths, t.ragdollsActive,
 										t.enemyChanges, t.enemyLost, t.noEnemy, t.canHitTraces, t.attackPosSearches, t.coverSearches, t.usCombatTraces,
-										t.usShooterTokens, t.shooterCandidates, t.shooterHolders, t.shooterGrants, t.shooterYields, t.shooterExpired, t.shooterDenied, t.shooterTests, t.shooterSniperAsks, t.dormTests, t.dormAsleep, t.dormClosedOff, t.dormFar, t.dormUnseen, t.dormWakes, t.dormSleeps, t.dormDeferred, t.dormForced, t.dormViolations, t.awakeNear2k, t.awakeNear4k, t.awakeNear8k, t.awakeFar, t.dormCatchUps, ( long long )aasBytes, ( long long )aasEvictions, ( long long )aasSaturated );	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md)
+										t.usShooterTokens, t.shooterCandidates, t.shooterHolders, t.shooterGrants, t.shooterYields, t.shooterExpired, t.shooterDenied, t.shooterTests, t.shooterSniperAsks, t.dormTests, t.dormAsleep, t.dormClosedOff, t.dormFar, t.dormUnseen, t.dormWakes, t.dormSleeps, t.dormDeferred, t.dormForced, t.dormViolations, t.awakeNear2k, t.awakeNear4k, t.awakeNear8k, t.awakeFar, t.dormCatchUps, ( long long )aasBytes, ( long long )aasEvictions, ( long long )aasSaturated,	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md)
+										pass );	//puncho - P2b.0.3
 		if( aiProfileLen + len >= ( int )sizeof( aiProfileBuf ) )
 		{
 			FlushAIProfileLog();
