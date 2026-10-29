@@ -9,7 +9,7 @@ Version 2
 "_tb_type" "_tb_group"
 "_tb_id" "1"
 "_tb_name" "return128"
-"_tb_linked_group_id" "a2a5033b-fbe8-4fe2-891a-000000000128"
+"_tb_linked_group_id" "843a849d-54bd-4842-8922-ee67d0f65bd0"
 }
 // entity 2
 {
@@ -54,6 +54,7 @@ Version 2
 {
 "classname" "trigger_changelevel"
 "name" "doorway_trigger"
+"model" "doorway_trigger"
 "landmark" "doorway"
 "_tb_group" "1"
 // primitive 0

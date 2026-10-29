@@ -54,6 +54,7 @@ Version 2
 {
 "classname" "trigger_changelevel"
 "name" "doorway_trigger"
+"model" "doorway_trigger"
 "landmark" "doorway"
 "_tb_group" "1"
 // primitive 0

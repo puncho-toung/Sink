@@ -1,3 +1,8 @@
+// The three map-only classes are never spawned: the game reads their keys from the raw .map
+// (idWorldStore::ReadMapData and the landing pick in Game_transition.cpp), matching these class
+// names exactly, so a class that inherits one is inhibited but never read. Their values below are
+// never merged either; they show the editor the default the C++ uses when a key is absent, and
+// change only together with it.
 entityDef info_landmark {
 	"dmapOnly" "1"
 	"editor_color" "0 1 1"
@@ -6,15 +11,22 @@ entityDef info_landmark {
 	"editor_var kind" "Doorway template kind"
 	"editor_var link" "map:landmark or @mapGraph"
 	"editor_float radius" "Arrival placement radius"
+	"editor_bool entry" "Arrivals may use this doorway"
+	"editor_bool exit" "Departures may use this doorway"
+	"editor_bool required" "Generation must link this exit, through an endcap rule if no other rule links it"
+	"editor_var sealed_by" "func_door kept shut while this doorway is not linked"
 	"radius" "256"
 	"entry" "1"
 	"exit" "1"
+	"required" "0"
 }
 entityDef trigger_transition {
 	"dmapOnly" "1"
 	"editor_color" "0 0.7 1"
 	"editor_usage" "Map-only carry volume paired with a landmark"
 	"editor_var landmark" "Doorway id"
+	"editor_int cap" "Most entities carried across, 0 through 64"
+	"editor_var carry" "all carries the entities inside the volume; any other value carries none"
 	"cap" "64"
 	"carry" "all"
 }
@@ -24,6 +36,7 @@ entityDef info_landing {
 	"editor_usage" "Explicit party landing slot, index 0 through 7"
 	"editor_var landmark" "Arrival doorway id"
 	"editor_int index" "Party player index"
+	"index" "0"
 }
 
 entityDef corpse {
@@ -37,6 +50,10 @@ entityDef trigger_changelevel {
 	"editor_color" "0.2 0.8 1"
 	"editor_usage" "Whole party map graph exit"
 	"editor_var landmark" "Departure doorway id"
+	"editor_bool wait_party" "Fire only when every living player stands inside the carry volume of landmark"
+	// no default for these two: an arrivalLandmark key, even empty, would replace the C++ default of landmark
+	"editor_var nextMap" "Destination map when no map graph world is active"
+	"editor_var arrivalLandmark" "Arrival doorway id in nextMap; defaults to landmark"
 	"wait_party" "1"
 }
 

@@ -195,6 +195,8 @@ mapTri_t* TriListForSide( const side_t* s, const idWinding* w )
 	}
 
 	// don't create faces for non-visible sides
+	//puncho - P2.4b review: occluder sides now emit faces for the masked occlusion fill. Only RBDOOM's "occlusion"
+	// keyword sets SURF_OCCLUSION, and the stock id maps predate it, so their .proc output is unchanged
 	if( !si->SurfaceCastsShadow() && !si->IsDrawn() && !si->IsOccluder() )
 	{
 		return NULL;

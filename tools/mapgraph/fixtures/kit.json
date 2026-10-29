@@ -1,4 +1,7 @@
 {
+  "flags": [
+    "extra_start"
+  ],
   "links": [
     [
       "entry.east",
@@ -144,5 +147,8 @@
       }
     }
   },
+  "triggers": [
+    "boss_dead"
+  ],
   "version": 1
 }

@@ -5,21 +5,26 @@ import copy
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
+import tempfile
 
 MAX_BYTES = 8 * 1024 * 1024
 MAX_INSTANCES = 256
+MAX_WORLD_COORD = 131072  # idlib/Lib.h; dmap drops a brush whose bounds pass it (ubrush.cpp BoundBrush)
 IDENT = re.compile(r'[A-Za-z][A-Za-z0-9_]{0,47}\Z')
 # Unknown epairs fail closed: additional game classes need an audited extension.
 SAFE_KEYS = set('classname name model origin light_origin angle angles rotation _color light_radius light_center light_target light_right light_up light_start light_end texture skin shaderParm0 shaderParm1 shaderParm2 shaderParm3 shaderParm4 shaderParm5 shaderParm6 shaderParm7 noshadows nospecular parallel ambient falloff s_shader s_looping s_global s_volume wait speed damage health solid inline hide noTouch start_on bindOrientated bindToJoint bindToBody'.split())
 REF_KEYS = {'bind', 'target', 'killtarget'}
+# Map-only classes are known by their entityDef ("dmapOnly" "1"); a dmapOnly map key does nothing and is rejected.
 KIT_KEYS = {
-    'info_landmark': {'landmark', 'kind', 'entry', 'exit', 'radius', 'required', 'sealed_by', 'dmapOnly'},
-    'trigger_transition': {'landmark', 'cap', 'carry', 'dmapOnly'},
+    'info_landmark': {'landmark', 'kind', 'entry', 'exit', 'radius', 'required', 'sealed_by'},
+    'trigger_transition': {'landmark', 'cap', 'carry'},
     'trigger_changelevel': {'landmark', 'wait_party'},
-    'info_landing': {'landmark', 'index', 'dmapOnly'},
+    'info_landing': {'landmark', 'index'},
 }
+WORLD_RESET = ('never', 'timed', 'cleared')  # WorldStore.cpp reads worldspawn world_reset / world_reset_time
 TOKEN = re.compile(r'\s+|//[^\n]*|/\*.*?\*/|"(?:[^"\\]|\\.)*"|[{}()]|[^\s{}()"]+', re.S)
 
 
@@ -69,11 +74,68 @@ def dot(a, b):
 
 
 def basis(n):
-    # Same basis as idMapBrushSide::GetTextureVectors / ComputeAxisBase.
+    # Same basis as idMapBrushSide::GetTextureVectors / ComputeAxisBase, in closed form: with
+    # rz = atan2(y, x), sin(rz) = y/hypot(x, y) and cos(rz) = x/hypot(x, y), and likewise for ry. libm's
+    # sin/cos/atan2 may differ in the last bit between platforms; IEEE division and CPython's own hypot
+    # do not, so the output bytes do not depend on the platform. atan2(0, 0) is 0: sin 0, cos 1.
     n = [0.0 if abs(x) < 1e-6 else x for x in n]
-    ry = -math.atan2(n[2], math.hypot(n[0], n[1]))
-    rz = math.atan2(n[1], n[0])
-    return [-math.sin(rz), math.cos(rz), 0], [-math.sin(ry)*math.cos(rz), -math.sin(ry)*math.sin(rz), -math.cos(ry)]
+    h = math.hypot(n[0], n[1])
+    sin_z, cos_z = (n[1]/h, n[0]/h) if h else (0.0, 1.0)
+    r = math.hypot(h, n[2])
+    sin_y, cos_y = -n[2]/r, h/r  # ry = -atan2(n[2], h)
+    return [-sin_z, cos_z, 0], [-sin_y*cos_z, -sin_y*sin_z, -cos_y]
+
+
+def brush_points(sides):
+    # The engine's way to a brush's corners: each side's plane as a large square (idWinding::BaseForPlane),
+    # clipped to the back of every other side (ClipInPlace). Planes read n.x + d = 0, inside is n.x + d <= 0.
+    for plane, _, _ in sides:
+        n, d = plane[:3], plane[3]
+        a = [0.0, 0.0, 1.0] if abs(n[2]) < 0.9 else [1.0, 0.0, 0.0]
+        u = [a[j] - n[j]*dot(a, n) for j in range(3)]
+        length = math.sqrt(dot(u, u))
+        u = [x/length for x in u]
+        v = [n[1]*u[2] - n[2]*u[1], n[2]*u[0] - n[0]*u[2], n[0]*u[1] - n[1]*u[0]]
+        w = [[-d*n[j] + (su*u[j] + sv*v[j])*4*1048576 for j in range(3)] for su, sv in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+        for other, _, _ in sides:
+            if other is plane or not w:
+                continue
+            dist = [dot(other[:3], q) + other[3] for q in w]
+            clipped = []
+            for k in range(len(w)):
+                p, q, dp, dq = w[k-1], w[k], dist[k-1], dist[k]
+                if (dp <= 0) != (dq <= 0):
+                    t = dp/(dp - dq)
+                    clipped.append([p[j] + t*(q[j] - p[j]) for j in range(3)])
+                if dq <= 0:
+                    clipped.append(q)
+            w = clipped
+        yield from w
+
+
+def extent(entities):
+    # World bounds of everything a segment places: brush corners (entity brush planes are local to the
+    # entity origin), patch control points (absolute on disk), entity origins and light origins.
+    lo, hi = [math.inf]*3, [-math.inf]*3
+
+    def add(p):
+        for j in range(3):
+            lo[j], hi[j] = min(lo[j], p[j]), max(hi[j], p[j])
+    for i, (ep, primitives) in enumerate(entities):
+        origin = [float(x) for x in ep.get('origin', '0 0 0').split()] if i else [0.0, 0.0, 0.0]
+        if i:
+            add(origin)
+            if 'light_origin' in ep:
+                add([float(x) for x in ep['light_origin'].split()])
+        for p in primitives:
+            if p[0] == 'brushDef3':
+                for q in brush_points(p[1]):
+                    add([q[j] + origin[j] for j in range(3)])
+            else:
+                for column in p[3]:
+                    for point in column:
+                        add(point[:3])
+    return lo, hi
 
 
 class Parser:
@@ -179,18 +241,21 @@ def parse(raw):
 
 def transform(entities, name, translation):
     entities = copy.deepcopy(entities)
-    names = {}
+    # one lower-case set per name space: the engine compares entity names and landmark ids ignoring case
+    names, seen = {}, set()
     for i, (ep, _) in enumerate(entities[1:], 1):
         local = ep.get('name', 'entity_' + str(i))
         ident(local)
-        require(local.lower() not in {x.lower() for x in names}, 'duplicate entity name')
+        require(local.lower() not in seen, 'duplicate entity name')
+        seen.add(local.lower())
         names[local] = name + '__' + local
         require(len(names[local]) <= 63, 'namespaced entity name exceeds 63 characters')
-    landmarks = {}
+    landmarks, seen = {}, set()
     for i, (ep, _) in enumerate(entities[1:], 1):
         if ep.get('classname') == 'info_landmark':
             local = ident(ep.get('landmark', ep.get('name', 'entity_' + str(i))))
-            require(local.lower() not in {x.lower() for x in landmarks}, 'duplicate landmark identity')
+            require(local.lower() not in seen, 'duplicate landmark identity')
+            seen.add(local.lower())
             landmarks[local] = name + '__' + local
             require(len(landmarks[local]) <= 63, 'namespaced landmark exceeds 63 characters')
     for i, (ep, primitives) in enumerate(entities):
@@ -246,8 +311,9 @@ def render(entities):
     out = ['Version 2']
     for ep, primitives in entities:
         out.append('{')
-        # Origin must precede primitives: the engine parser captures origin as it reads.
-        out += [quote(k) + ' ' + quote(ep[k]) for k in sorted(ep)]
+        # Epairs keep source order, before the primitives: idDict keeps the order it reads, which is
+        # the order target, target1, target2 fire in, and the engine parser captures origin as it reads.
+        out += [quote(k) + ' ' + quote(v) for k, v in ep.items()]
         for p in primitives:
             out += ['{', p[0], '{']
             if p[0] == 'brushDef3':
@@ -286,14 +352,30 @@ def compose(recipe_path, seed, flags=(), triggers=()):
     raw = recipe_path.read_bytes()
     require(len(raw) <= MAX_BYTES, 'recipe too large')
     recipe = json.loads(raw, object_pairs_hook=unique_object)
-    keys(recipe, ('version', 'name', 'segments', 'nodes', 'links'), ('version', 'name', 'segments', 'nodes', 'links'))
+    keys(recipe, ('version', 'name', 'segments', 'nodes', 'links', 'flags', 'triggers', 'world'), ('version', 'name', 'segments', 'nodes', 'links'))
     require(type(recipe['version']) is int and recipe['version'] == 1, 'unsupported recipe version')
     require(isinstance(recipe['name'], str) and len(recipe['name']) <= 31 and re.fullmatch(r'[A-Za-z0-9_]+(?:/[A-Za-z0-9_]+)*', recipe['name']) and not recipe['name'].startswith('maps/'), 'invalid canonical map name (max 31)')
     require(isinstance(recipe['segments'], dict) and 1 <= len(recipe['segments']) <= 256, 'segment count')
     require(isinstance(recipe['nodes'], list) and 1 <= len(recipe['nodes']) <= MAX_INSTANCES, 'node count')
+    # flag and trigger names are declared in the recipe, so a misspelt `when` entry or input fails
+    declared = {}
+    for field in ('flags', 'triggers'):
+        names = recipe.get(field, [])
+        require(isinstance(names, list) and len(names) <= 256 and all(isinstance(v, str) for v in names), 'invalid ' + field + ' declaration')
+        declared[field] = {ident(v) for v in names}
+        require(len(declared[field]) == len(names), 'duplicate name in ' + field)
     flags, triggers = sorted(set(flags)), sorted(set(triggers))
-    for v in flags + triggers:
-        ident(v)
+    for field, inputs in (('flags', flags), ('triggers', triggers)):
+        for v in inputs:
+            require(ident(v) in declared[field], 'undeclared ' + field[:-1] + ' ' + v)
+    worldspawn = {'classname': 'worldspawn'}
+    world = recipe.get('world', {})
+    keys(world, ('world_reset', 'world_reset_time'))
+    if 'world_reset' in world:
+        require(world['world_reset'] in WORLD_RESET, 'world_reset must be one of ' + ', '.join(WORLD_RESET))
+        worldspawn['world_reset'] = world['world_reset']
+    if 'world_reset_time' in world:
+        worldspawn['world_reset_time'] = str(integer(world['world_reset_time'], 0, 2**31-1))
     segments, hashes = {}, {}
     for sid, entry in sorted(recipe['segments'].items()):
         ident(sid)
@@ -305,7 +387,7 @@ def compose(recipe_path, seed, flags=(), triggers=()):
         require(path.stat().st_size <= MAX_BYTES, 'segment too large')
         data = path.read_bytes()
         ents = parse(data.decode('utf-8'))
-        transform(ents, 'validate', [0, 0, 0])  # Audit every segment, including unselected choices.
+        checked = transform(ents, 'validate', [0, 0, 0])  # Audit every segment, including unselected choices.
         sockets = entry['sockets']
         require(isinstance(sockets, dict) and len(sockets) <= 32, 'socket count')
         for socket, s in sockets.items():
@@ -316,7 +398,7 @@ def compose(recipe_path, seed, flags=(), triggers=()):
             n, size = s['normal'], s['size']
             require(sum(abs(x) for x in n) == 1 and all(x in (-1, 0, 1) for x in n), 'socket normal must be axial')
             require(all((size[j] == 0 if n[j] else size[j] > 0) for j in range(3)), 'socket size must span plane')
-        segments[sid] = (ents, sockets)
+        segments[sid] = (ents, sockets, extent(checked))
         hashes[sid] = {'map': entry['map'], 'sha256': digest(data)}
     instances, choices, sockets = {}, [], {}
     for node in recipe['nodes']:
@@ -336,7 +418,7 @@ def compose(recipe_path, seed, flags=(), triggers=()):
             for condition, vals in when.items():
                 require(isinstance(vals, list) and len(vals) <= 256, 'invalid condition')
                 for val in vals:
-                    ident(val)
+                    require(ident(val) in declared['flags' if condition.startswith('flags') else 'triggers'], 'undeclared name in ' + condition + ': ' + val)
             if all((set(vals) <= set(flags if k.startswith('flags') else triggers)) if k.endswith('all') else not (set(vals) & set(flags if k.startswith('flags') else triggers)) for k, vals in when.items()):
                 eligible.append(c)
         require(eligible, 'no eligible choice for ' + name)
@@ -374,7 +456,7 @@ def compose(recipe_path, seed, flags=(), triggers=()):
             continue
         cap = s.get('cap')
         require(isinstance(cap, str) and cap in segments, 'unclosed socket ' + endpoint)
-        capents, capsockets = segments[cap]
+        capents, capsockets, _ = segments[cap]
         require(not capsockets and len(capents) == 1, 'cap must be world geometry without sockets/entities')
         # Require an axial solid spanning the full doorway, with positive depth.
         covered = False
@@ -394,9 +476,12 @@ def compose(recipe_path, seed, flags=(), triggers=()):
                 covered = True
         require(covered, 'cap does not cover socket ' + endpoint)
         caps.append({'id': name + '__cap_' + endpoint.split('.')[1], 'segment': cap, 'translation': instances[name][1]})
-    output = [[{'classname': 'worldspawn'}, []]]
+    output = [[worldspawn, []]]
     for instance in choices + caps:
-        transformed = transform(segments[instance['segment']][0], instance['id'], instance['translation'])
+        lo, hi = segments[instance['segment']][2]
+        tr = instance['translation']
+        require(all(lo[j] + tr[j] >= -MAX_WORLD_COORD and hi[j] + tr[j] <= MAX_WORLD_COORD for j in range(3)), 'instance ' + instance['id'] + ' exceeds MAX_WORLD_COORD (' + str(MAX_WORLD_COORD) + ')')
+        transformed = transform(segments[instance['segment']][0], instance['id'], tr)
         output[0][1].extend(transformed[0][1])
         output.extend(transformed[1:])
     require(len(output) <= 8192 and sum(len(e[1]) for e in output) <= 65536, 'composed map exceeds limits')
@@ -409,6 +494,20 @@ def compose(recipe_path, seed, flags=(), triggers=()):
     return mapbytes, canonical(manifest)
 
 
+def write_new(path, data):
+    # Beside the target, then renamed over it: a reader or a failed run never leaves a partial file.
+    fd, temp = tempfile.mkstemp(dir=path.parent, prefix='.' + path.name + '.', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        return temp
+    except BaseException:
+        os.unlink(temp)
+        raise
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('recipe', type=Path)
@@ -419,10 +518,25 @@ def main():
     args = ap.parse_args()
     try:
         data, manifest = compose(args.recipe, args.seed, args.flag, args.trigger)
-        require(args.output.suffix == '.map', 'output must be .map')
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_bytes(data)
-        args.output.with_suffix('.manifest.json').write_bytes(manifest)
+        output = args.output.resolve()
+        require(output.suffix == '.map', 'output must be .map')
+        manifest_path = output.with_suffix('.manifest.json')
+        recipe = args.recipe.resolve()
+        inputs = {recipe} | {(recipe.parent / s['map']).resolve() for s in json.loads(manifest)['segments'].values()}
+        require(output not in inputs and manifest_path not in inputs, 'output would replace a recipe input')
+        output.parent.mkdir(parents=True, exist_ok=True)
+        temps = []
+        try:
+            temps.append(write_new(output, data))
+            temps.append(write_new(manifest_path, manifest))
+            # each file is replaced whole; a failure between the two renames leaves a manifest whose
+            # map_sha256 no longer matches the map, which a consumer can see
+            os.replace(temps[0], output)
+            os.replace(temps[1], manifest_path)
+        finally:
+            for temp in temps:
+                if os.path.exists(temp):
+                    os.unlink(temp)
     except (Invalid, ValueError, OSError) as e:
         ap.exit(2, 'compose: ' + str(e) + '\n')
 

@@ -56,6 +56,12 @@ static const char* const dressKeywords[] = { NULL };
 // passes match the classname exactly: a def that inherits one of them is not baked
 static const char* const dressEntityClasses[] = { FUNC_DECAL_CLASSNAME, NULL };
 
+// the classes of map-only entities that no dress pass bakes because another reader takes their keys
+// straight from the .map: the map graph's landmarks, carry volumes and landings (the game, at map
+// load) and the light-grid hints (bakeLightGrids). NULL terminated; the readers match the classname
+// exactly too
+static const char* const mapReadEntityClasses[] = { "info_landmark", "trigger_transition", "info_landing", "info_lightgrid_hint", NULL };
+
 /*
 ====================
 DressCheckMaterialKeywords
@@ -120,7 +126,8 @@ static void DressCheckMaterialKeywords( uEntity_t* e )
 DressCheckMapOnlyEntities
 
 The game inhibits every dmapOnly entity and dmap strips its primitives, so one that
-no pass bakes is lost without a trace; say so once per entity.
+no pass bakes and no other reader takes from the .map is lost without a trace; say so
+once per entity.
 ====================
 */
 static void DressCheckMapOnlyEntities()
@@ -142,7 +149,19 @@ static void DressCheckMapOnlyEntities()
 				break;
 			}
 		}
-		if( dressEntityClasses[k] == NULL )
+		if( dressEntityClasses[k] != NULL )
+		{
+			continue;
+		}
+
+		for( k = 0; mapReadEntityClasses[k] != NULL; k++ )
+		{
+			if( !idStr::Icmp( classname, mapReadEntityClasses[k] ) )
+			{
+				break;
+			}
+		}
+		if( mapReadEntityClasses[k] == NULL )
 		{
 			common->Warning( "map-only entity '%s' (%s): no dmap pass handles this class, it bakes nothing", epairs.GetString( "name", va( "entity %i", i ) ), classname );
 		}

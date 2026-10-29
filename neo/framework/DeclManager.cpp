@@ -2701,7 +2701,8 @@ static const char* const FGD_LINK_KEYS[] =
 	"buddy",
 	"camShot",
 	"switchToView",
-	"bind"
+	"bind",
+	"sealed_by"		//puncho - P2.4b review: the func_door that keeps a map graph doorway shut
 };
 
 static const int FGD_NUM_LINK_KEYS = sizeof( FGD_LINK_KEYS ) / sizeof( FGD_LINK_KEYS[ 0 ] );

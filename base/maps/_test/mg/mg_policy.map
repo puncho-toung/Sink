@@ -166,7 +166,6 @@ Version 2
 "landmark" "back"
 "index" "0"
 "origin" "-400 160 32"
-"dmapOnly" "1"
 }
 // entity 12
 {
@@ -175,12 +174,12 @@ Version 2
 "landmark" "back"
 "index" "1"
 "origin" "-400 240 32"
-"dmapOnly" "1"
 }
 // entity 13
 {
 "classname" "trigger_changelevel"
 "name" "back_trigger"
+"model" "back_trigger"
 "landmark" "back"
 // primitive 0
 {
@@ -243,7 +242,6 @@ Version 2
 "landmark" "forward"
 "index" "0"
 "origin" "400 160 32"
-"dmapOnly" "1"
 }
 // entity 17
 {
@@ -252,12 +250,12 @@ Version 2
 "landmark" "forward"
 "index" "1"
 "origin" "400 240 32"
-"dmapOnly" "1"
 }
 // entity 18
 {
 "classname" "trigger_changelevel"
 "name" "forward_trigger"
+"model" "forward_trigger"
 "landmark" "forward"
 // primitive 0
 {
@@ -345,6 +343,7 @@ Version 2
 {
 "classname" "trigger_once"
 "name" "lever"
+"model" "lever"
 "target" "remote_effect"
 // primitive 0
 {

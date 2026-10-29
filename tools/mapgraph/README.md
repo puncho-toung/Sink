@@ -5,13 +5,14 @@ whole map and a deterministic JSON manifest. Run dmap and bake the result offlin
 using the normal engine tools. There is no runtime stitching, additive loading,
 host compilation, or change to the mapgraph wire protocol.
 
-From the workspace root:
+From the root of the engine checkout (Python 3.9 or later; the scripts need their own
+directory on `sys.path`, so do not run them with `python3 -I`):
 
 ```sh
-PYTHONDONTWRITEBYTECODE=1 python3 rbdoom/tools/mapgraph/compose.py \
-  rbdoom/tools/mapgraph/fixtures/kit.json --seed 17 --flag extra_start \
-  --output outputs/phase2/composer/c0.map
-PYTHONDONTWRITEBYTECODE=1 python3 rbdoom/tools/mapgraph/test_compose.py
+PYTHONDONTWRITEBYTECODE=1 python3 tools/mapgraph/compose.py \
+  tools/mapgraph/fixtures/kit.json --seed 17 --flag extra_start \
+  --output /tmp/mapgraph/c0.map
+PYTHONDONTWRITEBYTECODE=1 python3 tools/mapgraph/test_compose.py
 ```
 
 The recipe's `name` is the canonical eventual engine name (`_test/mgc/c0`), maximum
@@ -20,12 +21,26 @@ The recipe's `name` is the canonical eventual engine name (`_test/mgc/c0`), maxi
 map at `base/maps/<name>.map` before compiling. The manifest carries the canonical
 name; changing the staging directory does not change either output's bytes.
 
+The map and its manifest are each written to a temporary file beside the target and
+renamed over it, so neither is ever left half written. An `--output` whose map or
+manifest path resolves (through symlinks) to the recipe or any listed segment is
+refused, and nothing is written.
+
+A `.mapgraph` `map` line may name the result as `maps/_test/mgc/c0` or `_test/mgc/c0`:
+the engine canonicalises both to `maps/<name>`, lower case, without the extension. The
+test graphs in `base/mapgraphs` use the `maps/` form.
+
 ## Recipe
 
 The complete example is `fixtures/kit.json`. All fields not specified here are
 errors; identifiers match `[A-Za-z][A-Za-z0-9_]{0,47}`. JSON duplicate keys are errors.
 
-* Top level: `version: 1`, `name`, `segments` object, `nodes` array, `links` array.
+* Top level: `version: 1`, `name`, `segments` object, `nodes` array, `links` array;
+  optional `flags` and `triggers` arrays declaring every flag and trigger name the
+  recipe uses, and optional `world` object.
+* World: `world_reset` (`never`, `timed` or `cleared`) and `world_reset_time` (an
+  integer number of seconds, 0 through 2^31-1), written into the composed worldspawn,
+  where persistent worlds read them. No other worldspawn key can be set.
 * Segment: `map` path relative to the recipe directory, `sockets` object. Paths
   resolving outside that directory are rejected, including symlinks. All listed
   segments are parsed and digested, even if no node selects them.
@@ -35,13 +50,15 @@ errors; identifiers match `[A-Za-z][A-Za-z0-9_]{0,47}`. JSON duplicate keys are 
 * Node: unique `id`, integer `translation: [x,y,z]`, ordered `choices` array.
 * Choice: `segment`, positive integer `weight` (at most 2^31-1), optional `when`.
   `when` accepts `flags_all`, `flags_none`, `triggers_all`, `triggers_none`, each an
-  array of identifiers. All supplied predicates must pass. No eligible choice
-  fails composition rather than silently removing the node.
+  array of names declared in the recipe's `flags` or `triggers`; an undeclared name
+  fails, so a misspelling cannot silently change selection. All supplied predicates
+  must pass. No eligible choice fails composition rather than silently removing the node.
 * Link: two strings `node.socket`. Both endpoints must exist, be unused and belong
   to different nodes; kind, translated center and size must be identical and
   normals opposite. No tolerance or snapping hides authoring errors.
 
-`--flag` and `--trigger` are repeatable **compile-time inputs**. Trigger names mean
+`--flag` and `--trigger` are repeatable **compile-time inputs** and must be declared
+in the recipe. Trigger names mean
 previously resolved generation events supplied by the build caller, not runtime
 trigger entities or script callbacks. Inputs are deduplicated and sorted in the
 manifest. Node and choice ordering is authored and preserved. For each node, the
@@ -63,13 +80,17 @@ authoritative whole-map closure gate. There is no synthesized hull hiding leaks.
 Only integer translations are supported. Rotation, scale, pitch/roll, legacy
 three-point brushes, Valve220 maps and unknown primitives fail explicitly. Coordinates
 are finite and bounded to +/-1048576 on input; this is a numerical input bound,
-not a node-area restriction. Brush planes must have unit normals. Supported forms:
+not a node-area restriction. Each placed segment's brush corners, patch control points
+and entity origins must stay within +/-131072 (`MAX_WORLD_COORD`, where dmap drops a
+brush) after translation. Brush planes must have unit normals. Supported forms:
 
 * `brushDef3` with plane, 2x3 texture matrix, quoted material and three zero flags.
   World planes change `d -= normal dot translation`. Entity planes remain local;
   moving the entity origin moves rendering and collision together. For both forms,
   texture offsets change by minus the world texture vector dot translation, matching
-  `idMapBrushSide::GetTextureVectors`, including its entity-origin offset.
+  `idMapBrushSide::GetTextureVectors`, including its entity-origin offset. The texture
+  basis uses the closed form of `ComputeAxisBase` (IEEE arithmetic and CPython's own
+  `hypot`, no libm trigonometry), so the output bytes are the same on every platform.
 * `patchDef2` and `patchDef3`: on-disk control-point xyz translates, UV stays fixed.
   The engine subtracts entity origin while parsing, so local entity patches stay
   unchanged. Width/height are odd integers 3..31; explicit subdivision counts are
@@ -81,9 +102,11 @@ not a node-area restriction. Brush planes must have unit normals. Supported form
   custom physics spawnargs and mover path semantics are rejected.
 
 All listed segments are validated even when unselected.
-Worldspawn must have exactly `classname worldspawn`; world-setting merges are not
-implicit. The first world contributes all world brushes/patches, followed by merged
-segment entities. Entity epairs use the explicit `SAFE_KEYS`/`REF_KEYS` allowlist in
+A segment's worldspawn must have exactly `classname worldspawn`; world keys come only
+from the recipe's `world`. The first world contributes all world brushes/patches, followed by merged
+segment entities. Epairs are written in source order (keys the composer adds, such as
+a missing `origin`, follow), because idDict keeps the order it reads and `target`,
+`target1`, `target2` fire in that order. Entity epairs use the explicit `SAFE_KEYS`/`REF_KEYS` allowlist in
 `compose.py`; unknown keys, including script hooks, fail. Some otherwise valid game
 entities therefore need a reviewed schema extension before they can be composed.
 `func_mover*`, `target_call*`, and `target_set*` classes are rejected. Segment `.script`
@@ -112,8 +135,11 @@ It does not certify external material/model assets or compiled/baked output.
 
 `test_compose.py` runs byte-for-byte map and manifest repeats for 1000 seeds,
 checks actual selected variants, negative schema/socket/cap/name/script cases,
-and compares engine-style local planes, patch coordinates and texture evaluation
-before/after translation. The fixture's room B adds a solid pillar, so weighted
+declared flag and trigger names, world keys, source epair order, the closed-form
+texture basis against the libm form, `MAX_WORLD_COORD` bounds, and the command line's
+whole-file writes and input refusal, and compares engine-style local planes, patch
+coordinates and texture evaluation before/after translation. Scratch files go to the
+system temporary directory. The fixture's room B adds a solid pillar, so weighted
 selection changes geometry. Room caps are authored ordinary map brushes. Tests
 are Python-only; dmap, leaks, runtime collision and bake validation are separate
 engine gates, not implied by these tests.
@@ -129,7 +155,8 @@ connect the generated map through the normal external mapGraph declaration.
 The manifest exposes `landmark_ids` for that declaration. Point and brush landmarks
 share the normal entity/primitive transform rules: a brush landmark or carry volume
 keeps local planes and moves with its `origin`, and the game reads it at its planes
-plus that origin (`idWorldStore::ReadMapData`). This does not bypass the engine
+plus that origin (`idWorldStore::ReadMapData`). A `"dmapOnly"` map key is rejected:
+the entityDef alone makes these classes map-only. This does not bypass the engine
 kit checker's winding, carry-volume, sealing-door or graph grammar checks.
 
 Three complete recipes `compile_c0.json`, `compile_c1.json`, `compile_c2.json` are

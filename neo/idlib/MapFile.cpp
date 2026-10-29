@@ -2546,12 +2546,52 @@ void idMapFile::SetGeometryCRC()
 //puncho start - content check (P1-A3a, K37)
 /*
 ===============
+UpdateEpairsCRC
+
+Adds one entity's key/values to a running CRC32: the pair count, then each key and value with its terminator, which
+keeps the boundaries unambiguous. GetEntitiesCRC and GetEntityCRC share it, so the content check and the world
+store's per-entity identity hash an entity the same way.
+===============
+*/
+static void UpdateEpairsCRC( unsigned int& crc, const idDict& epairs )
+{
+	const int numPairs = LittleLong( epairs.GetNumKeyVals() );
+	CRC32_UpdateChecksum( crc, &numPairs, sizeof( numPairs ) );
+	for( int i = 0; i < epairs.GetNumKeyVals(); i++ )
+	{
+		const idKeyValue* kv = epairs.GetKeyVal( i );
+		CRC32_UpdateChecksumNoCR( crc, kv->GetKey().c_str(), kv->GetKey().Length() + 1 );
+		CRC32_UpdateChecksumNoCR( crc, kv->GetValue().c_str(), kv->GetValue().Length() + 1 );
+	}
+}
+
+/*
+===============
 idMapFile::GetEntitiesCRC
 
 CRC32 of every entity's key/values, entities in map order and pairs in dict order, as they stand after Parse has
 merged <map>_extra_ents.map. GetGeometryCRC hashes brushes, patches and meshes only, so this is what proves two peers
-spawned the same entities with the same spawn args. Each entity hashes its pair count, then each key and value with
-its terminator, which keeps the boundaries unambiguous. Computed on demand: it walks every pair.
+spawned the same entities with the same spawn args. Computed on demand: it walks every pair.
+===============
+*/
+unsigned int idMapFile::GetEntitiesCRC() const
+{
+	unsigned int crc;
+	CRC32_InitChecksum( crc );
+	for( int i = 0; i < entities.Num(); i++ )
+	{
+		UpdateEpairsCRC( crc, entities[i]->epairs );
+	}
+	CRC32_FinishChecksum( crc );
+	return crc;
+}
+
+/*
+===============
+idMapFile::GetEntityCRC
+
+CRC32 of one entity's key/values, hashed as GetEntitiesCRC hashes each entity; 0 for an ordinal out of range. The
+world store matches a record to its map entity by it. Computed on demand: it walks the entity's pairs.
 ===============
 */
 unsigned int idMapFile::GetEntityCRC( int ordinal ) const
@@ -2562,35 +2602,7 @@ unsigned int idMapFile::GetEntityCRC( int ordinal ) const
 	}
 	unsigned int crc;
 	CRC32_InitChecksum( crc );
-	const idDict& epairs = entities[ordinal]->epairs;
-	const int count = LittleLong( epairs.GetNumKeyVals() );
-	CRC32_UpdateChecksum( crc, &count, sizeof( count ) );
-	for( int i = 0; i < epairs.GetNumKeyVals(); i++ )
-	{
-		const idKeyValue* kv = epairs.GetKeyVal( i );
-		CRC32_UpdateChecksumNoCR( crc, kv->GetKey().c_str(), kv->GetKey().Length() + 1 );
-		CRC32_UpdateChecksumNoCR( crc, kv->GetValue().c_str(), kv->GetValue().Length() + 1 );
-	}
-	CRC32_FinishChecksum( crc );
-	return crc;
-}
-
-unsigned int idMapFile::GetEntitiesCRC() const
-{
-	unsigned int crc;
-	CRC32_InitChecksum( crc );
-	for( int i = 0; i < entities.Num(); i++ )
-	{
-		const idDict& epairs = entities[i]->epairs;
-		const int numPairs = LittleLong( epairs.GetNumKeyVals() );
-		CRC32_UpdateChecksum( crc, &numPairs, sizeof( numPairs ) );
-		for( int j = 0; j < epairs.GetNumKeyVals(); j++ )
-		{
-			const idKeyValue* kv = epairs.GetKeyVal( j );
-			CRC32_UpdateChecksumNoCR( crc, kv->GetKey().c_str(), kv->GetKey().Length() + 1 );
-			CRC32_UpdateChecksumNoCR( crc, kv->GetValue().c_str(), kv->GetValue().Length() + 1 );
-		}
-	}
+	UpdateEpairsCRC( crc, entities[ordinal]->epairs );
 	CRC32_FinishChecksum( crc );
 	return crc;
 }
