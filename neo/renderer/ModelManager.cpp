@@ -420,7 +420,7 @@ idRenderModel* idRenderModelManagerLocal::GetModel( const char* _modelName, bool
 			if( !model->IsLoaded() )
 			{
 				// a purged model's first reference this load: binary load, else parse
-				idLoadSpanScope modelSpan( SPAN_MDL_LOAD );
+				idScopedLoadSpan modelSpan( SPAN_MDL_LOAD );
 
 				// reload it if it was purged
 				idStr generatedFileName = "generated/rendermodels/";
@@ -531,7 +531,7 @@ idRenderModel* idRenderModelManagerLocal::GetModel( const char* _modelName, bool
 	if( model != NULL )
 	{
 		// a model's first reference: binary load, else parse and write the binary (binaryLoadRenderModels is on by default)
-		idLoadSpanScope modelSpan( SPAN_MDL_LOAD );
+		idScopedLoadSpan modelSpan( SPAN_MDL_LOAD );
 
 		generatedFileName = "generated/rendermodels/";
 		generatedFileName.AppendPath( canonical );
@@ -934,7 +934,7 @@ void idRenderModelManagerLocal::BeginLevelLoad()
 
 #if !defined( DMAP )
 	{
-		idLoadSpanScope freeSpan( SPAN_FREE_STATIC );
+		idScopedLoadSpan freeSpan( SPAN_FREE_STATIC );
 		vertexCache.FreeStaticData();
 	}
 #endif
@@ -1075,7 +1075,7 @@ void idRenderModelManagerLocal::EndLevelLoad()
 		if( model->IsLevelLoadReferenced() && !model->IsLoaded() && model->IsReloadable() )
 		{
 			loadCount++;
-			idLoadSpanScope modelSpan( SPAN_MDL_LOAD );
+			idScopedLoadSpan modelSpan( SPAN_MDL_LOAD );
 			model->LoadModel();
 		}
 	}

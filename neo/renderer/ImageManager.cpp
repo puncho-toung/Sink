@@ -822,7 +822,7 @@ static int imageLevelLoadCount;
 
 void idImageManager::BeginLevelLoad()
 {
-	idLoadSpanScope freeSpan( SPAN_FREE_IMG );
+	idScopedLoadSpan freeSpan( SPAN_FREE_IMG );
 	imageLevelLoadCount++;
 	const int grace = common->LevelKeepGrace();
 	insideLevelLoad = true;
@@ -1226,7 +1226,7 @@ void idImageManager::TouchImage( idImage* image )
 
 void idImageManager::PurgeUnusedLevelCache()
 {
-	idLoadSpanScope freeSpan( SPAN_FREE_IMG );
+	idScopedLoadSpan freeSpan( SPAN_FREE_IMG );
 	int purged = 0, resident = 0, pins = 0;
 	int64 bytes = 0;
 	for( int i = 0; i < images.Num(); i++ )

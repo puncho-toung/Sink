@@ -74,18 +74,20 @@ static const char* loadPhaseNames[LOAD_PHASE_COUNT] = {
 	"MOVE", "BEGIN", "UNLOAD", "PURGE", "LOADGUI", "PRELOAD", "RENDER_WORLD", "MAP_PARSE", "CM", "GAME_INIT", "PVS", "AAS", "MEDIA", "SCRIPT", "SPAWN", "POST_SPAWN", "RESTORE", "SESSION", "FIRST_FRAME", "END_RENDER", "END_SOUND", "END_DECL", "END_UI", "END_FS", "SETTLE", "AUTOSAVE", "INTERACTIONS", "FINISH"
 };
 //puncho - P2b.0.4b: images load on the main and on the game thread, so a span adds atomically, 64 bits as
-// Image_load.cpp's imageLoadBytes does
-struct loadSpanRow_t
+// Image_load.cpp's imageLoadBytes does; one row per cache line, so two threads adding to two spans share none
+struct alignas( 64 ) loadSpanRow_t
 {
-	std::atomic<uint64> us, calls, maxUs, readBytes, readUs, imageBytes;
+	std::atomic<uint64> us, calls, maxUs, readBytes, readUs, imageBytes, pacifierUs;
 };
 static loadSpanRow_t loadSpanRows[LOAD_SPAN_COUNT];
 static char loadSpanNames[LOAD_SPAN_COUNT][32];
-static const char* loadSpanDefaultNames[LOAD_SPAN_COUNT] = {
+extern thread_local uint64 loadPacifierUs;	// framework/File.cpp, beside the read twins the spans snapshot with it
+static const char* loadSpanDefaultNames[LOAD_SPAN_COUNT] =
+{
 	"RW_PROC", "LIGHTGRID_FILE", "LIGHTGRID_IMAGES", "PROBE_DEFS", "IMG_GRID", "IMG_PROBE", "IMG_GEN", "IMG_MAT", "MDL_LOAD", "AAS_0", "AAS_1", "AAS_2", "AAS_3", "AAS_4", "AAS_5", "AAS_6", "AAS_7", "REC_MAPCRC", "REC_ENTCRC", "FREE_RW", "FREE_IMG", "FREE_STATIC", "FREE_CM", "FREE_AAS", "FREE_ENTS"
 };
 
-void idCommonLocal::LoadSpanAdd( loadSpan_t span, uint64 us, int64 readBytes, int64 readUs, int64 imageBytes )
+void idCommonLocal::LoadSpanAdd( loadSpan_t span, uint64 us, int64 readBytes, int64 readUs, int64 imageBytes, int64 pacifierUs )
 {
 	if( span < 0 || span >= LOAD_SPAN_COUNT )
 	{
@@ -94,13 +96,17 @@ void idCommonLocal::LoadSpanAdd( loadSpan_t span, uint64 us, int64 readBytes, in
 	loadSpanRow_t& row = loadSpanRows[span];
 	row.us.fetch_add( us, std::memory_order_relaxed );
 	row.calls.fetch_add( 1, std::memory_order_relaxed );
+	// the hitch a call would be at runtime, without the loading screen's frames
+	const uint64 stepUs = us - ( uint64 )pacifierUs;
 	uint64 maxUs = row.maxUs.load( std::memory_order_relaxed );
-	while( us > maxUs && !row.maxUs.compare_exchange_weak( maxUs, us, std::memory_order_relaxed ) )
+	// reloads maxUs on failure; ends once the row holds a value >= stepUs
+	while( stepUs > maxUs && !row.maxUs.compare_exchange_weak( maxUs, stepUs, std::memory_order_relaxed ) )
 	{
 	}
 	row.readBytes.fetch_add( ( uint64 )readBytes, std::memory_order_relaxed );
 	row.readUs.fetch_add( ( uint64 )readUs, std::memory_order_relaxed );
 	row.imageBytes.fetch_add( ( uint64 )imageBytes, std::memory_order_relaxed );
+	row.pacifierUs.fetch_add( ( uint64 )pacifierUs, std::memory_order_relaxed );
 }
 
 void idCommonLocal::LoadSpanName( loadSpan_t span, const char* name )
@@ -117,7 +123,10 @@ void idCommonLocal::LoadPhase( loadPhase_t phase )
 	if( !com_loadTimeline.GetBool() && !com_loadTimelineLog.GetString()[0] && !com_transitionTimelineLog.GetString()[0] )
 	{
 		loadCurrentPhase = -1;
-		loadSpanTiming = false;
+		if( loadSpanTiming.load( std::memory_order_relaxed ) )
+		{
+			loadSpanTiming.store( false, std::memory_order_relaxed );
+		}
 		return;
 	}
 	if( phase == LOAD_MOVE || ( phase == LOAD_BEGIN && loadCurrentPhase != LOAD_MOVE ) )
@@ -133,6 +142,7 @@ void idCommonLocal::LoadPhase( loadPhase_t phase )
 			row.readBytes.store( 0, std::memory_order_relaxed );
 			row.readUs.store( 0, std::memory_order_relaxed );
 			row.imageBytes.store( 0, std::memory_order_relaxed );
+			row.pacifierUs.store( 0, std::memory_order_relaxed );
 		}
 		memset( loadSpanNames, 0, sizeof( loadSpanNames ) );
 	}
@@ -156,7 +166,7 @@ void idCommonLocal::LoadPhase( loadPhase_t phase )
 		loadWasSavegame = mapSpawnData.savegameFile != NULL;
 	}
 	loadCurrentPhase = phase == LOAD_PHASE_COUNT ? -1 : phase;
-	loadSpanTiming = loadCurrentPhase >= 0;	// spans and the read clock run from the first phase to FINISH's end
+	loadSpanTiming.store( loadCurrentPhase >= 0, std::memory_order_relaxed );	// spans and their clocks run from the first phase to FINISH's end
 	loadPhaseStart = now;
 	loadReadStart = reads;
 	loadResourceStart = resources;
@@ -206,32 +216,47 @@ void idCommonLocal::FinishLoadTimeline()
 			csv->Printf( "%d,%s,%s,%d,%d,%s,%llu,%llu,%lld,%lld,%lld\n", loadIndex, currentMapName.c_str(), loadPreviousMap, loadWasSavegame ? 1 : 0, i, loadPhaseNames[i], ( unsigned long long )row.us, ( unsigned long long )row.readBytes, ( long long )row.imageBytes, ( long long )row.vertexBytes, ( long long )row.indexBytes );
 		}
 	}
+	// the spans go to their own file after the phase rows, so P2.0.6's file keeps its layout
+	idFile* spans = NULL;
 	if( csv != NULL )
 	{
 		fileSystem->CloseFile( csv );
-		// the spans go to their own file after the phase rows, so P2.0.6's file keeps its layout; cpuUs = us - readUs
 		char spansPath[160];
 		idStr::snPrintf( spansPath, sizeof( spansPath ), "loadtimeline/%s_spans.csv", name );
-		idFile* spans = fileSystem->OpenFileAppend( spansPath, true, "fs_savepath" );
-		if( spans != NULL )
+		spans = fileSystem->OpenFileAppend( spansPath, true, "fs_savepath" );
+		if( spans != NULL && spans->Length() == 0 )
 		{
-			if( spans->Length() == 0 )
-			{
-				spans->Printf( "loadIndex,map,span,name,us,calls,maxUs,readBytes,readUs,imageBytes,cpuUs\n" );
-			}
-			for( int i = 0; i < LOAD_SPAN_COUNT; i++ )
-			{
-				const loadSpanRow_t& row = loadSpanRows[i];
-				const uint64 us = row.us.load( std::memory_order_relaxed );
-				const uint64 readUs = row.readUs.load( std::memory_order_relaxed );
-				spans->Printf( "%d,%s,%d,%s,%llu,%llu,%llu,%llu,%llu,%llu,%lld\n", loadIndex, currentMapName.c_str(), i, loadSpanNames[i][0] ? loadSpanNames[i] : loadSpanDefaultNames[i], ( unsigned long long )us, ( unsigned long long )row.calls.load( std::memory_order_relaxed ), ( unsigned long long )row.maxUs.load( std::memory_order_relaxed ), ( unsigned long long )row.readBytes.load( std::memory_order_relaxed ), ( unsigned long long )readUs, ( unsigned long long )row.imageBytes.load( std::memory_order_relaxed ), ( long long )( ( int64 )us - ( int64 )readUs ) );
-			}
-			fileSystem->CloseFile( spans );
+			spans->Printf( "loadIndex,map,span,name,us,calls,maxUs,readBytes,readUs,imageBytes,cpuUs,pacifierUs\n" );
 		}
 	}
 	if( com_loadTimeline.GetBool() )
 	{
 		Printf( "LOAD total %llu us (BEGIN..FINISH)\n", ( unsigned long long )total );
+	}
+	for( int i = 0; i < LOAD_SPAN_COUNT; i++ )
+	{
+		const loadSpanRow_t& row = loadSpanRows[i];
+		const unsigned long long us = row.us.load( std::memory_order_relaxed );
+		const unsigned long long calls = row.calls.load( std::memory_order_relaxed );
+		const unsigned long long maxUs = row.maxUs.load( std::memory_order_relaxed );
+		const unsigned long long readBytes = row.readBytes.load( std::memory_order_relaxed );
+		const unsigned long long readUs = row.readUs.load( std::memory_order_relaxed );
+		const unsigned long long imageBytes = row.imageBytes.load( std::memory_order_relaxed );
+		const unsigned long long pacifierUs = row.pacifierUs.load( std::memory_order_relaxed );
+		const long long cpuUs = ( long long )us - ( long long )readUs - ( long long )pacifierUs;
+		const char* spanName = loadSpanNames[i][0] ? loadSpanNames[i] : loadSpanDefaultNames[i];
+		if( com_loadTimeline.GetBool() && calls > 0 )
+		{
+			Printf( "SPAN %02d %-18s %llu us calls %llu max %llu read %llu readUs %llu image %llu cpu %lld pacifier %llu\n", i, spanName, us, calls, maxUs, readBytes, readUs, imageBytes, cpuUs, pacifierUs );
+		}
+		if( spans != NULL )
+		{
+			spans->Printf( "%d,%s,%d,%s,%llu,%llu,%llu,%llu,%llu,%llu,%lld,%llu\n", loadIndex, currentMapName.c_str(), i, spanName, us, calls, maxUs, readBytes, readUs, imageBytes, cpuUs, pacifierUs );
+		}
+	}
+	if( spans != NULL )
+	{
+		fileSystem->CloseFile( spans );
 	}
 }
 
@@ -599,6 +624,7 @@ void idCommonLocal::MoveToNewMap( const char* mapName, bool devmap )
 				{
 					//puncho - transitions (stage 3 review): the committed crossing is refused here too; release it
 					game->ClearMapTransition();
+					LoadPhase( LOAD_PHASE_COUNT );	// P2b.0.4b: ends the timeline unwritten, the span switch with it
 					return;
 				}
 				session->UpdateMatchParms( matchParameters );
@@ -807,6 +833,7 @@ void idCommonLocal::ExecuteMapChange()
 	if( session->GetState() != idSession::LOADING )
 	{
 		idLib::Warning( "Session state is not LOADING in ExecuteMapChange" );
+		LoadPhase( LOAD_PHASE_COUNT );	// P2b.0.4b: ends the timeline unwritten, the span switch with it
 		return;
 	}
 
@@ -823,12 +850,14 @@ void idCommonLocal::ExecuteMapChange()
 	{
 		Warning( "map load refused: invalid match game data" );
 		LeaveGame();
+		LoadPhase( LOAD_PHASE_COUNT );	// P2b.0.4b: ends the timeline unwritten, the span switch with it
 		return;
 	}
 
 	if( matchParameters.numSlots <= 0 )
 	{
 		idLib::Warning( "numSlots <= 0 in ExecuteMapChange" );
+		LoadPhase( LOAD_PHASE_COUNT );	// P2b.0.4b: ends the timeline unwritten, the span switch with it
 		return;
 	}
 
@@ -1075,6 +1104,7 @@ void idCommonLocal::ExecuteMapChange()
 				loadGUI = NULL;
 				fileSystem->EndLevelLoad();
 				LeaveGame();
+				LoadPhase( LOAD_PHASE_COUNT );	// P2b.0.4b: ends the timeline unwritten, the span switch with it
 				return;
 			}
 			UpdateLevelLoadPacifier();
@@ -1288,6 +1318,17 @@ void idCommonLocal::UpdateLevelLoadPacifier()
 		return;
 	}
 
+	//puncho - P2b.0.4b: the spans leave out the pacifier (loading-screen frames, session pumps), which streaming at runtime
+	// never runs, less the reads it makes; the total is assigned, not added, so a nested call counts once
+	const bool pacifierTimed = loadSpanTiming.load( std::memory_order_relaxed );
+	uint64 pacifierStart = 0, pacifierReadUs = 0, pacifierTotal = 0;
+	if( pacifierTimed )
+	{
+		pacifierStart = Sys_Microseconds();
+		pacifierReadUs = FileThreadReadUs();
+		pacifierTotal = loadPacifierUs;
+	}
+
 	const int sessionUpdateTime = common->IsMultiplayer() ? 16 : 100;
 
 	const int time = Sys_Milliseconds();
@@ -1371,6 +1412,11 @@ void idCommonLocal::UpdateLevelLoadPacifier()
 		{
 			renderSystem->BeginAutomaticBackgroundSwaps( icon );
 		}
+	}
+
+	if( pacifierTimed )
+	{
+		loadPacifierUs = pacifierTotal + ( Sys_Microseconds() - pacifierStart ) - ( FileThreadReadUs() - pacifierReadUs );
 	}
 }
 

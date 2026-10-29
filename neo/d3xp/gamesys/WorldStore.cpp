@@ -1052,7 +1052,7 @@ void idWorldStore::Commit( bool leaving )
 	// game-driven transition commits before the load begins (Game_transition.cpp), untimed
 	unsigned int entitiesCRC;
 	{
-		idLoadSpanScope crcSpan( SPAN_REC_MAPCRC );
+		idScopedLoadSpan crcSpan( SPAN_REC_MAPCRC );
 		entitiesCRC = map->GetEntitiesCRC();
 	}
 	record.WriteUnsignedInt( entitiesCRC );
@@ -1108,7 +1108,7 @@ void idWorldStore::Commit( bool leaving )
 		record.WriteUnsignedShort( row.ordinal );
 		unsigned int entityCRC;
 		{
-			idLoadSpanScope crcSpan( SPAN_REC_ENTCRC );	// one call per row written
+			idScopedLoadSpan crcSpan( SPAN_REC_ENTCRC );	// one call per row written
 			entityCRC = map->GetEntityCRC( row.ordinal );
 		}
 		record.WriteUnsignedInt( entityCRC );
@@ -1297,7 +1297,7 @@ void idWorldStore::ApplyCurrentMap()
 		idMapFile* map = gameLocal.mapFile;
 		unsigned int mapEntitiesCRC;
 		{
-			idLoadSpanScope crcSpan( SPAN_REC_MAPCRC );	//puncho - P2b.0.1g (M2)
+			idScopedLoadSpan crcSpan( SPAN_REC_MAPCRC );	//puncho - P2b.0.1g (M2)
 			mapEntitiesCRC = map->GetEntitiesCRC();
 		}
 		const bool identical = entitiesCRC == mapEntitiesCRC && numEntities == map->GetNumEntities();
@@ -1314,7 +1314,7 @@ void idWorldStore::ApplyCurrentMap()
 		if( !identical )
 		{
 			// an unedited map checks each row's CRC in the loop below instead; this span is the edited map's pass
-			idLoadSpanScope crcSpan( SPAN_REC_ENTCRC );	//puncho - P2b.0.1g (M2)
+			idScopedLoadSpan crcSpan( SPAN_REC_ENTCRC );	//puncho - P2b.0.1g (M2)
 			entityCRCs.SetNum( numMapEntities );
 			for( int j = numMapEntities - 1; j >= 1; j-- )
 			{

@@ -1396,6 +1396,7 @@ void idCommonLocal::Frame()
 	{
 		DrainPrintRelay();
 		// an ERP_DROP was thrown
+		LoadPhase( LOAD_PHASE_COUNT );	//puncho - P2b.0.4b: a load it cut short ends its timeline unwritten, the span switch with it
 #if defined(USE_DOOMCLASSIC)
 		if( currentGame == DOOM_CLASSIC || currentGame == DOOM2_CLASSIC )
 		{

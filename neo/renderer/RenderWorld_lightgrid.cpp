@@ -476,7 +476,7 @@ void idRenderWorldLocal::SetupLightGrid()
 
 void idRenderWorldLocal::LoadLightGridImages()
 {
-	idLoadSpanScope gridSpan( SPAN_LIGHTGRID_IMAGES );
+	idScopedLoadSpan gridSpan( SPAN_LIGHTGRID_IMAGES );
 	idLib::Printf( "----- LoadLightGridImages -----\n" );
 
 	idStrStatic< MAX_OSPATH > baseName = mapName;
@@ -596,7 +596,7 @@ void idRenderWorldLocal::WriteLightGrid( idFile* fp, const LightGrid& lightGrid 
 
 bool idRenderWorldLocal::LoadLightGridFile( const char* name )
 {
-	idLoadSpanScope gridSpan( SPAN_LIGHTGRID_FILE );
+	idScopedLoadSpan gridSpan( SPAN_LIGHTGRID_FILE );
 	idToken token;
 	idLexer* src;
 	const unsigned int mapCRC = LightGridMapCRC( numPortalAreas, portalAreas );

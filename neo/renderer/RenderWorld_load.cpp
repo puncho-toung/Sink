@@ -42,8 +42,6 @@ idRenderWorldLocal::FreeWorld
 */
 void idRenderWorldLocal::FreeWorld()
 {
-	idLoadSpanScope freeSpan( SPAN_FREE_RW );
-
 	// this will free all the lightDefs and entityDefs
 	FreeDefs();
 
@@ -875,7 +873,6 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 	idLexer* 		src;
 	idToken			token;
 	idRenderModel* 	lastModel;
-	idLoadSpanScope	procSpan( SPAN_RW_PROC );	// ends before SetupLightGrid, whose spans are LIGHTGRID_*
 
 	// if this is an empty world, initialize manually
 	if( !name || !name[0] )
@@ -885,6 +882,9 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 		ClearWorld();
 		return true;
 	}
+
+	//puncho - P2b.0.4b: only a map load is a span; a GUI's empty world above adds nothing
+	idScopedLoadSpan procSpan( SPAN_RW_PROC );	// ends before SetupLightGrid, whose spans are LIGHTGRID_*
 
 	// load it
 	idStrStatic< MAX_OSPATH > filename = name;
@@ -918,7 +918,10 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 		common->Printf( "idRenderWorldLocal::InitFromMap: timestamp has changed, reloading.\n" );
 	}
 
-	FreeWorld();
+	{
+		idScopedLoadSpan freeSpan( SPAN_FREE_RW );
+		FreeWorld();
+	}
 
 	// see if we have a generated version of this
 	// versions: 1 BFG, 2 MOC data, 3 vertex colour (opaque white for a surface without), 4 the same

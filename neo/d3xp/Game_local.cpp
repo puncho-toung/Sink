@@ -1174,11 +1174,11 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	{
 		//puncho - P2b.0.4b: a span per type; a ninth type gets LOAD_SPAN_COUNT, which LoadSpanAdd and LoadSpanName drop
 		const loadSpan_t aasSpan = i <= SPAN_AAS_7 - SPAN_AAS_0 ? ( loadSpan_t )( SPAN_AAS_0 + i ) : LOAD_SPAN_COUNT;
-		if( loadSpanTiming )
+		if( loadSpanTiming.load( std::memory_order_relaxed ) )
 		{
 			common->LoadSpanName( aasSpan, va( "AAS_%s", aasNames[ i ].c_str() ) );
 		}
-		idLoadSpanScope aasScope( aasSpan );
+		idScopedLoadSpan aasScope( aasSpan );
 		aasList[ i ]->Init( idStr( mapFileName ).SetFileExtension( aasNames[ i ] ).c_str(), mapFile->GetGeometryCRC() );
 	}
 
@@ -1930,7 +1930,7 @@ idGameLocal::MapClear
 */
 void idGameLocal::MapClear( bool clearClients )
 {
-	idLoadSpanScope freeSpan( SPAN_FREE_ENTS );
+	idScopedLoadSpan freeSpan( SPAN_FREE_ENTS );
 	int i;
 
 	for( i = ( clearClients ? 0 : MAX_CLIENTS ); i < MAX_GENTITIES; i++ )

@@ -558,7 +558,7 @@ void idImage::ActuallyLoadImage( bool fromBackEnd, nvrhi::ICommandList* commandL
 {
 	//puncho - P2b.0.4b: every call is a span, the already-loaded return included; the kind is read off the name only
 	// while spans run. imageBytes is the image's share of imageLoadBytes, so the IMG_* rows sum to the phase rows
-	idLoadSpanScope imageSpan( SPAN_IMG_MAT );
+	idScopedLoadSpan imageSpan( SPAN_IMG_MAT );
 	if( imageSpan.IsOn() )
 	{
 		if( imgName.Find( "_lightgrid_", false ) >= 0 )
