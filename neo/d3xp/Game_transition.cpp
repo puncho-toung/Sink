@@ -270,7 +270,7 @@ void idGameLocal::CommitMapTransition()
 		for( int i = 0; i < mapFile->GetNumEntities(); i++ )
 		{
 			const idDict& args = mapFile->GetEntity( i )->epairs;
-			if( !idStr::Icmp( args.GetString( "classname" ), "info_landing" ) )
+			if( idMapLandmarks::MapOnlyKind( args.GetString( "classname" ), NULL ) == MAPONLY_LANDING )	//puncho - P2b.1.10j
 			{
 				gameRenderWorld->DebugBounds( colorGreen, idBounds( idVec3( -8, -8, 0 ), idVec3( 8, 8, 16 ) ), args.GetVector( "origin" ) );
 			}
@@ -655,11 +655,13 @@ bool idGameLocal::SelectTransitionSpawn( idPlayer* player, idVec3& origin, idAng
 			for( int i = 0; i < mapFile->GetNumEntities(); i++ )
 			{
 				const idDict& args = mapFile->GetEntity( i )->epairs;
-				if( idStr::Icmp( args.GetString( "classname" ), "info_landing" ) || idStr::Icmp( args.GetString( "landmark" ), partyTransition.request.arrivalLandmark ) )
+				//puncho - P2b.1.10j: a landing by its def's mapOnlyKind; the def's index is the default
+				const idDict* defaults;
+				if( idMapLandmarks::MapOnlyKind( args.GetString( "classname" ), &defaults ) != MAPONLY_LANDING || idStr::Icmp( args.GetString( "landmark" ), partyTransition.request.arrivalLandmark ) )
 				{
 					continue;
 				}
-				const int number = args.GetInt( "index", "0" );
+				const int number = args.GetInt( "index", defaults->GetString( "index" ) );
 				if( number < lastIndex || ( number == lastIndex && i <= lastOrdinal ) )
 				{
 					continue;

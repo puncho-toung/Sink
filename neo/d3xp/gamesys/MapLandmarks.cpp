@@ -61,6 +61,37 @@ const idStrList* idMapLandmarks::FindVariantChoices( const char* group ) const
 	return NULL;
 }
 
+/*
+================
+idMapLandmarks::MapOnlyKind
+
+The kind the classname's entityDef names in mapOnlyKind, and that def's dict, whose values are the defaults of the
+keys the map leaves out (defaults may be NULL; it is set to NULL for any other class). As idDeclEntityDef::IsMapOnlyClass
+does, it reads the plain def, inheritance merged, never the map's keys and no _mp variant, so every peer, a fingerprint
+and mapGraphCheck class an entity alike. The lookup parses the def on first use.
+================
+*/
+mapOnlyKind_t idMapLandmarks::MapOnlyKind( const char* classname, const idDict** defaults )
+{
+	if( defaults != NULL )
+	{
+		*defaults = NULL;
+	}
+	const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, classname, false ) );
+	if( def == NULL )
+	{
+		return MAPONLY_NONE;
+	}
+	const char* kind = def->dict.GetString( "mapOnlyKind" );
+	const mapOnlyKind_t result = !idStr::Icmp( kind, "landmark" ) ? MAPONLY_LANDMARK : !idStr::Icmp( kind, "volume" ) ? MAPONLY_VOLUME :
+								 !idStr::Icmp( kind, "landing" ) ? MAPONLY_LANDING : MAPONLY_NONE;
+	if( result != MAPONLY_NONE && defaults != NULL )
+	{
+		*defaults = &def->dict;
+	}
+	return result;
+}
+
 void idMapLandmarks::ReadMapData( const idMapFile* map )
 {
 	Clear();
@@ -99,8 +130,12 @@ void idMapLandmarks::ReadMapData( const idMapFile* map )
 			}
 		}
 		//puncho end
-		const bool isLandmark = idStr::Icmp( args.GetString( "classname" ), "info_landmark" ) == 0;
-		const bool isVolume = idStr::Icmp( args.GetString( "classname" ), "trigger_transition" ) == 0;
+		//puncho - P2b.1.10j: classed by the def's mapOnlyKind, not the exact classnames, so a class that inherits one is read
+		// as one; the def's values are the defaults of the keys the map leaves out (MapOnlyKind)
+		const idDict* defaults;
+		const mapOnlyKind_t kind = MapOnlyKind( args.GetString( "classname" ), &defaults );
+		const bool isLandmark = kind == MAPONLY_LANDMARK;
+		const bool isVolume = kind == MAPONLY_VOLUME;
 		if( !isLandmark && !isVolume )
 		{
 			continue;
@@ -183,15 +218,16 @@ void idMapLandmarks::ReadMapData( const idMapFile* map )
 		{
 			landmark_t row;
 			row.id = id;
-			row.kind = args.GetString( "kind" );
+			row.kind = args.GetString( "kind", defaults->GetString( "kind" ) );
 			row.origin = center;
 			row.axis[0] = forward;
 			row.axis[2].Set( 0, 0, 1 );
 			row.axis[1] = forward.Cross( row.axis[2] );
-			row.flags = ( args.GetBool( "entry", "1" ) ? 1 : 0 ) | ( args.GetBool( "exit", "1" ) ? 2 : 0 ) | ( args.GetBool( "required" ) ? 4 : 0 );
-			row.radius = args.GetFloat( "radius", "256" );
-			row.link = args.GetString( "link" );
-			row.sealedBy = args.GetString( "sealed_by" );
+			row.flags = ( args.GetBool( "entry", defaults->GetString( "entry" ) ) ? 1 : 0 ) | ( args.GetBool( "exit", defaults->GetString( "exit" ) ) ? 2 : 0 ) |
+						( args.GetBool( "required", defaults->GetString( "required" ) ) ? 4 : 0 );
+			row.radius = args.GetFloat( "radius", defaults->GetString( "radius" ) );
+			row.link = args.GetString( "link", defaults->GetString( "link" ) );
+			row.sealedBy = args.GetString( "sealed_by", defaults->GetString( "sealed_by" ) );
 			row.ordinal = i;
 			landmarks.Append( row );
 		}
@@ -200,8 +236,8 @@ void idMapLandmarks::ReadMapData( const idMapFile* map )
 			transitionVolume_t row;
 			row.bounds = bounds;
 			row.landmark = id;
-			row.cap = idMath::ClampInt( 0, 64, args.GetInt( "cap", "64" ) );
-			row.carryAll = idStr::Icmp( args.GetString( "carry", "all" ), "all" ) == 0;
+			row.cap = idMath::ClampInt( 0, 64, args.GetInt( "cap", defaults->GetString( "cap" ) ) );
+			row.carryAll = idStr::Icmp( args.GetString( "carry", defaults->GetString( "carry" ) ), "all" ) == 0;
 			row.ordinal = i;
 			transitionVolumes.Append( row );
 		}

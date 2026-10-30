@@ -21,6 +21,16 @@ struct transitionVolume_t
 	int ordinal;
 };
 
+//puncho - P2b.1.10j: the map-only kinds an entityDef names in "mapOnlyKind" (base/def/mapgraph.def): such an entity is
+// never spawned, and the game reads its keys from the raw .map
+enum mapOnlyKind_t
+{
+	MAPONLY_NONE,
+	MAPONLY_LANDMARK,	// info_landmark: a doorway (landmarks)
+	MAPONLY_VOLUME,		// trigger_transition: a carry volume (transitionVolumes)
+	MAPONLY_LANDING		// info_landing: a party landing slot (idGameLocal's landing pick)
+};
+
 //puncho - P2b.1.10f: one dungeon_variant group of a parsed map: the group as its first entity spelled it, and the
 // choices its entities name, sorted and unique by idStr::Icmp (idMapGraphDirector::InhibitSpawn picks one by index)
 struct mapVariantGroup_t
@@ -43,6 +53,7 @@ public:
 		variantGroups.Clear();	//puncho - P2b.1.10f
 	}
 	void ReadMapData( const idMapFile* map );
+	static mapOnlyKind_t MapOnlyKind( const char* classname, const idDict** defaults );	//puncho - P2b.1.10j
 	const landmark_t* FindLandmark( const char* name ) const;
 	const transitionVolume_t* FindTransitionVolume( const char* name ) const;
 	int NumLandmarks() const

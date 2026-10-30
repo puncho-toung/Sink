@@ -1,8 +1,8 @@
 // The three map-only classes are never spawned: the game reads their keys from the raw .map
-// (idWorldStore::ReadMapData and the landing pick in Game_transition.cpp), matching these class
-// names exactly, so a class that inherits one is inhibited but never read. Their values below are
-// never merged either; they show the editor the default the C++ uses when a key is absent, and
-// change only together with it.
+// (idMapLandmarks::ReadMapData and the landing pick in Game_transition.cpp). It finds them by the
+// mapOnlyKind of the classname's entityDef (landmark, volume, landing), never by the map's keys,
+// so a class that inherits one of these is read as one. Their values below are the defaults of the
+// keys a map entity leaves out: the readers merge them under the map's, and no C++ copy remains.
 entityDef info_landmark {
 	"dmapOnly" "1"
 	"editor_color" "0 1 1"
@@ -15,6 +15,7 @@ entityDef info_landmark {
 	"editor_bool exit" "Departures may use this doorway"
 	"editor_bool required" "Generation must link this exit, through an endcap rule if no other rule links it"
 	"editor_var sealed_by" "func_door kept shut while this doorway is not linked"
+	"mapOnlyKind" "landmark"
 	"radius" "256"
 	"entry" "1"
 	"exit" "1"
@@ -27,6 +28,7 @@ entityDef trigger_transition {
 	"editor_var landmark" "Doorway id"
 	"editor_int cap" "Most entities carried across, 0 through 64"
 	"editor_var carry" "all carries the entities inside the volume; any other value carries none"
+	"mapOnlyKind" "volume"
 	"cap" "64"
 	"carry" "all"
 }
@@ -36,6 +38,7 @@ entityDef info_landing {
 	"editor_usage" "Explicit party landing slot, index 0 through 7"
 	"editor_var landmark" "Arrival doorway id"
 	"editor_int index" "Party player index"
+	"mapOnlyKind" "landing"
 	"index" "0"
 }
 

@@ -3825,9 +3825,10 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 					}
 				}
 
-				// the spawnclass comes from the entityDef and must not be edited; so does dmapOnly, whose map
-				// value is never read (idDeclEntityDef::IsMapOnlyClass reads the def)
-				const char* readOnly = ( cleanKey.Icmp( "spawnclass" ) == 0 || cleanKey.Icmp( "dmapOnly" ) == 0 ) ? " readonly" : "";
+				// the spawnclass comes from the entityDef and must not be edited; so do dmapOnly and mapOnlyKind,
+				// whose map values are never read (idDeclEntityDef::IsMapOnlyClass and idMapLandmarks::MapOnlyKind
+				// read the def)
+				const char* readOnly = ( cleanKey.Icmp( "spawnclass" ) == 0 || cleanKey.Icmp( "dmapOnly" ) == 0 || cleanKey.Icmp( "mapOnlyKind" ) == 0 ) ? " readonly" : "";
 
 				file->Printf( "\t%s(%s)%s : \"%s\"", cleanKey.c_str(), typeName, readOnly, desc.c_str() );
 
