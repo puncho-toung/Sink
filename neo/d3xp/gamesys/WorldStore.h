@@ -105,8 +105,8 @@ public:
 	{
 		currentNode = node;
 	}
-	// the next BeginMap continues this world instead of clearing it; the director sets it around a load it starts
-	// and puts the previous value back when the load is refused
+	// the next BeginMap continues this world instead of clearing it, then clears the flag; CommitMapTransition and the
+	// director set it before a load, the director puts the previous value back when its load is refused
 	bool GetContinue() const
 	{
 		return continueNextLoad;
@@ -124,7 +124,7 @@ public:
 	{
 		return dungeonRecords[i];
 	}
-	// a gibbed corpse: the map record keeps only their count, in 16 bits
+	// one more gibbed corpse; the map record keeps only the count, saturating at 65535 (16 bits)
 	void AddRemains()
 	{
 		if( remains < 65535 )
@@ -132,10 +132,20 @@ public:
 			remains++;
 		}
 	}
-	// a client's snapshot reader writes these bits: MAX_WORLD_MAP_ORDINALS / 8 bytes, indexed by map ordinal
+	// one bit per map ordinal, NumRemovedBytes() bytes: the host's snapshot writer reads them, a client's reader
+	// zeroes and ORs them
+	static const int REMOVED_BYTES = MAX_WORLD_MAP_ORDINALS / 8;
+	const byte* RemovedBits() const
+	{
+		return removed;
+	}
 	byte* RemovedBits()
 	{
 		return removed;
+	}
+	int NumRemovedBytes() const
+	{
+		return REMOVED_BYTES;
 	}
 	int NumSpawnRows() const
 	{
@@ -149,10 +159,11 @@ public:
 	int recordMaps, recordEntries, recordCreated, recordBytes, recordDropped, corpseEvicted;
 	unsigned int commitUs, applyUs;
 	//puncho - P2b.1.1b: public only for the snapshot's removed-ordinal writer and reader in Game_network.cpp (stage 6's
-	// file); stage 6 switches them to RemovedBits(), NumSpawnRows() and SpawnRow( i ) at its next edit of that file, and
-	// these two go private then
+	// file); stage 6 switches them to RemovedBits(), NumRemovedBytes(), NumSpawnRows() and SpawnRow( i ) at its next edit
+	// of that file, and these two go private then. Its sizeof( worldStore.removed ) must become NumRemovedBytes(), since
+	// sizeof of the accessor's result is a pointer's
 	idList<mapSpawnRow_t, TAG_GAME> mapSpawned;
-	byte removed[MAX_WORLD_MAP_ORDINALS / 8];
+	byte removed[REMOVED_BYTES];
 
 private:
 	void Commit( bool leaving );

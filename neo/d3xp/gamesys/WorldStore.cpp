@@ -226,7 +226,8 @@ void idWorldStore::BeginSpawn()
 	remains = 0;
 	applyingReset = false;
 	resetApplied = false;
-	if( IsActive() && gameLocal.GetLoadedMap() != NULL && gameLocal.GetLoadedMap()->GetNumEntities() > 65535 )
+	const idMapFile* loaded = gameLocal.GetLoadedMap();
+	if( IsActive() && loaded != NULL && loaded->GetNumEntities() > 65535 )
 	{
 		gameLocal.Error( "World map has more than 65535 authored ordinals" );
 	}
@@ -339,7 +340,8 @@ struct recordRow_t
 
 void idWorldStore::Commit( bool leaving )
 {
-	if( !IsActive() || committed || common->IsClient() || gameLocal.GameState() != GAMESTATE_ACTIVE || gameLocal.GetLoadedMap() == NULL )
+	const idMapFile* map = gameLocal.GetLoadedMap();
+	if( !IsActive() || committed || common->IsClient() || gameLocal.GameState() != GAMESTATE_ACTIVE || map == NULL )
 	{
 		return;
 	}
@@ -381,7 +383,6 @@ void idWorldStore::Commit( bool leaving )
 			RecordExclude( excluded, ent );
 		}
 	}
-	const idMapFile* map = gameLocal.GetLoadedMap();
 	bool isCleared = true;
 	idList<createdCandidate_t, TAG_GAME> bodies;
 	for( idEntity* ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
@@ -695,7 +696,8 @@ void idWorldStore::Commit( bool leaving )
 
 void idWorldStore::ApplyCurrentMap()
 {
-	if( !IsActive() || common->IsClient() || gameLocal.GetLoadedMap() == NULL )
+	const idMapFile* map = gameLocal.GetLoadedMap();
+	if( !IsActive() || common->IsClient() || map == NULL )
 	{
 		return;
 	}
@@ -723,7 +725,7 @@ void idWorldStore::ApplyCurrentMap()
 		uint32 resetSeconds = 0;
 		if( instanceId == 0 || !mapGraphDirector.GetResetPolicy( mapName, resetPolicy, resetSeconds ) )
 		{
-			const idDict& world = gameLocal.GetLoadedMap()->GetEntity( 0 )->epairs;
+			const idDict& world = map->GetEntity( 0 )->epairs;
 			const char* policy = world.GetString( "world_reset", "never" );
 			resetPolicy = idStr::Icmp( policy, "timed" ) == 0 ? 1 : idStr::Icmp( policy, "cleared" ) == 0 ? 2
 						  : 0;
@@ -739,7 +741,6 @@ void idWorldStore::ApplyCurrentMap()
 		}
 		remains = applyingReset ? 0 : savedRemains;
 		idList<idEntity*, TAG_GAME> deleted;
-		const idMapFile* map = gameLocal.GetLoadedMap();
 		const bool identical = entitiesCRC == map->GetEntitiesCRC() && numEntities == map->GetNumEntities();
 		//puncho start - P2.4 (bug review 2026-10-28): one lookup per record row, not a scan of the map and the rows. A
 		// claimed bit per map ordinal, the spawned row by binary search (rows are in ordinal order), and on an edited map
@@ -1031,6 +1032,7 @@ void idWorldStore::Restore( idRestoreGame* save )
 			gotOrdinals = true;
 			mapSpawned.SetNum( count );
 			byte seen[( MAX_GENTITIES + 7 ) / 8] = { 0 };
+			const idMapFile* loaded = gameLocal.GetLoadedMap();
 			for( int j = 0; j < count; j++ )
 			{
 				unsigned short ordinal;
@@ -1039,7 +1041,7 @@ void idWorldStore::Restore( idRestoreGame* save )
 				chunk.ReadInt( mapSpawned[j].entityNumber );
 				chunk.ReadInt( mapSpawned[j].spawnId );
 				mapSpawned[j].departed = false;
-				if( gameLocal.GetLoadedMap() == NULL || ordinal >= gameLocal.GetLoadedMap()->GetNumEntities() || mapSpawned[j].entityNumber < 0 || mapSpawned[j].entityNumber >= MAX_GENTITIES || ( j > 0 && ordinal <= mapSpawned[j - 1].ordinal ) )
+				if( loaded == NULL || ordinal >= loaded->GetNumEntities() || mapSpawned[j].entityNumber < 0 || mapSpawned[j].entityNumber >= MAX_GENTITIES || ( j > 0 && ordinal <= mapSpawned[j - 1].ordinal ) )
 				{
 					save->Error( "Invalid ORDT identity" );
 				}

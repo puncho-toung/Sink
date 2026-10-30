@@ -28,7 +28,8 @@ const transitionVolume_t* idMapLandmarks::FindTransitionVolume( const char* name
 }
 
 //puncho - P2b.1.1b: MapLoaded's town portal, re-added each load. RemoveIndex keeps the order of the rows left: a lookup
-// returns the first match
+// returns the first match. The match is case-sensitive, unlike the finds, exactly as the inline loops it replaces were;
+// a map-authored _TownPortal would survive it
 void idMapLandmarks::RemoveById( const char* id )
 {
 	for( int i = landmarks.Num() - 1; i >= 0; i-- )
