@@ -101,7 +101,9 @@ public:
 	void DumpRecords( idFile* out ) const;	//puncho - P2b.1.0: recordDump
 #endif
 	void DrawDebug() const;
+#if !defined( ID_RETAIL )
 	void TestCodec();
+#endif
 	void RetireInstanceAfterActivation( uint64 identity, const char* destination );
 	void FinishMapActivation();
 	int recordMaps, recordEntries, recordCreated, recordBytes, recordDropped, corpseEvicted;

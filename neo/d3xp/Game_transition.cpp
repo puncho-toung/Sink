@@ -58,6 +58,7 @@ static struct
 	bool		roots[MAX_GENTITIES];
 	bool		accepted[MAX_GENTITIES];
 } transitionCarryScratch;
+#if !defined( ID_RETAIL )	//puncho - dev guard (P2b.1.1a): testPartyPlacement's fixture placement is test scaffolding
 static bool transitionTestPlacementPending;
 static bool transitionTestFarPeer;
 
@@ -71,6 +72,7 @@ bool QueueTransitionTestParty( const mapTransition_t& request, bool farPeer )
 	transitionTestFarPeer = farPeer;
 	return true;
 }
+#endif
 
 
 static int TransitionPlayerIndex( int client )
@@ -134,7 +136,9 @@ void idGameLocal::ClearMapTransition()
 	sessionCommand.Clear();
 	worldStore.continueNextLoad = false;
 	transitionState.pending = transitionState.active = false;
+#if !defined( ID_RETAIL )
 	transitionTestPlacementPending = false;
+#endif
 	for( int i = 0; i < transitionState.count; i++ )
 	{
 		transitionState.carry[i].spawned = NULL;
@@ -309,6 +313,7 @@ void idGameLocal::CommitMapTransition()
 	transitionState.arrivalStart = 0;
 	transitionState.carryApplied = false;
 	const landmark_t* depart = worldStore.FindLandmark( transitionState.request.departLandmark );
+#if !defined( ID_RETAIL )
 	if( transitionTestPlacementPending )
 	{
 		// Developer fixture setup shares the post-think capture boundary. Otherwise
@@ -333,6 +338,7 @@ void idGameLocal::CommitMapTransition()
 		}
 		Printf( "testPartyPlacement players=%d farPeer=%d\n", count, transitionTestFarPeer );
 	}
+#endif
 
 	transitionState.relative = g_transitionLandmarks.GetBool() && depart != NULL && !transitionState.request.arrivalLandmark.IsEmpty();
 	if( g_transitionLandmarks.GetBool() && !transitionState.relative )

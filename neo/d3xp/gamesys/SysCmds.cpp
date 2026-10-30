@@ -3983,6 +3983,7 @@ static void Cmd_RunScriptFunction_f( const idCmdArgs& args )
 	thread->Start(); // Ordinary script-thread ownership, including waits and completion.
 }
 
+#if !defined( ID_RETAIL )	//puncho - dev guard (P2b.1.1a): the record fixture is test scaffolding
 struct recordTestRow_t
 {
 	int ordinal, health;
@@ -4182,6 +4183,7 @@ static void Cmd_RecordTest_f( const idCmdArgs& args )
 		gameLocal.Printf( "RECORD_TEST COMPLETE %s total_failures=%d\n", recordTestFailures == 0 && recordTestBaseline.Num() > 0 ? "PASS" : "FAIL", recordTestFailures );
 	}
 }
+#endif
 
 static void Cmd_ListMapRecords_f( const idCmdArgs& args )
 {
@@ -4324,6 +4326,7 @@ static void Cmd_ListTransition_f( const idCmdArgs& args )
 	gameLocal.ListTransition();
 }
 
+#if !defined( ID_RETAIL )	//puncho - dev guard (P2b.1.1a): the transition fixtures are test scaffolding
 bool QueueTransitionTestParty( const mapTransition_t& request, bool farPeer );
 
 static void Cmd_TestPartyPlacement_f( const idCmdArgs& args )
@@ -4368,6 +4371,7 @@ static void Cmd_TransitionTest_f( const idCmdArgs& args )
 	request.arrivalLandmark = args.Argc() > 3 ? args.Argv( 3 ) : args.Argv( 2 );
 	gameLocal.BeginMapTransition( request );
 }
+#endif
 
 void MapGraphCheck_f( const idCmdArgs& args );
 void CorpseFixture_f( const idCmdArgs& args );
@@ -4377,10 +4381,14 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "corpseFixture", CorpseFixture_f, CMD_FL_GAME | CMD_FL_CHEAT, "bounded static corpse render fixture (mg test maps only)" );
 	cmdSystem->AddCommand( "mapGraphCheck", MapGraphCheck_f, CMD_FL_GAME, "check map graph authoring kit and seeded caps" );
 	cmdSystem->AddCommand( "runScriptFunction", Cmd_RunScriptFunction_f, CMD_FL_GAME | CMD_FL_CHEAT, "invoke a precompiled global noarg void function without changing the script image" );
+#if !defined( ID_RETAIL )
 	cmdSystem->AddCommand( "recordTest", Cmd_RecordTest_f, CMD_FL_GAME | CMD_FL_CHEAT, "capture/compare record functional fixture; pose moves one test prop" );
+#endif
 	cmdSystem->AddCommand( "listTransition", Cmd_ListTransition_f, CMD_FL_GAME, "list bounded transition state" );
+#if !defined( ID_RETAIL )
 	cmdSystem->AddCommand( "testPartyPlacement", Cmd_TestPartyPlacement_f, CMD_FL_GAME | CMD_FL_CHEAT, "place and capture a one/two-player fixture party at the transition boundary" );
 	cmdSystem->AddCommand( "transitionTest", Cmd_TransitionTest_f, CMD_FL_GAME | CMD_FL_CHEAT, "request a landmark transition" );
+#endif
 	cmdSystem->AddCommand( "listMapRecords", Cmd_ListMapRecords_f, CMD_FL_GAME, "list persistent map records" );
 	cmdSystem->AddCommand( "dumpMapState", Cmd_DumpMapState_f, CMD_FL_GAME, "write current authored state CSV" );
 	cmdSystem->AddCommand( "setWorldTime", Cmd_SetWorldTime_f, CMD_FL_GAME | CMD_FL_CHEAT, "set unscaled world clock in milliseconds" );

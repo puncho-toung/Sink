@@ -744,7 +744,12 @@ set(GAMED3XP_GAMESYS_SOURCES
 	d3xp/gamesys/CorpseFixture.cpp
 	d3xp/gamesys/MapGraphCheck.cpp
 	d3xp/gamesys/MapGraph.cpp
+	d3xp/gamesys/MapGraphCmds.cpp
+	d3xp/gamesys/MapGraphDirector.cpp
+	d3xp/gamesys/MapGraphRecord.cpp
+	d3xp/gamesys/MapLandmarks.cpp
 	d3xp/gamesys/WorldStore.cpp
+	d3xp/gamesys/WorldStoreRecord.cpp
 	d3xp/gamesys/SaveGame.cpp
 	d3xp/gamesys/StreamTrace.cpp
 	d3xp/gamesys/SysCmds.cpp
