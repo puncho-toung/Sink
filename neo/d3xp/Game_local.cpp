@@ -4601,7 +4601,9 @@ void idGameLocal::ResetEntityBudgets( bool restore )
 			}
 			else if( corpseOn && ( ent->IsType( idCorpse::Type ) || ( ent->IsType( idAI::Type ) && ent->health <= 0 && !static_cast<idAI*>( ent )->IsGibbed() ) ) )
 			{
-				// a corpse, or a dead monster idAI::Killed would have joined
+				// a corpse, or a dead monster idAI::Killed would have joined. A throttled gib (idAFEntity_Gibbable::Gib
+				// inside GIB_DELAY) still reads !IsGibbed() for the 4 s until its EV_Gibbed, so a save at 0 made in that
+				// window can rejoin it; bounded, not handled
 				bodies.Append( ent );
 			}
 		}
@@ -4820,6 +4822,8 @@ void idGameLocal::EnforceCorpseBudget( const idEntity* keep, bool deleteCorpses 
 	{
 		idEntity* ent = next;
 		next = ent->budgetNode.Next();
+		// an idCorpse built from such a monster keeps persist_nocap only; Event_PersistCorpse removes the monster at the
+		// settle, so a script that names it has already seen it go
 		if( ent == keep || ent->spawnArgs.GetBool( "persist_nocap" ) || ent->spawnArgs.GetBool( "essential" ) || ent->spawnArgs.GetBool( "quest_item" ) )
 		{
 			continue;

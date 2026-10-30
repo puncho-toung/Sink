@@ -3020,9 +3020,10 @@ void idAI::Event_RealKill()
 		BecomeActive( TH_PHYSICS );
 	}
 
+	const bool joins = ( budgetClass == BUDGET_NONE );	//puncho - c15c (P2b.1.10c): the cap only at the joining death
 	Killed( this, this, 0, vec3_zero, INVALID_JOINT );
 	//puncho - c15b (P2b.1.10c): Killed only joins the corpse class; this death never gibs, so its cap follows at once
-	if( budgetClass == BUDGET_CORPSE )
+	if( joins && budgetClass == BUDGET_CORPSE )
 	{
 		gameLocal.EnforceCorpseBudget( this, false );
 	}

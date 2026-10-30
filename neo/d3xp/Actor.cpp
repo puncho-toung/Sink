@@ -2672,13 +2672,16 @@ void idActor::Damage( idEntity* inflictor, idEntity* attacker, const idVec3& dir
 				}
 			}
 
+			//puncho - c15c (P2b.1.10c): the cap runs only at the death that joins the class; a hit on a body already in it
+			// (Killed returns at AI_DEAD, a corpse keeps takedamage) evicts nothing
+			const bool joins = ( budgetClass == BUDGET_NONE );
 			Killed( inflictor, attacker, damage, dir, location );
 			if( ( health < -20 ) && spawnArgs.GetBool( "gib" ) && damageDef->GetBool( "gib" ) )
 			{
 				Gib( dir, damageDefName );
 			}
 			//puncho - c15b (P2b.1.10c): the corpse class's cap after the gib test, so a body that gibs costs no corpse
-			if( budgetClass == BUDGET_CORPSE )
+			if( joins && budgetClass == BUDGET_CORPSE )
 			{
 				gameLocal.EnforceCorpseBudget( this, false );
 			}
