@@ -208,7 +208,8 @@ idRenderWorldLocal::idRenderWorldLocal()
 
 	interactionTable = NULL;
 	interactionIndex = NULL;
-	interactionIndexCapacity = interactionIndexShift = interactionIndexEntries = 0;
+	interactionIndexLights = NULL;
+	interactionIndexCapacity = interactionIndexEntries = 0;
 	interactionMaxProbe = interactionLateInserts = interactionGenerateMS = 0;
 	interactionIndexSparse = interactionIndexVerify = false;
 	interactionMismatches.SetValue( 0 );
@@ -267,7 +268,8 @@ static idCVar r_interactionIndexVerify( "r_interactionIndexVerify", "0", CVAR_RE
 size_t idRenderWorldLocal::InteractionIndexBytes() const
 {
 	return ( interactionTable ? ( size_t )interactionTableWidth * interactionTableHeight * sizeof( *interactionTable ) : 0 ) +
-		( size_t )interactionIndexCapacity * sizeof( interactionIndexSlot_t );
+		( size_t )interactionIndexCapacity * sizeof( interactionIndexSlot_t ) +
+		( interactionIndexLights ? ( size_t )interactionTableHeight * sizeof( interactionIndexLight_t ) : 0 );
 }
 
 void idRenderWorldLocal::FreeInteractionIndex()
@@ -286,6 +288,11 @@ void idRenderWorldLocal::FreeInteractionIndex()
 		R_StaticFree( interactionIndex );
 		interactionIndex = NULL;
 	}
+	if( interactionIndexLights != NULL )
+	{
+		R_StaticFree( interactionIndexLights );
+		interactionIndexLights = NULL;
+	}
 	interactionIndexCapacity = interactionIndexEntries = 0;
 	interactionTableWidth = interactionTableHeight = 0;
 }
@@ -299,16 +306,17 @@ idInteraction* idRenderWorldLocal::GetIndexedInteraction( int light, int entity 
 		return NULL;
 	}
 	idInteraction* sparseValue = NULL;
-	if( interactionIndex != NULL )
+	if( interactionIndex != NULL && interactionIndexLights[light].base >= 0 )
 	{
-		const unsigned int key = ( ( unsigned int )light << 16 ) | ( unsigned int )entity;
-		const int mask = interactionIndexCapacity - 1;
-		int slot = ( key * 0x9E3779B1u ) >> interactionIndexShift;
-		while( interactionIndex[slot].value != NULL )
+		const interactionIndexLight_t& segment = interactionIndexLights[light];
+		const interactionIndexSlot_t* slots = interactionIndex + segment.base;
+		const int mask = ( int )( ~0u >> segment.shift );
+		int slot = ( int )( ( ( unsigned int )entity * 0x9E3779B1u ) >> segment.shift );
+		while( slots[slot].value != NULL )
 		{
-			if( interactionIndex[slot].key == key )
+			if( slots[slot].entity == entity )
 			{
-				sparseValue = interactionIndex[slot].value;
+				sparseValue = slots[slot].value;
 				break;
 			}
 			slot = ( slot + 1 ) & mask;
@@ -328,47 +336,65 @@ void idRenderWorldLocal::SetInteraction( int light, int entity, idInteraction* v
 	{
 		return;
 	}
-	if( interactionIndex != NULL )
+	//puncho - interaction index (P2b.1.7): a refused insert leaves the sparse index alone and still reaches the dense
+	// table of the verify mode, which then counts the refusal as mismatches and keeps a dense primary whole
+	if( interactionIndex != NULL && interactionIndexLights[light].base < 0 )
 	{
-		const unsigned int key = ( ( unsigned int )light << 16 ) | ( unsigned int )entity;
-		const int mask = interactionIndexCapacity - 1;
-		int slot = ( key * 0x9E3779B1u ) >> interactionIndexShift;
+		// a light with no pairs when the index was sized, or added since: it has no segment to insert into
+		if( value != NULL )
+		{
+			interactionLateInserts++;
+		}
+	}
+	else if( interactionIndex != NULL )
+	{
+		interactionIndexLight_t& segment = interactionIndexLights[light];
+		interactionIndexSlot_t* slots = interactionIndex + segment.base;
+		const int mask = ( int )( ~0u >> segment.shift );
+		int slot = ( int )( ( ( unsigned int )entity * 0x9E3779B1u ) >> segment.shift );
 		int probes = 1;
-		while( interactionIndex[slot].value != NULL && interactionIndex[slot].key != key )
+		while( slots[slot].value != NULL && slots[slot].entity != entity )
 		{
 			slot = ( slot + 1 ) & mask;
 			probes++;
 		}
 		interactionMaxProbe = Max( interactionMaxProbe, probes );
-		if( value != NULL )
+		if( value != NULL && slots[slot].value == NULL && generateAllInteractionsCalled )
 		{
-			if( interactionIndex[slot].value == NULL )
+			interactionLateInserts++;
+			assert( !generateAllInteractionsCalled );
+		}
+		else if( value != NULL && slots[slot].value == NULL && segment.entries >= mask )
+		{
+			// a pair the sizing walk did not count ( a transition member that entered the light's areas before the
+			// light's lazy slice ) when only one slot is left: refused like a late insert, so every chain ends
+			interactionLateInserts++;
+		}
+		else if( value != NULL )
+		{
+			if( slots[slot].value == NULL )
 			{
-				if( generateAllInteractionsCalled )
-				{
-					interactionLateInserts++;
-					assert( !generateAllInteractionsCalled );
-					return;
-				}
+				segment.entries++;
 				interactionIndexEntries++;
 			}
-			interactionIndex[slot].key = key;
-			interactionIndex[slot].value = value;
+			slots[slot].entity = entity;
+			slots[slot].value = value;
 		}
-		else if( interactionIndex[slot].value != NULL )
+		else if( slots[slot].value != NULL )
 		{
 			// Shift only entries whose probe chain crosses the hole; no tombstones accumulate.
 			int hole = slot;
-			for( int next = ( hole + 1 ) & mask; interactionIndex[next].value != NULL; next = ( next + 1 ) & mask )
+			for( int next = ( hole + 1 ) & mask; slots[next].value != NULL; next = ( next + 1 ) & mask )
 			{
-				const int home = ( interactionIndex[next].key * 0x9E3779B1u ) >> interactionIndexShift;
+				const int home = ( int )( ( ( unsigned int )slots[next].entity * 0x9E3779B1u ) >> segment.shift );
 				if( ( ( next - home ) & mask ) >= ( ( next - hole ) & mask ) )
 				{
-					interactionIndex[hole] = interactionIndex[next];
+					slots[hole] = slots[next];
 					hole = next;
 				}
 			}
-			interactionIndex[hole].value = NULL;
+			slots[hole].value = NULL;
+			segment.entries--;
 			interactionIndexEntries--;
 		}
 	}
@@ -391,30 +417,42 @@ void idRenderWorldLocal::ListInteractionIndex() const
 	int longest[10] = { 0 };
 	if( interactionIndex != NULL )
 	{
-		for( int i = 0; i < interactionIndexCapacity; i++ )
+		for( int light = 0; light < interactionTableHeight; light++ )
 		{
-			if( interactionIndex[i].value == NULL )
+			const interactionIndexLight_t& segment = interactionIndexLights[light];
+			if( segment.base < 0 )
 			{
 				continue;
 			}
-			const int home = ( interactionIndex[i].key * 0x9E3779B1u ) >> interactionIndexShift;
-			int probes = ( ( i - home ) & ( interactionIndexCapacity - 1 ) ) + 1;
-			for( int rank = 0; rank < 10; rank++ )
+			const interactionIndexSlot_t* slots = interactionIndex + segment.base;
+			const int mask = ( int )( ~0u >> segment.shift );
+			for( int i = 0; i <= mask; i++ )
 			{
-				if( probes > longest[rank] )
+				if( slots[i].value == NULL )
 				{
-					const int displaced = longest[rank];
-					longest[rank] = probes;
-					probes = displaced;
+					continue;
+				}
+				const int home = ( int )( ( ( unsigned int )slots[i].entity * 0x9E3779B1u ) >> segment.shift );
+				int probes = ( ( i - home ) & mask ) + 1;
+				for( int rank = 0; rank < 10; rank++ )
+				{
+					if( probes > longest[rank] )
+					{
+						const int displaced = longest[rank];
+						longest[rank] = probes;
+						probes = displaced;
+					}
 				}
 			}
 		}
-		common->Printf( "longest lookup probes:" );
+		// one Printf for the line: its twelve were most of the sparse index's own cost in a small map's INTERACTIONS row
+		char line[160];
+		int length = idStr::snPrintf( line, sizeof( line ), "longest lookup probes:" );
 		for( int rank = 0; rank < 10; rank++ )
 		{
-			common->Printf( " %i", longest[rank] );
+			length += idStr::snPrintf( line + length, sizeof( line ) - length, " %i", longest[rank] );
 		}
-		common->Printf( "\n" );
+		common->Printf( "%s\n", line );
 	}
 }
 
@@ -2128,36 +2166,55 @@ void idRenderWorldLocal::BeginInteractionTable()
 	}
 	if( interactionIndexSparse || interactionIndexVerify )
 	{
+		//puncho - interaction index (P2b.1.7): a light's segment is the smallest power of two >= 2 x its pairs, the
+		// entity refs of its areas ( an entity in two of them counts twice, so this bounds the pairs a walk inserts );
+		// segments lie in light order in one allocation, and a light without pairs has none
+		interactionIndexLights = ( interactionIndexLight_t* )R_StaticAlloc( interactionTableHeight * ( int )sizeof( interactionIndexLight_t ) );
 		size_t pairs = 0;
-		for( int i = 0; i < lightDefs.Num(); i++ )
+		size_t capacity = 0;
+		for( int i = 0; i < interactionTableHeight; i++ )
 		{
-			const idRenderLightLocal* light = lightDefs[i];
+			interactionIndexLight_t& segment = interactionIndexLights[i];
+			segment.base = -1;
+			segment.shift = 32;
+			segment.entries = 0;
+			const idRenderLightLocal* light = i < lightDefs.Num() ? lightDefs[i] : NULL;
 			if( light == NULL )
 			{
 				continue;
 			}
+			size_t lightPairs = 0;
 			for( areaReference_t* lref = light->references; lref != NULL; lref = lref->ownerNext )
 			{
 				portalArea_t* area = lref->area;
 				for( areaReference_t* eref = area->entityRefs.areaNext; eref != &area->entityRefs; eref = eref->areaNext )
 				{
-					pairs++;
+					lightPairs++;
 				}
 			}
+			if( lightPairs == 0 )
+			{
+				continue;
+			}
+			pairs += lightPairs;
+			size_t slots = 2;
+			int shift = 31;
+			while( slots < lightPairs * 2 )
+			{
+				slots *= 2;
+				shift--;
+			}
+			if( capacity + slots > INT_MAX / sizeof( interactionIndexSlot_t ) )
+			{
+				common->Error( "sparse interaction index exceeds allocator limit: %" PRIuSIZE " pairs", pairs );
+			}
+			segment.base = ( int )capacity;
+			segment.shift = shift;
+			capacity += slots;
 		}
-		size_t capacity = 1024;
-		interactionIndexShift = 22;
-		while( capacity < pairs * 2 )
-		{
-			capacity *= 2;
-			interactionIndexShift--;
-		}
-		if( capacity > INT_MAX / sizeof( interactionIndexSlot_t ) )
-		{
-			common->Error( "sparse interaction index exceeds allocator limit: %" PRIuSIZE " pairs", pairs );
-		}
-		interactionIndexCapacity = ( int )capacity;
-		interactionIndex = ( interactionIndexSlot_t* )R_ClearedStaticAlloc( ( int )( capacity * sizeof( interactionIndexSlot_t ) ) );
+		// one slot at least: GetInteraction takes the indexed path on a non-NULL index, and no segment points at it
+		interactionIndexCapacity = capacity > 0 ? ( int )capacity : 1;
+		interactionIndex = ( interactionIndexSlot_t* )R_ClearedStaticAlloc( interactionIndexCapacity * ( int )sizeof( interactionIndexSlot_t ) );
 	}
 
 }

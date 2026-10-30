@@ -174,8 +174,17 @@ struct shProbeEntry_t
 
 struct interactionIndexSlot_t
 {
-	unsigned int key;
+	int entity;
 	idInteraction* value;
+};
+
+//puncho - interaction index (P2b.1.7): the sparse index is one open-addressed segment of slots per light, keyed by
+// entity index, so a light's walk probes its own segment rather than one table the size of the world
+struct interactionIndexLight_t
+{
+	int					base;		// the segment's first slot; -1: no segment ( no pairs when the index was sized )
+	int					shift;		// 32 - log2( slots ): an entity's home slot is ( entity * 0x9E3779B1 ) >> shift
+	int					entries;	// occupied slots: one stays empty, so every probe chain ends
 };
 
 class idRenderWorldLocal : public idRenderWorld
@@ -297,8 +306,8 @@ public:
 	// of entityDefs and lightDefs
 	idInteraction** 		interactionTable;
 	interactionIndexSlot_t* interactionIndex;
+	interactionIndexLight_t* interactionIndexLights;	// interactionTableHeight segments
 	int					interactionIndexCapacity;
-	int					interactionIndexShift;
 	int					interactionIndexEntries;
 	int					interactionMaxProbe;
 	int					interactionLateInserts;
