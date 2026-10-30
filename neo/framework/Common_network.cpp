@@ -301,27 +301,6 @@ void idCommonLocal::ProcessSnapshot( idSnapShot& ss )
 	}
 	lastReceivedLocalTime = time;
 
-	/* JAF ?
-	for ( int i = 0; i < MAX_PLAYERS; i++ ) {
-		idBitMsg msg;
-		if ( ss.GetObjectMsgByID( idSession::SS_PLAYER + i, msg ) ) {
-			if ( msg.GetSize() == 0 ) {
-				snapCurrent.players[ i ].valid = false;
-				continue;
-			}
-
-			idSerializer ser( msg, false );
-			SerializePlayer( ser, snapCurrent.players[ i ] );
-			snapCurrent.players[ i ].valid = true;
-
-			extern idCVar com_drawSnapshots;
-			if ( com_drawSnapshots.GetInteger() == 3 ) {
-				console->AddSnapObject( "players", msg.GetSize(), ss.CompareObject( &oldss, idSession::SS_PLAYER + i ) );
-			}
-		}
-	}
-	*/
-
 	// Set server game time here so that it accurately reflects the time when this frame was saved out, in case any serialize function needs it.
 	int oldTime = Game()->GetServerGameTimeMs();
 	Game()->SetServerGameTimeMs( snapCurrent.serverTime );

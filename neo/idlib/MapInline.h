@@ -8,9 +8,10 @@
 	inlines the model into the areas when it holds (tools/compilers/dmap/usurface.cpp), idStaticEntity::Spawn then
 	hides the entity, and MapStaticCanSkip adds its own tests before a spawn is skipped. world is the map's
 	worldspawn, ent the entity's key/values: "inline" "1" on the entity, or "inlineAllStatics" "1" on the
-	worldspawn for every static of a model format dmap reads that runs no GUI. Nothing else switches it: dmap's
-	inlineAll option is refused, since the game would not see it and would draw the model a second time. reason
-	names the failed test, or "inlined". idDict and idStr are supplied before inclusion.
+	worldspawn for every static whose model format is on the list below and that has no gui, gui2 or gui3 key.
+	Nothing else switches it: dmap's inlineAll option is refused, since the game would not see it and would draw
+	the model a second time. reason names the failed test, or "inlined". idDict and idStr are supplied before
+	inclusion.
 
 ===============================================================================
 */
@@ -29,23 +30,25 @@ ID_INLINE bool MapInlineEligible( const idDict& world, const idDict& ent, const 
 		reason = "not inlined";
 		return false;
 	}
-	const idKeyValue* model = ent.FindKey( "model" );
-	if( model == NULL || model->GetValue().IsEmpty() )
+	const idKeyValue* kv = ent.FindKey( "model" );
+	if( kv == NULL || kv->GetValue().IsEmpty() )
 	{
 		reason = "no model";
 		return false;
 	}
+	const idStr& model = kv->GetValue();
 	if( inlineAll )
 	{
-		// the model formats dmap reads (the renderer's GLTF_EXT and GLTF_GLB_EXT, renderer/Model.h, are not visible
-		// from idlib); the text after the last '.' matches one exactly when idStr::ExtractFileExtension's copy would
+		// the formats inlineAllStatics may bake; a brush static's model is its own name and has no extension (the
+		// renderer's GLTF_EXT and GLTF_GLB_EXT, renderer/Model.h, are not visible from idlib); the text after the
+		// last '.' matches one exactly when idStr::ExtractFileExtension's copy would
 		static const char* const extensions[] = { "glb", "gltf", "lwo", "ase", "ma", "obj" };
 		const int numExtensions = sizeof( extensions ) / sizeof( extensions[0] );
-		const int dot = model->GetValue().Last( '.' );
+		const int dot = model.Last( '.' );
 		bool known = false;
 		for( int i = 0; dot >= 0 && i < numExtensions; i++ )
 		{
-			known |= idStr::Icmp( model->GetValue().c_str() + dot + 1, extensions[i] ) == 0;
+			known |= idStr::Icmp( model.c_str() + dot + 1, extensions[i] ) == 0;
 		}
 		if( !known )
 		{

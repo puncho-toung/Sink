@@ -320,8 +320,8 @@ typedef struct
 extern dmapGlobals_t dmapGlobals;
 
 extern idCVar dmap_maxSurfaceVerts;
-//puncho start - P2b.1.10g: the externs optimize.cpp declared for itself; OptimizeGroupList counts its groups and the
-// largest group's tris when dmap_phaseTimes is set
+//puncho start - P2b.1.10g: dmap.cpp's; OptimizeGroupList counts its groups and the largest group's tris when
+// dmap_phaseTimes is set
 extern idCVar dmap_phaseTimes;
 extern int dmapOptimizeGroups;
 extern int dmapMaxGroupTris;
@@ -343,7 +343,7 @@ int FindFloatPlane( const idPlane& plane, bool* fixedDegeneracies = NULL );
 #define	PSIDE_BOTH			(PSIDE_FRONT|PSIDE_BACK)
 #define	PSIDE_FACING		4
 
-extern int c_nodes;	//puncho - P2b.1.10g: was facebsp.cpp's own extern
+extern int c_nodes;	//puncho - P2b.1.10g: ubrush.cpp's; only FreeTree_r writes it (c_nodes--), nothing increments or reads it
 
 int	CountBrushList( uBrush_t* brushes );
 uBrush_t* AllocBrush( int numsides );
