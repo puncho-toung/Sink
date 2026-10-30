@@ -102,7 +102,8 @@ double Sys_GetClockTicks()
 Sys_PerfCountersOpen
 ================
 */
-bool Sys_PerfCountersOpen() {
+bool Sys_PerfCountersOpen()
+{
 	Sys_Printf( "Sys_PerfCountersOpen: no hardware counters on this platform\n" );
 	return false;
 }
@@ -112,7 +113,8 @@ bool Sys_PerfCountersOpen() {
 Sys_PerfCountersRead
 ================
 */
-bool Sys_PerfCountersRead( uint64[ 3 ] ) {
+bool Sys_PerfCountersRead( uint64[ SYS_NUM_PERF_COUNTERS ] )
+{
 	return false;
 }
 
@@ -121,7 +123,8 @@ bool Sys_PerfCountersRead( uint64[ 3 ] ) {
 Sys_PerfCountersClose
 ================
 */
-void Sys_PerfCountersClose() {
+void Sys_PerfCountersClose()
+{
 }
 //puncho end
 

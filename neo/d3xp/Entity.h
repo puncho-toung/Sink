@@ -608,6 +608,12 @@ private:
 	void					FixupLocalizedStrings();
 
 	bool					DoDormantTests();				// dormant == on the active list, but out of PVS
+	//puncho start - P2b.0.3: the timed twins of CheckDormant, UpdatePVSAreas() and Present (Entity.cpp), out of line so
+	// the untimed sites keep the parent's code
+	PASS_NOINLINE bool		CheckDormantTimed();
+	PASS_NOINLINE void		UpdatePVSAreasTimed();
+	PASS_NOINLINE void		PresentTimed();
+	//puncho end
 
 	// physics
 	// initialize the default physics

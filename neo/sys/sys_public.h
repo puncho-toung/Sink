@@ -524,10 +524,12 @@ uint64			Sys_Microseconds();
 double			Sys_GetClockTicks();
 double			Sys_ClockTicksPerSecond();
 
-//puncho start - P2b.0.3: hardware counters opened on the calling thread; counts accumulate since open
-// out[0]: PERF_COUNT_HW_CACHE_MISSES, out[1]: CPU cycles, out[2]: instructions (Linux; false elsewhere)
+//puncho start - P2b.0.3: hardware counters opened on the calling thread, which alone they count; counts accumulate since
+// open. out[0]: PERF_COUNT_HW_CACHE_MISSES, out[1]: CPU cycles, out[2]: instructions (Linux; false elsewhere). A read
+// fails when the kernel multiplexed the group (enabled time != running time), so a scaled count never passes for a real one
+const int		SYS_NUM_PERF_COUNTERS = 3;
 bool			Sys_PerfCountersOpen();
-bool			Sys_PerfCountersRead( uint64 out[ 3 ] );
+bool			Sys_PerfCountersRead( uint64 out[ SYS_NUM_PERF_COUNTERS ] );
 void			Sys_PerfCountersClose();
 //puncho end
 

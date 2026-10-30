@@ -291,7 +291,8 @@ double Sys_GetClockTicks()
 // thread, user space only (kernel.perf_event_paranoid 2 refuses the kernel's share)
 #if defined( __linux__ )
 
-static int perfCounterFds[ 3 ] = { -1, -1, -1 };
+static int	perfCounterFds[ SYS_NUM_PERF_COUNTERS ] = { -1, -1, -1 };
+static bool	perfCounterMultiplexed = false;		// the one line about a multiplexed group was printed since the open
 
 /*
 ===============
@@ -305,9 +306,9 @@ bool Sys_PerfCountersOpen()
 		return true;
 	}
 
-	const uint64 events[ 3 ] = { PERF_COUNT_HW_CACHE_MISSES, PERF_COUNT_HW_CPU_CYCLES, PERF_COUNT_HW_INSTRUCTIONS };
-	const char* const eventNames[ 3 ] = { "cache misses", "CPU cycles", "instructions" };
-	for( int i = 0; i < 3; i++ )
+	const uint64 events[ SYS_NUM_PERF_COUNTERS ] = { PERF_COUNT_HW_CACHE_MISSES, PERF_COUNT_HW_CPU_CYCLES, PERF_COUNT_HW_INSTRUCTIONS };
+	const char* const eventNames[ SYS_NUM_PERF_COUNTERS ] = { "cache misses", "CPU cycles", "instructions" };
+	for( int i = 0; i < SYS_NUM_PERF_COUNTERS; i++ )
 	{
 		struct perf_event_attr attr;
 		memset( &attr, 0, sizeof( attr ) );
@@ -318,9 +319,10 @@ bool Sys_PerfCountersOpen()
 		attr.exclude_hv = 1;
 		if( i == 0 )
 		{
-			// Enable only after all siblings are open so all three counts start together.
+			// Enable only after all siblings are open so all three counts start together. The two times tell a
+			// multiplexed group (the kernel scaled it) from one that counted all along.
 			attr.disabled = 1;
-			attr.read_format = PERF_FORMAT_GROUP;
+			attr.read_format = PERF_FORMAT_GROUP | PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING;
 		}
 
 		const int groupFd = ( i == 0 ) ? -1 : perfCounterFds[ 0 ];
@@ -342,6 +344,7 @@ bool Sys_PerfCountersOpen()
 		return false;
 	}
 
+	perfCounterMultiplexed = false;
 	return true;
 }
 
@@ -350,7 +353,7 @@ bool Sys_PerfCountersOpen()
 Sys_PerfCountersRead
 ===============
 */
-bool Sys_PerfCountersRead( uint64 out[ 3 ] )
+bool Sys_PerfCountersRead( uint64 out[ SYS_NUM_PERF_COUNTERS ] )
 {
 	if( perfCounterFds[ 0 ] == -1 )
 	{
@@ -359,15 +362,27 @@ bool Sys_PerfCountersRead( uint64 out[ 3 ] )
 
 	struct
 	{
-		uint64 nr;
-		uint64 values[ 3 ];
+		uint64		nr;
+		uint64		timeEnabled;
+		uint64		timeRunning;
+		uint64		values[ SYS_NUM_PERF_COUNTERS ];
 	} counters;
-	if( read( perfCounterFds[ 0 ], &counters, sizeof( counters ) ) != sizeof( counters ) || counters.nr != 3 )
+	if( read( perfCounterFds[ 0 ], &counters, sizeof( counters ) ) != sizeof( counters ) || counters.nr != SYS_NUM_PERF_COUNTERS )
 	{
 		return false;
 	}
+	if( counters.timeEnabled != counters.timeRunning )
+	{
+		if( !perfCounterMultiplexed )
+		{
+			perfCounterMultiplexed = true;
+			Sys_Printf( "Sys_PerfCountersRead: the group was multiplexed (running %llu of %llu ns enabled); its reads fail\n",
+						( unsigned long long )counters.timeRunning, ( unsigned long long )counters.timeEnabled );
+		}
+		return false;
+	}
 
-	for( int i = 0; i < 3; i++ )
+	for( int i = 0; i < SYS_NUM_PERF_COUNTERS; i++ )
 	{
 		out[ i ] = counters.values[ i ];
 	}
@@ -381,7 +396,7 @@ Sys_PerfCountersClose
 */
 void Sys_PerfCountersClose()
 {
-	for( int i = 2; i >= 0; i-- )
+	for( int i = SYS_NUM_PERF_COUNTERS - 1; i >= 0; i-- )
 	{
 		if( perfCounterFds[ i ] != -1 )
 		{
@@ -399,7 +414,7 @@ bool Sys_PerfCountersOpen()
 	return false;
 }
 
-bool Sys_PerfCountersRead( uint64[ 3 ] )
+bool Sys_PerfCountersRead( uint64[ SYS_NUM_PERF_COUNTERS ] )
 {
 	return false;
 }
