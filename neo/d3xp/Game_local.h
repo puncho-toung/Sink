@@ -446,6 +446,29 @@ struct aiSquadDef_t
 };
 //puncho end
 
+//puncho start - P2b.1.10a: the entity budget classes. The four spawn classes keep their numbers, 0 through 3, which
+// idEntity::budgetClass saves as class + 1 (WorldIdentity); the corpse class is joined by a death, never by a spawn
+enum entityBudget_t
+{
+	BUDGET_NONE = -1,
+	BUDGET_DEBRIS,
+	BUDGET_FX,
+	BUDGET_ITEM,		// refused at its cap, never evicted
+	BUDGET_GIB,
+	BUDGET_CORPSE,
+	NUM_BUDGETS
+};
+
+// one class: its members oldest first (the order it evicts in), the counters listBudgets prints, the cap's cvar
+// (NULL or 0: no cap)
+struct entityBudgetState_t
+{
+	idLinkList<idEntity>	list;
+	int						live, evicted, refused;
+	idCVar* 				cap;
+};
+//puncho end
+
 //============================================================================
 
 class idGameLocal : public idGame
@@ -689,11 +712,10 @@ public:
 	void					ListBudgets( bool order ) const;
 	bool					SpawnRefused() const { return budgetSpawnRefused; }
 	void					ResetEntityBudgets( bool restore );
-	int					GetEntityBudgetClass( const idTypeInfo& type, const idDict& args ) const;
-	bool					PrepareBudgetSpawn( int budget, const idDict& args );
-	void					JoinEntityBudget( idEntity* entity, int budget );
-	idLinkList<idEntity>	entityBudgets[4];
-	int					budgetLive[4], budgetEvicted[4], budgetRefused[4];
+	entityBudget_t			GetEntityBudgetClass( const idTypeInfo& type, const idDict& args ) const;
+	bool					PrepareBudgetSpawn( entityBudget_t budget, const idDict& args );
+	void					JoinEntityBudget( idEntity* entity, entityBudget_t budget );
+	entityBudgetState_t		entityBudgets[NUM_BUDGETS];	//puncho - P2b.1.10a
 	int					budgetFreeSlots[2], budgetHighWater;
 	uint32					budgetJoinCounter;	//puncho - P2b.1.3: JoinEntityBudget stamps ++budgetJoinCounter; 0 at map start, the restored maximum seq + 1 after a restore (so the next stamp is max + 2; order is what matters)
 	int					mapStaticSkipCount;

@@ -953,7 +953,7 @@ void idEntity::SaveWorldIdentity( idSaveGame* savefile ) const
 ================
 idEntity::RestoreWorldIdentity
 
-A flag bit this build does not know, a budget class past the four (idGameLocal::entityBudgets) or a created id of 0
+A flag bit this build does not know, a budget class past NUM_BUDGETS (entityBudget_t) or a created id of 0
 is a malformed save.
 ================
 */
@@ -962,7 +962,7 @@ void idEntity::RestoreWorldIdentity( idRestoreGame* savefile )
 	byte flags, budget;
 	savefile->ReadByte( flags );
 	savefile->ReadByte( budget );
-	if( ( flags & ~( WORLD_IDENTITY_CREATED | WORLD_FLAGS_ALL ) ) != 0 || budget > ( int )ARRAY_COUNT( gameLocal.entityBudgets ) )
+	if( ( flags & ~( WORLD_IDENTITY_CREATED | WORLD_FLAGS_ALL ) ) != 0 || budget > NUM_BUDGETS )
 	{
 		savefile->Error( "Invalid WorldIdentity of entity '%s' (flags %02x, budget %d)", name.c_str(), flags, budget );
 	}
@@ -1018,7 +1018,7 @@ void idEntity::RestoreLegacyWorldKeys()
 	worldCreatedTime = worldCreatedId != 0 ? strtoll( spawnArgs.GetString( "_worldCreatedTime", "0" ), NULL, 10 ) : 0;
 	worldFlags = ( spawnArgs.GetBool( "_worldDeparted" ) ? WORLD_FLAG_DEPARTED : 0 ) | ( spawnArgs.GetBool( "_worldTaken" ) ? WORLD_FLAG_TAKEN : 0 );
 	const int budget = spawnArgs.GetInt( "_budgetClass", "-1" );
-	budgetClass = ( budget >= 0 && budget < ( int )ARRAY_COUNT( gameLocal.entityBudgets ) ) ? budget : -1;
+	budgetClass = ( budget >= 0 && budget < NUM_BUDGETS ) ? budget : BUDGET_NONE;
 	budgetJoinSeq = 0;
 	for( int i = 0; i < ( int )ARRAY_COUNT( legacyWorldKeys ); i++ )
 	{

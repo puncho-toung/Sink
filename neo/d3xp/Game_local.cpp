@@ -4477,49 +4477,52 @@ static idCVar g_budgetFx( "g_budgetFx", "0", CVAR_GAME | CVAR_INTEGER, "maximum 
 static idCVar g_budgetItems( "g_budgetItems", "0", CVAR_GAME | CVAR_INTEGER, "refuse new optional dropped items at this cap; existing items persist" );
 static idCVar g_budgetGibs( "g_budgetGibs", "0", CVAR_GAME | CVAR_INTEGER, "maximum live transient gibs; 0 disables" );
 static idCVar g_entityReserve( "g_entityReserve", "64", CVAR_GAME | CVAR_INTEGER, "free entity slots reserved for essential spawns; 0 disables" );
-static const char* budgetNames[] = { "debris", "fx", "item", "gib" };
+//puncho - P2b.1.10a: listBudgets' and spawn_budget's names, indexed by entityBudget_t
+static const char* const budgetNames[] = { "debris", "fx", "item", "gib", "corpse" };
+compile_time_assert( sizeof( budgetNames ) / sizeof( budgetNames[0] ) == NUM_BUDGETS );
 
-int idGameLocal::GetEntityBudgetClass( const idTypeInfo& type, const idDict& args ) const
+entityBudget_t idGameLocal::GetEntityBudgetClass( const idTypeInfo& type, const idDict& args ) const
 {
 	if( gamestate != GAMESTATE_ACTIVE )
 	{
-		return -1;
+		return BUDGET_NONE;
 	}
 	// Actors/corpses and authored essential items cannot be evicted by a transient budget.
 	if( type.IsType( idActor::Type ) || type.IsType( idProjectile::Type ) || type.IsType( idWeapon::Type ) || args.GetBool( "essential" ) || args.GetBool( "quest_item" ) )
 	{
-		return -1;
+		return BUDGET_NONE;
 	}
 	const char* explicitBudget = args.GetString( "spawn_budget" );
 	if( explicitBudget[0] != '\0' )
 	{
-		for( int i = 0; i < 4; i++ )
+		// the spawn classes only: a death joins the corpse class (P2b.1.10c)
+		for( int i = BUDGET_DEBRIS; i < BUDGET_CORPSE; i++ )
 		{
 			if( idStr::Icmp( explicitBudget, budgetNames[i] ) == 0 )
 			{
 				// Items always retain the non-evicting class, even with an erroneous def key.
-				return type.IsType( idItem::Type ) || type.IsType( idMoveableItem::Type ) ? 2 : i;
+				return type.IsType( idItem::Type ) || type.IsType( idMoveableItem::Type ) ? BUDGET_ITEM : ( entityBudget_t )i;
 			}
 		}
-		return -1;
+		return BUDGET_NONE;
 	}
 	if( type.IsType( idDebris::Type ) )
 	{
-		return 0;
+		return BUDGET_DEBRIS;
 	}
 	if( type.IsType( idEntityFx::Type ) )
 	{
-		return 1;
+		return BUDGET_FX;
 	}
 	if( ( type.IsType( idItem::Type ) || type.IsType( idMoveableItem::Type ) ) && args.GetBool( "dropped" ) )
 	{
-		return 2;
+		return BUDGET_ITEM;
 	}
 	if( type.IsType( idAFEntity_Base::Type ) && !type.IsType( idActor::Type ) && args.GetBool( "dropped" ) )
 	{
-		return 3;
+		return BUDGET_GIB;
 	}
-	return -1;
+	return BUDGET_NONE;
 }
 
 //puncho - P2b.1.3: a restore's rejoin order, the join seq and then the entity number
@@ -4538,11 +4541,17 @@ public:
 
 void idGameLocal::ResetEntityBudgets( bool restore )
 {
-	for( int i = 0; i < 4; i++ )
+	for( int i = 0; i < NUM_BUDGETS; i++ )
 	{
-		entityBudgets[i].Clear();
-		budgetLive[i] = budgetEvicted[i] = budgetRefused[i] = 0;
+		entityBudgetState_t& state = entityBudgets[i];
+		state.list.Clear();
+		state.live = state.evicted = state.refused = 0;
 	}
+	entityBudgets[BUDGET_DEBRIS].cap = &g_budgetDebris;
+	entityBudgets[BUDGET_FX].cap = &g_budgetFx;
+	entityBudgets[BUDGET_ITEM].cap = &g_budgetItems;
+	entityBudgets[BUDGET_GIB].cap = &g_budgetGibs;
+	entityBudgets[BUDGET_CORPSE].cap = NULL;
 	budgetFreeSlots[0] = ENTITYNUM_FIRST_NON_REPLICATED - MAX_CLIENTS;
 	budgetFreeSlots[1] = ENTITYNUM_MAX_NORMAL - ENTITYNUM_FIRST_NON_REPLICATED;
 	budgetHighWater = 0;
@@ -4581,8 +4590,8 @@ void idGameLocal::ResetEntityBudgets( bool restore )
 		for( int i = 0; i < joined.Num(); i++ )
 		{
 			idEntity* ent = joined[i];
-			ent->budgetNode.AddToEnd( entityBudgets[ent->budgetClass] );
-			budgetLive[ent->budgetClass]++;
+			ent->budgetNode.AddToEnd( entityBudgets[ent->budgetClass].list );
+			entityBudgets[ent->budgetClass].live++;
 		}
 		// past every restored stamp, so a later join is younger than each of them
 		budgetJoinCounter = ( joined.Num() > 0 ? joined[joined.Num() - 1]->budgetJoinSeq : 0 ) + 1;
@@ -4591,41 +4600,42 @@ void idGameLocal::ResetEntityBudgets( bool restore )
 	}
 }
 
-bool idGameLocal::PrepareBudgetSpawn( int budget, const idDict& args )
+bool idGameLocal::PrepareBudgetSpawn( entityBudget_t budget, const idDict& args )
 {
-	if( budget < 0 )
+	if( budget == BUDGET_NONE )
 	{
 		return true;
 	}
-	const int caps[] = { g_budgetDebris.GetInteger(), g_budgetFx.GetInteger(), g_budgetItems.GetInteger(), g_budgetGibs.GetInteger() };
+	entityBudgetState_t& state = entityBudgets[budget];
+	const int cap = state.cap != NULL ? state.cap->GetInteger() : 0;
 	const int range = common->IsMultiplayer() && args.GetBool( "net_skip_replication" ) ? 1 : 0;
 	const int free = common->IsMultiplayer() ? budgetFreeSlots[range] : budgetFreeSlots[0] + budgetFreeSlots[1];
 	const bool reserveFull = g_entityReserve.GetInteger() > 0 && free <= g_entityReserve.GetInteger();
-	const bool capFull = caps[budget] > 0 && budgetLive[budget] >= caps[budget];
-	if( reserveFull || ( budget == 2 && capFull ) )
+	const bool capFull = cap > 0 && state.live >= cap;
+	if( reserveFull || ( budget == BUDGET_ITEM && capFull ) )
 	{
 		budgetSpawnRefused = true;
-		if( budgetRefused[budget] < INT_MAX )
+		if( state.refused < INT_MAX )
 		{
-			budgetRefused[budget]++;
+			state.refused++;
 		}
-		if( budgetRefused[budget] == 1 || budgetRefused[budget] % 1000 == 0 )
+		if( state.refused == 1 || state.refused % 1000 == 0 )
 		{
-			Warning( "refused optional %s spawn: %i free slots, %i live, %i refused", budgetNames[budget], free, budgetLive[budget], budgetRefused[budget] );
+			Warning( "refused optional %s spawn: %i free slots, %i live, %i refused", budgetNames[budget], free, state.live, state.refused );
 		}
 		return false;
 	}
 	if( capFull )
 	{
-		idEntity* oldest = entityBudgets[budget].Next();
+		idEntity* oldest = state.list.Next();
 		if( oldest != NULL )
 		{
 			oldest->budgetNode.Remove();
-			oldest->budgetClass = -1;	//puncho - entity budgets (P2 review, P2b.1.3): saved, so a save before EV_Remove runs does not rejoin it
-			budgetLive[budget]--;
-			if( budgetEvicted[budget] < INT_MAX )
+			oldest->budgetClass = BUDGET_NONE;	//puncho - entity budgets (P2 review, P2b.1.3): saved, so a save before EV_Remove runs does not rejoin it
+			state.live--;
+			if( state.evicted < INT_MAX )
 			{
-				budgetEvicted[budget]++;
+				state.evicted++;
 			}
 			oldest->PostEventMS( &EV_Remove, 0 );
 		}
@@ -4633,31 +4643,32 @@ bool idGameLocal::PrepareBudgetSpawn( int budget, const idDict& args )
 	return true;
 }
 
-void idGameLocal::JoinEntityBudget( idEntity* ent, int budget )
+void idGameLocal::JoinEntityBudget( idEntity* ent, entityBudget_t budget )
 {
-	if( budget >= 0 && ent != NULL )
+	if( budget != BUDGET_NONE && ent != NULL )
 	{
 		ent->budgetClass = budget;
 		ent->budgetJoinSeq = ++budgetJoinCounter;	//puncho - P2b.1.3: the class and the seq are saved (WorldIdentity)
-		ent->budgetNode.AddToEnd( entityBudgets[budget] );
-		budgetLive[budget]++;
+		ent->budgetNode.AddToEnd( entityBudgets[budget].list );
+		entityBudgets[budget].live++;
 	}
 }
 
 void idGameLocal::ListBudgets( bool order ) const
 {
 	Printf( "ent_used %i ent_highWater %i free_normal %i free_nonreplicated %i\n", ENTITYNUM_MAX_NORMAL - MAX_CLIENTS - budgetFreeSlots[0] - budgetFreeSlots[1], budgetHighWater, budgetFreeSlots[0], budgetFreeSlots[1] );
-	for( int i = 0; i < 4; i++ )
+	for( int i = 0; i < NUM_BUDGETS; i++ )
 	{
-		Printf( "bud_%s_live %i bud_%s_evicted %i bud_%s_refused %i\n", budgetNames[i], budgetLive[i], budgetNames[i], budgetEvicted[i], budgetNames[i], budgetRefused[i] );
+		const entityBudgetState_t& state = entityBudgets[i];
+		Printf( "bud_%s_live %i bud_%s_evicted %i bud_%s_refused %i\n", budgetNames[i], state.live, budgetNames[i], state.evicted, budgetNames[i], state.refused );
 	}
 	//puncho start - P2b.1.3: each class oldest first, the order it evicts in, with the seq a restore rejoins it by
 	if( order )
 	{
-		for( int i = 0; i < 4; i++ )
+		for( int i = 0; i < NUM_BUDGETS; i++ )
 		{
 			int position = 0;
-			for( idEntity* ent = entityBudgets[i].Next(); ent != NULL; ent = ent->budgetNode.Next() )
+			for( idEntity* ent = entityBudgets[i].list.Next(); ent != NULL; ent = ent->budgetNode.Next() )
 			{
 				Printf( "bud_%s_order %i entity=%i seq=%u name=%s\n", budgetNames[i], position++, ent->entityNumber, ent->budgetJoinSeq, ent->name.c_str() );
 			}
@@ -4803,11 +4814,11 @@ void idGameLocal::UnregisterEntity( idEntity* ent )
 		{
 			budgetFreeSlots[ent->entityNumber >= ENTITYNUM_FIRST_NON_REPLICATED]++;
 		}
-		if( ent->budgetClass >= 0 )
+		if( ent->budgetClass != BUDGET_NONE )
 		{
-			budgetLive[ent->budgetClass]--;
+			entityBudgets[ent->budgetClass].live--;
 			ent->budgetNode.Remove();
-			ent->budgetClass = -1;
+			ent->budgetClass = BUDGET_NONE;
 		}
 		worldStore.EntityRemoved( ent );
 		ent->spawnNode.Remove();
@@ -4832,7 +4843,7 @@ idGameLocal::SpawnEntityType
 idEntity* idGameLocal::SpawnEntityType( const idTypeInfo& classdef, const idDict* args, bool bIsClientReadSnapshot )
 {
 	idClass* obj;
-	int budget = -1;
+	entityBudget_t budget = BUDGET_NONE;
 	budgetSpawnRefused = false;
 
 #if _DEBUG
@@ -4953,7 +4964,7 @@ bool idGameLocal::SpawnEntityDef( const idDict& args, idEntity** ent, bool setDe
 			return false;
 		}
 
-		const int budget = spawnArgs.FindKey( "spawn_entnum" ) ? -1 : GetEntityBudgetClass( *cls, spawnArgs );
+		const entityBudget_t budget = spawnArgs.FindKey( "spawn_entnum" ) ? BUDGET_NONE : GetEntityBudgetClass( *cls, spawnArgs );
 		if( !PrepareBudgetSpawn( budget, spawnArgs ) )
 		{
 			spawnArgs.Clear();
@@ -7476,12 +7487,15 @@ void idGameLocal::GetMapStats( mapGameStats_t& stats ) const
 	stats.allocGameTic = mapAllocTic;
 	stats.entityHighWater = budgetHighWater;
 	stats.spawnStaticsSkipped = mapStaticSkipCount;
-	for( int i = 0; i < 4; i++ )
+	// the MAP row's columns are the four spawn classes (the corpse class has its own, corpseLive and corpseEvicted);
+	// a corpse is never refused
+	compile_time_assert( sizeof( stats.budgetLive ) / sizeof( stats.budgetLive[0] ) == BUDGET_CORPSE );
+	for( int i = BUDGET_DEBRIS; i < BUDGET_CORPSE; i++ )
 	{
-		stats.budgetLive[i] = budgetLive[i];
-		stats.budgetEvicted[i] = budgetEvicted[i];
-		stats.budgetRefused[i] = budgetRefused[i];
-		stats.entityRefused += budgetRefused[i];
+		stats.budgetLive[i] = entityBudgets[i].live;
+		stats.budgetEvicted[i] = entityBudgets[i].evicted;
+		stats.budgetRefused[i] = entityBudgets[i].refused;
+		stats.entityRefused += entityBudgets[i].refused;
 	}
 	for( int i = 0; i < aasList.Num(); i++ )
 	{
