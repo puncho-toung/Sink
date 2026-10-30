@@ -77,7 +77,7 @@ static const char* loadPhaseNames[LOAD_PHASE_COUNT] = {
 // Image_load.cpp's imageLoadBytes does; one row per cache line, so two threads adding to two spans share none
 struct alignas( 64 ) loadSpanRow_t
 {
-	std::atomic<uint64> us, calls, maxUs, readBytes, readUs, imageBytes, pacifierUs;
+	std::atomic<uint64> us, calls, maxStepUs, readBytes, readUs, imageBytes, pacifierUs;
 };
 static loadSpanRow_t loadSpanRows[LOAD_SPAN_COUNT];
 static char loadSpanNames[LOAD_SPAN_COUNT][32];
@@ -98,9 +98,9 @@ void idCommonLocal::LoadSpanAdd( loadSpan_t span, uint64 us, int64 readBytes, in
 	row.calls.fetch_add( 1, std::memory_order_relaxed );
 	// the hitch a call would be at runtime, without the loading screen's frames
 	const uint64 stepUs = us - ( uint64 )pacifierUs;
-	uint64 maxUs = row.maxUs.load( std::memory_order_relaxed );
-	// reloads maxUs on failure; ends once the row holds a value >= stepUs
-	while( stepUs > maxUs && !row.maxUs.compare_exchange_weak( maxUs, stepUs, std::memory_order_relaxed ) )
+	uint64 maxStepUs = row.maxStepUs.load( std::memory_order_relaxed );
+	// reloads maxStepUs on failure; ends once the row holds a value >= stepUs
+	while( stepUs > maxStepUs && !row.maxStepUs.compare_exchange_weak( maxStepUs, stepUs, std::memory_order_relaxed ) )
 	{
 	}
 	row.readBytes.fetch_add( ( uint64 )readBytes, std::memory_order_relaxed );
@@ -138,7 +138,7 @@ void idCommonLocal::LoadPhase( loadPhase_t phase )
 			loadSpanRow_t& row = loadSpanRows[i];
 			row.us.store( 0, std::memory_order_relaxed );
 			row.calls.store( 0, std::memory_order_relaxed );
-			row.maxUs.store( 0, std::memory_order_relaxed );
+			row.maxStepUs.store( 0, std::memory_order_relaxed );
 			row.readBytes.store( 0, std::memory_order_relaxed );
 			row.readUs.store( 0, std::memory_order_relaxed );
 			row.imageBytes.store( 0, std::memory_order_relaxed );
@@ -229,7 +229,7 @@ void idCommonLocal::FinishLoadTimeline()
 		spans = fileSystem->OpenFileAppend( spansPath, true, "fs_savepath" );
 		if( spans != NULL && spans->Length() == 0 )
 		{
-			spans->Printf( "loadIndex,map,span,name,us,calls,maxUs,readBytes,readUs,imageBytes,cpuUs,pacifierUs\n" );
+			spans->Printf( "loadIndex,map,span,name,us,calls,maxStepUs,readBytes,readUs,imageBytes,cpuUs,pacifierUs\n" );
 		}
 	}
 	if( com_loadTimeline.GetBool() )
@@ -241,7 +241,7 @@ void idCommonLocal::FinishLoadTimeline()
 		const loadSpanRow_t& row = loadSpanRows[i];
 		const unsigned long long us = row.us.load( std::memory_order_relaxed );
 		const unsigned long long calls = row.calls.load( std::memory_order_relaxed );
-		const unsigned long long maxUs = row.maxUs.load( std::memory_order_relaxed );
+		const unsigned long long maxStepUs = row.maxStepUs.load( std::memory_order_relaxed );
 		const unsigned long long readBytes = row.readBytes.load( std::memory_order_relaxed );
 		const unsigned long long readUs = row.readUs.load( std::memory_order_relaxed );
 		const unsigned long long imageBytes = row.imageBytes.load( std::memory_order_relaxed );
@@ -250,11 +250,11 @@ void idCommonLocal::FinishLoadTimeline()
 		const char* spanName = loadSpanNames[i][0] ? loadSpanNames[i] : loadSpanDefaultNames[i];
 		if( com_loadTimeline.GetBool() && calls > 0 )
 		{
-			Printf( "SPAN %02d %-18s %llu us calls %llu max %llu read %llu readUs %llu image %llu cpu %lld pacifier %llu\n", i, spanName, us, calls, maxUs, readBytes, readUs, imageBytes, cpuUs, pacifierUs );
+			Printf( "SPAN %02d %-18s %llu us calls %llu maxStep %llu read %llu readUs %llu image %llu cpu %lld pacifier %llu\n", i, spanName, us, calls, maxStepUs, readBytes, readUs, imageBytes, cpuUs, pacifierUs );
 		}
 		if( spans != NULL )
 		{
-			spans->Printf( "%d,%s,%d,%s,%llu,%llu,%llu,%llu,%llu,%llu,%lld,%llu\n", loadIndex, currentMapName.c_str(), i, spanName, us, calls, maxUs, readBytes, readUs, imageBytes, cpuUs, pacifierUs );
+			spans->Printf( "%d,%s,%d,%s,%llu,%llu,%llu,%llu,%llu,%llu,%lld,%llu\n", loadIndex, currentMapName.c_str(), i, spanName, us, calls, maxStepUs, readBytes, readUs, imageBytes, cpuUs, pacifierUs );
 		}
 	}
 	if( spans != NULL )
@@ -615,6 +615,7 @@ void idCommonLocal::MoveToNewMap( const char* mapName, bool devmap )
 		mapSpawnData.persistentPlayerInfo = game->GetPersistentPlayerInfo( 0 );
 	}
 	session->QuitMatchToTitle();
+	bool started = false;	// P2b.0.4b: a refused session step ends the timeline LOAD_MOVE opened
 	if( WaitForSessionState( idSession::IDLE ) )
 	{
 		session->CreatePartyLobby( matchParameters );
@@ -632,8 +633,13 @@ void idCommonLocal::MoveToNewMap( const char* mapName, bool devmap )
 				}
 				session->UpdateMatchParms( matchParameters );
 				session->StartMatch();
+				started = true;
 			}
 		}
+	}
+	if( !started )
+	{
+		LoadPhase( LOAD_PHASE_COUNT );
 	}
 }
 

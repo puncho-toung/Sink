@@ -1927,16 +1927,27 @@ int idFile_InZip::Seek( long offset, fsOrigin_t origin )
 		// FALLTHROUGH
 		case FS_SEEK_CUR:
 		{
+			//puncho - P2b.0.4b: inflating to skip is read time for the spans; no bytes reach the caller, so none count
+			const bool timed = loadSpanTiming.load( std::memory_order_relaxed );
+			const uint64 seekStart = timed ? Sys_Microseconds() : 0;
 			buf = ( char* ) _alloca16( ZIP_SEEK_BUF_SIZE );
 			for( i = 0; i < ( offset - ZIP_SEEK_BUF_SIZE ); i += ZIP_SEEK_BUF_SIZE )
 			{
 				res = unzReadCurrentFile( z, buf, ZIP_SEEK_BUF_SIZE );
 				if( res < ZIP_SEEK_BUF_SIZE )
 				{
+					if( timed )
+					{
+						fileThreadReadUs += Sys_Microseconds() - seekStart;
+					}
 					return -1;
 				}
 			}
 			res = i + unzReadCurrentFile( z, buf, offset - i );
+			if( timed )
+			{
+				fileThreadReadUs += Sys_Microseconds() - seekStart;
+			}
 			return ( res == offset ) ? 0 : -1;
 		}
 		default:

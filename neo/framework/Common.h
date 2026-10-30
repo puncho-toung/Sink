@@ -546,10 +546,10 @@ extern idCommon* 		common;
 //puncho - P2b.0.4b: a load span's scope guard. Off, it costs a test at each end (of loadSpanTiming, then of its copy):
 // no clock, no counter, no call. LoadPhase turns the switch on while a timed load runs (rbdmap never does); then the
 // guard reads the clock and this thread's counters at both ends, so a span holds only its own thread's reads, and adds
-// through LoadSpanAdd. readUs is the time inside leaf reads (an idFile_InZip read includes its inflate CPU; the skip-reads
-// of idFile_InZip::Seek are not timed and land in cpuUs). pacifierUs is the time inside UpdateLevelLoadPacifier less its
-// own reads: the loading screen's frames, which streaming at runtime never draws, so maxUs and cpuUs leave it out. The
-// switch and the counters live in framework/File.cpp, which rbdmap compiles, not Common_load.cpp
+// through LoadSpanAdd. readUs is the time inside leaf reads and idFile_InZip seeks (an InZip read or seek includes its
+// inflate CPU). pacifierUs is the time inside UpdateLevelLoadPacifier less its own reads: the loading screen's frames,
+// which streaming at runtime never draws, so maxStepUs and cpuUs leave it out. The switch and the counters live in
+// framework/File.cpp, which rbdmap compiles, not Common_load.cpp
 extern std::atomic<bool>	loadSpanTiming;
 uint64						FileThreadReadBytes();
 uint64						FileThreadReadUs();
