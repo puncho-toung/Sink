@@ -677,6 +677,11 @@ private:
 	void					FixupLocalizedStrings();
 
 	bool					DoDormantTests();				// dormant == on the active list, but out of PVS
+	//puncho start - P2b.1.10d: DoDormantTests' parts, called from it alone (Entity.cpp)
+	bool					DormantAreaTest( bool connected );
+	bool					DormantDistanceTier();
+	void					DormantDebugDraw( const idVec4& color, float distance, float radius ) const;
+	//puncho end
 
 	// physics
 	// initialize the default physics
