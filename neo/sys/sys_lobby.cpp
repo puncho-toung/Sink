@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 extern idCVar net_connectTimeoutInSeconds;
 extern idCVar net_headlessServer;
+extern idCVar com_gateLines;	//puncho - P2b.0.6: the LOBBY lines (framework/common_frame.cpp)
 
 idCVar net_checkVersion( "net_checkVersion", "1", CVAR_INTEGER, "Check for matching version when clients connect. 0: normal rules, 1: force check, otherwise no check (pass always)" );	//puncho - version rule (MP-A0, MD13): on by default
 idCVar net_peerTimeoutInSeconds( "net_peerTimeoutInSeconds", "30", CVAR_INTEGER, "If the host hasn't received a response from a peer in this amount of time (in seconds), the peer will be disconnected." );
@@ -1445,6 +1446,13 @@ void idLobby::QueueReliableMessage( int p, byte type, const byte* data, int data
 
 	if( !peer.packetProc->QueueReliableMessage( type, data, dataLen ) )
 	{
+		//puncho start - P2b.0.6: printed before the drop, whose SetPeerConnectionState deletes the packet processor
+		if( com_gateLines.GetBool() )
+		{
+			idLib::Printf( "LOBBY reliable overflow peer %d hw %d/%d bytes %d/%d attempted %d\n", p, peer.packetProc->GetReliableHighWaterNum(), idPacketProcessor::MAX_RELIABLE_QUEUE,
+						   peer.packetProc->GetReliableHighWaterBytes(), idPacketProcessor::MAX_MSG_SIZE, 1 + dataLen );
+		}
+		//puncho end
 		// For now, when this happens, disconnect from all session types
 		NET_VERBOSE_PRINT( "NET: Dropping peer because we overflowed his reliable message queue\n" );
 		if( IsHost() )
@@ -2358,6 +2366,12 @@ int idLobby::HandleInitialPeerConnection( idBitMsg& msg, const lobbyAddress_t& p
 	NET_VERBOSE_PRINT( "NET: Sending response to %s, lobbyType %s, sessionID %i\n", peerAddress.ToString(), GetLobbyName(), sessionID );
 
 	QueueReliableMessage( peerNum, RELIABLE_HELLO, outmsg.GetReadData(), outmsg.GetSize() );
+	//puncho start - P2b.0.6: the HELLO's size against its one packet (LobbyHelloBytesDry below is this writer's dry copy)
+	if( com_gateLines.GetBool() )
+	{
+		idLib::Printf( "LOBBY hello %s peer %d users %d bytes %d/%d\n", GetLobbyName(), peerNum, GetNumLobbyUsers(), outmsg.GetSize(), idPacketProcessor::MAX_PACKET_SIZE );
+	}
+	//puncho end
 
 	if( MatchTypeIsJoinInProgress( parms.matchFlags ) )
 	{
@@ -2406,6 +2420,69 @@ int idLobby::HandleInitialPeerConnection( idBitMsg& msg, const lobbyAddress_t& p
 
 	return peerNum;
 }
+
+//puncho start - P2b.0.6
+#if !defined( ID_RETAIL )
+/*
+========================
+LobbyHelloBytesDry
+
+A dry copy of the HELLO idLobby::HandleInitialPeerConnection writes above (from its "byte buffer[
+idPacketProcessor::MAX_PACKET_SIZE ]" to FillMsgWithPostConnectInfo): the same fields in the same order into a scratch
+message; nothing is sent and the lobby is not changed. users 0 writes the lobby's own users; users > 0 writes that
+many copies of its first user (a default one when it has none) with tagLength-character gamertags. The scratch holds
+MAX_MSG_SIZE bytes, so a HELLO past MAX_PACKET_SIZE, where the live writer's idBitMsg is a FatalError
+(BitMsg.cpp:44-51), is still measured. Returns the bytes written, -1 if even the scratch overflowed.
+========================
+*/
+static int LobbyHelloBytesDry( idLobby& lobby, int users, int tagLength )
+{
+	byte buffer[ idPacketProcessor::MAX_MSG_SIZE ];
+	idBitMsg outmsg( buffer, sizeof( buffer ) );
+	outmsg.SetAllowOverflow( true );
+
+	outmsg.WriteLong( 0 );			// the peer index: any value is four bytes
+
+	if( lobby.lobbyType == idLobby::TYPE_PARTY )
+	{
+		outmsg.WriteLong( 0 );		// the party token: GetPartyTokenAsHost would make one; any value is four bytes
+	}
+
+	// Serialize also stores gameDataValid, so a copy is written and the lobby's parms stay as they are
+	idMatchParameters parms = lobby.parms;
+	parms.Write( outmsg );
+
+	if( users == 0 )
+	{
+		outmsg.WriteByte( lobby.GetNumLobbyUsers() );
+		for( int u = 0; u < lobby.GetNumLobbyUsers(); u++ )
+		{
+			lobby.GetLobbyUser( u )->WriteToMsg( outmsg );
+		}
+	}
+	else
+	{
+		// every field but the gamertag has a fixed size on the wire, so the first user stands for all of them
+		lobbyUser_t user;
+		if( lobby.GetNumLobbyUsers() > 0 )
+		{
+			user = *lobby.GetLobbyUser( 0 );
+		}
+		memset( user.gamertag, 'x', tagLength );
+		user.gamertag[ tagLength ] = '\0';
+		outmsg.WriteByte( users );
+		for( int u = 0; u < users; u++ )
+		{
+			user.WriteToMsg( outmsg );
+		}
+	}
+
+	lobby.lobbyBackend->FillMsgWithPostConnectInfo( outmsg );
+
+	return outmsg.IsOverflowed() ? -1 : outmsg.GetSize();
+}
+#endif
+//puncho end
 
 /*
 ========================
@@ -3275,6 +3352,15 @@ void idLobby::HandleReliableMsg( int p, idBitMsg& msg, const lobbyAddress_t* rem
 		VERIFY_CONNECTED_PEER( p, actingGameStateLobbyType, RELIABLE_IN_GAME );
 
 		peer.inGame = true;
+
+		//puncho start - P2b.0.6: the join's reliable high-water and the bytes sent to this peer so far (snapshots,
+		// reliables and fragments all pass GetSendFragment's UpdateOutgoingRate, PacketProcessor.cpp)
+		if( com_gateLines.GetBool() )
+		{
+			idLib::Printf( "LOBBY reliable peer %d hw %d/%d bytes %d/%d largest %d sent %d\n", p, peer.packetProc->GetReliableHighWaterNum(), idPacketProcessor::MAX_RELIABLE_QUEUE,
+						   peer.packetProc->GetReliableHighWaterBytes(), idPacketProcessor::MAX_MSG_SIZE, peer.packetProc->GetReliableLargestMsg(), peer.packetProc->GetOutgoingBytes() );
+		}
+		//puncho end
 	}
 	else if( reliableType == RELIABLE_SNAPSHOT_ACK )
 	{
@@ -5344,3 +5430,85 @@ void idLobby::FlushTransitionHeld( int p )
 		peer.transitionHold = false;
 	}
 }
+
+//puncho start - P2b.0.6: both budget commands read the acting game-state lobby, the one snapshots and the game use
+#if !defined( ID_RETAIL )
+/*
+========================
+lobbyHelloBytes <users> [<tagLength>]
+
+The acting game-state lobby's HELLO written dry by LobbyHelloBytesDry: users 0 writes the lobby as it is (its bytes
+equal that lobby's "LOBBY hello" line), 1 .. MAX_PLAYERS writes that many users with tagLength-character gamertags.
+========================
+*/
+CONSOLE_COMMAND( lobbyHelloBytes, "lobbyHelloBytes <users> [<tagLength>]: the game lobby's HELLO bytes written dry, users 0 = the lobby as it is", 0 )
+{
+	if( !com_gateLines.GetBool() )
+	{
+		idLib::Printf( "lobbyHelloBytes: requires com_gateLines 1\n" );
+		return;
+	}
+
+	const int maxTag = lobbyUser_t::MAX_GAMERTAG - 1;
+	char* usersEnd;
+	char* tagEnd;
+	const long usersValue = strtol( args.Argv( 1 ), &usersEnd, 10 );
+	const long tagValue = strtol( args.Argv( 2 ), &tagEnd, 10 );
+	if( args.Argc() < 2 || args.Argc() > 3 || usersEnd == args.Argv( 1 ) || *usersEnd != '\0' || usersValue < 0 || usersValue > MAX_PLAYERS ||
+			( args.Argc() == 2 && usersValue != 0 ) || ( args.Argc() == 3 && ( tagEnd == args.Argv( 2 ) || *tagEnd != '\0' || tagValue < 0 || tagValue > maxTag ) ) )
+	{
+		idLib::Printf( "usage: lobbyHelloBytes <users 0..%d> <tagLength 0..%d> (tagLength optional for users 0)\n", MAX_PLAYERS, maxTag );
+		return;
+	}
+	const int users = ( int )usersValue;
+	const int tagLength = ( int )tagValue;
+
+	// GetActingGameStateLobbyBase returns GetActingGameStateLobby(), always an idLobby (sys_session_local.h)
+	idLobby& lobby = static_cast< idLobby& >( session->GetActingGameStateLobbyBase() );
+	if( !lobby.IsLobbyActive() || lobby.lobbyBackend == NULL )
+	{
+		idLib::Printf( "lobbyHelloBytes: no active game lobby\n" );
+		return;
+	}
+
+	const int bytes = LobbyHelloBytesDry( lobby, users, tagLength );
+	const bool overflow = ( bytes < 0 || bytes > idPacketProcessor::MAX_PACKET_SIZE );
+	idLib::Printf( "LOBBY hello dryrun users %d tag %d bytes %d/%d overflow %d\n", users, tagLength, bytes, idPacketProcessor::MAX_PACKET_SIZE, overflow ? 1 : 0 );
+}
+
+/*
+========================
+netReliableStats
+
+The LOBBY reliable line of every connected peer of the acting game-state lobby: the reliable queue's high-water, its
+largest message and the bytes sent to the peer since it connected
+========================
+*/
+CONSOLE_COMMAND( netReliableStats, "the reliable queue's high-water and the bytes sent, per connected peer of the game lobby", 0 )
+{
+	if( !com_gateLines.GetBool() )
+	{
+		idLib::Printf( "netReliableStats: requires com_gateLines 1\n" );
+		return;
+	}
+
+	idLobby& lobby = static_cast< idLobby& >( session->GetActingGameStateLobbyBase() );
+	int printed = 0;
+	for( int p = 0; p < lobby.peers.Num(); p++ )
+	{
+		const idLobby::peer_t& peer = lobby.peers[p];
+		if( !peer.IsConnected() || peer.packetProc == NULL )
+		{
+			continue;
+		}
+		idLib::Printf( "LOBBY reliable peer %d hw %d/%d bytes %d/%d largest %d sent %d\n", p, peer.packetProc->GetReliableHighWaterNum(), idPacketProcessor::MAX_RELIABLE_QUEUE,
+					   peer.packetProc->GetReliableHighWaterBytes(), idPacketProcessor::MAX_MSG_SIZE, peer.packetProc->GetReliableLargestMsg(), peer.packetProc->GetOutgoingBytes() );
+		printed++;
+	}
+	if( printed == 0 )
+	{
+		idLib::Printf( "netReliableStats: no connected peer in the game lobby\n" );
+	}
+}
+#endif
+//puncho end

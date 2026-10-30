@@ -86,6 +86,10 @@ public:
 		outgoingBytes			= 0;
 		incomingBytes			= 0;
 
+		reliableHighWaterNum		= 0;	//puncho - P2b.0.6
+		reliableHighWaterBytes	= 0;	//puncho
+		reliableLargestMsg		= 0;	//puncho
+
 		currentOutgoingRate		= 0;
 		lastOutgoingRateTime	= 0;
 		lastOutgoingBytes		= 0;
@@ -220,6 +224,21 @@ public:
 		return reliable.GetDataLength();
 	}
 
+	//puncho start - P2b.0.6: the send queue's high-water since this processor was made (the LOBBY reliable lines)
+	int				GetReliableHighWaterNum() const
+	{
+		return reliableHighWaterNum;
+	}
+	int				GetReliableHighWaterBytes() const
+	{
+		return reliableHighWaterBytes;
+	}
+	int				GetReliableLargestMsg() const
+	{
+		return reliableLargestMsg;
+	}
+	//puncho end
+
 	void			VerifyEmptyReliableQueue( byte keepMsgBelowThis, byte replaceWithThisMsg );
 
 private:
@@ -326,6 +345,12 @@ private:
 
 	int				outgoingBytes;
 	int				incomingBytes;
+
+	//puncho start - P2b.0.6: set after each queued reliable; an item is the type byte plus its data, as reliable stores it
+	int				reliableHighWaterNum;		// most unacknowledged reliables queued at once, of MAX_RELIABLE_QUEUE
+	int				reliableHighWaterBytes;		// most queued reliable bytes at once, of MAX_MSG_SIZE
+	int				reliableLargestMsg;			// largest single queued reliable in bytes
+	//puncho end
 
 	int				currentOutgoingRate;
 	int				lastOutgoingRateTime;
