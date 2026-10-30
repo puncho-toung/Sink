@@ -569,7 +569,10 @@ void idInteraction::MakeEmpty()
 	}
 
 	// store the special marker in the interaction table
-	assert( entityDef->world->GetInteraction( lightDef->index, entityDef->index ) == this );
+	//puncho - interaction index (P2b.1.7): the sparse index can lack this pair, as UnlinkAndFree allows: a lazy slice's
+	// pair the sizing walk did not count is refused at a light without a segment or at a segment's last empty slot
+	assert( entityDef->world->GetInteraction( lightDef->index, entityDef->index ) == this ||
+			( entityDef->world->interactionIndexSparse && entityDef->world->GetInteraction( lightDef->index, entityDef->index ) == NULL ) );
 	entityDef->world->SetInteraction( lightDef->index, entityDef->index, INTERACTION_EMPTY );
 }
 
