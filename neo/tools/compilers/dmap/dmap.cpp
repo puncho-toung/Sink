@@ -329,7 +329,6 @@ void ResetDmapGlobals()
 	dmapGlobals.drawflag = false;
 	dmapGlobals.bspAlternateSplitWeights = false;
 	dmapGlobals.blockSize = idVec3( 1024.0f, 1024.0f, 1024.0f );	// default block size for splitting
-	dmapGlobals.inlineStatics = false;
 	dmapGlobals.totalInlinedModels = 0;
 }
 
@@ -439,8 +438,9 @@ void Dmap( const idCmdArgs& args )
 		}
 		else if( !idStr::Icmp( s, "inlineAll" ) )
 		{
-			common->Printf( "inlineAll = true\n" );
-			dmapGlobals.inlineStatics = true;
+			//puncho - P2b.1.10b: the game reads only the worldspawn key (MapInlineEligible), so a map compiled with this
+			// option drew its statics twice
+			common->Error( "dmap inlineAll is refused: set inlineAllStatics 1 on the map's worldspawn, the one switch the game reads too" );
 		}
 		else if( !idStr::Icmp( s, "noMerge" ) )
 		{

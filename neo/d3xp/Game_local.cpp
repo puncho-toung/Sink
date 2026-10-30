@@ -32,6 +32,7 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "Game_local.h"
+#include "../idlib/MapInline.h"	//puncho - P2b.1.10b: dmap's inline rule, shared
 
 #ifdef GAME_DLL
 
@@ -5313,21 +5314,12 @@ static bool MapStaticCanSkip( const idMapFile* map, int entity, const idHashInde
 		reason = "brush static (retained)";
 		return false;
 	}
-	const bool inlineAll = map->GetEntity( 0 )->epairs.GetBool( "inlineAllStatics" );
-	if( !args.GetBool( "inline" ) && !inlineAll )
+	//puncho - P2b.1.10b: only what dmap drew into the world; the rule dmap inlines by
+	const char* inlineReason;
+	if( !MapInlineEligible( map->GetEntity( 0 )->epairs, args, inlineReason ) )
 	{
-		reason = "not inlined";
+		reason = inlineReason;
 		return false;
-	}
-	if( inlineAll )
-	{
-		idStr extension;
-		model.ExtractFileExtension( extension );
-		if( extension.Icmp( "glb" ) && extension.Icmp( "gltf" ) && extension.Icmp( "lwo" ) && extension.Icmp( "ase" ) && extension.Icmp( "ma" ) && extension.Icmp( "obj" ) )
-		{
-			reason = "not inlined: unsupported extension";
-			return false;
-		}
 	}
 	const idDict* def = gameLocal.FindEntityDefDict( classname, false );
 	if( args.GetBool( "solid", def ? def->GetString( "solid", "1" ) : "1" ) &&
@@ -5378,6 +5370,7 @@ void idGameLocal::ListMapStatics() const
 	idList<mapStaticReference_t, TAG_GAME> refs;
 	BuildMapStaticReferences( mapFile, references, refs );
 	int eligible = 0;
+	int inlined = 0;	//puncho - P2b.1.10b: MapInlineEligible's count, dmap's "static models merged" for the same map
 	idStr scriptPath = mapFileName;
 	scriptPath.SetFileExtension( "script" );
 	void* scriptData = NULL;
@@ -5398,6 +5391,8 @@ void idGameLocal::ListMapStatics() const
 		idStr reason;
 		const bool canSkip = MapStaticCanSkip( mapFile, e, references, refs, reason );
 		eligible += canSkip;
+		const char* inlineReason;
+		inlined += MapInlineEligible( mapFile->GetEntity( 0 )->epairs, args, inlineReason );
 		idEntity* live = FindEntity( args.GetString( "name" ) );
 		Printf( "map static %i %s entity %i: %s\n", e, args.GetString( "name" ), live ? live->entityNumber : -1, reason.c_str() );
 		const idStr name = args.GetString( "name" );
@@ -5426,6 +5421,7 @@ void idGameLocal::ListMapStatics() const
 			}
 		}
 	}
+	Printf( "map statics: %i inlined by dmap\n", inlined );
 	Printf( "map statics: %i eligible for collision-free inline skip\n", eligible );
 }
 

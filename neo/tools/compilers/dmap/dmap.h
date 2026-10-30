@@ -314,7 +314,6 @@ typedef struct
 	bool	bspAlternateSplitWeights;
 	idVec3	blockSize;			// size of the blocks used for splitting
 
-	bool	inlineStatics;		// dev option: inline static models into the areas
 	int		totalInlinedModels;
 } dmapGlobals_t;
 

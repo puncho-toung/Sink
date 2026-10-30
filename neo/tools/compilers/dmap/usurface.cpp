@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "dmap.h"
+#include "../../../idlib/MapInline.h"	//puncho - P2b.1.10b: the inline rule the game shares
 
 
 #define	 TEXTURE_OFFSET_EQUAL_EPSILON	0.005
@@ -835,74 +836,22 @@ void PutPrimitivesInAreas( uEntity_t* e )
 	// optionally inline some of the func_static models
 	if( dmapGlobals.entityNum == 0 )
 	{
-		bool inlineAll = dmapGlobals.uEntities[0].mapEntity->epairs.GetBool( "inlineAllStatics" ) || dmapGlobals.inlineStatics;
+		//puncho - P2b.1.10b: MapInlineEligible decides, the rule idStaticEntity::Spawn hides by; the worldspawn's
+		// inlineAllStatics is the one switch (dmap's inlineAll option is refused)
+		const idDict& world = dmapGlobals.uEntities[0].mapEntity->epairs;
+		const bool inlineAll = world.GetBool( "inlineAllStatics" );
 
 		for( int eNum = 1 ; eNum < dmapGlobals.numEntities ; eNum++ )
 		{
 			uEntity_t* entity = &dmapGlobals.uEntities[eNum];
-			const char* className = entity->mapEntity->epairs.GetString( "classname" );
-
-			if( idStr::Icmp( className, "func_static" ) != 0 && idStr::Icmp( className, "misc_model" ) != 0 )
-			{
-				continue;
-			}
-
-			if( !entity->mapEntity->epairs.GetBool( "inline" ) && !inlineAll )
+			const char* inlineReason;
+			if( !MapInlineEligible( world, entity->mapEntity->epairs, inlineReason ) )
 			{
 				continue;
 			}
 
 			idStr modelName = entity->mapEntity->epairs.GetString( "model" );
-			if( modelName.IsEmpty() )
-			{
-				continue;
-			}
-
 			const char* entityName = entity->mapEntity->epairs.GetString( "name" );
-			//common->Printf( "testing %s.%s\n", entityName, modelName.c_str() );
-
-			if( inlineAll )
-			{
-				idStr extension;
-				modelName.ExtractFileExtension( extension );
-
-				if( extension.IsEmpty() )
-				{
-					continue;
-				}
-
-				if( ( extension.Icmp( GLTF_GLB_EXT ) != 0 ) &&
-						( extension.Icmp( GLTF_EXT ) != 0 ) &&
-						( extension.Icmp( "lwo" ) != 0 ) &&
-						( extension.Icmp( "ase" ) != 0 ) &&
-						( extension.Icmp( "ma" ) != 0 ) &&
-						( extension.Icmp( "obj" ) != 0 ) )
-				{
-					continue;	// not a supported model format
-				}
-
-				//if( idStr::Icmp( modelName.c_str(), "models/mapobjects/mc_underground/mcucave.ASE" ) == 0 )
-				//{
-				//	int a = 1;	// place for debugger breakpoint
-				//	continue;
-				//}
-
-				// don't break interactive GUIs
-				if( entity->mapEntity->epairs.GetString( "gui", NULL ) != NULL )
-				{
-					continue;
-				}
-
-				if( entity->mapEntity->epairs.GetString( "gui2", NULL ) != NULL )
-				{
-					continue;
-				}
-
-				if( entity->mapEntity->epairs.GetString( "gui3", NULL ) != NULL )
-				{
-					continue;
-				}
-			}
 
 			idRenderModel*	model = renderModelManager->FindModel( modelName );
 

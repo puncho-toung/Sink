@@ -35,6 +35,7 @@ Various utility objects and functions.
 #pragma hdrstop
 
 #include "Game_local.h"
+#include "../idlib/MapInline.h"	//puncho - P2b.1.10b: dmap's inline rule, shared
 
 /*
 ===============================================================================
@@ -1742,44 +1743,16 @@ void idStaticEntity::Spawn()
 
 	// an inline static model will not do anything at all: dmap drew it into the world. idEntity::Hide,
 	// because idStaticEntity::Hide would zero the contents set above
-	if( spawnArgs.GetBool( "inline" ) )
+	//puncho - P2b.1.10b: hidden by the rule dmap inlined by, so a static dmap did not draw (a GUI, another format,
+	// another class) is drawn here, and one dmap drew is never drawn twice
+	const char* inlineReason;
+	if( MapInlineEligible( gameLocal.world->spawnArgs, spawnArgs, inlineReason ) )
 	{
 		idEntity::Hide();
 		return;
 	}
 
 	idStr model = spawnArgs.GetString( "model" );
-	if( gameLocal.world->spawnArgs.GetBool( "inlineAllStatics" ) )
-	{
-		// RB: this wasn't used in Doom 3 BFG
-
-		// don't break interactive GUIs
-		bool isGUI = false;
-		if( spawnArgs.GetString( "gui", NULL ) != NULL ||
-				spawnArgs.GetString( "gui2", NULL ) != NULL ||
-				spawnArgs.GetString( "gui3", NULL ) != NULL )
-		{
-			isGUI = true;
-		}
-
-		idStr extension;
-		model.ExtractFileExtension( extension );
-
-		// only support real model formats and no brush models
-		if( ( extension.Icmp( GLTF_GLB_EXT ) == 0 ) ||
-				( extension.Icmp( GLTF_EXT ) == 0 ) ||
-				( extension.Icmp( "lwo" ) == 0 ) ||
-				( extension.Icmp( "ase" ) == 0 ) ||
-				( extension.Icmp( "ma" ) == 0 ) ||
-				( extension.Icmp( "obj" ) == 0 ) )
-		{
-			if( !isGUI )
-			{
-				idEntity::Hide();
-				return;
-			}
-		}
-	}
 
 	spawnTime = gameLocal.time;
 	active = false;
