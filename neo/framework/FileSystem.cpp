@@ -167,9 +167,9 @@ public:
 	virtual void			RemoveFile( const char* relativePath );
 	virtual	bool			RemoveDir( const char* relativePath );
 	virtual bool			RenameFile( const char* relativePath, const char* newName, const char* basePath = "fs_savepath" );
-	virtual void MountPrefetchResource( const char* name );
-	virtual void ReleasePrefetchResource();
-	virtual bool LocateFile( const char* path, resolvedFile_t& out, int searchFlags, const char* gamedir = NULL );
+	virtual void			MountPrefetchResource( const char* name );
+	virtual void			ReleasePrefetchResource();
+	virtual bool			LocateFile( const char* path, resolvedFile_t& out, int searchFlags, const char* gamedir = NULL );
 	virtual idFile* 		OpenFileReadFlags( const char* relativePath, int searchFlags, bool allowCopyFiles = true, const char* gamedir = NULL );
 	virtual idFile* 		OpenFileRead( const char* relativePath, bool allowCopyFiles = true, const char* gamedir = NULL );
 	virtual idFile* 		OpenFileReadMemory( const char* relativePath, bool allowCopyFiles = true, const char* gamedir = NULL );
@@ -241,6 +241,7 @@ public:
 
 	virtual void			StartPreload( const idStrList& _preload );
 	virtual void			StopPreload();
+	//puncho - P2b.1.5: rc is FindInLayer's entry in its container's table; the lookup and its static copy are gone
 	idFile* 				GetResourceFile( const idResourceCacheEntry& rc, bool memFile );
 	bool					GetResourceCacheEntry( const char* fileName, idResourceCacheEntry& rc, int layer = -1 );
 	virtual int				ReadFromBGL( idFile* _resourceFile, void* _buffer, int _offset, int _len );
@@ -365,6 +366,7 @@ private:
 	bool					FindInLayer( const char* relativePath, int searchFlags, const char* gamedir, int layer, int resolveFlags, resolvedFile_t& out );
 	bool					FillIdentity( const char* relativePath, const resolvedFile_t& found, resolvedFile_t& out );
 	idFile*					OpenResolvedFile( const char* relativePath, int searchFlags, bool allowCopyFiles, const resolvedFile_t& found );
+	idFile*					ServePrefetched( const char* relativePath, int layer, const resolvedFile_t& found );
 	bool					LayerHoldsFile( const char* relativePath, int layer );
 	void					AddLayerPath( int layer, const char* relativePath );
 	void					ListLayerDir( int layer, const char* relativeDir );
@@ -384,6 +386,7 @@ private:
 	void					ReOpenCacheFiles();
 
 	// RB: PK4 support
+	//puncho - P2b.1.5: rc is FindInLayer's entry in its container's table; the lookup and its static copy are gone
 	idFile* 				GetZipFile( const idZipCacheEntry& rc, const char* fileName, bool memFile );
 	bool					GetZipCacheEntry( const char* fileName, idZipCacheEntry& rc, int layer = -1 );
 };
@@ -446,7 +449,7 @@ static void TraceOpensLine( const char* source, const char* path, int64 length )
 ================
 TraceOpen
 
-file is the open OpenLayerFile or the prefetcher returns, never NULL
+file is the open OpenResolvedFile or the prefetcher returns, never NULL
 ================
 */
 static idFile* TraceOpen( const char* source, const char* path, idFile* file )
@@ -4198,6 +4201,7 @@ idFileSystemLocal::GetZipFile
 The open of the .pk4 entry FindInLayer found, rc in its container's table
 ========================
 */
+//puncho - P2b.1.5: rc is FindInLayer's entry in its container's table; the lookup and its static copy are gone
 idFile* idFileSystemLocal::GetZipFile( const idZipCacheEntry& rc, const char* fileName, bool memFile )
 {
 	if( fs_debugResources.GetBool() )
@@ -4257,6 +4261,7 @@ idFileSystemLocal::GetResourceFile
 The open of the .resources entry FindInLayer found, rc in its container's table
 ========================
 */
+//puncho - P2b.1.5: rc is FindInLayer's entry in its container's table; the lookup and its static copy are gone
 idFile* idFileSystemLocal::GetResourceFile( const idResourceCacheEntry& rc, bool memFile )
 {
 	if( fs_debugResources.GetBool() )
@@ -4315,8 +4320,9 @@ order (.pk4 then .resources first under fs_resourceLoadPriority 1, then loose fi
 .pk4 then .resources under 0; no container under another value). It fills kind and the container and entry only: a
 packed file's entry in its container's table, or a loose file opened (handle, the caller's to open from or close)
 with its search path and OS path. No stat, readlink or zip entry open, so an open pays what OpenLayerFile always paid.
-RESOLVE_PREDICTED (LocateFile for the prefetch walk) first consults the predicted map's private container in the layer
-its load appends it to, newest first; GetResourceCacheEntry finds the same entry once the load mounts it
+RESOLVE_PREDICTED (LocateFile for the prefetch walk) also consults the predicted map's private container, in the layer
+its load appends it to, after that layer's .pk4 tables and ahead of its .resources (the load appends it newest first);
+GetResourceCacheEntry finds the same entry once the load mounts it
 ===========
 */
 bool idFileSystemLocal::FindInLayer( const char* relativePath, int searchFlags, const char* gamedir, int layer, int resolveFlags, resolvedFile_t& out )
@@ -4408,8 +4414,9 @@ bool idFileSystemLocal::FindInLayer( const char* relativePath, int searchFlags, 
 				out.handle = OpenOSFile( netpath, FS_READ );
 				if( out.handle != NULL )
 				{
-					// opened by its whole path; the open half's copy keeps MAX_OSPATH - 1 bytes of an OS path a caller passed
-					idStr::Copynz( out.osPath, netpath, sizeof( out.osPath ) );
+					const int n = Min( netpath.Length(), ( int )sizeof( out.osPath ) - 1 );
+					memcpy( out.osPath, netpath.c_str(), n );
+					out.osPath[n] = '\0';
 					out.kind = 0;
 					out.searchPath = sp;
 					return true;
@@ -4474,13 +4481,18 @@ bool idFileSystemLocal::FillIdentity( const char* relativePath, const resolvedFi
 	out.kind = 0;
 	out.length = DirectFileLength( found.handle );
 	out.timestamp = Sys_FileTimeStamp( found.handle );	// idFile_Permanent::Timestamp's
-	idStr::Copynz( out.osPath, found.osPath, sizeof( out.osPath ) );
+	// written by length into the zeroed descriptor, so no byte past the path's end differs between two descriptors
 #if defined( __linux__ )
 	// OpenOSFile may have found a case-folded basename. Reopen that exact inode's path.
 	char descriptor[64];
 	idStr::snPrintf( descriptor, sizeof( descriptor ), "/proc/self/fd/%d", fileno( found.handle ) );
 	const ssize_t length = readlink( descriptor, out.osPath, sizeof( out.osPath ) - 1 );
-	if( length > 0 ) { out.osPath[length] = 0; }
+	if( length <= 0 )
+	{
+		memcpy( out.osPath, found.osPath, idStr::Length( found.osPath ) );
+	}
+#else
+	memcpy( out.osPath, found.osPath, idStr::Length( found.osPath ) );
 #endif
 	out.archiveTime = out.timestamp;
 	out.archiveSize = out.length;
@@ -4499,8 +4511,11 @@ when no layer holds it
 bool idFileSystemLocal::LocateFile( const char* path, resolvedFile_t& out, int searchFlags, const char* gamedir )
 {
 	assert( !Prefetch_IsWorker() );
-	memset( &out, 0, sizeof( out ) );
-	if( path == NULL || path[0] == 0 || strstr( path, ".." ) || strstr( path, "::" ) ) { return false; }
+	if( path == NULL || path[0] == 0 || strstr( path, ".." ) || strstr( path, "::" ) )
+	{
+		memset( &out, 0, sizeof( out ) );
+		return false;
+	}
 	if( path[0] == '/' || path[0] == '\\' ) { path++; }
 	for( int layer = layerNames.Num() - 1; layer >= 0; layer-- )
 	{
@@ -4516,6 +4531,7 @@ bool idFileSystemLocal::LocateFile( const char* path, resolvedFile_t& out, int s
 		}
 	}
 	TraceOpensLine( "resolve miss", path, 0 );	//puncho - P2b.1.0
+	memset( &out, 0, sizeof( out ) );
 	return false;
 }
 //puncho end
@@ -4587,25 +4603,10 @@ idFile* idFileSystemLocal::OpenFileReadFlags( const char* relativePath, int sear
 	// either way, and no identity work for any other open (at com_prefetch 0 an open pays the one branch)
 	if( prefetchServing && !fs_buildResources.GetBool() && !fs_copyfiles.GetBool() )
 	{
-		const resolvedFile_t* held = Prefetch_Ready( relativePath );
-		if( held != NULL )
+		idFile* prefetched = ServePrefetched( relativePath, layer, found );
+		if( prefetched != NULL )
 		{
-			// a descriptor is 3 KB: the second one is on the heap, so every open's frame holds one and stays under a page
-			resolvedFile_t* source = ( resolvedFile_t* )Mem_Alloc( sizeof( resolvedFile_t ), TAG_IDFILE );
-			if( layer < 0 || found.kind != held->kind || !FillIdentity( relativePath, found, *source ) )
-			{
-				source->kind = -1;	// nothing this open serves can be the walk's bytes: a miss
-			}
-			idFile* prefetched = Prefetch_Take( relativePath, *source );
-			Mem_Free( source );
-			if( prefetched != NULL )
-			{
-				if( found.kind == 0 )
-				{
-					CloseOSFile( found.handle );
-				}
-				return TraceOpen( "prefetch", relativePath, prefetched );	//puncho - P2b.1.0
-			}
+			return TraceOpen( "prefetch", relativePath, prefetched );	//puncho - P2b.1.0
 		}
 	}
 	//puncho end
@@ -4620,6 +4621,43 @@ idFile* idFileSystemLocal::OpenFileReadFlags( const char* relativePath, int sear
 	}
 	return OpenResolvedFile( relativePath, searchFlags, allowCopyFiles, found );
 }
+
+//puncho start - P2b.1.5
+/*
+===========
+idFileSystemLocal::ServePrefetched
+
+The store's bytes for an open while a load is served, when the store holds relativePath ready and what this open's
+search found (found, in layer; layer -1 when nothing) has the walk's identity; NULL otherwise. A served loose file's
+handle is closed here. Never inlined: its descriptor stays on its own frame, so an open's frame holds one and stays
+under a page
+===========
+*/
+#if defined( _MSC_VER )
+__declspec( noinline )
+#else
+__attribute__( ( noinline ) )
+#endif
+idFile* idFileSystemLocal::ServePrefetched( const char* relativePath, int layer, const resolvedFile_t& found )
+{
+	const resolvedFile_t* held = Prefetch_Ready( relativePath );
+	if( held == NULL )
+	{
+		return NULL;
+	}
+	resolvedFile_t source;
+	if( layer < 0 || found.kind != held->kind || !FillIdentity( relativePath, found, source ) )
+	{
+		source.kind = -1;	// nothing this open serves can be the walk's bytes: a miss
+	}
+	idFile* prefetched = Prefetch_Take( relativePath, source );
+	if( prefetched != NULL && found.kind == 0 )
+	{
+		CloseOSFile( found.handle );
+	}
+	return prefetched;
+}
+//puncho end
 
 //puncho start - MP-A5 (K21a), P2b.1.5
 /*
@@ -4662,7 +4700,7 @@ idFile* idFileSystemLocal::OpenResolvedFile( const char* relativePath, int searc
 	idFile_Permanent* file = new( TAG_IDFILE ) idFile_Permanent();
 	file->o = found.handle;
 	file->name = relativePath;
-	file->fullPath = found.osPath;
+	file->fullPath = IsOSPath( relativePath ) ? relativePath : found.osPath;	//puncho - P2b.1.5: the path opened, whole
 	file->mode = ( 1 << FS_READ );
 	file->fileSize = DirectFileLength( file->o );
 	if( fs_debug.GetInteger() )
@@ -4748,7 +4786,7 @@ idFile* idFileSystemLocal::OpenResolvedFile( const char* relativePath, int searc
 
 		if( fs_copyfiles.GetBool() )
 		{
-			CopyFile( found.osPath, copypath );
+			CopyFile( file->fullPath, copypath );
 		}
 	}
 
