@@ -220,7 +220,7 @@ public:
 
 	idLinkList<idEntity>	budgetNode;
 	int					mapSpawnIndex; // derived ordinal row; restored from ORDT
-	int					budgetClass;	// -1 none; saved (WorldIdentity), never on the wire
+	int					budgetClass;	// BUDGET_NONE none; saved as class + 1 (WorldIdentity), never on the wire
 	//puncho start - P2b.1.3: the world store's identity and the budget's join order, saved members (WorldIdentity)
 	uint64					worldCreatedId;		// the store's created identity, 0 none
 	int64					worldCreatedTime;	// world time the identity was taken, 0 without one
@@ -677,7 +677,7 @@ private:
 	void					FixupLocalizedStrings();
 
 	bool					DoDormantTests();				// dormant == on the active list, but out of PVS
-	//puncho start - P2b.1.10d: DoDormantTests' parts, called from it alone (Entity.cpp)
+	//puncho start - P2b.1.10d: DoDormantTests' parts, called only beneath it (Entity.cpp)
 	bool					DormantAreaTest( bool connected );
 	bool					DormantDistanceTier();
 	void					DormantDebugDraw( const idVec4& color, float distance, float radius ) const;

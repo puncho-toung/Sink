@@ -524,7 +524,7 @@ idEntity::idEntity():
 
 	budgetNode.SetOwner( this );
 	mapSpawnIndex = -1;
-	budgetClass = -1;
+	budgetClass = BUDGET_NONE;
 	worldCreatedId = 0;
 	worldCreatedTime = 0;
 	budgetJoinSeq = 0;
@@ -936,7 +936,7 @@ void idEntity::SaveWorldIdentity( idSaveGame* savefile ) const
 	const bool created = worldCreatedId != 0;
 	savefile->WriteByte( ( byte )( worldFlags | ( created ? WORLD_IDENTITY_CREATED : 0 ) ) );
 	savefile->WriteByte( ( byte )( budgetClass + 1 ) );
-	if( budgetClass >= 0 )
+	if( budgetClass != BUDGET_NONE )
 	{
 		savefile->WriteInt( ( int )budgetJoinSeq );
 	}
@@ -969,7 +969,7 @@ void idEntity::RestoreWorldIdentity( idRestoreGame* savefile )
 	worldFlags = flags & WORLD_FLAGS_ALL;
 	budgetClass = budget - 1;
 	budgetJoinSeq = 0;
-	if( budgetClass >= 0 )
+	if( budgetClass != BUDGET_NONE )
 	{
 		int seq;
 		savefile->ReadInt( seq );
@@ -1018,7 +1018,7 @@ void idEntity::RestoreLegacyWorldKeys()
 	worldCreatedTime = worldCreatedId != 0 ? strtoll( spawnArgs.GetString( "_worldCreatedTime", "0" ), NULL, 10 ) : 0;
 	worldFlags = ( spawnArgs.GetBool( "_worldDeparted" ) ? WORLD_FLAG_DEPARTED : 0 ) | ( spawnArgs.GetBool( "_worldTaken" ) ? WORLD_FLAG_TAKEN : 0 );
 	const int budget = spawnArgs.GetInt( "_budgetClass", "-1" );
-	budgetClass = ( budget >= 0 && budget < NUM_BUDGETS ) ? budget : BUDGET_NONE;
+	budgetClass = ( budget >= 0 && budget < BUDGET_CORPSE ) ? budget : BUDGET_NONE;	//puncho - c15b: such a save predates the corpse class
 	budgetJoinSeq = 0;
 	for( int i = 0; i < ( int )ARRAY_COUNT( legacyWorldKeys ); i++ )
 	{
@@ -1236,10 +1236,7 @@ void idEntity::Think()
 
 /*
 ================
-idEntity::DoDormantTests
-
-Monsters and other expensive entities that are completely closed
-off from the player can skip all of their work
+idEntity::DormantRadiusScale
 ================
 */
 float idEntity::DormantRadiusScale() const
@@ -1254,6 +1251,14 @@ void idEntity::DormantCatchUp( int elapsedMs )
 //puncho start - P2b.1.10d: DoDormantTests in its parts, which run the tests in the order the one function did: never
 // dormant; then, in a player's connected area with the authored distance tier on, the tier; else the area tests (closed
 // off from every player, or the PVS wake). Each part draws g_showDormancy's bounds where the one function did
+/*
+================
+idEntity::DoDormantTests
+
+Monsters and other expensive entities that are completely closed
+off from the player can skip all of their work
+================
+*/
 bool idEntity::DoDormantTests()
 {
 	gameLocal.aiStats.dormTests++;

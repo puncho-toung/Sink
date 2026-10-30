@@ -880,6 +880,7 @@ void idWorldStore::ApplyCurrentMap()
 		remains = applyingReset ? 0 : header.remains;
 		idList<idEntity*, TAG_GAME> deleted;
 		idList<recordPosed_t, TAG_GAME> moved;
+		idList<idEntity*, TAG_GAME> corpses;	//puncho - c15b: the corpses this apply builds, kept, in row and then entry order
 		const bool identical = header.entitiesCRC == map->GetEntitiesCRC() && header.numMapEntities == map->GetNumEntities();
 		//puncho start - P2.4 (bug review 2026-10-28): one lookup per record row, not a scan of the map and the rows. A
 		// claimed bit per map ordinal, the spawned row by binary search (rows are in ordinal order), and on an edited map
@@ -1009,6 +1010,7 @@ void idWorldStore::ApplyCurrentMap()
 					else
 					{
 						ReplaceMapEntity( ent, corpse );
+						corpses.Append( corpse );
 					}
 				}
 				deleted.Append( ent );
@@ -1045,8 +1047,15 @@ void idWorldStore::ApplyCurrentMap()
 				continue;
 			}
 			RecordFrameEntry( data, header.cellId, frame, entry, entry.name, rec );
-			SpawnCreatedEntry( mapName, entry.name, entry.createdId, entry.createdTime, rec, frame );
+			idEntity* created = SpawnCreatedEntry( mapName, entry.name, entry.createdId, entry.createdTime, rec, frame );
+			if( created != NULL && created->IsType( idCorpse::Type ) )
+			{
+				corpses.Append( created );
+			}
 		}
+		//puncho - c15b: each corpse joined the corpse class at its spawn, in row order, before Build gave it its death time;
+		// they rejoin oldest death first, the order the class evicts in
+		gameLocal.JoinCorpseBudgetByDeath( corpses );
 		BindCreatedRecords();
 		RecordCarryBindChildren( moved );
 		for( int i = 0; i < deleted.Num(); i++ )

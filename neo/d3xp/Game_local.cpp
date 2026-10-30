@@ -4478,7 +4478,7 @@ static idCVar g_budgetFx( "g_budgetFx", "0", CVAR_GAME | CVAR_INTEGER, "maximum 
 static idCVar g_budgetItems( "g_budgetItems", "0", CVAR_GAME | CVAR_INTEGER, "refuse new optional dropped items at this cap; existing items persist" );
 static idCVar g_budgetGibs( "g_budgetGibs", "0", CVAR_GAME | CVAR_INTEGER, "maximum live transient gibs; 0 disables" );
 static idCVar g_entityReserve( "g_entityReserve", "64", CVAR_GAME | CVAR_INTEGER, "free entity slots reserved for essential spawns; 0 disables" );
-static idCVar g_budgetCorpses( "g_budgetCorpses", "0", CVAR_GAME | CVAR_INTEGER, "maximum live corpses, dead monsters and settled corpses, oldest death first, persist_nocap kept (in world mode the cap is g_recordCapCorpses); 0 off" );	//puncho - P2b.1.10c
+static idCVar g_budgetCorpses( "g_budgetCorpses", "0", CVAR_GAME | CVAR_INTEGER, "maximum live corpses, dead monsters and settled corpses, oldest death first, persist_nocap, essential and quest_item kept (in world mode the cap is g_recordCapCorpses); 0 off; a change mid-map leaves the bodies already down as they are: the class fills from new deaths" );	//puncho - P2b.1.10c
 //puncho - P2b.1.10a: listBudgets' and spawn_budget's names, indexed by entityBudget_t
 static const char* const budgetNames[] = { "debris", "fx", "item", "gib", "corpse" };
 compile_time_assert( sizeof( budgetNames ) / sizeof( budgetNames[0] ) == NUM_BUDGETS );
@@ -4497,7 +4497,7 @@ entityBudget_t idGameLocal::GetEntityBudgetClass( const idTypeInfo& type, const 
 	const char* explicitBudget = args.GetString( "spawn_budget" );
 	if( explicitBudget[0] != '\0' )
 	{
-		// the spawn classes only: a death joins the corpse class (P2b.1.10c)
+		// the spawn classes only: idAI::Killed and idCorpse::Spawn join the corpse class, never spawn_budget (P2b.1.10c)
 		for( int i = BUDGET_DEBRIS; i < BUDGET_CORPSE; i++ )
 		{
 			if( idStr::Icmp( explicitBudget, budgetNames[i] ) == 0 )
@@ -4575,17 +4575,34 @@ void idGameLocal::ResetEntityBudgets( bool restore )
 		// after its spawn keeps its age. The type ladder would also class the map's func_fx and debris and the props a
 		// load spawned, all unclassed under GAMESTATE_STARTUP, and slot order is not age. A save before RECORD_IDENTITY
 		// holds no seq (RestoreLegacyWorldKeys leaves 0, which a join never stamps): its entities take their place in
-		// spawnedEntities, which the save keeps in spawn order, the order they rejoined in before
+		// spawnedEntities, which the save keeps in spawn order, the order they rejoined in before.
+		// The corpse class (c15b) follows g_budgetCorpses at the load: off, it has no member, so a save written above 0
+		// leaves its bodies unclassed; on, a save holding no member of it (written at 0) has its bodies join it, oldest
+		// death first, so none escapes the cap. A save holding a member was written with the class on: a body outside
+		// it then left it (evicted with its removal pending, gibbed) and stays out
+		const bool corpseOn = CorpseBudgetOn();
+		bool corpseMembers = false;
 		idList<idEntity*, TAG_GAME> joined;
+		idList<idEntity*, TAG_GAME> bodies;
 		for( idEntity* ent = spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
 		{
-			if( ent->budgetClass >= 0 )
+			if( ent->budgetClass == BUDGET_CORPSE && !corpseOn )
+			{
+				ent->budgetClass = BUDGET_NONE;
+			}
+			if( ent->budgetClass != BUDGET_NONE )
 			{
 				if( ent->budgetJoinSeq == 0 )
 				{
 					ent->budgetJoinSeq = ( uint32 )joined.Num() + 1;
 				}
 				joined.Append( ent );
+				corpseMembers |= ent->budgetClass == BUDGET_CORPSE;
+			}
+			else if( corpseOn && ( ent->IsType( idCorpse::Type ) || ( ent->IsType( idAI::Type ) && ent->health <= 0 && !static_cast<idAI*>( ent )->IsGibbed() ) ) )
+			{
+				// a corpse, or a dead monster idAI::Killed would have joined
+				bodies.Append( ent );
 			}
 		}
 		joined.SortWithTemplate( idSortBudgetJoin() );
@@ -4597,6 +4614,10 @@ void idGameLocal::ResetEntityBudgets( bool restore )
 		}
 		// past every restored stamp, so a later join is younger than each of them
 		budgetJoinCounter = ( joined.Num() > 0 ? joined[joined.Num() - 1]->budgetJoinSeq : 0 ) + 1;
+		if( !corpseMembers )
+		{
+			JoinCorpseBudgetByDeath( bodies );
+		}
 		//puncho end
 		budgetHighWater = ENTITYNUM_MAX_NORMAL - MAX_CLIENTS - budgetFreeSlots[0] - budgetFreeSlots[1];
 	}
@@ -4680,8 +4701,9 @@ void idGameLocal::LeaveEntityBudget( idEntity* ent )
 idGameLocal::CorpseBudgetOn
 
 The corpse class runs on the authority while g_budgetCorpses is above 0, read at each join and cap: a change takes the
-deaths after it. Off, nothing joins it and nothing saves it, and idCorpse::EnforceLiveCap keeps the world-mode live cap
-it had before the class (its own list, the earliest death time first): at 0 the game is the build before it.
+deaths after it, and a load's bodies (ResetEntityBudgets). Off, nothing joins it, a load leaves it empty and nothing
+saves it, and idCorpse::EnforceLiveCap keeps the world-mode live cap it had before the class (its own list, the earliest
+death time first): at 0 the game is the build before it.
 ================
 */
 bool idGameLocal::CorpseBudgetOn() const
@@ -4689,23 +4711,70 @@ bool idGameLocal::CorpseBudgetOn() const
 	return g_budgetCorpses.GetInteger() > 0 && !common->IsClient();
 }
 
+//puncho start - c15b: a body's place in death order (JoinCorpseBudgetByDeath)
+struct corpseDeath_t
+{
+	idEntity*	ent;
+	int64		death;		// idCorpse::DeathTime; 0 for a dead monster
+	int			order;		// its index in the caller's list, for ties
+	bool		monster;	// a dead monster, which records no death time
+};
+
+class idSortCorpseDeath : public idSort_Quick<corpseDeath_t, idSortCorpseDeath>
+{
+public:
+	int Compare( const corpseDeath_t& a, const corpseDeath_t& b ) const
+	{
+		if( a.monster != b.monster )
+		{
+			return a.monster ? 1 : -1;
+		}
+		if( a.death != b.death )
+		{
+			return a.death < b.death ? -1 : 1;
+		}
+		return a.order - b.order;
+	}
+};
+
 /*
 ================
-idGameLocal::JoinCorpseBudget
+idGameLocal::JoinCorpseBudgetByDeath
 
-A death (idAI::Killed): the body joins the corpse class youngest, then the class is held to its cap. A gib leaves it
-again (idActor::Gib), a revive too (idAI::Event_SetHealth), and the corpse a world-mode settle makes takes its place
-(idCorpse::Capture), so the class stays in death order through a settle and, by budgetJoinSeq, a save.
+A death joins the corpse class youngest (idAI::Killed) and the cap holds it after Damage's gib test; a gib leaves it
+(idActor::Gib), a revive too (idAI::Event_SetHealth), and the corpse a world-mode settle makes takes its place
+(idCorpse::Capture), so the class stays in death order through a settle and, by budgetJoinSeq, a save. Bodies that join
+it later than their deaths join here, oldest death first: each corpse by its death time, then each dead monster (it
+records none, and died after every corpse there is: a corpse is taken at its monster's settle), ties in list order. A
+member leaves first, so a call reorders bodies already in the class: a record's corpses, which joined at their spawns in
+row order, before Build gave them a death time (idWorldStore). A load of a save the class did not write calls it too
+(ResetEntityBudgets). Joining evicts nothing: the cap waits for the next death or settle. Off, nothing joins.
 ================
 */
-void idGameLocal::JoinCorpseBudget( idEntity* ent )
+void idGameLocal::JoinCorpseBudgetByDeath( idList<idEntity*, TAG_GAME>& bodies )
 {
-	if( CorpseBudgetOn() && ent->budgetClass == BUDGET_NONE )
+	if( !CorpseBudgetOn() || bodies.Num() == 0 )
 	{
-		JoinEntityBudget( ent, BUDGET_CORPSE );
-		EnforceCorpseBudget( ent, false );
+		return;
+	}
+	idList<corpseDeath_t, TAG_GAME> order;
+	order.SetNum( bodies.Num() );
+	for( int i = 0; i < bodies.Num(); i++ )
+	{
+		corpseDeath_t& row = order[i];
+		row.ent = bodies[i];
+		row.monster = !row.ent->IsType( idCorpse::Type );
+		row.death = row.monster ? 0 : static_cast<idCorpse*>( row.ent )->DeathTime();
+		row.order = i;
+		LeaveEntityBudget( row.ent );
+	}
+	order.SortWithTemplate( idSortCorpseDeath() );
+	for( int i = 0; i < order.Num(); i++ )
+	{
+		JoinEntityBudget( order[i].ent, BUDGET_CORPSE );
 	}
 }
+//puncho end
 
 /*
 ================
@@ -4729,16 +4798,19 @@ void idGameLocal::ReplaceInEntityBudget( idEntity* from, idEntity* to )
 idGameLocal::EnforceCorpseBudget
 
 While the corpse class holds more than its cap (g_recordCapCorpses in world mode, else g_budgetCorpses; 0 none), its
-oldest member that is neither keep nor persist_nocap goes; none left, the class stays over the cap. Each is unlinked at
-once (the class is saved, so a save before its removal does not rejoin it). A settle (idCorpse::EnforceLiveCap, inside
-its event) deletes an idCorpse as the live cap before the class did; a death runs inside a Damage whose caller may hold
-other entities, so there, and for a dead monster, the removal is EV_Remove as every budget class posts it.
+oldest member that is neither keep nor spared goes; none left, the class stays over the cap. Spared are persist_nocap,
+and essential and quest_item, which a spawn's class spares too (GetEntityBudgetClass): a script may still name such a
+body (a boss's death sequence). Each is unlinked at once (the class is saved, so a save before its removal does not
+rejoin it), and each corpse counts in the MAP row's corpse evictions. A settle (idCorpse::EnforceLiveCap, inside its
+event) deletes an idCorpse as the live cap before the class did; a death (idActor::Damage after its gib test,
+idAI::Event_RealKill) runs inside a call whose caller may hold other entities, so there, and for a dead monster, the
+removal is EV_Remove as every budget class posts it.
 ================
 */
 void idGameLocal::EnforceCorpseBudget( const idEntity* keep, bool deleteCorpses )
 {
 	entityBudgetState_t& state = entityBudgets[BUDGET_CORPSE];
-	const int cap = worldStore.IsActive() ? g_recordCapCorpses.GetInteger() : state.cap->GetInteger();
+	const int cap = worldStore.IsActive() ? g_recordCapCorpses.GetInteger() : ( state.cap != NULL ? state.cap->GetInteger() : 0 );
 	if( cap <= 0 )
 	{
 		return;
@@ -4748,7 +4820,7 @@ void idGameLocal::EnforceCorpseBudget( const idEntity* keep, bool deleteCorpses 
 	{
 		idEntity* ent = next;
 		next = ent->budgetNode.Next();
-		if( ent == keep || ent->spawnArgs.GetBool( "persist_nocap" ) )
+		if( ent == keep || ent->spawnArgs.GetBool( "persist_nocap" ) || ent->spawnArgs.GetBool( "essential" ) || ent->spawnArgs.GetBool( "quest_item" ) )
 		{
 			continue;
 		}
@@ -4759,9 +4831,12 @@ void idGameLocal::EnforceCorpseBudget( const idEntity* keep, bool deleteCorpses 
 		{
 			state.evicted++;
 		}
-		if( deleteCorpses && ent->IsType( idCorpse::Type ) )
+		if( ent->IsType( idCorpse::Type ) )
 		{
 			worldStore.corpseEvicted++;
+		}
+		if( deleteCorpses && ent->IsType( idCorpse::Type ) )
+		{
 			delete ent;
 		}
 		else

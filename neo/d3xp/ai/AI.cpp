@@ -4509,10 +4509,11 @@ void idAI::Killed( idEntity* inflictor, idEntity* attacker, int damage, const id
 
 	ClearEnemy();
 	AI_DEAD	= true;
-	//puncho - P2b.1.10c: the body joins the corpse class (idGameLocal::JoinCorpseBudget); a gib after this leaves it
-	if( !IsGibbed() )
+	//puncho - P2b.1.10c, c15b: the body joins the corpse class youngest, and only joins: the caller holds the class to its
+	// cap after Damage's gib test (idActor::Damage, Event_RealKill), so a body that gibs leaves it costing no corpse
+	if( !IsGibbed() && gameLocal.CorpseBudgetOn() && budgetClass == BUDGET_NONE )
 	{
-		gameLocal.JoinCorpseBudget( this );
+		gameLocal.JoinEntityBudget( this, BUDGET_CORPSE );
 	}
 
 	// make monster nonsolid

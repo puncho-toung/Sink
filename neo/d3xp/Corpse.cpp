@@ -41,7 +41,8 @@ void idCorpse::Spawn()
 	spawnArgs.Set( "persist_lifetime", "-1" );
 	BecomeInactive( TH_ALL );
 	//puncho - P2b.1.10c: a corpse joins the corpse class; one a settle makes takes its monster's place there (Capture),
-	// and one a record or a save builds evicts nothing: the cap waits for the next death or settle
+	// a record's rejoin it in death order once the apply has built them all (c15b, idWorldStore), and none of them
+	// evicts anything: the cap waits for the next death or settle
 	if( gameLocal.CorpseBudgetOn() )
 	{
 		gameLocal.JoinEntityBudget( this, BUDGET_CORPSE );

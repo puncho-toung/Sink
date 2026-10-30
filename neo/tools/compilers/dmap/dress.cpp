@@ -58,9 +58,14 @@ static const char* const dressEntityClasses[] = { FUNC_DECAL_CLASSNAME, NULL };
 
 // the classes of map-only entities that no dress pass bakes because another reader takes their keys
 // straight from the .map: the map graph's landmarks, carry volumes and landings (the game, at map
-// load) and the light-grid hints (bakeLightGrids). NULL terminated; the readers match the classname
-// exactly too
+// load) and the light-grid hints (bakeLightGrids). NULL terminated. bakeLightGrids matches its
+// classname exactly; the game reads the map graph's three by their entityDef's mapOnlyKind
+// (idMapLandmarks::MapOnlyKind), so DressCheckMapOnlyEntities also takes any class whose def names
+// one of those kinds, a class that inherits one of the three among them
 static const char* const mapReadEntityClasses[] = { "info_landmark", "trigger_transition", "info_landing", "info_lightgrid_hint", NULL };
+
+// the mapOnlyKind values the game reads (idMapLandmarks::MapOnlyKind), NULL terminated
+static const char* const mapReadKinds[] = { "landmark", "volume", "landing", NULL };
 
 /*
 ====================
@@ -161,7 +166,22 @@ static void DressCheckMapOnlyEntities()
 				break;
 			}
 		}
-		if( mapReadEntityClasses[k] == NULL )
+		if( mapReadEntityClasses[k] != NULL )
+		{
+			continue;
+		}
+
+		// the plain def, inheritance merged, as the game's lookup reads it (no map keys, no _mp variant)
+		const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, classname, false ) );
+		const char* kind = def != NULL ? def->dict.GetString( "mapOnlyKind" ) : "";
+		for( k = 0; mapReadKinds[k] != NULL; k++ )
+		{
+			if( !idStr::Icmp( kind, mapReadKinds[k] ) )
+			{
+				break;
+			}
+		}
+		if( mapReadKinds[k] == NULL )
 		{
 			common->Warning( "map-only entity '%s' (%s): no dmap pass handles this class, it bakes nothing", epairs.GetString( "name", va( "entity %i", i ) ), classname );
 		}

@@ -706,6 +706,7 @@ int idMapGraphDirector::GetFlag( const char* name ) const
 			if( hub.ReadRecord( persistentHub.Ptr(), persistentHub.Num() ) )
 			{
 				hubFlagDefinitions = hub.flagDefinitions;
+				compile_time_assert( sizeof( hubFlagValues ) == sizeof( flagValues ) );	// both copies of the cache
 				memcpy( hubFlagValues, hub.flagValues, sizeof( hubFlagValues ) );
 				hubFlagsState = HUB_FLAGS_DECODED;
 			}

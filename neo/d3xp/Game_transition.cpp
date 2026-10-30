@@ -267,13 +267,10 @@ void idGameLocal::CommitMapTransition()
 	}
 	if( g_showTransition.GetBool() && mapFile != NULL )
 	{
-		for( int i = 0; i < mapFile->GetNumEntities(); i++ )
+		//puncho - c15b (P2b.1.10j): the landings ReadMapData classed at the load
+		for( int i = 0; i < mapLandmarks.NumLandings(); i++ )
 		{
-			const idDict& args = mapFile->GetEntity( i )->epairs;
-			if( idMapLandmarks::MapOnlyKind( args.GetString( "classname" ), NULL ) == MAPONLY_LANDING )	//puncho - P2b.1.10j
-			{
-				gameRenderWorld->DebugBounds( colorGreen, idBounds( idVec3( -8, -8, 0 ), idVec3( 8, 8, 16 ) ), args.GetVector( "origin" ) );
-			}
+			gameRenderWorld->DebugBounds( colorGreen, idBounds( idVec3( -8, -8, 0 ), idVec3( 8, 8, 16 ) ), mapLandmarks.Landing( i ).origin );
 		}
 	}
 	//puncho start - transitions (stage 3 review): a departing peer that never comes back must not hold arrival open. Each
@@ -648,21 +645,21 @@ bool idGameLocal::SelectTransitionSpawn( idPlayer* player, idVec3& origin, idAng
 	if( !clear && mapFile != NULL )
 	{
 		// Select by authored index, then ordinal without allocating or reordering map data.
+		//puncho - c15b (P2b.1.10j): over the landings ReadMapData classed at the load, in map order, so ties go to the
+		// lowest ordinal as the walk of the map file gave them
 		int lastIndex = -1, lastOrdinal = -1;
-		for( int pass = 0; pass < mapFile->GetNumEntities(); pass++ )
+		for( int pass = 0; pass < mapLandmarks.NumLandings(); pass++ )
 		{
 			int best = -1, bestIndex = INT_MAX;
-			for( int i = 0; i < mapFile->GetNumEntities(); i++ )
+			for( int i = 0; i < mapLandmarks.NumLandings(); i++ )
 			{
-				const idDict& args = mapFile->GetEntity( i )->epairs;
-				//puncho - P2b.1.10j: a landing by its def's mapOnlyKind; the def's index is the default
-				const idDict* defaults;
-				if( idMapLandmarks::MapOnlyKind( args.GetString( "classname" ), &defaults ) != MAPONLY_LANDING || idStr::Icmp( args.GetString( "landmark" ), partyTransition.request.arrivalLandmark ) )
+				const mapLanding_t& landing = mapLandmarks.Landing( i );
+				if( idStr::Icmp( landing.landmark, partyTransition.request.arrivalLandmark ) )
 				{
 					continue;
 				}
-				const int number = args.GetInt( "index", defaults->GetString( "index" ) );
-				if( number < lastIndex || ( number == lastIndex && i <= lastOrdinal ) )
+				const int number = landing.index;
+				if( number < lastIndex || ( number == lastIndex && landing.ordinal <= lastOrdinal ) )
 				{
 					continue;
 				}
@@ -675,8 +672,8 @@ bool idGameLocal::SelectTransitionSpawn( idPlayer* player, idVec3& origin, idAng
 			{
 				break;
 			}
-			lastIndex = bestIndex; lastOrdinal = best;
-			origin = mapFile->GetEntity( best )->epairs.GetVector( "origin" );
+			lastIndex = bestIndex; lastOrdinal = mapLandmarks.Landing( best ).ordinal;
+			origin = mapLandmarks.Landing( best ).origin;
 			if( TransitionPositionClear( record, origin ) )
 			{
 				Printf( "transition_landing slot=%d index=%d origin=%.9g,%.9g,%.9g\n", player->entityNumber, bestIndex, origin.x, origin.y, origin.z );

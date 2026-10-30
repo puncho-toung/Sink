@@ -448,7 +448,8 @@ struct aiSquadDef_t
 //puncho end
 
 //puncho start - P2b.1.10a: the entity budget classes. The four spawn classes keep their numbers, 0 through 3, which
-// idEntity::budgetClass saves as class + 1 (WorldIdentity); the corpse class is joined by a death, never by a spawn
+// idEntity::budgetClass saves as class + 1 (WorldIdentity); the corpse class is joined by idAI::Killed and idCorpse::Spawn,
+// never by spawn_budget
 enum entityBudget_t
 {
 	BUDGET_NONE = -1,
@@ -719,7 +720,7 @@ public:
 	void					LeaveEntityBudget( idEntity* entity );
 	//puncho start - P2b.1.10c: the corpse class (Game_local.cpp, CorpseBudgetOn)
 	bool					CorpseBudgetOn() const;
-	void					JoinCorpseBudget( idEntity* entity );
+	void					JoinCorpseBudgetByDeath( idList<idEntity*, TAG_GAME>& bodies );
 	void					ReplaceInEntityBudget( idEntity* from, idEntity* to );
 	void					EnforceCorpseBudget( const idEntity* keep, bool deleteCorpses );
 	//puncho end

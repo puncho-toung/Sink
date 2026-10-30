@@ -83,8 +83,19 @@ mapOnlyKind_t idMapLandmarks::MapOnlyKind( const char* classname, const idDict**
 		return MAPONLY_NONE;
 	}
 	const char* kind = def->dict.GetString( "mapOnlyKind" );
-	const mapOnlyKind_t result = !idStr::Icmp( kind, "landmark" ) ? MAPONLY_LANDMARK : !idStr::Icmp( kind, "volume" ) ? MAPONLY_VOLUME :
-								 !idStr::Icmp( kind, "landing" ) ? MAPONLY_LANDING : MAPONLY_NONE;
+	mapOnlyKind_t result = MAPONLY_NONE;
+	if( !idStr::Icmp( kind, "landmark" ) )
+	{
+		result = MAPONLY_LANDMARK;
+	}
+	else if( !idStr::Icmp( kind, "volume" ) )
+	{
+		result = MAPONLY_VOLUME;
+	}
+	else if( !idStr::Icmp( kind, "landing" ) )
+	{
+		result = MAPONLY_LANDING;
+	}
 	if( result != MAPONLY_NONE && defaults != NULL )
 	{
 		*defaults = &def->dict;
@@ -132,8 +143,18 @@ void idMapLandmarks::ReadMapData( const idMapFile* map )
 		//puncho end
 		//puncho - P2b.1.10j: classed by the def's mapOnlyKind, not the exact classnames, so a class that inherits one is read
 		// as one; the def's values are the defaults of the keys the map leaves out (MapOnlyKind)
-		const idDict* defaults;
+		const idDict* defaults = NULL;
 		const mapOnlyKind_t kind = MapOnlyKind( args.GetString( "classname" ), &defaults );
+		//puncho - c15b: a landing is classed here once a load, not by each pick and each g_showTransition frame
+		if( kind == MAPONLY_LANDING )
+		{
+			mapLanding_t& row = landings.Alloc();
+			row.landmark = args.GetString( "landmark" );
+			row.origin = args.GetVector( "origin" );
+			row.index = args.GetInt( "index", defaults->GetString( "index" ) );
+			row.ordinal = i;
+			continue;
+		}
 		const bool isLandmark = kind == MAPONLY_LANDMARK;
 		const bool isVolume = kind == MAPONLY_VOLUME;
 		if( !isLandmark && !isVolume )

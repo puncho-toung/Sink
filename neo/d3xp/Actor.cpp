@@ -2677,6 +2677,11 @@ void idActor::Damage( idEntity* inflictor, idEntity* attacker, const idVec3& dir
 			{
 				Gib( dir, damageDefName );
 			}
+			//puncho - c15b (P2b.1.10c): the corpse class's cap after the gib test, so a body that gibs costs no corpse
+			if( budgetClass == BUDGET_CORPSE )
+			{
+				gameLocal.EnforceCorpseBudget( this, false );
+			}
 		}
 		else
 		{

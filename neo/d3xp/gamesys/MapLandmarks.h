@@ -31,6 +31,17 @@ enum mapOnlyKind_t
 	MAPONLY_LANDING		// info_landing: a party landing slot (idGameLocal's landing pick)
 };
 
+//puncho - c15b (P2b.1.10j): one party landing slot of a parsed map, classed once by ReadMapData for the landing pick
+// (idGameLocal::SelectTransitionSpawn) and g_showTransition: its landmark and origin as the map spells them, its index
+// the def's default where the map leaves it out
+struct mapLanding_t
+{
+	idStr landmark;
+	idVec3 origin;
+	int index;
+	int ordinal;		// the map entity it was read from; the rows are in map order
+};
+
 //puncho - P2b.1.10f: one dungeon_variant group of a parsed map: the group as its first entity spelled it, and the
 // choices its entities name, sorted and unique by idStr::Icmp (idMapGraphDirector::InhibitSpawn picks one by index)
 struct mapVariantGroup_t
@@ -51,6 +62,7 @@ public:
 		landmarks.Clear();
 		transitionVolumes.Clear();
 		variantGroups.Clear();	//puncho - P2b.1.10f
+		landings.Clear();		//puncho - c15b
 	}
 	void ReadMapData( const idMapFile* map );
 	static mapOnlyKind_t MapOnlyKind( const char* classname, const idDict** defaults );	//puncho - P2b.1.10j
@@ -72,6 +84,16 @@ public:
 	{
 		return transitionVolumes[i];
 	}
+	//puncho start - c15b
+	int NumLandings() const
+	{
+		return landings.Num();
+	}
+	const mapLanding_t& Landing( int i ) const
+	{
+		return landings[i];
+	}
+	//puncho end
 	void RemoveById( const char* id );
 	const idStrList* FindVariantChoices( const char* group ) const;	//puncho - P2b.1.10f: NULL when no entity names the group
 	void Add( const landmark_t& landmark )
@@ -87,5 +109,6 @@ private:
 	idList<landmark_t, TAG_GAME> landmarks;
 	idList<transitionVolume_t, TAG_GAME> transitionVolumes;
 	idList<mapVariantGroup_t, TAG_GAME> variantGroups;	//puncho - P2b.1.10f
+	idList<mapLanding_t, TAG_GAME> landings;			//puncho - c15b
 };
 #endif
