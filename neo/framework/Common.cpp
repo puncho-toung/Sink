@@ -196,7 +196,7 @@ idCommonLocal::idCommonLocal() :
 
 	mapSpawnData.gameDriven = false;
 	transitionLoadStartTime = 0;
-	transitionState = transitionStateTime = 0;
+	loadTransition = loadTransitionTime = 0;
 	transitionArrivalSnapshotTime = -1;
 	transitionSequence = transitionLastAccepted = 0;
 	transitionLoaded = false;
@@ -1808,7 +1808,7 @@ void idCommonLocal::LeaveGame()
 	gameThread.WaitForThread();
 	gameThread.ClearSessionCommand();
 	game->ClearMapTransition();
-	transitionState = 0;
+	loadTransition = 0;
 	transitionLoaded = false;
 	//puncho - transitions (stage 3 review): the next load (another server, or CreateMainMenu's level load) is not
 	// game-driven, and a new host's intents restart at sequence 1, so neither the flag nor the old epoch survives

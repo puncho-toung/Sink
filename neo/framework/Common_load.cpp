@@ -225,6 +225,11 @@ int idCommonLocal::LevelKeepGrace() const
 	return ( IsGameDrivenLoad() || com_levelKeepAll.GetBool() ) ? com_levelKeep.GetInteger() : 0;
 }
 
+int idCommonLocal::GetLevelKeep() const
+{
+	return com_levelKeep.GetInteger();
+}
+
 bool idCommonLocal::IsLevelAssetPinned( int type, const char* name, int filter, int repeat, int usage, int cubeMap ) const
 {
 	if( LevelKeepGrace() == 0 )
@@ -418,7 +423,7 @@ void idCommonLocal::StartNewGame( const char* mapName, bool devmap, int gameMode
 	session->GetActingGameStateLobbyBase().CancelTransitionHold();
 	BeginTransitionTimeline( "newgame" );
 	mapSpawnData.gameDriven = false;
-	transitionState = 0;
+	loadTransition = 0;
 	transitionSequence = transitionLastAccepted = 0;
 	if( session->GetSignInManager().GetMasterLocalUser() == NULL )
 	{
@@ -986,14 +991,14 @@ void idCommonLocal::ExecuteMapChange()
 		session->LoadingFinished();
 		//puncho - transitions (stage 3 review): net_transitionArriveMs measures the wait for the party, not this machine's
 		// own load; the host's timer started on entering state 2 and the client's on the intent, both before the load
-		if( transitionState != 0 )
+		if( loadTransition != 0 )
 		{
-			transitionStateTime = Sys_Milliseconds();
+			loadTransitionTime = Sys_Milliseconds();
 		}
 
 		while( session->GetState() == idSession::LOADING )
 		{
-			if( transitionState != 0 && Sys_Milliseconds() - transitionStateTime >= net_transitionArriveMs.GetInteger() )
+			if( loadTransition != 0 && Sys_Milliseconds() - loadTransitionTime >= net_transitionArriveMs.GetInteger() )
 			{
 				Warning( "transition first snapshot wait timed out during load" );
 				//puncho - transitions (stage 3 review): the error path's teardown (Frame's catch) plus the file system's end
@@ -1013,7 +1018,7 @@ void idCommonLocal::ExecuteMapChange()
 		}
 	}
 
-	if( !mapSpawnData.savegameFile && transitionState == 0 )
+	if( !mapSpawnData.savegameFile && loadTransition == 0 )
 	{
 		LoadPhase( LOAD_FIRST_FRAME );
 		// run a single frame to catch any resources that are referenced by events posted in spawn
@@ -1157,7 +1162,7 @@ void idCommonLocal::ExecuteMapChange()
 
 
 	// capture the current screen and start a wipe
-	if( transitionState == 0 )
+	if( loadTransition == 0 )
 	{
 		StartWipe( "wipe2Material" );
 	}
@@ -1166,10 +1171,10 @@ void idCommonLocal::ExecuteMapChange()
 	insideExecuteMapChange = false;
 	mapSpawned = true;
 	transitionTimelineArmed = true;
-	if( transitionState != 0 )
+	if( loadTransition != 0 )
 	{
 		transitionLoaded = true;
-		transitionStateTime = Sys_Milliseconds();
+		loadTransitionTime = Sys_Milliseconds();
 	}
 	if( carrySound )
 	{
@@ -1186,7 +1191,7 @@ void idCommonLocal::ExecuteMapChange()
 	{
 		Printf( "TRANSITION guiDraws=%d\n", transitionGuiDraws );
 	}
-	if( transitionState == 0 )
+	if( loadTransition == 0 )
 	{
 		transitionLoadStartTime = 0;
 	}
@@ -1510,7 +1515,7 @@ idCommonLocal::SaveGame
 */
 bool idCommonLocal::SaveGame( const char* saveName )
 {
-	if( transitionState != 0 || game->IsMapTransitionActive() )
+	if( loadTransition != 0 || game->IsMapTransitionActive() )
 	{
 		Warning( "save refused while a map transition is pending" );
 		return false;
@@ -1715,7 +1720,7 @@ idCommonLocal::LoadGame
 */
 bool idCommonLocal::LoadGame( const char* saveName )
 {
-	if( transitionState != 0 || game->IsMapTransitionActive() )
+	if( loadTransition != 0 || game->IsMapTransitionActive() )
 	{
 		Warning( "load refused while a map transition is pending; retry after arrival" );
 		return false;
@@ -2290,7 +2295,7 @@ bool idCommonLocal::PrepareMatchGameData( idMatchParameters& parms )
 bool idCommonLocal::BeginCoopTransition( const char* map )
 {
 	idLobbyBase& lobby = session->GetActingGameStateLobbyBase();
-	if( !net_coopTransitions.GetBool() || !lobby.IsHost() || transitionState != 0 )
+	if( !net_coopTransitions.GetBool() || !lobby.IsHost() || loadTransition != 0 )
 	{
 		return false;
 	}
@@ -2309,12 +2314,12 @@ bool idCommonLocal::BeginCoopTransition( const char* map )
 	transitionSequence++;
 	game->BroadcastMapTransition( transitionSequence, transitionMap );
 	lobby.BeginTransitionHold();
-	transitionState = 1;
-	transitionStateTime = Sys_Milliseconds();
+	loadTransition = 1;
+	loadTransitionTime = Sys_Milliseconds();
 	transitionLoaded = false;
 	mapSpawnData.gameDriven = true;
 	mapSpawnData.worldTimeBase = game->GetWorldTime();
-	transitionLoadStartTime = transitionStateTime;
+	transitionLoadStartTime = loadTransitionTime;
 	StartWipe( "wipeMaterial", true );
 	Printf( "transition_drain seq=%u map=%s\n", transitionSequence, transitionMap );
 	return true;
@@ -2338,12 +2343,12 @@ void idCommonLocal::NotifyMapTransition( unsigned short sequence, const char* ma
 	BeginTransitionTimeline( "coop" );
 	transitionLastAccepted = sequence;
 	idStr::Copynz( transitionMap, map, sizeof( transitionMap ) );
-	transitionState = 3;
-	transitionStateTime = Sys_Milliseconds();
+	loadTransition = 3;
+	loadTransitionTime = Sys_Milliseconds();
 	transitionLoaded = false;
 	transitionArrivalSnapshotTime = -1;
 	mapSpawnData.gameDriven = true;
-	transitionLoadStartTime = transitionStateTime;
+	transitionLoadStartTime = loadTransitionTime;
 	Prefetch_Request( map );
 	StartWipe( "wipeMaterial", true );
 	Printf( "transition_pending seq=%u map=%s\n", sequence, map );
@@ -2351,13 +2356,13 @@ void idCommonLocal::NotifyMapTransition( unsigned short sequence, const char* ma
 
 void idCommonLocal::PumpMapTransition()
 {
-	if( transitionState == 0 )
+	if( loadTransition == 0 )
 	{
 		return;
 	}
 	idLobbyBase& lobby = session->GetActingGameStateLobbyBase();
-	const int elapsed = Sys_Milliseconds() - transitionStateTime;
-	if( transitionState == 1 && lobby.TransitionDrainReady( elapsed >= net_transitionAckMs.GetInteger() ) )
+	const int elapsed = Sys_Milliseconds() - loadTransitionTime;
+	if( loadTransition == 1 && lobby.TransitionDrainReady( elapsed >= net_transitionAckMs.GetInteger() ) )
 	{
 		idMatchParameters parms = session->GetGameLobbyBase().GetMatchParms();
 		parms.mapName = transitionMap;
@@ -2369,22 +2374,22 @@ void idCommonLocal::PumpMapTransition()
 		transitionTimelineNetUs += ( uint64 )elapsed * 1000;
 		session->EndMatch();
 		session->UpdateMatchParms( parms );
-		transitionState = 2;
-		transitionStateTime = Sys_Milliseconds();
+		loadTransition = 2;
+		loadTransitionTime = Sys_Milliseconds();
 		session->StartMatch();
 		Printf( "transition_loading seq=%u\n", transitionSequence );
 	}
-	else if( transitionState == 2 && transitionLoaded && lobby.TransitionArrivalReady( elapsed >= net_transitionArriveMs.GetInteger() ) )
+	else if( loadTransition == 2 && transitionLoaded && lobby.TransitionArrivalReady( elapsed >= net_transitionArriveMs.GetInteger() ) )
 	{
 		transitionTimelineNetUs += ( uint64 )elapsed * 1000;
 		mapSpawnData.gameDriven = true;
 		StartWipe( "wipe2Material" );
 		// StartWipe captures a Draw: keep the arrival hold until its new deadline exists.
-		transitionState = 0;
+		loadTransition = 0;
 		mapSpawnData.gameDriven = false;
 		Printf( "transition_release seq=%u\n", transitionSequence );
 	}
-	else if( transitionState == 3 )
+	else if( loadTransition == 3 )
 	{
 		const int hostPeer = lobby.PeerIndexForHost();
 		if( transitionLoaded && ( hostPeer < 0 || lobby.IsPeerDisconnected( hostPeer ) ) )
@@ -2404,7 +2409,7 @@ void idCommonLocal::PumpMapTransition()
 		{
 			mapSpawnData.gameDriven = true;
 			StartWipe( "wipe2Material" );
-			transitionState = 0;
+			loadTransition = 0;
 			mapSpawnData.gameDriven = false;
 			Printf( "transition_client_arrived seq=%u\n", transitionLastAccepted );
 		}
@@ -2418,7 +2423,7 @@ void idCommonLocal::PumpMapTransition()
 
 void idCommonLocal::ListTransitionNetwork() const
 {
-	common->Printf( "transition network state=%d seq=%u accepted=%u loaded=%d map=%s elapsed=%d\n", transitionState, transitionSequence, transitionLastAccepted, transitionLoaded, transitionMap, transitionState != 0 ? Sys_Milliseconds() - transitionStateTime : 0 );
+	common->Printf( "transition network state=%d seq=%u accepted=%u loaded=%d map=%s elapsed=%d\n", loadTransition, transitionSequence, transitionLastAccepted, transitionLoaded, transitionMap, loadTransition != 0 ? Sys_Milliseconds() - loadTransitionTime : 0 );
 }
 
 void idCommonLocal::ReportTransitionMetric( transitionMetric_t metric, uint64 value )
@@ -2450,7 +2455,7 @@ void idCommonLocal::BeginTransitionTimeline( const char* kind )
 void idCommonLocal::RecordTransitionDraw()
 {
 	// Called by Draw; consumed only after the game/draw thread joins.
-	if( transitionTimelineArmed && transitionTimelineDraw == 0 && mapSpawned && transitionState == 0 && !wipeHold && Sys_Milliseconds() >= wipeStopTime )
+	if( transitionTimelineArmed && transitionTimelineDraw == 0 && mapSpawned && loadTransition == 0 && !wipeHold && Sys_Milliseconds() >= wipeStopTime )
 	{
 		transitionTimelineDraw = Sys_Microseconds();
 	}

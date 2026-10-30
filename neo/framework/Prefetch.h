@@ -19,8 +19,6 @@ ID_INLINE void Prefetch_Clear() {}
 ID_INLINE void Prefetch_EndLoad() {}
 ID_INLINE idFile* Prefetch_Open( const char*, bool, const char* ) { return NULL; }
 #else
-bool Prefetch_ModelResident( const char* name );
-bool Prefetch_SampleResident( const char* name );
 void Prefetch_Queue( const char* mapName );
 void Prefetch_Request( const char* mapName );
 void Prefetch_Pump();

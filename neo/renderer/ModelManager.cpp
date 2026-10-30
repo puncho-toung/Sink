@@ -62,6 +62,7 @@ public:
 	virtual void			FreeModel( idRenderModel* model );
 	virtual idRenderModel* 	FindModel( const char* modelName, const idImportOptions* options = NULL );
 	virtual idRenderModel* 	CheckModel( const char* modelName );
+	virtual bool			IsResident( const char* modelName ) const;
 	virtual idRenderModel* 	DefaultModel();
 	virtual void			AddModel( idRenderModel* model );
 	virtual void			RemoveModel( idRenderModel* model );
@@ -77,7 +78,6 @@ public:
 	virtual	void			PrintMemInfo( MemInfo_t* mi );
 
 private:
-	friend bool Prefetch_ModelResident( const char* name );
 	idList<idRenderModel*, TAG_MODEL>	models;
 	idHashIndex							hash;
 	idRenderModel* 						defaultModel;
@@ -104,14 +104,20 @@ idRenderModelManager* 		renderModelManager = &localModelManager;
 
 static int modelLevelLoadCount;
 
-// Resident-only lookup: no reload or reference side effects.
-bool Prefetch_ModelResident( const char* name )
+/*
+==============
+idRenderModelManagerLocal::IsResident
+
+Resident-only lookup: no reload or reference side effects.
+==============
+*/
+bool idRenderModelManagerLocal::IsResident( const char* modelName ) const
 {
-	const int key = localModelManager.hash.GenerateKey( name, false );
-	for( int i = localModelManager.hash.First( key ); i != -1; i = localModelManager.hash.Next( i ) )
+	const int key = hash.GenerateKey( modelName, false );
+	for( int i = hash.First( key ); i != -1; i = hash.Next( i ) )
 	{
-		idRenderModel* model = localModelManager.models[i];
-		if( !idStr::Icmp( name, model->Name() ) )
+		idRenderModel* model = models[i];
+		if( !idStr::Icmp( modelName, model->Name() ) )
 		{
 			return model->IsLoaded();
 		}

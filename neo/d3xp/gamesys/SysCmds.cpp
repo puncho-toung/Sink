@@ -3833,7 +3833,7 @@ static void Cmd_ListMap_f( const idCmdArgs& args )
 	}
 	char rows[6][256];
 	bool high[6];
-	FormatMapRows( rows, high );
+	common->FormatMapRows( rows, high );
 	for( int i = 0; i < 6; i++ )
 	{
 		gameLocal.Printf( "%s\n", rows[i] );

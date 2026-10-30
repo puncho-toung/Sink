@@ -323,6 +323,9 @@ public:
 
 	virtual void			Preload( idPreloadManifest& preload ) = 0;
 
+	//puncho - P2b.1.6: true when the sample is in the list and loaded; never loads it or marks it used this level
+	virtual bool			IsSampleResident( const char* name ) const = 0;
+
 	// prints memory info
 	virtual void			PrintMemInfo( MemInfo_t* mi ) = 0;
 };

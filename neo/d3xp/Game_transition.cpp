@@ -41,7 +41,7 @@ struct transitionCarry_t
 	bool orientated, applied;
 	idEntityPtr<idEntity> spawned;
 };
-struct transitionState_t
+struct partyTransition_t
 {
 	mapTransition_t request;
 	transitionPlayer_t players[MAX_CLIENTS];
@@ -50,7 +50,7 @@ struct transitionState_t
 	int arrivalStart;	// Sys_Milliseconds of the first placement on the arrival map, 0 before it
 	bool pending, active, relative, carryApplied;
 };
-static transitionState_t transitionState;
+static partyTransition_t partyTransition;
 //puncho - transitions (stage 3 review): CommitMapTransition's carry scratch, 224 KB, off the 1 MB Game/Draw stack; only
 // the game thread commits. rootOf is each entity's candidate root (-1 if none), found once instead of once per group
 static struct
@@ -85,9 +85,9 @@ static int TransitionPlayerIndex( int client )
 	}
 	for( int i = 0; i < MAX_CLIENTS; i++ )
 	{
-		if( transitionState.players[i].valid &&
+		if( partyTransition.players[i].valid &&
 			( ( !common->IsMultiplayer() && i == client ) ||
-			( gameLocal.lobbyUserIDs[client].IsValid() && transitionState.players[i].user.CompareIgnoreLobbyType( gameLocal.lobbyUserIDs[client] ) ) ) )
+			( gameLocal.lobbyUserIDs[client].IsValid() && partyTransition.players[i].user.CompareIgnoreLobbyType( gameLocal.lobbyUserIDs[client] ) ) ) )
 		{
 			return i;
 		}
@@ -103,7 +103,7 @@ static bool TransitionPartyPlaced()
 {
 	for( int i = 0; i < MAX_CLIENTS; i++ )
 	{
-		if( transitionState.players[i].valid && !transitionState.players[i].placed )
+		if( partyTransition.players[i].valid && !partyTransition.players[i].placed )
 		{
 			return false;
 		}
@@ -114,22 +114,22 @@ static bool TransitionPartyPlaced()
 static void EndTransitionArrival()
 {
 	int unapplied = 0;
-	for( int i = 0; i < transitionState.count; i++ )
+	for( int i = 0; i < partyTransition.count; i++ )
 	{
-		unapplied += transitionState.carry[i].applied ? 0 : 1;
+		unapplied += partyTransition.carry[i].applied ? 0 : 1;
 	}
 	if( unapplied > 0 )
 	{
 		gameLocal.Warning( "transition: %d carried records could not spawn; dropped", unapplied );
 	}
-	transitionState.active = false;
+	partyTransition.active = false;
 	// The departure dictionaries are dead once arrival ends. Emptying them also keeps this file-static's idDicts from
 	// freeing into idDict's global pools, another translation unit's statics, at exit
 	for( int i = 0; i < MAX_CLIENTS; i++ )
 	{
-		transitionState.players[i].info.Clear();
+		partyTransition.players[i].info.Clear();
 	}
-	gameLocal.Printf( "transition_arrived carry=%d fallback=%d rotation_ignored=%d\n", transitionState.count, transitionState.fallback, transitionState.rotationIgnored );
+	gameLocal.Printf( "transition_arrived carry=%d fallback=%d rotation_ignored=%d\n", partyTransition.count, partyTransition.fallback, partyTransition.rotationIgnored );
 }
 //puncho end
 
@@ -137,26 +137,26 @@ void idGameLocal::ClearMapTransition()
 {
 	sessionCommand.Clear();
 	worldStore.SetContinue( false );
-	transitionState.pending = transitionState.active = false;
+	partyTransition.pending = partyTransition.active = false;
 #if !defined( ID_RETAIL )
 	transitionTestPlacementPending = false;
 #endif
-	for( int i = 0; i < transitionState.count; i++ )
+	for( int i = 0; i < partyTransition.count; i++ )
 	{
-		transitionState.carry[i].spawned = NULL;
+		partyTransition.carry[i].spawned = NULL;
 	}
-	transitionState.count = 0;
-	transitionState.carryApplied = false;
+	partyTransition.count = 0;
+	partyTransition.carryApplied = false;
 	for( int i = 0; i < MAX_CLIENTS; i++ )
 	{
-		transitionState.players[i].valid = false;
-		transitionState.players[i].info.Clear();
+		partyTransition.players[i].valid = false;
+		partyTransition.players[i].info.Clear();
 	}
 }
 
 bool idGameLocal::BeginMapTransition( const mapTransition_t& request )
 {
-	if( common->IsClient() || transitionState.pending || transitionState.active )
+	if( common->IsClient() || partyTransition.pending || partyTransition.active )
 	{
 		Warning( "transition refused: client or transition already pending" );
 		return false;
@@ -180,9 +180,9 @@ bool idGameLocal::BeginMapTransition( const mapTransition_t& request )
 		Warning( "transition refused: net_coopTransitions is disabled" );
 		return false;
 	}
-	transitionState.request = request;
-	transitionState.request.nextMap = normalizedMap;
-	transitionState.pending = true;
+	partyTransition.request = request;
+	partyTransition.request.nextMap = normalizedMap;
+	partyTransition.pending = true;
 	return true;
 }
 
@@ -237,7 +237,7 @@ void idGameLocal::CarryTransitionSounds()
 {
 	if( cvarSystem->GetCVarBool( "s_transitionCarry" ) )
 	{
-		if( cvarSystem->GetCVarInteger( "com_levelKeep" ) < 1 )
+		if( common->GetLevelKeep() < 1 )
 		{
 			Warning( "transition sound disabled: requires com_levelKeep >= 1" );
 		}
@@ -279,12 +279,12 @@ void idGameLocal::CommitMapTransition()
 	//puncho start - transitions (stage 3 review): a departing peer that never comes back must not hold arrival open. Each
 	// host tic on the arrival map drops slots whose lobby user has left (the acting lobby common's hold uses), and a party
 	// not placed within twice net_transitionArriveMs of the first placement is released
-	if( transitionState.active && common->IsMultiplayer() && !common->IsClient() && !common->IsTransitionDraining() )
+	if( partyTransition.active && common->IsMultiplayer() && !common->IsClient() && !common->IsTransitionDraining() )
 	{
 		idLobbyBase& lobby = session->GetActingGameStateLobbyBase();
 		for( int i = 0; i < MAX_CLIENTS; i++ )
 		{
-			transitionPlayer_t& record = transitionState.players[i];
+			transitionPlayer_t& record = partyTransition.players[i];
 			if( record.valid && !record.placed && !lobby.IsLobbyUserValid( record.user ) )
 			{
 				Printf( "transition_player_left slot=%d\n", i );
@@ -293,7 +293,7 @@ void idGameLocal::CommitMapTransition()
 			}
 		}
 		const int timeout = 2 * cvarSystem->GetCVarInteger( "net_transitionArriveMs" );
-		const bool timedOut = transitionState.arrivalStart != 0 && Sys_Milliseconds() - transitionState.arrivalStart >= timeout;
+		const bool timedOut = partyTransition.arrivalStart != 0 && Sys_Milliseconds() - partyTransition.arrivalStart >= timeout;
 		if( timedOut )
 		{
 			Warning( "transition: party not placed within %d ms; arrival released", timeout );
@@ -305,17 +305,17 @@ void idGameLocal::CommitMapTransition()
 		}
 	}
 	//puncho end
-	if( !transitionState.pending || common->IsClient() )
+	if( !partyTransition.pending || common->IsClient() )
 	{
 		return;
 	}
 	const uint64 carryStart = Sys_Microseconds();
-	transitionState.pending = false;
-	transitionState.active = true;
-	transitionState.count = transitionState.fallback = transitionState.rotationIgnored = 0;
-	transitionState.arrivalStart = 0;
-	transitionState.carryApplied = false;
-	const landmark_t* depart = mapLandmarks.FindLandmark( transitionState.request.departLandmark );
+	partyTransition.pending = false;
+	partyTransition.active = true;
+	partyTransition.count = partyTransition.fallback = partyTransition.rotationIgnored = 0;
+	partyTransition.arrivalStart = 0;
+	partyTransition.carryApplied = false;
+	const landmark_t* depart = mapLandmarks.FindLandmark( partyTransition.request.departLandmark );
 #if !defined( ID_RETAIL )
 	if( transitionTestPlacementPending )
 	{
@@ -343,19 +343,19 @@ void idGameLocal::CommitMapTransition()
 	}
 #endif
 
-	transitionState.relative = g_transitionLandmarks.GetBool() && depart != NULL && !transitionState.request.arrivalLandmark.IsEmpty();
-	if( g_transitionLandmarks.GetBool() && !transitionState.relative )
+	partyTransition.relative = g_transitionLandmarks.GetBool() && depart != NULL && !partyTransition.request.arrivalLandmark.IsEmpty();
+	if( g_transitionLandmarks.GetBool() && !partyTransition.relative )
 	{
 		Warning( "transition: missing departure/arrival landmark; using ordinary spawn" );
 	}
 	if( depart != NULL && !depart->axis.Compare( mat3_identity ) )
 	{
-		transitionState.rotationIgnored++;
+		partyTransition.rotationIgnored++;
 		Warning( "transition: landmark rotation ignored (translation only)" );
 	}
 	for( int i = 0; i < MAX_CLIENTS; i++ )
 	{
-		transitionPlayer_t& record = transitionState.players[i];
+		transitionPlayer_t& record = partyTransition.players[i];
 		record.valid = entities[i] != NULL && entities[i]->IsType( idPlayer::Type );
 		record.placed = record.selected = false;
 		if( !record.valid )
@@ -383,8 +383,8 @@ void idGameLocal::CommitMapTransition()
 		}
 		Printf( "transition_player_depart slot=%d offset=%.9g,%.9g,%.9g health=%d infoHash=%08x\n", i, record.offset.x, record.offset.y, record.offset.z, player->health, record.info.Checksum() );
 	}
-	const transitionVolume_t* volume = mapLandmarks.FindTransitionVolume( transitionState.request.departLandmark );
-	if( g_transitionCarry.GetBool() && transitionState.relative && worldStore.IsActive() && volume != NULL && volume->carryAll )
+	const transitionVolume_t* volume = mapLandmarks.FindTransitionVolume( partyTransition.request.departLandmark );
+	if( g_transitionCarry.GetBool() && partyTransition.relative && worldStore.IsActive() && volume != NULL && volume->carryAll )
 	{
 		// Transition-only fixed scratch. Bound teams are ranked as a unit; no frame allocation.
 		idEntity** touching = transitionCarryScratch.touching;
@@ -486,7 +486,7 @@ void idGameLocal::CommitMapTransition()
 			{
 				continue;
 			}
-			transitionCarry_t& record = transitionState.carry[transitionState.count++];
+			transitionCarry_t& record = partyTransition.carry[partyTransition.count++];
 			record.length = bytes.Length();
 			memcpy( record.bytes, bytes.GetDataPtr(), record.length );
 			record.entity = i;
@@ -505,27 +505,27 @@ void idGameLocal::CommitMapTransition()
 	worldStore.SetContinue( worldStore.IsActive() );
 	worldStore.CommitCurrentMap();
 	common->ReportTransitionMetric( TRANSITION_CARRY_US, Sys_Microseconds() - carryStart );
-	sessionCommand = transitionState.relative ? "transition " : "map ";
-	sessionCommand += transitionState.request.nextMap;
+	sessionCommand = partyTransition.relative ? "transition " : "map ";
+	sessionCommand += partyTransition.request.nextMap;
 	int playerCount = 0;
-	for( int i = 0; i < MAX_CLIENTS; i++ ) { playerCount += transitionState.players[i].valid ? 1 : 0; }
-	Printf( "transition_commit players=%d carry=%d map=%s\n", playerCount, transitionState.count, transitionState.request.nextMap.c_str() );
+	for( int i = 0; i < MAX_CLIENTS; i++ ) { playerCount += partyTransition.players[i].valid ? 1 : 0; }
+	Printf( "transition_commit players=%d carry=%d map=%s\n", playerCount, partyTransition.count, partyTransition.request.nextMap.c_str() );
 }
 
 void idGameLocal::ApplyTransitionCarry()
 {
-	if( !transitionState.active || transitionState.carryApplied || common->IsClient() )
+	if( !partyTransition.active || partyTransition.carryApplied || common->IsClient() )
 	{
 		return;
 	}
-	const landmark_t* arrival = mapLandmarks.FindLandmark( transitionState.request.arrivalLandmark );
+	const landmark_t* arrival = mapLandmarks.FindLandmark( partyTransition.request.arrivalLandmark );
 	idVec3 origin;
 	if( arrival != NULL )
 	{
 		origin = arrival->origin;
 		if( !arrival->axis.Compare( mat3_identity ) )
 		{
-			transitionState.rotationIgnored++;
+			partyTransition.rotationIgnored++;
 			Warning( "transition: arrival rotation ignored" );
 		}
 	}
@@ -535,7 +535,7 @@ void idGameLocal::ApplyTransitionCarry()
 		int player = -1;
 		for( int i = 0; i < MAX_CLIENTS; i++ )
 		{
-			if( transitionState.players[i].placed )
+			if( partyTransition.players[i].placed )
 			{
 				player = i; break;
 			}
@@ -544,13 +544,13 @@ void idGameLocal::ApplyTransitionCarry()
 		{
 			return;
 		}
-		origin = transitionState.players[player].actual;
+		origin = partyTransition.players[player].actual;
 		Warning( "transition: no arrival landmark; carry uses stock player spawn" );
 	}
 	bool allApplied = true;
-	for( int i = 0; i < transitionState.count; i++ )
+	for( int i = 0; i < partyTransition.count; i++ )
 	{
-		transitionCarry_t& record = transitionState.carry[i];
+		transitionCarry_t& record = partyTransition.carry[i];
 		if( record.applied )
 		{
 			continue;
@@ -564,36 +564,36 @@ void idGameLocal::ApplyTransitionCarry()
 			Warning( "transition: carry %d could not spawn; record retained", i );
 		}
 	}
-	for( int i = 0; i < transitionState.count; i++ )
+	for( int i = 0; i < partyTransition.count; i++ )
 	{
-		idEntity* ent = transitionState.carry[i].spawned.GetEntity();
-		if( ent == NULL || transitionState.carry[i].master < 0 )
+		idEntity* ent = partyTransition.carry[i].spawned.GetEntity();
+		if( ent == NULL || partyTransition.carry[i].master < 0 )
 		{
 			continue;
 		}
-		for( int j = 0; j < transitionState.count; j++ )
+		for( int j = 0; j < partyTransition.count; j++ )
 		{
-			idEntity* master = transitionState.carry[j].spawned.GetEntity();
-			if( master == NULL || transitionState.carry[j].entity != transitionState.carry[i].master )
+			idEntity* master = partyTransition.carry[j].spawned.GetEntity();
+			if( master == NULL || partyTransition.carry[j].entity != partyTransition.carry[i].master )
 			{
 				continue;
 			}
-			if( transitionState.carry[i].joint != INVALID_JOINT )
+			if( partyTransition.carry[i].joint != INVALID_JOINT )
 			{
-				ent->BindToJoint( master, static_cast<jointHandle_t>( transitionState.carry[i].joint ), transitionState.carry[i].orientated );
+				ent->BindToJoint( master, static_cast<jointHandle_t>( partyTransition.carry[i].joint ), partyTransition.carry[i].orientated );
 			}
-			else if( transitionState.carry[i].body >= 0 )
+			else if( partyTransition.carry[i].body >= 0 )
 			{
-				ent->BindToBody( master, transitionState.carry[i].body, transitionState.carry[i].orientated );
+				ent->BindToBody( master, partyTransition.carry[i].body, partyTransition.carry[i].orientated );
 			}
 			else
 			{
-				ent->Bind( master, transitionState.carry[i].orientated );
+				ent->Bind( master, partyTransition.carry[i].orientated );
 			}
 			break;
 		}
 	}
-	transitionState.carryApplied = allApplied;
+	partyTransition.carryApplied = allApplied;
 }
 
 static bool TransitionPositionClear( const transitionPlayer_t& record, const idVec3& origin )
@@ -612,7 +612,7 @@ static bool TransitionPositionClear( const transitionPlayer_t& record, const idV
 	bounds.FromTransformedBounds( record.bounds, origin, record.axis );
 	for( int i = 0; i < MAX_CLIENTS; i++ )
 	{
-		const transitionPlayer_t& other = transitionState.players[i];
+		const transitionPlayer_t& other = partyTransition.players[i];
 		if( !other.valid || !other.placed )
 		{
 			continue;
@@ -631,15 +631,15 @@ bool idGameLocal::SelectTransitionSpawn( idPlayer* player, idVec3& origin, idAng
 {
 	const int index = TransitionPlayerIndex( player->entityNumber );
 	//puncho - transitions (stage 3 review): a respawn on the departure map during the co-op drain is not an arrival
-	if( !transitionState.active || !transitionState.relative || index < 0 || transitionState.players[index].placed || common->IsTransitionDraining() )
+	if( !partyTransition.active || !partyTransition.relative || index < 0 || partyTransition.players[index].placed || common->IsTransitionDraining() )
 	{
 		return false;
 	}
-	transitionPlayer_t& record = transitionState.players[index];
-	const landmark_t* arrival = mapLandmarks.FindLandmark( transitionState.request.arrivalLandmark );
+	transitionPlayer_t& record = partyTransition.players[index];
+	const landmark_t* arrival = mapLandmarks.FindLandmark( partyTransition.request.arrivalLandmark );
 	if( arrival == NULL )
 	{
-		Warning( "transition: arrival '%s' missing; ordinary spawn", transitionState.request.arrivalLandmark.c_str() );
+		Warning( "transition: arrival '%s' missing; ordinary spawn", partyTransition.request.arrivalLandmark.c_str() );
 		return false;
 	}
 	origin = arrival->origin + record.offset;
@@ -655,7 +655,7 @@ bool idGameLocal::SelectTransitionSpawn( idPlayer* player, idVec3& origin, idAng
 			for( int i = 0; i < mapFile->GetNumEntities(); i++ )
 			{
 				const idDict& args = mapFile->GetEntity( i )->epairs;
-				if( idStr::Icmp( args.GetString( "classname" ), "info_landing" ) || idStr::Icmp( args.GetString( "landmark" ), transitionState.request.arrivalLandmark ) )
+				if( idStr::Icmp( args.GetString( "classname" ), "info_landing" ) || idStr::Icmp( args.GetString( "landmark" ), partyTransition.request.arrivalLandmark ) )
 				{
 					continue;
 				}
@@ -681,7 +681,7 @@ bool idGameLocal::SelectTransitionSpawn( idPlayer* player, idVec3& origin, idAng
 				clear = true; break;
 			}
 		}
-		transitionState.fallback++;
+		partyTransition.fallback++;
 	}
 	if( !clear )
 	{
@@ -695,27 +695,27 @@ bool idGameLocal::SelectTransitionSpawn( idPlayer* player, idVec3& origin, idAng
 bool idGameLocal::RestoreTransitionPlayerInfo( int clientNum )
 {
 	const int index = TransitionPlayerIndex( clientNum );
-	if( !transitionState.active || index < 0 )
+	if( !partyTransition.active || index < 0 )
 	{
 		return false;
 	}
-	persistentPlayerInfo[clientNum] = transitionState.players[index].info;
+	persistentPlayerInfo[clientNum] = partyTransition.players[index].info;
 	return true;
 }
 
 void idGameLocal::FinishTransitionSpawn( idPlayer* player )
 {
 	const int index = TransitionPlayerIndex( player->entityNumber );
-	if( !transitionState.active || index < 0 || transitionState.players[index].placed || common->IsTransitionDraining() )
+	if( !partyTransition.active || index < 0 || partyTransition.players[index].placed || common->IsTransitionDraining() )
 	{
 		return;
 	}
-	transitionPlayer_t& record = transitionState.players[index];
+	transitionPlayer_t& record = partyTransition.players[index];
 	record.actual = player->GetPhysics()->GetOrigin();
 	record.placed = true;
-	if( transitionState.arrivalStart == 0 )
+	if( partyTransition.arrivalStart == 0 )
 	{
-		transitionState.arrivalStart = Max( 1, Sys_Milliseconds() );
+		partyTransition.arrivalStart = Max( 1, Sys_Milliseconds() );
 	}
 	if( record.selected )
 	{
@@ -735,11 +735,11 @@ void idGameLocal::FinishTransitionSpawn( idPlayer* player )
 // transition still holds them (WorldStore.h)
 int TransitionCarryRecords( const byte* records[], int lengths[], int max )
 {
-	const int count = Min( transitionState.count, max );
+	const int count = Min( partyTransition.count, max );
 	for( int i = 0; i < count; i++ )
 	{
-		records[i] = transitionState.carry[i].bytes;
-		lengths[i] = transitionState.carry[i].length;
+		records[i] = partyTransition.carry[i].bytes;
+		lengths[i] = partyTransition.carry[i].length;
 	}
 	return count;
 }
@@ -748,10 +748,10 @@ int TransitionCarryRecords( const byte* records[], int lengths[], int max )
 void idGameLocal::ListTransition() const
 {
 	common->ListTransitionNetwork();
-	Printf( "transition pending=%d active=%d map=%s carry=%d bytes=%d fallback=%d rotation_ignored=%d\n", transitionState.pending, transitionState.active, transitionState.request.nextMap.c_str(), transitionState.count, ( int )sizeof( transitionState ), transitionState.fallback, transitionState.rotationIgnored );
+	Printf( "transition pending=%d active=%d map=%s carry=%d bytes=%d fallback=%d rotation_ignored=%d\n", partyTransition.pending, partyTransition.active, partyTransition.request.nextMap.c_str(), partyTransition.count, ( int )sizeof( partyTransition ), partyTransition.fallback, partyTransition.rotationIgnored );
 	for( int i = 0; i < MAX_CLIENTS; i++ )
 	{
-		const transitionPlayer_t& p = transitionState.players[i];
+		const transitionPlayer_t& p = partyTransition.players[i];
 		if( p.valid )
 		{
 			Printf( " player %d placed=%d expected=%s actual=%s\n", i, p.placed, p.expected.ToString(), p.actual.ToString() );
@@ -762,18 +762,18 @@ void idGameLocal::ListTransition() const
 bool idGameLocal::PrepareTransitionPlayerSpawn( idPlayer* player )
 {
 	const int index = TransitionPlayerIndex( player->entityNumber );
-	if( !transitionState.active || index < 0 )
+	if( !partyTransition.active || index < 0 )
 	{
 		return false;
 	}
 	player->spectator = player->entityNumber;
-	player->spectating = transitionState.players[index].spectating;
-	player->wantSpectate = transitionState.players[index].wantSpectate;
+	player->spectating = partyTransition.players[index].spectating;
+	player->wantSpectate = partyTransition.players[index].wantSpectate;
 	player->forceRespawn = false;
 	return true;
 }
 
 bool idGameLocal::IsMapTransitionActive() const
 {
-	return transitionState.pending || transitionState.active;
+	return partyTransition.pending || partyTransition.active;
 }

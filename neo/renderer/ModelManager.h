@@ -142,6 +142,9 @@ public:
 	// returns NULL if not loadable
 	virtual	idRenderModel* 	CheckModel( const char* modelName ) = 0;
 
+	//puncho - P2b.1.6: true when the model is in the list and loaded; never loads, reloads or marks it referenced
+	virtual bool			IsResident( const char* modelName ) const = 0;
+
 	// returns the default cube model
 	virtual	idRenderModel* 	DefaultModel() = 0;
 

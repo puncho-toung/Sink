@@ -248,6 +248,7 @@ public:
 	idFile* 				GetResourceFile( const char* fileName, bool memFile, int layer );
 	bool					GetResourceCacheEntry( const char* fileName, idResourceCacheEntry& rc, int layer = -1 );
 	virtual int				ReadFromBGL( idFile* _resourceFile, void* _buffer, int _offset, int _len );
+	virtual unsigned int	GetReadBytes() const;
 	virtual bool			IsBinaryModel( const idStr& resName ) const;
 	virtual bool			IsSoundSample( const idStr& resName ) const;
 	virtual void			FreeResourceBuffer()
@@ -405,6 +406,8 @@ idCVar	fs_enableBackgroundCaching( "fs_enableBackgroundCaching", "1", CVAR_SYSTE
 idFileSystemLocal	fileSystemLocal;
 idFileSystem* 		fileSystem = &fileSystemLocal;
 
+extern thread_local bool fileReadContainer;	// File.cpp; ReadFromBGL sets it, and FileReadBytes leaves those reads out
+
 //puncho start - P2b.1.0: fs_traceOpens <file> writes a line for each read open OpenFileReadFlags or
 // OpenFileReadFromLayer serves, "<source> <path> <length>" with the source loose, zip, resource or prefetch, and a line
 // for each ResolveForRead that resolves or misses every layer, "resolve <kind> <path> <length>", so a load's opens, their
@@ -507,12 +510,21 @@ int idFileSystemLocal::ReadFromBGL( idFile* _resourceFile, void* _buffer, int _o
 	{
 		_resourceFile->Seek( _offset, FS_SEEK_SET );
 	}
-	extern thread_local bool fileReadContainer;
 	const bool previous = fileReadContainer;
 	fileReadContainer = true;
 	const int result = _resourceFile->Read( _buffer, _len );
 	fileReadContainer = previous;
 	return result;
+}
+
+/*
+================
+idFileSystemLocal::GetReadBytes
+================
+*/
+unsigned int idFileSystemLocal::GetReadBytes() const
+{
+	return FileReadBytes();
 }
 
 /*

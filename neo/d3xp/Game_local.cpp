@@ -7452,6 +7452,7 @@ void idGameLocal::GetMapStats( mapGameStats_t& stats ) const
 	stats.recordApplyUs = worldStore.applyUs;
 	stats.cmModels = collisionModelManager->GetNumModels();
 	stats.skipStatics = skipReplicatedStatics;
+	stats.skipStaticsCap = net_maxSkipReplicatedStatics.GetInteger();
 	stats.pvsBytes = pvs.GetMapBytes();
 	stats.pvsMilliseconds = pvs.GetInitMilliseconds();
 	clipStats_t current;
@@ -7483,4 +7484,9 @@ void idGameLocal::GetMapStats( mapGameStats_t& stats ) const
 		stats.aasCacheEvictions += evictions;
 		stats.aasTravelSaturated += saturated;
 	}
+}
+
+bool idGameLocal::RefusesMapWithPeers() const
+{
+	return net_refuseMapWithPeers.GetBool();
 }

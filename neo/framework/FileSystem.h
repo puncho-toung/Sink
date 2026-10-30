@@ -251,7 +251,7 @@ public:
 	virtual void			UnloadResourceContainer( const char* name ) = 0;
 	virtual void			StartPreload( const idStrList& _preload ) = 0;
 	virtual void			StopPreload() = 0;
-	virtual unsigned int GetReadBytes() const { return FileReadBytes(); }
+	virtual unsigned int	GetReadBytes() const = 0;
 	virtual int				ReadFromBGL( idFile* _resourceFile, void* _buffer, int _offset, int _len ) = 0;
 	virtual bool			IsBinaryModel( const idStr& resName ) const = 0;
 	virtual bool			IsSoundSample( const idStr& resName ) const = 0;

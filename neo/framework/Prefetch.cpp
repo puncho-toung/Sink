@@ -255,7 +255,7 @@ static void Prefetch_AddPreload( const preloadEntry_s& p )
 	}
 	else if( p.resType == PRELOAD_MODEL )
 	{
-		if( Prefetch_ModelResident( p.resourceName ) ) { return; }
+		if( renderModelManager->IsResident( p.resourceName ) ) { return; }
 		name = "generated/rendermodels/";
 		name += p.resourceName;
 		idStr extension;
@@ -264,7 +264,7 @@ static void Prefetch_AddPreload( const preloadEntry_s& p )
 	}
 	else if( p.resType == PRELOAD_SAMPLE )
 	{
-		if( Prefetch_SampleResident( p.resourceName ) ) { return; }
+		if( soundSystem->IsSampleResident( p.resourceName ) ) { return; }
 		name = "generated/";
 		name += p.resourceName;
 		name.SetFileExtension( "idwav" );

@@ -99,7 +99,7 @@ bool ValidDiagnosticName( const char* name )
 	return true;
 }
 
-void FormatMapRows( char rows[6][256], bool high[6] )
+void idCommonLocal::FormatMapRows( char rows[6][256], bool high[6] ) const
 {
 	renderMapStats_t r = {};
 	mapGameStats_t g = {};
@@ -108,7 +108,7 @@ void FormatMapRows( char rows[6][256], bool high[6] )
 	{
 		game->GetMapStats( g );
 	}
-	const int cap = cvarSystem->GetCVarInteger( "net_maxSkipReplicatedStatics" );
+	const int cap = g.skipStaticsCap;
 	idStr::snPrintf( rows[0], 256, "MAP static vtx %llu/%llu idx %llu/%llu KB frame %llu/65536 KB", ( unsigned long long )( r.staticVertexBytes / 1024 ), ( unsigned long long )( r.staticVertexCapacity / 1024 ), ( unsigned long long )( r.staticIndexBytes / 1024 ), ( unsigned long long )( r.staticIndexCapacity / 1024 ), ( unsigned long long )( r.frameBytes / 1024 ) );
 	idStr::snPrintf( rows[1], 256, "MAP handles entities %d/%d lights %d/%d probes %d/%d interactions %llu KB %dx%d", r.entityDefs, r.entityCapacity, r.lightDefs, r.lightCapacity, r.envprobeDefs, r.probeCapacity, ( unsigned long long )( r.interactionBytes / 1024 ), r.interactionWidth, r.interactionHeight );
 	idStr::snPrintf( rows[2], 256, "MAP world areas %d portals %d/20800 pvs %llu KB %d ms lightgrid %llu KB", r.areas, r.portals, ( unsigned long long )( g.pvsBytes / 1024 ), g.pvsMilliseconds, ( unsigned long long )( r.lightGridBytes / 1024 ) );
@@ -738,7 +738,7 @@ void idCommonLocal::ProcessGameReturn( const gameReturn_t& ret )
 
 		//puncho - transitions (stage 3 review): the acting game-state lobby, as the co-op branch above, the transition hold
 		// and the game's BeginMapTransition use, and a refusal releases the committed crossing
-		if( cvarSystem->GetCVarBool( "net_refuseMapWithPeers" ) && IsMultiplayer() &&
+		if( game->RefusesMapWithPeers() && IsMultiplayer() &&
 			session->GetActingGameStateLobbyBase().HasActivePeers() &&
 			( !idStr::Icmp( args.Argv( 0 ), "map" ) || !idStr::Icmp( args.Argv( 0 ), "transition" ) || !idStr::Icmp( args.Argv( 0 ), "devmap" ) ) )
 		{
@@ -1073,13 +1073,13 @@ void idCommonLocal::Frame()
 			mapSpawnData.savegameFile = NULL;
 			mapSpawnData.persistentPlayerInfo.Clear();
 			mapSpawnData.worldTimeBase = 0;
-			if( transitionState == 0 )
+			if( loadTransition == 0 )
 			{
 				mapSpawnData.gameDriven = false;
 			}
 			return;
 		}
-		else if( session->GetState() != idSession::INGAME && mapSpawned && transitionState == 0 )
+		else if( session->GetState() != idSession::INGAME && mapSpawned && loadTransition == 0 )
 		{
 			// If the game is running, but the session reports we are not in a game, disconnect
 			// This happens when a server disconnects us or we sign out
@@ -1096,7 +1096,7 @@ void idCommonLocal::Frame()
 		}
 
 		ExecuteReliableMessages();
-		if( transitionState != 0 )
+		if( loadTransition != 0 )
 		{
 			numGameFrames = 0;
 			gameTimeResidual = 0;
@@ -1208,7 +1208,7 @@ void idCommonLocal::Frame()
 
 		// Now that we have an updated game frame, we can send out new snapshots to our clients
 		session->Pump(); // Pump to get updated usercmds to relay
-		if( transitionState != 1 && transitionState != 3 )
+		if( loadTransition != 1 && loadTransition != 3 )
 		{
 			SendSnapshots();
 		}

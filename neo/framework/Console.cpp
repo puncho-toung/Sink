@@ -491,7 +491,7 @@ float idConsoleLocal::DrawFPS( float y )
 		{
 			char rows[6][256];
 			bool high[6];
-			FormatMapRows( rows, high );
+			commonLocal.FormatMapRows( rows, high );
 			for( int i = 0; i < 6; i++ )
 			{
 				ImGui::TextColored( high[i] ? ImVec4( 1, 0.2f, 0.2f, 1 ) : colorLtGrey, "%s", rows[i] );

@@ -610,7 +610,7 @@ bool idSoundWorldLocal::IsCarriedEmitter( const idSoundEmitter* emitter ) const
 
 bool idSoundWorldLocal::CarryEmitter( idSoundEmitter* emitter, const char* shader )
 {
-	if( !s_transitionCarry.GetBool() || cvarSystem->GetCVarInteger( "com_levelKeep" ) < 1 || emitter == NULL || idStr::Length( shader ) >= 256 )
+	if( !s_transitionCarry.GetBool() || common->GetLevelKeep() < 1 || emitter == NULL || idStr::Length( shader ) >= 256 )
 	{
 		return false;
 	}
@@ -665,7 +665,7 @@ void idSoundWorldLocal::TransitionArrival()
 
 void idSoundWorldLocal::ClearAllSoundEmitters()
 {
-	if( !common->IsGameDrivenLoad() || !s_transitionCarry.GetBool() || cvarSystem->GetCVarInteger( "com_levelKeep" ) < 1 )
+	if( !common->IsGameDrivenLoad() || !s_transitionCarry.GetBool() || common->GetLevelKeep() < 1 )
 	{
 		memset( transitionEmitters, 0, sizeof( transitionEmitters ) );
 	}

@@ -72,7 +72,6 @@ enum loadPhase_t
 	LOAD_PHASE_COUNT
 };
 
-void FormatMapRows( char rows[6][256], bool high[6] );
 bool ValidDiagnosticName( const char* name );
 
 extern idCVar com_engineHz;
@@ -321,7 +320,6 @@ enum transitionMetric_t
 class idCommon
 {
 public:
-	virtual void LoadPhase( loadPhase_t phase ) {}
 	virtual bool IsSaveGameLoad() const { return false; }
 	virtual bool IsGameDrivenLoad() const { return false; }
 	virtual void PrefetchMap( const char* name ) {}
@@ -335,6 +333,13 @@ public:
 	static void PreloadManifestName( const char* map, idStr& result );
 
 	virtual						~idCommon() {}
+
+	virtual void LoadPhase( loadPhase_t phase ) {}
+	//puncho start - P2b.1.6: com_levelKeep as set, for the game and the sound system (LevelKeepGrace is the load-gated grace)
+	virtual int GetLevelKeep() const { return 0; }
+	// the six MAP rows of com_showFPS 5 and listMap; high[i] is set when row i is near a cap
+	virtual void FormatMapRows( char rows[6][256], bool high[6] ) const {}
+	//puncho end
 
 	// Initialize everything.
 	// if the OS allows, pass argc/argv directly (without executable name)

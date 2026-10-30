@@ -144,6 +144,10 @@ idCVar g_weaponShadows( "g_weaponShadows", "1", CVAR_BOOL | CVAR_ARCHIVE, "UNUSE
 
 extern idCVar cg_predictedSpawn_debug;
 extern idCVar g_projectileCatchUp;	// Projectile.cpp
+extern idCVar net_ucmdRate;	//puncho - OQ-B6: the catch-up lead bound's inputs (framework/Common_network.cpp)
+extern idCVar net_maxBufferedSnapMS;
+extern idCVar net_minBufferedSnapPCT_Static;
+extern idCVar net_minBufferedSnapWinPCT_Static;
 
 /***********************************************************************
 
@@ -4187,10 +4191,6 @@ void idWeapon::Event_LaunchProjectiles( int num_projectiles, float spread, float
 				// An honest lead is inside it and a claimed older view is cut to it; maxCatchup stays the outer cap and a
 				// view from the future gives 0. The round trip comes from echoes the client sends, so the bound holds an
 				// unmodified client; a modified one that delays its echoes still reaches the cap, as before
-				extern idCVar net_ucmdRate;
-				extern idCVar net_maxBufferedSnapMS;
-				extern idCVar net_minBufferedSnapPCT_Static;
-				extern idCVar net_minBufferedSnapWinPCT_Static;
 				const int rawDelta = gameLocal.GetServerGameTimeMs() - serverTimeOnClient;
 				const int rttMs = session->GetActingGameStateLobbyBase().GetLobbyUserQoS( gameLocal.lobbyUserIDs[ owner->entityNumber ] );
 				const int snapMs = common->GetSnapRate();

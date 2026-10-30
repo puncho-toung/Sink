@@ -566,6 +566,7 @@ public:
 	void					FreeVoice( idSoundVoice* );
 
 	idSoundSample* 			LoadSample( const char* name );
+	virtual bool			IsSampleResident( const char* name ) const;
 
 	virtual void			Preload( idPreloadManifest& preload );
 

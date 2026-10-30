@@ -466,11 +466,13 @@ public:
 	void FlushTransitionTimeline();
 	virtual void ListTransitionNetwork() const;
 	virtual void NotifyMapTransition( unsigned short sequence, const char* map );
-	virtual bool IsTransitionDraining() const { return transitionState == 1; }
+	virtual bool IsTransitionDraining() const { return loadTransition == 1; }
 	bool BeginCoopTransition( const char* map );
 	void PumpMapTransition();
 	bool PrepareMatchGameData( idMatchParameters& parms );
 	virtual int LevelKeepGrace() const;
+	virtual int GetLevelKeep() const;
+	virtual void FormatMapRows( char rows[6][256], bool high[6] ) const;
 	virtual void ReportLevelCache( int manager, int loaded, int kept, int purged, int pinned, int64 bytes );
 	virtual bool IsLevelAssetPinned( int type, const char* name, int filter = -1, int repeat = -1, int usage = -1, int cubeMap = -1 ) const;
 	virtual void				LoadPacifierInfo( VERIFY_FORMAT_STRING const char* fmt, ... );
@@ -581,7 +583,7 @@ private:
 	mapSpawnData_t		mapSpawnData;
 	int					transitionLoadStartTime;
 	int					transitionGuiDraws;
-	int transitionState, transitionStateTime;
+	int loadTransition, loadTransitionTime;
 	int transitionArrivalSnapshotTime;
 	unsigned short transitionSequence, transitionLastAccepted;
 	bool transitionLoaded;

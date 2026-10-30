@@ -203,6 +203,7 @@ struct snapStats_t
 struct mapGameStats_t
 {
 	int entities, activeEntities, nonReplicated, cmModels, skipStatics;
+	int skipStaticsCap;	//puncho - P2b.1.6: net_maxSkipReplicatedStatics (0 = no cap), so the framework reads no game cvar
 	uint64 pvsBytes;
 	int pvsMilliseconds;
 	unsigned int clipTrans, clipRot, clipMotion, clipContents, clipContacts, clipGathers, clipCandidates, clipRmt, clipUs;
@@ -380,6 +381,8 @@ public:
 	{
 		return false;
 	}
+	//puncho - P2b.1.6: net_refuseMapWithPeers, read by idCommonLocal::ProcessGameReturn on the main thread
+	virtual bool RefusesMapWithPeers() const = 0;
 	virtual void BroadcastMapTransition( unsigned short sequence, const char* map )
 	{
 	}
@@ -583,7 +586,7 @@ extern idGameEdit* 				gameEdit;
 ===============================================================================
 */
 
-const int GAME_API_VERSION		= 11; // P2: transition and dungeon recipe interfaces
+const int GAME_API_VERSION		= 12; // P2b stage 1: GetLevelKeep, RefusesMapWithPeers, FormatMapRows virtual, bool SaveGame
 
 typedef struct
 {

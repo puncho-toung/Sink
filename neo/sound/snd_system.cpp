@@ -449,19 +449,21 @@ void idSoundSystemLocal::FreeVoice( idSoundVoice* voice )
 
 /*
 ========================
-idSoundSystemLocal::LoadSample
+idSoundSystemLocal::IsSampleResident
+
+Resident-only lookup: no load or reference side effects.
 ========================
 */
-bool Prefetch_SampleResident( const char* name )
+bool idSoundSystemLocal::IsSampleResident( const char* name ) const
 {
 	idStrStatic<MAX_OSPATH> canonical = name;
 	canonical.ToLower();
 	canonical.BackSlashesToSlashes();
 	canonical.StripFileExtension();
 	const int key = idStr::Hash( canonical );
-	for( int i = soundSystemLocal.sampleHash.First( key ); i != -1; i = soundSystemLocal.sampleHash.Next( i ) )
+	for( int i = sampleHash.First( key ); i != -1; i = sampleHash.Next( i ) )
 	{
-		const idSoundSample* sample = soundSystemLocal.samples[i];
+		const idSoundSample* sample = samples[i];
 		if( !idStr::Cmp( sample->GetName(), canonical ) )
 		{
 			return sample->IsLoaded();
@@ -470,6 +472,11 @@ bool Prefetch_SampleResident( const char* name )
 	return false;
 }
 
+/*
+========================
+idSoundSystemLocal::LoadSample
+========================
+*/
 idSoundSample* idSoundSystemLocal::LoadSample( const char* name )
 {
 	DeclMediaLookup();

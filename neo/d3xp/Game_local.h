@@ -622,6 +622,7 @@ public:
 	virtual void BroadcastMapTransition( unsigned short sequence, const char* map ) override;
 	virtual bool ReceiveMapTransition( int type, const idBitMsg& msg ) override;
 	virtual bool IsMapTransitionActive() const override;
+	virtual bool RefusesMapWithPeers() const override;
 	bool PrepareTransitionPlayerSpawn( idPlayer* player );
 	bool BeginMapTransition( const mapTransition_t& transition );
 	void CommitMapTransition();
