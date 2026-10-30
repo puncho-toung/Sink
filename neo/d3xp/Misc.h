@@ -670,6 +670,7 @@ public:
 
 	void					Save( idSaveGame* savefile ) const;
 	void					Restore( idRestoreGame* savefile );
+	virtual void			WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const;	//puncho - P2b.1.2 (review): no Pose
 
 private:
 	idPhysics_Parametric	physicsObj;

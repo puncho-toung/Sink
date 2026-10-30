@@ -17,6 +17,14 @@ struct mapTransition_t
 // buffer (Game_transition.cpp) is the same 168
 static const int MAX_WORLD_CREATED_CARRY_BYTES = 168;
 
+//puncho start - P2b.1.2: recordDump's view of the last transition's carried created entries while the transition holds
+// them, from its commit to the next ClearMapTransition (Game_transition.cpp, whose MAX_TRANSITION_CARRY this equals)
+static const int MAX_TRANSITION_CARRY_RECORDS = 64;
+#if !defined( ID_RETAIL )
+	int TransitionCarryRecords( const byte* records[], int lengths[], int max );
+#endif
+//puncho end
+
 //puncho - P2.4 (bug review 2026-10-28): the removed bits are indexed by map ordinal, which the host and every client
 // share, not by spawned row, which differs when one side skips or fails a spawn; BeginSpawn bounds ordinals by 65535
 static const int MAX_WORLD_MAP_ORDINALS = 65536;
@@ -173,7 +181,7 @@ public:
 private:
 	void Commit( bool leaving );
 	bool EncodeCreated( idEntity* ent, const recordFrame_t& frame, idFile_Memory& out, bool assign );
-	idEntity* SpawnCreatedEntry( const char* def, uint64 id, int64 when, idRecordIn& rec, const recordFrame_t& frame );	//puncho - P2b.1.2
+	idEntity* SpawnCreatedEntry( const char* unit, const char* def, uint64 id, int64 when, idRecordIn& rec, const recordFrame_t& frame );	//puncho - P2b.1.2
 	bool continueNextLoad;
 	idStr worldName;
 	uint64 instanceId;

@@ -167,7 +167,8 @@ void RecordFrameEntry( const byte* data, uint32 recordCellId, const recordFrame_
 {
 	int consumed;
 	rec.Begin( frame, recordCellId, entry.created, defName );
-	rec.ReadSections( data + entry.sectionsOffset, entry.sectionsLength, entry.numSections, consumed );
+	// the scan framed these bytes already
+	verify( rec.ReadSections( data + entry.sectionsOffset, entry.sectionsLength, entry.numSections, consumed ) );
 }
 
 bool RecordScanChunk( const byte* data, int length, uint64 nextIdentity, mrecHeader_t& h, idList<mrecEntry_t, TAG_GAME>& entries, idStr& reason )
@@ -343,7 +344,7 @@ bool idWorldStore::EncodeCreated( idEntity* ent, const recordFrame_t& frame, idF
 		return false;
 	}
 	compile_time_assert( MAX_WORLD_CREATED_CARRY_BYTES == 168 );
-	if( ent->CanCrossTransition() && 8 + 1 + idStr::Length( recordName ) + 8 + 1 + 1 + rec.Length() > MAX_WORLD_CREATED_CARRY_BYTES )
+	if( ent->CanCrossTransition() && MREC_CREATED_HEAD_BYTES + idStr::Length( recordName ) + rec.Length() > MAX_WORLD_CREATED_CARRY_BYTES )
 	{
 		return false;
 	}
@@ -383,6 +384,7 @@ idCorpse* SpawnCorpseRecord( const char* def, idRecordIn& rec, const recordFrame
 	{
 		return NULL;
 	}
+	// the class spawned is the corpse: RecordSectionsFit below is the type check, the AI section fits only an idCorpse
 	idCorpse* corpse = static_cast<idCorpse*>( ent );
 	rec.Rewind();
 	if( !RecordSectionsFit( corpse, rec ) || corpse->ApplyRecord( rec, frame ) != RECORD_APPLIED || !rec.Done() )
@@ -404,19 +406,22 @@ idEntity* idWorldStore::SpawnCreated( idFile_Memory& in, const idMat3& rotation,
 	if( !RecordReadCreatedEntry( in, entry, rec ) )
 	{
 		gameLocal.Warning( "record: carried entry dropped: cannot be framed" );
+		recordInvalid++;
 		return NULL;
 	}
 	if( !RecordCheckEntry( rec, entry.flags, entry.reason ) || entry.name.IsEmpty() )
 	{
 		gameLocal.Warning( "record: carried '%s'#%llu dropped: %s", entry.name.c_str(), ( unsigned long long )entry.createdId, entry.reason.c_str() );
+		recordInvalid++;
 		return NULL;
 	}
 	RecordFrameEntry( ( const byte* )in.GetDataPtr(), CELL_ID_NONE, frame, entry, entry.name, rec );
-	return SpawnCreatedEntry( entry.name, entry.createdId, entry.createdTime, rec, frame );
+	return SpawnCreatedEntry( "carried", entry.name, entry.createdId, entry.createdTime, rec, frame );
 }
 
-// rec holds the entry's checked sections; nothing spawns for an unknown def, an expired lifetime or a reset map
-idEntity* idWorldStore::SpawnCreatedEntry( const char* def, uint64 id, int64 when, idRecordIn& rec, const recordFrame_t& frame )
+// rec holds the entry's checked sections; nothing spawns for an unknown def, an expired lifetime or a reset map, and an
+// entry that cannot be built is dropped, logged against unit
+idEntity* idWorldStore::SpawnCreatedEntry( const char* unit, const char* def, uint64 id, int64 when, idRecordIn& rec, const recordFrame_t& frame )
 {
 	const idDeclEntityDef* declaration = gameLocal.FindEntityDef( def, false );
 	if( declaration == NULL )
@@ -426,7 +431,12 @@ idEntity* idWorldStore::SpawnCreatedEntry( const char* def, uint64 id, int64 whe
 	if( rec.HasSection( RECORD_SECTION_AI ) )
 	{
 		idCorpse* corpse = SpawnCorpseRecord( def, rec, frame );
-		if( corpse != NULL )
+		if( corpse == NULL )
+		{
+			gameLocal.Warning( "record: %s '%s'#%llu dropped: no corpse could be built", unit, def, ( unsigned long long )id );
+			recordInvalid++;
+		}
+		else
 		{
 			const int lifetime = corpse->spawnArgs.GetInt( "persist_lifetime", "-1" );
 			const int64 death = corpse->DeathTime();
@@ -463,86 +473,14 @@ idEntity* idWorldStore::SpawnCreatedEntry( const char* def, uint64 id, int64 whe
 	rec.Rewind();
 	if( !RecordSectionsFit( ent, rec ) || ent->ApplyRecord( rec, frame ) != RECORD_APPLIED || !rec.Done() )
 	{
-		gameLocal.Warning( "record: created '%s'#%llu dropped: its sections do not apply to %s", def, ( unsigned long long )id, ent->GetClassname() );
+		gameLocal.Warning( "record: %s '%s'#%llu dropped: its sections do not apply to %s", unit, def, ( unsigned long long )id, ent->GetClassname() );
+		recordInvalid++;
 		delete ent;
 		return NULL;
 	}
 	return ent;
 }
 
-void RecordCarryBindChildren( const idList<recordPosed_t, TAG_GAME>& posed )
-{
-	if( posed.Num() == 0 )
-	{
-		return;
-	}
-	// the map entities still to bind at spawn; one that moved on its own record keeps its pose
-	idList<recordPosed_t, TAG_GAME> carried = posed;
-	idList<idEntity*, TAG_GAME> pending;
-	for( idEntity* ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
-	{
-		if( ent->mapSpawnIndex < 0 || ent->GetBindMaster() != NULL || ent->spawnArgs.FindKey( "bind" ) == NULL )
-		{
-			continue;
-		}
-		bool moved = false;
-		for( int i = 0; i < posed.Num() && !moved; i++ )
-		{
-			moved = posed[i].ent == ent;
-		}
-		if( !moved )
-		{
-			pending.Append( ent );
-		}
-	}
-	// a pass per bind depth: a child moves with its master, a grandchild with the child
-	for( bool progress = true; progress; )
-	{
-		progress = false;
-		for( int i = 0; i < pending.Num(); i++ )
-		{
-			idEntity* child = pending[i];
-			if( child == NULL )
-			{
-				continue;
-			}
-			const idEntity* master = gameLocal.FindEntity( child->spawnArgs.GetString( "bind" ) );
-			int found = -1;
-			for( int j = 0; j < carried.Num() && found < 0; j++ )
-			{
-				found = carried[j].ent == master ? j : -1;
-			}
-			if( found < 0 )
-			{
-				continue;
-			}
-			const recordPosed_t m = carried[found];
-			recordPosed_t c;
-			c.ent = child;
-			c.fromOrigin = child->GetPhysics()->GetOrigin();
-			c.fromAxis = child->GetPhysics()->GetAxis();
-			// the offset the spawn bind takes: a translation for a master that kept its axis or a bind that ignores it
-			if( m.fromAxis == m.toAxis || !child->spawnArgs.GetBool( "bindOrientated", "1" ) )
-			{
-				c.toOrigin = c.fromOrigin + ( m.toOrigin - m.fromOrigin );
-				c.toAxis = c.fromAxis;
-			}
-			else
-			{
-				const idMat3 rotation = m.fromAxis.Transpose() * m.toAxis;
-				c.toOrigin = m.toOrigin + ( c.fromOrigin - m.fromOrigin ) * rotation;
-				c.toAxis = c.fromAxis * rotation;
-			}
-			child->SetOrigin( c.toOrigin );
-			child->SetAxis( c.toAxis );
-			child->GetPhysics()->PutToRest();
-			carried.Append( c );
-			pending[i] = NULL;
-			progress = true;
-		}
-	}
-}
-//puncho end
 
 void idWorldStore::BindCreatedRecords()
 {

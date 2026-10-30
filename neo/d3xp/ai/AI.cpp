@@ -6939,15 +6939,15 @@ void idAI::Event_SettleCorpse()
 // never comes back as an AI with health <= 0: it records as the corpse it leaves, or as REMOVED when it leaves none
 // (corpses off, gibbed, persist_lifetime 0). A departure can precede the settle event, so the pose is taken from the AI
 // itself (idCorpse::WriteActorPose), at the origin the AI stands at.
+// The parent is still called after SetRemoved, as every override calls it first; a removed entry keeps no section.
 void idAI::WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const
 {
-	if( health <= 0 )
+	if( health <= 0 && ( !g_corpses.GetBool() || gibbed || spawnArgs.GetInt( "persist_lifetime", "-1" ) == 0 ) )
 	{
-		if( !g_corpses.GetBool() || gibbed || spawnArgs.GetInt( "persist_lifetime", "-1" ) == 0 )
-		{
-			rec.SetRemoved();
-			return;
-		}
+		rec.SetRemoved();
+	}
+	else if( health <= 0 )
+	{
 		rec.SetCorpse( GetPhysics()->GetOrigin() );
 	}
 	idActor::WriteRecord( rec, frame );
@@ -6973,6 +6973,10 @@ recordApply_t idAI::ApplyRecord( idRecordIn& rec, const recordFrame_t& frame )
 // anim name past 63 bytes) records the AI as REMOVED, as no corpse could be built from it.
 void idAI::WriteRecordCorpse( idRecordOut& rec ) const
 {
+	if( rec.IsRemoved() )
+	{
+		return;
+	}
 	idFile_Memory pose;
 	// WriteActorPose only reads the actor; its accessors are not const
 	if( !idCorpse::WriteActorPose( const_cast<idAI*>( this ), pose ) )

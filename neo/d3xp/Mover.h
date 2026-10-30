@@ -329,7 +329,8 @@ public:
 	CLASS_PROTOTYPE( idMover_Binary );
 
 	bool RecordAtPosition2() const;
-	void ApplyRecordState( bool position2, bool locked );
+	void ApplyRecordState( bool spawnPosition2, bool locked );
+	void CarryRecordPositions( const idVec3& fromOrigin, const idMat3& rotation, const idVec3& toOrigin, bool rotate );	//puncho - P2b.1.2 (review)
 	//puncho start - P2b.1.2: the map record
 	enum
 	{
@@ -466,6 +467,14 @@ public:
 	bool					IsNoTouch();
 	bool					AllowPlayerOnly( idEntity* ent );
 	void ApplyRecordLock( bool locked );
+	//puncho start - P2b.1.2 (review): whether pos1 and pos2 are a start_open door's swapped pair, the one source of the
+	// swap for RecordAtPosition2 and ApplyRecordState; transient, not saved (Restore derives it)
+	bool					StartOpenSwapped() const
+	{
+		return startOpenSwapped;
+	}
+	bool					ApplyRecordStartOpen();
+	//puncho end
 	int						IsLocked();
 	void					Lock( int f );
 	void					Use( idEntity* other, idEntity* activator );
@@ -489,6 +498,7 @@ private:
 	idStr					syncLock;
 	int						normalAxisIndex;		// door faces X or Y for spectator teleports
 	idDoor* 				companionDoor;
+	bool					startOpenSwapped;		//puncho - P2b.1.2 (review): Event_StartOpen or the record's apply swapped pos1 and pos2
 
 	void					SetAASAreaState( bool closed );
 

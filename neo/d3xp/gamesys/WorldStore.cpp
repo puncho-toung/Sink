@@ -460,7 +460,7 @@ void idWorldStore::Commit( bool leaving )
 		out.length = rowPayloads.Length() - out.offset;
 		if( out.written )
 		{
-			authoredBytes += 9 + idStr::Length( rowName ) + out.length;
+			authoredBytes += MREC_AUTHORED_HEAD_BYTES + idStr::Length( rowName ) + out.length;
 		}
 	}
 	//puncho end
@@ -682,6 +682,108 @@ void idWorldStore::Commit( bool leaving )
 	gameLocal.Printf( "record commit map=%s entries=%d created=%d bytes=%d dropped=%d us=%u\n", name.c_str(), recordEntries, recordCreated, record.Length(), evicted, commitUs );
 }
 
+//puncho start - P2b.1.2: the children that bind at spawn to an entity the record moved
+
+// an entity the record moved (its Pose, a mover's state, an elevator's floor), from its spawn pose to the applied one;
+// posed when its entry held Pose, the one pose a spawn bind must not move again
+struct recordPosed_t
+{
+	idEntity*		ent;
+	idVec3			fromOrigin;
+	idMat3			fromAxis;
+	idVec3			toOrigin;
+	idMat3			toAxis;
+	bool			posed;
+};
+
+// A map entity still to bind at spawn (the "bind" key, bound after the record applies) moves with an entity the record
+// moved, so the spawn bind finds it at its spawn offset from it: a bound entity records no Pose of its own. One whose
+// own MoverState moved it is still in the spawn frame and moves too; a binary mover's pos1 and pos2 go along, or its
+// PostBind would make them local off by the master's move. A pass per bind depth: a grandchild moves with the child.
+static void RecordCarryBindChildren( const idList<recordPosed_t, TAG_GAME>& moved )
+{
+	if( moved.Num() == 0 )
+	{
+		return;
+	}
+	idList<recordPosed_t, TAG_GAME> carried = moved;
+	idList<idEntity*, TAG_GAME> pending;
+	for( idEntity* ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
+	{
+		if( ent->mapSpawnIndex < 0 || ent->GetBindMaster() != NULL || ent->spawnArgs.FindKey( "bind" ) == NULL )
+		{
+			continue;
+		}
+		bool posed = false;
+		for( int i = 0; i < moved.Num() && !posed; i++ )
+		{
+			posed = moved[i].ent == ent && moved[i].posed;
+		}
+		if( !posed )
+		{
+			pending.Append( ent );
+		}
+	}
+	for( bool progress = true; progress; )
+	{
+		progress = false;
+		for( int i = 0; i < pending.Num(); i++ )
+		{
+			idEntity* child = pending[i];
+			if( child == NULL )
+			{
+				continue;
+			}
+			const idEntity* master = gameLocal.FindEntity( child->spawnArgs.GetString( "bind" ) );
+			int found = -1;
+			for( int j = 0; j < carried.Num() && found < 0; j++ )
+			{
+				found = carried[j].ent == master ? j : -1;
+			}
+			if( found < 0 )
+			{
+				continue;
+			}
+			const recordPosed_t m = carried[found];
+			// the offset the spawn bind takes: a translation for a master that kept its axis or a bind that ignores it
+			const bool rotate = m.fromAxis != m.toAxis && child->spawnArgs.GetBool( "bindOrientated", "1" );
+			const idMat3 rotation = rotate ? m.fromAxis.Transpose() * m.toAxis : mat3_identity;
+			const idVec3 origin = child->GetPhysics()->GetOrigin();
+			const idMat3 axis = child->GetPhysics()->GetAxis();
+			const idVec3 toOrigin = rotate ? m.toOrigin + ( origin - m.fromOrigin ) * rotation : origin + ( m.toOrigin - m.fromOrigin );
+			const idMat3 toAxis = rotate ? axis * rotation : axis;
+			child->SetOrigin( toOrigin );
+			child->SetAxis( toAxis );
+			child->GetPhysics()->PutToRest();
+			if( child->IsType( idMover_Binary::Type ) )
+			{
+				static_cast<idMover_Binary*>( child )->CarryRecordPositions( m.fromOrigin, rotation, m.toOrigin, rotate );
+			}
+			// a child the record moved already keeps its spawn pose as the from of its entry: its own children move by
+			// the whole of it
+			int self = -1;
+			for( int j = 0; j < carried.Num() && self < 0; j++ )
+			{
+				self = carried[j].ent == child ? j : -1;
+			}
+			if( self < 0 )
+			{
+				recordPosed_t& c = carried.Alloc();
+				c.ent = child;
+				c.fromOrigin = origin;
+				c.fromAxis = axis;
+				c.posed = false;
+				self = carried.Num() - 1;
+			}
+			carried[self].toOrigin = toOrigin;
+			carried[self].toAxis = toAxis;
+			pending[i] = NULL;
+			progress = true;
+		}
+	}
+}
+//puncho end
+
 void idWorldStore::ApplyCurrentMap()
 {
 	const idMapFile* map = gameLocal.GetLoadedMap();
@@ -849,12 +951,18 @@ void idWorldStore::ApplyCurrentMap()
 			pose.ent = ent;
 			pose.fromOrigin = ent->GetPhysics()->GetOrigin();
 			pose.fromAxis = ent->GetPhysics()->GetAxis();
+			pose.posed = rec.HasField( RECORD_SECTION_ENTITY, idEntity::RF_Pose );
 			const recordApply_t result = ent->ApplyRecord( rec, frame );
 			if( result == RECORD_REPLACED )
 			{
 				rec.Rewind();
 				idCorpse* corpse = SpawnCorpseRecord( ent->GetEntityDefName(), rec, frame );
-				if( corpse != NULL )
+				if( corpse == NULL )
+				{
+					gameLocal.Warning( "record: %s '%s'#%d dropped: no corpse could be built", mapName.c_str(), name.c_str(), ordinal );
+					recordInvalid++;
+				}
+				else
 				{
 					const int lifetime = ent->spawnArgs.GetInt( "persist_lifetime", "-1" );
 					corpse->spawnArgs.SetInt( "persist_lifetime", lifetime );
@@ -873,7 +981,9 @@ void idWorldStore::ApplyCurrentMap()
 			}
 			if( result != RECORD_APPLIED || !rec.Done() )
 			{
-				gameLocal.Warning( "record: %s '%s'#%d dropped: a field did not apply", mapName.c_str(), name.c_str(), ordinal );
+				// a chain that refused the entry before any field applied dropped it; one that failed a later field left
+				// the earlier ones applied
+				gameLocal.Warning( "record: %s '%s'#%d %s", mapName.c_str(), name.c_str(), ordinal, rec.SectionsBegun() == 0 ? "dropped: its fields do not apply" : "partly applied: a field did not apply" );
 				recordInvalid++;
 			}
 			// what the record moved carries the entities that bind to it at spawn
@@ -900,7 +1010,7 @@ void idWorldStore::ApplyCurrentMap()
 				continue;
 			}
 			RecordFrameEntry( data, header.cellId, frame, entry, entry.name, rec );
-			SpawnCreatedEntry( entry.name, entry.createdId, entry.createdTime, rec, frame );
+			SpawnCreatedEntry( mapName, entry.name, entry.createdId, entry.createdTime, rec, frame );
 		}
 		BindCreatedRecords();
 		RecordCarryBindChildren( moved );
@@ -1233,7 +1343,7 @@ static void RecordDumpHex( idFile* out, const char* label, const byte* bytes, in
 //puncho start - P2b.1.2: the decoder on MREC v3's sections and field bits. Per known section, and per field of it, the
 // entries holding it ( [kind][0] ) and not ( [kind][1] ); kind 0 the authored entries, 1 the created; column
 // RECORD_DUMP_FIELDS is the section itself. An authored entry's REMOVED flag is counted as section 0's column
-static const int RECORD_DUMP_SECTIONS = RECORD_SECTION_ELEVATOR + 1;
+static const int RECORD_DUMP_SECTIONS = RECORD_SECTION_LAST + 1;	// every id in use, with column 0 for the REMOVED flag
 static const int RECORD_DUMP_FIELDS = 64;
 
 struct recordDumpTotals_t

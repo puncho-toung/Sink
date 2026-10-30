@@ -29,9 +29,6 @@ If you have questions concerning this license or the applicable additional terms
 #ifndef __GAME_ENTITY_H__
 #define __GAME_ENTITY_H__
 
-#include "gamesys/Schema.h"	//puncho - P2b.1.2: the record lists' RF_ enums expand inside the class bodies
-#include "gamesys/Record.h"	//puncho - P2b.1.2: idRecordOut, idRecordIn, recordFrame_t
-
 /*
 ===============================================================================
 

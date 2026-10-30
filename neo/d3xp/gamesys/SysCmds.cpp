@@ -4043,7 +4043,8 @@ static void Cmd_RecordTest_f( const idCmdArgs& args )
 	// (RecordScanChunk, the record's identity, each entry's check, an authored entry's sections against its entity).
 	// Kinds: a bit flipped, a byte overwritten, a truncation, the version, numEntries, a mask bit past the list, a
 	// reserved flag bit, a header cellId on the reserved layer that is neither 0 nor 1, a section byte count past the
-	// chunk. VERSION/CELL/BYTES must fail scanning; MASK/FLAGS must fail scanning or their targeted entry's check.
+	// chunk, a MIGRATED flag that disagrees with Pose.cellId, a section id twice in an entry. VERSION/CELL/BYTES must
+	// fail scanning; MASK/FLAGS/MIGRATED/SECTION_ID must fail scanning or their targeted entry's check.
 	// ENTRIES and the untargeted kinds may survive as long as nothing crashes. Each unmutated record must
 	// round-trip byte for byte (read, then written again).
 	if( idStr::Icmp( args.Argv( 1 ), "fuzz" ) == 0 && args.Argc() == 4 )
@@ -4076,7 +4077,7 @@ static void Cmd_RecordTest_f( const idCmdArgs& args )
 			idFile_Memory rewritten;
 			roundtrip &= RecordRewriteChunk( bytes.Ptr(), bytes.Num(), nextIdentity, rewritten ) && rewritten.Length() == bytes.Num() && memcmp( rewritten.GetDataPtr(), bytes.Ptr(), bytes.Num() ) == 0;
 		}
-		enum { FUZZ_FLIP, FUZZ_BYTE, FUZZ_TRUNCATE, FUZZ_VERSION, FUZZ_ENTRIES, FUZZ_MASK, FUZZ_FLAGS, FUZZ_CELL, FUZZ_BYTES, FUZZ_KINDS };
+		enum { FUZZ_FLIP, FUZZ_BYTE, FUZZ_TRUNCATE, FUZZ_VERSION, FUZZ_ENTRIES, FUZZ_MASK, FUZZ_FLAGS, FUZZ_CELL, FUZZ_BYTES, FUZZ_MIGRATED, FUZZ_SECTION_ID, FUZZ_KINDS };
 		idRandom rng( seed );
 		int dropped = 0, accepted = 0, missed = 0, skipped = 0;
 		int kinds[FUZZ_KINDS], changed[FUZZ_KINDS];
@@ -4122,7 +4123,7 @@ static void Cmd_RecordTest_f( const idCmdArgs& args )
 				case FUZZ_ENTRIES:
 				{
 					// numEntries, the header's last field: one more or one fewer may still frame; the count is not a check
-					const int at = 56 + worldBytes + unitBytes;
+					const int at = MREC_HEADER_NUMENTRIES_OFFSET + worldBytes + unitBytes;
 					offset = at;
 					const uint32 value = ( uint32 )( header.numEntries + ( RecordFuzzRandom( rng, 2 ) ? 1 : 0xffffffffu ) );
 					for( int b = 0; b < 4; b++ )
@@ -4189,9 +4190,52 @@ static void Cmd_RecordTest_f( const idCmdArgs& args )
 					bytes[offset] |= ( byte )( 1 << ( 2 + RecordFuzzRandom( rng, 6 ) ) );
 					break;
 				}
+				case FUZZ_MIGRATED:
+				{
+					// MIGRATED on an entry whose Pose.cellId is the record's (or that has no Pose, or is created)
+					if( target < 0 )
+					{
+						mustDrop = false;
+						skipped++;
+						break;
+					}
+					offset = entries[target].sectionsOffset - 2;
+					bytes[offset] ^= ( byte )RECORD_ENTRY_MIGRATED;
+					break;
+				}
+				case FUZZ_SECTION_ID:
+				{
+					// an earlier section's id copied into a later one of the same entry: the "section twice" rule
+					idList<int, TAG_GAME> multi;
+					for( int e = 0; e < entries.Num(); e++ )
+					{
+						if( entries[e].numSections >= 2 )
+						{
+							multi.Append( e );
+						}
+					}
+					if( multi.Num() == 0 )
+					{
+						mustDrop = false;
+						skipped++;
+						break;
+					}
+					target = multi[RecordFuzzRandom( rng, multi.Num() )];
+					idList<int, TAG_GAME> headers;
+					int at = entries[target].sectionsOffset;
+					for( int s = 0; s < entries[target].numSections; s++ )
+					{
+						headers.Append( at );
+						at += RECORD_SECTION_HEADER_BYTES + bytes[at + 10] + ( bytes[at + 11] << 8 );
+					}
+					const int later = 1 + RecordFuzzRandom( rng, headers.Num() - 1 );
+					offset = headers[later];
+					bytes[offset] = bytes[headers[RecordFuzzRandom( rng, later )]];
+					break;
+				}
 				case FUZZ_CELL:
 				{
-					const int at = 4 + 1 + worldBytes + 8 + 2;
+					const int at = MREC_HEADER_CELLID_OFFSET + worldBytes;
 					offset = at;
 					const uint32 value = 2 + ( uint32 )RecordFuzzRandom( rng, 0xfffffe );
 					for( int b = 0; b < 4; b++ )
@@ -4229,7 +4273,7 @@ static void Cmd_RecordTest_f( const idCmdArgs& args )
 			}
 			dropped += bad;
 			// VERSION/CELL/BYTES must fail scanning; unrelated invalid entries or node mismatch never satisfy them.
-			const bool hit = !scanned || ( ( kind == FUZZ_MASK || kind == FUZZ_FLAGS ) && targetValid == 0 );
+			const bool hit = !scanned || ( ( kind == FUZZ_MASK || kind == FUZZ_FLAGS || kind == FUZZ_MIGRATED || kind == FUZZ_SECTION_ID ) && targetValid == 0 );
 			if( mustDrop && !hit )
 			{
 				missed++;
@@ -4246,7 +4290,7 @@ static void Cmd_RecordTest_f( const idCmdArgs& args )
 			}
 		}
 		const bool pass = corpusValid && covered && roundtrip && missed == 0 && count > 0;
-		gameLocal.Printf( "RECORD_FUZZ kinds flip=%d byte=%d truncate=%d version=%d entries=%d mask=%d flags=%d cell=%d bytes=%d skipped=%d missed=%d\n", kinds[FUZZ_FLIP], kinds[FUZZ_BYTE], kinds[FUZZ_TRUNCATE], kinds[FUZZ_VERSION], kinds[FUZZ_ENTRIES], kinds[FUZZ_MASK], kinds[FUZZ_FLAGS], kinds[FUZZ_CELL], kinds[FUZZ_BYTES], skipped, missed );
+		gameLocal.Printf( "RECORD_FUZZ kinds flip=%d byte=%d truncate=%d version=%d entries=%d mask=%d flags=%d cell=%d bytes=%d migrated=%d section=%d skipped=%d missed=%d\n", kinds[FUZZ_FLIP], kinds[FUZZ_BYTE], kinds[FUZZ_TRUNCATE], kinds[FUZZ_VERSION], kinds[FUZZ_ENTRIES], kinds[FUZZ_MASK], kinds[FUZZ_FLAGS], kinds[FUZZ_CELL], kinds[FUZZ_BYTES], kinds[FUZZ_MIGRATED], kinds[FUZZ_SECTION_ID], skipped, missed );
 		gameLocal.Printf( "RECORD_FUZZ %s n=%d seed=%d dropped=%d accepted=%d roundtrip=%s\n", pass ? "PASS" : "FAIL", count, seed, dropped, accepted, roundtrip ? "equal" : "DIFF" );
 		return;
 	}

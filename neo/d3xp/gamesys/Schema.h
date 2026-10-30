@@ -63,15 +63,15 @@ If you have questions concerning this license or the applicable additional terms
 
 	SCHEMA_SAVE, SCHEMA_RESTORE, SCHEMA_WRITE and SCHEMA_READ. No generator, no build step, no registry walked at run
 	time: the precedent is CLASS_PROTOTYPE and the event tables (Class.h). A list is a #define in the header of the
-	class it lists, inert until expanded, so only the .cpp files that expand one include this file, and the class
-	headers whose bodies expand a record list's SCHEMA_RECORD_INDEX (through Entity.h).
+	class it lists, inert until expanded, so only the .cpp files that expand one include this file, and Game_local.h for
+	the class headers whose bodies expand a record list's SCHEMA_RECORD_INDEX.
 
 	K8: a field the schema cannot express is a HAND entry. It stays hand-written, at its position, in the member
 	functions Save<name> and Restore<name>, or Write<name>ToSnapshot and Read<name>FromSnapshot on the wire.
 
 	The record channel (P2b.1.2). A class's R rows are its record section: SCHEMA_RECORD_INDEX numbers them RF_<field>
-	in an enum inside the class (so a class header that holds one includes this file), the bit of the field in the
-	section's uint64 fieldMask; R rows append only, so a mask never renumbers. Inside the class's WriteRecord,
+	in an enum inside the class (Game_local.h includes this file before every class header that holds one), the bit of
+	the field in the section's uint64 fieldMask; R rows append only, so a mask never renumbers. Inside WriteRecord,
 	SCHEMA_RECORD_DIFF sets the bit of each field that differs from the spawn baseline and SCHEMA_RECORD_WRITE then
 	writes the set fields in list order; ApplyRecord expands SCHEMA_RECORD_READ and a static CheckRecordSection
 	SCHEMA_RECORD_CHECK, whose s is the class name. A failed read or check clears the sticky rec.good, which the caller
@@ -127,8 +127,8 @@ If you have questions concerning this license or the applicable additional terms
 // record HAND rows: the field functions, inside the byte bounds of the field
 #define SCHEMA_RCHANGED_HAND( r, s, n, a )		( s ).Record##n##Changed( r )
 #define SCHEMA_RPUT_HAND( r, s, n, a )			( r ).BeginField( a ); ( s ).WriteRecord##n( r ); ( r ).EndField( a );
-#define SCHEMA_RGET_HAND( r, s, n, a )			( r ).BeginField( a ) && ( s ).ApplyRecord##n( r ) && ( r ).EndField()
-#define SCHEMA_RCHECK_HAND( r, s, n, a )		( r ).BeginField( a ) && s::CheckRecord##n( r ) && ( r ).EndField()
+#define SCHEMA_RGET_HAND( r, s, n, a )			( ( r ).BeginField( a ) && ( s ).ApplyRecord##n( r ) && ( r ).EndField() )
+#define SCHEMA_RCHECK_HAND( r, s, n, a )		( ( r ).BeginField( a ) && s::CheckRecord##n( r ) && ( r ).EndField() )
 //puncho end
 
 // save types: f is the stream, s the instance, n the field, a the argument

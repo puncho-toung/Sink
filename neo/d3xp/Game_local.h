@@ -106,6 +106,8 @@ void gameError( const char* fmt, ... );
 #include "gamesys/SaveGame.h"
 #include "gamesys/MapLandmarks.h"
 #include "gamesys/WorldStore.h"
+#include "gamesys/Schema.h"	//puncho - P2b.1.2: the record lists' RF_ enums expand inside the class bodies below
+#include "gamesys/Record.h"	//puncho - P2b.1.2: idRecordOut, idRecordIn, recordFrame_t
 #include "gamesys/MapGraph.h"
 
 #include "script/Script_Program.h"

@@ -6391,9 +6391,10 @@ bool idEntity::CheckRecordPose( idRecordIn& rec )
 	return true;
 }
 
+// a created entry has no baseline (SpawnCreatedEntry spawns from the def alone), so it always carries the health
 bool idEntity::RecordHealthChanged( const idRecordOut& rec ) const
 {
-	return health != spawnArgs.GetInt( "health" );
+	return rec.IsCreated() || health != spawnArgs.GetInt( "health" );
 }
 
 void idEntity::WriteRecordHealth( idRecordOut& rec ) const
@@ -6413,10 +6414,10 @@ bool idEntity::CheckRecordHealth( idRecordIn& rec )
 }
 
 // against the "hide" key the entity spawns with: a hide-until-triggered entity revealed in play comes back shown, one
-// never revealed comes back as authored
+// never revealed comes back as authored; a created entry, with no baseline, always carries it
 bool idEntity::RecordVisibilityChanged( const idRecordOut& rec ) const
 {
-	return IsHidden() != spawnArgs.GetBool( "hide" );
+	return rec.IsCreated() || IsHidden() != spawnArgs.GetBool( "hide" );
 }
 
 void idEntity::WriteRecordVisibility( idRecordOut& rec ) const
@@ -6542,12 +6543,25 @@ bool idEntity::ApplyRecordBind( idRecordIn& rec )
 	return true;
 }
 
+// v2's rules: a created entry's, a master identity, a joint or a body or neither, an orientation flag
 bool idEntity::CheckRecordBind( idRecordIn& rec )
 {
 	uint64 parent;
 	short joint, body;
 	byte orientated;
-	return rec.IsCreated() && rec.Read64( parent ) && parent != 0 && rec.ReadShort( joint ) && joint >= -1 && rec.ReadShort( body ) && body >= -1 && ( joint < 0 || body < 0 ) && rec.ReadByte( orientated ) && orientated <= 1;
+	if( !rec.IsCreated() )
+	{
+		return false;
+	}
+	if( !rec.Read64( parent ) || parent == 0 )
+	{
+		return false;
+	}
+	if( !rec.ReadShort( joint ) || !rec.ReadShort( body ) || joint < -1 || body < -1 || ( joint >= 0 && body >= 0 ) )
+	{
+		return false;
+	}
+	return rec.ReadByte( orientated ) && orientated <= 1;
 }
 //puncho end
 

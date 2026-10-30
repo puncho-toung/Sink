@@ -34,6 +34,7 @@ enum recordSectionId_t
 	RECORD_SECTION_DAMAGABLE		= 3,	// DAMAGABLE_RECORD_SCHEMA (Misc.h)
 	RECORD_SECTION_AI				= 4,	// AI_RECORD_SCHEMA (ai/AI.h); an idCorpse writes it too
 	RECORD_SECTION_ELEVATOR			= 5,	// ELEVATOR_RECORD_SCHEMA (Mover.h)
+	RECORD_SECTION_LAST				= RECORD_SECTION_ELEVATOR,	// the highest id in use; the ids up to it are all in use
 	RECORD_SECTION_IDS				= 64
 };
 
@@ -252,25 +253,31 @@ public:
 	}
 	int					SectionId( int index ) const
 	{
+		assert( index >= 0 && index < numSections );
 		return sections[index].id;
 	}
 	int					SectionVersion( int index ) const
 	{
+		assert( index >= 0 && index < numSections );
 		return sections[index].version;
 	}
 	uint64				SectionMask( int index ) const
 	{
+		assert( index >= 0 && index < numSections );
 		return sections[index].mask;
 	}
 	int					SectionBytes( int index ) const
 	{
+		assert( index >= 0 && index < numSections );
 		return sections[index].bytes;
 	}
 	const byte* 		SectionData( int index ) const
 	{
+		assert( index >= 0 && index < numSections );
 		return base + sections[index].offset;
 	}
 	bool				HasSection( int id ) const;
+	int					FindSection( int id ) const;	// its index, -1 when the entry has none
 	bool				HasField( int section, int bit ) const;
 
 	// the next unread section, when it is this level's (ApplyRecord, root first)
@@ -287,6 +294,11 @@ public:
 	bool				Done() const
 	{
 		return next == numSections;
+	}
+	// the sections an ApplyRecord chain has begun: none when it refused the entry before any field applied
+	int					SectionsBegun() const
+	{
+		return next;
 	}
 
 	// a field: bytes is the row's ARG, 0 for a variable field (a uint16 length first, at most RECORD_MAX_FIELD_BYTES)

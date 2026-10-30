@@ -343,6 +343,18 @@ bool idRecordIn::HasSection( int id ) const
 	return false;
 }
 
+int idRecordIn::FindSection( int id ) const
+{
+	for( int i = 0; i < numSections; i++ )
+	{
+		if( sections[i].id == id )
+		{
+			return i;
+		}
+	}
+	return -1;
+}
+
 bool idRecordIn::HasField( int section, int bit ) const
 {
 	for( int i = 0; i < numSections; i++ )
@@ -367,6 +379,7 @@ bool idRecordIn::BeginSection( int id )
 
 void idRecordIn::BeginSectionAt( int index )
 {
+	assert( index >= 0 && index < numSections );
 	const section_t& s = sections[index];
 	next = index + 1;
 	mask = s.mask;
@@ -511,11 +524,11 @@ static const char* const moverBinaryRecordNames[] = { MOVER_BINARY_RECORD_SCHEMA
 static const char* const damagableRecordNames[] = { DAMAGABLE_RECORD_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
 static const char* const aiRecordNames[] = { AI_RECORD_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
 static const char* const elevatorRecordNames[] = { ELEVATOR_RECORD_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
-compile_time_assert( sizeof( entityRecordNames ) / sizeof( entityRecordNames[0] ) == idEntity::ENTITY_RECORD_FIELDS );
-compile_time_assert( sizeof( moverBinaryRecordNames ) / sizeof( moverBinaryRecordNames[0] ) == idMover_Binary::MOVER_BINARY_RECORD_FIELDS );
-compile_time_assert( sizeof( damagableRecordNames ) / sizeof( damagableRecordNames[0] ) == idDamagable::DAMAGABLE_RECORD_FIELDS );
-compile_time_assert( sizeof( aiRecordNames ) / sizeof( aiRecordNames[0] ) == idAI::AI_RECORD_FIELDS );
-compile_time_assert( sizeof( elevatorRecordNames ) / sizeof( elevatorRecordNames[0] ) == idElevator::ELEVATOR_RECORD_FIELDS );
+verify_array_size( entityRecordNames, idEntity::ENTITY_RECORD_FIELDS );
+verify_array_size( moverBinaryRecordNames, idMover_Binary::MOVER_BINARY_RECORD_FIELDS );
+verify_array_size( damagableRecordNames, idDamagable::DAMAGABLE_RECORD_FIELDS );
+verify_array_size( aiRecordNames, idAI::AI_RECORD_FIELDS );
+verify_array_size( elevatorRecordNames, idElevator::ELEVATOR_RECORD_FIELDS );
 
 struct recordSectionInfo_t
 {
@@ -537,7 +550,8 @@ static const recordSectionInfo_t recordSections[] =
 	{ RECORD_SECTION_AI, RECORD_VERSION_AI, idAI::AI_RECORD_FIELDS, idCorpse::CheckRecordSection, &idAI::Type, &idCorpse::Type, "ai", aiRecordNames },
 	{ RECORD_SECTION_ELEVATOR, RECORD_VERSION_ELEVATOR, idElevator::ELEVATOR_RECORD_FIELDS, idElevator::CheckRecordSection, &idElevator::Type, NULL, "elevator", elevatorRecordNames },
 };
-static const int NUM_RECORD_SECTIONS = sizeof( recordSections ) / sizeof( recordSections[0] );
+static const int NUM_RECORD_SECTIONS = ARRAY_COUNT( recordSections );
+compile_time_assert( NUM_RECORD_SECTIONS == RECORD_SECTION_LAST );
 
 static const recordSectionInfo_t* RecordSectionInfo( int id )
 {
@@ -579,7 +593,18 @@ bool RecordCheckEntry( idRecordIn& rec, int entryFlags, idStr& reason )
 	}
 	// a created entry's flags are 0 and it has a section; an authored entry has only REMOVED and MIGRATED, and no
 	// section iff REMOVED
-	if( rec.IsCreated() ? ( entryFlags != 0 || rec.NumSections() == 0 ) : ( ( entryFlags & ~( RECORD_ENTRY_REMOVED | RECORD_ENTRY_MIGRATED ) ) != 0 || ( ( entryFlags & RECORD_ENTRY_REMOVED ) != 0 ) != ( rec.NumSections() == 0 ) ) )
+	bool flagsGood;
+	if( rec.IsCreated() )
+	{
+		flagsGood = entryFlags == 0 && rec.NumSections() > 0;
+	}
+	else
+	{
+		const bool reserved = ( entryFlags & ~( RECORD_ENTRY_REMOVED | RECORD_ENTRY_MIGRATED ) ) != 0;
+		const bool removed = ( entryFlags & RECORD_ENTRY_REMOVED ) != 0;
+		flagsGood = !reserved && removed == ( rec.NumSections() == 0 );
+	}
+	if( !flagsGood )
 	{
 		reason = va( "flags %02x with %d sections", entryFlags, rec.NumSections() );
 		return false;

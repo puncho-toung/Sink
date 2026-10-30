@@ -1,8 +1,9 @@
 #ifndef __GAME_WORLDSTORELOCAL_H__
 #define __GAME_WORLDSTORELOCAL_H__
 
-//puncho - P2b.1.1a: the record codec helpers that WorldStore.cpp (commit, apply, save, restore) and WorldStoreRecord.cpp
-// (codec, created entities, binds) both call; MapLandmarks.cpp needs none of them
+//puncho - P2b.1.1a: the record codec helpers that WorldStore.cpp (commit, apply, save, restore, recordDump) and
+// WorldStoreRecord.cpp (codec, created entities, binds) both call, and SysCmds.cpp's recordTest; MapLandmarks.cpp needs
+// none of them
 void RecordString( idFile& f, const char* value );
 bool RecordReadString( idFile& f, idStr& value );
 void Record64( idFile& f, uint64 value );
@@ -14,6 +15,10 @@ bool RecordRead64( idFile& f, uint64& value );
 // (ascending ordinal), numCreated and the created entries (ascending id)
 static const int MREC_VERSION = 3;
 static const int MREC_FIXED_HEADER_BYTES = 64;	// the header and the created count without the two names' bytes
+static const int MREC_HEADER_CELLID_OFFSET = 15;	// the header's cellId, after the world name's bytes
+static const int MREC_HEADER_NUMENTRIES_OFFSET = 56;	// the header's numEntries, after both names' bytes
+static const int MREC_AUTHORED_HEAD_BYTES = 9;	// ordinalHint, entityCRC, the name's length, flags, numSections; then the name
+static const int MREC_CREATED_HEAD_BYTES = 19;	// createdId, the name's length, createdWorldTime, flags, numSections; then the name
 
 struct mrecHeader_t
 {
@@ -67,26 +72,11 @@ bool		RecordReadCreatedEntry( idFile_Memory& in, mrecEntry_t& entry, idRecordIn&
 // an entry's sections framed again into rec, for a walk after the scan
 void		RecordFrameEntry( const byte* data, uint32 recordCellId, const recordFrame_t& frame, const mrecEntry_t& entry, const char* defName, idRecordIn& rec );
 #if !defined( ID_RETAIL )
-	// recordDump's view of the last transition's carried created entries while the transition holds them (Game_transition.cpp)
-	static const int MAX_TRANSITION_CARRY_RECORDS = 64;
-	int			TransitionCarryRecords( const byte* records[], int lengths[], int max );
 	// recordTest's round trip: read, then written again from what the reader took (the same bytes for a chunk it accepts)
 	bool		RecordRewriteChunk( const byte* data, int length, uint64 nextIdentity, idFile_Memory& out );
 #endif
 // The corpse an entry holding Corpse builds, from the source def: idCorpse::ApplyRecord reads its sections
 idCorpse*	SpawnCorpseRecord( const char* def, idRecordIn& rec, const recordFrame_t& frame );
 
-// an entity the record moved (its Pose, a mover's state, an elevator's floor), from its spawn pose to the applied one
-struct recordPosed_t
-{
-	idEntity*		ent;
-	idVec3			fromOrigin;
-	idMat3			fromAxis;
-	idVec3			toOrigin;
-	idMat3			toAxis;
-};
-// The children that bind at spawn to an entity the record moved (the "bind" key, bound after the record applies) moved
-// with it, so the spawn bind finds them at their spawn offset from it: a bound entity records no Pose of its own
-void		RecordCarryBindChildren( const idList<recordPosed_t, TAG_GAME>& posed );
 //puncho end
 #endif

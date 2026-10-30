@@ -367,19 +367,22 @@ its pose was built at (the pose's leading origin), not at the AF body its physic
 */
 void idCorpse::WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const
 {
+	// a corpse never built has no pose to record: REMOVED, the parent still called first (it keeps no section)
 	if( poseBytes.Num() < 29 )
 	{
 		rec.SetRemoved();
-		return;
 	}
-	idVec3 origin;
-	memcpy( origin.ToFloatPtr(), poseBytes.Ptr(), sizeof( origin ) );
-	for( int i = 0; i < 3; i++ )
+	else
 	{
-		origin[i] = LittleFloat( origin[i] );
+		idVec3 origin;
+		memcpy( origin.ToFloatPtr(), poseBytes.Ptr(), sizeof( origin ) );
+		for( int i = 0; i < 3; i++ )
+		{
+			origin[i] = LittleFloat( origin[i] );
+		}
+		rec.SetDefName( sourceName.c_str() );
+		rec.SetCorpse( origin );
 	}
-	rec.SetDefName( sourceName.c_str() );
-	rec.SetCorpse( origin );
 	idAFEntity_Base::WriteRecord( rec, frame );
 	rec.BeginSection( RECORD_SECTION_AI, RECORD_VERSION_AI );
 	AI_RECORD_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
@@ -407,7 +410,10 @@ bool idCorpse::CheckRecordSection( idRecordIn& rec )
 
 void idCorpse::WriteRecordCorpse( idRecordOut& rec ) const
 {
-	WriteRecordPayload( rec, poseBytes.Ptr(), poseBytes.Num() );
+	if( !rec.IsRemoved() )
+	{
+		WriteRecordPayload( rec, poseBytes.Ptr(), poseBytes.Num() );
+	}
 }
 
 // Build takes the pose with its origin first: the entry's Pose gives it (idEntity::ApplyRecordPose ran before this

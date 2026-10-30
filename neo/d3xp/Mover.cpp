@@ -3629,6 +3629,7 @@ idDoor::idDoor()
 	syncLock.Clear();
 	companionDoor = NULL;
 	normalAxisIndex = 0;
+	startOpenSwapped = false;
 }
 
 /*
@@ -3705,6 +3706,10 @@ void idDoor::Restore( idRestoreGame* savefile )
 	savefile->ReadClipModel( sndTrigger );
 
 	savefile->ReadObject( reinterpret_cast<idClass*&>( companionDoor ) );
+
+	//puncho - P2b.1.2 (review): a save comes after the 1 ms Event_StartOpen, so a start_open door's pos1 and pos2 are the
+	// swapped pair
+	startOpenSwapped = spawnArgs.GetBool( "start_open" );
 }
 
 /*
@@ -4253,6 +4258,7 @@ void idDoor::Event_StartOpen()
 	// if "start_open", reverse position 1 and 2
 	pos1 = pos2;
 	pos2 = GetPhysics()->GetOrigin();
+	startOpenSwapped = true;	//puncho - P2b.1.2 (review)
 
 	spawnArgs.GetFloat( "speed", "400", speed );
 
@@ -5547,36 +5553,44 @@ void idRiser::Event_Activate( idEntity* activator )
 }
 
 // Record replay snaps directly: no signals, sounds, target activation or events.
-//puncho - P2b.1.2: at pos2 of the spawn frame, moving there counting as there. A start_open door plays with pos1 and pos2
-// swapped (Event_StartOpen, posted at its spawn, makes the open position pos1; the record's MoverState makes the same
-// swap), so for it this is the other end of the live one, and a start_open door is at position 2 at spawn: the baseline
-// MoverState is written against. ApplyRecordState itself works in the live frame, as the director calls it
+//puncho - P2b.1.2 (review): at pos2 of the spawn frame, moving there counting as there. A start_open door plays with pos1
+// and pos2 swapped once its Event_StartOpen (posted at its spawn) or ApplyRecordState has made the swap
+// (idDoor::StartOpenSwapped), so its live end is then the other one. The record's MoverState and its baseline are in the
+// spawn frame, where a start_open door is at position 2 at spawn
 bool idMover_Binary::RecordAtPosition2() const
 {
-	const bool startOpen = IsType( idDoor::Type ) && spawnArgs.GetBool( "start_open" );
-	return ( moverState == MOVER_POS2 || moverState == MOVER_1TO2 ) != startOpen;
+	const bool swapped = IsType( idDoor::Type ) && static_cast<const idDoor*>( this )->StartOpenSwapped();
+	return ( moverState == MOVER_POS2 || moverState == MOVER_1TO2 ) != swapped;
 }
 
-void idMover_Binary::ApplyRecordState( bool position2, bool locked )
+//puncho - P2b.1.2 (review): spawnPosition2 is in the spawn frame, for the record's apply on a fresh spawn and for the
+// director's on a fresh spawn or a restored door alike. A start_open door whose Event_StartOpen is still pending (the
+// record and the director apply before a fresh spawn's events run) gets the event's swap here, then sits at the live end
+// of the spawn-frame position. The portal follows the door's opening as Spawn sets it, open unless the door is shut, so a
+// start_open door whose lock alone changed keeps its open portal; the AAS block is the live frame's (ApplyRecordLock)
+void idMover_Binary::ApplyRecordState( bool spawnPosition2, bool locked )
 {
 	CancelEvents( &EV_Mover_ReturnToPos1 );
 	CancelEvents( &EV_Mover_MatchTeam );
 	CancelEvents( &EV_ReachedPos );
 	CancelEvents( &EV_Activate );
+	bool swapped = false;
 	if( IsType( idDoor::Type ) )
 	{
 		CancelEvents( &EV_Door_StartOpen );
 		CancelEvents( &EV_Door_Lock );
+		swapped = static_cast<idDoor*>( this )->ApplyRecordStartOpen();
 	}
-	moverState = position2 ? MOVER_POS2 : MOVER_POS1;
+	const bool live2 = spawnPosition2 != swapped;
+	moverState = live2 ? MOVER_POS2 : MOVER_POS1;
 	move_thread = 0;
 	stateStartTime = gameLocal.time;
 	physicsObj.SetLinearInterpolation( 0, 0, 0, 0, pos1, pos2 );
-	physicsObj.SetLinearExtrapolation( EXTRAPOLATION_NONE, gameLocal.time, 0, position2 ? pos2 : pos1, vec3_origin, vec3_origin );
-	physicsObj.SetOrigin( position2 ? pos2 : pos1 );
+	physicsObj.SetLinearExtrapolation( EXTRAPOLATION_NONE, gameLocal.time, 0, live2 ? pos2 : pos1, vec3_origin, vec3_origin );
+	physicsObj.SetOrigin( live2 ? pos2 : pos1 );
 	physicsObj.PutToRest();
 	spawnArgs.SetInt( "locked", locked ? 1 : 0 );
-	SetPortalState( position2 );
+	SetPortalState( spawnPosition2 );
 	if( IsType( idDoor::Type ) )
 	{
 		static_cast<idDoor*>( this )->ApplyRecordLock( locked );
@@ -5584,10 +5598,31 @@ void idMover_Binary::ApplyRecordState( bool position2, bool locked )
 	UpdateVisuals();
 }
 
+//puncho - P2b.1.2 (review): pos1 and pos2 moved with the master a mover binds to at spawn, as the store moves the mover
+// itself (RecordCarryBindChildren), so the PostBind of that bind makes them local where they belong
+void idMover_Binary::CarryRecordPositions( const idVec3& fromOrigin, const idMat3& rotation, const idVec3& toOrigin, bool rotate )
+{
+	pos1 = rotate ? toOrigin + ( pos1 - fromOrigin ) * rotation : pos1 + ( toOrigin - fromOrigin );
+	pos2 = rotate ? toOrigin + ( pos2 - fromOrigin ) * rotation : pos2 + ( toOrigin - fromOrigin );
+}
+
+//puncho - P2b.1.2 (review): the AAS area is blocked while the door is locked at its live pos1, in either frame
 void idDoor::ApplyRecordLock( bool locked )
 {
 	spawnArgs.SetInt( "locked", locked ? 1 : 0 );
-	SetAASAreaState( locked && !RecordAtPosition2() );
+	SetAASAreaState( locked && moverState != MOVER_POS2 && moverState != MOVER_1TO2 );
+}
+
+//puncho - P2b.1.2 (review): the swap Event_StartOpen makes, for a start_open door whose event is still pending (cancelled
+// by the caller); the frame the door is in after it
+bool idDoor::ApplyRecordStartOpen()
+{
+	if( !startOpenSwapped && spawnArgs.GetBool( "start_open" ) )
+	{
+		SwapValues( pos1, pos2 );
+		startOpenSwapped = true;
+	}
+	return startOpenSwapped;
 }
 
 //puncho start - P2b.1.2: the map record sections of the binary movers, the elevator and the periodic movers
@@ -5645,9 +5680,7 @@ void idMover_Binary::WriteRecordMoverState( idRecordOut& rec ) const
 	rec.WriteByte( spawnArgs.GetInt( "locked" ) != 0 ? 1 : 0 );
 }
 
-// The record applies to a fresh spawn, before its events run: a start_open door's Event_StartOpen is still pending. It is
-// cancelled and its swap made here, so the door plays swapped as the event would have left it, at the live end of the
-// spawn-frame position.
+// the spawn-frame position, as ApplyRecordState takes it (it makes a pending start_open swap itself)
 bool idMover_Binary::ApplyRecordMoverState( idRecordIn& rec )
 {
 	byte position, locked;
@@ -5655,15 +5688,7 @@ bool idMover_Binary::ApplyRecordMoverState( idRecordIn& rec )
 	{
 		return false;
 	}
-	const bool startOpen = IsType( idDoor::Type ) && spawnArgs.GetBool( "start_open" );
-	if( startOpen )
-	{
-		CancelEvents( &EV_Door_StartOpen );
-		const idVec3 open = pos2;
-		pos2 = pos1;
-		pos1 = open;
-	}
-	ApplyRecordState( ( position != 0 ) != startOpen, locked != 0 );
+	ApplyRecordState( position != 0, locked != 0 );
 	return true;
 }
 
@@ -5692,6 +5717,14 @@ void idElevator::WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) con
 
 recordApply_t idElevator::ApplyRecord( idRecordIn& rec, const recordFrame_t& frame )
 {
+	// the floor is checked against this elevator before any field applies, so an entry naming a floor it lacks drops
+	// whole (Floor is the section's first field, one byte)
+	compile_time_assert( RF_Floor == 0 );
+	const int section = rec.FindSection( RECORD_SECTION_ELEVATOR );
+	if( section >= 0 && ( rec.SectionMask( section ) & BIT( RF_Floor ) ) != 0 && GetFloorInfo( rec.SectionData( section )[0] ) == NULL )
+	{
+		return RECORD_INVALID;
+	}
 	const recordApply_t result = idMover::ApplyRecord( rec, frame );
 	if( result != RECORD_APPLIED || !rec.BeginSection( RECORD_SECTION_ELEVATOR ) )
 	{
@@ -5761,7 +5794,8 @@ bool idElevator::ApplyRecordFloor( idRecordIn& rec )
 	state = IDLE;
 	DisableAllDoors();
 	EnableProperDoors();
-	SetGuiStates( ( currentFloor == 1 ) ? guiBinaryMoverStates[0] : guiBinaryMoverStates[1] );
+	// the gui targets are found by an event at spawn, after this
+	PostEventMS( &EV_SetGuiStates, 0 );
 	return true;
 }
 
@@ -5780,6 +5814,20 @@ was committed at, a little further on every revisit.
 ================
 */
 void idMover_Periodic::WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const
+{
+	rec.SkipPose();
+	idEntity::WriteRecord( rec, frame );
+}
+
+/*
+================
+idShaking::WriteRecord
+
+No Pose, for the reason idMover_Periodic has none: a parametric oscillation about its spawn origin (P2b.1.2 review,
+refining the frozen table's Pose row).
+================
+*/
+void idShaking::WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const
 {
 	rec.SkipPose();
 	idEntity::WriteRecord( rec, frame );
