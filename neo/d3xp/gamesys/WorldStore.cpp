@@ -549,8 +549,9 @@ void idWorldStore::Commit( bool leaving )
 	}
 	if( rec.Overflowed() )
 	{
-		// the world, the map and every row's name were refused or skipped above past 63 bytes: a programmer error
-		gameLocal.Error( "world record of %s: a name exceeds 63 bytes", name.c_str() );
+		// the world, the map and every row's name were refused or skipped above past 63 bytes, and an ordinal is below
+		// the map's uint16 entity count: a programmer error
+		gameLocal.Error( "world record of %s: a name exceeds 63 bytes or an ordinal 65535", name.c_str() );
 	}
 	//puncho end
 	idList<createdCandidate_t, TAG_GAME> candidates;

@@ -122,7 +122,8 @@ public:
 	// per entry: the frame, created (no baseline), the baseline dict of an authored entry, the created identity of a
 	// created entry's bind master (0 for none) and the def name a created entry records
 	void				Begin( const recordFrame_t& frame, bool created, const idRecordMapArgs& mapArgs, uint64 bindParent, const char* defName );
-	// the codec over file, until the next Begin
+	// the codec over file, until the next Begin; Data() and DefName() keep the entry's, so one writer writes an entry's
+	// head and then its sections
 	void				BeginFile( idFile* file );
 
 	// what a subclass tells the root levels before it calls its parent's WriteRecord, so the root-first sections see it

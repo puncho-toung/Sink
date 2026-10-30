@@ -9,7 +9,8 @@
 //puncho start - P2b.1.4: the dungeon record (DREC v2) through MapGraph.h's struct lists and Record.h's codec. The
 // reader refuses what the hand reader refused, in its order: each list's count before any element, then per element
 // its fix-up and checks (the Check functions), the literals, the sparse flag list's order and zeros, the bools past 1,
-// a non-finite portal origin, the party and portal nodes, a short record and a byte past its end
+// a non-finite portal origin, a short record and a byte past its end. One test moved: the party and portal nodes are
+// tested after the whole record (the hand reader tested them before the pending list), so the same records are refused
 static void WriteRecordCondFlag( idRecordOut& rec, const dungeonLink_t& l )
 {
 	rec.WriteUnsigned( l.condFlag < 0 ? 0 : l.condFlag, 1 );
@@ -176,7 +177,10 @@ SCHEMA_RECORD_STRUCT_FUNCTIONS( DungeonRecord, idMapGraphDirector, DUNGEON_RECOR
 // bytes is left as it was when the record cannot be written (a name past 63 bytes, a count past its list's bound)
 bool idMapGraphDirector::WriteRecord( idList<byte, TAG_GAME>& bytes ) const
 {
+	// sized once for the record bytes held (a rewrite of the hub's) or 4 KiB; a record past that grows in 16 KiB steps,
+	// per store, never per tic
 	idFile_Memory file( "DREC" );
+	file.PreAllocate( Max( bytes.Num(), 4096 ) + 1 );
 	idRecordOut rec;
 	rec.BeginFile( &file );
 	WriteRecordDungeonRecord( rec, *this );

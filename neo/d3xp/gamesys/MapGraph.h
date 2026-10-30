@@ -31,9 +31,6 @@ struct graphFlag_t
 //puncho start - P2b.1.4: the dungeon record's (DREC v2) and the recipe's (v1) byte forms as Schema.h's record struct
 // lists, beside their structs; MapGraphRecord.cpp and MapGraphDirector.cpp expand them. A list's rows are its fields in
 // byte order; a value or count that does not fit fails the write, and the reader refuses what the hand codec refused
-static const int DUNGEON_RECORD_VERSION = 2;
-static const int DUNGEON_GENERATOR_VERSION = 1;
-static const int DUNGEON_RECIPE_VERSION = 1;		// the recipe's first byte, before DUNGEON_RECIPE_SCHEMA's rows
 #define DUNGEON_FLAGDEF_SCHEMA( X, s ) \
 	X( s, name,		STR,	R,	RAW,	63,	SCHEMA_STOCK ) \
 	X( s, index,	U8,		R,	RAW,	0,	SCHEMA_STOCK )
@@ -128,8 +125,11 @@ struct dungeonRecipe_t
 	uint16 currentNode, nodeVisits;
 	idStr worldName;
 };
-//puncho start - P2b.1.4: the recipe after its version byte, a wire message in the match parameters (35-66 bytes); the
-// world name's bound is 31. P2b.6.6 appends rows
+//puncho start - P2b.1.4: the recipe after its version byte, a wire message in the match parameters; the world name's
+// bound is 31. P2b.6.6 appends rows, and changes the version and the two sizes with them
+static const int DUNGEON_RECIPE_VERSION = 1;		// the recipe's first byte, before DUNGEON_RECIPE_SCHEMA's rows
+static const int DUNGEON_RECIPE_MIN_BYTES = 1 + 1 + 8 + 8 + 4 + 2 + 2 + 8 + 1;	// the version, the rows, a name's length
+static const int DUNGEON_RECIPE_MAX_BYTES = DUNGEON_RECIPE_MIN_BYTES + 31;
 #define DUNGEON_RECIPE_SCHEMA( X, s ) \
 	X( s, flags,		U8,		R,	RAW,	0,	SCHEMA_STOCK ) \
 	X( s, instanceId,	U64,	R,	RAW,	0,	SCHEMA_STOCK ) \
@@ -141,6 +141,8 @@ struct dungeonRecipe_t
 	X( s, worldName,	STR,	R,	RAW,	31,	SCHEMA_STOCK )
 // the dungeon record: an idMapGraphDirector's persistent state. HAND rows: the two literals, the flag values written
 // sparse from their 256 slots, and the two bools
+static const int DUNGEON_RECORD_VERSION = 2;
+static const int DUNGEON_GENERATOR_VERSION = 1;
 #define DUNGEON_RECORD_SCHEMA( X, s ) \
 	X( s, Version,			HAND,	R,	RAW,	2,						SCHEMA_STOCK ) \
 	X( s, instanceId,		U64,	R,	RAW,	0,						SCHEMA_STOCK ) \

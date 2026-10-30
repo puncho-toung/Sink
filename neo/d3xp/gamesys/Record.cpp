@@ -273,8 +273,11 @@ void idRecordOut::WriteData( const void* bytes, int count )
 	Put( bytes, count );
 }
 
+// WriteUnsigned, WriteCount, WriteString and WriteChunk are the file mode's: an entry's fields write through the calls
+// above, inside their field bounds
 void idRecordOut::WriteUnsigned( uint64 value, int bytes )
 {
+	assert( file != NULL );
 	assert( bytes == 1 || bytes == 2 || bytes == 4 || bytes == 8 );
 	if( bytes < 8 && ( value >> ( bytes * 8 ) ) != 0 )
 	{
@@ -291,6 +294,7 @@ void idRecordOut::WriteUnsigned( uint64 value, int bytes )
 
 void idRecordOut::WriteCount( int count, int bytes, int maxCount )
 {
+	assert( file != NULL );
 	if( count < 0 || count > maxCount )
 	{
 		overflow = true;
@@ -301,6 +305,7 @@ void idRecordOut::WriteCount( int count, int bytes, int maxCount )
 
 void idRecordOut::WriteString( const char* value, int bound )
 {
+	assert( file != NULL );
 	assert( bound >= 0 && bound <= 255 );
 	const int count = idStr::Length( value );
 	if( count > bound )
@@ -314,6 +319,7 @@ void idRecordOut::WriteString( const char* value, int bound )
 
 void idRecordOut::WriteChunk( uint32 tag, const void* bytes, int count )
 {
+	assert( file != NULL );
 	WriteUnsigned( tag, 4 );
 	WriteUnsigned( ( uint64 )count, 4 );
 	Put( bytes, count );
@@ -615,6 +621,11 @@ bool idRecordIn::ReadCount( int& count, int bytes, int maxCount )
 {
 	assert( bytes == 1 || bytes == 2 || bytes == 4 );
 	count = 0;
+	// a release build reads no wider than the buffer (Schema.h's LIST expanders refuse a wider countWidth)
+	if( bytes < 1 || bytes > 4 )
+	{
+		return false;
+	}
 	byte b[4];
 	if( !ReadData( b, bytes ) )
 	{

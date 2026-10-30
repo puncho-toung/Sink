@@ -135,7 +135,8 @@ If you have questions concerning this license or the applicable additional terms
 // recipe and their elements, MapGraph.h). SCHEMA_RECORD_STRUCT_FUNCTIONS( name, type, LIST ) makes static
 // WriteRecord<name>( idRecordOut&, const type& ) and ReadRecord<name>( idRecordIn&, type& ), which run over an idFile
 // (Record.h's BeginFile), and the typedef recordStruct<name>_t a LIST of the struct declares its elements with. Every row
-// is written, in list order: no mask, no field framing. The types, CH R and ENC RAW:
+// is written, in list order: no mask, no field framing. Every row is CH R, ENC RAW and BUILD SCHEMA_STOCK (a row of
+// another channel, encoding or build does not compile). The types:
 //	U8 U16 U32 U64 I64	little endian, the width from the type; a value that does not fit fails the write; the read
 //						assigns the member from an unsigned of the width (I64: the signed value)
 //	STR					ARG the bound: a uint8 length, then the bytes; a longer string fails the write, the read refuses a
@@ -153,26 +154,28 @@ If you have questions concerning this license or the applicable additional terms
 	typedef type recordStruct##name##_t; \
 	static void WriteRecord##name( idRecordOut& rec, const type& s ) { LIST( SCHEMA_RECORD_STRUCT_PUT, s ) } \
 	static void ReadRecord##name( idRecordIn& rec, type& s ) { LIST( SCHEMA_RECORD_STRUCT_GET, s ) }
-#define SCHEMA_RECORD_STRUCT_PUT( s, n, TYPE, CH, ENC, ARG, BUILD )	SCHEMA_SPUT_##TYPE( rec, s, n, ARG )
-#define SCHEMA_RECORD_STRUCT_GET( s, n, TYPE, CH, ENC, ARG, BUILD )	if( rec.good ) { SCHEMA_SGET_##TYPE( rec, s, n, ARG ) }
+#define SCHEMA_RECORD_STRUCT_PUT( s, n, TYPE, CH, ENC, ARG, BUILD )	compile_time_assert( ( BUILD ) == SCHEMA_STOCK ); SCHEMA_SROW_##CH##_##ENC( SCHEMA_RSPUT_##TYPE( rec, s, n, ARG ) )
+#define SCHEMA_RECORD_STRUCT_GET( s, n, TYPE, CH, ENC, ARG, BUILD )	compile_time_assert( ( BUILD ) == SCHEMA_STOCK ); SCHEMA_SROW_##CH##_##ENC( if( rec.good ) { SCHEMA_RSGET_##TYPE( rec, s, n, ARG ) } )
+// the one gate a struct row passes: SCHEMA_SROW_<CH>_<ENC> exists only for R and RAW
+#define SCHEMA_SROW_R_RAW( ... )			__VA_ARGS__
 
-#define SCHEMA_SGET_UNSIGNED( r, s, n, T, READ )	{ T value; if( ( r ).READ( value ) ) { ( s ).n = value; } else { ( r ).good = false; } }
-#define SCHEMA_SPUT_U8( r, s, n, a )		( r ).WriteUnsigned( ( s ).n, 1 );
-#define SCHEMA_SGET_U8( r, s, n, a )		SCHEMA_SGET_UNSIGNED( r, s, n, byte, ReadByte )
-#define SCHEMA_SPUT_U16( r, s, n, a )		( r ).WriteUnsigned( ( s ).n, 2 );
-#define SCHEMA_SGET_U16( r, s, n, a )		SCHEMA_SGET_UNSIGNED( r, s, n, uint16, ReadUnsignedShort )
-#define SCHEMA_SPUT_U32( r, s, n, a )		( r ).WriteUnsigned( ( s ).n, 4 );
-#define SCHEMA_SGET_U32( r, s, n, a )		SCHEMA_SGET_UNSIGNED( r, s, n, uint32, ReadUnsignedInt )
-#define SCHEMA_SPUT_U64( r, s, n, a )		( r ).WriteUnsigned( ( s ).n, 8 );
-#define SCHEMA_SGET_U64( r, s, n, a )		SCHEMA_SGET_UNSIGNED( r, s, n, uint64, Read64 )
-#define SCHEMA_SPUT_I64( r, s, n, a )		( r ).WriteUnsigned( ( uint64 )( s ).n, 8 );
-#define SCHEMA_SGET_I64( r, s, n, a )		{ uint64 value; if( ( r ).Read64( value ) ) { ( s ).n = ( int64 )value; } else { ( r ).good = false; } }
-#define SCHEMA_SPUT_STR( r, s, n, a )		( r ).WriteString( ( s ).n, a );
-#define SCHEMA_SGET_STR( r, s, n, a )		if( !( r ).ReadString( ( s ).n, a ) ) { ( r ).good = false; }
-#define SCHEMA_SPUT_VEC3( r, s, n, a )		( r ).WriteFloat( ( s ).n[0] ); ( r ).WriteFloat( ( s ).n[1] ); ( r ).WriteFloat( ( s ).n[2] );
-#define SCHEMA_SGET_VEC3( r, s, n, a )		if( !( r ).ReadFiniteFloat( ( s ).n[0] ) || !( r ).ReadFiniteFloat( ( s ).n[1] ) || !( r ).ReadFiniteFloat( ( s ).n[2] ) ) { ( r ).good = false; }
-#define SCHEMA_SPUT_HAND( r, s, n, a )		WriteRecord##n( r, s );
-#define SCHEMA_SGET_HAND( r, s, n, a )		if( !ReadRecord##n( r, s ) ) { ( r ).good = false; }
+#define SCHEMA_RSGET_UNSIGNED( r, s, n, T, READ )	{ T value; if( ( r ).READ( value ) ) { ( s ).n = value; } else { ( r ).good = false; } }
+#define SCHEMA_RSPUT_U8( r, s, n, a )		( r ).WriteUnsigned( ( s ).n, 1 );
+#define SCHEMA_RSGET_U8( r, s, n, a )		SCHEMA_RSGET_UNSIGNED( r, s, n, byte, ReadByte )
+#define SCHEMA_RSPUT_U16( r, s, n, a )		( r ).WriteUnsigned( ( s ).n, 2 );
+#define SCHEMA_RSGET_U16( r, s, n, a )		SCHEMA_RSGET_UNSIGNED( r, s, n, uint16, ReadUnsignedShort )
+#define SCHEMA_RSPUT_U32( r, s, n, a )		( r ).WriteUnsigned( ( s ).n, 4 );
+#define SCHEMA_RSGET_U32( r, s, n, a )		SCHEMA_RSGET_UNSIGNED( r, s, n, uint32, ReadUnsignedInt )
+#define SCHEMA_RSPUT_U64( r, s, n, a )		( r ).WriteUnsigned( ( s ).n, 8 );
+#define SCHEMA_RSGET_U64( r, s, n, a )		SCHEMA_RSGET_UNSIGNED( r, s, n, uint64, Read64 )
+#define SCHEMA_RSPUT_I64( r, s, n, a )		( r ).WriteUnsigned( ( uint64 )( s ).n, 8 );
+#define SCHEMA_RSGET_I64( r, s, n, a )		{ uint64 value; if( ( r ).Read64( value ) ) { ( s ).n = ( int64 )value; } else { ( r ).good = false; } }
+#define SCHEMA_RSPUT_STR( r, s, n, a )		( r ).WriteString( ( s ).n, a );
+#define SCHEMA_RSGET_STR( r, s, n, a )		if( !( r ).ReadString( ( s ).n, a ) ) { ( r ).good = false; }
+#define SCHEMA_RSPUT_VEC3( r, s, n, a )		( r ).WriteFloat( ( s ).n[0] ); ( r ).WriteFloat( ( s ).n[1] ); ( r ).WriteFloat( ( s ).n[2] );
+#define SCHEMA_RSGET_VEC3( r, s, n, a )		if( !( r ).ReadFiniteFloat( ( s ).n[0] ) || !( r ).ReadFiniteFloat( ( s ).n[1] ) || !( r ).ReadFiniteFloat( ( s ).n[2] ) ) { ( r ).good = false; }
+#define SCHEMA_RSPUT_HAND( r, s, n, a )		WriteRecord##n( r, s );
+#define SCHEMA_RSGET_HAND( r, s, n, a )		if( !ReadRecord##n( r, s ) ) { ( r ).good = false; }
 
 // a LIST's ARG, taken apart; the element's names are pasted through SCHEMA_CAT so the argument expands first
 #define SCHEMA_LIST_ELEMENT( e, w, m )		e
@@ -182,14 +185,16 @@ If you have questions concerning this license or the applicable additional terms
 #define SCHEMA_CAT_( x, y )					x##y
 #define SCHEMA_CAT3( x, y, z )				SCHEMA_CAT3_( x, y, z )
 #define SCHEMA_CAT3_( x, y, z )				x##y##z
-#define SCHEMA_SPUT_LIST( r, s, n, a ) \
+#define SCHEMA_RSPUT_LIST( r, s, n, a ) \
+	compile_time_assert( SCHEMA_LIST_WIDTH a <= 4 ); \
 	( r ).WriteCount( ( s ).n.Num(), SCHEMA_LIST_WIDTH a, SCHEMA_LIST_MAX a ); \
 	for( int i = 0; i < ( s ).n.Num(); i++ ) \
 	{ \
 		SCHEMA_CAT( WriteRecord, SCHEMA_LIST_ELEMENT a )( r, ( s ).n[i] ); \
 	}
-#define SCHEMA_SGET_LIST( r, s, n, a ) \
+#define SCHEMA_RSGET_LIST( r, s, n, a ) \
 	{ \
+		compile_time_assert( SCHEMA_LIST_WIDTH a <= 4 ); \
 		int count; \
 		if( !( r ).ReadCount( count, SCHEMA_LIST_WIDTH a, SCHEMA_LIST_MAX a ) ) \
 		{ \

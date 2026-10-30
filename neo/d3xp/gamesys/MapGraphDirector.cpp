@@ -249,7 +249,13 @@ static int WriteRecipeBytes( const dungeonRecipe_t& r, byte* out, int max )
 	{
 		return 0;
 	}
+	//puncho - P2b.1.4: SetMatchGameData refuses a node past 255, so the host refuses the load rather than every client
+	if( r.currentNode >= 256 )
+	{
+		return -1;
+	}
 	idFile_Memory bytes( "recipe" );
+	bytes.SetGranularity( 128 );	// at most DUNGEON_RECIPE_MAX_BYTES
 	idRecordOut rec;
 	rec.BeginFile( &bytes );
 	rec.WriteUnsigned( DUNGEON_RECIPE_VERSION, 1 );
@@ -290,7 +296,7 @@ bool idMapGraphDirector::SetMatchGameData( const byte* data, int size )
 	{
 		return true;
 	}
-	if( data == NULL || size < 35 || size > 66 )
+	if( data == NULL || size < DUNGEON_RECIPE_MIN_BYTES || size > DUNGEON_RECIPE_MAX_BYTES )
 	{
 		return false;
 	}
@@ -312,12 +318,14 @@ bool idMapGraphDirector::SetMatchGameData( const byte* data, int size )
 }
 #if !defined( ID_RETAIL )
 //puncho - P2b.1.4: recordTest recipe. The recipe this map loaded with (recordDump's bytes) fed to SetMatchGameData,
-// which accepts it within 35-66 bytes and writes the same bytes back, then that recipe with a 32-character world name,
-// which the write refuses
+// which accepts it within DUNGEON_RECIPE_MIN_BYTES - DUNGEON_RECIPE_MAX_BYTES and writes the same bytes back; that
+// recipe with a 32-character world name, which the write refuses, and with 31, the longest recipe, which a fresh
+// director accepts; then the dumped recipe with one trailing byte and the longest with its name's length byte set to 32,
+// which SetMatchGameData refuses
 void idMapGraphDirector::TestRecipe( const char* map ) const
 {
 	byte bytes[MAX_MATCH_GAME_DATA];
-	const int length = PeekMatchGameData( map, bytes, sizeof( bytes ) );
+	const int length = PeekMatchGameData( map, bytes, sizeof( bytes ) - 1 );
 	idStr hex;
 	for( int i = 0; i < length; i++ )
 	{
@@ -325,7 +333,7 @@ void idMapGraphDirector::TestRecipe( const char* map ) const
 	}
 	gameLocal.Printf( "RECORD_RECIPE bytes=%d %s\n", length, hex.c_str() );
 	idMapGraphDirector decoded;
-	const bool accepted = length >= 35 && length <= 66 && decoded.SetMatchGameData( bytes, length );
+	const bool accepted = length >= DUNGEON_RECIPE_MIN_BYTES && length <= DUNGEON_RECIPE_MAX_BYTES && decoded.SetMatchGameData( bytes, length );
 	byte again[MAX_MATCH_GAME_DATA];
 	const bool same = accepted && WriteRecipeBytes( decoded.recipe, again, sizeof( again ) ) == length && memcmp( again, bytes, length ) == 0;
 	dungeonRecipe_t overlong = decoded.recipe;
@@ -333,8 +341,22 @@ void idMapGraphDirector::TestRecipe( const char* map ) const
 	const int refused = WriteRecipeBytes( overlong, again, sizeof( again ) );
 	overlong.worldName.Fill( 'w', 31 );
 	const int longest = WriteRecipeBytes( overlong, again, sizeof( again ) );
-	const bool pass = accepted && same && refused == -1 && longest == 66;
-	gameLocal.Printf( "RECORD_RECIPE %s accepted=%d rewritten=%s name32=%d name31=%d\n", pass ? "PASS" : "FAIL", accepted ? 1 : 0, same ? "equal" : "DIFF", refused, longest );
+	idMapGraphDirector fresh;
+	const bool acceptLongest = longest == DUNGEON_RECIPE_MAX_BYTES && fresh.SetMatchGameData( again, longest );
+	bool refuseTrailing = false;
+	if( accepted )
+	{
+		bytes[length] = 0;	// PeekMatchGameData left the byte free
+		refuseTrailing = !fresh.SetMatchGameData( bytes, length + 1 );
+	}
+	bool refuseLength32 = false;
+	if( longest == DUNGEON_RECIPE_MAX_BYTES )
+	{
+		again[DUNGEON_RECIPE_MIN_BYTES - 1] = 32;
+		refuseLength32 = !fresh.SetMatchGameData( again, longest );
+	}
+	const bool pass = accepted && same && refused == -1 && acceptLongest && refuseTrailing && refuseLength32;
+	gameLocal.Printf( "RECORD_RECIPE %s accepted=%d rewritten=%s name32=%d name31=%d accept66=%d trailing=%s length32=%s\n", pass ? "PASS" : "FAIL", accepted ? 1 : 0, same ? "equal" : "DIFF", refused, longest, acceptLongest ? 1 : 0, refuseTrailing ? "refused" : "ACCEPTED", refuseLength32 ? "refused" : "ACCEPTED" );
 }
 #endif
 

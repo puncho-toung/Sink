@@ -327,15 +327,18 @@ bool idWorldStore::EncodeCreated( idEntity* ent, const recordFrame_t& frame, idF
 		}
 		nextCreatedId = nextIdentity;
 	}
-	idRecordOut head;
-	head.BeginFile( &out );
-	head.Write64( identity );
-	head.WriteString( recordName, 63 );
-	head.Write64( created );
-	head.WriteUnsigned( 0, 1 );
-	head.WriteUnsigned( rec.NumSections(), 1 );
-	head.WriteData( rec.Data(), rec.Length() );
-	return !head.Overflowed();
+	//puncho - P2b.1.4: the entry's writer writes the head and its sections over out: BeginFile keeps the sections'
+	// bytes in its buffer (Data) and the def name, so one writer, one buffer
+	const int numSections = rec.NumSections();
+	const int length = rec.Length();
+	rec.BeginFile( &out );
+	rec.Write64( identity );
+	rec.WriteString( recordName, 63 );
+	rec.Write64( created );
+	rec.WriteUnsigned( 0, 1 );
+	rec.WriteUnsigned( numSections, 1 );
+	rec.WriteData( rec.Data(), length );
+	return !rec.Overflowed();
 }
 
 idCorpse* SpawnCorpseRecord( const char* def, idRecordIn& rec, const recordFrame_t& frame )
