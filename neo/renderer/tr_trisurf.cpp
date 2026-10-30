@@ -1926,6 +1926,13 @@ Uploads static vertices to the vertex cache.
 void R_CreateDeformStaticVertices( deformInfo_t* deform, nvrhi::ICommandList* commandList )
 {
 #if !defined( DMAP )
+	//puncho - static arena (P2b.1.8): a retained model keeps its deform caches (StaticHandleValid, false at
+	// r_staticArenaSplit 0, so every load uploads as before); in EndLevelLoad's preflight this only measures
+	if( !vertexCache.StaticUploadNeeded( deform->staticIndexCache, ( int )( deform->numIndexes * sizeof( triIndex_t ) ),
+										 deform->staticAmbientCache, ( int )( deform->numOutputVerts * sizeof( idDrawVert ) ) ) )
+	{
+		return;
+	}
 	deform->staticAmbientCache = vertexCache.AllocStaticVertex( deform->verts, deform->numOutputVerts * sizeof( idDrawVert ), commandList );
 	deform->staticIndexCache = vertexCache.AllocStaticIndex( deform->indexes, deform->numIndexes * sizeof( triIndex_t ), commandList );
 #endif
@@ -2052,6 +2059,15 @@ time, rather than being re-created each frame in the frame temporary buffers.
 */
 void R_CreateStaticBuffersForTri( srfTriangles_t& tri, nvrhi::ICommandList* commandList )
 {
+	//puncho start - static arena (P2b.1.8): a retained model keeps its static buffers (StaticHandleValid, false at
+	// r_staticArenaSplit 0, so every load uploads as before); in EndLevelLoad's preflight this only measures
+	const int indexBytes = ( tri.indexes != NULL ) ? ( int )( tri.numIndexes * sizeof( tri.indexes[0] ) ) : 0;
+	const int vertexBytes = ( tri.verts != NULL ) ? ( int )( tri.numVerts * sizeof( tri.verts[0] ) ) : 0;
+	if( !vertexCache.StaticUploadNeeded( tri.indexCache, indexBytes, tri.ambientCache, vertexBytes ) )
+	{
+		return;
+	}
+	//puncho end
 	tri.indexCache = 0;
 	tri.ambientCache = 0;
 

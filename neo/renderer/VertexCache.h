@@ -97,6 +97,202 @@ If you have questions concerning this license or the applicable additional terms
 
 #endif
 
+//puncho start - static arena (P2b.1.8): the frozen math core (plans/map-graph/gates-2b/s1/check/static_arena_core.h,
+// FROZEN-arena.txt: moved verbatim but for static_assert -> compile_time_assert and tab-only continuation lines; its
+// check runs against this copy). At r_staticArenaSplit 1 a static handle's frame field holds segment and generation
+#ifndef STATIC_ARENA_CORE_H
+#define STATIC_ARENA_CORE_H
+
+// The including scope supplies uint64 as an unsigned 64-bit integer (the engine's
+// existing typedef) and the VERTCACHE_ handle layout constants (VertexCache.h).
+// At split 0 the caller retains the frame field and validity always fails. At
+// split 1 the caller replaces that field; low bits, including the static flag,
+// remain untouched. The caller owns load latching and generation invalidation.
+const int STATIC_ARENA_SEGMENT_BITS = 6;
+const int STATIC_ARENA_GENERATION_BITS = 7;
+const int STATIC_ARENA_SEGMENT_SHIFT = 51;
+const int STATIC_ARENA_GENERATION_SHIFT = 57;
+const int STATIC_ARENA_MAX_SEGMENTS = 63;		// IDs 0..62; 63 means none
+const int STATIC_ARENA_MAX_GENERATION = 127;	// 0 means never valid
+
+// The MAX_ values double as the field masks, and the two fields must exactly replace
+// the frame field: if VertexCache.h's layout changes, these fail before a handle does
+compile_time_assert( STATIC_ARENA_MAX_SEGMENTS == ( 1 << STATIC_ARENA_SEGMENT_BITS ) - 1 );
+compile_time_assert( STATIC_ARENA_MAX_GENERATION == ( 1 << STATIC_ARENA_GENERATION_BITS ) - 1 );
+compile_time_assert( STATIC_ARENA_SEGMENT_SHIFT == VERTCACHE_FRAME_SHIFT );
+compile_time_assert( STATIC_ARENA_GENERATION_SHIFT == STATIC_ARENA_SEGMENT_SHIFT + STATIC_ARENA_SEGMENT_BITS );
+compile_time_assert( STATIC_ARENA_GENERATION_SHIFT + STATIC_ARENA_GENERATION_BITS == 64 );
+compile_time_assert( ( 1 << ( STATIC_ARENA_SEGMENT_BITS + STATIC_ARENA_GENERATION_BITS ) ) - 1 == VERTCACHE_FRAME_MASK );
+compile_time_assert( ( ( uint64 )VERTCACHE_OFFSET_MASK << VERTCACHE_OFFSET_SHIFT ) < ( ( uint64 )1 << STATIC_ARENA_SEGMENT_SHIFT ) );
+
+/*
+====================
+StaticArenaPackTop
+====================
+*/
+inline uint64 StaticArenaPackTop( int segment, int generation )
+{
+	return ( ( uint64 )( segment & STATIC_ARENA_MAX_SEGMENTS ) << STATIC_ARENA_SEGMENT_SHIFT ) |
+		   ( ( uint64 )( generation & STATIC_ARENA_MAX_GENERATION ) << STATIC_ARENA_GENERATION_SHIFT );
+}
+
+/*
+====================
+StaticArenaSegment
+====================
+*/
+inline int StaticArenaSegment( uint64 handle )
+{
+	return ( int )( ( handle >> STATIC_ARENA_SEGMENT_SHIFT ) & STATIC_ARENA_MAX_SEGMENTS );
+}
+
+/*
+====================
+StaticArenaGeneration
+====================
+*/
+inline int StaticArenaGeneration( uint64 handle )
+{
+	return ( int )( ( handle >> STATIC_ARENA_GENERATION_SHIFT ) & STATIC_ARENA_MAX_GENERATION );
+}
+
+/*
+====================
+StaticArenaSetTop
+====================
+*/
+inline uint64 StaticArenaSetTop( uint64 handle, int segment, int generation )
+{
+	const uint64 lowMask = ( ( uint64 )1 << STATIC_ARENA_SEGMENT_SHIFT ) - 1;
+	return ( handle & lowMask ) | StaticArenaPackTop( segment, generation );
+}
+
+/*
+====================
+StaticArenaHandleValid
+
+The caller selects static handles; this predicate does not inspect the static
+flag. A nonreserved segment/generation at split 1 requires a 63-entry table.
+====================
+*/
+inline bool StaticArenaHandleValid( bool split, uint64 handle, const int generations[STATIC_ARENA_MAX_SEGMENTS] )
+{
+	if( !split )
+	{
+		return false;
+	}
+
+	const int segment = StaticArenaSegment( handle );
+	const int generation = StaticArenaGeneration( handle );
+	return segment != STATIC_ARENA_MAX_SEGMENTS && generation != 0 && generation == generations[segment];
+}
+
+// Used bytes include alignment padding. The live regions are [0, used0) and
+// [size - used1, size); equal frontiers are allowed. Only segments 0 and 1 bump.
+struct staticArenaSet_t
+{
+	int		size;
+	int		used0;
+	int		used1;
+};
+
+/*
+====================
+StaticArenaFits
+
+Reject invalid sets, nonpositive byte counts, non-power-of-two alignment, and
+unsupported segments. Subtract within bounds before computing either start,
+so even a set of INT_MAX bytes cannot overflow signed arithmetic.
+====================
+*/
+inline bool StaticArenaFits( const staticArenaSet_t& set, int segment, int bytes, int align )
+{
+	if( ( segment != 0 && segment != 1 ) || bytes <= 0 || align <= 0 || ( align & ( align - 1 ) ) != 0 )
+	{
+		return false;
+	}
+	if( set.size < 0 || set.used0 < 0 || set.used1 < 0 || set.used0 > set.size || set.used1 > set.size - set.used0 )
+	{
+		return false;
+	}
+
+	const int freeBytes = set.size - set.used0 - set.used1;
+	if( bytes > freeBytes )
+	{
+		return false;
+	}
+
+	const int alignMask = align - 1;
+	if( segment == 0 )
+	{
+		const int padding = ( align - ( set.used0 & alignMask ) ) & alignMask;
+		return padding <= freeBytes - bytes;
+	}
+	const int padding = ( set.size - set.used1 - bytes ) & alignMask;
+	return padding <= freeBytes - bytes;
+}
+
+/*
+====================
+StaticArenaAlloc
+
+Failure leaves the set unchanged. Starts, rather than byte counts, are aligned;
+segment 0 charges leading padding and segment 1 charges trailing padding.
+====================
+*/
+inline int StaticArenaAlloc( staticArenaSet_t& set, int segment, int bytes, int align )
+{
+	if( !StaticArenaFits( set, segment, bytes, align ) )
+	{
+		return -1;
+	}
+
+	const int alignMask = align - 1;
+	if( segment == 0 )
+	{
+		const int offset = set.used0 + ( ( align - ( set.used0 & alignMask ) ) & alignMask );
+		set.used0 = offset + bytes;
+		return offset;
+	}
+	const int offset = ( set.size - set.used1 - bytes ) & ~alignMask;
+	set.used1 = set.size - offset;
+	return offset;
+}
+
+/*
+====================
+StaticArenaFree
+
+Unsupported segments leave the set unchanged; generation changes are separate.
+====================
+*/
+inline void StaticArenaFree( staticArenaSet_t& set, int segment )
+{
+	if( segment == 0 )
+	{
+		set.used0 = 0;
+	}
+	else if( segment == 1 )
+	{
+		set.used1 = 0;
+	}
+}
+
+/*
+====================
+StaticArenaNextGeneration
+
+Input is a decoded generation in [0, 127]. A fresh arena advances 0 to 1.
+====================
+*/
+inline int StaticArenaNextGeneration( int generation )
+{
+	return ( generation == 0 || generation == STATIC_ARENA_MAX_GENERATION ) ? 1 : generation + 1;
+}
+
+#endif
+//puncho end
+
 const int VERTEX_CACHE_ALIGN		= 32;
 const int INDEX_CACHE_ALIGN			= 16;
 const int JOINT_CACHE_ALIGN			= 16;
@@ -122,6 +318,19 @@ struct geoBufferSet_t
 	int						allocations;	// number of index and vertex allocations combined
 };
 
+//puncho start - static arena (P2b.1.8): one static set's bookkeeping at r_staticArenaSplit 1 (staticSets[ CACHE_VERTEX ]
+// and staticSets[ CACHE_INDEX ]); geoBufferSet_t's vertexMemUsed and indexMemUsed mirror used0 + used1
+struct staticArenaStats_t
+{
+	staticArenaSet_t		arena;			// segment 0 from offset 0 up, segment 1 from the end down
+	int						high[2];		// per segment: the most bytes it held
+	int						late;			// the most bytes allocated after a load's upload loops, before the next load
+	int						mark;			// the set's bytes when the last upload loops ended, -1 before any
+	int64					live0;			// preflight: the bytes segment 0's kept handles hold (ALIGN'd)
+	int64					incoming;		// preflight: the bytes the upload loops will ask for (ALIGN'd)
+};
+//puncho end
+
 class idVertexCache
 {
 public:
@@ -131,6 +340,24 @@ public:
 
 	// call on loading a new map
 	void			FreeStaticData();
+
+	//puncho start - static arena (P2b.1.8): at r_staticArenaSplit 1 each static set is two-ended: segment 0 (persistent
+	// models, reloadable or default, and their deform caches at LevelKeepGrace() >= 1) grows up from 0, segment 1 (the
+	// map's own models, light tris, everything at grace 0) down from the end, so a game-driven load keeps segment 0's
+	// handles and frees segment 1 only. Main thread only, as every static allocation is (EndLevelLoad's upload loops,
+	// GenerateInteractionsForLight)
+	void			BeginStaticLoad( bool keepPersistent );		// BeginLevelLoad: latch the split, free segment 1 or both
+	void			SetStaticSegment( int segment );			// the segment the next static allocations go to
+	void			FreeStaticSegment( int segment );			// reset: both sets' frontier, generation + 1
+	bool			StaticHandleValid( const vertCacheHandle_t handle ) const;	// false at split 0
+	// the creation functions' first test: false when both handles are kept (or have no bytes), and always in the preflight,
+	// which only measures; true when the caller must zero both handles and upload both blocks
+	bool			StaticUploadNeeded( vertCacheHandle_t indexHandle, int indexBytes, vertCacheHandle_t vertexHandle, int vertexBytes );
+	bool			BeginStaticPreflight();						// false at split 0; else measure mode until EndStaticPreflight
+	void			EndStaticPreflight( const int segmentModels[2] );	// the reset decision and its line
+	void			EndStaticUploads();							// after the upload loops: late use starts, segment 1
+	void			PlantStaleHandle( vertCacheHandle_t& handle );	// dev: r_staticTestStale makes one valid handle stale
+	//puncho end
 
 	// this data is only valid for one frame of rendering
 	vertCacheHandle_t	AllocVertex( const void* data, int num, size_t size = sizeof( idDrawVert ), nvrhi::ICommandList* commandList = nullptr );
@@ -174,6 +401,24 @@ public:
 	int				mostUsedVertex;
 	int				mostUsedIndex;
 	int				mostUsedJoint;
+
+	//puncho start - static arena (P2b.1.8)
+	staticArenaStats_t	staticSets[2];				// [ CACHE_VERTEX ], [ CACHE_INDEX ]; used at split 1 only
+	int				staticGenerations[STATIC_ARENA_MAX_SEGMENTS];	// per segment; 0 is never valid
+	int				staticSegment;				// 0 or 1
+	bool			staticSplit;				// r_staticArenaSplit, latched by BeginStaticLoad
+	bool			staticSplitChanged;			// this load changed the split: no handle is valid until its uploads end
+	bool			staticMeasure;				// inside the preflight
+	int				staticReports;				// preflight: creation calls that keep or will upload bytes
+	int				staticSegmentModels[2];		// per segment: the models holding static data after the last load
+	int				staticResets;				// preflight resets of segment 0
+	int				staticUploadsRetained;		// this load: uploads that replaced a static handle (resident models)
+	int				staticUploadsNew;			// this load: uploads of geometry that had no static handle
+	int64			staticRetainedBytes;
+	int64			staticNewBytes;
+	idSysInterlockedInteger	staticStaleHandles;	// stale static handles CacheIsCurrent refused (frontend jobs)
+	idSysInterlockedInteger	staticTestStale;	// dev: 1 while r_staticTestStale's plant is armed
+	//puncho end
 
 	// Try to make room for <bytes> bytes
 	vertCacheHandle_t	ActuallyAlloc( geoBufferSet_t& vcs, const void* data, int bytes, cacheType_t type, nvrhi::ICommandList* commandList );

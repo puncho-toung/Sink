@@ -933,7 +933,9 @@ void idRenderModelManagerLocal::BeginLevelLoad()
 	}
 
 #if !defined( DMAP )
-	vertexCache.FreeStaticData();
+	//puncho - static arena (P2b.1.8): latches r_staticArenaSplit; at split 1 a load that keeps the models above
+	// (LevelKeepGrace() >= 1) frees only segment 1, so the kept models' static handles stay valid; any other load frees both
+	vertexCache.BeginStaticLoad( common->LevelKeepGrace() >= 1 );
 #endif
 }
 
@@ -1009,6 +1011,17 @@ void idRenderModelManagerLocal::Preload( const idPreloadManifest& manifest )
 	}
 }
 
+#if !defined( DMAP )
+//puncho start - static arena (P2b.1.8): the static segment a model's buffers and deform caches go to. Persistent are
+// the reloadable models and the default models (_DEFAULT and a missing file's placeholder: not reloadable, but the
+// manager's own and never purged); every other non-reloadable model is a render world's, freed with its map
+static int StaticSegmentForModel( const idRenderModel* model, bool keepPersistent )
+{
+	return ( keepPersistent && ( model->IsReloadable() || model->IsDefaultModel() ) ) ? 0 : 1;
+}
+//puncho end
+#endif
+
 /*
 =================
 idRenderModelManagerLocal::EndLevelLoad
@@ -1077,11 +1090,42 @@ void idRenderModelManagerLocal::EndLevelLoad()
 	}
 
 #if !defined( DMAP )
+	//puncho start - static arena (P2b.1.8): at LevelKeepGrace() >= 1 a persistent model (StaticSegmentForModel) and its
+	// deform caches go to segment 0, which the next such load keeps; the map's own models (_area, inline) and everything
+	// at grace 0 go to segment 1. The preflight runs the two upload loops' calls in measure mode first: each creation
+	// function reports the bytes its kept handles hold or the bytes it would ask for, and uploads nothing; then
+	// EndStaticPreflight resets segment 0 (a new generation: all of it re-uploads below) when keeping it would not fit or
+	// a quarter of it is dead
+	const bool keepPersistent = common->LevelKeepGrace() >= 1;
+	if( vertexCache.BeginStaticPreflight() )
+	{
+		int segmentModels[2] = { 0, 0 };
+		for( int i = 0; i < models.Num(); i++ )
+		{
+			idRenderModel* model = models[i];
+			const int segment = StaticSegmentForModel( model, keepPersistent );
+			const int reports = vertexCache.staticReports;
+			vertexCache.SetStaticSegment( segment );
+			model->CreateBuffers( commandList );
+			if( model->IsLoaded() )
+			{
+				for( int j = 0; j < model->NumSurfaces(); j++ )
+				{
+					R_CreateStaticBuffersForTri( *( model->Surface( j )->geometry ), commandList );
+				}
+			}
+			segmentModels[segment] += ( vertexCache.staticReports != reports ) ? 1 : 0;
+		}
+		vertexCache.EndStaticPreflight( segmentModels );
+	}
+	//puncho end
+
 	commandList->open();
 
 	for( int i = 0; i < models.Num(); i++ )
 	{
 		idRenderModel* model = models[i];
+		vertexCache.SetStaticSegment( StaticSegmentForModel( model, keepPersistent ) );	//puncho - static arena (P2b.1.8)
 		const uint64 bufferStart = Sys_Microseconds();
 		model->CreateBuffers( commandList );
 		transitionBufferUs += Sys_Microseconds() - bufferStart;
@@ -1093,6 +1137,7 @@ void idRenderModelManagerLocal::EndLevelLoad()
 		idRenderModel* model = models[i];
 		if( model->IsLoaded() )
 		{
+			vertexCache.SetStaticSegment( StaticSegmentForModel( model, keepPersistent ) );	//puncho - static arena (P2b.1.8)
 			for( int j = 0; j < model->NumSurfaces(); j++ )
 			{
 				const uint64 uploadStart = Sys_Microseconds();
@@ -1101,6 +1146,7 @@ void idRenderModelManagerLocal::EndLevelLoad()
 			}
 		}
 	}
+	vertexCache.EndStaticUploads();	//puncho - static arena (P2b.1.8): light tris from here on are late use, in segment 1
 
 	commandList->close();
 	deviceManager->GetDevice()->executeCommandList( commandList );
@@ -1126,6 +1172,13 @@ void idRenderModelManagerLocal::EndLevelLoad()
 		common->Printf( "%5i new models loaded in %5.1f seconds\n", loadCount, ( end - start ) * 0.001 );
 	}
 	common->Printf( "---------------------------------------------------\n" );
+#if !defined( DMAP )
+	//puncho - static arena (P2b.1.8): what the two metrics below timed: uploads of geometry that held a static handle
+	// (resident before this load) and of geometry that held none
+	common->Printf( "static uploads: staticUploadsRetained %d (%lld KB) staticUploadsNew %d (%lld KB) staticStaleHandles %d\n",
+					vertexCache.staticUploadsRetained, ( long long )( vertexCache.staticRetainedBytes / 1024 ), vertexCache.staticUploadsNew,
+					( long long )( vertexCache.staticNewBytes / 1024 ), vertexCache.staticStaleHandles.GetValue() );
+#endif
 	common->ReportTransitionMetric( TRANSITION_MODEL_BUFFER_US, transitionBufferUs );
 	common->ReportTransitionMetric( TRANSITION_STATIC_UPLOAD_US, transitionStaticUs );
 	common->ReportTransitionMetric( TRANSITION_MODEL_US, Sys_Microseconds() - transitionMetricStart );

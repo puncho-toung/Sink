@@ -847,6 +847,17 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 		drawSurf_t* baseDrawSurf = NULL;
 		if( surfaceDirectlyVisible && shader->IsDrawn() )
 		{
+			//puncho start - static arena (P2b.1.8): a stale static handle (its segment reset since) fails CacheIsCurrent,
+			// which counts it in staticStaleHandles, and is re-uploaded here into this frame's buffers, never drawn. Dev:
+			// r_staticTestStale plants one on a drawn surface, with the jobs off only: two entities sharing this tri in
+			// parallel jobs could copy the planted handle between another job's test and its fallback
+#if !defined( ID_RETAIL )
+			if( vertexCache.staticTestStale.GetValue() > 0 && !r_useParallelAddModels.GetBool() )
+			{
+				vertexCache.PlantStaleHandle( tri->indexCache );
+			}
+#endif
+			//puncho end
 			// make sure we have an ambient cache and all necessary normals / tangents
 			if( !vertexCache.CacheIsCurrent( tri->indexCache ) )
 			{
@@ -1058,6 +1069,8 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 			{
 				// static interactions can commonly find that no triangles from a surface
 				// contact the light, even when the total model does
+				//puncho - static arena (P2b.1.8): stage 4 inherits this: the light tris' static index cache (segment 1)
+				// is used without CacheIsCurrent's generation test; P2b.4.11 adds it
 				if( surfInter == NULL || surfInter->lightTrisIndexCache > 0 )
 				{
 					// make sure we have a valid shader register even if we didn't generate a drawn mesh above
@@ -1194,6 +1207,8 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 			{
 				// static interactions can commonly find that no triangles from a surface
 				// contact the light, even when the total model does
+				//puncho - static arena (P2b.1.8): stage 4 inherits this: the light tris' static index cache (segment 1)
+				// is used without CacheIsCurrent's generation test; P2b.4.11 adds it
 				if( surfInter == NULL || surfInter->lightTrisIndexCache > 0 )
 				{
 					// create a drawSurf for this interaction
