@@ -847,17 +847,8 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 		drawSurf_t* baseDrawSurf = NULL;
 		if( surfaceDirectlyVisible && shader->IsDrawn() )
 		{
-			//puncho start - static arena (P2b.1.8): a stale static handle (its segment reset since) fails CacheIsCurrent,
-			// which counts it in staticStaleHandles, and is re-uploaded here into this frame's buffers, never drawn. Dev:
-			// r_staticTestStale plants one on a drawn surface, with the jobs off only: two entities sharing this tri in
-			// parallel jobs could copy the planted handle between another job's test and its fallback
-#if !defined( ID_RETAIL )
-			if( vertexCache.staticTestStale.GetValue() > 0 && !r_useParallelAddModels.GetBool() )
-			{
-				vertexCache.PlantStaleHandle( tri->indexCache );
-			}
-#endif
-			//puncho end
+			//puncho - static arena (P2b.1.8): a stale static handle (its segment reset since) fails CacheIsCurrent, which
+			// counts it in staticStaleHandles, and is re-uploaded here into this frame's buffers, never drawn
 			// make sure we have an ambient cache and all necessary normals / tangents
 			if( !vertexCache.CacheIsCurrent( tri->indexCache ) )
 			{

@@ -41,10 +41,10 @@ idCVar r_showVertexCache( "r_showVertexCache", "0", CVAR_RENDERER | CVAR_BOOL, "
 idCVar r_showVertexCacheTimings( "r_showVertexCacheTimings", "0", CVAR_RENDERER | CVAR_BOOL, "Print stats about the vertex cache every frame" );
 
 //puncho start - static arena (P2b.1.8)
-idCVar r_staticArenaSplit( "r_staticArenaSplit", "0", CVAR_RENDERER | CVAR_BOOL, "1: two-ended static sets; a load at com_levelKeep >= 1 keeps the reloadable models' static buffers (latched at each level load)" );
+idCVar r_staticArenaSplit( "r_staticArenaSplit", "0", CVAR_RENDERER | CVAR_BOOL, "1: two-ended static sets; a game-driven load at com_levelKeep >= 1 keeps the persistent models' static buffers (latched at each level load)" );
 #if !defined( ID_RETAIL )
 idCVar r_staticArenaTestCapMB( "r_staticArenaTestCapMB", "0", CVAR_RENDERER | CVAR_FLOAT, "test only: the set size in MB the static arena's preflight decides against (0: the set's own); allocation keeps the whole set" );
-idCVar r_staticTestStale( "r_staticTestStale", "0", CVAR_RENDERER | CVAR_BOOL, "test only: make the next drawn static index handle stale (split 1, r_useParallelAddModels 0); CacheIsCurrent counts it and the frontend re-uploads it" );
+idCVar r_staticTestStale( "r_staticTestStale", "0", CVAR_RENDERER | CVAR_BOOL, "test only: the next valid static handle CacheIsCurrent tests reads as stale once (split 1): it is counted and the caller re-uploads it" );
 #endif
 
 CONSOLE_COMMAND( listStaticSegments, "lists the static arena's segments: bytes used, high-water, generation, models", NULL )
@@ -191,6 +191,7 @@ void idVertexCache::Init( int _uniformBufferOffsetAlignment, nvrhi::ICommandList
 	staticSegment = 1;
 	staticSplit = false;
 	staticSplitChanged = false;
+	staticKeepPersistent = false;
 	staticMeasure = false;
 	staticReports = 0;
 	staticSegmentModels[0] = 0;
@@ -283,6 +284,8 @@ void idVertexCache::BeginStaticLoad( bool keepPersistent )
 	staticUploadsNew = 0;
 	staticRetainedBytes = 0;
 	staticNewBytes = 0;
+	staticSegmentModels[0] = 0;
+	staticSegmentModels[1] = 0;
 
 	const bool split = r_staticArenaSplit.GetBool();
 	staticSplitChanged = ( split != staticSplit );
@@ -298,7 +301,10 @@ void idVertexCache::BeginStaticLoad( bool keepPersistent )
 		staticSplit = split;
 		FreeStaticData();
 	}
+	// read per model by StaticSegmentForModel: at split 0 it needs no model call
+	staticKeepPersistent = staticSplit && keepPersistent;
 	staticSegment = 1;
+	staticMeasure = false;
 }
 
 /*
@@ -335,19 +341,6 @@ void idVertexCache::FreeStaticSegment( int segment )
 
 /*
 ==============
-idVertexCache::StaticHandleValid
-
-The static flag selects the handles the core may decode: a per-frame handle's frame field is not a
-segment and generation.
-==============
-*/
-bool idVertexCache::StaticHandleValid( const vertCacheHandle_t handle ) const
-{
-	return CacheIsStatic( handle ) && StaticArenaHandleValid( staticSplit && !staticSplitChanged, handle, staticGenerations );
-}
-
-/*
-==============
 idVertexCache::StaticUploadNeeded
 
 The two creation functions' first test. A block of no bytes allocates nothing (ActuallyAlloc
@@ -363,11 +356,12 @@ bool idVertexCache::StaticUploadNeeded( vertCacheHandle_t indexHandle, int index
 	const bool indexKept = ( indexBytes > 0 ) ? StaticHandleValid( indexHandle ) : ( indexHandle == 0 );
 	const bool vertexKept = ( vertexBytes > 0 ) ? StaticHandleValid( vertexHandle ) : ( vertexHandle == 0 );
 	const bool kept = indexKept && vertexKept;
+	const int indexFootprint = indexBytes > 0 ? ALIGN( indexBytes, INDEX_CACHE_ALIGN ) : 0;
+	const int vertexFootprint = vertexBytes > 0 ? ALIGN( vertexBytes, VERTEX_CACHE_ALIGN ) : 0;
+	// the upload loops count a model in its segment when one of its calls holds bytes (staticSegmentModels)
+	staticReports += ( indexFootprint + vertexFootprint > 0 ) ? 1 : 0;
 	if( staticMeasure )
 	{
-		const int indexFootprint = indexBytes > 0 ? ALIGN( indexBytes, INDEX_CACHE_ALIGN ) : 0;
-		const int vertexFootprint = vertexBytes > 0 ? ALIGN( vertexBytes, VERTEX_CACHE_ALIGN ) : 0;
-		staticReports += ( indexFootprint + vertexFootprint > 0 ) ? 1 : 0;
 		if( kept )
 		{
 			staticSets[ CACHE_INDEX ].live0 += ( indexFootprint > 0 && StaticArenaSegment( indexHandle ) == 0 ) ? indexFootprint : 0;
@@ -410,6 +404,14 @@ bool idVertexCache::BeginStaticPreflight()
 	{
 		return false;
 	}
+	staticSets[ CACHE_VERTEX ].dead0 = 0;
+	staticSets[ CACHE_INDEX ].dead0 = 0;
+	// nothing to keep (every grace 0 load, the first after a split change): the walk cannot change the decision
+	if( staticSets[ CACHE_VERTEX ].arena.used0 == 0 && staticSets[ CACHE_INDEX ].arena.used0 == 0 )
+	{
+		idLib::Printf( "static arena preflight: used0 0 in both sets, no walk; segment 0 empty (generation %d, 0 us)\n", staticGenerations[0] );
+		return false;
+	}
 	staticSets[ CACHE_VERTEX ].live0 = 0;
 	staticSets[ CACHE_VERTEX ].incoming = 0;
 	staticSets[ CACHE_INDEX ].live0 = 0;
@@ -424,24 +426,23 @@ bool idVertexCache::BeginStaticPreflight()
 idVertexCache::EndStaticPreflight
 
 Per set, with footprints ALIGN'd: dead0 = used0 - live0; segment 0 is reset when it holds bytes
-and either more than 25 % of them are dead or ALIGN( used0 ) + incoming + late exceeds the set's
-size. Kept, segment 0's frontier stays where it is, so the bytes this load needs are used0, not
-live0: a reset is taken whenever keeping would run out, and after one the load needs what the
-single arena needed (live0 + incoming + late). r_staticArenaTestCapMB moves the decision only.
+and either more than 25 % of them are dead or ALIGN( used0 ) + used1 + incoming + late exceeds the
+set's size. Kept, segment 0's frontier stays where it is, so the bytes this load needs are used0,
+not live0: a reset is taken whenever keeping would run out at the forecast late (the largest seen;
+a heavier map can still run out by up to dead0), and after one the load needs what the single
+arena needed (live0 + incoming + late). r_staticArenaTestCapMB moves the decision only.
 ==============
 */
-void idVertexCache::EndStaticPreflight( const int segmentModels[2] )
+void idVertexCache::EndStaticPreflight( uint64 walkUs )
 {
 	staticMeasure = false;
-	staticSegmentModels[0] = segmentModels[0];
-	staticSegmentModels[1] = segmentModels[1];
 
 	bool reset = false;
 	bool holds = false;
 	idStr line;
 	for( int type = CACHE_VERTEX; type <= CACHE_INDEX; type++ )
 	{
-		const staticArenaStats_t& set = staticSets[ type ];
+		staticArenaStats_t& set = staticSets[ type ];
 		const int64 align = ( type == CACHE_INDEX ) ? INDEX_CACHE_ALIGN : VERTEX_CACHE_ALIGN;
 		int64 size = set.arena.size;
 #if !defined( ID_RETAIL )
@@ -450,9 +451,13 @@ void idVertexCache::EndStaticPreflight( const int segmentModels[2] )
 			size = Min( size, ( int64 )( r_staticArenaTestCapMB.GetFloat() * 1024.0f * 1024.0f ) );
 		}
 #endif
+		// BeginStaticLoad freed segment 1 and nothing allocates static data between BeginLevelLoad and the upload loops;
+		// used1 is counted all the same, so a static allocation there (stage 4's cells) cannot pass unbudgeted
+		assert( set.arena.used1 == 0 );
 		const int64 used0 = set.arena.used0;
 		const int64 dead0 = Max( ( int64 )0, used0 - set.live0 );
-		const int64 needed = ALIGN( used0, align ) + set.incoming + set.late;
+		const int64 needed = ALIGN( used0, align ) + set.arena.used1 + set.incoming + set.late;
+		set.dead0 = dead0;
 		holds = holds || used0 > 0;
 		reset = reset || ( used0 > 0 && ( 4 * dead0 > used0 || needed > size ) );
 		line += va( " %s used0 %lld live0 %lld dead0 %lld incoming %lld late %d size %lld;", ( type == CACHE_INDEX ) ? "idx" : "vtx",
@@ -463,8 +468,8 @@ void idVertexCache::EndStaticPreflight( const int segmentModels[2] )
 		FreeStaticSegment( 0 );
 		staticResets++;
 	}
-	idLib::Printf( "static arena preflight:%s segment 0 %s (generation %d, models %d + %d)\n", line.c_str(),
-				   reset ? "reset" : ( holds ? "kept" : "empty" ), staticGenerations[0], segmentModels[0], segmentModels[1] );
+	idLib::Printf( "static arena preflight:%s segment 0 %s (generation %d, %llu us)\n", line.c_str(),
+				   reset ? "reset" : ( holds ? "kept" : "empty" ), staticGenerations[0], ( unsigned long long )walkUs );
 }
 
 /*
@@ -485,24 +490,83 @@ void idVertexCache::EndStaticUploads()
 
 /*
 ==============
-idVertexCache::PlantStaleHandle
+idVertexCache::AllocStaticArena
 
-Dev (r_staticTestStale): the frontend passes a drawn surface's static index handle just before
-its CacheIsCurrent test; one caller wins the armed count and gets a generation its segment does
-not have (NextGeneration never returns its input).
+AllocStaticVertex/Index at split 1: the frozen core places the block at the current segment's
+frontier (the start is aligned, not the length; -1 when the two frontiers would cross) and the
+frame field carries segment and generation. The offset stays absolute, so every reader of a static
+handle is unchanged. ActuallyAlloc's checks come first, its 4 MiB block guard among them.
 ==============
 */
-void idVertexCache::PlantStaleHandle( vertCacheHandle_t& handle )
+vertCacheHandle_t idVertexCache::AllocStaticArena( const void* data, int bytes, cacheType_t type, nvrhi::ICommandList* commandList )
 {
-#if !defined( ID_RETAIL )
-	if( StaticHandleValid( handle ) && staticTestStale.Decrement() == 0 )
+	if( bytes == 0 )
 	{
-		const int segment = StaticArenaSegment( handle );
-		assert( segment >= 0 && segment < STATIC_ARENA_MAX_SEGMENTS );
-		assert( staticGenerations[ segment ] >= 1 && staticGenerations[ segment ] <= STATIC_ARENA_MAX_GENERATION );
-		handle = StaticArenaSetTop( handle, segment, StaticArenaNextGeneration( staticGenerations[ segment ] ) );
+		return ( vertCacheHandle_t )0;
 	}
-#endif
+	assert( ( ( ( uintptr_t )( data ) ) & 15 ) == 0 );
+	if( bytes > VERTCACHE_SIZE_MASK )
+	{
+		idLib::Error( "idVertexCache::AllocStaticArena: %i bytes exceeds the %i byte block limit", bytes, VERTCACHE_SIZE_MASK );
+	}
+
+	assert( type == CACHE_VERTEX || type == CACHE_INDEX );
+	staticArenaStats_t& set = staticSets[ type ];
+	const int segment = staticSegment;
+	assert( segment == 0 || segment == 1 );
+	const int offset = StaticArenaAlloc( set.arena, segment, bytes, ( type == CACHE_INDEX ) ? INDEX_CACHE_ALIGN : VERTEX_CACHE_ALIGN );
+	if( offset < 0 )
+	{
+		// the forecast's residual (EndStaticPreflight): a map whose late use exceeds every earlier one by up to dead0
+		idLib::FatalError( "%s failed: segment %i: %i + %i used + %i requested > %i bytes (segment 0 dead %lld at the preflight, late %d)",
+						   ( type == CACHE_INDEX ) ? "AllocStaticIndex" : "AllocStaticVertex", segment, set.arena.used0, set.arena.used1, bytes,
+						   set.arena.size, ( long long )set.dead0, set.late );
+	}
+	set.high[ segment ] = Max( set.high[ segment ], ( segment == 0 ) ? set.arena.used0 : set.arena.used1 );
+	if( type == CACHE_INDEX )
+	{
+		staticData.indexMemUsed.SetValue( set.arena.used0 + set.arena.used1 );
+		if( data != NULL )
+		{
+			if( staticData.indexBuffer.GetUsage() == BU_DYNAMIC )
+			{
+				MapGeoBufferSet( staticData );
+			}
+			staticData.indexBuffer.Update( data, bytes, offset, false, commandList );
+		}
+	}
+	else
+	{
+		staticData.vertexMemUsed.SetValue( set.arena.used0 + set.arena.used1 );
+		if( data != NULL )
+		{
+			if( staticData.vertexBuffer.GetUsage() == BU_DYNAMIC )
+			{
+				MapGeoBufferSet( staticData );
+			}
+			staticData.vertexBuffer.Update( data, bytes, offset, false, commandList );
+		}
+	}
+	staticData.allocations++;
+
+	assert( staticGenerations[ segment ] >= 1 && staticGenerations[ segment ] <= STATIC_ARENA_MAX_GENERATION );
+	return	StaticArenaPackTop( segment, staticGenerations[ segment ] ) |
+			( ( uint64 )( offset & VERTCACHE_OFFSET_MASK ) << VERTCACHE_OFFSET_SHIFT ) |
+			( ( uint64 )( bytes & VERTCACHE_SIZE_MASK ) << VERTCACHE_SIZE_SHIFT ) | VERTCACHE_STATIC;
+}
+
+/*
+==============
+idVertexCache::CountStaleHandle
+
+CacheIsCurrent's cold path, out of its body: count the stale static handle the caller is about to
+re-upload.
+==============
+*/
+bool idVertexCache::CountStaleHandle()
+{
+	staticStaleHandles.Increment();
+	return false;
 }
 //puncho end
 
@@ -530,51 +594,6 @@ vertCacheHandle_t idVertexCache::ActuallyAlloc( geoBufferSet_t& vcs, const void*
 	{
 		idLib::Error( "idVertexCache::ActuallyAlloc: %i bytes exceeds the %i byte block limit", bytes, VERTCACHE_SIZE_MASK );
 	}
-
-	//puncho start - static arena (P2b.1.8): at split 1 the frozen core places a static block at the current segment's
-	// frontier (AllocStaticVertex/Index checked it fits; the start is aligned, not the length) and the frame field carries
-	// segment and generation. The offset stays absolute, so every reader of a static handle is unchanged
-	if( &vcs == &staticData && staticSplit )
-	{
-		assert( type == CACHE_VERTEX || type == CACHE_INDEX );
-		staticArenaStats_t& set = staticSets[ type ];
-		const int segment = staticSegment;
-		const int staticOffset = StaticArenaAlloc( set.arena, segment, bytes, ( type == CACHE_INDEX ) ? INDEX_CACHE_ALIGN : VERTEX_CACHE_ALIGN );
-		release_assert( staticOffset >= 0 );
-		set.high[ segment ] = Max( set.high[ segment ], ( segment == 0 ) ? set.arena.used0 : set.arena.used1 );
-		if( type == CACHE_INDEX )
-		{
-			vcs.indexMemUsed.SetValue( set.arena.used0 + set.arena.used1 );
-			if( data != NULL )
-			{
-				if( vcs.indexBuffer.GetUsage() == BU_DYNAMIC )
-				{
-					MapGeoBufferSet( vcs );
-				}
-				vcs.indexBuffer.Update( data, bytes, staticOffset, false, commandList );
-			}
-		}
-		else
-		{
-			vcs.vertexMemUsed.SetValue( set.arena.used0 + set.arena.used1 );
-			if( data != NULL )
-			{
-				if( vcs.vertexBuffer.GetUsage() == BU_DYNAMIC )
-				{
-					MapGeoBufferSet( vcs );
-				}
-				vcs.vertexBuffer.Update( data, bytes, staticOffset, false, commandList );
-			}
-		}
-		vcs.allocations++;
-
-		assert( segment >= 0 && segment < STATIC_ARENA_MAX_SEGMENTS );
-		assert( staticGenerations[ segment ] >= 1 && staticGenerations[ segment ] <= STATIC_ARENA_MAX_GENERATION );
-		return	StaticArenaPackTop( segment, staticGenerations[ segment ] ) |
-				( ( uint64 )( staticOffset & VERTCACHE_OFFSET_MASK ) << VERTCACHE_OFFSET_SHIFT ) |
-				( ( uint64 )( bytes & VERTCACHE_SIZE_MASK ) << VERTCACHE_SIZE_SHIFT ) | VERTCACHE_STATIC;
-	}
-	//puncho end
 
 	int	endPos = 0;
 	int offset = 0;
@@ -703,14 +722,11 @@ idVertexCache::AllocStaticVertex
 */
 vertCacheHandle_t idVertexCache::AllocStaticVertex( const void* data, int bytes, nvrhi::ICommandList* commandList )
 {
-	//puncho start - static arena (P2b.1.8): at split 1 the block must fit between the two frontiers (then the check below
-	// holds too: vertexMemUsed is used0 + used1)
-	const staticArenaSet_t& arena = staticSets[ CACHE_VERTEX ].arena;
-	if( staticSplit && bytes > 0 && !StaticArenaFits( arena, staticSegment, bytes, VERTEX_CACHE_ALIGN ) )
+	//puncho - static arena (P2b.1.8): split 1 places the block in the two-ended set
+	if( staticSplit )
 	{
-		idLib::FatalError( "AllocStaticVertex failed: segment %i: %i + %i used + %i requested > %i bytes", staticSegment, arena.used0, arena.used1, bytes, arena.size );
+		return AllocStaticArena( data, bytes, CACHE_VERTEX, commandList );
 	}
-	//puncho end
 	if( staticData.vertexMemUsed.GetValue() + bytes > STATIC_VERTEX_MEMORY )
 	{
 		idLib::FatalError( "AllocStaticVertex failed: %i used + %i requested > %i bytes", staticData.vertexMemUsed.GetValue(), bytes, STATIC_VERTEX_MEMORY );
@@ -725,13 +741,11 @@ idVertexCache::AllocStaticIndex
 */
 vertCacheHandle_t idVertexCache::AllocStaticIndex( const void* data, int bytes, nvrhi::ICommandList* commandList )
 {
-	//puncho start - static arena (P2b.1.8): at split 1 the block must fit between the two frontiers
-	const staticArenaSet_t& arena = staticSets[ CACHE_INDEX ].arena;
-	if( staticSplit && bytes > 0 && !StaticArenaFits( arena, staticSegment, bytes, INDEX_CACHE_ALIGN ) )
+	//puncho - static arena (P2b.1.8): split 1 places the block in the two-ended set
+	if( staticSplit )
 	{
-		idLib::FatalError( "AllocStaticIndex failed: segment %i: %i + %i used + %i requested > %i bytes", staticSegment, arena.used0, arena.used1, bytes, arena.size );
+		return AllocStaticArena( data, bytes, CACHE_INDEX, commandList );
 	}
-	//puncho end
 	if( staticData.indexMemUsed.GetValue() + bytes > STATIC_INDEX_MEMORY )
 	{
 		idLib::FatalError( "AllocStaticIndex failed: %i used + %i requested > %i bytes", staticData.indexMemUsed.GetValue(), bytes, STATIC_INDEX_MEMORY );
@@ -778,13 +792,17 @@ bool idVertexCache::CacheIsCurrent( const vertCacheHandle_t handle )
 	if( isStatic )
 	{
 		//puncho start - static arena (P2b.1.8): at split 1 a static handle is current while its segment keeps its
-		// generation; a stale one is counted and the caller's fallback re-uploads the data into this frame's buffers
+		// generation; a stale one is counted and the caller's fallback re-uploads the data into this frame's buffers.
+		// Dev: while r_staticTestStale's plant is armed, one valid handle reads as stale (no handle is rewritten)
+#if defined( ID_RETAIL )
 		if( !staticSplit || StaticHandleValid( handle ) )
+#else
+		if( !staticSplit || ( StaticHandleValid( handle ) && !( staticTestStale.GetValue() > 0 && staticTestStale.Decrement() == 0 ) ) )
+#endif
 		{
 			return true;
 		}
-		staticStaleHandles.Increment();
-		return false;
+		return CountStaleHandle();
 		//puncho end
 	}
 	const uint64 frameNum = ( int )( handle >> VERTCACHE_FRAME_SHIFT ) & VERTCACHE_FRAME_MASK;
@@ -808,8 +826,8 @@ bool idVertexCache::GetVertexBuffer( vertCacheHandle_t handle, idVertexBuffer* v
 	const uint64 frameNum = ( int )( handle >> VERTCACHE_FRAME_SHIFT ) & VERTCACHE_FRAME_MASK;
 	if( isStatic )
 	{
-		//puncho - static arena (P2b.1.8): stage 4 inherits this path; it does not test the segment's generation (the
-		// frontend's CacheIsCurrent did), P2b.4.11 adds the check
+		//puncho - static arena (P2b.1.8): stage 4 inherits this (the debug path, RenderDebug_NVRHI.cpp): no generation
+		// test here (the frontend's CacheIsCurrent did); P2b.4.11 adds it
 		vb->Reference( staticData.vertexBuffer, offset, size );
 		return true;
 	}
@@ -834,7 +852,7 @@ bool idVertexCache::GetIndexBuffer( vertCacheHandle_t handle, idIndexBuffer* ib 
 	const uint64 frameNum = ( int )( handle >> VERTCACHE_FRAME_SHIFT ) & VERTCACHE_FRAME_MASK;
 	if( isStatic )
 	{
-		//puncho - static arena (P2b.1.8): stage 4 inherits this path unchecked too (P2b.4.11)
+		//puncho - static arena (P2b.1.8): stage 4 inherits this debug path unchecked too (P2b.4.11)
 		ib->Reference( staticData.indexBuffer, offset, size );
 		return true;
 	}
@@ -882,7 +900,7 @@ void idVertexCache::BeginBackEnd()
 	mostUsedJoint = Max( mostUsedJoint, frameData[ listNum ].jointMemUsed.GetValue() );
 
 #if !defined( ID_RETAIL )
-	//puncho - static arena (P2b.1.8): r_staticTestStale arms one plant for the next frame's frontend (PlantStaleHandle);
+	//puncho - static arena (P2b.1.8): r_staticTestStale arms one plant for the next frame's frontend (CacheIsCurrent);
 	// no frontend job runs here
 	if( r_staticTestStale.GetBool() )
 	{

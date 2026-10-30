@@ -1014,10 +1014,11 @@ void idRenderModelManagerLocal::Preload( const idPreloadManifest& manifest )
 #if !defined( DMAP )
 //puncho start - static arena (P2b.1.8): the static segment a model's buffers and deform caches go to. Persistent are
 // the reloadable models and the default models (_DEFAULT and a missing file's placeholder: not reloadable, but the
-// manager's own and never purged); every other non-reloadable model is a render world's, freed with its map
-static int StaticSegmentForModel( const idRenderModel* model, bool keepPersistent )
+// manager's own and never purged); every other non-reloadable model is a render world's, freed with its map. The latch
+// (split 1 and LevelKeepGrace() >= 1, BeginStaticLoad) comes first, so split 0 makes no model call here
+static int StaticSegmentForModel( const idRenderModel* model )
 {
-	return ( keepPersistent && ( model->IsReloadable() || model->IsDefaultModel() ) ) ? 0 : 1;
+	return ( vertexCache.staticKeepPersistent && ( model->IsReloadable() || model->IsDefaultModel() ) ) ? 0 : 1;
 }
 //puncho end
 #endif
@@ -1090,22 +1091,21 @@ void idRenderModelManagerLocal::EndLevelLoad()
 	}
 
 #if !defined( DMAP )
+	commandList->open();
+
 	//puncho start - static arena (P2b.1.8): at LevelKeepGrace() >= 1 a persistent model (StaticSegmentForModel) and its
 	// deform caches go to segment 0, which the next such load keeps; the map's own models (_area, inline) and everything
-	// at grace 0 go to segment 1. The preflight runs the two upload loops' calls in measure mode first: each creation
-	// function reports the bytes its kept handles hold or the bytes it would ask for, and uploads nothing; then
-	// EndStaticPreflight resets segment 0 (a new generation: all of it re-uploads below) when keeping it would not fit or
-	// a quarter of it is dead
-	const bool keepPersistent = common->LevelKeepGrace() >= 1;
+	// at grace 0 go to segment 1. The preflight runs the two upload loops' calls in measure mode first (the command list
+	// is open but unused: each creation function reports the bytes its kept handles hold or the bytes it would ask for,
+	// and uploads nothing); then EndStaticPreflight resets segment 0 (a new generation: all of it re-uploads below) when
+	// keeping it would not fit or more than a quarter of it is dead. With segment 0 empty there is no walk
 	if( vertexCache.BeginStaticPreflight() )
 	{
-		int segmentModels[2] = { 0, 0 };
+		const uint64 preflightStart = Sys_Microseconds();
 		for( int i = 0; i < models.Num(); i++ )
 		{
 			idRenderModel* model = models[i];
-			const int segment = StaticSegmentForModel( model, keepPersistent );
-			const int reports = vertexCache.staticReports;
-			vertexCache.SetStaticSegment( segment );
+			vertexCache.SetStaticSegment( StaticSegmentForModel( model ) );
 			model->CreateBuffers( commandList );
 			if( model->IsLoaded() )
 			{
@@ -1114,21 +1114,26 @@ void idRenderModelManagerLocal::EndLevelLoad()
 					R_CreateStaticBuffersForTri( *( model->Surface( j )->geometry ), commandList );
 				}
 			}
-			segmentModels[segment] += ( vertexCache.staticReports != reports ) ? 1 : 0;
 		}
-		vertexCache.EndStaticPreflight( segmentModels );
+		vertexCache.EndStaticPreflight( Sys_Microseconds() - preflightStart );
 	}
 	//puncho end
 
-	commandList->open();
-
+	//puncho - static arena (P2b.1.8): a model holding static data after the loops counts in its segment
+	// (staticSegmentModels): its deform caches in the first loop or its surfaces in the second (no model class has both:
+	// MD5 and liquid surfaces are their instances')
 	for( int i = 0; i < models.Num(); i++ )
 	{
 		idRenderModel* model = models[i];
-		vertexCache.SetStaticSegment( StaticSegmentForModel( model, keepPersistent ) );	//puncho - static arena (P2b.1.8)
+		//puncho start - static arena (P2b.1.8)
+		const int segment = StaticSegmentForModel( model );
+		const int reports = vertexCache.staticReports;
+		vertexCache.SetStaticSegment( segment );
+		//puncho end
 		const uint64 bufferStart = Sys_Microseconds();
 		model->CreateBuffers( commandList );
 		transitionBufferUs += Sys_Microseconds() - bufferStart;
+		vertexCache.staticSegmentModels[segment] += ( vertexCache.staticReports != reports ) ? 1 : 0;	//puncho - static arena (P2b.1.8)
 	}
 
 	// create static vertex/index buffers for all models
@@ -1137,13 +1142,18 @@ void idRenderModelManagerLocal::EndLevelLoad()
 		idRenderModel* model = models[i];
 		if( model->IsLoaded() )
 		{
-			vertexCache.SetStaticSegment( StaticSegmentForModel( model, keepPersistent ) );	//puncho - static arena (P2b.1.8)
+			//puncho start - static arena (P2b.1.8)
+			const int segment = StaticSegmentForModel( model );
+			const int reports = vertexCache.staticReports;
+			vertexCache.SetStaticSegment( segment );
+			//puncho end
 			for( int j = 0; j < model->NumSurfaces(); j++ )
 			{
 				const uint64 uploadStart = Sys_Microseconds();
 				R_CreateStaticBuffersForTri( *( model->Surface( j )->geometry ), commandList );
 				transitionStaticUs += Sys_Microseconds() - uploadStart;
 			}
+			vertexCache.staticSegmentModels[segment] += ( vertexCache.staticReports != reports ) ? 1 : 0;	//puncho - static arena (P2b.1.8)
 		}
 	}
 	vertexCache.EndStaticUploads();	//puncho - static arena (P2b.1.8): light tris from here on are late use, in segment 1

@@ -323,6 +323,8 @@ void idRenderBackend::DrawElementsWithCounters( const drawSurf_t* surf, bool sha
 	idVertexBuffer* vertexBuffer;
 	if( vertexCache.CacheIsStatic( vbHandle ) )
 	{
+		//puncho - static arena (P2b.1.8): stage 4 inherits this bind: no generation test here (the frontend's
+		// CacheIsCurrent did, light tris excepted); P2b.4.11 adds it
 		vertexBuffer = &vertexCache.staticData.vertexBuffer;
 	}
 	else
@@ -357,6 +359,8 @@ void idRenderBackend::DrawElementsWithCounters( const drawSurf_t* surf, bool sha
 	idIndexBuffer* indexBuffer;
 	if( vertexCache.CacheIsStatic( ibHandle ) )
 	{
+		//puncho - static arena (P2b.1.8): stage 4 inherits this bind: no generation test here (the frontend's
+		// CacheIsCurrent did, light tris excepted); P2b.4.11 adds it
 		indexBuffer = &vertexCache.staticData.indexBuffer;
 	}
 	else

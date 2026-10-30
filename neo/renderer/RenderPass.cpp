@@ -319,6 +319,8 @@ void BasicTriangle::Render( nvrhi::IFramebuffer* framebuffer )
 	{
 		if( vertexCache.CacheIsStatic( vertexBlock ) )
 		{
+			//puncho - static arena (P2b.1.8): stage 4 inherits this bind: no generation test here (the frontend's
+			// CacheIsCurrent did, light tris excepted); P2b.4.11 adds it
 			vertexBuffer = &vertexCache.staticData.vertexBuffer;
 		}
 		else
@@ -340,6 +342,8 @@ void BasicTriangle::Render( nvrhi::IFramebuffer* framebuffer )
 	uint indexOffset = 0;
 	if( vertexCache.CacheIsStatic( indexBlockTemp ) )
 	{
+		//puncho - static arena (P2b.1.8): stage 4 inherits this bind: no generation test here (the frontend's
+		// CacheIsCurrent did, light tris excepted); P2b.4.11 adds it
 		indexBuffer = &vertexCache.staticData.indexBuffer;
 	}
 	else

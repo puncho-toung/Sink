@@ -98,8 +98,8 @@ If you have questions concerning this license or the applicable additional terms
 #endif
 
 //puncho start - static arena (P2b.1.8): the frozen math core (plans/map-graph/gates-2b/s1/check/static_arena_core.h,
-// FROZEN-arena.txt: moved verbatim but for static_assert -> compile_time_assert and tab-only continuation lines; its
-// check runs against this copy). At r_staticArenaSplit 1 a static handle's frame field holds segment and generation
+// FROZEN-arena.txt: moved verbatim but for static_assert -> compile_time_assert (messages dropped); its check runs
+// against this copy). At r_staticArenaSplit 1 a static handle's frame field holds segment and generation
 #ifndef STATIC_ARENA_CORE_H
 #define STATIC_ARENA_CORE_H
 
@@ -318,8 +318,9 @@ struct geoBufferSet_t
 	int						allocations;	// number of index and vertex allocations combined
 };
 
-//puncho start - static arena (P2b.1.8): one static set's bookkeeping at r_staticArenaSplit 1 (staticSets[ CACHE_VERTEX ]
-// and staticSets[ CACHE_INDEX ]); geoBufferSet_t's vertexMemUsed and indexMemUsed mirror used0 + used1
+//puncho start - static arena (P2b.1.8): one static set's bookkeeping, staticSets[ CACHE_VERTEX ], [ CACHE_INDEX ]; arena
+// and high at split 1 only, late and mark at both; at split 1 geoBufferSet_t's vertexMemUsed and indexMemUsed mirror
+// used0 + used1
 struct staticArenaStats_t
 {
 	staticArenaSet_t		arena;			// segment 0 from offset 0 up, segment 1 from the end down
@@ -328,7 +329,9 @@ struct staticArenaStats_t
 	int						mark;			// the set's bytes when the last upload loops ended, -1 before any
 	int64					live0;			// preflight: the bytes segment 0's kept handles hold (ALIGN'd)
 	int64					incoming;		// preflight: the bytes the upload loops will ask for (ALIGN'd)
+	int64					dead0;			// the last preflight's dead bytes in segment 0 (0 when it did not walk)
 };
+compile_time_assert( sizeof( staticArenaStats_t ) * 2 >= 64 );	// keeps idVertexCache's two counters on separate cache lines
 //puncho end
 
 class idVertexCache
@@ -349,14 +352,18 @@ public:
 	void			BeginStaticLoad( bool keepPersistent );		// BeginLevelLoad: latch the split, free segment 1 or both
 	void			SetStaticSegment( int segment );			// the segment the next static allocations go to
 	void			FreeStaticSegment( int segment );			// reset: both sets' frontier, generation + 1
-	bool			StaticHandleValid( const vertCacheHandle_t handle ) const;	// false at split 0
+	// false at split 0; the static flag selects the handles the core may decode (a per-frame handle's frame field is not
+	// a segment and generation)
+	bool			StaticHandleValid( const vertCacheHandle_t handle ) const
+	{
+		return CacheIsStatic( handle ) && StaticArenaHandleValid( staticSplit && !staticSplitChanged, handle, staticGenerations );
+	}
 	// the creation functions' first test: false when both handles are kept (or have no bytes), and always in the preflight,
 	// which only measures; true when the caller must zero both handles and upload both blocks
 	bool			StaticUploadNeeded( vertCacheHandle_t indexHandle, int indexBytes, vertCacheHandle_t vertexHandle, int vertexBytes );
-	bool			BeginStaticPreflight();						// false at split 0; else measure mode until EndStaticPreflight
-	void			EndStaticPreflight( const int segmentModels[2] );	// the reset decision and its line
+	bool			BeginStaticPreflight();						// false at split 0 or with segment 0 empty; else measure mode
+	void			EndStaticPreflight( uint64 walkUs );		// the reset decision and its line
 	void			EndStaticUploads();							// after the upload loops: late use starts, segment 1
-	void			PlantStaleHandle( vertCacheHandle_t& handle );	// dev: r_staticTestStale makes one valid handle stale
 	//puncho end
 
 	// this data is only valid for one frame of rendering
@@ -402,22 +409,31 @@ public:
 	int				mostUsedIndex;
 	int				mostUsedJoint;
 
-	//puncho start - static arena (P2b.1.8)
-	staticArenaStats_t	staticSets[2];				// [ CACHE_VERTEX ], [ CACHE_INDEX ]; used at split 1 only
-	int				staticGenerations[STATIC_ARENA_MAX_SEGMENTS];	// per segment; 0 is never valid
-	int				staticSegment;				// 0 or 1
+	//puncho start - static arena (P2b.1.8). Ordered for CacheIsCurrent: staticTestStale, the two bools and the
+	// generations it reads sit together, and staticStaleHandles, which frontend jobs write, comes first with staticSets
+	// (over 64 bytes, asserted below the struct) between, so the two counters never share a cache line
+	idSysInterlockedInteger	staticStaleHandles;	// since Init: stale static handles CacheIsCurrent refused (frontend jobs; each is then replaced by a per-frame copy)
+	staticArenaStats_t	staticSets[2];				// [ CACHE_VERTEX ], [ CACHE_INDEX ]; arena and high at split 1 only, late and mark at both
+	idSysInterlockedInteger	staticTestStale;	// dev: 1 while r_staticTestStale's plant is armed
 	bool			staticSplit;				// r_staticArenaSplit, latched by BeginStaticLoad
 	bool			staticSplitChanged;			// this load changed the split: no handle is valid until its uploads end
+	int				staticGenerations[STATIC_ARENA_MAX_SEGMENTS];	// per segment; 0 is never valid
+	bool			staticKeepPersistent;		// latched by BeginStaticLoad: split 1 and LevelKeepGrace() >= 1
 	bool			staticMeasure;				// inside the preflight
-	int				staticReports;				// preflight: creation calls that keep or will upload bytes
+	int				staticSegment;				// 0 or 1
+	int				staticReports;				// creation calls that keep or upload bytes (StaticUploadNeeded)
 	int				staticSegmentModels[2];		// per segment: the models holding static data after the last load
 	int				staticResets;				// preflight resets of segment 0
 	int				staticUploadsRetained;		// this load: uploads that replaced a static handle (resident models)
 	int				staticUploadsNew;			// this load: uploads of geometry that had no static handle
 	int64			staticRetainedBytes;
 	int64			staticNewBytes;
-	idSysInterlockedInteger	staticStaleHandles;	// stale static handles CacheIsCurrent refused (frontend jobs)
-	idSysInterlockedInteger	staticTestStale;	// dev: 1 while r_staticTestStale's plant is armed
+	//puncho end
+
+	//puncho start - static arena (P2b.1.8): the split-1 static allocation (AllocStaticVertex/Index) and CacheIsCurrent's
+	// cold path
+	vertCacheHandle_t	AllocStaticArena( const void* data, int bytes, cacheType_t type, nvrhi::ICommandList* commandList );
+	bool			CountStaleHandle();
 	//puncho end
 
 	// Try to make room for <bytes> bytes
