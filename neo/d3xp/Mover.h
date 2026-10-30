@@ -219,12 +219,32 @@ struct floorInfo_s
 	int						floor;
 };
 
+//puncho - P2b.1.2: idElevator's map record section (Record.h, RECORD_SECTION_ELEVATOR): the floor it is at, HAND in
+// Mover.cpp; the elevator's Pose is this row's (SkipPose)
+#define ELEVATOR_RECORD_SCHEMA( X, s ) \
+	X( s, Floor,		HAND,	R,	RAW,	1,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA )
+
 class idElevator : public idMover
 {
 public:
 	CLASS_PROTOTYPE( idElevator );
 
 	idElevator();
+	//puncho start - P2b.1.2: the map record
+	enum
+	{
+		ELEVATOR_RECORD_SCHEMA( SCHEMA_RECORD_INDEX, _ )
+		ELEVATOR_RECORD_FIELDS
+	};
+	compile_time_assert( ELEVATOR_RECORD_FIELDS <= 64 );
+	virtual void			WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const;
+	virtual recordApply_t	ApplyRecord( idRecordIn& rec, const recordFrame_t& frame );
+	static bool				CheckRecordSection( idRecordIn& rec );
+	bool					RecordFloorChanged( const idRecordOut& rec ) const;
+	void					WriteRecordFloor( idRecordOut& rec ) const;
+	bool					ApplyRecordFloor( idRecordIn& rec );
+	static bool				CheckRecordFloor( idRecordIn& rec );
+	//puncho end
 
 	void					Spawn();
 
@@ -245,6 +265,7 @@ protected:
 	void					SpawnTrigger( const idVec3& pos );
 	void					GetLocalTriggerPosition();
 	void					Event_Touch( idEntity* other, trace_t* trace );
+	void					BindDoors();	//puncho - P2b.1.2: Think's first pass, shared with ApplyRecordFloor
 
 private:
 	typedef enum
@@ -297,6 +318,11 @@ typedef enum
 	MOVER_2TO1
 } moverState_t;
 
+//puncho - P2b.1.2: idMover_Binary's map record section (Record.h, RECORD_SECTION_MOVER_BINARY): the position and the
+// lock, HAND in Mover.cpp; a binary mover's Pose is this row's (SkipPose)
+#define MOVER_BINARY_RECORD_SCHEMA( X, s ) \
+	X( s, MoverState,	HAND,	R,	RAW,	2,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA )
+
 class idMover_Binary : public idEntity
 {
 public:
@@ -304,6 +330,21 @@ public:
 
 	bool RecordAtPosition2() const;
 	void ApplyRecordState( bool position2, bool locked );
+	//puncho start - P2b.1.2: the map record
+	enum
+	{
+		MOVER_BINARY_RECORD_SCHEMA( SCHEMA_RECORD_INDEX, _ )
+		MOVER_BINARY_RECORD_FIELDS
+	};
+	compile_time_assert( MOVER_BINARY_RECORD_FIELDS <= 64 );
+	virtual void			WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const;
+	virtual recordApply_t	ApplyRecord( idRecordIn& rec, const recordFrame_t& frame );
+	static bool				CheckRecordSection( idRecordIn& rec );
+	bool					RecordMoverStateChanged( const idRecordOut& rec ) const;
+	void					WriteRecordMoverState( idRecordOut& rec ) const;
+	bool					ApplyRecordMoverState( idRecordIn& rec );
+	static bool				CheckRecordMoverState( idRecordIn& rec );
+	//puncho end
 	moverState_t RecordMoverState() const	//puncho - P2b.1.0: dumpMapState's moverPos column, the moving states included
 	{
 		return moverState;
@@ -528,6 +569,7 @@ public:
 
 	virtual void			WriteToSnapshot( idBitMsg& msg ) const;
 	virtual void			ReadFromSnapshot( const idBitMsg& msg );
+	virtual void			WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const;	//puncho - P2b.1.2: no Pose
 
 protected:
 	idPhysics_Parametric	physicsObj;

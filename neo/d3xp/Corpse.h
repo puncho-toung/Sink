@@ -25,6 +25,28 @@ public:
 	{
 		return deathTime;
 	}
+	//puncho start - P2b.1.2: the map record. A corpse writes idEntity's section and the AI's (AI_RECORD_SCHEMA, whose
+	// RF_ bits it numbers in its own scope), and is the class that applies and checks the AI's: the store builds a
+	// corpse for an entry holding Corpse
+	enum
+	{
+		AI_RECORD_SCHEMA( SCHEMA_RECORD_INDEX, _ )
+		CORPSE_RECORD_FIELDS
+	};
+	compile_time_assert( ( int )CORPSE_RECORD_FIELDS == ( int )idAI::AI_RECORD_FIELDS );
+	virtual void			WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const;
+	virtual recordApply_t	ApplyRecord( idRecordIn& rec, const recordFrame_t& frame );
+	static bool				CheckRecordSection( idRecordIn& rec );
+	bool					RecordCorpseChanged( const idRecordOut& rec ) const
+	{
+		return true;
+	}
+	void					WriteRecordCorpse( idRecordOut& rec ) const;
+	bool					ApplyRecordCorpse( idRecordIn& rec );
+	static bool				CheckRecordCorpse( idRecordIn& rec );
+	// a pose as Build reads it (its leading origin first), written as the Corpse field: no origin, frame-relative
+	static void				WriteRecordPayload( idRecordOut& rec, const byte* pose, int length );
+	//puncho end
 
 private:
 	void FreeHead();

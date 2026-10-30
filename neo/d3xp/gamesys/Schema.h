@@ -44,8 +44,8 @@ If you have questions concerning this license or the applicable additional terms
 	  writes snapshots from current and reads them into next.
 	- The type picks the one idSaveGame / idRestoreGame call the field always had, so the bytes do not change, and a
 	  member of another type does not compile.
-	- The channels are S (save), W (wire: snapshots) and R (record), in that order: S, W, R, SW, SR, WR, SWR. Nothing
-	  expands R yet; it marks what a chunk record will carry.
+	- The channels are S (save), W (wire: snapshots) and R (record), in that order: S, W, R, SW, SR, WR, SWR. R is the
+	  map record's (MREC v3, P2b.1.2): the SCHEMA_RECORD_ expanders below and gamesys/Record.h.
 	- The encoding is the wire form, RAW, BITS or DELTA; a save is always raw. Its argument, 0 when unused: BITS takes
 	  ( exponentBits, mantissaBits ), DELTA the base field, which comes earlier in the list. A LIST takes its element
 	  type, a STRUCTLIST the name of the element functions SCHEMA_STRUCT_FUNCTIONS made.
@@ -63,10 +63,21 @@ If you have questions concerning this license or the applicable additional terms
 
 	SCHEMA_SAVE, SCHEMA_RESTORE, SCHEMA_WRITE and SCHEMA_READ. No generator, no build step, no registry walked at run
 	time: the precedent is CLASS_PROTOTYPE and the event tables (Class.h). A list is a #define in the header of the
-	class it lists, inert until expanded, so only the .cpp files that expand one include this file.
+	class it lists, inert until expanded, so only the .cpp files that expand one include this file, and the class
+	headers whose bodies expand a record list's SCHEMA_RECORD_INDEX (through Entity.h).
 
 	K8: a field the schema cannot express is a HAND entry. It stays hand-written, at its position, in the member
 	functions Save<name> and Restore<name>, or Write<name>ToSnapshot and Read<name>FromSnapshot on the wire.
+
+	The record channel (P2b.1.2). A class's R rows are its record section: SCHEMA_RECORD_INDEX numbers them RF_<field>
+	in an enum inside the class (so a class header that holds one includes this file), the bit of the field in the
+	section's uint64 fieldMask; R rows append only, so a mask never renumbers. Inside the class's WriteRecord,
+	SCHEMA_RECORD_DIFF sets the bit of each field that differs from the spawn baseline and SCHEMA_RECORD_WRITE then
+	writes the set fields in list order; ApplyRecord expands SCHEMA_RECORD_READ and a static CheckRecordSection
+	SCHEMA_RECORD_CHECK, whose s is the class name. A failed read or check clears the sticky rec.good, which the caller
+	tests after the list. A HAND row is Record<n>Changed, WriteRecord<n>, ApplyRecord<n> and static CheckRecord<n>, and
+	its ARG is its byte count, 0 for a variable field (a uint16 length, at most RECORD_MAX_FIELD_BYTES, before it); the
+	field's bytes are bounded by idRecordOut/idRecordIn around the call, so a reader can never cross into the next field.
 
 ===============================================================================
 */
@@ -96,6 +107,29 @@ If you have questions concerning this license or the applicable additional terms
 #define SCHEMA_W_S( x )
 #define SCHEMA_W_R( x )
 #define SCHEMA_W_SR( x )
+//puncho start - P2b.1.2: the record channel's gates, variadic so an enumerator's comma passes through
+#define SCHEMA_R_R( ... )	__VA_ARGS__
+#define SCHEMA_R_SR( ... )	__VA_ARGS__
+#define SCHEMA_R_WR( ... )	__VA_ARGS__
+#define SCHEMA_R_SWR( ... )	__VA_ARGS__
+#define SCHEMA_R_S( ... )
+#define SCHEMA_R_W( ... )
+#define SCHEMA_R_SW( ... )
+
+// the record channel, per R row: rec is the idRecordOut or idRecordIn, s the instance (the class name for CHECK)
+#define SCHEMA_RECORD_INDEX( s, n, TYPE, CH, ENC, ARG, BUILD )	SCHEMA_R_##CH( RF_##n, )
+#define SCHEMA_RECORD_NAME( s, n, TYPE, CH, ENC, ARG, BUILD )	SCHEMA_R_##CH( #n, )
+#define SCHEMA_RECORD_DIFF( s, n, TYPE, CH, ENC, ARG, BUILD )	SCHEMA_R_##CH( if( SCHEMA_RCHANGED_##TYPE( rec, s, n, ARG ) ) rec.Set( RF_##n ); )
+#define SCHEMA_RECORD_WRITE( s, n, TYPE, CH, ENC, ARG, BUILD )	SCHEMA_R_##CH( if( rec.Has( RF_##n ) ) { SCHEMA_RPUT_##TYPE( rec, s, n, ARG ) } )
+#define SCHEMA_RECORD_READ( s, n, TYPE, CH, ENC, ARG, BUILD )	SCHEMA_R_##CH( if( rec.Has( RF_##n ) && !( SCHEMA_RGET_##TYPE( rec, s, n, ARG ) ) ) { rec.good = false; } )
+#define SCHEMA_RECORD_CHECK( s, n, TYPE, CH, ENC, ARG, BUILD )	SCHEMA_R_##CH( if( rec.Has( RF_##n ) && !( SCHEMA_RCHECK_##TYPE( rec, s, n, ARG ) ) ) { rec.good = false; } )
+
+// record HAND rows: the field functions, inside the byte bounds of the field
+#define SCHEMA_RCHANGED_HAND( r, s, n, a )		( s ).Record##n##Changed( r )
+#define SCHEMA_RPUT_HAND( r, s, n, a )			( r ).BeginField( a ); ( s ).WriteRecord##n( r ); ( r ).EndField( a );
+#define SCHEMA_RGET_HAND( r, s, n, a )			( r ).BeginField( a ) && ( s ).ApplyRecord##n( r ) && ( r ).EndField()
+#define SCHEMA_RCHECK_HAND( r, s, n, a )		( r ).BeginField( a ) && s::CheckRecord##n( r ) && ( r ).EndField()
+//puncho end
 
 // save types: f is the stream, s the instance, n the field, a the argument
 #define SCHEMA_SAVE_INT( f, s, n, a )			( f )->WriteInt( ( s ).n );

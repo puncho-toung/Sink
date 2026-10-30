@@ -107,6 +107,7 @@ class idVec4;
 #define MAX_WORLD_COORD			( 128 * 1024 )
 #define MIN_WORLD_COORD			( -128 * 1024 )
 #define MAX_WORLD_SIZE			( MAX_WORLD_COORD - MIN_WORLD_COORD )
+#include "CellId.h"	//puncho - P2b.1.2: C1's cell size, cell ids and cell codes (P2b.3.1's symbols, landed with the record layer)
 
 #define SIZE_KB( x )						( ( (x) + 1023 ) / 1024 )
 #define SIZE_MB( x )						( ( ( SIZE_KB( x ) ) + 1023 ) / 1024 )

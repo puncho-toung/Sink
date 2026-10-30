@@ -285,6 +285,198 @@ void idCorpse::WritePose( idFile* out ) const
 	out->Write( poseBytes.Ptr(), poseBytes.Num() );
 }
 
+//puncho start - P2b.1.2: the map record of a corpse (idEntity's section and AI_RECORD_SCHEMA's)
+
+/*
+================
+CorpsePayloadAxes
+
+A pose's bytes after its leading origin, from world axes into a frame's (toFrame) or back: the yaw, and each AF body's
+offset and axis. A frame with the identity axis copies the bytes as they are, so a map record holds the pose a corpse
+was built with, bit for bit. False on a body list Build would refuse.
+================
+*/
+static bool CorpsePayloadAxes( const byte* src, int length, byte* dst, const idMat3& axis, bool toFrame )
+{
+	memcpy( dst, src, length );
+	if( axis == mat3_identity )
+	{
+		return true;
+	}
+	if( length < 17 )
+	{
+		return false;
+	}
+	float yaw;
+	memcpy( &yaw, src, 4 );
+	const float frameYaw = axis.ToAngles().yaw;
+	yaw = LittleFloat( idMath::AngleNormalize180( toFrame ? LittleFloat( yaw ) - frameYaw : LittleFloat( yaw ) + frameYaw ) );
+	memcpy( dst, &yaw, 4 );
+	if( src[5] != 1 )
+	{
+		return true;
+	}
+	const int count = src[14];
+	if( length != 15 + count * 13 )
+	{
+		return false;
+	}
+	const idMat3 rotation = toFrame ? axis.Transpose() : axis;
+	for( int i = 0; i < count; i++ )
+	{
+		byte* body = dst + 15 + i * 13 + 1;
+		short v[6];
+		memcpy( v, body, sizeof( v ) );
+		idVec3 offset;
+		idCQuat q;
+		for( int j = 0; j < 3; j++ )
+		{
+			offset[j] = LittleShort( v[j] ) * ( 1.0f / 16.0f );
+			q[j] = LittleShort( v[3 + j] ) * ( 1.0f / 32767.0f );
+		}
+		offset = offset * rotation;
+		q = ( q.ToMat3() * rotation ).ToCQuat();
+		for( int j = 0; j < 3; j++ )
+		{
+			v[j] = LittleShort( ( short )idMath::ClampInt( -32767, 32767, idMath::Ftoi( offset[j] * 16.0f ) ) );
+			v[3 + j] = LittleShort( ( short )idMath::ClampInt( -32767, 32767, idMath::Ftoi( q[j] * 32767.0f ) ) );
+		}
+		memcpy( body, v, sizeof( v ) );
+	}
+	return true;
+}
+
+void idCorpse::WriteRecordPayload( idRecordOut& rec, const byte* pose, int length )
+{
+	byte payload[300];
+	if( length < 29 || length > 300 || !CorpsePayloadAxes( pose + 12, length - 12, payload, rec.Frame().axis, true ) )
+	{
+		rec.SetRemoved();
+		return;
+	}
+	rec.WriteData( payload, length - 12 );
+}
+
+/*
+================
+idCorpse::WriteRecord
+
+A corpse is recorded against its source def, so the record builds the same corpse again, and its Pose at the origin
+its pose was built at (the pose's leading origin), not at the AF body its physics reports.
+================
+*/
+void idCorpse::WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const
+{
+	if( poseBytes.Num() < 29 )
+	{
+		rec.SetRemoved();
+		return;
+	}
+	idVec3 origin;
+	memcpy( origin.ToFloatPtr(), poseBytes.Ptr(), sizeof( origin ) );
+	for( int i = 0; i < 3; i++ )
+	{
+		origin[i] = LittleFloat( origin[i] );
+	}
+	rec.SetDefName( sourceName.c_str() );
+	rec.SetCorpse( origin );
+	idAFEntity_Base::WriteRecord( rec, frame );
+	rec.BeginSection( RECORD_SECTION_AI, RECORD_VERSION_AI );
+	AI_RECORD_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
+	AI_RECORD_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
+	rec.EndSection();
+}
+
+recordApply_t idCorpse::ApplyRecord( idRecordIn& rec, const recordFrame_t& frame )
+{
+	const recordApply_t result = idAFEntity_Base::ApplyRecord( rec, frame );
+	if( result != RECORD_APPLIED || !rec.BeginSection( RECORD_SECTION_AI ) )
+	{
+		return result;
+	}
+	AI_RECORD_SCHEMA( SCHEMA_RECORD_READ, ( *this ) )
+	rec.EndSection();
+	return rec.good ? RECORD_APPLIED : RECORD_INVALID;
+}
+
+bool idCorpse::CheckRecordSection( idRecordIn& rec )
+{
+	AI_RECORD_SCHEMA( SCHEMA_RECORD_CHECK, idCorpse )
+	return rec.good;
+}
+
+void idCorpse::WriteRecordCorpse( idRecordOut& rec ) const
+{
+	WriteRecordPayload( rec, poseBytes.Ptr(), poseBytes.Num() );
+}
+
+// Build takes the pose with its origin first: the entry's Pose gives it (idEntity::ApplyRecordPose ran before this
+// section), the source def is the entry's (rec.DefName()).
+bool idCorpse::ApplyRecordCorpse( idRecordIn& rec )
+{
+	const int length = rec.FieldRemaining();
+	if( !rec.posed || length < 17 || length > 288 )
+	{
+		return false;
+	}
+	byte payload[288];
+	byte pose[300];
+	for( int i = 0; i < 3; i++ )
+	{
+		const float value = LittleFloat( rec.poseOrigin[i] );
+		memcpy( pose + i * 4, &value, 4 );
+	}
+	if( !rec.ReadData( payload, length ) || !CorpsePayloadAxes( payload, length, pose + 12, rec.Frame().axis, false ) )
+	{
+		return false;
+	}
+	idFile_Memory in( "corpse record", ( const char* )pose, 12 + length );
+	return Build( gameLocal.FindEntityDef( rec.DefName(), false ), in );
+}
+
+// v2's rules on the pose after its origin: a finite yaw, flags and kind, a death time; an anim name and a frame, or a
+// body list in order
+bool idCorpse::CheckRecordCorpse( idRecordIn& rec )
+{
+	float yaw;
+	byte flags, kind;
+	uint64 death;
+	if( !rec.ReadFiniteFloat( yaw ) || !rec.ReadByte( flags ) || flags > 7 || !rec.ReadByte( kind ) || kind > 1 || !rec.Read64( death ) || death > 0x7fffffffffffffffULL )
+	{
+		return false;
+	}
+	if( kind == 0 )
+	{
+		byte length;
+		char anim[64];
+		short frame;
+		return rec.ReadByte( length ) && length <= 63 && rec.ReadData( anim, length ) && memchr( anim, 0, length ) == NULL && rec.ReadShort( frame ) && frame != 0;
+	}
+	byte count;
+	if( !rec.ReadByte( count ) || count == 0 || count > 20 )
+	{
+		return false;
+	}
+	for( int i = 0; i < count; i++ )
+	{
+		byte index;
+		if( !rec.ReadByte( index ) || index != i )
+		{
+			return false;
+		}
+		for( int j = 0; j < 6; j++ )
+		{
+			short value;
+			if( !rec.ReadShort( value ) )
+			{
+				return false;
+			}
+		}
+	}
+	return true;
+}
+//puncho end
+
 void idCorpse::Save( idSaveGame* save ) const
 {
 	save->WriteString( sourceName );

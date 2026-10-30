@@ -4608,8 +4608,48 @@ void idPortalSky::Event_Activate( idEntity* activator )
 	gameLocal.SetPortalSkyEnt( this );
 }
 
-void idDamagable::ApplyRecordBroken()
+//puncho start - P2b.1.2: idDamagable's map record section (DAMAGABLE_RECORD_SCHEMA)
+void idDamagable::WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const
 {
+	idEntity::WriteRecord( rec, frame );
+	rec.BeginSection( RECORD_SECTION_DAMAGABLE, RECORD_VERSION_DAMAGABLE );
+	DAMAGABLE_RECORD_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
+	DAMAGABLE_RECORD_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
+	rec.EndSection();
+}
+
+recordApply_t idDamagable::ApplyRecord( idRecordIn& rec, const recordFrame_t& frame )
+{
+	const recordApply_t result = idEntity::ApplyRecord( rec, frame );
+	if( result != RECORD_APPLIED || !rec.BeginSection( RECORD_SECTION_DAMAGABLE ) )
+	{
+		return result;
+	}
+	DAMAGABLE_RECORD_SCHEMA( SCHEMA_RECORD_READ, ( *this ) )
+	rec.EndSection();
+	return rec.good ? RECORD_APPLIED : RECORD_INVALID;
+}
+
+bool idDamagable::CheckRecordSection( idRecordIn& rec )
+{
+	DAMAGABLE_RECORD_SCHEMA( SCHEMA_RECORD_CHECK, idDamagable )
+	return rec.good;
+}
+
+// the byte is always 1: the bit says broken
+void idDamagable::WriteRecordBroken( idRecordOut& rec ) const
+{
+	rec.WriteByte( 1 );
+}
+
+// broken without its events: no targets fire, no sound, no gibs; the broken model and no more damage
+bool idDamagable::ApplyRecordBroken( idRecordIn& rec )
+{
+	byte broken;
+	if( !rec.ReadByte( broken ) )
+	{
+		return false;
+	}
 	nextTriggerTime = Max( 1, gameLocal.time );
 	const char* model = spawnArgs.GetString( "broken" );
 	if( model[0] != '\0' )
@@ -4618,4 +4658,12 @@ void idDamagable::ApplyRecordBroken()
 	}
 	fl.takedamage = false;
 	UpdateVisuals();
+	return true;
 }
+
+bool idDamagable::CheckRecordBroken( idRecordIn& rec )
+{
+	byte broken;
+	return rec.ReadByte( broken ) && broken == 1;
+}
+//puncho end

@@ -154,6 +154,10 @@ private:
 ===============================================================================
 */
 
+//puncho - P2b.1.2: idDamagable's map record section (Record.h, RECORD_SECTION_DAMAGABLE): broken in play, HAND in Misc.cpp
+#define DAMAGABLE_RECORD_SCHEMA( X, s ) \
+	X( s, Broken,		HAND,	R,	RAW,	1,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA )
+
 class idDamagable : public idEntity
 {
 public:
@@ -162,7 +166,24 @@ public:
 	{
 		return nextTriggerTime != 0;
 	}
-	void ApplyRecordBroken();
+	//puncho start - P2b.1.2: the map record
+	enum
+	{
+		DAMAGABLE_RECORD_SCHEMA( SCHEMA_RECORD_INDEX, _ )
+		DAMAGABLE_RECORD_FIELDS
+	};
+	compile_time_assert( DAMAGABLE_RECORD_FIELDS <= 64 );
+	virtual void			WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const;
+	virtual recordApply_t	ApplyRecord( idRecordIn& rec, const recordFrame_t& frame );
+	static bool				CheckRecordSection( idRecordIn& rec );
+	bool					RecordBrokenChanged( const idRecordOut& rec ) const
+	{
+		return RecordBroken();
+	}
+	void					WriteRecordBroken( idRecordOut& rec ) const;
+	bool					ApplyRecordBroken( idRecordIn& rec );
+	static bool				CheckRecordBroken( idRecordIn& rec );
+	//puncho end
 
 	idDamagable();
 

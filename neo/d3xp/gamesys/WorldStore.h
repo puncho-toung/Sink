@@ -4,28 +4,18 @@
 class idEntity;
 class idSaveGame;
 class idRestoreGame;
+class idRecordIn;
+struct recordFrame_t;
 
 struct mapTransition_t
 {
 	idStr nextMap, departLandmark, arrivalLandmark;
 };
 
-// 63-byte def name plus identity/time, MOVED/MOVER/HEALTH/MOTION/BIND.
-static const int MAX_WORLD_CREATED_CARRY_BYTES = 151;
-
-enum recordAspect_t
-{
-	RECORD_REMOVED = BIT( 0 ),
-	RECORD_MOVED = BIT( 1 ),
-	RECORD_MOVER = BIT( 2 ),
-	RECORD_HEALTH = BIT( 3 ),
-	RECORD_BROKEN = BIT( 4 ),
-	RECORD_HIDDEN = BIT( 5 ),
-	RECORD_CORPSE = BIT( 6 ),
-	RECORD_MOTION = BIT( 7 ),
-	RECORD_BIND = BIT( 8 ),
-	RECORD_SHOWN = BIT( 9 ) //puncho - P2.4 (bug review 2026-10-28): HIDDEN or SHOWN, a visibility that differs from the "hide" key
-};
+//puncho - P2b.1.2: a carried created entry (MREC v3, Record.h): 82 bytes of head (identity, a 63-byte def name, time,
+// flags, section count) and 82 of section 1 (its header, Pose, Health, Visibility, Motion, Bind) is 164; the transition's
+// buffer (Game_transition.cpp) is the same 168
+static const int MAX_WORLD_CREATED_CARRY_BYTES = 168;
 
 //puncho - P2.4 (bug review 2026-10-28): the removed bits are indexed by map ordinal, which the host and every client
 // share, not by spawned row, which differs when one side skips or fails a spawn; BeginSpawn bounds ordinals by 65535
@@ -151,12 +141,27 @@ public:
 	{
 		return mapSpawned.Num();
 	}
+	//puncho start - P2b.1.2: the committed map records, for recordTest's fuzz and codec checks
+	int NumMapRecords() const
+	{
+		return records.Num();
+	}
+	const idList<byte, TAG_GAME>& MapRecordBytes( int i ) const
+	{
+		return records[i].bytes;
+	}
+	uint64 GetNextCreatedId() const
+	{
+		return nextCreatedId;
+	}
+	//puncho end
 	const mapSpawnRow_t& SpawnRow( int i ) const
 	{
 		return mapSpawned[i];
 	}
 	//puncho end
 	int recordMaps, recordEntries, recordCreated, recordBytes, recordDropped, corpseEvicted;
+	int recordInvalid;	//puncho - P2b.1.2: entries and chunks the reader dropped (logged), since the store cleared
 	unsigned int commitUs, applyUs;
 	//puncho - P2b.1.1b: public only for the snapshot's removed-ordinal writer and reader in Game_network.cpp (stage 6's
 	// file); stage 6 switches them to RemovedBits(), NumRemovedBytes(), NumSpawnRows() and SpawnRow( i ) at its next edit
@@ -167,7 +172,8 @@ public:
 
 private:
 	void Commit( bool leaving );
-	bool EncodeCreated( idEntity* ent, const idVec3& landmark, idFile_Memory& out, bool assign );
+	bool EncodeCreated( idEntity* ent, const recordFrame_t& frame, idFile_Memory& out, bool assign );
+	idEntity* SpawnCreatedEntry( const char* def, uint64 id, int64 when, idRecordIn& rec, const recordFrame_t& frame );	//puncho - P2b.1.2
 	bool continueNextLoad;
 	idStr worldName;
 	uint64 instanceId;

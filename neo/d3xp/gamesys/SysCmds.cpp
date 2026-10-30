@@ -35,6 +35,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "../tools/imgui/afeditor/AfEditor.h"
 #include "StreamTrace.h"	//puncho - stream-trace (P1-A1c)
+#include "WorldStoreLocal.h"	//puncho - P2b.1.2: recordTest fuzz reads records as the store does
 
 /*
 ==================
@@ -3995,6 +3996,21 @@ static idList<recordTestRow_t, TAG_GAME> recordTestBaseline;
 static idStr recordTestMap;
 static int recordTestFailures;
 
+//puncho - P2b.1.2: recordTest fuzz's draws from idRandom( seed ). Its RandomInt is the low bits of a power-of-two LCG,
+// whose lowest bits alternate, which would correlate the record, the kind and the offset of a mutant: the state steps
+// as idRandom's, in unsigned arithmetic, and is mixed before it is reduced to the range
+static int RecordFuzzRandom( idRandom& rng, int limit )
+{
+	uint32 value = ( uint32 )rng.GetSeed() * 69069U + 1U;
+	rng.SetSeed( ( int )value );
+	value ^= value >> 16;
+	value *= 0x7feb352dU;
+	value ^= value >> 15;
+	value *= 0x846ca68bU;
+	value ^= value >> 16;
+	return limit > 0 ? ( int )( value % ( uint32 )limit ) : 0;
+}
+
 static void Cmd_RecordTest_f( const idCmdArgs& args )
 {
 	if( !gameLocal.CheatsOk() || args.Argc() < 2 )
@@ -4022,6 +4038,219 @@ static void Cmd_RecordTest_f( const idCmdArgs& args )
 		worldStore.TestCodec();
 		return;
 	}
+	//puncho start - P2b.1.2: recordTest fuzz <n> <seed>. The current map committed (PrepareSave), then n mutants of the
+	// store's records from idRandom( seed ), each through the reader and the check ApplyCurrentMap runs before any apply
+	// (RecordScanChunk, the record's identity, each entry's check, an authored entry's sections against its entity).
+	// Kinds: a bit flipped, a byte overwritten, a truncation, the version, numEntries, a mask bit past the list, a
+	// reserved flag bit, a header cellId on the reserved layer that is neither 0 nor 1, a section byte count past the
+	// chunk. VERSION/CELL/BYTES must fail scanning; MASK/FLAGS must fail scanning or their targeted entry's check.
+	// ENTRIES and the untargeted kinds may survive as long as nothing crashes. Each unmutated record must
+	// round-trip byte for byte (read, then written again).
+	if( idStr::Icmp( args.Argv( 1 ), "fuzz" ) == 0 && args.Argc() == 4 )
+	{
+		const int count = Max( 0, atoi( args.Argv( 2 ) ) );
+		const int seed = atoi( args.Argv( 3 ) );
+		worldStore.PrepareSave();
+		const uint64 nextIdentity = worldStore.GetNextCreatedId();
+		bool corpusValid = true;
+		bool roundtrip = worldStore.NumMapRecords() > 0;
+		for( int i = 0; i < worldStore.NumMapRecords(); i++ )
+		{
+			const idList<byte, TAG_GAME>& bytes = worldStore.MapRecordBytes( i );
+			mrecHeader_t original;
+			idList<mrecEntry_t, TAG_GAME> originalEntries;
+			idStr originalReason;
+			if( !RecordScanChunk( bytes.Ptr(), bytes.Num(), nextIdentity, original, originalEntries, originalReason ) )
+			{
+				corpusValid = false;
+				gameLocal.Warning( "recordTest fuzz: source %d: %s", i, originalReason.c_str() );
+			}
+			for( int e = 0; e < originalEntries.Num(); e++ )
+			{
+				if( !originalEntries[e].valid )
+				{
+					corpusValid = false;
+					gameLocal.Warning( "recordTest fuzz: source %d entry %d: %s", i, e, originalEntries[e].reason.c_str() );
+				}
+			}
+			idFile_Memory rewritten;
+			roundtrip &= RecordRewriteChunk( bytes.Ptr(), bytes.Num(), nextIdentity, rewritten ) && rewritten.Length() == bytes.Num() && memcmp( rewritten.GetDataPtr(), bytes.Ptr(), bytes.Num() ) == 0;
+		}
+		enum { FUZZ_FLIP, FUZZ_BYTE, FUZZ_TRUNCATE, FUZZ_VERSION, FUZZ_ENTRIES, FUZZ_MASK, FUZZ_FLAGS, FUZZ_CELL, FUZZ_BYTES, FUZZ_KINDS };
+		idRandom rng( seed );
+		int dropped = 0, accepted = 0, missed = 0, skipped = 0;
+		int kinds[FUZZ_KINDS], changed[FUZZ_KINDS];
+		memset( changed, 0, sizeof( changed ) );
+		memset( kinds, 0, sizeof( kinds ) );
+		mrecHeader_t header;
+		idList<mrecEntry_t, TAG_GAME> entries;
+		idStr reason;
+		idRecordIn rec;
+		for( int m = 0; m < count && corpusValid && worldStore.NumMapRecords() > 0; m++ )
+		{
+			const idList<byte, TAG_GAME>& source = worldStore.MapRecordBytes( RecordFuzzRandom( rng, worldStore.NumMapRecords() ) );
+			idList<byte, TAG_GAME> bytes = source;
+			const int length = bytes.Num();
+			const int kind = RecordFuzzRandom( rng, FUZZ_KINDS );
+			int offset = RecordFuzzRandom( rng, length );
+			// Locate targets only in a successfully scanned source; a malformed corpus must not become test UB.
+			if( !RecordScanChunk( source.Ptr(), length, nextIdentity, header, entries, reason ) )
+			{
+				corpusValid = false;
+				break;
+			}
+			const int worldBytes = header.world.Length(), unitBytes = header.unit.Length();
+			int target = entries.Num() > 0 ? RecordFuzzRandom( rng, entries.Num() ) : -1;
+			int newLength = length;
+			bool mustDrop = kind > FUZZ_TRUNCATE;
+			switch( kind )
+			{
+				case FUZZ_FLIP:
+					bytes[offset] ^= ( byte )( 1 << RecordFuzzRandom( rng, 8 ) );
+					break;
+				case FUZZ_BYTE:
+					bytes[offset] ^= ( byte )( 1 + RecordFuzzRandom( rng, 255 ) );
+					break;
+				case FUZZ_TRUNCATE:
+					newLength = offset;
+					break;
+				case FUZZ_VERSION:
+					offset = 0;
+					bytes[0] = ( byte )( RecordFuzzRandom( rng, 2 ) ? 2 : 4 + RecordFuzzRandom( rng, 200 ) );
+					bytes[1] = 0;
+					break;
+				case FUZZ_ENTRIES:
+				{
+					// numEntries, the header's last field: one more or one fewer may still frame; the count is not a check
+					const int at = 56 + worldBytes + unitBytes;
+					offset = at;
+					const uint32 value = ( uint32 )( header.numEntries + ( RecordFuzzRandom( rng, 2 ) ? 1 : 0xffffffffu ) );
+					for( int b = 0; b < 4; b++ )
+					{
+						bytes[at + b] = ( byte )( value >> ( b * 8 ) );
+					}
+					mustDrop = false;
+					break;
+				}
+				case FUZZ_MASK:
+				case FUZZ_BYTES:
+				{
+					// Choose among actual sections, including later class levels and created entries; REMOVED has none.
+					idList<int, TAG_GAME> sectionEntries, sectionOffsets;
+					for( int e = 0; e < entries.Num(); e++ )
+					{
+						int at = entries[e].sectionsOffset;
+						for( int s = 0; s < entries[e].numSections; s++ )
+						{
+							const int fields = RecordSectionFields( bytes[at] );
+							if( kind == FUZZ_MASK ? ( fields > 0 && fields < 64 ) : length - at - RECORD_SECTION_HEADER_BYTES < 65535 )
+							{
+								sectionEntries.Append( e );
+								sectionOffsets.Append( at );
+							}
+							at += RECORD_SECTION_HEADER_BYTES + bytes[at + 10] + ( bytes[at + 11] << 8 );
+						}
+					}
+					if( sectionOffsets.Num() == 0 )
+					{
+						mustDrop = false;
+						skipped++;
+						break;
+					}
+					const int section = RecordFuzzRandom( rng, sectionOffsets.Num() );
+					target = sectionEntries[section];
+					const int at = sectionOffsets[section];
+					if( kind == FUZZ_MASK )
+					{
+						const int fields = RecordSectionFields( bytes[at] );
+						const int bit = fields + RecordFuzzRandom( rng, 64 - fields );
+						offset = at + 2 + bit / 8;
+						bytes[offset] |= ( byte )( 1 << ( bit & 7 ) );
+					}
+					else
+					{
+						// Smallest representable size that certainly exceeds the remaining chunk, without clamping.
+						const int value = length - at - RECORD_SECTION_HEADER_BYTES + 1;
+						offset = at + 10;
+						bytes[at + 10] = ( byte )value;
+						bytes[at + 11] = ( byte )( value >> 8 );
+					}
+					break;
+				}
+				case FUZZ_FLAGS:
+				{
+					if( target < 0 )
+					{
+						mustDrop = false;
+						skipped++;
+						break;
+					}
+					offset = entries[target].sectionsOffset - 2;
+					bytes[offset] |= ( byte )( 1 << ( 2 + RecordFuzzRandom( rng, 6 ) ) );
+					break;
+				}
+				case FUZZ_CELL:
+				{
+					const int at = 4 + 1 + worldBytes + 8 + 2;
+					offset = at;
+					const uint32 value = 2 + ( uint32 )RecordFuzzRandom( rng, 0xfffffe );
+					for( int b = 0; b < 4; b++ )
+					{
+						bytes[at + b] = ( byte )( value >> ( b * 8 ) );
+					}
+					break;
+				}
+			}
+			kinds[kind]++;
+			changed[kind] += newLength != length || memcmp( bytes.Ptr(), source.Ptr(), length ) != 0 ? 1 : 0;
+			// The codec oracle is separate: a foreign node must not hide a missed validator in the hub record.
+			reason.Clear();
+			const bool scanned = RecordScanChunk( bytes.Ptr(), newLength, nextIdentity, header, entries, reason );
+			const bool framed = scanned && header.node == worldStore.GetCurrentNode() && header.cellId == CELL_ID_NONE;
+			int bad = framed ? 0 : 1;
+			const int targetValid = scanned && target >= 0 && target < entries.Num() ? entries[target].valid : -1;
+			for( int e = 0; framed && e < entries.Num(); e++ )
+			{
+				bool valid = entries[e].valid;
+				if( valid && !entries[e].created && !( entries[e].flags & RECORD_ENTRY_REMOVED ) )
+				{
+					const int row = worldStore.FindSpawnRow( entries[e].ordinalHint );
+					const mapSpawnRow_t* spawn = row >= 0 ? &worldStore.SpawnRow( row ) : NULL;
+					idEntity* ent = spawn != NULL ? gameLocal.entities[spawn->entityNumber] : NULL;
+					if( ent != NULL && gameLocal.GetSpawnId( ent ) == spawn->spawnId )
+					{
+						const recordFrame_t frame = RecordChunkFrame( header.cellId );
+						RecordFrameEntry( bytes.Ptr(), header.cellId, frame, entries[e], ent->GetEntityDefName(), rec );
+						valid = RecordSectionsFit( ent, rec );
+					}
+				}
+				bad += valid ? 0 : 1;
+				accepted += valid ? 1 : 0;
+			}
+			dropped += bad;
+			// VERSION/CELL/BYTES must fail scanning; unrelated invalid entries or node mismatch never satisfy them.
+			const bool hit = !scanned || ( ( kind == FUZZ_MASK || kind == FUZZ_FLAGS ) && targetValid == 0 );
+			if( mustDrop && !hit )
+			{
+				missed++;
+				gameLocal.Printf( "RECORD_FUZZ missed mutant %d kind %d offset %d\n", m, kind, offset );
+			}
+		}
+		bool covered = true;
+		for( int k = 0; k < FUZZ_KINDS; k++ )
+		{
+			if( kinds[k] > 0 && changed[k] == 0 )
+			{
+				covered = false;
+				gameLocal.Warning( "recordTest fuzz: kind %d attempted %d times without changing bytes", k, kinds[k] );
+			}
+		}
+		const bool pass = corpusValid && covered && roundtrip && missed == 0 && count > 0;
+		gameLocal.Printf( "RECORD_FUZZ kinds flip=%d byte=%d truncate=%d version=%d entries=%d mask=%d flags=%d cell=%d bytes=%d skipped=%d missed=%d\n", kinds[FUZZ_FLIP], kinds[FUZZ_BYTE], kinds[FUZZ_TRUNCATE], kinds[FUZZ_VERSION], kinds[FUZZ_ENTRIES], kinds[FUZZ_MASK], kinds[FUZZ_FLAGS], kinds[FUZZ_CELL], kinds[FUZZ_BYTES], skipped, missed );
+		gameLocal.Printf( "RECORD_FUZZ %s n=%d seed=%d dropped=%d accepted=%d roundtrip=%s\n", pass ? "PASS" : "FAIL", count, seed, dropped, accepted, roundtrip ? "equal" : "DIFF" );
+		return;
+	}
+	//puncho end
 	if( idStr::Icmp( args.Argv( 1 ), "pose" ) == 0 && args.Argc() == 6 )
 	{
 		idEntity* ent = gameLocal.FindEntity( args.Argv( 2 ) );

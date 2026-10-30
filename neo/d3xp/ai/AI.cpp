@@ -6934,3 +6934,52 @@ void idAI::Event_SettleCorpse()
 	}
 	Event_PersistCorpse();
 }
+
+//puncho start - P2b.1.2: idAI's map record section (AI_RECORD_SCHEMA): the store's corpse rule. An AI that died in play
+// never comes back as an AI with health <= 0: it records as the corpse it leaves, or as REMOVED when it leaves none
+// (corpses off, gibbed, persist_lifetime 0). A departure can precede the settle event, so the pose is taken from the AI
+// itself (idCorpse::WriteActorPose), at the origin the AI stands at.
+void idAI::WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const
+{
+	if( health <= 0 )
+	{
+		if( !g_corpses.GetBool() || gibbed || spawnArgs.GetInt( "persist_lifetime", "-1" ) == 0 )
+		{
+			rec.SetRemoved();
+			return;
+		}
+		rec.SetCorpse( GetPhysics()->GetOrigin() );
+	}
+	idActor::WriteRecord( rec, frame );
+	rec.BeginSection( RECORD_SECTION_AI, RECORD_VERSION_AI );
+	AI_RECORD_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
+	AI_RECORD_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
+	rec.EndSection();
+}
+
+// A section holding Corpse replaces the AI: the store builds the idCorpse from the same entry (idCorpse::ApplyRecord
+// reads this section) and frees the AI after the record has applied.
+recordApply_t idAI::ApplyRecord( idRecordIn& rec, const recordFrame_t& frame )
+{
+	const recordApply_t result = idActor::ApplyRecord( rec, frame );
+	if( result != RECORD_APPLIED || !rec.BeginSection( RECORD_SECTION_AI ) )
+	{
+		return result;
+	}
+	return rec.Has( RF_Corpse ) ? RECORD_REPLACED : RECORD_INVALID;
+}
+
+// The pose is the corpse's, its leading origin left to Pose; a pose that cannot be taken (more than 20 AF bodies, an
+// anim name past 63 bytes) records the AI as REMOVED, as no corpse could be built from it.
+void idAI::WriteRecordCorpse( idRecordOut& rec ) const
+{
+	idFile_Memory pose;
+	// WriteActorPose only reads the actor; its accessors are not const
+	if( !idCorpse::WriteActorPose( const_cast<idAI*>( this ), pose ) )
+	{
+		rec.SetRemoved();
+		return;
+	}
+	idCorpse::WriteRecordPayload( rec, ( const byte* )pose.GetDataPtr(), pose.Length() );
+}
+//puncho end

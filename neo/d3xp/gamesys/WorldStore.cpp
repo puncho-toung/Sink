@@ -50,46 +50,8 @@ public:
 static const unsigned int WSTO_TAG = 0x4f545357, MREC_TAG = 0x4345524d, ORDT_TAG = 0x5444524f, DREC_TAG = 0x43455244;
 static const int MAX_WORLD_BYTES = 2097152;
 
-static bool ValidateMapRecord( const char* data, int length, uint64 nextIdentity = ( uint64 ) - 1 )
-{
-	idFile_Memory in( "MREC validation", data, length );
-	unsigned short version, flags, entities, remains, node = 0;
-	unsigned int crc, count;
-	uint64 instance, left, cleared;
-	idStr name;
-	if( in.ReadUnsignedShort( version ) != 2 || ( version < 1 || version > 2 ) || in.ReadUnsignedShort( flags ) != 2 || flags > 3 || !RecordReadString( in, name ) || name.IsEmpty() || !RecordRead64( in, instance ) || ( version >= 2 && in.ReadUnsignedShort( node ) != 2 ) || node >= 256 || ( instance == 0 && node != 0 ) || !RecordReadString( in, name ) || name.IsEmpty() || in.ReadUnsignedInt( crc ) != 4 || in.ReadUnsignedInt( crc ) != 4 || in.ReadUnsignedShort( entities ) != 2 || entities == 0 || !RecordRead64( in, left ) || left > 0x7fffffffffffffffULL || !RecordRead64( in, cleared ) || in.ReadUnsignedShort( remains ) != 2 || in.ReadUnsignedInt( count ) != 4 || count > MAX_GENTITIES )
-	{
-		return false;
-	}
-	int previous = -1;
-	for( unsigned int i = 0; i < count; i++ )
-	{
-		unsigned short ordinal, aspects, size;
-		if( in.ReadUnsignedShort( ordinal ) != 2 || ordinal >= entities || ordinal <= previous || in.ReadUnsignedInt( crc ) != 4 || !RecordReadString( in, name ) || in.ReadUnsignedShort( aspects ) != 2 || ( aspects & RECORD_BIND ) || in.ReadUnsignedShort( size ) != 2 || size > in.Length() - in.Tell() || !ValidateAspectBytes( aspects, in.GetDataPtr() + in.Tell(), size ) )
-		{
-			return false;
-		}
-		previous = ordinal;
-		in.Seek( size, FS_SEEK_CUR );
-	}
-	if( in.ReadUnsignedInt( count ) != 4 || count > MAX_GENTITIES )
-	{
-		return false;
-	}
-	uint64 previousId = 0;
-	for( unsigned int i = 0; i < count; i++ )
-	{
-		uint64 id, when;
-		unsigned short aspects, size;
-		if( !RecordRead64( in, id ) || id <= previousId || id >= nextIdentity || !RecordReadString( in, name ) || name.IsEmpty() || !RecordRead64( in, when ) || when > 0x7fffffffffffffffULL || in.ReadUnsignedShort( aspects ) != 2 || !( aspects & RECORD_MOVED ) || in.ReadUnsignedShort( size ) != 2 || size > in.Length() - in.Tell() || !ValidateAspectBytes( aspects, in.GetDataPtr() + in.Tell(), size ) )
-		{
-			return false;
-		}
-		previousId = id;
-		in.Seek( size, FS_SEEK_CUR );
-	}
-	return in.Tell() == in.Length();
-}
+//puncho - P2b.1.2: WSTO 4 holds MREC v3 (Save writes it, Restore reads 4 and drops 3's MREC v2 chunks)
+static const int WSTO_VERSION = 4;
 
 static void RecordChunk( idFile& out, unsigned int tag, const void* bytes, int length )
 {
@@ -121,6 +83,7 @@ idWorldStore::idWorldStore()
 	resetApplied = false;
 	remains = 0;
 	recordMaps = recordEntries = recordCreated = recordBytes = recordDropped = corpseEvicted = 0;
+	recordInvalid = 0;
 	commitUs = applyUs = 0;
 	memset( removed, 0, sizeof( removed ) );
 }
@@ -142,6 +105,7 @@ void idWorldStore::Clear()
 	resetApplied = false;
 	remains = 0;
 	recordMaps = recordEntries = recordCreated = recordBytes = recordDropped = corpseEvicted = 0;
+	recordInvalid = 0;
 	commitUs = applyUs = 0;
 	memset( removed, 0, sizeof( removed ) );
 }
@@ -334,7 +298,8 @@ static bool RecordExcluded( const byte* excluded, const idEntity* ent )
 struct recordRow_t
 {
 	int offset, length;
-	unsigned short aspects;
+	byte flags, numSections;	// RECORD_ENTRY_REMOVED and no section, or the entity's sections
+	bool written;				// the row holds an entry; an entity that matches its spawn state writes none
 };
 //puncho end
 
@@ -437,9 +402,12 @@ void idWorldStore::Commit( bool leaving )
 		return;
 	}
 	const int authoredLimit = Min( g_recordBytesMap.GetInteger(), g_recordBytesWorld.GetInteger() - otherRecordBytes - 64 );
-	int authoredBytes = 52 + worldName.Length() + recordMap.Length();
-	// Each row's aspects are written once, here; the record below copies them. An entity that matches its spawn
-	// state writes no row at all.
+	int authoredBytes = MREC_FIXED_HEADER_BYTES + worldName.Length() + recordMap.Length();
+	//puncho start - P2b.1.2: each row's sections are written once, here, by the entity's WriteRecord chain against its
+	// spawn baseline (the map entity's epairs over its def); the record below copies them. An entity that matches its
+	// spawn state writes no entry at all
+	const recordFrame_t frame = RecordChunkFrame( CELL_ID_NONE );
+	idRecordOut rec;
 	idList<recordRow_t, TAG_GAME> rows;
 	rows.SetNum( mapSpawned.Num() );
 	idFile_Memory rowPayloads;
@@ -453,21 +421,49 @@ void idWorldStore::Commit( bool leaving )
 		}
 		recordRow_t& out = rows[i];
 		out.offset = rowPayloads.Length();
-		const char* rowName = map->GetEntity( row.ordinal )->epairs.GetString( "name" );
+		out.length = 0;
+		out.flags = 0;
+		out.numSections = 0;
+		out.written = false;
+		const idMapEntity* mapEntity = map->GetEntity( row.ordinal );
+		const char* rowName = mapEntity->epairs.GetString( "name" );
 		if( idStr::Length( rowName ) > 63 )
 		{
 			gameLocal.Warning( "record: %s entity '%s' not recorded: name exceeds 63 bytes", recordMap.c_str(), rowName );
-			out.aspects = 0;
-			out.length = 0;
 			continue;
 		}
-		out.aspects = ent == NULL ? RECORD_REMOVED : WriteAspects( ent, rowPayloads, vec3_origin, false, 0 );
-		out.length = rowPayloads.Length() - out.offset;
-		if( out.aspects != 0 )
+		if( ent != NULL )
 		{
-			authoredBytes += 11 + idStr::Length( rowName ) + out.length;
+			const idDecl* def = ent->entityDefNumber >= 0 ? declManager->DeclByIndex( DECL_ENTITYDEF, ent->entityDefNumber, false ) : NULL;
+			idRecordMapArgs baseline;
+			baseline.map = &mapEntity->epairs;
+			baseline.def = def != NULL ? &static_cast<const idDeclEntityDef*>( def )->dict : NULL;
+			rec.Begin( frame, false, baseline, 0, "" );
+			ent->WriteRecord( rec, frame );
+			if( rec.Overflowed() )
+			{
+				gameLocal.Warning( "record: %s entity '%s' not recorded: its sections exceed %d bytes", recordMap.c_str(), rowName, RECORD_MAX_ENTRY_BYTES );
+				continue;
+			}
+		}
+		if( ent == NULL || rec.IsRemoved() )
+		{
+			out.flags = RECORD_ENTRY_REMOVED;
+			out.written = true;
+		}
+		else if( rec.NumSections() > 0 )
+		{
+			out.numSections = ( byte )rec.NumSections();
+			out.written = true;
+			rowPayloads.Write( rec.Data(), rec.Length() );
+		}
+		out.length = rowPayloads.Length() - out.offset;
+		if( out.written )
+		{
+			authoredBytes += 9 + idStr::Length( rowName ) + out.length;
 		}
 	}
+	//puncho end
 	for( int i = 0; i < bodies.Num() && authoredBytes > authoredLimit; i++ )
 	{
 		if( bodies[i].noCap || bodies[i].ent == NULL )
@@ -480,12 +476,13 @@ void idWorldStore::Commit( bool leaving )
 			continue;
 		}
 		recordRow_t& out = rows[ent->mapSpawnIndex];
-		if( out.aspects == 0 )
+		if( !out.written )
 		{
 			continue; // not recorded at all (an overlong name), so leaving it out saves nothing
 		}
 		authoredBytes -= out.length;
-		out.aspects = RECORD_REMOVED;
+		out.flags = RECORD_ENTRY_REMOVED;
+		out.numSections = 0;
 		out.length = 0;
 		evicted++;
 		RecordExclude( excluded, ent );
@@ -494,23 +491,29 @@ void idWorldStore::Commit( bool leaving )
 	int rowCount = 0;
 	for( int i = 0; i < rows.Num(); i++ )
 	{
-		rowCount += rows[i].aspects != 0 ? 1 : 0;
+		rowCount += rows[i].written ? 1 : 0;
 	}
-	idFile_Memory record;
-	record.WriteUnsignedShort( 2 );
-	record.WriteUnsignedShort( isCleared ? 3 : 1 );
-	RecordString( record, worldName );
-	Record64( record, instanceId );
-	record.WriteUnsignedShort( currentNode );
 	idStr name = gameLocal.GetMapName();
 	name.StripFileExtension();
 	name.ToLower();
-	RecordString( record, name );
-	record.WriteUnsignedInt( map->GetEntitiesCRC() );
-	record.WriteUnsignedInt( map->GetGeometryCRC() );
-	record.WriteUnsignedShort( map->GetNumEntities() );
-	Record64( record, gameLocal.GetWorldTime() );
-	uint64 clearedTime = isCleared ? ( uint64 )gameLocal.GetWorldTime() : ( uint64 ) - 1;
+	//puncho start - P2b.1.2: MREC v3's header; a node map's cellId is CELL_ID_NONE, its unit the map name, revision 0
+	mrecHeader_t header;
+	header.version = MREC_VERSION;
+	header.flags = isCleared ? 3 : 1;
+	header.world = worldName;
+	header.instanceId = instanceId;
+	header.node = currentNode;
+	header.cellId = CELL_ID_NONE;
+	header.unit = name;
+	header.unitRevision = 0;
+	header.entitiesCRC = map->GetEntitiesCRC();
+	header.geometryCRC = map->GetGeometryCRC();
+	header.numMapEntities = map->GetNumEntities();
+	header.lastLeft = gameLocal.GetWorldTime();
+	header.cleared = isCleared ? gameLocal.GetWorldTime() : -1;
+	header.remains = remains;
+	header.writerBuild = BUILD_NUMBER;
+	header.numEntries = rowCount;
 	if( isCleared && !resetApplied )
 	{
 		for( int i = 0; i < records.Num(); i++ )
@@ -521,48 +524,33 @@ void idWorldStore::Commit( bool leaving )
 				continue;
 			}
 			idFile_Memory old( "previous MREC", ( const char* )previous.bytes.Ptr(), previous.bytes.Num() );
-			unsigned short version, flags, number;
-			unsigned int crc;
-			uint64 identity, left, cleared;
-			idStr ignored;
-			old.ReadUnsignedShort( version );
-			old.ReadUnsignedShort( flags );
-			RecordReadString( old, ignored );
-			RecordRead64( old, identity );
-			if( version >= 2 )
+			mrecHeader_t before;
+			idStr reason;
+			if( RecordReadHeader( old, before, reason ) && ( before.flags & 2 ) && before.cleared != -1 )
 			{
-				old.ReadUnsignedShort( number );
-			}
-			RecordReadString( old, ignored );
-			old.ReadUnsignedInt( crc );
-			old.ReadUnsignedInt( crc );
-			old.ReadUnsignedShort( number );
-			RecordRead64( old, left );
-			if( RecordRead64( old, cleared ) && ( flags & 2 ) && cleared != ( uint64 ) - 1 )
-			{
-				clearedTime = cleared;
+				header.cleared = before.cleared;
 			}
 			break;
 		}
 	}
-	Record64( record, clearedTime );
-	record.WriteUnsignedShort( remains );
-	record.WriteUnsignedInt( rowCount );
+	idFile_Memory record;
+	RecordWriteHeader( record, header );
 	for( int i = 0; i < mapSpawned.Num(); i++ )
 	{
 		const mapSpawnRow_t& row = mapSpawned[i];
 		const recordRow_t& out = rows[i];
-		if( out.aspects == 0 )
+		if( !out.written )
 		{
 			continue;
 		}
 		record.WriteUnsignedShort( row.ordinal );
 		record.WriteUnsignedInt( map->GetEntityCRC( row.ordinal ) );
 		RecordString( record, map->GetEntity( row.ordinal )->epairs.GetString( "name" ) );
-		record.WriteUnsignedShort( out.aspects );
-		record.WriteUnsignedShort( out.length );
+		record.WriteUnsignedChar( out.flags );
+		record.WriteUnsignedChar( out.numSections );
 		record.Write( rowPayloads.GetDataPtr() + out.offset, out.length );
 	}
+	//puncho end
 	idList<createdCandidate_t, TAG_GAME> candidates;
 	for( idEntity* ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
 	{
@@ -587,7 +575,7 @@ void idWorldStore::Commit( bool leaving )
 			continue;
 		}
 		idFile_Memory encoded;
-		if( !WriteCreated( ent, vec3_origin, encoded ) )
+		if( !EncodeCreated( ent, frame, encoded, true ) )	//puncho - P2b.1.2: in the map's frame
 		{
 			continue;
 		}
@@ -712,15 +700,28 @@ void idWorldStore::ApplyCurrentMap()
 		{
 			continue;
 		}
-		idFile_Memory in( "MREC", ( const char* )record.bytes.Ptr(), record.bytes.Num() );
-		unsigned short version, flags, numEntities, savedRemains, node = 0;
-		unsigned int entitiesCRC, geometryCRC, count;
-		uint64 instance, left, cleared;
-		idStr world, name;
-		if( in.ReadUnsignedShort( version ) != 2 || ( version < 1 || version > 2 ) || in.ReadUnsignedShort( flags ) != 2 || !RecordReadString( in, world ) || !RecordRead64( in, instance ) || ( version >= 2 && in.ReadUnsignedShort( node ) != 2 ) || node != currentNode || !RecordReadString( in, name ) || in.ReadUnsignedInt( entitiesCRC ) != 4 || in.ReadUnsignedInt( geometryCRC ) != 4 || in.ReadUnsignedShort( numEntities ) != 2 || !RecordRead64( in, left ) || !RecordRead64( in, cleared ) || in.ReadUnsignedShort( savedRemains ) != 2 || in.ReadUnsignedInt( count ) != 4 || count > MAX_GENTITIES )
+		//puncho start - P2b.1.2: every entry is framed and checked before any applies; a chunk that cannot be read, or
+		// that is not this map's, is dropped whole and logged, an entry that fails its check alone
+		const byte* data = record.bytes.Ptr();
+		mrecHeader_t header;
+		idList<mrecEntry_t, TAG_GAME> entries;
+		idStr reason;
+		bool readable = RecordScanChunk( data, record.bytes.Num(), nextCreatedId, header, entries, reason );
+		if( readable && ( header.node != currentNode || header.cellId != CELL_ID_NONE ) )
 		{
-			gameLocal.Error( "Malformed MREC header for %s", mapName.c_str() );
+			reason = va( "node %u cell %08x is not this map's", header.node, header.cellId );
+			readable = false;
 		}
+		if( !readable )
+		{
+			gameLocal.Warning( "record: %s dropped: %s", mapName.c_str(), reason.c_str() );
+			recordInvalid++;
+			records.RemoveIndex( index );
+			recordMaps = records.Num();
+			return;
+		}
+		const recordFrame_t frame = RecordChunkFrame( header.cellId );
+		//puncho end
 		int resetPolicy = 0;
 		uint32 resetSeconds = 0;
 		if( instanceId == 0 || !mapGraphDirector.GetResetPolicy( mapName, resetPolicy, resetSeconds ) )
@@ -732,16 +733,17 @@ void idWorldStore::ApplyCurrentMap()
 			resetSeconds = Max( 0, world.GetInt( "world_reset_time" ) );
 		}
 		const uint64 now = gameLocal.GetWorldTime();
-		const uint64 resetAt = resetPolicy == 2 ? cleared : left;
-		applyingReset = resetPolicy != 0 && ( resetPolicy != 2 || ( flags & 2 ) ) && now >= resetAt && now - resetAt >= ( uint64 )resetSeconds * 1000;
+		const uint64 resetAt = resetPolicy == 2 ? ( uint64 )header.cleared : ( uint64 )header.lastLeft;
+		applyingReset = resetPolicy != 0 && ( resetPolicy != 2 || ( header.flags & 2 ) ) && now >= resetAt && now - resetAt >= ( uint64 )resetSeconds * 1000;
 		resetApplied = applyingReset;
 		if( applyingReset )
 		{
 			gameLocal.Printf( "record: reset %s\n", mapName.c_str() );
 		}
-		remains = applyingReset ? 0 : savedRemains;
+		remains = applyingReset ? 0 : header.remains;
 		idList<idEntity*, TAG_GAME> deleted;
-		const bool identical = entitiesCRC == map->GetEntitiesCRC() && numEntities == map->GetNumEntities();
+		idList<recordPosed_t, TAG_GAME> moved;
+		const bool identical = header.entitiesCRC == map->GetEntitiesCRC() && header.numMapEntities == map->GetNumEntities();
 		//puncho start - P2.4 (bug review 2026-10-28): one lookup per record row, not a scan of the map and the rows. A
 		// claimed bit per map ordinal, the spawned row by binary search (rows are in ordinal order), and on an edited map
 		// each entity's CRC computed once (implementer E's request: GetEntityCRC walks every pair on each call) with the
@@ -768,13 +770,23 @@ void idWorldStore::ApplyCurrentMap()
 			entityCRCs[0] = map->GetEntityCRC( 0 );
 		}
 		//puncho end
-		for( unsigned int i = 0; i < count; i++ )
+		idRecordIn rec;
+		unsigned int count = 0;
+		for( int i = 0; i < entries.Num(); i++ )
 		{
-			unsigned short ordinal, aspects, length;
-			unsigned int crc;
-			if( in.ReadUnsignedShort( ordinal ) != 2 || in.ReadUnsignedInt( crc ) != 4 || !RecordReadString( in, name ) || in.ReadUnsignedShort( aspects ) != 2 || in.ReadUnsignedShort( length ) != 2 || length > in.Length() - in.Tell() )
+			const mrecEntry_t& entry = entries[i];
+			if( entry.created )
 			{
-				gameLocal.Error( "Malformed MREC entry for %s", mapName.c_str() );
+				continue;
+			}
+			const unsigned short ordinal = entry.ordinalHint;
+			const unsigned int crc = entry.entityCRC;
+			const idStr& name = entry.name;
+			if( !entry.valid )
+			{
+				gameLocal.Warning( "record: %s '%s'#%d dropped: %s", mapName.c_str(), name.c_str(), ordinal, entry.reason.c_str() );
+				recordInvalid++;
+				continue;
 			}
 			int candidate = -1;
 			if( identical )
@@ -807,8 +819,6 @@ void idWorldStore::ApplyCurrentMap()
 					}
 				}
 			}
-			idFile_Memory payload( "aspects", ( const char* )in.GetDataPtr() + in.Tell(), length );
-			in.Seek( length, FS_SEEK_CUR );
 			if( candidate < 0 || ( claimed[candidate >> 3] & ( 1 << ( candidate & 7 ) ) ) || ( identical ? map->GetEntityCRC( candidate ) : entityCRCs[candidate] ) != crc )
 			{
 				gameLocal.Warning( "record: %s '%s'#%d dropped: entity changed", mapName.c_str(), name.c_str(), ordinal );
@@ -821,18 +831,34 @@ void idWorldStore::ApplyCurrentMap()
 			{
 				continue;
 			}
-			if( aspects & RECORD_REMOVED )
+			if( entry.flags & RECORD_ENTRY_REMOVED )
 			{
 				deleted.Append( ent );
+				continue;
 			}
-			else if( aspects & RECORD_CORPSE )
+			//puncho start - P2b.1.2: the entity's own chain applies its sections; an AI that died in play is replaced by
+			// the corpse built from the same entry, and freed after the record has applied
+			RecordFrameEntry( data, header.cellId, frame, entry, ent->GetEntityDefName(), rec );
+			if( !RecordSectionsFit( ent, rec ) )
 			{
-				idEntity* corpse = SpawnCorpseRecord( ent->GetEntityDefName(), aspects, payload );
+				gameLocal.Warning( "record: %s '%s'#%d dropped: its sections are not those of %s", mapName.c_str(), name.c_str(), ordinal, ent->GetClassname() );
+				recordInvalid++;
+				continue;
+			}
+			recordPosed_t pose;
+			pose.ent = ent;
+			pose.fromOrigin = ent->GetPhysics()->GetOrigin();
+			pose.fromAxis = ent->GetPhysics()->GetAxis();
+			const recordApply_t result = ent->ApplyRecord( rec, frame );
+			if( result == RECORD_REPLACED )
+			{
+				rec.Rewind();
+				idCorpse* corpse = SpawnCorpseRecord( ent->GetEntityDefName(), rec, frame );
 				if( corpse != NULL )
 				{
 					const int lifetime = ent->spawnArgs.GetInt( "persist_lifetime", "-1" );
 					corpse->spawnArgs.SetInt( "persist_lifetime", lifetime );
-					const int64 death = static_cast<idCorpse*>( corpse )->DeathTime();
+					const int64 death = corpse->DeathTime();
 					if( lifetime == 0 || ( lifetime > 0 && gameLocal.GetWorldTime() - death >= ( int64 )lifetime * 1000 ) )
 					{
 						delete corpse;
@@ -843,21 +869,41 @@ void idWorldStore::ApplyCurrentMap()
 					}
 				}
 				deleted.Append( ent );
+				continue;
 			}
-			else if( !ApplyAspects( ent, aspects, payload, mat3_identity, vec3_origin ) )
+			if( result != RECORD_APPLIED || !rec.Done() )
 			{
-				gameLocal.Warning( "record: unsupported aspects for %s", name.c_str() );
+				gameLocal.Warning( "record: %s '%s'#%d dropped: a field did not apply", mapName.c_str(), name.c_str(), ordinal );
+				recordInvalid++;
 			}
+			// what the record moved carries the entities that bind to it at spawn
+			pose.toOrigin = ent->GetPhysics()->GetOrigin();
+			pose.toAxis = ent->GetPhysics()->GetAxis();
+			if( pose.toOrigin != pose.fromOrigin || pose.toAxis != pose.fromAxis )
+			{
+				moved.Append( pose );
+			}
+			//puncho end
 		}
-		if( in.ReadUnsignedInt( count ) != 4 || count > MAX_GENTITIES )
+		for( int i = 0; i < entries.Num(); i++ )
 		{
-			gameLocal.Error( "Malformed created count" );
-		}
-		for( unsigned int i = 0; i < count; i++ )
-		{
-			SpawnCreated( in, mat3_identity, vec3_origin );
+			const mrecEntry_t& entry = entries[i];
+			if( !entry.created )
+			{
+				continue;
+			}
+			count++;
+			if( !entry.valid )
+			{
+				gameLocal.Warning( "record: %s '%s'#%llu dropped: %s", mapName.c_str(), entry.name.c_str(), ( unsigned long long )entry.createdId, entry.reason.c_str() );
+				recordInvalid++;
+				continue;
+			}
+			RecordFrameEntry( data, header.cellId, frame, entry, entry.name, rec );
+			SpawnCreatedEntry( entry.name, entry.createdId, entry.createdTime, rec, frame );
 		}
 		BindCreatedRecords();
+		RecordCarryBindChildren( moved );
 		for( int i = 0; i < deleted.Num(); i++ )
 		{
 			delete deleted[i];
@@ -865,7 +911,7 @@ void idWorldStore::ApplyCurrentMap()
 		applyingReset = false;
 		applyUs = ( unsigned int )( Sys_Microseconds() - applyStart );
 		gameLocal.Printf( "record apply map=%s created=%u us=%u\n", mapName.c_str(), count, applyUs );
-		if( geometryCRC != map->GetGeometryCRC() )
+		if( header.geometryCRC != map->GetGeometryCRC() )
 		{
 			gameLocal.Warning( "record: %s geometry changed; retained entity poses", mapName.c_str() );
 		}
@@ -930,7 +976,7 @@ void idWorldStore::Save( idSaveGame* save )
 	}
 	recordMaps = records.Num();
 	idFile_Memory body;
-	body.WriteUnsignedShort( 3 );
+	body.WriteUnsignedShort( WSTO_VERSION );	//puncho - P2b.1.2: 4, MREC v3
 	Record64( body, nextCreatedId );
 	body.WriteUnsignedInt( records.Num() + 1 + dungeonRecords.Num() );
 	for( int i = 0; i < records.Num(); i++ )
@@ -977,7 +1023,24 @@ void idWorldStore::Restore( idRestoreGame* save )
 	idFile_Memory in( "WSTO", ( const char* )bytes.Ptr(), length );
 	unsigned int tag, size, chunks;
 	unsigned short version;
-	if( in.ReadUnsignedInt( tag ) != 4 || tag != WSTO_TAG || in.ReadUnsignedInt( size ) != 4 || size != ( unsigned int )length - 8 || in.ReadUnsignedShort( version ) != 2 || version > 3 || version < 1 || !RecordRead64( in, nextCreatedId ) || nextCreatedId == 0 || nextCreatedId == ( uint64 ) - 1 || in.ReadUnsignedInt( chunks ) != 4 || chunks > 4096 )
+	if( in.ReadUnsignedInt( tag ) != 4 || tag != WSTO_TAG || in.ReadUnsignedInt( size ) != 4 || size != ( unsigned int )length - 8 || in.ReadUnsignedShort( version ) != 2 || version < 1 )
+	{
+		save->Error( "Unsupported or malformed WSTO" );
+	}
+	//puncho start - P2b.1.2: WSTO 4 holds MREC v3; 3 holds MREC v2, each dropped with a line while its DREC and ORDT
+	// stay; 1 and 2 are dropped whole; a later version is refused by name
+	if( version > WSTO_VERSION )
+	{
+		save->Error( "WSTO version %u is newer than this build reads (%d)", version, WSTO_VERSION );
+	}
+	if( version < 3 )
+	{
+		gameLocal.Warning( "record: the world store of WSTO version %u dropped (this build reads 3 and 4)", version );
+		recordInvalid++;
+		return;
+	}
+	//puncho end
+	if( !RecordRead64( in, nextCreatedId ) || nextCreatedId == 0 || nextCreatedId == ( uint64 ) - 1 || in.ReadUnsignedInt( chunks ) != 4 || chunks > 4096 )
 	{
 		save->Error( "Unsupported or malformed WSTO" );
 	}
@@ -992,26 +1055,39 @@ void idWorldStore::Restore( idRestoreGame* save )
 		in.Seek( size, FS_SEEK_CUR );
 		if( tag == MREC_TAG )
 		{
-			if( !ValidateMapRecord( chunk.GetDataPtr(), size, nextCreatedId ) )
-			{
-				save->Error( "Malformed MREC payload" );
-			}
+			//puncho start - P2b.1.2: a chunk the reader cannot frame, of another version or a duplicate identity is
+			// dropped and logged; an entry that fails its check is dropped when the map applies
 			worldMapRecord_t record;
-			record.node = 0;
-			unsigned short recordVersion, flags;
-			if( chunk.ReadUnsignedShort( recordVersion ) != 2 || ( recordVersion < 1 || recordVersion > 2 ) || chunk.ReadUnsignedShort( flags ) != 2 || !RecordReadString( chunk, record.world ) || !RecordRead64( chunk, record.instance ) || ( recordVersion >= 2 && chunk.ReadUnsignedShort( record.node ) != 2 ) || !RecordReadString( chunk, record.map ) )
+			mrecHeader_t header;
+			idList<mrecEntry_t, TAG_GAME> entries;
+			idStr reason;
+			if( version == 3 )
 			{
-				save->Error( "Invalid MREC identity" );
+				reason = va( "MREC version %u (WSTO 3)", RecordChunkVersion( ( const byte* )chunk.GetDataPtr(), size, record.map ) );
 			}
-			record.bytes.SetNum( size );
-			memcpy( record.bytes.Ptr(), chunk.GetDataPtr(), size );
-			for( int previous = 0; previous < records.Num(); previous++ )
+			else if( RecordScanChunk( ( const byte* )chunk.GetDataPtr(), size, nextCreatedId, header, entries, reason ) )
 			{
-				if( records[previous].world == record.world && records[previous].instance == record.instance && records[previous].node == record.node && records[previous].map == record.map )
+				record.world = header.world;
+				record.instance = header.instanceId;
+				record.node = header.node;
+				record.map = header.unit;
+				for( int previous = 0; previous < records.Num() && reason.IsEmpty(); previous++ )
 				{
-					save->Error( "Duplicate MREC identity" );
+					if( records[previous].world == record.world && records[previous].instance == record.instance && records[previous].node == record.node && records[previous].map == record.map )
+					{
+						reason = "a second record of the map";
+					}
 				}
 			}
+			if( !reason.IsEmpty() )
+			{
+				gameLocal.Warning( "record: %s dropped: %s", record.map.IsEmpty() ? "(unreadable)" : record.map.c_str(), reason.c_str() );
+				recordInvalid++;
+				continue;
+			}
+			//puncho end
+			record.bytes.SetNum( size );
+			memcpy( record.bytes.Ptr(), chunk.GetDataPtr(), size );
 			records.Append( record );
 			idStr current = gameLocal.GetMapName();
 			current.StripFileExtension();
@@ -1096,25 +1172,12 @@ void idWorldStore::Restore( idRestoreGame* save )
 			continue;
 		}
 		idFile_Memory metadata( "current MREC metadata", ( const char* )record.bytes.Ptr(), record.bytes.Num() );
-		unsigned short version, flags, number;
-		unsigned int crc;
-		uint64 value;
-		idStr ignored;
-		metadata.ReadUnsignedShort( version );
-		metadata.ReadUnsignedShort( flags );
-		RecordReadString( metadata, ignored );
-		RecordRead64( metadata, value );
-		if( version >= 2 )
+		mrecHeader_t header;
+		idStr reason;
+		if( RecordReadHeader( metadata, header, reason ) )	//puncho - P2b.1.2: framed when restored
 		{
-			metadata.ReadUnsignedShort( number );
+			remains = header.remains;
 		}
-		RecordReadString( metadata, ignored );
-		metadata.ReadUnsignedInt( crc );
-		metadata.ReadUnsignedInt( crc );
-		metadata.ReadUnsignedShort( number );
-		RecordRead64( metadata, value );
-		RecordRead64( metadata, value );
-		metadata.ReadUnsignedShort( remains );
 		break;
 	}
 }
@@ -1147,10 +1210,6 @@ void idWorldStore::ListRecords() const
 #if !defined( ID_RETAIL )
 //puncho start - P2b.1.0: recordDump, the reference the record-layer commits are held to. Text only, in store, ordinal and
 // created-id order, with no pointer, address or wall-clock time, so two runs of one tic sequence write the same bytes
-static const int RECORD_DUMP_ASPECTS = 10;
-static const char* const recordDumpAspectNames[RECORD_DUMP_ASPECTS] = { "REMOVED", "MOVED", "MOVER", "HEALTH", "BROKEN", "HIDDEN", "CORPSE", "MOTION", "BIND", "SHOWN" };
-compile_time_assert( RECORD_SHOWN == BIT( RECORD_DUMP_ASPECTS - 1 ) );
-
 // 64 bytes a line, offset first, so a byte changed in place shows as one changed line
 static const int RECORD_DUMP_HEX_BYTES = 64;
 
@@ -1171,112 +1230,117 @@ static void RecordDumpHex( idFile* out, const char* label, const byte* bytes, in
 	}
 }
 
-static void RecordDumpAspects( idFile* out, unsigned short aspects )
-{
-	out->Printf( "aspects=%04x", aspects );
-	const char* separator = " ";
-	for( int i = 0; i < RECORD_DUMP_ASPECTS; i++ )
-	{
-		if( aspects & BIT( i ) )
-		{
-			out->Printf( "%s%s", separator, recordDumpAspectNames[i] );
-			separator = "|";
-		}
-	}
-}
+//puncho start - P2b.1.2: the decoder on MREC v3's sections and field bits. Per known section, and per field of it, the
+// entries holding it ( [kind][0] ) and not ( [kind][1] ); kind 0 the authored entries, 1 the created; column
+// RECORD_DUMP_FIELDS is the section itself. An authored entry's REMOVED flag is counted as section 0's column
+static const int RECORD_DUMP_SECTIONS = RECORD_SECTION_ELEVATOR + 1;
+static const int RECORD_DUMP_FIELDS = 64;
 
-// per aspect, the entries with it set ( [kind][0] ) and clear ( [kind][1] ); kind 0 the authored rows, 1 the created
 struct recordDumpTotals_t
 {
-	int			counts[2][2][RECORD_DUMP_ASPECTS];
+	int			counts[2][2][RECORD_DUMP_SECTIONS][RECORD_DUMP_FIELDS + 1];
 };
 
-// The decoded listing of one MREC v1 or v2 payload: the header, each authored row and created entry (INVALID after one
-// whose payload restore would refuse), and per aspect the number of entries with it set and clear (authored and
-// created apart), added into the totals. The record layer's commits replace this function and RecordDumpTotals when
-// the payload becomes sections and field bits.
-static void RecordDumpMap( idFile* out, int index, const byte* data, int length, recordDumpTotals_t& totals )
+static void RecordDumpCounts( idFile* out, const char* prefix, const int counts[2][2][RECORD_DUMP_SECTIONS][RECORD_DUMP_FIELDS + 1] )
 {
-	idFile_Memory in( "recordDump", ( const char* )data, length );
-	unsigned short version, flags, entities, remains, node = 0;
-	unsigned int entitiesCRC, geometryCRC, count;
-	uint64 instance, left, cleared;
-	idStr world, map;
-	// one MREC v1 or v2 payload, read as ApplyCurrentMap and ValidateMapRecord read it
-	if( in.ReadUnsignedShort( version ) != 2 || version < 1 || version > 2 || in.ReadUnsignedShort( flags ) != 2 || !RecordReadString( in, world ) || !RecordRead64( in, instance ) || ( version >= 2 && in.ReadUnsignedShort( node ) != 2 ) || !RecordReadString( in, map ) || in.ReadUnsignedInt( entitiesCRC ) != 4 || in.ReadUnsignedInt( geometryCRC ) != 4 || in.ReadUnsignedShort( entities ) != 2 || !RecordRead64( in, left ) || !RecordRead64( in, cleared ) || in.ReadUnsignedShort( remains ) != 2 || in.ReadUnsignedInt( count ) != 4 )
+	out->Printf( "%s flag REMOVED rows set=%d clear=%d\n", prefix, counts[0][0][0][RECORD_DUMP_FIELDS], counts[0][1][0][RECORD_DUMP_FIELDS] );
+	for( int id = 1; id < RECORD_DUMP_SECTIONS; id++ )
 	{
-		out->Printf( "map %d malformed header\n", index );
-		return;
-	}
-	out->Printf( "map %d header version=%u flags=%u world=%s map=%s instance=%llu node=%u entitiesCRC=%08x geometryCRC=%08x entities=%u left=%lld cleared=%lld remains=%u rows=%u\n", index, version, flags, world.c_str(), map.c_str(), ( unsigned long long )instance, node, entitiesCRC, geometryCRC, entities, ( long long )left, ( long long )cleared, remains, count );
-	int counts[2][2][RECORD_DUMP_ASPECTS];
-	memset( counts, 0, sizeof( counts ) );
-	for( int kind = 0; kind < 2; kind++ )
-	{
-		if( kind == 1 && in.ReadUnsignedInt( count ) != 4 )
+		const char* section = RecordSectionName( id );
+		if( section == NULL )
 		{
-			out->Printf( "map %d malformed created count\n", index );
-			return;
+			continue;
 		}
-		for( unsigned int i = 0; i < count; i++ )
+		out->Printf( "%s section %s rows set=%d clear=%d created set=%d clear=%d\n", prefix, section, counts[0][0][id][RECORD_DUMP_FIELDS], counts[0][1][id][RECORD_DUMP_FIELDS], counts[1][0][id][RECORD_DUMP_FIELDS], counts[1][1][id][RECORD_DUMP_FIELDS] );
+		for( int bit = 0; bit < RecordSectionFields( id ); bit++ )
 		{
-			unsigned short ordinal = 0, aspects, size;
-			unsigned int crc = 0;
-			uint64 id = 0, when = 0;
-			idStr name;
-			const bool good = kind == 0 ?
-							  ( in.ReadUnsignedShort( ordinal ) == 2 && in.ReadUnsignedInt( crc ) == 4 && RecordReadString( in, name ) ) :
-							  ( RecordRead64( in, id ) && RecordReadString( in, name ) && RecordRead64( in, when ) );
-			if( !good || in.ReadUnsignedShort( aspects ) != 2 || in.ReadUnsignedShort( size ) != 2 || size > in.Length() - in.Tell() )
-			{
-				out->Printf( "map %d malformed %s %u\n", index, kind == 0 ? "row" : "created", i );
-				return;
-			}
-			if( kind == 0 )
-			{
-				out->Printf( "map %d row ordinal=%u crc=%08x name=%s ", index, ordinal, crc, name.c_str() );
-			}
-			else
-			{
-				out->Printf( "map %d created id=%llu def=%s time=%llu ", index, ( unsigned long long )id, name.c_str(), ( unsigned long long )when );
-			}
-			// as Restore validates: no BIND on an authored row, MOVED in every created entry, the payload's own bytes
-			const bool valid = ( kind == 0 ? !( aspects & RECORD_BIND ) : ( aspects & RECORD_MOVED ) != 0 ) && ValidateAspectBytes( aspects, in.GetDataPtr() + in.Tell(), size );
-			RecordDumpAspects( out, aspects );
-			out->Printf( " size=%u%s\n", size, valid ? "" : " INVALID" );
-			for( int a = 0; a < RECORD_DUMP_ASPECTS; a++ )
-			{
-				counts[kind][( aspects & BIT( a ) ) ? 0 : 1][a]++;
-			}
-			in.Seek( size, FS_SEEK_CUR );
+			out->Printf( "%s field %s.%s rows set=%d clear=%d created set=%d clear=%d\n", prefix, section, RecordFieldName( id, bit ), counts[0][0][id][bit], counts[0][1][id][bit], counts[1][0][id][bit], counts[1][1][id][bit] );
 		}
-	}
-	for( int a = 0; a < RECORD_DUMP_ASPECTS; a++ )
-	{
-		out->Printf( "map %d aspect %s rows set=%d clear=%d created set=%d clear=%d\n", index, recordDumpAspectNames[a], counts[0][0][a], counts[0][1][a], counts[1][0][a], counts[1][1][a] );
-		for( int kind = 0; kind < 2; kind++ )
-		{
-			totals.counts[kind][0][a] += counts[kind][0][a];
-			totals.counts[kind][1][a] += counts[kind][1][a];
-		}
-	}
-	if( in.Tell() != in.Length() )
-	{
-		out->Printf( "map %d trailing %d bytes\n", index, in.Length() - in.Tell() );
 	}
 }
 
-static void RecordDumpTotals( idFile* out, const recordDumpTotals_t& totals )
+static void RecordDumpAdd( recordDumpTotals_t& totals, const recordDumpTotals_t& counts )
 {
-	for( int a = 0; a < RECORD_DUMP_ASPECTS; a++ )
+	for( int a = 0; a < 2 * 2 * RECORD_DUMP_SECTIONS * ( RECORD_DUMP_FIELDS + 1 ); a++ )
 	{
-		out->Printf( "total aspect %s rows set=%d clear=%d created set=%d clear=%d\n", recordDumpAspectNames[a], totals.counts[0][0][a], totals.counts[0][1][a], totals.counts[1][0][a], totals.counts[1][1][a] );
+		( &totals.counts[0][0][0][0] )[a] += ( &counts.counts[0][0][0][0] )[a];
 	}
+}
+
+// one entry: its head, flags and sections with the fields each holds by name, INVALID and the reason when the check
+// drops it; counted into counts
+static void RecordDumpEntry( idFile* out, const char* prefix, const byte* data, uint32 cellId, const recordFrame_t& frame, const mrecEntry_t& e, recordDumpTotals_t& counts )
+{
+	const int kind = e.created ? 1 : 0;
+	if( kind == 0 )
+	{
+		out->Printf( "%s entry ordinal=%u crc=%08x name=%s flags=%02x%s%s sections=%u", prefix, e.ordinalHint, e.entityCRC, e.name.c_str(), e.flags, ( e.flags & RECORD_ENTRY_REMOVED ) ? " REMOVED" : "", ( e.flags & RECORD_ENTRY_MIGRATED ) ? " MIGRATED" : "", e.numSections );
+		counts.counts[0][( e.flags & RECORD_ENTRY_REMOVED ) ? 0 : 1][0][RECORD_DUMP_FIELDS]++;
+	}
+	else
+	{
+		out->Printf( "%s created id=%llu def=%s time=%lld flags=%02x sections=%u", prefix, ( unsigned long long )e.createdId, e.name.c_str(), ( long long )e.createdTime, e.flags, e.numSections );
+	}
+	out->Printf( "%s%s\n", e.valid ? "" : " INVALID ", e.valid ? "" : e.reason.c_str() );
+	idRecordIn rec;
+	RecordFrameEntry( data, cellId, frame, e, e.name, rec );
+	for( int s = 0; s < rec.NumSections(); s++ )
+	{
+		const int id = rec.SectionId( s );
+		const char* section = RecordSectionName( id );
+		out->Printf( "%s  section id=%d %s version=%d mask=%016llx bytes=%d fields=", prefix, id, section != NULL ? section : "unknown", rec.SectionVersion( s ), ( unsigned long long )rec.SectionMask( s ), rec.SectionBytes( s ) );
+		const char* separator = "";
+		for( int bit = 0; bit < 64; bit++ )
+		{
+			if( rec.SectionMask( s ) & BIT( bit ) )
+			{
+				const char* field = RecordFieldName( id, bit );
+				out->Printf( "%s%s", separator, field != NULL ? field : va( "bit%d", bit ) );
+				separator = "|";
+			}
+		}
+		out->Printf( "\n" );
+	}
+	for( int id = 1; id < RECORD_DUMP_SECTIONS; id++ )
+	{
+		counts.counts[kind][rec.HasSection( id ) ? 0 : 1][id][RECORD_DUMP_FIELDS]++;
+		for( int bit = 0; bit < RecordSectionFields( id ); bit++ )
+		{
+			counts.counts[kind][rec.HasField( id, bit ) ? 0 : 1][id][bit]++;
+		}
+	}
+}
+
+// The decoded listing of one MREC v3 payload: the header, each entry with its flags and sections (the fields each
+// holds by name, INVALID and the reason when the check would drop it), and the counts, added into the totals. A chunk
+// the reader drops whole prints why.
+static void RecordDumpMap( idFile* out, int index, const byte* data, int length, uint64 nextIdentity, recordDumpTotals_t& totals )
+{
+	mrecHeader_t h;
+	idList<mrecEntry_t, TAG_GAME> entries;
+	idStr reason;
+	if( !RecordScanChunk( data, length, nextIdentity, h, entries, reason ) )
+	{
+		out->Printf( "map %d dropped: %s\n", index, reason.c_str() );
+		return;
+	}
+	out->Printf( "map %d header version=%u flags=%u world=%s unit=%s instance=%llu node=%u cellId=%08x unitRevision=%u entitiesCRC=%08x geometryCRC=%08x entities=%u left=%lld cleared=%lld remains=%u writerBuild=%u entries=%u\n", index, h.version, h.flags, h.world.c_str(), h.unit.c_str(), ( unsigned long long )h.instanceId, h.node, h.cellId, h.unitRevision, h.entitiesCRC, h.geometryCRC, h.numMapEntities, ( long long )h.lastLeft, ( long long )h.cleared, h.remains, h.writerBuild, h.numEntries );
+	const recordFrame_t frame = RecordChunkFrame( h.cellId );
+	recordDumpTotals_t counts;
+	memset( &counts, 0, sizeof( counts ) );
+	char prefix[32];
+	idStr::snPrintf( prefix, sizeof( prefix ), "map %d", index );
+	for( int i = 0; i < entries.Num(); i++ )
+	{
+		RecordDumpEntry( out, prefix, data, h.cellId, frame, entries[i], counts );
+	}
+	RecordDumpCounts( out, prefix, counts.counts );
+	RecordDumpAdd( totals, counts );
 }
 
 void idWorldStore::DumpRecords( idFile* out ) const
 {
-	out->Printf( "recordDump 1\n" );
+	out->Printf( "recordDump 2\n" );
 	out->Printf( "store world=%s instance=%llu node=%u nextCreatedId=%llu maps=%d dungeon=%d spawned=%d map=%s worldTime=%lld\n", worldName.c_str(), ( unsigned long long )instanceId, currentNode, ( unsigned long long )nextCreatedId, records.Num(), dungeonRecords.Num(), mapSpawned.Num(), gameLocal.GetMapName(), ( long long )gameLocal.GetWorldTime() );
 	byte recipe[MAX_MATCH_GAME_DATA];
 	const int recipeLength = mapGraphDirector.PeekMatchGameData( gameLocal.GetMapName(), recipe, sizeof( recipe ) );
@@ -1297,9 +1361,39 @@ void idWorldStore::DumpRecords( idFile* out ) const
 		out->Printf( "map %d world=%s map=%s instance=%llu node=%u bytes=%d\n", i, record.world.c_str(), record.map.c_str(), ( unsigned long long )record.instance, record.node, record.bytes.Num() );
 		idStr::snPrintf( label, sizeof( label ), "mrec %d", i );
 		RecordDumpHex( out, label, record.bytes.Ptr(), record.bytes.Num() );
-		RecordDumpMap( out, i, record.bytes.Ptr(), record.bytes.Num(), totals );
+		RecordDumpMap( out, i, record.bytes.Ptr(), record.bytes.Num(), nextCreatedId, totals );
 	}
-	RecordDumpTotals( out, totals );
+	// the last transition's carried entries, in the carry's frame, when they are still held (Motion lives only here)
+	const recordFrame_t carryFrame = { CELL_ID_NONE, vec3_origin, mat3_identity, RECORD_FRAME_CARRY };
+	recordDumpTotals_t carried;
+	memset( &carried, 0, sizeof( carried ) );
+	const byte* carry[MAX_TRANSITION_CARRY_RECORDS];
+	int carryLengths[MAX_TRANSITION_CARRY_RECORDS];
+	const int numCarried = TransitionCarryRecords( carry, carryLengths, MAX_TRANSITION_CARRY_RECORDS );
+	for( int i = 0; i < numCarried; i++ )
+	{
+		out->Printf( "carry %d bytes=%d\n", i, carryLengths[i] );
+		idStr::snPrintf( label, sizeof( label ), "carry %d", i );
+		RecordDumpHex( out, label, carry[i], carryLengths[i] );
+		idFile_Memory in( "carry", ( const char* )carry[i], carryLengths[i] );
+		mrecEntry_t entry;
+		idRecordIn rec;
+		rec.Begin( carryFrame, CELL_ID_NONE, true, "" );
+		if( !RecordReadCreatedEntry( in, entry, rec ) )
+		{
+			out->Printf( "%s cannot be framed\n", label );
+			continue;
+		}
+		entry.valid = RecordCheckEntry( rec, entry.flags, entry.reason );
+		RecordDumpEntry( out, label, carry[i], CELL_ID_NONE, carryFrame, entry, carried );
+	}
+	if( numCarried > 0 )
+	{
+		RecordDumpCounts( out, "carry", carried.counts );
+		RecordDumpAdd( totals, carried );
+	}
+	RecordDumpCounts( out, "total", totals.counts );
+	out->Printf( "total dropped=%d\n", recordInvalid );
 }
 //puncho end
 #endif
@@ -1309,27 +1403,50 @@ void idWorldStore::TestCodec()
 {
 	PrepareSave();
 	int failures = 0, cases = 0;
+	mrecHeader_t header;
+	idList<mrecEntry_t, TAG_GAME> entries;
+	idStr reason;
 	for( int i = 0; i < records.Num(); i++ )
 	{
 		const idList<byte, TAG_GAME>& bytes = records[i].bytes;
-		failures += ValidateMapRecord( ( const char* )bytes.Ptr(), bytes.Num(), nextCreatedId ) ? 0 : 1;
+		//puncho - P2b.1.2: a committed record frames whole and every entry passes its check
+		bool good = RecordScanChunk( bytes.Ptr(), bytes.Num(), nextCreatedId, header, entries, reason );
+		for( int j = 0; j < entries.Num(); j++ )
+		{
+			good &= entries[j].valid;
+		}
+		failures += good ? 0 : 1;
 		cases++;
 		// Exhaust all small records and sample bounded cuts of large ones.
 		const int stride = Max( 1, bytes.Num() / 512 );
 		for( int length = 0; length < bytes.Num(); length += stride )
 		{
-			failures += ValidateMapRecord( ( const char* )bytes.Ptr(), length, nextCreatedId ) ? 1 : 0;
+			failures += RecordScanChunk( bytes.Ptr(), length, nextCreatedId, header, entries, reason ) ? 1 : 0;
 			cases++;
 		}
 		idList<byte, TAG_GAME> corrupt = bytes;
 		corrupt[0] = 255;
-		failures += ValidateMapRecord( ( const char* )corrupt.Ptr(), corrupt.Num(), nextCreatedId ) ? 1 : 0;
+		failures += RecordScanChunk( corrupt.Ptr(), corrupt.Num(), nextCreatedId, header, entries, reason ) ? 1 : 0;
 		cases++;
 	}
-	const char badFloat[24] = { 0, 0, ( char )0x80, 0x7f };
-	failures += ValidateAspectBytes( RECORD_MOTION, badFloat, sizeof( badFloat ) ) ? 1 : 0;
-	failures += ValidateAspectBytes( 0x8000, "", 0 ) ? 1 : 0;
-	cases += 2;
+	//puncho start - P2b.1.2: the entry check on two hand-made created entries, a Pose holding an infinity and an
+	// unknown section id; both are dropped
+	static const recordFrame_t frame = { CELL_ID_NONE, vec3_origin, mat3_identity, RECORD_FRAME_MAP };
+	byte badPose[RECORD_SECTION_HEADER_BYTES + 28] = { RECORD_SECTION_ENTITY, RECORD_VERSION_ENTITY, 1 << idEntity::RF_Pose, 0, 0, 0, 0, 0, 0, 0, 28, 0 };
+	badPose[RECORD_SECTION_HEADER_BYTES + 6] = 0x80;
+	badPose[RECORD_SECTION_HEADER_BYTES + 7] = 0x7f;
+	const byte unknown[RECORD_SECTION_HEADER_BYTES] = { 63, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+	const byte* const cases2[2] = { badPose, unknown };
+	const int lengths[2] = { sizeof( badPose ), sizeof( unknown ) };
+	for( int i = 0; i < 2; i++ )
+	{
+		idRecordIn rec;
+		int consumed;
+		rec.Begin( frame, CELL_ID_NONE, true, "" );
+		failures += rec.ReadSections( cases2[i], lengths[i], 1, consumed ) && RecordCheckEntry( rec, 0, reason ) ? 1 : 0;
+		cases++;
+	}
+	//puncho end
 	gameLocal.Printf( "RECORD_CODEC %s records=%d cases=%d failures=%d\n", failures == 0 && records.Num() > 0 ? "PASS" : "FAIL", records.Num(), cases, failures );
 }
 #endif

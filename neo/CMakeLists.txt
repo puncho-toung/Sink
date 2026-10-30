@@ -748,6 +748,7 @@ set(GAMED3XP_GAMESYS_SOURCES
 	d3xp/gamesys/MapGraphDirector.cpp
 	d3xp/gamesys/MapGraphRecord.cpp
 	d3xp/gamesys/MapLandmarks.cpp
+	d3xp/gamesys/Record.cpp
 	d3xp/gamesys/WorldStore.cpp
 	d3xp/gamesys/WorldStoreRecord.cpp
 	d3xp/gamesys/SaveGame.cpp

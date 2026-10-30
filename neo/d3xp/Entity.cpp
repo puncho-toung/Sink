@@ -6215,6 +6215,342 @@ void idEntity::ReadFromSnapshot_Ex( const idBitMsg&  msg )
 	ReadFromSnapshot( msg );
 }
 
+//puncho start - P2b.1.2: idEntity's map record section (ENTITY_RECORD_SCHEMA, Record.h)
+
+/*
+================
+RecordSpawnPose
+
+The pose a map entity spawns with, from the keys idEntity::Spawn reads (ParseSpawnArgsToRenderEntity's origin and
+rotation, plus an origin brush's offset for an entity with a model). A model scale or a key this misses makes the live
+pose differ, which only writes a Pose the entity did not need: the safe direction.
+================
+*/
+static void RecordSpawnPose( const idEntity* ent, idVec3& origin, idMat3& axis )
+{
+	const idDict& args = ent->spawnArgs;
+	origin = args.GetVector( "origin" );
+	if( args.GetString( "model" )[0] != '\0' )
+	{
+		origin += ent->GetOriginBrushOffset();
+	}
+	idAngles angles;
+	if( !args.GetMatrix( "rotation", "1 0 0 0 1 0 0 0 1", axis ) )
+	{
+		if( args.GetAngles( "angles", "0 0 0", angles ) )
+		{
+			axis = angles.ToMat3();
+		}
+		else
+		{
+			axis = idAngles( 0.0f, args.GetFloat( "angle" ), 0.0f ).ToMat3();
+		}
+	}
+}
+
+/*
+================
+idEntity::WriteRecord
+
+This level's section; an override sets what the root levels must know (SkipPose, SetCorpse) before it calls this.
+================
+*/
+void idEntity::WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const
+{
+	assert( &frame == &rec.Frame() );
+	rec.BeginSection( RECORD_SECTION_ENTITY, RECORD_VERSION_ENTITY );
+	ENTITY_RECORD_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
+	ENTITY_RECORD_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
+	rec.EndSection();
+}
+
+/*
+================
+idEntity::ApplyRecord
+================
+*/
+recordApply_t idEntity::ApplyRecord( idRecordIn& rec, const recordFrame_t& frame )
+{
+	assert( &frame == &rec.Frame() );
+	if( rec.BeginSection( RECORD_SECTION_ENTITY ) )
+	{
+		ENTITY_RECORD_SCHEMA( SCHEMA_RECORD_READ, ( *this ) )
+		rec.EndSection();
+	}
+	return rec.good ? RECORD_APPLIED : RECORD_INVALID;
+}
+
+/*
+================
+idEntity::CheckRecordSection
+================
+*/
+bool idEntity::CheckRecordSection( idRecordIn& rec )
+{
+	ENTITY_RECORD_SCHEMA( SCHEMA_RECORD_CHECK, idEntity )
+	return rec.good;
+}
+
+// A created entry always carries its pose (a bound child's world pose, bound again by Bind after), and so does an entry
+// holding Corpse. An authored entry never does for a bound entity, which follows its master, nor for a class whose own
+// row carries the pose or whose pose a write would ratchet (SkipPose). A map commit writes it for an entity at rest off
+// its spawn pose, a cell commit for one off it at rest or not.
+bool idEntity::RecordPoseChanged( const idRecordOut& rec ) const
+{
+	if( rec.IsCreated() || rec.IsCorpse() )
+	{
+		return true;
+	}
+	if( rec.PoseSkipped() || GetBindMaster() != NULL )
+	{
+		return false;
+	}
+	idVec3 spawnOrigin;
+	idMat3 spawnAxis;
+	RecordSpawnPose( this, spawnOrigin, spawnAxis );
+	const bool moved = ( GetPhysics()->GetOrigin() - spawnOrigin ).LengthSqr() > 1.0f || !GetPhysics()->GetAxis().Compare( spawnAxis, 0.001f );
+	return moved && ( rec.Frame().kind == RECORD_FRAME_CELL || GetPhysics()->IsAtRest() );
+}
+
+// cellId, the origin and the axis as an idCQuat, in the frame; a corpse's origin is the one its pose was built at
+void idEntity::WriteRecordPose( idRecordOut& rec ) const
+{
+	const recordFrame_t& frame = rec.Frame();
+	const idVec3 origin = RecordLocalPoint( frame, rec.IsCorpse() ? rec.CorpseOrigin() : GetPhysics()->GetOrigin() );
+	const idCQuat axis = RecordLocalAxis( frame, GetPhysics()->GetAxis() ).ToCQuat();
+	rec.WriteUnsignedInt( frame.cellId );
+	for( int i = 0; i < 3; i++ )
+	{
+		rec.WriteFloat( origin[i] );
+	}
+	for( int i = 0; i < 3; i++ )
+	{
+		rec.WriteFloat( axis[i] );
+	}
+}
+
+// The pose it takes stays on rec: a corpse built for the entry takes its origin from there.
+bool idEntity::ApplyRecordPose( idRecordIn& rec )
+{
+	uint32 cell;
+	idVec3 origin;
+	idCQuat axis;
+	if( !rec.ReadUnsignedInt( cell ) )
+	{
+		return false;
+	}
+	for( int i = 0; i < 3; i++ )
+	{
+		if( !rec.ReadFloat( origin[i] ) )
+		{
+			return false;
+		}
+	}
+	for( int i = 0; i < 3; i++ )
+	{
+		if( !rec.ReadFloat( axis[i] ) )
+		{
+			return false;
+		}
+	}
+	const recordFrame_t& frame = rec.Frame();
+	rec.posed = true;
+	rec.poseCellId = cell;
+	rec.poseOrigin = frame.origin + origin * frame.axis;
+	rec.poseAxis = axis.ToMat3() * frame.axis;
+	SetOrigin( rec.poseOrigin );
+	SetAxis( rec.poseAxis );
+	GetPhysics()->PutToRest();
+	return true;
+}
+
+// C1: the reserved layer (a zero top byte) holds only CELL_ID_NONE and CELL_ID_PERSISTENT, and a node map's record
+// (CELL_ID_NONE) never migrates; six finite floats, the last three a unit quaternion's x y z (ToCQuat writes w >= 0), so
+// ToMat3 takes a finite rotation from them
+bool idEntity::CheckRecordPose( idRecordIn& rec )
+{
+	uint32 cell;
+	if( !rec.ReadUnsignedInt( cell ) || ( ( cell >> 24 ) == 0 && cell > CELL_ID_PERSISTENT ) || ( rec.RecordCellId() == CELL_ID_NONE && cell != CELL_ID_NONE ) )
+	{
+		return false;
+	}
+	float value[6];
+	for( int i = 0; i < 6; i++ )
+	{
+		if( !rec.ReadFiniteFloat( value[i] ) )
+		{
+			return false;
+		}
+	}
+	if( value[3] * value[3] + value[4] * value[4] + value[5] * value[5] > 1.001f )
+	{
+		return false;
+	}
+	rec.posed = true;
+	rec.poseCellId = cell;
+	return true;
+}
+
+bool idEntity::RecordHealthChanged( const idRecordOut& rec ) const
+{
+	return health != spawnArgs.GetInt( "health" );
+}
+
+void idEntity::WriteRecordHealth( idRecordOut& rec ) const
+{
+	rec.WriteInt( health );
+}
+
+bool idEntity::ApplyRecordHealth( idRecordIn& rec )
+{
+	return rec.ReadInt( health );
+}
+
+bool idEntity::CheckRecordHealth( idRecordIn& rec )
+{
+	int value;
+	return rec.ReadInt( value );
+}
+
+// against the "hide" key the entity spawns with: a hide-until-triggered entity revealed in play comes back shown, one
+// never revealed comes back as authored
+bool idEntity::RecordVisibilityChanged( const idRecordOut& rec ) const
+{
+	return IsHidden() != spawnArgs.GetBool( "hide" );
+}
+
+void idEntity::WriteRecordVisibility( idRecordOut& rec ) const
+{
+	rec.WriteByte( IsHidden() ? 1 : 0 );
+}
+
+// The apply runs before the spawn's events, and Spawn posts EV_Hide for a "hide" entity, which would hide a revealed
+// one again after this: a shown entry cancels it.
+bool idEntity::ApplyRecordVisibility( idRecordIn& rec )
+{
+	byte hidden;
+	if( !rec.ReadByte( hidden ) )
+	{
+		return false;
+	}
+	if( hidden )
+	{
+		Hide();
+	}
+	else
+	{
+		CancelEvents( &EV_Hide );
+		Show();
+	}
+	return true;
+}
+
+bool idEntity::CheckRecordVisibility( idRecordIn& rec )
+{
+	byte hidden;
+	return rec.ReadByte( hidden ) && hidden <= 1;
+}
+
+// a carry's velocities only: a commit puts nothing in motion on return
+bool idEntity::RecordMotionChanged( const idRecordOut& rec ) const
+{
+	return rec.Frame().kind == RECORD_FRAME_CARRY;
+}
+
+void idEntity::WriteRecordMotion( idRecordOut& rec ) const
+{
+	const idVec3 linear = RecordLocalVector( rec.Frame(), GetPhysics()->GetLinearVelocity() );
+	const idVec3 angular = RecordLocalVector( rec.Frame(), GetPhysics()->GetAngularVelocity() );
+	for( int i = 0; i < 3; i++ )
+	{
+		rec.WriteFloat( linear[i] );
+	}
+	for( int i = 0; i < 3; i++ )
+	{
+		rec.WriteFloat( angular[i] );
+	}
+}
+
+bool idEntity::ApplyRecordMotion( idRecordIn& rec )
+{
+	idVec3 linear, angular;
+	for( int i = 0; i < 3; i++ )
+	{
+		if( !rec.ReadFloat( linear[i] ) )
+		{
+			return false;
+		}
+	}
+	for( int i = 0; i < 3; i++ )
+	{
+		if( !rec.ReadFloat( angular[i] ) )
+		{
+			return false;
+		}
+	}
+	GetPhysics()->SetLinearVelocity( linear * rec.Frame().axis );
+	GetPhysics()->SetAngularVelocity( angular * rec.Frame().axis );
+	return true;
+}
+
+bool idEntity::CheckRecordMotion( idRecordIn& rec )
+{
+	if( rec.Frame().kind != RECORD_FRAME_CARRY )
+	{
+		return false;
+	}
+	for( int i = 0; i < 6; i++ )
+	{
+		float value;
+		if( !rec.ReadFiniteFloat( value ) )
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+// a created entry's bind master, by its created identity (the store passes it; 0 when the master records none)
+bool idEntity::RecordBindChanged( const idRecordOut& rec ) const
+{
+	return rec.IsCreated() && GetBindMaster() != NULL && rec.BindParent() != 0;
+}
+
+void idEntity::WriteRecordBind( idRecordOut& rec ) const
+{
+	rec.Write64( rec.BindParent() );
+	rec.WriteShort( GetBindJoint() );
+	rec.WriteShort( GetBindBody() );
+	rec.WriteByte( fl.bindOrientated ? 1 : 0 );
+}
+
+// BindCreatedRecords binds every created entity once all of them have spawned; until P2b.1.3 the bind goes through
+// these keys
+bool idEntity::ApplyRecordBind( idRecordIn& rec )
+{
+	uint64 parent;
+	short joint, body;
+	byte orientated;
+	if( !rec.Read64( parent ) || !rec.ReadShort( joint ) || !rec.ReadShort( body ) || !rec.ReadByte( orientated ) )
+	{
+		return false;
+	}
+	spawnArgs.Set( "_worldBindParent", va( "%llu", ( unsigned long long )parent ) );
+	spawnArgs.SetInt( "_worldBindJoint", joint );
+	spawnArgs.SetInt( "_worldBindBody", body );
+	spawnArgs.SetBool( "_worldBindOrientated", orientated != 0 );
+	return true;
+}
+
+bool idEntity::CheckRecordBind( idRecordIn& rec )
+{
+	uint64 parent;
+	short joint, body;
+	byte orientated;
+	return rec.IsCreated() && rec.Read64( parent ) && parent != 0 && rec.ReadShort( joint ) && joint >= -1 && rec.ReadShort( body ) && body >= -1 && ( joint < 0 || body < 0 ) && rec.ReadByte( orientated ) && orientated <= 1;
+}
+//puncho end
+
 /*
 ================
 idEntity::FlagNewSnapshot

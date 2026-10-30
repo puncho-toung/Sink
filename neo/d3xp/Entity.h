@@ -29,6 +29,9 @@ If you have questions concerning this license or the applicable additional terms
 #ifndef __GAME_ENTITY_H__
 #define __GAME_ENTITY_H__
 
+#include "gamesys/Schema.h"	//puncho - P2b.1.2: the record lists' RF_ enums expand inside the class bodies
+#include "gamesys/Record.h"	//puncho - P2b.1.2: idRecordOut, idRecordIn, recordFrame_t
+
 /*
 ===============================================================================
 
@@ -182,6 +185,17 @@ inline void	ReadFromBitMsg( netBoolEvent_t& netEvent, const idBitMsg& msg )
 	X( s, bindBody,		INT,	S,	RAW,	0,	SCHEMA_STOCK ) \
 	X( s, teamMaster,	OBJECT,	S,	RAW,	0,	SCHEMA_STOCK ) \
 	X( s, teamChain,	OBJECT,	S,	RAW,	0,	SCHEMA_STOCK )
+//puncho end
+
+//puncho start - P2b.1.2: idEntity's map record section (Record.h, RECORD_SECTION_ENTITY): the pose, the health, the
+// visibility, a carry's motion and a created entry's bind master. Every row is HAND (Record<n>Changed, WriteRecord<n>,
+// ApplyRecord<n>, static CheckRecord<n>, Entity.cpp) and its ARG is its byte count; R rows append only
+#define ENTITY_RECORD_SCHEMA( X, s ) \
+	X( s, Pose,			HAND,	R,	RAW,	28,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA ) \
+	X( s, Health,		HAND,	R,	RAW,	4,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA ) \
+	X( s, Visibility,	HAND,	R,	RAW,	1,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA ) \
+	X( s, Motion,		HAND,	R,	RAW,	24,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA ) \
+	X( s, Bind,			HAND,	R,	RAW,	13,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA )
 //puncho end
 
 class idEntity : public idClass
@@ -498,6 +512,38 @@ public:
 	virtual void			WriteToSnapshot( idBitMsg& msg ) const;
 	void					ReadFromSnapshot_Ex( const idBitMsg& msg );
 	virtual void			ReadFromSnapshot( const idBitMsg& msg );
+	//puncho start - P2b.1.2: the map record (Record.h). An override writes or reads its own section after its parent's,
+	// so an entry's sections are root first; the field functions are ENTITY_RECORD_SCHEMA's HAND rows
+	enum
+	{
+		ENTITY_RECORD_SCHEMA( SCHEMA_RECORD_INDEX, _ )
+		ENTITY_RECORD_FIELDS
+	};
+	compile_time_assert( ENTITY_RECORD_FIELDS <= 64 );
+	virtual void			WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const;
+	virtual recordApply_t	ApplyRecord( idRecordIn& rec, const recordFrame_t& frame );
+	static bool				CheckRecordSection( idRecordIn& rec );
+	bool					RecordPoseChanged( const idRecordOut& rec ) const;
+	void					WriteRecordPose( idRecordOut& rec ) const;
+	bool					ApplyRecordPose( idRecordIn& rec );
+	static bool				CheckRecordPose( idRecordIn& rec );
+	bool					RecordHealthChanged( const idRecordOut& rec ) const;
+	void					WriteRecordHealth( idRecordOut& rec ) const;
+	bool					ApplyRecordHealth( idRecordIn& rec );
+	static bool				CheckRecordHealth( idRecordIn& rec );
+	bool					RecordVisibilityChanged( const idRecordOut& rec ) const;
+	void					WriteRecordVisibility( idRecordOut& rec ) const;
+	bool					ApplyRecordVisibility( idRecordIn& rec );
+	static bool				CheckRecordVisibility( idRecordIn& rec );
+	bool					RecordMotionChanged( const idRecordOut& rec ) const;
+	void					WriteRecordMotion( idRecordOut& rec ) const;
+	bool					ApplyRecordMotion( idRecordIn& rec );
+	static bool				CheckRecordMotion( idRecordIn& rec );
+	bool					RecordBindChanged( const idRecordOut& rec ) const;
+	void					WriteRecordBind( idRecordOut& rec ) const;
+	bool					ApplyRecordBind( idRecordIn& rec );
+	static bool				CheckRecordBind( idRecordIn& rec );
+	//puncho end
 	virtual bool			ServerReceiveEvent( int event, int time, const idBitMsg& msg );
 	virtual bool			ClientReceiveEvent( int event, int time, const idBitMsg& msg );
 

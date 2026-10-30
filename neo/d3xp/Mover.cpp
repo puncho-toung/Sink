@@ -1960,6 +1960,34 @@ void idElevator::Event_Touch( idEntity* other, trace_t* trace )
 
 /*
 ================
+idElevator::BindDoors
+
+The inner door rides with the elevator and is every floor door's companion. The first Think does it, or the record's
+Floor when it puts the elevator at its floor before that Think runs.
+================
+*/
+void idElevator::BindDoors()
+{
+	idDoor* doorent = GetDoor( spawnArgs.GetString( "innerdoor" ) );
+	if( doorent )
+	{
+		doorent->BindTeam( this );
+		doorent->spawnArgs.Set( "snd_open", "" );
+		doorent->spawnArgs.Set( "snd_close", "" );
+		doorent->spawnArgs.Set( "snd_opened", "" );
+	}
+	for( int i = 0; i < floorInfo.Num(); i++ )
+	{
+		idDoor* door = GetDoor( floorInfo[i].door );
+		if( door )
+		{
+			door->SetCompanion( doorent );
+		}
+	}
+}
+
+/*
+================
 idElevator::Think
 ================
 */
@@ -1971,21 +1999,7 @@ void idElevator::Think()
 	if( state == INIT )
 	{
 		state = IDLE;
-		if( doorent )
-		{
-			doorent->BindTeam( this );
-			doorent->spawnArgs.Set( "snd_open", "" );
-			doorent->spawnArgs.Set( "snd_close", "" );
-			doorent->spawnArgs.Set( "snd_opened", "" );
-		}
-		for( int i = 0; i < floorInfo.Num(); i++ )
-		{
-			idDoor* door = GetDoor( floorInfo[i].door );
-			if( door )
-			{
-				door->SetCompanion( doorent );
-			}
-		}
+		BindDoors();
 
 		Event_GotoFloor( pendingFloor );
 		DisableAllDoors();
@@ -5533,9 +5547,14 @@ void idRiser::Event_Activate( idEntity* activator )
 }
 
 // Record replay snaps directly: no signals, sounds, target activation or events.
+//puncho - P2b.1.2: at pos2 of the spawn frame, moving there counting as there. A start_open door plays with pos1 and pos2
+// swapped (Event_StartOpen, posted at its spawn, makes the open position pos1; the record's MoverState makes the same
+// swap), so for it this is the other end of the live one, and a start_open door is at position 2 at spawn: the baseline
+// MoverState is written against. ApplyRecordState itself works in the live frame, as the director calls it
 bool idMover_Binary::RecordAtPosition2() const
 {
-	return moverState == MOVER_POS2 || moverState == MOVER_1TO2;
+	const bool startOpen = IsType( idDoor::Type ) && spawnArgs.GetBool( "start_open" );
+	return ( moverState == MOVER_POS2 || moverState == MOVER_1TO2 ) != startOpen;
 }
 
 void idMover_Binary::ApplyRecordState( bool position2, bool locked )
@@ -5570,3 +5589,199 @@ void idDoor::ApplyRecordLock( bool locked )
 	spawnArgs.SetInt( "locked", locked ? 1 : 0 );
 	SetAASAreaState( locked && !RecordAtPosition2() );
 }
+
+//puncho start - P2b.1.2: the map record sections of the binary movers, the elevator and the periodic movers
+
+/*
+================
+idMover_Binary::WriteRecord
+
+The position is this section's row, never Pose: a SetOrigin would take a mover's position off its pos1 and pos2.
+================
+*/
+void idMover_Binary::WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const
+{
+	rec.SkipPose();
+	idEntity::WriteRecord( rec, frame );
+	rec.BeginSection( RECORD_SECTION_MOVER_BINARY, RECORD_VERSION_MOVER_BINARY );
+	MOVER_BINARY_RECORD_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
+	MOVER_BINARY_RECORD_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
+	rec.EndSection();
+}
+
+recordApply_t idMover_Binary::ApplyRecord( idRecordIn& rec, const recordFrame_t& frame )
+{
+	const recordApply_t result = idEntity::ApplyRecord( rec, frame );
+	if( result != RECORD_APPLIED || !rec.BeginSection( RECORD_SECTION_MOVER_BINARY ) )
+	{
+		return result;
+	}
+	MOVER_BINARY_RECORD_SCHEMA( SCHEMA_RECORD_READ, ( *this ) )
+	rec.EndSection();
+	return rec.good ? RECORD_APPLIED : RECORD_INVALID;
+}
+
+bool idMover_Binary::CheckRecordSection( idRecordIn& rec )
+{
+	MOVER_BINARY_RECORD_SCHEMA( SCHEMA_RECORD_CHECK, idMover_Binary )
+	return rec.good;
+}
+
+// against the map dict: spawnArgs "locked" is the live lock (idDoor::Lock writes it). A created mover has no baseline
+bool idMover_Binary::RecordMoverStateChanged( const idRecordOut& rec ) const
+{
+	const idRecordMapArgs& map = rec.MapArgs();
+	if( !map.IsValid() )
+	{
+		return true;
+	}
+	const bool startOpen = IsType( idDoor::Type ) && map.GetBool( "start_open" );
+	return RecordAtPosition2() != startOpen || ( spawnArgs.GetInt( "locked" ) != 0 ) != ( map.GetInt( "locked" ) != 0 );
+}
+
+void idMover_Binary::WriteRecordMoverState( idRecordOut& rec ) const
+{
+	rec.WriteByte( RecordAtPosition2() ? 1 : 0 );
+	rec.WriteByte( spawnArgs.GetInt( "locked" ) != 0 ? 1 : 0 );
+}
+
+// The record applies to a fresh spawn, before its events run: a start_open door's Event_StartOpen is still pending. It is
+// cancelled and its swap made here, so the door plays swapped as the event would have left it, at the live end of the
+// spawn-frame position.
+bool idMover_Binary::ApplyRecordMoverState( idRecordIn& rec )
+{
+	byte position, locked;
+	if( !rec.ReadByte( position ) || !rec.ReadByte( locked ) )
+	{
+		return false;
+	}
+	const bool startOpen = IsType( idDoor::Type ) && spawnArgs.GetBool( "start_open" );
+	if( startOpen )
+	{
+		CancelEvents( &EV_Door_StartOpen );
+		const idVec3 open = pos2;
+		pos2 = pos1;
+		pos1 = open;
+	}
+	ApplyRecordState( ( position != 0 ) != startOpen, locked != 0 );
+	return true;
+}
+
+bool idMover_Binary::CheckRecordMoverState( idRecordIn& rec )
+{
+	byte position, locked;
+	return rec.ReadByte( position ) && position <= 1 && rec.ReadByte( locked ) && locked <= 1;
+}
+
+/*
+================
+idElevator::WriteRecord
+
+The elevator's position is its floor's, never Pose.
+================
+*/
+void idElevator::WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const
+{
+	rec.SkipPose();
+	idMover::WriteRecord( rec, frame );
+	rec.BeginSection( RECORD_SECTION_ELEVATOR, RECORD_VERSION_ELEVATOR );
+	ELEVATOR_RECORD_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
+	ELEVATOR_RECORD_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
+	rec.EndSection();
+}
+
+recordApply_t idElevator::ApplyRecord( idRecordIn& rec, const recordFrame_t& frame )
+{
+	const recordApply_t result = idMover::ApplyRecord( rec, frame );
+	if( result != RECORD_APPLIED || !rec.BeginSection( RECORD_SECTION_ELEVATOR ) )
+	{
+		return result;
+	}
+	ELEVATOR_RECORD_SCHEMA( SCHEMA_RECORD_READ, ( *this ) )
+	rec.EndSection();
+	return rec.good ? RECORD_APPLIED : RECORD_INVALID;
+}
+
+bool idElevator::CheckRecordSection( idRecordIn& rec )
+{
+	ELEVATOR_RECORD_SCHEMA( SCHEMA_RECORD_CHECK, idElevator )
+	return rec.good;
+}
+
+// against the "floor" key Spawn starts it towards; a floor past a byte is not recorded
+bool idElevator::RecordFloorChanged( const idRecordOut& rec ) const
+{
+	if( currentFloor == spawnArgs.GetInt( "floor", "1" ) )
+	{
+		return false;
+	}
+	if( currentFloor < 0 || currentFloor > 255 )
+	{
+		gameLocal.Warning( "record: elevator '%s' floor %d not recorded (0 - 255)", name.c_str(), currentFloor );
+		return false;
+	}
+	return true;
+}
+
+void idElevator::WriteRecordFloor( idRecordOut& rec ) const
+{
+	rec.WriteByte( currentFloor );
+}
+
+// Arrived and idle at the floor: no move, door wait, arrival or return pending, the doors bound and enabled as after an
+// arrival there. The doors' own rows hold whether they are open.
+bool idElevator::ApplyRecordFloor( idRecordIn& rec )
+{
+	byte floor;
+	if( !rec.ReadByte( floor ) )
+	{
+		return false;
+	}
+	floorInfo_s* fi = GetFloorInfo( floor );
+	if( fi == NULL )
+	{
+		return false;
+	}
+	CancelEvents( &EV_GotoFloor );
+	CancelEvents( &EV_PostArrival );
+	CancelEvents( &EV_ReachedPos );
+	CancelEvents( &EV_ReachedAng );
+	if( state == INIT )
+	{
+		BindDoors();
+	}
+	const idVec3 position = GetLocalCoordinates( fi->pos );	// MoveToPos's destination
+	physicsObj.SetLinearExtrapolation( EXTRAPOLATION_NONE, gameLocal.time, 0, position, vec3_origin, vec3_origin );
+	physicsObj.SetLinearInterpolation( 0, 0, 0, 0, vec3_origin, vec3_origin );
+	physicsObj.SetOrigin( position );
+	UpdateVisuals();
+	currentFloor = floor;
+	lastFloor = floor;
+	pendingFloor = floor;
+	state = IDLE;
+	DisableAllDoors();
+	EnableProperDoors();
+	SetGuiStates( ( currentFloor == 1 ) ? guiBinaryMoverStates[0] : guiBinaryMoverStates[1] );
+	return true;
+}
+
+bool idElevator::CheckRecordFloor( idRecordIn& rec )
+{
+	byte floor;
+	return rec.ReadByte( floor );
+}
+
+/*
+================
+idMover_Periodic::WriteRecord
+
+No Pose: a SetOrigin resets the extrapolation base, so a func_bobbing or func_pendulum would swing about the phase it
+was committed at, a little further on every revisit.
+================
+*/
+void idMover_Periodic::WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const
+{
+	rec.SkipPose();
+	idEntity::WriteRecord( rec, frame );
+}
+//puncho end

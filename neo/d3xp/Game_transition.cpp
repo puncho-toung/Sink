@@ -20,7 +20,8 @@ static idCVar g_transitionLandmarks( "g_transitionLandmarks", "0", CVAR_NOCHEAT 
 static idCVar g_transitionCarry( "g_transitionCarry", "0", CVAR_NOCHEAT | CVAR_GAME | CVAR_BOOL, "carry eligible entities in transition volumes" );
 static idCVar g_showTransition( "g_showTransition", "0", CVAR_GAME | CVAR_BOOL, "draw transition landmarks" );
 static const int MAX_TRANSITION_CARRY = 64;
-static const int MAX_TRANSITION_RECORD_BYTES = 160;
+static const int MAX_TRANSITION_RECORD_BYTES = 168;	//puncho - P2b.1.2: a carried MREC v3 created entry (WorldStore.h)
+compile_time_assert( MAX_TRANSITION_RECORD_BYTES == MAX_WORLD_CREATED_CARRY_BYTES );
 
 struct transitionPlayer_t
 {
@@ -727,6 +728,21 @@ void idGameLocal::FinishTransitionSpawn( idPlayer* player )
 		EndTransitionArrival();
 	}
 }
+
+#if !defined( ID_RETAIL )
+//puncho - P2b.1.2: recordDump decodes the carried created entries (MREC v3's, the only ones holding Motion) while the
+// transition still holds them, from its commit to the next ClearMapTransition
+int TransitionCarryRecords( const byte* records[], int lengths[], int max )
+{
+	const int count = Min( transitionState.count, max );
+	for( int i = 0; i < count; i++ )
+	{
+		records[i] = transitionState.carry[i].bytes;
+		lengths[i] = transitionState.carry[i].length;
+	}
+	return count;
+}
+#endif
 
 void idGameLocal::ListTransition() const
 {

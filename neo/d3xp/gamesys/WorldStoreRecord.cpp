@@ -51,349 +51,244 @@ bool RecordRead64( idFile& f, uint64& value )
 	return true;
 }
 
-bool ValidateAspectBytes( unsigned short aspects, const char* data, int length )
+//puncho start - P2b.1.2: the MREC v3 codec (WorldStoreLocal.h); the entries' sections are Record.h's
+void RecordWriteHeader( idFile& out, const mrecHeader_t& h )
 {
-	if( ( aspects & ~( RECORD_REMOVED | RECORD_MOVED | RECORD_MOVER | RECORD_HEALTH | RECORD_BROKEN | RECORD_HIDDEN | RECORD_CORPSE | RECORD_MOTION | RECORD_BIND | RECORD_SHOWN ) ) || ( aspects & ( RECORD_HIDDEN | RECORD_SHOWN ) ) == ( RECORD_HIDDEN | RECORD_SHOWN ) )
+	out.WriteUnsignedShort( h.version );
+	out.WriteUnsignedShort( h.flags );
+	RecordString( out, h.world );
+	Record64( out, h.instanceId );
+	out.WriteUnsignedShort( h.node );
+	out.WriteUnsignedInt( h.cellId );
+	RecordString( out, h.unit );
+	out.WriteUnsignedInt( h.unitRevision );
+	out.WriteUnsignedInt( h.entitiesCRC );
+	out.WriteUnsignedInt( h.geometryCRC );
+	out.WriteUnsignedShort( h.numMapEntities );
+	Record64( out, ( uint64 )h.lastLeft );
+	Record64( out, ( uint64 )h.cleared );
+	out.WriteUnsignedShort( h.remains );
+	out.WriteUnsignedInt( h.writerBuild );
+	out.WriteUnsignedInt( h.numEntries );
+}
+
+// v2's rules on the fields it had (flags, node, a world and a map, the entity count, the times), and C1's on the cellId:
+// a zero top byte is the reserved layer, which holds only CELL_ID_NONE and CELL_ID_PERSISTENT
+bool RecordReadHeader( idFile_Memory& in, mrecHeader_t& h, idStr& reason )
+{
+	uint64 left, cleared;
+	if( in.ReadUnsignedShort( h.version ) != 2 )
+	{
+		reason = "truncated header";
+		return false;
+	}
+	if( h.version != MREC_VERSION )
+	{
+		reason = va( "MREC version %u", h.version );
+		return false;
+	}
+	if( in.ReadUnsignedShort( h.flags ) != 2 || h.flags > 3 || !RecordReadString( in, h.world ) || h.world.IsEmpty() || !RecordRead64( in, h.instanceId ) || in.ReadUnsignedShort( h.node ) != 2 || h.node >= 256 || ( h.instanceId == 0 && h.node != 0 ) || in.ReadUnsignedInt( h.cellId ) != 4 || !RecordReadString( in, h.unit ) || h.unit.IsEmpty() || in.ReadUnsignedInt( h.unitRevision ) != 4 || in.ReadUnsignedInt( h.entitiesCRC ) != 4 || in.ReadUnsignedInt( h.geometryCRC ) != 4 || in.ReadUnsignedShort( h.numMapEntities ) != 2 || h.numMapEntities == 0 || !RecordRead64( in, left ) || left > 0x7fffffffffffffffULL || !RecordRead64( in, cleared ) || ( cleared > 0x7fffffffffffffffULL && cleared != ( uint64 ) - 1 ) || in.ReadUnsignedShort( h.remains ) != 2 || in.ReadUnsignedInt( h.writerBuild ) != 4 || in.ReadUnsignedInt( h.numEntries ) != 4 || h.numEntries > MAX_GENTITIES )
+	{
+		reason = "malformed header";
+		return false;
+	}
+	if( ( h.cellId >> 24 ) == 0 && h.cellId > CELL_ID_PERSISTENT )
+	{
+		reason = va( "header cellId %08x", h.cellId );
+		return false;
+	}
+	h.lastLeft = ( int64 )left;
+	h.cleared = ( int64 )cleared;
+	return true;
+}
+
+// v1: version, flags, world, instance, map; v2 adds the node after the instance; v3 the cellId after the node
+int RecordChunkVersion( const byte* data, int length, idStr& unit )
+{
+	idFile_Memory in( "MREC version", ( const char* )data, length );
+	unsigned short version, flags, node;
+	uint64 instance;
+	uint32 cellId;
+	idStr world;
+	if( in.ReadUnsignedShort( version ) != 2 || version < 1 || version > MREC_VERSION || in.ReadUnsignedShort( flags ) != 2 || !RecordReadString( in, world ) || !RecordRead64( in, instance ) || ( version >= 2 && in.ReadUnsignedShort( node ) != 2 ) || ( version >= 3 && in.ReadUnsignedInt( cellId ) != 4 ) || !RecordReadString( in, unit ) )
+	{
+		unit.Clear();
+		return 0;
+	}
+	return version;
+}
+
+recordFrame_t RecordChunkFrame( uint32 cellId )
+{
+	recordFrame_t frame;
+	frame.cellId = cellId;
+	frame.origin.Zero();
+	frame.axis.Identity();
+	frame.kind = RECORD_FRAME_MAP;
+	if( cellId != CELL_ID_NONE && CellPlaceable( cellId ) )
+	{
+		frame.origin.Set( ( float )( CellX( cellId ) * CELL_SIZE ), ( float )( CellY( cellId ) * CELL_SIZE ), ( float )( CellZ( cellId ) * CELL_SIZE ) );
+		frame.kind = RECORD_FRAME_CELL;
+	}
+	return frame;
+}
+
+// an entry's head, then its sections framed into rec; false when it cannot be delimited
+static bool RecordReadEntry( idFile_Memory& in, bool created, mrecEntry_t& e, idRecordIn& rec )
+{
+	e.created = created;
+	e.createdId = 0;
+	e.createdTime = 0;
+	e.entityCRC = 0;
+	e.ordinalHint = 0;
+	e.valid = false;
+	uint64 when = 0;
+	const bool head = created ? ( RecordRead64( in, e.createdId ) && RecordReadString( in, e.name ) && RecordRead64( in, when ) ) : ( in.ReadUnsignedShort( e.ordinalHint ) == 2 && in.ReadUnsignedInt( e.entityCRC ) == 4 && RecordReadString( in, e.name ) );
+	if( !head || in.ReadUnsignedChar( e.flags ) != 1 || in.ReadUnsignedChar( e.numSections ) != 1 )
 	{
 		return false;
 	}
-	if( aspects & RECORD_REMOVED )
-	{
-		return aspects == RECORD_REMOVED && length == 0;
-	}
-	idFile_Memory in( "record validation", data, length );
-	if( aspects & RECORD_MOVED )
-	{
-		for( int i = 0; i < 6; i++ )
-		{
-			unsigned int bits;
-			if( in.ReadUnsignedInt( bits ) != 4 || ( bits & 0x7f800000U ) == 0x7f800000U )
-			{
-				return false;
-			}
-		}
-	}
-	if( aspects & RECORD_MOVER )
-	{
-		byte position, flags;
-		if( in.ReadUnsignedChar( position ) != 1 || position > 1 || in.ReadUnsignedChar( flags ) != 1 || flags > 1 )
-		{
-			return false;
-		}
-	}
-	if( aspects & RECORD_HEALTH )
-	{
-		int health;
-		if( in.ReadInt( health ) != 4 )
-		{
-			return false;
-		}
-	}
-	if( aspects & RECORD_CORPSE )
-	{
-		if( aspects != ( RECORD_MOVED | RECORD_CORPSE ) )
-		{
-			return false;
-		}
-		for( int i = 0; i < 4; i++ )
-		{
-			unsigned int bits;
-			if( in.ReadUnsignedInt( bits ) != 4 || ( bits & 0x7f800000U ) == 0x7f800000U )
-			{
-				return false;
-			}
-		}
-		byte flags, kind;
-		uint64 death;
-		if( in.ReadUnsignedChar( flags ) != 1 || flags > 7 || in.ReadUnsignedChar( kind ) != 1 || kind > 1 || !RecordRead64( in, death ) || death > 0x7fffffffffffffffULL )
-		{
-			return false;
-		}
-		if( kind == 0 )
-		{
-			idStr anim;
-			unsigned short frame;
-			if( !RecordReadString( in, anim ) || in.ReadUnsignedShort( frame ) != 2 || frame == 0 )
-			{
-				return false;
-			}
-		}
-		else
-		{
-			byte count;
-			if( in.ReadUnsignedChar( count ) != 1 || count == 0 || count > 20 )
-			{
-				return false;
-			}
-			for( int i = 0; i < count; i++ )
-			{
-				byte index;
-				short value;
-				if( in.ReadUnsignedChar( index ) != 1 || index != i )
-				{
-					return false;
-				}
-				for( int j = 0; j < 6; j++ )
-				{
-					if( in.ReadShort( value ) != 2 )
-					{
-						return false;
-					}
-				}
-			}
-		}
-	}
-	if( aspects & RECORD_MOTION )
-	{
-		for( int i = 0; i < 6; i++ )
-		{
-			unsigned int bits;
-			if( in.ReadUnsignedInt( bits ) != 4 || ( bits & 0x7f800000U ) == 0x7f800000U )
-			{
-				return false;
-			}
-		}
-	}
-	if( aspects & RECORD_BIND )
-	{
-		uint64 parent;
-		short joint, body;
-		byte orientated;
-		if( !RecordRead64( in, parent ) || parent == 0 || in.ReadShort( joint ) != 2 || joint < -1 || in.ReadShort( body ) != 2 || body < -1 || ( joint >= 0 && body >= 0 ) || in.ReadUnsignedChar( orientated ) != 1 || orientated > 1 )
-		{
-			return false;
-		}
-	}
-	return in.Tell() == in.Length();
-}
-
-// The pose a map entity spawns with, from the keys idEntity::Spawn reads (ParseSpawnArgsToRenderEntity's origin and
-// rotation, plus an origin brush's offset for an entity with a model). A model scale or a key this misses makes the
-// live pose differ, which only writes a MOVED the entity did not need: the safe direction.
-static void RecordSpawnPose( const idEntity* ent, idVec3& origin, idMat3& axis )
-{
-	const idDict& args = ent->spawnArgs;
-	origin = args.GetVector( "origin" );
-	if( args.GetString( "model" )[0] != '\0' )
-	{
-		origin += ent->GetOriginBrushOffset();
-	}
-	idAngles angles;
-	if( !args.GetMatrix( "rotation", "1 0 0 0 1 0 0 0 1", axis ) )
-	{
-		if( args.GetAngles( "angles", "0 0 0", angles ) )
-		{
-			axis = angles.ToMat3();
-		}
-		else
-		{
-			axis = idAngles( 0.0f, args.GetFloat( "angle" ), 0.0f ).ToMat3();
-		}
-	}
-}
-
-// bindParent is the created identity of the bind master a created record binds to, 0 for none.
-unsigned short WriteAspects( idEntity* ent, idFile_Memory& payload, const idVec3& landmark, bool motion, uint64 bindParent )
-{
-	if( ent->IsType( idAI::Type ) && ent->health <= 0 )
-	{
-		idAI* actor = static_cast<idAI*>( ent );
-		if( !g_corpses.GetBool() || actor->IsGibbed() || actor->spawnArgs.GetInt( "persist_lifetime", "-1" ) == 0 )
-		{
-			return RECORD_REMOVED;
-		}
-		// A departure can precede the script's settled-remove event. Capture
-		// the current pose directly; never materialize an AI with health <= 0.
-		idFile_Memory pose;
-		if( !idCorpse::WriteActorPose( actor, pose ) )
-		{
-			return RECORD_REMOVED;
-		}
-		const idVec3 origin = actor->GetPhysics()->GetOrigin() - landmark;
-		const idCQuat axis = actor->GetPhysics()->GetAxis().ToCQuat();
-		for( int i = 0; i < 3; i++ )
-		{
-			payload.WriteFloat( origin[i] );
-		}
-		for( int i = 0; i < 3; i++ )
-		{
-			payload.WriteFloat( axis[i] );
-		}
-		payload.Write( pose.GetDataPtr(), pose.Length() );
-		return RECORD_MOVED | RECORD_CORPSE;
-	}
-	if( ent->IsType( idCorpse::Type ) )
-	{
-		const idVec3 origin = ent->GetPhysics()->GetOrigin() - landmark;
-		const idCQuat axis = ent->GetPhysics()->GetAxis().ToCQuat();
-		for( int i = 0; i < 3; i++ )
-		{
-			payload.WriteFloat( origin[i] );
-		}
-		for( int i = 0; i < 3; i++ )
-		{
-			payload.WriteFloat( axis[i] );
-		}
-		static_cast<idCorpse*>( ent )->WritePose( &payload );
-		return RECORD_MOVED | RECORD_CORPSE;
-	}
-	//puncho start - P2.4 (bug review 2026-10-28): an authored row is a delta over the .map. MOVED only for an entity at
-	// rest off its spawn pose, and never for a parametric mover: SetOrigin resets its extrapolation base, so a
-	// func_bobbing or func_pendulum recentred its swing on the commit phase and ratcheted on every revisit (binary
-	// movers keep their MOVER aspect). A bound entity follows its master, and SetOrigin would take the world position
-	// as its offset. A created entity has no spawn pose, so it always carries one. HEALTH only when it changed
-	unsigned short aspects = 0;
-	bool moved = motion;
-	if( !motion && ent->GetBindMaster() == NULL && !ent->GetPhysics()->IsType( idPhysics_Parametric::Type ) && ent->GetPhysics()->IsAtRest() )
-	{
-		idVec3 spawnOrigin;
-		idMat3 spawnAxis;
-		RecordSpawnPose( ent, spawnOrigin, spawnAxis );
-		moved = ( ent->GetPhysics()->GetOrigin() - spawnOrigin ).LengthSqr() > 1.0f || !ent->GetPhysics()->GetAxis().Compare( spawnAxis, 0.001f );
-	}
-	// visibility against the "hide" key the entity spawns with: a hide-until-triggered entity revealed in play comes
-	// back shown, and one never revealed comes back as authored
-	if( ent->IsHidden() != ent->spawnArgs.GetBool( "hide" ) )
-	{
-		aspects |= ent->IsHidden() ? RECORD_HIDDEN : RECORD_SHOWN;
-	}
-	if( moved )
-	{
-		aspects |= RECORD_MOVED;
-		const idVec3 origin = ent->GetPhysics()->GetOrigin() - landmark;
-		const idCQuat rotation = ent->GetPhysics()->GetAxis().ToCQuat();
-		for( int i = 0; i < 3; i++ )
-		{
-			payload.WriteFloat( origin[i] );
-		}
-		for( int i = 0; i < 3; i++ )
-		{
-			payload.WriteFloat( rotation[i] );
-		}
-	}
-	if( ent->IsType( idMover_Binary::Type ) )
-	{
-		aspects |= RECORD_MOVER;
-		payload.WriteUnsignedChar( static_cast<idMover_Binary*>( ent )->RecordAtPosition2() );
-		payload.WriteUnsignedChar( ent->spawnArgs.GetInt( "locked" ) != 0 );
-	}
-	if( ent->health != ent->spawnArgs.GetInt( "health" ) )
-	{
-		aspects |= RECORD_HEALTH;
-		payload.WriteInt( ent->health );
-	}
-	//puncho end
-	if( ent->IsType( idDamagable::Type ) && static_cast<idDamagable*>( ent )->RecordBroken() )
-	{
-		aspects |= RECORD_BROKEN;
-	}
-	if( motion )
-	{
-		aspects |= RECORD_MOTION;
-		for( int i = 0; i < 3; i++ )
-		{
-			payload.WriteFloat( ent->GetPhysics()->GetLinearVelocity()[i] );
-		}
-		for( int i = 0; i < 3; i++ )
-		{
-			payload.WriteFloat( ent->GetPhysics()->GetAngularVelocity()[i] );
-		}
-	}
-	if( motion && ent->GetBindMaster() != NULL && bindParent != 0 )
-	{
-		aspects |= RECORD_BIND;
-		Record64( payload, bindParent );
-		payload.WriteShort( ent->GetBindJoint() );
-		payload.WriteShort( ent->GetBindBody() );
-		payload.WriteUnsignedChar( ent->fl.bindOrientated ? 1 : 0 );
-	}
-	return aspects;
-}
-
-bool ApplyAspects( idEntity* ent, unsigned short aspects, idFile_Memory& payload, const idMat3& rotation, const idVec3& landmark )
-{
-	const int expected = ( ( aspects & RECORD_MOVED ) ? 24 : 0 ) + ( ( aspects & RECORD_MOVER ) ? 2 : 0 ) + ( ( aspects & RECORD_HEALTH ) ? 4 : 0 ) + ( ( aspects & RECORD_MOTION ) ? 24 : 0 ) + ( ( aspects & RECORD_BIND ) ? 13 : 0 );
-	if( ( aspects & ~( RECORD_REMOVED | RECORD_MOVED | RECORD_MOVER | RECORD_HEALTH | RECORD_BROKEN | RECORD_HIDDEN | RECORD_MOTION | RECORD_BIND | RECORD_SHOWN ) ) != 0 || payload.Length() != expected )
+	e.createdTime = ( int64 )when;
+	e.sectionsOffset = in.Tell();
+	if( !rec.ReadSections( ( const byte* )in.GetDataPtr() + e.sectionsOffset, in.Length() - e.sectionsOffset, e.numSections, e.sectionsLength ) )
 	{
 		return false;
 	}
-	if( aspects & RECORD_MOVED )
+	in.Seek( e.sectionsLength, FS_SEEK_CUR );
+	return true;
+}
+
+bool RecordReadCreatedEntry( idFile_Memory& in, mrecEntry_t& entry, idRecordIn& rec )
+{
+	return RecordReadEntry( in, true, entry, rec );
+}
+
+void RecordFrameEntry( const byte* data, uint32 recordCellId, const recordFrame_t& frame, const mrecEntry_t& entry, const char* defName, idRecordIn& rec )
+{
+	int consumed;
+	rec.Begin( frame, recordCellId, entry.created, defName );
+	rec.ReadSections( data + entry.sectionsOffset, entry.sectionsLength, entry.numSections, consumed );
+}
+
+bool RecordScanChunk( const byte* data, int length, uint64 nextIdentity, mrecHeader_t& h, idList<mrecEntry_t, TAG_GAME>& entries, idStr& reason )
+{
+	entries.SetNum( 0 );
+	idFile_Memory in( "MREC", ( const char* )data, length );
+	if( !RecordReadHeader( in, h, reason ) )
 	{
-		idVec3 origin;
-		idCQuat axis;
-		for( int i = 0; i < 3; i++ )
-		{
-			payload.ReadFloat( origin[i] );
-		}
-		for( int i = 0; i < 3; i++ )
-		{
-			payload.ReadFloat( axis[i] );
-		}
-		ent->SetOrigin( landmark + origin * rotation );
-		ent->SetAxis( axis.ToMat3() * rotation );
-		ent->GetPhysics()->PutToRest();
+		return false;
 	}
-	if( aspects & RECORD_MOVER )
+	const recordFrame_t frame = RecordChunkFrame( h.cellId );
+	idRecordIn rec;
+	int previousOrdinal = -1;
+	uint64 previousId = 0;
+	uint32 count = h.numEntries;
+	for( int kind = 0; kind < 2; kind++ )
 	{
-		byte position, flags;
-		payload.ReadUnsignedChar( position );
-		payload.ReadUnsignedChar( flags );
-		if( position > 1 || flags > 1 || !ent->IsType( idMover_Binary::Type ) )
+		if( kind == 1 && ( in.ReadUnsignedInt( count ) != 4 || count > MAX_GENTITIES ) )
 		{
+			reason = "malformed created count";
 			return false;
 		}
-		static_cast<idMover_Binary*>( ent )->ApplyRecordState( position != 0, flags != 0 );
-	}
-	if( aspects & RECORD_HEALTH )
-	{
-		payload.ReadInt( ent->health );
-	}
-	if( ( aspects & RECORD_BROKEN ) && ent->IsType( idDamagable::Type ) )
-	{
-		static_cast<idDamagable*>( ent )->ApplyRecordBroken();
-	}
-	if( aspects & RECORD_HIDDEN )
-	{
-		ent->Hide();
-	}
-	else if( aspects & RECORD_SHOWN )
-	{
-		ent->Show();
-	}
-	if( aspects & RECORD_MOTION )
-	{
-		idVec3 linear, angular;
-		for( int i = 0; i < 3; i++ )
+		for( uint32 i = 0; i < count; i++ )
 		{
-			payload.ReadFloat( linear[i] );
+			mrecEntry_t& e = entries.Alloc();
+			rec.Begin( frame, h.cellId, kind == 1, "" );
+			if( !RecordReadEntry( in, kind == 1, e, rec ) )
+			{
+				reason = va( "%s entry %u cannot be framed", kind == 0 ? "authored" : "created", i );
+				return false;
+			}
+			e.valid = RecordCheckEntry( rec, e.flags, e.reason );
+			// the order and the identities: an ordinal of the map once, ascending; a created id once, ascending, below the
+			// store's next identity, with a def name and a time
+			if( e.valid && kind == 0 && ( e.ordinalHint >= h.numMapEntities || ( int )e.ordinalHint <= previousOrdinal ) )
+			{
+				e.valid = false;
+				e.reason = "ordinal out of order";
+			}
+			if( e.valid && kind == 1 && ( e.createdId <= previousId || e.createdId >= nextIdentity || e.name.IsEmpty() || e.createdTime < 0 ) )
+			{
+				e.valid = false;
+				e.reason = "created identity";
+			}
+			// the order runs over the entries kept, so one corrupt ordinal or id drops itself, not the entries after it
+			if( e.valid && kind == 0 )
+			{
+				previousOrdinal = e.ordinalHint;
+			}
+			else if( e.valid )
+			{
+				previousId = e.createdId;
+			}
 		}
-		for( int i = 0; i < 3; i++ )
-		{
-			payload.ReadFloat( angular[i] );
-		}
-		ent->GetPhysics()->SetLinearVelocity( linear * rotation );
-		ent->GetPhysics()->SetAngularVelocity( angular * rotation );
 	}
-	if( aspects & RECORD_BIND )
+	if( in.Tell() != in.Length() )
 	{
-		uint64 parent;
-		short joint, body;
-		byte orientated;
-		RecordRead64( payload, parent );
-		payload.ReadShort( joint );
-		payload.ReadShort( body );
-		payload.ReadUnsignedChar( orientated );
-		ent->spawnArgs.Set( "_worldBindParent", va( "%llu", ( unsigned long long )parent ) );
-		ent->spawnArgs.SetInt( "_worldBindJoint", joint );
-		ent->spawnArgs.SetInt( "_worldBindBody", body );
-		ent->spawnArgs.SetBool( "_worldBindOrientated", orientated != 0 );
+		reason = va( "%d bytes after the last entry", in.Length() - in.Tell() );
+		return false;
 	}
 	return true;
 }
 
+#if !defined( ID_RETAIL )
+// recordTest's round trip: the chunk read and written again from what the reader took from it, the header's fields,
+// each entry's head and each section's header, then its field bytes
+bool RecordRewriteChunk( const byte* data, int length, uint64 nextIdentity, idFile_Memory& out )
+{
+	mrecHeader_t header;
+	idList<mrecEntry_t, TAG_GAME> entries;
+	idStr reason;
+	if( !RecordScanChunk( data, length, nextIdentity, header, entries, reason ) )
+	{
+		return false;
+	}
+	RecordWriteHeader( out, header );
+	const recordFrame_t frame = RecordChunkFrame( header.cellId );
+	idRecordIn rec;
+	for( int i = 0; i < entries.Num(); i++ )
+	{
+		const mrecEntry_t& e = entries[i];
+		if( e.created && ( i == 0 || !entries[i - 1].created ) )
+		{
+			out.WriteUnsignedInt( entries.Num() - i );
+		}
+		if( e.created )
+		{
+			Record64( out, e.createdId );
+			RecordString( out, e.name );
+			Record64( out, ( uint64 )e.createdTime );
+		}
+		else
+		{
+			out.WriteUnsignedShort( e.ordinalHint );
+			out.WriteUnsignedInt( e.entityCRC );
+			RecordString( out, e.name );
+		}
+		out.WriteUnsignedChar( e.flags );
+		out.WriteUnsignedChar( e.numSections );
+		RecordFrameEntry( data, header.cellId, frame, e, e.name, rec );
+		for( int s = 0; s < rec.NumSections(); s++ )
+		{
+			out.WriteUnsignedChar( rec.SectionId( s ) );
+			out.WriteUnsignedChar( rec.SectionVersion( s ) );
+			Record64( out, rec.SectionMask( s ) );
+			out.WriteUnsignedShort( rec.SectionBytes( s ) );
+			out.Write( rec.SectionData( s ), rec.SectionBytes( s ) );
+		}
+	}
+	if( entries.Num() == 0 || !entries[entries.Num() - 1].created )
+	{
+		out.WriteUnsignedInt( 0 );
+	}
+	return true;
+}
+#endif
+
 bool idWorldStore::WriteCreated( idEntity* ent, const idVec3& landmark, idFile_Memory& out )
 {
-	return EncodeCreated( ent, landmark, out, true );
+	const recordFrame_t frame = { CELL_ID_NONE, landmark, mat3_identity, RECORD_FRAME_CARRY };
+	return EncodeCreated( ent, frame, out, true );
 }
 
 //puncho - P2.4 (bug review 2026-10-28): the transition carry sizes each team member before it accepts the team; that
@@ -402,37 +297,30 @@ bool idWorldStore::WriteCreated( idEntity* ent, const idVec3& landmark, idFile_M
 // and stamps nothing
 bool idWorldStore::MeasureCreated( idEntity* ent, const idVec3& landmark, idFile_Memory& out )
 {
-	return EncodeCreated( ent, landmark, out, false );
+	const recordFrame_t frame = { CELL_ID_NONE, landmark, mat3_identity, RECORD_FRAME_CARRY };
+	return EncodeCreated( ent, frame, out, false );
 }
 
-// assign takes the entity's (and its crossing bind master's) created identity from nextCreatedId and stamps it;
-// without it the identities a write would take are only written.
-bool idWorldStore::EncodeCreated( idEntity* ent, const idVec3& landmark, idFile_Memory& out, bool assign )
+// A created entry: uint64 createdId, str defName, int64 createdWorldTime, uint8 flags 0, uint8 numSections, the
+// entity's sections. assign takes the entity's (and its crossing bind master's) created identity from nextCreatedId
+// and stamps it once the entry is written; without it the identities a write would take are only written.
+bool idWorldStore::EncodeCreated( idEntity* ent, const recordFrame_t& frame, idFile_Memory& out, bool assign )
 {
-	if( ent == NULL )
-	{
-		return false;
-	}
-	// a corpse records its source def; a name over 63 bytes is refused here, never raised at the write
-	const char* recordName = ent->IsType( idCorpse::Type ) ? static_cast<idCorpse*>( ent )->SourceName() : ent->GetEntityDefName();
-	if( ent->GetEntityDefName()[0] == '\0' || recordName[0] == '\0' || idStr::Length( recordName ) > 63 )
+	if( ent == NULL || ent->GetEntityDefName()[0] == '\0' )
 	{
 		return false;
 	}
 	uint64 nextIdentity = nextCreatedId;
 	uint64 identity = strtoull( ent->spawnArgs.GetString( "_worldCreatedId", "0" ), NULL, 10 );
 	uint64 created = strtoull( ent->spawnArgs.GetString( "_worldCreatedTime", "0" ), NULL, 10 );
-	if( identity == 0 )
+	const bool newIdentity = identity == 0;
+	if( newIdentity )
 	{
 		identity = nextIdentity++;
 		created = ( uint64 )gameLocal.GetWorldTime();
-		if( assign )
-		{
-			ent->spawnArgs.Set( "_worldCreatedId", va( "%llu", ( unsigned long long )identity ) );
-			ent->spawnArgs.Set( "_worldCreatedTime", va( "%lld", ( long long )gameLocal.GetWorldTime() ) );
-		}
 	}
 	uint64 parentIdentity = 0;
+	bool newParentIdentity = false;
 	idEntity* parent = ent->GetBindMaster();
 	if( parent != NULL )
 	{
@@ -440,40 +328,51 @@ bool idWorldStore::EncodeCreated( idEntity* ent, const idVec3& landmark, idFile_
 		if( parentIdentity == 0 && parent->CanCrossTransition() )
 		{
 			parentIdentity = nextIdentity++;
-			if( assign )
-			{
-				parent->spawnArgs.Set( "_worldCreatedId", va( "%llu", ( unsigned long long )parentIdentity ) );
-				parent->spawnArgs.Set( "_worldCreatedTime", va( "%lld", ( long long )gameLocal.GetWorldTime() ) );
-			}
+			newParentIdentity = true;
 		}
+	}
+	// a corpse records its source def (idCorpse::WriteRecord); a name over 63 bytes is refused here, never raised at
+	// the write
+	static const idRecordMapArgs noBaseline = { NULL, NULL };
+	idRecordOut rec;
+	rec.Begin( frame, true, noBaseline, parentIdentity, ent->GetEntityDefName() );
+	ent->WriteRecord( rec, frame );
+	const char* recordName = rec.DefName();
+	if( rec.IsRemoved() || rec.Overflowed() || !rec.HasField( RECORD_SECTION_ENTITY, idEntity::RF_Pose ) || recordName[0] == '\0' || idStr::Length( recordName ) > 63 )
+	{
+		return false;
+	}
+	compile_time_assert( MAX_WORLD_CREATED_CARRY_BYTES == 168 );
+	if( ent->CanCrossTransition() && 8 + 1 + idStr::Length( recordName ) + 8 + 1 + 1 + rec.Length() > MAX_WORLD_CREATED_CARRY_BYTES )
+	{
+		return false;
 	}
 	if( assign )
 	{
+		if( newIdentity )
+		{
+			ent->spawnArgs.Set( "_worldCreatedId", va( "%llu", ( unsigned long long )identity ) );
+			ent->spawnArgs.Set( "_worldCreatedTime", va( "%lld", ( long long )created ) );
+		}
+		if( newParentIdentity )
+		{
+			parent->spawnArgs.Set( "_worldCreatedId", va( "%llu", ( unsigned long long )parentIdentity ) );
+			parent->spawnArgs.Set( "_worldCreatedTime", va( "%lld", ( long long )gameLocal.GetWorldTime() ) );
+		}
 		nextCreatedId = nextIdentity;
-	}
-	idFile_Memory payload;
-	const unsigned short aspects = WriteAspects( ent, payload, landmark, true, parentIdentity );
-	if( !( aspects & RECORD_MOVED ) )
-	{
-		return false;
-	}
-	compile_time_assert( MAX_WORLD_CREATED_CARRY_BYTES <= 160 );
-	if( ent->CanCrossTransition() && 8 + 1 + idStr::Length( recordName ) + 8 + 4 + payload.Length() > MAX_WORLD_CREATED_CARRY_BYTES )
-	{
-		return false;
 	}
 	Record64( out, identity );
 	RecordString( out, recordName );
 	Record64( out, created );
-	out.WriteUnsignedShort( aspects );
-	out.WriteUnsignedShort( payload.Length() );
-	out.Write( payload.GetDataPtr(), payload.Length() );
+	out.WriteUnsignedChar( 0 );
+	out.WriteUnsignedChar( rec.NumSections() );
+	out.Write( rec.Data(), rec.Length() );
 	return true;
 }
 
-idEntity* SpawnCorpseRecord( const char* def, unsigned short aspects, idFile_Memory& payload )
+idCorpse* SpawnCorpseRecord( const char* def, idRecordIn& rec, const recordFrame_t& frame )
 {
-	if( aspects != ( RECORD_MOVED | RECORD_CORPSE ) || payload.Length() < 53 || payload.Length() > 324 )
+	if( gameLocal.FindEntityDef( def, false ) == NULL )
 	{
 		return NULL;
 	}
@@ -484,41 +383,53 @@ idEntity* SpawnCorpseRecord( const char* def, unsigned short aspects, idFile_Mem
 	{
 		return NULL;
 	}
-	idFile_Memory pose( "corpse pose", ( const char* )payload.GetDataPtr() + 24, payload.Length() - 24 );
-	if( !static_cast<idCorpse*>( ent )->Build( gameLocal.FindEntityDef( def, false ), pose ) )
+	idCorpse* corpse = static_cast<idCorpse*>( ent );
+	rec.Rewind();
+	if( !RecordSectionsFit( corpse, rec ) || corpse->ApplyRecord( rec, frame ) != RECORD_APPLIED || !rec.Done() )
 	{
-		delete ent;
+		delete corpse;
 		return NULL;
 	}
-	return ent;
+	return corpse;
 }
 
+// A carried created entry, framed and checked in the carry's frame (the arrival landmark and the rotation between the
+// two), then spawned
 idEntity* idWorldStore::SpawnCreated( idFile_Memory& in, const idMat3& rotation, const idVec3& landmark )
 {
-	uint64 id, when;
-	idStr def;
-	unsigned short aspects, length;
-	if( !RecordRead64( in, id ) || !RecordReadString( in, def ) || !RecordRead64( in, when ) || in.ReadUnsignedShort( aspects ) != 2 || in.ReadUnsignedShort( length ) != 2 || length > in.Length() - in.Tell() )
+	const recordFrame_t frame = { CELL_ID_NONE, landmark, rotation, RECORD_FRAME_CARRY };
+	mrecEntry_t entry;
+	idRecordIn rec;
+	rec.Begin( frame, CELL_ID_NONE, true, "" );
+	if( !RecordReadCreatedEntry( in, entry, rec ) )
+	{
+		gameLocal.Warning( "record: carried entry dropped: cannot be framed" );
+		return NULL;
+	}
+	if( !RecordCheckEntry( rec, entry.flags, entry.reason ) || entry.name.IsEmpty() )
+	{
+		gameLocal.Warning( "record: carried '%s'#%llu dropped: %s", entry.name.c_str(), ( unsigned long long )entry.createdId, entry.reason.c_str() );
+		return NULL;
+	}
+	RecordFrameEntry( ( const byte* )in.GetDataPtr(), CELL_ID_NONE, frame, entry, entry.name, rec );
+	return SpawnCreatedEntry( entry.name, entry.createdId, entry.createdTime, rec, frame );
+}
+
+// rec holds the entry's checked sections; nothing spawns for an unknown def, an expired lifetime or a reset map
+idEntity* idWorldStore::SpawnCreatedEntry( const char* def, uint64 id, int64 when, idRecordIn& rec, const recordFrame_t& frame )
+{
+	const idDeclEntityDef* declaration = gameLocal.FindEntityDef( def, false );
+	if( declaration == NULL )
 	{
 		return NULL;
 	}
-	idFile_Memory payload( "created", ( const char* )in.GetDataPtr() + in.Tell(), length );
-	in.Seek( length, FS_SEEK_CUR );
-	if( !( aspects & RECORD_MOVED ) || !ValidateAspectBytes( aspects, payload.GetDataPtr(), length ) || gameLocal.FindEntityDef( def, false ) == NULL )
+	if( rec.HasSection( RECORD_SECTION_AI ) )
 	{
-		return NULL;
-	}
-	if( !( aspects & RECORD_CORPSE ) && applyingReset && !gameLocal.FindEntityDef( def, false )->dict.GetBool( "persist_noreset" ) )
-	{
-		return NULL;
-	}
-	if( aspects & RECORD_CORPSE )
-	{
-		idEntity* corpse = SpawnCorpseRecord( def, aspects, payload );
+		idCorpse* corpse = SpawnCorpseRecord( def, rec, frame );
 		if( corpse != NULL )
 		{
 			const int lifetime = corpse->spawnArgs.GetInt( "persist_lifetime", "-1" );
-			const int64 death = static_cast<idCorpse*>( corpse )->DeathTime();
+			const int64 death = corpse->DeathTime();
 			if( ( applyingReset && !corpse->spawnArgs.GetBool( "persist_noreset" ) ) || lifetime == 0 || ( lifetime > 0 && gameLocal.GetWorldTime() - death >= ( int64 )lifetime * 1000 ) )
 			{
 				delete corpse;
@@ -529,9 +440,12 @@ idEntity* idWorldStore::SpawnCreated( idFile_Memory& in, const idMat3& rotation,
 		}
 		return corpse;
 	}
-	const idDeclEntityDef* declaration = gameLocal.FindEntityDef( def, false );
+	if( applyingReset && !declaration->dict.GetBool( "persist_noreset" ) )
+	{
+		return NULL;
+	}
 	const int lifetime = declaration->dict.GetInt( "persist_lifetime", "-1" );
-	if( lifetime > 0 && ( uint64 )gameLocal.GetWorldTime() >= when + ( uint64 )lifetime * 1000 )
+	if( lifetime > 0 && ( uint64 )gameLocal.GetWorldTime() >= ( uint64 )when + ( uint64 )lifetime * 1000 )
 	{
 		return NULL;
 	}
@@ -546,13 +460,89 @@ idEntity* idWorldStore::SpawnCreated( idFile_Memory& in, const idMat3& rotation,
 	{
 		return NULL;
 	}
-	if( !ApplyAspects( ent, aspects, payload, rotation, landmark ) )
+	rec.Rewind();
+	if( !RecordSectionsFit( ent, rec ) || ent->ApplyRecord( rec, frame ) != RECORD_APPLIED || !rec.Done() )
 	{
+		gameLocal.Warning( "record: created '%s'#%llu dropped: its sections do not apply to %s", def, ( unsigned long long )id, ent->GetClassname() );
 		delete ent;
 		return NULL;
 	}
 	return ent;
 }
+
+void RecordCarryBindChildren( const idList<recordPosed_t, TAG_GAME>& posed )
+{
+	if( posed.Num() == 0 )
+	{
+		return;
+	}
+	// the map entities still to bind at spawn; one that moved on its own record keeps its pose
+	idList<recordPosed_t, TAG_GAME> carried = posed;
+	idList<idEntity*, TAG_GAME> pending;
+	for( idEntity* ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
+	{
+		if( ent->mapSpawnIndex < 0 || ent->GetBindMaster() != NULL || ent->spawnArgs.FindKey( "bind" ) == NULL )
+		{
+			continue;
+		}
+		bool moved = false;
+		for( int i = 0; i < posed.Num() && !moved; i++ )
+		{
+			moved = posed[i].ent == ent;
+		}
+		if( !moved )
+		{
+			pending.Append( ent );
+		}
+	}
+	// a pass per bind depth: a child moves with its master, a grandchild with the child
+	for( bool progress = true; progress; )
+	{
+		progress = false;
+		for( int i = 0; i < pending.Num(); i++ )
+		{
+			idEntity* child = pending[i];
+			if( child == NULL )
+			{
+				continue;
+			}
+			const idEntity* master = gameLocal.FindEntity( child->spawnArgs.GetString( "bind" ) );
+			int found = -1;
+			for( int j = 0; j < carried.Num() && found < 0; j++ )
+			{
+				found = carried[j].ent == master ? j : -1;
+			}
+			if( found < 0 )
+			{
+				continue;
+			}
+			const recordPosed_t m = carried[found];
+			recordPosed_t c;
+			c.ent = child;
+			c.fromOrigin = child->GetPhysics()->GetOrigin();
+			c.fromAxis = child->GetPhysics()->GetAxis();
+			// the offset the spawn bind takes: a translation for a master that kept its axis or a bind that ignores it
+			if( m.fromAxis == m.toAxis || !child->spawnArgs.GetBool( "bindOrientated", "1" ) )
+			{
+				c.toOrigin = c.fromOrigin + ( m.toOrigin - m.fromOrigin );
+				c.toAxis = c.fromAxis;
+			}
+			else
+			{
+				const idMat3 rotation = m.fromAxis.Transpose() * m.toAxis;
+				c.toOrigin = m.toOrigin + ( c.fromOrigin - m.fromOrigin ) * rotation;
+				c.toAxis = c.fromAxis * rotation;
+			}
+			child->SetOrigin( c.toOrigin );
+			child->SetAxis( c.toAxis );
+			child->GetPhysics()->PutToRest();
+			carried.Append( c );
+			pending[i] = NULL;
+			progress = true;
+		}
+	}
+}
+//puncho end
 
 void idWorldStore::BindCreatedRecords()
 {

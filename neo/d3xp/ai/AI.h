@@ -295,6 +295,12 @@ private:
 	int					PVSAreas[ idEntity::MAX_PVS_AREAS ];
 };
 
+//puncho - P2b.1.2: idAI's map record section (Record.h, RECORD_SECTION_AI): an AI that died in play, as the pose of
+// the corpse it leaves. Written by idAI and idCorpse, applied and checked by the idCorpse the store builds for it
+// (Corpse.cpp); ARG 0, a variable field
+#define AI_RECORD_SCHEMA( X, s ) \
+	X( s, Corpse,		HAND,	R,	RAW,	0,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA )
+
 class idAI : public idActor
 {
 public:
@@ -303,6 +309,21 @@ public:
 	{
 		return spawnArgs.GetBool( "transition", "0" );
 	}
+	//puncho start - P2b.1.2: the map record
+	enum
+	{
+		AI_RECORD_SCHEMA( SCHEMA_RECORD_INDEX, _ )
+		AI_RECORD_FIELDS
+	};
+	compile_time_assert( AI_RECORD_FIELDS <= 64 );
+	virtual void			WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const;
+	virtual recordApply_t	ApplyRecord( idRecordIn& rec, const recordFrame_t& frame );
+	bool					RecordCorpseChanged( const idRecordOut& rec ) const
+	{
+		return health <= 0;
+	}
+	void					WriteRecordCorpse( idRecordOut& rec ) const;
+	//puncho end
 	void Event_PersistCorpse();
 	void Event_SettleCorpse();
 
