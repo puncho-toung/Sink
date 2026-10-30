@@ -5567,7 +5567,7 @@ bool idMover_Binary::RecordAtPosition2() const
 // director's on a fresh spawn or a restored door alike. A start_open door whose Event_StartOpen is still pending (the
 // record and the director apply before a fresh spawn's events run) gets the event's swap here, then sits at the live end
 // of the spawn-frame position. The portal follows the door's opening as Spawn sets it, open unless the door is shut, so a
-// start_open door whose lock alone changed keeps its open portal; the AAS block is the live frame's (ApplyRecordLock)
+// start_open door whose lock alone changed keeps its open portal; the AAS block is ApplyRecordLock's
 void idMover_Binary::ApplyRecordState( bool spawnPosition2, bool locked )
 {
 	CancelEvents( &EV_Mover_ReturnToPos1 );
@@ -5580,6 +5580,9 @@ void idMover_Binary::ApplyRecordState( bool spawnPosition2, bool locked )
 		CancelEvents( &EV_Door_StartOpen );
 		CancelEvents( &EV_Door_Lock );
 		swapped = static_cast<idDoor*>( this )->ApplyRecordStartOpen();
+		// the AAS block Spawn's ClosePortal set at the bounds the door leaves, cleared before it moves (a map-locked or
+		// no_touch door left unlocked and open no longer blocks its doorway); ApplyRecordLock sets it again below
+		static_cast<idDoor*>( this )->ApplyRecordLock( false );
 	}
 	const bool live2 = spawnPosition2 != swapped;
 	moverState = live2 ? MOVER_POS2 : MOVER_POS1;
@@ -5590,7 +5593,10 @@ void idMover_Binary::ApplyRecordState( bool spawnPosition2, bool locked )
 	physicsObj.SetOrigin( live2 ? pos2 : pos1 );
 	physicsObj.PutToRest();
 	spawnArgs.SetInt( "locked", locked ? 1 : 0 );
-	SetPortalState( spawnPosition2 );
+	if( areaPortal )
+	{
+		SetPortalState( spawnPosition2 );
+	}
 	if( IsType( idDoor::Type ) )
 	{
 		static_cast<idDoor*>( this )->ApplyRecordLock( locked );
@@ -5606,11 +5612,12 @@ void idMover_Binary::CarryRecordPositions( const idVec3& fromOrigin, const idMat
 	pos2 = rotate ? toOrigin + ( pos2 - fromOrigin ) * rotation : pos2 + ( toOrigin - fromOrigin );
 }
 
-//puncho - P2b.1.2 (review): the AAS area is blocked while the door is locked at its live pos1, in either frame
+//puncho - P2b.1.2 (review): the AAS area is blocked while the door is locked at its live pos1, and while a swapped
+// start_open door is locked at either end, so a start_open exit sealed shut at its live pos2 is not routable either
 void idDoor::ApplyRecordLock( bool locked )
 {
 	spawnArgs.SetInt( "locked", locked ? 1 : 0 );
-	SetAASAreaState( locked && moverState != MOVER_POS2 && moverState != MOVER_1TO2 );
+	SetAASAreaState( locked && ( startOpenSwapped || ( moverState != MOVER_POS2 && moverState != MOVER_1TO2 ) ) );
 }
 
 //puncho - P2b.1.2 (review): the swap Event_StartOpen makes, for a start_open door whose event is still pending (cancelled

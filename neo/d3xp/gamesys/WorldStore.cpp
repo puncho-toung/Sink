@@ -698,10 +698,48 @@ struct recordPosed_t
 	bool			posed;
 };
 
+// a map entity still to bind at spawn, and the hops along the "bind" keys from it to an entity that binds to nothing
+struct recordBindChild_t
+{
+	idEntity*		ent;
+	int				depth;
+};
+
+class idSortBindDepth : public idSort_Quick<recordBindChild_t, idSortBindDepth>
+{
+public:
+	int Compare( const recordBindChild_t& a, const recordBindChild_t& b ) const
+	{
+		if( a.depth != b.depth )
+		{
+			return a.depth - b.depth;
+		}
+		return a.ent->entityNumber - b.ent->entityNumber;
+	}
+};
+
+// the hops along the "bind" keys, capped at limit (a cycle of keys)
+static int RecordBindDepth( const idEntity* ent, int limit )
+{
+	int depth = 0;
+	for( const idEntity* cursor = ent; depth < limit; depth++ )
+	{
+		const idKeyValue* kv = cursor->spawnArgs.FindKey( "bind" );
+		const idEntity* master = kv != NULL ? gameLocal.FindEntity( kv->GetValue() ) : NULL;
+		if( master == NULL )
+		{
+			break;
+		}
+		cursor = master;
+	}
+	return depth;
+}
+
 // A map entity still to bind at spawn (the "bind" key, bound after the record applies) moves with an entity the record
 // moved, so the spawn bind finds it at its spawn offset from it: a bound entity records no Pose of its own. One whose
 // own MoverState moved it is still in the spawn frame and moves too; a binary mover's pos1 and pos2 go along, or its
-// PostBind would make them local off by the master's move. A pass per bind depth: a grandchild moves with the child.
+// PostBind would make them local off by the master's move. One pass in bind-depth order: every master has its final
+// move before its children take theirs, a middle link its own and its master's both.
 static void RecordCarryBindChildren( const idList<recordPosed_t, TAG_GAME>& moved )
 {
 	if( moved.Num() == 0 )
@@ -709,7 +747,8 @@ static void RecordCarryBindChildren( const idList<recordPosed_t, TAG_GAME>& move
 		return;
 	}
 	idList<recordPosed_t, TAG_GAME> carried = moved;
-	idList<idEntity*, TAG_GAME> pending;
+	idList<recordBindChild_t, TAG_GAME> pending;
+	const int limit = gameLocal.spawnedEntities.Num();
 	for( idEntity* ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
 	{
 		if( ent->mapSpawnIndex < 0 || ent->GetBindMaster() != NULL || ent->spawnArgs.FindKey( "bind" ) == NULL )
@@ -723,65 +762,58 @@ static void RecordCarryBindChildren( const idList<recordPosed_t, TAG_GAME>& move
 		}
 		if( !posed )
 		{
-			pending.Append( ent );
+			recordBindChild_t& row = pending.Alloc();
+			row.ent = ent;
+			row.depth = RecordBindDepth( ent, limit );
 		}
 	}
-	for( bool progress = true; progress; )
+	pending.SortWithTemplate( idSortBindDepth() );
+	for( int i = 0; i < pending.Num(); i++ )
 	{
-		progress = false;
-		for( int i = 0; i < pending.Num(); i++ )
+		idEntity* child = pending[i].ent;
+		const idEntity* master = gameLocal.FindEntity( child->spawnArgs.GetString( "bind" ) );
+		int found = -1;
+		for( int j = 0; j < carried.Num() && found < 0; j++ )
 		{
-			idEntity* child = pending[i];
-			if( child == NULL )
-			{
-				continue;
-			}
-			const idEntity* master = gameLocal.FindEntity( child->spawnArgs.GetString( "bind" ) );
-			int found = -1;
-			for( int j = 0; j < carried.Num() && found < 0; j++ )
-			{
-				found = carried[j].ent == master ? j : -1;
-			}
-			if( found < 0 )
-			{
-				continue;
-			}
-			const recordPosed_t m = carried[found];
-			// the offset the spawn bind takes: a translation for a master that kept its axis or a bind that ignores it
-			const bool rotate = m.fromAxis != m.toAxis && child->spawnArgs.GetBool( "bindOrientated", "1" );
-			const idMat3 rotation = rotate ? m.fromAxis.Transpose() * m.toAxis : mat3_identity;
-			const idVec3 origin = child->GetPhysics()->GetOrigin();
-			const idMat3 axis = child->GetPhysics()->GetAxis();
-			const idVec3 toOrigin = rotate ? m.toOrigin + ( origin - m.fromOrigin ) * rotation : origin + ( m.toOrigin - m.fromOrigin );
-			const idMat3 toAxis = rotate ? axis * rotation : axis;
-			child->SetOrigin( toOrigin );
-			child->SetAxis( toAxis );
-			child->GetPhysics()->PutToRest();
-			if( child->IsType( idMover_Binary::Type ) )
-			{
-				static_cast<idMover_Binary*>( child )->CarryRecordPositions( m.fromOrigin, rotation, m.toOrigin, rotate );
-			}
-			// a child the record moved already keeps its spawn pose as the from of its entry: its own children move by
-			// the whole of it
-			int self = -1;
-			for( int j = 0; j < carried.Num() && self < 0; j++ )
-			{
-				self = carried[j].ent == child ? j : -1;
-			}
-			if( self < 0 )
-			{
-				recordPosed_t& c = carried.Alloc();
-				c.ent = child;
-				c.fromOrigin = origin;
-				c.fromAxis = axis;
-				c.posed = false;
-				self = carried.Num() - 1;
-			}
-			carried[self].toOrigin = toOrigin;
-			carried[self].toAxis = toAxis;
-			pending[i] = NULL;
-			progress = true;
+			found = carried[j].ent == master ? j : -1;
 		}
+		if( found < 0 )
+		{
+			continue;
+		}
+		const recordPosed_t m = carried[found];
+		// the offset the spawn bind takes: a translation for a master that kept its axis or a bind that ignores it
+		const bool rotate = m.fromAxis != m.toAxis && child->spawnArgs.GetBool( "bindOrientated", "1" );
+		const idMat3 rotation = rotate ? m.fromAxis.Transpose() * m.toAxis : mat3_identity;
+		const idVec3 origin = child->GetPhysics()->GetOrigin();
+		const idMat3 axis = child->GetPhysics()->GetAxis();
+		const idVec3 toOrigin = rotate ? m.toOrigin + ( origin - m.fromOrigin ) * rotation : origin + ( m.toOrigin - m.fromOrigin );
+		const idMat3 toAxis = rotate ? axis * rotation : axis;
+		child->SetOrigin( toOrigin );
+		child->SetAxis( toAxis );
+		child->GetPhysics()->PutToRest();
+		if( child->IsType( idMover_Binary::Type ) )
+		{
+			static_cast<idMover_Binary*>( child )->CarryRecordPositions( m.fromOrigin, rotation, m.toOrigin, rotate );
+		}
+		// a child the record moved already keeps its spawn pose as the from of its entry: its own children move by
+		// the whole of it
+		int self = -1;
+		for( int j = 0; j < carried.Num() && self < 0; j++ )
+		{
+			self = carried[j].ent == child ? j : -1;
+		}
+		if( self < 0 )
+		{
+			recordPosed_t& c = carried.Alloc();
+			c.ent = child;
+			c.fromOrigin = origin;
+			c.fromAxis = axis;
+			c.posed = false;
+			self = carried.Num() - 1;
+		}
+		carried[self].toOrigin = toOrigin;
+		carried[self].toAxis = toAxis;
 	}
 }
 //puncho end

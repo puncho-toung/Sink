@@ -6549,14 +6549,22 @@ bool idEntity::ApplyRecordVisibility( idRecordIn& rec )
 	{
 		return false;
 	}
+	// only a change: a created entry always carries Visibility, and the subclasses' Show and Hide (idAI's takedamage,
+	// contents and ambient sound, idActor's bound lights, idMoveable's contents) are not idempotent
 	if( hidden )
 	{
-		Hide();
+		if( !IsHidden() )
+		{
+			Hide();
+		}
 	}
 	else
 	{
 		CancelEvents( &EV_Hide );
-		Show();
+		if( IsHidden() )
+		{
+			Show();
+		}
 	}
 	return true;
 }

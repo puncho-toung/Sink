@@ -830,7 +830,9 @@ void idMapGraphDirector::UpdateExitDoors( bool atLoad )
 				door->Lock( 0 );
 			}
 		}
-		else if( !door->IsLocked() || door->IsOpen() )
+		//puncho - P2b.1.2 (review): open in the spawn frame: IsOpen is the live frame's, where a sealed start_open exit sits
+		// shut at pos2 and Lock's Close would drive it to the open end
+		else if( !door->IsLocked() || door->RecordAtPosition2() )
 		{
 			door->Lock( 1 );
 		}
