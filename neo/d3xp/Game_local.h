@@ -715,6 +715,13 @@ public:
 	entityBudget_t			GetEntityBudgetClass( const idTypeInfo& type, const idDict& args ) const;
 	bool					PrepareBudgetSpawn( entityBudget_t budget, const idDict& args );
 	void					JoinEntityBudget( idEntity* entity, entityBudget_t budget );
+	void					LeaveEntityBudget( idEntity* entity );
+	//puncho start - P2b.1.10c: the corpse class (Game_local.cpp, CorpseBudgetOn)
+	bool					CorpseBudgetOn() const;
+	void					JoinCorpseBudget( idEntity* entity );
+	void					ReplaceInEntityBudget( idEntity* from, idEntity* to );
+	void					EnforceCorpseBudget( const idEntity* keep, bool deleteCorpses );
+	//puncho end
 	entityBudgetState_t		entityBudgets[NUM_BUDGETS];	//puncho - P2b.1.10a
 	int					budgetFreeSlots[2], budgetHighWater;
 	uint32					budgetJoinCounter;	//puncho - P2b.1.3: JoinEntityBudget stamps ++budgetJoinCounter; 0 at map start, the restored maximum seq + 1 after a restore (so the next stamp is max + 2; order is what matters)

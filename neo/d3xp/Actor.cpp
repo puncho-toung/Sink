@@ -2452,6 +2452,7 @@ void idActor::Gib( const idVec3& dir, const char* damageDefName )
 		return;
 	}
 	idAFEntity_Gibbable::Gib( dir, damageDefName );
+	gameLocal.LeaveEntityBudget( this );	//puncho - P2b.1.10c: a gibbed body is no corpse; EV_Gibbed removes it
 	if( head.GetEntity() )
 	{
 		head.GetEntity()->Hide();

@@ -4509,6 +4509,11 @@ void idAI::Killed( idEntity* inflictor, idEntity* attacker, int damage, const id
 
 	ClearEnemy();
 	AI_DEAD	= true;
+	//puncho - P2b.1.10c: the body joins the corpse class (idGameLocal::JoinCorpseBudget); a gib after this leaves it
+	if( !IsGibbed() )
+	{
+		gameLocal.JoinCorpseBudget( this );
+	}
 
 	// make monster nonsolid
 	physicsObj.SetContents( 0 );

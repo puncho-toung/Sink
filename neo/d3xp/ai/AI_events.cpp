@@ -1068,6 +1068,7 @@ void idAI::Event_SetHealth( float newHealth )
 	if( health > 0 )
 	{
 		AI_DEAD = false;
+		gameLocal.LeaveEntityBudget( this );	//puncho - P2b.1.10c (stage plan rev 3, Astra 7): a revive leaves the corpse class, never evicted alive
 	}
 	else
 	{

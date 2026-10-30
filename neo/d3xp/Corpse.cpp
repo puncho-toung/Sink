@@ -40,6 +40,12 @@ void idCorpse::Spawn()
 	fl.networkSync = true;
 	spawnArgs.Set( "persist_lifetime", "-1" );
 	BecomeInactive( TH_ALL );
+	//puncho - P2b.1.10c: a corpse joins the corpse class; one a settle makes takes its monster's place there (Capture),
+	// and one a record or a save builds evicts nothing: the cap waits for the next death or settle
+	if( gameLocal.CorpseBudgetOn() )
+	{
+		gameLocal.JoinEntityBudget( this, BUDGET_CORPSE );
+	}
 }
 
 bool idCorpse::Capture( idAI* actor )
@@ -55,6 +61,7 @@ bool idCorpse::Capture( idAI* actor )
 		return false;
 	}
 	spawnArgs.SetInt( "persist_lifetime", actor->spawnArgs.GetInt( "persist_lifetime", "-1" ) );
+	gameLocal.ReplaceInEntityBudget( actor, this );	//puncho - P2b.1.10c: the class keeps the monster's death order
 	EnforceLiveCap();
 	return true;
 }
@@ -65,6 +72,12 @@ bool idCorpse::Capture( idAI* actor )
 // marks its ordinal removed for the clients and the record
 void idCorpse::EnforceLiveCap()
 {
+	//puncho - P2b.1.10c: while the corpse class runs it is the live cap (oldest death first, its monsters counted)
+	if( gameLocal.CorpseBudgetOn() )
+	{
+		gameLocal.EnforceCorpseBudget( this, true );
+		return;
+	}
 	const int cap = g_recordCapCorpses.GetInteger();
 	if( cap <= 0 || common->IsClient() )
 	{
