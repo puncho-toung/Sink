@@ -35,8 +35,6 @@ If you have questions concerning this license or the applicable additional terms
 int			c_faceLeafs;
 
 
-extern	int	c_nodes;
-
 void RemovePortalFromNode( uPortal_t* portal, node_t* l );
 
 node_t* NodeForPoint( node_t* node, const idVec3& origin )

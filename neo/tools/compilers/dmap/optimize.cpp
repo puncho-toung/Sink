@@ -2145,10 +2145,6 @@ This will also fix tjunctions
 
 ===================
 */
-extern idCVar dmap_phaseTimes;
-extern int dmapOptimizeGroups;
-extern int dmapMaxGroupTris;
-
 void	OptimizeGroupList( optimizeGroup_t* groupList )
 {
 	int			c_in, c_edge, c_tjunc2;
