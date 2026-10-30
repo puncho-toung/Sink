@@ -312,8 +312,8 @@ bool idWorldStore::EncodeCreated( idEntity* ent, const recordFrame_t& frame, idF
 		return false;
 	}
 	uint64 nextIdentity = nextCreatedId;
-	uint64 identity = strtoull( ent->spawnArgs.GetString( "_worldCreatedId", "0" ), NULL, 10 );
-	uint64 created = strtoull( ent->spawnArgs.GetString( "_worldCreatedTime", "0" ), NULL, 10 );
+	uint64 identity = ent->worldCreatedId;
+	uint64 created = ( uint64 )ent->worldCreatedTime;
 	const bool newIdentity = identity == 0;
 	if( newIdentity )
 	{
@@ -325,7 +325,7 @@ bool idWorldStore::EncodeCreated( idEntity* ent, const recordFrame_t& frame, idF
 	idEntity* parent = ent->GetBindMaster();
 	if( parent != NULL )
 	{
-		parentIdentity = strtoull( parent->spawnArgs.GetString( "_worldCreatedId", "0" ), NULL, 10 );
+		parentIdentity = parent->worldCreatedId;
 		if( parentIdentity == 0 && parent->CanCrossTransition() )
 		{
 			parentIdentity = nextIdentity++;
@@ -352,13 +352,13 @@ bool idWorldStore::EncodeCreated( idEntity* ent, const recordFrame_t& frame, idF
 	{
 		if( newIdentity )
 		{
-			ent->spawnArgs.Set( "_worldCreatedId", va( "%llu", ( unsigned long long )identity ) );
-			ent->spawnArgs.Set( "_worldCreatedTime", va( "%lld", ( long long )created ) );
+			ent->worldCreatedId = identity;
+			ent->worldCreatedTime = ( int64 )created;
 		}
 		if( newParentIdentity )
 		{
-			parent->spawnArgs.Set( "_worldCreatedId", va( "%llu", ( unsigned long long )parentIdentity ) );
-			parent->spawnArgs.Set( "_worldCreatedTime", va( "%lld", ( long long )gameLocal.GetWorldTime() ) );
+			parent->worldCreatedId = parentIdentity;
+			parent->worldCreatedTime = gameLocal.GetWorldTime();
 		}
 		nextCreatedId = nextIdentity;
 	}
@@ -445,8 +445,8 @@ idEntity* idWorldStore::SpawnCreatedEntry( const char* unit, const char* def, ui
 				delete corpse;
 				return NULL;
 			}
-			corpse->spawnArgs.Set( "_worldCreatedId", va( "%llu", ( unsigned long long )id ) );
-			corpse->spawnArgs.Set( "_worldCreatedTime", va( "%llu", ( unsigned long long )when ) );
+			corpse->worldCreatedId = id;
+			corpse->worldCreatedTime = when;
 		}
 		return corpse;
 	}
@@ -463,13 +463,13 @@ idEntity* idWorldStore::SpawnCreatedEntry( const char* unit, const char* def, ui
 	args.Set( "classname", def );
 	args.SetBool( "dropped", true );
 	args.SetInt( "persist_lifetime", lifetime );
-	args.Set( "_worldCreatedId", va( "%llu", ( unsigned long long )id ) );
-	args.Set( "_worldCreatedTime", va( "%llu", ( unsigned long long )when ) );
 	idEntity* ent = NULL;
 	if( !gameLocal.SpawnEntityDef( args, &ent ) || ent == NULL )
 	{
 		return NULL;
 	}
+	ent->worldCreatedId = id;	//puncho - P2b.1.3: members, no longer spawn keys
+	ent->worldCreatedTime = when;
 	rec.Rewind();
 	if( !RecordSectionsFit( ent, rec ) || ent->ApplyRecord( rec, frame ) != RECORD_APPLIED || !rec.Done() )
 	{
@@ -482,6 +482,18 @@ idEntity* idWorldStore::SpawnCreatedEntry( const char* unit, const char* def, ui
 }
 
 
+//puncho - P2b.1.3: the bind a created entry's Bind field applied, held until BindCreatedRecords
+void idWorldStore::AddPendingBind( const idEntity* ent, uint64 parent, int joint, int body, bool orientated )
+{
+	pendingBind_t& bind = pendingBinds.Alloc();
+	bind.parent = parent;
+	bind.entityNumber = ent->entityNumber;
+	bind.spawnId = gameLocal.GetSpawnId( ent );
+	bind.joint = ( short )joint;
+	bind.body = ( short )body;
+	bind.orientated = orientated;
+}
+
 void idWorldStore::BindCreatedRecords()
 {
 	struct bindRow_t
@@ -489,12 +501,14 @@ void idWorldStore::BindCreatedRecords()
 		idEntity* entity;
 		uint64 id, parent;
 		int parentIndex, depth;
+		int joint, body;
+		bool orientated;
 	};
 	idList<bindRow_t, TAG_GAME> rows;
 	idHashIndex identities;
 	for( idEntity* ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
 	{
-		const uint64 id = strtoull( ent->spawnArgs.GetString( "_worldCreatedId", "0" ), NULL, 10 );
+		const uint64 id = ent->worldCreatedId;
 		if( id == 0 )
 		{
 			continue;
@@ -502,11 +516,39 @@ void idWorldStore::BindCreatedRecords()
 		bindRow_t row;
 		row.entity = ent;
 		row.id = id;
-		row.parent = strtoull( ent->spawnArgs.GetString( "_worldBindParent", "0" ), NULL, 10 );
+		row.parent = 0;
 		row.parentIndex = -1;
 		row.depth = -1;
+		row.joint = -1;
+		row.body = -1;
+		row.orientated = false;
 		identities.Add( identities.GenerateKey( ( int )id, ( int )( id >> 32 ) ), rows.Append( row ) );
 	}
+	//puncho start - P2b.1.3: each pending bind onto its entity's row, found by the entity's created identity; one whose
+	// entity is gone since its Bind field applied, or that never took an identity, binds nothing
+	for( int i = 0; i < pendingBinds.Num(); i++ )
+	{
+		const pendingBind_t& bind = pendingBinds[i];
+		idEntity* ent = gameLocal.entities[bind.entityNumber];
+		if( ent == NULL || gameLocal.GetSpawnId( ent ) != bind.spawnId || ent->worldCreatedId == 0 )
+		{
+			continue;
+		}
+		const uint64 id = ent->worldCreatedId;
+		for( int j = identities.First( identities.GenerateKey( ( int )id, ( int )( id >> 32 ) ) ); j != -1; j = identities.Next( j ) )
+		{
+			if( rows[j].entity == ent )
+			{
+				rows[j].parent = bind.parent;
+				rows[j].joint = bind.joint;
+				rows[j].body = bind.body;
+				rows[j].orientated = bind.orientated;
+				break;
+			}
+		}
+	}
+	pendingBinds.Clear();
+	//puncho end
 	for( int i = 0; i < rows.Num(); i++ )
 	{
 		if( rows[i].parent == 0 )
@@ -538,8 +580,8 @@ void idWorldStore::BindCreatedRecords()
 		}
 		idEntity* ent = rows[i].entity;
 		idEntity* parent = rows[i].parentIndex >= 0 ? rows[rows[i].parentIndex].entity : NULL;
-		const int joint = ent->spawnArgs.GetInt( "_worldBindJoint", "-1" );
-		const int body = ent->spawnArgs.GetInt( "_worldBindBody", "-1" );
+		const int joint = rows[i].joint;
+		const int body = rows[i].body;
 		if( cursor < 0 || depth > rows.Num() || parent == ent || parent == NULL || joint < -1 || body < -1 || ( joint >= 0 && ( body >= 0 || parent->GetAnimator() == NULL || joint >= parent->GetAnimator()->NumJoints() ) ) || ( body >= 0 && body >= parent->GetPhysics()->GetNumClipModels() ) )
 		{
 			gameLocal.Warning( "record: invalid or missing created bind parent for %s", ent->name.c_str() );
@@ -564,9 +606,9 @@ void idWorldStore::BindCreatedRecords()
 			}
 			idEntity* ent = rows[i].entity;
 			idEntity* parent = rows[rows[i].parentIndex].entity;
-			const int joint = ent->spawnArgs.GetInt( "_worldBindJoint", "-1" );
-			const int body = ent->spawnArgs.GetInt( "_worldBindBody", "-1" );
-			const bool orientated = ent->spawnArgs.GetBool( "_worldBindOrientated" );
+			const int joint = rows[i].joint;
+			const int body = rows[i].body;
+			const bool orientated = rows[i].orientated;
 			if( joint >= 0 )
 			{
 				ent->BindToJoint( parent, ( jointHandle_t )joint, orientated );

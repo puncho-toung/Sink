@@ -93,6 +93,7 @@ void idWorldStore::Clear()
 	records.Clear();
 	dungeonRecords.Clear();
 	mapSpawned.Clear();
+	pendingBinds.Clear();	//puncho - P2b.1.3
 	worldName.Clear();
 	instanceId = 0;
 	currentNode = 0;
@@ -196,6 +197,7 @@ void idWorldStore::BeginSpawn()
 		gameLocal.Error( "World map has more than 65535 authored ordinals" );
 	}
 	mapSpawned.Clear();
+	pendingBinds.Clear();	//puncho - P2b.1.3
 	memset( removed, 0, sizeof( removed ) );
 	committed = false;
 }
@@ -253,7 +255,7 @@ void idWorldStore::MarkDeparted( idEntity* ent )
 	{
 		mapSpawned[ent->mapSpawnIndex].departed = true;
 	}
-	ent->spawnArgs.SetBool( "_worldDeparted", true );
+	ent->worldFlags |= WORLD_FLAG_DEPARTED;	//puncho - P2b.1.3: a saved member, not a spawnArgs key
 }
 
 //puncho - P2.4 (bug review 2026-10-28): idItem::Pickup marks the item it gave, and the record removes a marked item on
@@ -263,7 +265,7 @@ void idWorldStore::MarkTaken( idEntity* ent )
 {
 	if( IsActive() )
 	{
-		ent->spawnArgs.SetBool( "_worldTaken", true );
+		ent->worldFlags |= WORLD_FLAG_TAKEN;	//puncho - P2b.1.3: a saved member, not a spawnArgs key
 	}
 }
 
@@ -321,7 +323,7 @@ void idWorldStore::Commit( bool leaving )
 	for( int i = MAX_CLIENTS; i < MAX_GENTITIES; i++ )
 	{
 		idEntity* ent = gameLocal.entities[i];
-		if( ent == NULL || ent->spawnArgs.GetBool( "_worldDeparted" ) )
+		if( ent == NULL || ( ent->worldFlags & WORLD_FLAG_DEPARTED ) )
 		{
 			continue;
 		}
@@ -335,9 +337,9 @@ void idWorldStore::Commit( bool leaving )
 		{
 			born = static_cast<idCorpse*>( ent )->DeathTime();
 		}
-		else if( ent->mapSpawnIndex < 0 && !ent->IsType( idPlayer::Type ) && ent->spawnArgs.GetString( "_worldCreatedId", "0" )[0] != '0' )
+		else if( ent->mapSpawnIndex < 0 && !ent->IsType( idPlayer::Type ) && ent->worldCreatedId != 0 )
 		{
-			born = strtoll( ent->spawnArgs.GetString( "_worldCreatedTime", "0" ), NULL, 10 );
+			born = ent->worldCreatedTime;
 		}
 		else
 		{
@@ -415,7 +417,7 @@ void idWorldStore::Commit( bool leaving )
 	{
 		const mapSpawnRow_t& row = mapSpawned[i];
 		idEntity* ent = row.departed ? NULL : RecordEntity( row );
-		if( ent != NULL && ( RecordExcluded( excluded, ent ) || ent->spawnArgs.GetBool( "_worldTaken" ) ) )
+		if( ent != NULL && ( RecordExcluded( excluded, ent ) || ( ent->worldFlags & WORLD_FLAG_TAKEN ) ) )
 		{
 			ent = NULL;
 		}
@@ -555,20 +557,20 @@ void idWorldStore::Commit( bool leaving )
 	for( idEntity* ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
 	{
 		const int lifetime = ent->spawnArgs.GetInt( "persist_lifetime", ent->spawnArgs.GetBool( "dropped" ) ? "-1" : "0" );
-		if( ent->mapSpawnIndex >= 0 || ( ent->GetBindMaster() != NULL && ( ent->spawnArgs.GetString( "_worldCreatedId", "0" )[0] == '0' || ent->GetBindMaster()->spawnArgs.GetString( "_worldCreatedId", "0" )[0] == '0' ) ) || ent->IsType( idPlayer::Type ) || ent->spawnArgs.GetBool( "_worldDeparted" ) || lifetime == 0 || RecordExcluded( excluded, ent ) || ent->spawnArgs.GetBool( "_worldTaken" ) )
+		if( ent->mapSpawnIndex >= 0 || ( ent->GetBindMaster() != NULL && ( ent->worldCreatedId == 0 || ent->GetBindMaster()->worldCreatedId == 0 ) ) || ent->IsType( idPlayer::Type ) || ( ent->worldFlags & WORLD_FLAG_DEPARTED ) || lifetime == 0 || RecordExcluded( excluded, ent ) || ( ent->worldFlags & WORLD_FLAG_TAKEN ) )
 		{
 			continue;
 		}
 		createdCandidate_t row;
 		row.ent = ent;
-		row.id = strtoull( ent->spawnArgs.GetString( "_worldCreatedId", "0" ), NULL, 10 );
+		row.id = ent->worldCreatedId;
 		if( row.id == 0 )
 		{
 			row.id = nextCreatedId++;
-			ent->spawnArgs.Set( "_worldCreatedId", va( "%llu", ( unsigned long long )row.id ) );
-			ent->spawnArgs.Set( "_worldCreatedTime", va( "%lld", ( long long )gameLocal.GetWorldTime() ) );
+			ent->worldCreatedId = row.id;
+			ent->worldCreatedTime = gameLocal.GetWorldTime();
 		}
-		row.time = strtoull( ent->spawnArgs.GetString( "_worldCreatedTime", "0" ), NULL, 10 );
+		row.time = ( uint64 )ent->worldCreatedTime;
 		row.noCap = ent->spawnArgs.GetBool( "persist_nocap" );
 		if( lifetime > 0 && ( uint64 )gameLocal.GetWorldTime() >= row.time + ( uint64 )lifetime * 1000 )
 		{
@@ -1577,12 +1579,12 @@ void idWorldStore::DrawDebug() const
 	{
 		for( idEntity* ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
 		{
-			if( ent->mapSpawnIndex < 0 && ent->spawnArgs.GetString( "_worldCreatedId", "0" )[0] == '0' )
+			if( ent->mapSpawnIndex < 0 && ent->worldCreatedId == 0 )
 			{
 				continue;
 			}
 			gameRenderWorld->DebugBounds( ent->IsType( idCorpse::Type ) ? colorRed : colorGreen, ent->GetPhysics()->GetAbsBounds() );
-			gameRenderWorld->DrawText( va( "ord %d created %s", ent->mapSpawnIndex, ent->spawnArgs.GetString( "_worldCreatedId", "0" ) ), ent->GetPhysics()->GetOrigin(), 0.15f, colorWhite, view );
+			gameRenderWorld->DrawText( va( "ord %d created %llu", ent->mapSpawnIndex, ( unsigned long long )ent->worldCreatedId ), ent->GetPhysics()->GetOrigin(), 0.15f, colorWhite, view );
 		}
 	}
 	if( g_showLandmarks.GetBool() )

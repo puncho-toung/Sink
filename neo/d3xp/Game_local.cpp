@@ -4515,6 +4515,20 @@ int idGameLocal::GetEntityBudgetClass( const idTypeInfo& type, const idDict& arg
 	return -1;
 }
 
+//puncho - P2b.1.3: a restore's rejoin order, the join seq and then the entity number
+class idSortBudgetJoin : public idSort_Quick<idEntity*, idSortBudgetJoin>
+{
+public:
+	int Compare( idEntity* const& a, idEntity* const& b ) const
+	{
+		if( a->budgetJoinSeq != b->budgetJoinSeq )
+		{
+			return a->budgetJoinSeq < b->budgetJoinSeq ? -1 : 1;
+		}
+		return a->entityNumber - b->entityNumber;
+	}
+};
+
 void idGameLocal::ResetEntityBudgets( bool restore )
 {
 	for( int i = 0; i < 4; i++ )
@@ -4525,6 +4539,7 @@ void idGameLocal::ResetEntityBudgets( bool restore )
 	budgetFreeSlots[0] = ENTITYNUM_FIRST_NON_REPLICATED - MAX_CLIENTS;
 	budgetFreeSlots[1] = ENTITYNUM_MAX_NORMAL - ENTITYNUM_FIRST_NON_REPLICATED;
 	budgetHighWater = 0;
+	budgetJoinCounter = 0;
 	mapStaticSkipCount = 0;
 	budgetAlarm[0] = budgetAlarm[1] = 0;
 	budgetSpawnRefused = false;
@@ -4532,24 +4547,38 @@ void idGameLocal::ResetEntityBudgets( bool restore )
 	{
 		for( int i = MAX_CLIENTS; i < ENTITYNUM_MAX_NORMAL; i++ )
 		{
-			idEntity* ent = entities[i];
-			if( ent != NULL )
+			if( entities[i] != NULL )
 			{
 				budgetFreeSlots[i >= ENTITYNUM_FIRST_NON_REPLICATED]--;
-				ent->budgetClass = -1;
 			}
 		}
-		//puncho start - entity budgets (P2 review): only what a spawn classed rejoins, with the class it saved, in spawn
-		// order (spawnedEntities is saved in order), which is join order. The type ladder would also class the map's
-		// func_fx and debris and the props a load spawned, all unclassed under GAMESTATE_STARTUP, and slot order is not age
+		//puncho start - entity budgets (P2 review, P2b.1.3): only what a spawn classed rejoins, with the class it saved
+		// (WorldIdentity), in the order it joined: by budgetJoinSeq, ties by entity number, so an entity that joined
+		// after its spawn keeps its age. The type ladder would also class the map's func_fx and debris and the props a
+		// load spawned, all unclassed under GAMESTATE_STARTUP, and slot order is not age. A save before RECORD_IDENTITY
+		// holds no seq (RestoreLegacyWorldKeys leaves 0, a join never stamps it): its entities take their place in
+		// spawnedEntities, which the save keeps in spawn order, the order they rejoined in before
+		idList<idEntity*, TAG_GAME> joined;
 		for( idEntity* ent = spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
 		{
-			const int budget = ent->spawnArgs.GetInt( "_budgetClass", "-1" );
-			if( budget < 4 )
+			if( ent->budgetClass >= 0 )
 			{
-				JoinEntityBudget( ent, budget );
+				if( ent->budgetJoinSeq == 0 )
+				{
+					ent->budgetJoinSeq = ( uint32 )joined.Num() + 1;
+				}
+				joined.Append( ent );
 			}
 		}
+		joined.SortWithTemplate( idSortBudgetJoin() );
+		for( int i = 0; i < joined.Num(); i++ )
+		{
+			idEntity* ent = joined[i];
+			ent->budgetNode.AddToEnd( entityBudgets[ent->budgetClass] );
+			budgetLive[ent->budgetClass]++;
+		}
+		// past every restored stamp, so a later join is younger than each of them
+		budgetJoinCounter = ( joined.Num() > 0 ? joined[joined.Num() - 1]->budgetJoinSeq : 0 ) + 1;
 		//puncho end
 		budgetHighWater = ENTITYNUM_MAX_NORMAL - MAX_CLIENTS - budgetFreeSlots[0] - budgetFreeSlots[1];
 	}
@@ -4585,8 +4614,7 @@ bool idGameLocal::PrepareBudgetSpawn( int budget, const idDict& args )
 		if( oldest != NULL )
 		{
 			oldest->budgetNode.Remove();
-			oldest->budgetClass = -1;
-			oldest->spawnArgs.Delete( "_budgetClass" );	//puncho - entity budgets (P2 review): a save before EV_Remove runs must not rejoin it
+			oldest->budgetClass = -1;	//puncho - entity budgets (P2 review, P2b.1.3): saved, so a save before EV_Remove runs does not rejoin it
 			budgetLive[budget]--;
 			if( budgetEvicted[budget] < INT_MAX )
 			{
@@ -4603,21 +4631,29 @@ void idGameLocal::JoinEntityBudget( idEntity* ent, int budget )
 	if( budget >= 0 && ent != NULL )
 	{
 		ent->budgetClass = budget;
+		ent->budgetJoinSeq = ++budgetJoinCounter;	//puncho - P2b.1.3: the class and the seq are saved (WorldIdentity)
 		ent->budgetNode.AddToEnd( entityBudgets[budget] );
 		budgetLive[budget]++;
-		//puncho - entity budgets (P2 review): budgetClass is never saved; the spawnArgs are, so the class rides there for
-		// ResetEntityBudgets. Four shared pool strings, never a unique value per spawn
-		ent->spawnArgs.SetInt( "_budgetClass", budget );
 	}
 }
 
-void idGameLocal::ListBudgets() const
+void idGameLocal::ListBudgets( bool order ) const
 {
 	Printf( "ent_used %i ent_highWater %i free_normal %i free_nonreplicated %i\n", ENTITYNUM_MAX_NORMAL - MAX_CLIENTS - budgetFreeSlots[0] - budgetFreeSlots[1], budgetHighWater, budgetFreeSlots[0], budgetFreeSlots[1] );
 	for( int i = 0; i < 4; i++ )
 	{
 		Printf( "bud_%s_live %i bud_%s_evicted %i bud_%s_refused %i\n", budgetNames[i], budgetLive[i], budgetNames[i], budgetEvicted[i], budgetNames[i], budgetRefused[i] );
 	}
+	//puncho start - P2b.1.3: each class oldest first, the order it evicts in, with the seq a restore rejoins it by
+	for( int i = 0; i < 4 && order; i++ )
+	{
+		int position = 0;
+		for( idEntity* ent = entityBudgets[i].Next(); ent != NULL; ent = ent->budgetNode.Next() )
+		{
+			Printf( "bud_%s_order %i entity=%i seq=%u name=%s\n", budgetNames[i], position++, ent->entityNumber, ent->budgetJoinSeq, ent->name.c_str() );
+		}
+	}
+	//puncho end
 }
 
 void idGameLocal::RegisterEntity( idEntity* ent, int forceSpawnId, const idDict& spawnArgsToCopy )

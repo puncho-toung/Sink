@@ -685,7 +685,7 @@ public:
 	//puncho end
 	const char* 			GetMapName() const;
 	void					ListMapStatics() const;
-	void					ListBudgets() const;
+	void					ListBudgets( bool order ) const;
 	bool					SpawnRefused() const { return budgetSpawnRefused; }
 	void					ResetEntityBudgets( bool restore );
 	int					GetEntityBudgetClass( const idTypeInfo& type, const idDict& args ) const;
@@ -694,6 +694,7 @@ public:
 	idLinkList<idEntity>	entityBudgets[4];
 	int					budgetLive[4], budgetEvicted[4], budgetRefused[4];
 	int					budgetFreeSlots[2], budgetHighWater;
+	uint32					budgetJoinCounter;	//puncho - P2b.1.3: the last budgetJoinSeq JoinEntityBudget stamped
 	int					mapStaticSkipCount;
 	int					budgetAlarm[2];
 	bool					budgetSpawnRefused;

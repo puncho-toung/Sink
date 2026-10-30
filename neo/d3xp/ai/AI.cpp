@@ -6909,8 +6909,13 @@ void idAI::Event_PersistCorpse()
 				if( corpse->Capture( this ) )
 				{
 					worldStore.ReplaceMapEntity( this, corpse );
-					corpse->spawnArgs.Set( "_worldCreatedId", spawnArgs.GetString( "_worldCreatedId", "0" ) );
-					corpse->spawnArgs.Set( "_worldCreatedTime", va( "%lld", ( long long )corpse->DeathTime() ) );
+					//puncho - P2b.1.3: a created AI's corpse keeps its identity, its death the created time; the time
+					// means nothing without an identity, so a map AI's corpse takes neither
+					if( worldCreatedId != 0 )
+					{
+						corpse->worldCreatedId = worldCreatedId;
+						corpse->worldCreatedTime = corpse->DeathTime();
+					}
 				}
 				else
 				{

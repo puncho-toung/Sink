@@ -35,6 +35,16 @@ struct mapSpawnRow_t
 	bool departed;
 };
 
+//puncho - P2b.1.3: a created entry's bind (ApplyRecordBind) until BindCreatedRecords applies it, by the entity's slot
+// and spawn id; the spawn id fails for an entity deleted since (a spawn that failed after its Bind field applied)
+struct pendingBind_t
+{
+	uint64 parent;
+	int entityNumber, spawnId;
+	short joint, body;
+	bool orientated;
+};
+
 struct worldMapRecord_t
 {
 	idStr world, map;
@@ -66,6 +76,7 @@ public:
 	void CommitCurrentMap();
 	void ApplyCurrentMap();
 	void BindCreatedRecords();
+	void AddPendingBind( const idEntity* ent, uint64 parent, int joint, int body, bool orientated );	//puncho - P2b.1.3
 	bool WriteCreated( idEntity* ent, const idVec3& landmark, idFile_Memory& out );
 	bool MeasureCreated( idEntity* ent, const idVec3& landmark, idFile_Memory& out );
 	idEntity* SpawnCreated( idFile_Memory& in, const idMat3& rotation, const idVec3& landmark );
@@ -189,6 +200,10 @@ private:
 	idList<idList<byte, TAG_GAME>, TAG_GAME> dungeonRecords;
 	unsigned short remains;
 	idList<worldMapRecord_t, TAG_GAME> records;
+	//puncho - P2b.1.3: derived per load, never saved: a save cannot fall between an apply and its BindCreatedRecords (both
+	// run inside the load); BindCreatedRecords empties it, Clear and BeginSpawn too (a slot's spawn ids start again with
+	// each map). A carry's spawns add nothing: they bind through the transition's own rows
+	idList<pendingBind_t, TAG_GAME> pendingBinds;
 	uint64 nextCreatedId;
 	uint64 retiringInstance;
 	idStr retiringDestination;

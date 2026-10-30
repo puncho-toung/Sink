@@ -60,5 +60,6 @@ const int BUILD_NUMBER_SAVE_VERSION_CORPSE_POLICY = 1426; // corpse per-entity p
 const int BUILD_NUMBER_SAVE_VERSION_DORMANT_WAKE = 1427; // P2 review stage 2: idEntity saves dormantWakeRequested and dormantWakeDeferredAt
 const int BUILD_NUMBER_SAVE_VERSION_MAP_REMOVED_ORDINAL = 1428; // P2 review stage 4a: SNAP_MAP_REMOVED bits by map ordinal (17 chunks); MREC rows are deltas with a SHOWN aspect; AI saves may hold a <settleCorpse> event
 const int BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA = 1429; // P2b.1.2: MREC v3 on the schema R channel (RF_ masks, sections, cellId frames), WSTO v4
-const int BUILD_NUMBER = BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA;
+const int BUILD_NUMBER_SAVE_VERSION_RECORD_IDENTITY = 1430; // P2b.1.3: WorldIdentity entry (world flags, budget class and join seq, created id and time) replaces the _world*/_budgetClass spawnArgs
+const int BUILD_NUMBER = BUILD_NUMBER_SAVE_VERSION_RECORD_IDENTITY;
 const int BUILD_NUMBER_MINOR = 0;

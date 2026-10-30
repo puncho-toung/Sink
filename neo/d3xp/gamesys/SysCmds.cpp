@@ -847,7 +847,7 @@ Cmd_SetViewpos_f
 */
 static void Cmd_ListBudgets_f( const idCmdArgs& args )
 {
-	gameLocal.ListBudgets();
+	gameLocal.ListBudgets( args.Argc() > 1 && idStr::Icmp( args.Argv( 1 ), "order" ) == 0 );	//puncho - P2b.1.3
 }
 
 static void Cmd_ListMapStatics_f( const idCmdArgs& args )
@@ -4380,7 +4380,7 @@ static void Cmd_RecordTest_f( const idCmdArgs& args )
 		int count = 0;
 		for( idEntity* ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
 		{
-			if( ent->mapSpawnIndex < 0 && ent->GetBindMaster() != NULL && strtoull( ent->spawnArgs.GetString( "_worldCreatedId", "0" ), NULL, 10 ) != 0 )
+			if( ent->mapSpawnIndex < 0 && ent->GetBindMaster() != NULL && ent->worldCreatedId != 0 )
 			{
 				count++;
 			}
@@ -4461,6 +4461,22 @@ static void Cmd_RecordTest_f( const idCmdArgs& args )
 static void Cmd_ListMapRecords_f( const idCmdArgs& args )
 {
 	worldStore.ListRecords();
+	//puncho start - P2b.1.3: the spawnArgs keys builds before RECORD_IDENTITY kept the world identity in; a load
+	// deletes them (idEntity::RestoreLegacyWorldKeys) and nothing writes them, so 0
+	int legacyKeys = 0;
+	for( idEntity* ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
+	{
+		for( const idKeyValue* kv = ent->spawnArgs.MatchPrefix( "_world" ); kv != NULL; kv = ent->spawnArgs.MatchPrefix( "_world", kv ) )
+		{
+			legacyKeys++;
+		}
+		for( const idKeyValue* kv = ent->spawnArgs.MatchPrefix( "_budgetClass" ); kv != NULL; kv = ent->spawnArgs.MatchPrefix( "_budgetClass", kv ) )
+		{
+			legacyKeys++;
+		}
+	}
+	gameLocal.Printf( "record legacy keys=%d\n", legacyKeys );
+	//puncho end
 }
 
 static void Cmd_SetWorldTime_f( const idCmdArgs& args )
@@ -4556,7 +4572,7 @@ static void Cmd_DumpMapState_f( const idCmdArgs& args )
 	idList<dumpCreatedRow_t, TAG_GAME> created;
 	for( idEntity* ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
 	{
-		const uint64 id = strtoull( ent->spawnArgs.GetString( "_worldCreatedId", "0" ), NULL, 10 );
+		const uint64 id = ent->worldCreatedId;
 		if( ent->mapSpawnIndex < 0 && id != 0 )
 		{
 			dumpCreatedRow_t& row = created.Alloc();
@@ -4689,7 +4705,7 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "notarget",				Cmd_Notarget_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"disables the player as a target" );
 	cmdSystem->AddCommand( "noclip",				Cmd_Noclip_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"disables collision detection for the player" );
 	cmdSystem->AddCommand( "where",					Cmd_GetViewpos_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"prints the current view position" );
-	cmdSystem->AddCommand( "listBudgets", Cmd_ListBudgets_f, CMD_FL_GAME, "list transient budget counters and entity high water" );
+	cmdSystem->AddCommand( "listBudgets", Cmd_ListBudgets_f, CMD_FL_GAME, "list transient budget counters and entity high water; listBudgets order adds each class's join order" );
 	cmdSystem->AddCommand( "checkPVSAreas", Cmd_CheckPVSAreas_f, CMD_FL_GAME, "list entities touching more than four PVS areas" );
 	cmdSystem->AddCommand( "listDormancy", Cmd_ListDormancy_f, CMD_FL_GAME, "list authored dormancy entities and wake state" );
 	cmdSystem->AddCommand( "listMapStatics", Cmd_ListMapStatics_f, CMD_FL_GAME, "list static spawn-skip eligibility and retained entity numbers" );

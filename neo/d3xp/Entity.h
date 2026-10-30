@@ -195,6 +195,19 @@ inline void	ReadFromBitMsg( netBoolEvent_t& netEvent, const idBitMsg& msg )
 	X( s, Bind,			HAND,	R,	RAW,	13,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA )
 //puncho end
 
+//puncho start - P2b.1.3: idEntity's world identity, saved after mpGUIState as one HAND entry (SaveWorldIdentity,
+// RestoreWorldIdentity, Entity.cpp): a byte of worldFlags with bit 7 set when a created id follows, a byte of
+// budgetClass + 1, the int budgetJoinSeq when budgetClass >= 0, then the created id and time as two ints each (low,
+// high) when created: 2 bytes an entity, 4 more budgeted, 16 more created. Older saves kept it in spawnArgs keys
+// (RestoreLegacyWorldKeys)
+#define ENTITY_WORLD_SCHEMA( X, s ) \
+	X( s, WorldIdentity,	HAND,	S,	RAW,	0,	BUILD_NUMBER_SAVE_VERSION_RECORD_IDENTITY )
+
+// idEntity::worldFlags, the world store's marks
+static const int WORLD_FLAG_DEPARTED	= 1;	// carried out through a transition (MarkDeparted): never committed here again
+static const int WORLD_FLAG_TAKEN		= 2;	// an item a player picked up (MarkTaken): removed on revisit
+//puncho end
+
 class idEntity : public idClass
 {
 public:
@@ -206,7 +219,13 @@ public:
 
 	idLinkList<idEntity>	budgetNode;
 	int					mapSpawnIndex; // derived ordinal row; restored from ORDT
-	int					budgetClass;	// derived; rebuilt after restore, never on the wire
+	int					budgetClass;	// -1 none; saved (WorldIdentity), never on the wire
+	//puncho start - P2b.1.3: the world store's identity and the budget's join order, saved members (WorldIdentity)
+	uint64					worldCreatedId;		// the store's created identity, 0 none
+	int64					worldCreatedTime;	// world time the identity was taken, 0 without one
+	uint32					budgetJoinSeq;		// JoinEntityBudget's stamp: a restore rejoins each class in this order
+	uint8					worldFlags;			// WORLD_FLAG_DEPARTED, WORLD_FLAG_TAKEN
+	//puncho end
 	idLinkList<idEntity>	spawnNode;				// for being linked into spawnedEntities list
 	idLinkList<idEntity>	activeNode;				// for being linked into activeEntities list
 	idLinkList<idEntity>	aimAssistNode;			// linked into gameLocal.aimAssistEntities
@@ -277,6 +296,11 @@ public:
 
 	void					Save( idSaveGame* savefile ) const;
 	void					Restore( idRestoreGame* savefile );
+	//puncho start - P2b.1.3: ENTITY_WORLD_SCHEMA's HAND entry, and the reader of the keys older saves held instead
+	void					SaveWorldIdentity( idSaveGame* savefile ) const;
+	void					RestoreWorldIdentity( idRestoreGame* savefile );
+	void					RestoreLegacyWorldKeys();
+	//puncho end
 
 	const char* 			GetEntityDefName() const;
 	void					SetName( const char* name );

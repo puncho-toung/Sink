@@ -525,6 +525,10 @@ idEntity::idEntity():
 	budgetNode.SetOwner( this );
 	mapSpawnIndex = -1;
 	budgetClass = -1;
+	worldCreatedId = 0;
+	worldCreatedTime = 0;
+	budgetJoinSeq = 0;
+	worldFlags = 0;
 	spawnNode.SetOwner( this );
 	activeNode.SetOwner( this );
 
@@ -915,7 +919,110 @@ void idEntity::Save( idSaveGame* savefile ) const
 	}
 
 	savefile->WriteInt( mpGUIState );
+
+	ENTITY_WORLD_SCHEMA( SCHEMA_SAVE, ( *this ) )	//puncho - P2b.1.3: the world identity (Entity.h)
 }
+
+//puncho start - P2b.1.3: WorldIdentity, ENTITY_WORLD_SCHEMA's HAND entry
+static const byte WORLD_IDENTITY_CREATED = 0x80;	// the flags byte's bit 7: the created id and time follow
+
+/*
+================
+idEntity::SaveWorldIdentity
+================
+*/
+void idEntity::SaveWorldIdentity( idSaveGame* savefile ) const
+{
+	const bool created = worldCreatedId != 0;
+	savefile->WriteByte( ( byte )( worldFlags | ( created ? WORLD_IDENTITY_CREATED : 0 ) ) );
+	savefile->WriteByte( ( byte )( budgetClass + 1 ) );
+	if( budgetClass >= 0 )
+	{
+		savefile->WriteInt( ( int )budgetJoinSeq );
+	}
+	if( created )
+	{
+		savefile->WriteInt( ( int )( uint32 )worldCreatedId );
+		savefile->WriteInt( ( int )( uint32 )( worldCreatedId >> 32 ) );
+		savefile->WriteInt( ( int )( uint32 )worldCreatedTime );
+		savefile->WriteInt( ( int )( uint32 )( ( uint64 )worldCreatedTime >> 32 ) );
+	}
+}
+
+/*
+================
+idEntity::RestoreWorldIdentity
+
+A flag bit this build does not know, a budget class past the four (idGameLocal::entityBudgets) or a created id of 0
+is a malformed save.
+================
+*/
+void idEntity::RestoreWorldIdentity( idRestoreGame* savefile )
+{
+	byte flags, budget;
+	savefile->ReadByte( flags );
+	savefile->ReadByte( budget );
+	if( ( flags & ~( WORLD_IDENTITY_CREATED | WORLD_FLAG_DEPARTED | WORLD_FLAG_TAKEN ) ) != 0 || budget > 4 )
+	{
+		savefile->Error( "Invalid WorldIdentity of entity '%s' (flags %02x, budget %d)", name.c_str(), flags, budget );
+	}
+	worldFlags = flags & ( WORLD_FLAG_DEPARTED | WORLD_FLAG_TAKEN );
+	budgetClass = budget - 1;
+	budgetJoinSeq = 0;
+	if( budgetClass >= 0 )
+	{
+		int seq;
+		savefile->ReadInt( seq );
+		budgetJoinSeq = ( uint32 )seq;
+	}
+	worldCreatedId = 0;
+	worldCreatedTime = 0;
+	if( flags & WORLD_IDENTITY_CREATED )
+	{
+		int idLow, idHigh, timeLow, timeHigh;
+		savefile->ReadInt( idLow );
+		savefile->ReadInt( idHigh );
+		savefile->ReadInt( timeLow );
+		savefile->ReadInt( timeHigh );
+		worldCreatedId = ( uint64 )( uint32 )idLow | ( ( uint64 )( uint32 )idHigh << 32 );
+		worldCreatedTime = ( int64 )( ( uint64 )( uint32 )timeLow | ( ( uint64 )( uint32 )timeHigh << 32 ) );
+		if( worldCreatedId == 0 )
+		{
+			savefile->Error( "Invalid WorldIdentity of entity '%s' (created id 0)", name.c_str() );
+		}
+	}
+}
+
+/*
+================
+idEntity::RestoreLegacyWorldKeys
+
+A save before RECORD_IDENTITY kept the world identity in spawnArgs keys: each is parsed into its member and deleted,
+so no dict holds one after the load. The created ids are kept, never zeroed: a bound pair of a 1429 save stays bound
+through them (the commit's bind check, BindCreatedRecords), and a 1428 save's WSTO 3 keeps the nextCreatedId they were
+taken from. Such a save has no join seq: its budget classes rejoin in spawn order (ResetEntityBudgets). The bind keys
+lived only between an apply and its BindCreatedRecords, but a 1429 save kept them: they are deleted too.
+================
+*/
+void idEntity::RestoreLegacyWorldKeys()
+{
+	static const char* const legacyKeys[] =
+	{
+		"_worldCreatedId", "_worldCreatedTime", "_worldDeparted", "_worldTaken", "_budgetClass",
+		"_worldBindParent", "_worldBindJoint", "_worldBindBody", "_worldBindOrientated"
+	};
+	worldCreatedId = strtoull( spawnArgs.GetString( "_worldCreatedId", "0" ), NULL, 10 );
+	worldCreatedTime = worldCreatedId != 0 ? strtoll( spawnArgs.GetString( "_worldCreatedTime", "0" ), NULL, 10 ) : 0;
+	worldFlags = ( spawnArgs.GetBool( "_worldDeparted" ) ? WORLD_FLAG_DEPARTED : 0 ) | ( spawnArgs.GetBool( "_worldTaken" ) ? WORLD_FLAG_TAKEN : 0 );
+	const int budget = spawnArgs.GetInt( "_budgetClass", "-1" );
+	budgetClass = ( budget >= 0 && budget < 4 ) ? budget : -1;
+	budgetJoinSeq = 0;
+	for( int i = 0; i < ( int )ARRAY_COUNT( legacyKeys ); i++ )
+	{
+		spawnArgs.Delete( legacyKeys[i] );
+	}
+}
+//puncho end
 
 /*
 ================
@@ -1024,6 +1131,14 @@ void idEntity::Restore( idRestoreGame* savefile )
 	}
 
 	savefile->ReadInt( mpGUIState );
+
+	//puncho start - P2b.1.3: the world identity; an older save held it in spawnArgs, restored above
+	ENTITY_WORLD_SCHEMA( SCHEMA_RESTORE, ( *this ) )
+	if( savefile->GetBuildNumber() < BUILD_NUMBER_SAVE_VERSION_RECORD_IDENTITY )
+	{
+		RestoreLegacyWorldKeys();
+	}
+	//puncho end
 
 	// restore must retrieve modelDefHandle from the renderer
 	if( modelDefHandle != -1 )
@@ -6525,8 +6640,9 @@ void idEntity::WriteRecordBind( idRecordOut& rec ) const
 	rec.WriteByte( fl.bindOrientated ? 1 : 0 );
 }
 
-// BindCreatedRecords binds every created entity once all of them have spawned; until P2b.1.3 the bind goes through
-// these keys
+// BindCreatedRecords binds every created entity once all of them have spawned: the bind waits in the store's pending
+// list until then (P2b.1.3). A carry's entry binds through the transition's own rows (ApplyTransitionCarry), after the
+// map's BindCreatedRecords, so its bind is read and left
 bool idEntity::ApplyRecordBind( idRecordIn& rec )
 {
 	uint64 parent;
@@ -6536,10 +6652,10 @@ bool idEntity::ApplyRecordBind( idRecordIn& rec )
 	{
 		return false;
 	}
-	spawnArgs.Set( "_worldBindParent", va( "%llu", ( unsigned long long )parent ) );
-	spawnArgs.SetInt( "_worldBindJoint", joint );
-	spawnArgs.SetInt( "_worldBindBody", body );
-	spawnArgs.SetBool( "_worldBindOrientated", orientated != 0 );
+	if( rec.Frame().kind != RECORD_FRAME_CARRY )
+	{
+		worldStore.AddPendingBind( this, parent, joint, body, orientated != 0 );
+	}
 	return true;
 }
 
