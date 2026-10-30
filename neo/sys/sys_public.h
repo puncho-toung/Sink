@@ -524,6 +524,13 @@ uint64			Sys_Microseconds();
 double			Sys_GetClockTicks();
 double			Sys_ClockTicksPerSecond();
 
+//puncho start - P2b.0.3: hardware counters opened on the calling thread; counts accumulate since open
+// out[0]: PERF_COUNT_HW_CACHE_MISSES, out[1]: CPU cycles, out[2]: instructions (Linux; false elsewhere)
+bool			Sys_PerfCountersOpen();
+bool			Sys_PerfCountersRead( uint64 out[ 3 ] );
+void			Sys_PerfCountersClose();
+//puncho end
+
 // returns a selection of the CPUID_* flags
 cpuid_t			Sys_GetProcessorId();
 const char* 	Sys_GetProcessorString();

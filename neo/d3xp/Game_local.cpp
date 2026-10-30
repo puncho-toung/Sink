@@ -2989,6 +2989,8 @@ static const int	PASS_CALIBRATION_PAIRS = 100000;	// empty clock pairs timed whe
 static const int	PASS_CSV_COLUMNS = 38;				// the appended ai_profileLog columns
 static int			passLevel = 0;						// g_passProfile as read at the start of this tic
 static float		passOverheadNs = 0.0f;				// mean of one empty Sys_GetClockTicks pair, ns
+static bool			passCountersOn = false;				// level 2's counter group is open (on the thread running the tics)
+static uint64		passCounterBase[ 3 ];				// the counters at the last read
 
 /*
 ================
@@ -3006,18 +3008,52 @@ static ID_INLINE void PassLap( double& accum, double& mark )
 
 /*
 ================
+PassCountersLap
+
+  Level 2: reads the counter group, stores its change since the last read as pass's (pass -1 only sets the base),
+  then moves mark past the read, so no clock bracket holds the read's system call. A failed read leaves the tic's
+  level 2 columns blank.
+================
+*/
+static void PassCountersLap( passTicStats_t& ps, int pass, double& mark )
+{
+	if( !passCountersOn )
+	{
+		return;
+	}
+	uint64 now[ 3 ];
+	if( !Sys_PerfCountersRead( now ) )
+	{
+		ps.counted = false;
+		return;
+	}
+	if( pass >= 0 )
+	{
+		for( int i = 0; i < 3; i++ )
+		{
+			ps.counters[ pass ][ i ] = now[ i ] - passCounterBase[ i ];
+		}
+	}
+	memcpy( passCounterBase, now, sizeof( passCounterBase ) );
+	mark = Sys_GetClockTicks();
+}
+
+/*
+================
 idGameLocal::PassProfileBeginTic
 
   Reads g_passProfile once for the tic and decides whether the tic is timed: one whole tic in g_passProfileEvery,
   so a timed tic's walk, think sum and walk overhead come from the same entities, the players' usercmd thinks
   included (Astra item 6). Leaving level 0 calibrates the bracket: the mean of PASS_CALIBRATION_PAIRS back-to-back
-  clock reads, about 2 ms once, before the tic's first pass.
+  clock reads, about 2 ms once, before the tic's first pass. Level 2 opens the counter group here, on the thread
+  that runs the tics (the group counts its opener only); when it cannot, Sys_PerfCountersOpen prints its one line
+  and the level falls back to 1.
 ================
 */
 void idGameLocal::PassProfileBeginTic()
 {
 	passTag = PASS_TAG_NONE;
-	const int level = g_passProfile.GetInteger();
+	int level = g_passProfile.GetInteger();
 	if( level != passLevel )
 	{
 		if( passLevel == 0 && level > 0 )
@@ -3030,12 +3066,27 @@ void idGameLocal::PassProfileBeginTic()
 			}
 			passOverheadNs = ( float )( sum / PASS_CALIBRATION_PAIRS * 1.0e9 / Sys_ClockTicksPerSecond() );
 		}
+		if( level == 2 && !passCountersOn )
+		{
+			passCountersOn = Sys_PerfCountersOpen();
+			if( !passCountersOn )
+			{
+				level = 1;
+				g_passProfile.SetInteger( 1 );
+			}
+		}
+		else if( level < 2 && passCountersOn )
+		{
+			Sys_PerfCountersClose();
+			passCountersOn = false;
+		}
 		passLevel = level;
 	}
 	passTimed = passLevel > 0 && ( framenum % Max( 1, g_passProfileEvery.GetInteger() ) ) == 0;
 	if( passTimed )
 	{
 		memset( &passStats, 0, sizeof( passStats ) );
+		passStats.counted = passCountersOn;
 	}
 }
 //puncho end
@@ -3171,6 +3222,7 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			if( passTimed )
 			{
 				passMark = Sys_GetClockTicks();
+				PassCountersLap( passStats, -1, passMark );
 			}
 			//puncho end
 
@@ -3180,6 +3232,7 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			if( passTimed )
 			{
 				PassLap( passStats.tPVS, passMark );
+				PassCountersLap( passStats, PASS_COUNTED_PVS, passMark );
 			}
 			//puncho end
 
@@ -3189,6 +3242,7 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			if( passTimed )
 			{
 				PassLap( passStats.tSort, passMark );
+				PassCountersLap( passStats, PASS_COUNTED_SORT, passMark );
 				passStats.activeEnts = activeEntities.Num();
 			}
 			//puncho end
@@ -3211,6 +3265,7 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			if( passTimed )
 			{
 				passMark = Sys_GetClockTicks();
+				PassCountersLap( passStats, -1, passMark );
 				passTag = PASS_TAG_WALK;
 			}
 			//puncho end
@@ -3273,6 +3328,7 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			if( passTimed )
 			{
 				PassLap( passStats.tThinkWalk, passMark );
+				PassCountersLap( passStats, PASS_COUNTED_WALK, passMark );
 				passTag = PASS_TAG_TG2;
 			}
 			//puncho end
@@ -3369,6 +3425,7 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			if( passTimed )
 			{
 				passMark = Sys_GetClockTicks();
+				PassCountersLap( passStats, -1, passMark );
 			}
 			//puncho end
 
@@ -3386,6 +3443,7 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			if( passTimed )
 			{
 				PassLap( passStats.tEvents, passMark );
+				PassCountersLap( passStats, PASS_COUNTED_EVENTS, passMark );
 			}
 			//puncho end
 
@@ -3662,16 +3720,30 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 		}
 		//puncho start - P2b.0.3: the pass columns are blank unless this tic was timed, at level 0 too: a blank reads as not
 		// measured (the AI harness's reader takes it as None) where a 0 would read as a pass that cost nothing. Microseconds
-		// with two decimals: a pass of a few hundred ns is common. The level 2 columns are blank below level 2
+		// with two decimals: a pass of a few hundred ns is common. The level 2 columns are blank below level 2 and on a
+		// tic with a failed counter read
 		if( passTimed )
 		{
 			const double usPerTick = 1000000.0 / Sys_ClockTicksPerSecond();
 			const passTicStats_t& ps = passStats;
+			char counted[ 192 ];
+			if( ps.counted )
+			{
+				idStr::snPrintf( counted, sizeof( counted ), "%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu",
+								 ( unsigned long long )ps.counters[ PASS_COUNTED_WALK ][ 0 ], ( unsigned long long )ps.counters[ PASS_COUNTED_WALK ][ 1 ],
+								 ( unsigned long long )ps.counters[ PASS_COUNTED_WALK ][ 2 ], ( unsigned long long )ps.counters[ PASS_COUNTED_EVENTS ][ 0 ],
+								 ( unsigned long long )ps.counters[ PASS_COUNTED_EVENTS ][ 1 ], ( unsigned long long )ps.counters[ PASS_COUNTED_EVENTS ][ 2 ],
+								 ( unsigned long long )ps.counters[ PASS_COUNTED_PVS ][ 0 ], ( unsigned long long )ps.counters[ PASS_COUNTED_SORT ][ 0 ] );
+			}
+			else
+			{
+				idStr::Copynz( counted, ",,,,,,,", sizeof( counted ) );
+			}
 			idStr::snPrintf( pass, sizeof( pass ),
 							 "%.2f,%.2f,%.2f,%.2f,%.2f,%d,%.2f,%d,%.2f,%d,%.1f,%d,%d,"
 							 "%.2f,%.2f,%d,%.2f,%d,%.2f,%d,%.2f,%d,%.2f,%d,%.2f,%d,%.2f,%d,"
 							 "%.2f,%.2f,"
-							 ",,,,,,,",
+							 "%s",
 							 ps.tPVS * usPerTick, ps.tSort * usPerTick, ps.tThinkWalk * usPerTick, ps.tEvents * usPerTick,
 							 ( ps.tDormantAsleep + ps.tDormantAwake ) * usPerTick, ps.nDormantAsleep + ps.nDormantAwake,
 							 ps.tPVSAreas * usPerTick, ps.nPVSAreas, ps.tPresent * usPerTick, ps.nPresent,
@@ -3680,7 +3752,7 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 							 ps.tSleeperThink * usPerTick, ps.nSleeperThink,
 							 ps.tDormantAsleep * usPerTick, ps.nDormantAsleep, ps.tDormantAwake * usPerTick, ps.nDormantAwake,
 							 ps.tPresentDef * usPerTick, ps.nPresentDef, ps.tPresentFar * usPerTick, ps.nPresentFar,
-							 ps.tPost * usPerTick, ps.tPrune * usPerTick );
+							 ps.tPost * usPerTick, ps.tPrune * usPerTick, counted );
 		}
 		else
 		{
