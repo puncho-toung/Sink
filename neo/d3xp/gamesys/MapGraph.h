@@ -2,6 +2,7 @@
 #define __GAME_MAPGRAPH_H__
 
 class idEntity;
+class idMapLandmarks;	//puncho - P2b.1.10f: InhibitSpawn reads its variant table
 
 // Decl data is immutable and shared. Dungeon state is server-owned and persistent;
 // the load recipe is replicated, and spawn decisions are derived from that recipe.
@@ -196,7 +197,7 @@ public:
 	void TestRecipe( const char* map ) const;	//puncho - P2b.1.4: recordTest recipe
 #endif
 	bool SetMatchGameData( const byte* data, int size );
-	bool InhibitSpawn( const idDict& args, const idMapFile* map ) const;
+	bool InhibitSpawn( const idDict& args, const idMapLandmarks* tables ) const;
 	bool GetResetPolicy( const char* map, int& policy, uint32& seconds ) const;
 	void StoreRecord();
 	bool RestoreRecord();

@@ -982,7 +982,7 @@ bool idMapGraphDirector::GetResetPolicy( const char* map, int& policy, uint32& s
 	}
 	return false;
 }
-bool idMapGraphDirector::InhibitSpawn( const idDict& args, const idMapFile* map ) const
+bool idMapGraphDirector::InhibitSpawn( const idDict& args, const idMapLandmarks* tables ) const
 {
 	if( recipe.worldName.IsEmpty() )
 	{
@@ -1017,7 +1017,7 @@ bool idMapGraphDirector::InhibitSpawn( const idDict& args, const idMapFile* map 
 	{
 		return false;
 	}
-	if( colon <= 0 || colon >= variant.Length() - 1 || !map )
+	if( colon <= 0 || colon >= variant.Length() - 1 || !tables )
 	{
 		inhibited++;
 		return true;
@@ -1025,34 +1025,16 @@ bool idMapGraphDirector::InhibitSpawn( const idDict& args, const idMapFile* map 
 	idStr group = variant.Left( colon );
 	group.ToLower();
 	const idStr choice = variant.Mid( colon + 1, variant.Length() );
-	idStrList choices;
-	for( int i = 0; i < map->GetNumEntities(); i++ )
-	{
-		const idStr v = map->GetEntity( i )->epairs.GetString( "dungeon_variant" );
-		const int c = v.Find( ':' );
-		if( c <= 0 || v.Left( c ).Icmp( group ) )
-		{
-			continue;
-		}
-		const idStr candidate = v.Mid( c + 1, v.Length() );
-		int at = 0;
-		while( at < choices.Num() && choices[at].Icmp( candidate ) < 0 )
-		{
-			at++;
-		}
-		if( at == choices.Num() || choices[at].Icmp( candidate ) )
-		{
-			choices.Insert( candidate, at );
-		}
-	}
-	if( choices.Num() == 0 )
+	//puncho - P2b.1.10f: the group's sorted choices from the map's table (idMapLandmarks::ReadMapData), built once
+	const idStrList* choices = tables->FindVariantChoices( group );
+	if( choices == NULL || choices->Num() == 0 )
 	{
 		inhibited++;
 		return true;
 	}
 	const uint64 seed = Hash( recipe.rootSeed, recipe.currentNode, 0, 0 );
-	const uint64 pick = Mix64( seed ^ CRC32_BlockChecksum( group.c_str(), group.Length() ) ^ 3 ) % choices.Num();
-	const bool hide = choices[( int )pick].Icmp( choice ) != 0;
+	const uint64 pick = Mix64( seed ^ CRC32_BlockChecksum( group.c_str(), group.Length() ) ^ 3 ) % choices->Num();
+	const bool hide = ( *choices )[( int )pick].Icmp( choice ) != 0;
 	inhibited += hide ? 1 : 0;
 	return hide;
 }

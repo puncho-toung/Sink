@@ -48,13 +48,57 @@ void idMapLandmarks::RemoveById( const char* id )
 	}
 }
 
+//puncho - P2b.1.10f: the group whose name equals the asked one by idStr::Icmp, as the per-entity scan matched it
+const idStrList* idMapLandmarks::FindVariantChoices( const char* group ) const
+{
+	for( int i = 0; i < variantGroups.Num(); i++ )
+	{
+		if( variantGroups[i].group.Icmp( group ) == 0 )
+		{
+			return &variantGroups[i].choices;
+		}
+	}
+	return NULL;
+}
+
 void idMapLandmarks::ReadMapData( const idMapFile* map )
 {
 	Clear();
-	for( int i = 1; i < map->GetNumEntities(); i++ )
+	for( int i = 0; i < map->GetNumEntities(); i++ )
 	{
 		const idMapEntity* ent = map->GetEntity( i );
 		const idDict& args = ent->epairs;
+		//puncho start - P2b.1.10f: the dungeon_variant groups, read once here, before SpawnMapEntities, for InhibitSpawn,
+		// which scanned every entity of the map for each variant entity. Every entity counts, the worldspawn too, as the
+		// scan's did: a "group:choice" with a group (a colon past the first byte) adds its choice, an empty one too, to
+		// the group that equals its group by Icmp, kept sorted and unique by Icmp
+		const char* variant = args.GetString( "dungeon_variant" );
+		const char* colon = strchr( variant, ':' );
+		if( colon != NULL && colon != variant )
+		{
+			const idStr group( variant, 0, ( int )( colon - variant ) );
+			int g = 0;
+			while( g < variantGroups.Num() && variantGroups[g].group.Icmp( group ) != 0 )
+			{
+				g++;
+			}
+			if( g == variantGroups.Num() )
+			{
+				variantGroups.Alloc().group = group;
+			}
+			idStrList& choices = variantGroups[g].choices;
+			const char* candidate = colon + 1;
+			int at = 0;
+			while( at < choices.Num() && choices[at].Icmp( candidate ) < 0 )
+			{
+				at++;
+			}
+			if( at == choices.Num() || choices[at].Icmp( candidate ) )
+			{
+				choices.Insert( candidate, at );
+			}
+		}
+		//puncho end
 		const bool isLandmark = idStr::Icmp( args.GetString( "classname" ), "info_landmark" ) == 0;
 		const bool isVolume = idStr::Icmp( args.GetString( "classname" ), "trigger_transition" ) == 0;
 		if( !isLandmark && !isVolume )

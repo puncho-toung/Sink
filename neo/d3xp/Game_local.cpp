@@ -5162,7 +5162,7 @@ idGameLocal::InhibitEntitySpawn
 */
 bool idGameLocal::InhibitEntitySpawn( idDict& spawnArgs )
 {
-	if( mapGraphDirector.InhibitSpawn( spawnArgs, mapFile ) )
+	if( mapGraphDirector.InhibitSpawn( spawnArgs, mapFile != NULL ? &mapLandmarks : NULL ) )	//puncho - P2b.1.10f: the map's variant table
 	{
 		return true;
 	}
@@ -5465,6 +5465,7 @@ void idGameLocal::SpawnMapEntities()
 
 	num = 1;
 	inhibit = 0;
+	const unsigned int graphInhibited = idMapGraphDirector::inhibited;	//puncho - P2b.1.10f: the map graph's share, printed below
 	int skippedStatics = 0;
 	bool skipStatics = mapFile->GetEntity( 0 )->epairs.GetBool( "spawnSkipStatics" );
 	if( !common->IsMultiplayer() && g_spawnSkipStatics.GetInteger() >= 0 )
@@ -5524,11 +5525,11 @@ void idGameLocal::SpawnMapEntities()
 	mapStaticSkipCount = skippedStatics;
 	if( skipStatics )
 	{
-		Printf( "...%i entities spawned, %i inhibited (%i statics skipped)\n\n", num, inhibit, skippedStatics );
+		Printf( "...%i entities spawned, %i inhibited (%u by the map graph, %i statics skipped)\n\n", num, inhibit, idMapGraphDirector::inhibited - graphInhibited, skippedStatics );
 	}
 	else
 	{
-		Printf( "...%i entities spawned, %i inhibited\n\n", num, inhibit );
+		Printf( "...%i entities spawned, %i inhibited (%u by the map graph)\n\n", num, inhibit, idMapGraphDirector::inhibited - graphInhibited );
 	}
 
 	//puncho start - P1-m3: the use_aas advice, game policy over the map merge's records. LoadMap has loaded the AAS
