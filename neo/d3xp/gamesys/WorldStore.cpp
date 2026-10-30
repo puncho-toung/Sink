@@ -1302,7 +1302,7 @@ void idWorldStore::DumpRecords( idFile* out ) const
 //puncho end
 #endif
 
-#if !defined( ID_RETAIL )	//puncho - dev guard (P2b.1.1a): recordTest codec's self-test is test scaffolding
+#if !defined( ID_RETAIL )	//puncho - dev guard (P2b.1.1a): recordTest's codec self-test is test scaffolding
 void idWorldStore::TestCodec()
 {
 	PrepareSave();

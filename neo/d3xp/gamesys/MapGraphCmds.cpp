@@ -53,7 +53,7 @@ void SetDungeonFlag_f( const idCmdArgs& args )
 		mapGraphDirector.SetFlag( args.Argv( 1 ), atoi( args.Argv( 2 ) ) );
 	}
 }
-//puncho - P2.4 (bug review 2026-10-28): the replay and recipe self-test is developer scaffolding, not in retail builds
+//puncho - P2.4 (bug review 2026-10-28), P2b.1.1a: the replay and recipe self-test and the portal-caster test are developer scaffolding, not in retail builds
 #if !defined( ID_RETAIL )
 void MapGraphTest_f( const idCmdArgs& args )
 {

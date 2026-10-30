@@ -3,7 +3,6 @@
 
 //puncho - P2b.1.1a: what MapGraph.cpp (parser, generator), MapGraphRecord.cpp (the dungeon record), MapGraphDirector.cpp
 // (the director) and MapGraphCmds.cpp (its console commands) share
-extern idCVar g_dungeonSeed;
 
 idStr GraphMapName( const char* name );
 idStr GraphEffectMapName( const char* name );
@@ -130,4 +129,6 @@ private:
 	int size, pos;
 	bool good;
 };
+
+extern idCVar g_dungeonSeed;
 #endif
