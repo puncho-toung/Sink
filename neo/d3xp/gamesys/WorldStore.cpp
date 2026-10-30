@@ -53,13 +53,6 @@ static const int MAX_WORLD_BYTES = 2097152;
 //puncho - P2b.1.2: WSTO 4 holds MREC v3 (Save writes it, Restore reads 4 and drops 3's MREC v2 chunks)
 static const int WSTO_VERSION = 4;
 
-static void RecordChunk( idFile& out, unsigned int tag, const void* bytes, int length )
-{
-	out.WriteUnsignedInt( tag );
-	out.WriteUnsignedInt( length );
-	out.Write( bytes, length );
-}
-
 static idEntity* RecordEntity( const mapSpawnRow_t& row )
 {
 	if( row.entityNumber < 0 || row.entityNumber >= MAX_GENTITIES )
@@ -535,8 +528,10 @@ void idWorldStore::Commit( bool leaving )
 			break;
 		}
 	}
+	//puncho - P2b.1.4: the rows' writer, done with their sections, writes the record's bytes over its file from here
 	idFile_Memory record;
-	RecordWriteHeader( record, header );
+	rec.BeginFile( &record );
+	RecordWriteHeader( rec, header );
 	for( int i = 0; i < mapSpawned.Num(); i++ )
 	{
 		const mapSpawnRow_t& row = mapSpawned[i];
@@ -545,12 +540,17 @@ void idWorldStore::Commit( bool leaving )
 		{
 			continue;
 		}
-		record.WriteUnsignedShort( row.ordinal );
-		record.WriteUnsignedInt( map->GetEntityCRC( row.ordinal ) );
-		RecordString( record, map->GetEntity( row.ordinal )->epairs.GetString( "name" ) );
-		record.WriteUnsignedChar( out.flags );
-		record.WriteUnsignedChar( out.numSections );
-		record.Write( rowPayloads.GetDataPtr() + out.offset, out.length );
+		rec.WriteUnsigned( row.ordinal, 2 );
+		rec.WriteUnsigned( map->GetEntityCRC( row.ordinal ), 4 );
+		rec.WriteString( map->GetEntity( row.ordinal )->epairs.GetString( "name" ), 63 );
+		rec.WriteUnsigned( out.flags, 1 );
+		rec.WriteUnsigned( out.numSections, 1 );
+		rec.WriteData( rowPayloads.GetDataPtr() + out.offset, out.length );
+	}
+	if( rec.Overflowed() )
+	{
+		// the world, the map and every row's name were refused or skipped above past 63 bytes: a programmer error
+		gameLocal.Error( "world record of %s: a name exceeds 63 bytes", name.c_str() );
 	}
 	//puncho end
 	idList<createdCandidate_t, TAG_GAME> candidates;
@@ -640,8 +640,8 @@ void idWorldStore::Commit( bool leaving )
 	{
 		gameLocal.Warning( "record: %s %d bytes, left out %d corpses; authored and nocap entries retained", name.c_str(), record.Length() + created.Length(), evicted );
 	}
-	record.WriteUnsignedInt( count );
-	record.Write( created.GetDataPtr(), created.Length() );
+	rec.WriteUnsigned( count, 4 );
+	rec.WriteData( created.GetDataPtr(), created.Length() );
 	// The world budget bounds the whole saved store (StoreFixedBytes plus every record), so a record that cannot
 	// fit never enters it and Save() cannot overflow MAX_WORLD_BYTES. This map keeps its previous record: the
 	// overflow fails before replacing the previous save instead of raising Error inside SaveGame.
@@ -1119,17 +1119,20 @@ void idWorldStore::Save( idSaveGame* save )
 		records.RemoveIndex( largest );
 	}
 	recordMaps = records.Num();
+	//puncho - P2b.1.4: the WSTO framing through the record codec; no value here can fail its width
 	idFile_Memory body;
-	body.WriteUnsignedShort( WSTO_VERSION );	//puncho - P2b.1.2: 4, MREC v3
-	Record64( body, nextCreatedId );
-	body.WriteUnsignedInt( records.Num() + 1 + dungeonRecords.Num() );
+	idRecordOut writer;
+	writer.BeginFile( &body );
+	writer.WriteUnsigned( WSTO_VERSION, 2 );	//puncho - P2b.1.2: 4, MREC v3
+	writer.Write64( nextCreatedId );
+	writer.WriteUnsigned( records.Num() + 1 + dungeonRecords.Num(), 4 );
 	for( int i = 0; i < records.Num(); i++ )
 	{
-		RecordChunk( body, MREC_TAG, records[i].bytes.Ptr(), records[i].bytes.Num() );
+		writer.WriteChunk( MREC_TAG, records[i].bytes.Ptr(), records[i].bytes.Num() );
 	}
 	for( int i = 0; i < dungeonRecords.Num(); i++ )
 	{
-		RecordChunk( body, DREC_TAG, dungeonRecords[i].Ptr(), dungeonRecords[i].Num() );
+		writer.WriteChunk( DREC_TAG, dungeonRecords[i].Ptr(), dungeonRecords[i].Num() );
 	}
 	idFile_Memory ordinals;
 	ordinals.WriteUnsignedShort( mapSpawned.Num() );
@@ -1139,9 +1142,12 @@ void idWorldStore::Save( idSaveGame* save )
 		ordinals.WriteInt( mapSpawned[i].entityNumber );
 		ordinals.WriteInt( mapSpawned[i].spawnId );
 	}
-	RecordChunk( body, ORDT_TAG, ordinals.GetDataPtr(), ordinals.Length() );
+	writer.WriteChunk( ORDT_TAG, ordinals.GetDataPtr(), ordinals.Length() );
+	assert( !writer.Overflowed() );
 	idFile_Memory out;
-	RecordChunk( out, WSTO_TAG, body.GetDataPtr(), body.Length() );
+	writer.BeginFile( &out );
+	writer.WriteChunk( WSTO_TAG, body.GetDataPtr(), body.Length() );
+	assert( !writer.Overflowed() );
 	if( out.Length() > MAX_WORLD_BYTES )
 	{
 		// every map record was shed and the two dungeon records are 512 KiB each at most, so this is a
@@ -1165,9 +1171,11 @@ void idWorldStore::Restore( idRestoreGame* save )
 	bytes.SetNum( length );
 	save->Read( bytes.Ptr(), length );
 	idFile_Memory in( "WSTO", ( const char* )bytes.Ptr(), length );
+	idRecordIn rec;	//puncho - P2b.1.4: the WSTO framing through the record codec
+	rec.BeginFile( &in );
 	unsigned int tag, size, chunks;
 	unsigned short version;
-	if( in.ReadUnsignedInt( tag ) != 4 || tag != WSTO_TAG || in.ReadUnsignedInt( size ) != 4 || size != ( unsigned int )length - 8 || in.ReadUnsignedShort( version ) != 2 || version < 1 )
+	if( !rec.ReadUnsignedInt( tag ) || tag != WSTO_TAG || !rec.ReadUnsignedInt( size ) || size != ( unsigned int )length - 8 || !rec.ReadUnsignedShort( version ) || version < 1 )
 	{
 		save->Error( "Unsupported or malformed WSTO" );
 	}
@@ -1184,14 +1192,14 @@ void idWorldStore::Restore( idRestoreGame* save )
 		return;
 	}
 	//puncho end
-	if( !RecordRead64( in, nextCreatedId ) || nextCreatedId == 0 || nextCreatedId == ( uint64 ) - 1 || in.ReadUnsignedInt( chunks ) != 4 || chunks > 4096 )
+	if( !rec.Read64( nextCreatedId ) || nextCreatedId == 0 || nextCreatedId == ( uint64 ) - 1 || !rec.ReadUnsignedInt( chunks ) || chunks > 4096 )
 	{
 		save->Error( "Unsupported or malformed WSTO" );
 	}
 	bool gotOrdinals = false;
 	for( unsigned int i = 0; i < chunks; i++ )
 	{
-		if( in.ReadUnsignedInt( tag ) != 4 || in.ReadUnsignedInt( size ) != 4 || size > ( unsigned int )( in.Length() - in.Tell() ) )
+		if( !rec.ReadUnsignedInt( tag ) || !rec.ReadUnsignedInt( size ) || size > ( unsigned int )( in.Length() - in.Tell() ) )
 		{
 			save->Error( "Truncated WSTO chunk" );
 		}

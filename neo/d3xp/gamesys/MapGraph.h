@@ -28,6 +28,16 @@ struct graphFlag_t
 	idStr name;
 	int index;
 };
+//puncho start - P2b.1.4: the dungeon record's (DREC v2) and the recipe's (v1) byte forms as Schema.h's record struct
+// lists, beside their structs; MapGraphRecord.cpp and MapGraphDirector.cpp expand them. A list's rows are its fields in
+// byte order; a value or count that does not fit fails the write, and the reader refuses what the hand codec refused
+static const int DUNGEON_RECORD_VERSION = 2;
+static const int DUNGEON_GENERATOR_VERSION = 1;
+static const int DUNGEON_RECIPE_VERSION = 1;		// the recipe's first byte, before DUNGEON_RECIPE_SCHEMA's rows
+#define DUNGEON_FLAGDEF_SCHEMA( X, s ) \
+	X( s, name,		STR,	R,	RAW,	63,	SCHEMA_STOCK ) \
+	X( s, index,	U8,		R,	RAW,	0,	SCHEMA_STOCK )
+//puncho end
 struct graphRule_t
 {
 	idStr from, landmark, to, flag;
@@ -61,6 +71,18 @@ struct dungeonNode_t
 	byte resetPolicy, state;
 	uint32 resetSeconds, geometryCRC, landmarkCRC;
 };
+//puncho start - P2b.1.4
+#define DUNGEON_NODE_SCHEMA( X, s ) \
+	X( s, map,			STR,	R,	RAW,	63,	SCHEMA_STOCK ) \
+	X( s, kindIndex,	U16,	R,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, resetPolicy,	U8,		R,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, resetSeconds,	U32,	R,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, state,		U8,		R,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, visits,		U16,	R,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, depth,		U16,	R,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, geometryCRC,	U32,	R,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, landmarkCRC,	U32,	R,	RAW,	0,	SCHEMA_STOCK )
+//puncho end
 struct dungeonLink_t
 {
 	uint16 from, to;
@@ -69,6 +91,18 @@ struct dungeonLink_t
 	int condFlag; // -1 in memory; conditionMode distinguishes none on disk.
 	uint16 condValue;
 };
+//puncho start - P2b.1.4: CondFlag is the clamp, -1 written as 0; the reader's conditionMode 0 fix-up is CheckLink's
+#define DUNGEON_LINK_SCHEMA( X, s ) \
+	X( s, from,				U16,	R,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, fromLandmark,		STR,	R,	RAW,	63,	SCHEMA_STOCK ) \
+	X( s, to,				U16,	R,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, toLandmark,		STR,	R,	RAW,	63,	SCHEMA_STOCK ) \
+	X( s, kind,				U8,		R,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, state,			U8,		R,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, CondFlag,			HAND,	R,	RAW,	1,	SCHEMA_STOCK ) \
+	X( s, conditionMode,	U8,		R,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, condValue,		U16,	R,	RAW,	0,	SCHEMA_STOCK )
+//puncho end
 struct dungeonPending_t
 {
 	uint32 id;
@@ -77,6 +111,15 @@ struct dungeonPending_t
 	byte action;
 	int64 queuedWorldTime;
 };
+//puncho start - P2b.1.4
+#define DUNGEON_PENDING_SCHEMA( X, s ) \
+	X( s, id,				U32,	R,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, targetNode,		U16,	R,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, targetMap,		STR,	R,	RAW,	63,	SCHEMA_STOCK ) \
+	X( s, targetName,		STR,	R,	RAW,	63,	SCHEMA_STOCK ) \
+	X( s, action,			U8,		R,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, queuedWorldTime,	I64,	R,	RAW,	0,	SCHEMA_STOCK )
+//puncho end
 struct dungeonRecipe_t
 {
 	byte flags;
@@ -85,6 +128,43 @@ struct dungeonRecipe_t
 	uint16 currentNode, nodeVisits;
 	idStr worldName;
 };
+//puncho start - P2b.1.4: the recipe after its version byte, a wire message in the match parameters (35-66 bytes); the
+// world name's bound is 31. P2b.6.6 appends rows
+#define DUNGEON_RECIPE_SCHEMA( X, s ) \
+	X( s, flags,		U8,		R,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, instanceId,	U64,	R,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, rootSeed,		U64,	R,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, graphCRC,		U32,	R,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, currentNode,	U16,	R,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, nodeVisits,	U16,	R,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, variantFlags,	U64,	R,	RAW,	0,	SCHEMA_STOCK ) \
+	X( s, worldName,	STR,	R,	RAW,	31,	SCHEMA_STOCK )
+// the dungeon record: an idMapGraphDirector's persistent state. HAND rows: the two literals, the flag values written
+// sparse from their 256 slots, and the two bools
+#define DUNGEON_RECORD_SCHEMA( X, s ) \
+	X( s, Version,			HAND,	R,	RAW,	2,						SCHEMA_STOCK ) \
+	X( s, instanceId,		U64,	R,	RAW,	0,						SCHEMA_STOCK ) \
+	X( s, rootSeed,			U64,	R,	RAW,	0,						SCHEMA_STOCK ) \
+	X( s, graphName,		STR,	R,	RAW,	63,						SCHEMA_STOCK ) \
+	X( s, graphCRC,			U32,	R,	RAW,	0,						SCHEMA_STOCK ) \
+	X( s, GeneratorVersion,	HAND,	R,	RAW,	2,						SCHEMA_STOCK ) \
+	X( s, createdWorldTime,	I64,	R,	RAW,	0,						SCHEMA_STOCK ) \
+	X( s, parentMap,		STR,	R,	RAW,	63,						SCHEMA_STOCK ) \
+	X( s, parentLandmark,	STR,	R,	RAW,	63,						SCHEMA_STOCK ) \
+	X( s, nodes,			LIST,	R,	RAW,	( Node, 2, 256 ),		SCHEMA_STOCK ) \
+	X( s, links,			LIST,	R,	RAW,	( Link, 2, 1024 ),		SCHEMA_STOCK ) \
+	X( s, FlagValues,		HAND,	R,	RAW,	0,						SCHEMA_STOCK ) \
+	X( s, partyNode,		U16,	R,	RAW,	0,						SCHEMA_STOCK ) \
+	X( s, partyLandmark,	STR,	R,	RAW,	63,						SCHEMA_STOCK ) \
+	X( s, portalNode,		U16,	R,	RAW,	0,						SCHEMA_STOCK ) \
+	X( s, portalLandmark,	STR,	R,	RAW,	63,						SCHEMA_STOCK ) \
+	X( s, pending,			LIST,	R,	RAW,	( Pending, 2, 1024 ),	SCHEMA_STOCK ) \
+	X( s, instanceEndKind,	STR,	R,	RAW,	63,						SCHEMA_STOCK ) \
+	X( s, flagDefinitions,	LIST,	R,	RAW,	( FlagDef, 2, 256 ),	SCHEMA_STOCK ) \
+	X( s, Suspended,		HAND,	R,	RAW,	1,						SCHEMA_STOCK ) \
+	X( s, PortalOpen,		HAND,	R,	RAW,	1,						SCHEMA_STOCK ) \
+	X( s, portalOrigin,		VEC3,	R,	RAW,	0,						SCHEMA_STOCK )
+//puncho end
 class idMapGraphDirector
 {
 public:
@@ -110,6 +190,7 @@ public:
 	int WriteMatchGameData( const char* map, byte* out, int max );
 #if !defined( ID_RETAIL )
 	int PeekMatchGameData( const char* map, byte* out, int max ) const;	//puncho - P2b.1.0: recordDump's recipe bytes
+	void TestRecipe( const char* map ) const;	//puncho - P2b.1.4: recordTest recipe
 #endif
 	bool SetMatchGameData( const byte* data, int size );
 	bool InhibitSpawn( const idDict& args, const idMapFile* map ) const;
@@ -137,6 +218,9 @@ public:
 	idList<dungeonLink_t, TAG_GAME> links;
 	idList<dungeonPending_t, TAG_GAME> pending;
 	int sealedRequired;
+	//puncho - P2b.1.4: public with the rest of the record's state, for DUNGEON_RECORD_SCHEMA's rows
+	bool suspended, portalOpen;
+	idVec3 portalOrigin;
 
 private:
 	void UpdateExitDoors( bool atLoad );
@@ -145,8 +229,7 @@ private:
 	bool AddChild( const idDeclMapGraph* decl, int node, const graphLandmark_t& exit, const graphRule_t& rule );
 	dungeonRecipe_t recipe;
 	idStr recipeMap;
-	bool recipeValid, clientRecipe, suspended, recipeNewWorld, portalOpen;
-	idVec3 portalOrigin;
+	bool recipeValid, clientRecipe, recipeNewWorld;
 	idList<byte, TAG_GAME> persistentHub;
 	idStr predictedMap; // last prediction sent; cleared per map load so each load announces its own
 	int predictedFrame;

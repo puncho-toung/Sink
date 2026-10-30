@@ -158,33 +158,36 @@ void MapGraphTest_f( const idCmdArgs& args )
 			}
 		}
 	}
-	idList<byte, TAG_GAME> recipeBytes;
-	idGraphBytes wire( recipeBytes );
-	wire.Put( 1, 1 );
-	wire.Put( 1, 1 );
-	wire.Put( 17, 8 );
-	wire.Put( 12345, 8 );
-	wire.Put( 0x12345678, 4 );
-	wire.Put( 2, 2 );
-	wire.Put( 3, 2 );
-	wire.Put( 0x8000000000000001ULL, 8 );
-	wire.Text( idStr( "mg_test" ), 31 );
+	//puncho - P2b.1.4: the recipe's bytes written out (version 1, flags 1, instance 17, seed 12345, CRC 0x12345678, node 2,
+	// visits 3, variant flags 0x8000000000000001, world "mg_test"), so the codec is checked against bytes it did not make
+	byte recipeBytes[] =
+	{
+		1, 1,
+		17, 0, 0, 0, 0, 0, 0, 0,
+		0x39, 0x30, 0, 0, 0, 0, 0, 0,
+		0x78, 0x56, 0x34, 0x12,
+		2, 0,
+		3, 0,
+		1, 0, 0, 0, 0, 0, 0, 0x80,
+		7, 'm', 'g', '_', 't', 'e', 's', 't'
+	};
+	const int recipeLength = sizeof( recipeBytes );
 	idMapGraphDirector decoded;
 	byte encoded[96];
-	if( !decoded.SetMatchGameData( recipeBytes.Ptr(), recipeBytes.Num() ) || decoded.WriteMatchGameData( "unused", encoded, sizeof( encoded ) ) != recipeBytes.Num() || memcmp( encoded, recipeBytes.Ptr(), recipeBytes.Num() ) )
+	if( !decoded.SetMatchGameData( recipeBytes, recipeLength ) || decoded.WriteMatchGameData( "unused", encoded, sizeof( encoded ) ) != recipeLength || memcmp( encoded, recipeBytes, recipeLength ) )
 	{
 		failures++;
 	}
-	for( int length = 1; length < recipeBytes.Num(); length++ )
+	for( int length = 1; length < recipeLength; length++ )
 	{
-		if( decoded.SetMatchGameData( recipeBytes.Ptr(), length ) )
+		if( decoded.SetMatchGameData( recipeBytes, length ) )
 		{
 			failures++;
 		}
 		truncations++;
 	}
 	recipeBytes[1] = 4;
-	if( decoded.SetMatchGameData( recipeBytes.Ptr(), recipeBytes.Num() ) )
+	if( decoded.SetMatchGameData( recipeBytes, recipeLength ) )
 	{
 		failures++;
 	}

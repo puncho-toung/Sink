@@ -21,6 +21,11 @@
 	them back. Every entry is checked (each section's CheckRecordSection, through the table in Record.cpp) before any
 	entry of its record applies.
 
+	The one record codec (P2b.1.4): the same writer and reader run over an idFile (BeginFile) for the bytes no entity
+	owns, the dungeon record and the recipe (Schema.h's struct lists, MapGraph.h) and the MREC and WSTO framing. The
+	bytes are made here as in an entry and handed to idFile::Write, or taken from idFile::Read; a value that does not
+	fit its width or bound fails the write (Overflowed), a short file fails the read.
+
 ===============================================================================
 */
 
@@ -104,6 +109,9 @@ idRecordOut
 One entry's sections as an entity's WriteRecord chain writes them. The store sets the entry's context with Begin, the
 chain writes, the store copies Data()/Length() behind the entry's head. Nothing allocates: the sections go into the
 fixed buffer, and an entry past it is refused (Overflowed).
+
+Or, after BeginFile, the codec over an idFile: every Write goes to the file, no section or field framing, and
+Overflowed() is a value that did not fit, after which nothing more is written.
 ================
 */
 class idRecordOut
@@ -114,6 +122,8 @@ public:
 	// per entry: the frame, created (no baseline), the baseline dict of an authored entry, the created identity of a
 	// created entry's bind master (0 for none) and the def name a created entry records
 	void				Begin( const recordFrame_t& frame, bool created, const idRecordMapArgs& mapArgs, uint64 bindParent, const char* defName );
+	// the codec over file, until the next Begin
+	void				BeginFile( idFile* file );
 
 	// what a subclass tells the root levels before it calls its parent's WriteRecord, so the root-first sections see it
 	void				SkipPose();								// the level's own row carries the pose, or writing one ratchets it
@@ -137,6 +147,10 @@ public:
 	void				WriteFloat( float value );
 	void				Write64( uint64 value );
 	void				WriteData( const void* data, int length );
+	void				WriteUnsigned( uint64 value, int bytes );				// 1, 2, 4 or 8 bytes; fails when value needs more
+	void				WriteCount( int count, int bytes, int maxCount );		// a list's count; fails past maxCount
+	void				WriteString( const char* value, int bound );			// a uint8 length, the bytes; fails past bound
+	void				WriteChunk( uint32 tag, const void* data, int length );	// a WSTO chunk: tag, length, the bytes
 
 	const recordFrame_t& Frame() const
 	{
@@ -197,6 +211,7 @@ public:
 private:
 	void				Put( const void* bytes, int count );
 
+	idFile* 			file;			// the codec's file, NULL for an entry
 	const recordFrame_t* frame;
 	idRecordMapArgs		mapArgs;
 	const char* 		defName;
@@ -227,6 +242,9 @@ idRecordIn
 One entry's sections as a reader frames them (ReadSections: each header read, its bytes bounded), then walked by the
 check table or by an entity's ApplyRecord chain. good is sticky: a failed field or a leftover byte clears it, and the
 caller tests it after the list.
+
+Or, after BeginFile, the codec over an idFile: every Read takes from the file and fails on a short file; a struct
+list's failed row clears good, and its caller tests that the file ends where the list does.
 ================
 */
 class idRecordIn
@@ -237,6 +255,8 @@ public:
 	// per entry: the frame, the record header's cellId, created, the def name (a created entry's, or an authored
 	// entry's map entity's: a corpse built for it takes its source def from here)
 	void				Begin( const recordFrame_t& frame, uint32 recordCellId, bool created, const char* defName );
+	// the codec over file, good set, until the next Begin
+	void				BeginFile( idFile* file );
 	// frames numSections sections from data; false when one runs past length. consumed is the bytes they take.
 	bool				ReadSections( const byte* data, int length, int numSections, int& consumed );
 	// back to the first section, for another walk of the same entry (the corpse route re-reads it)
@@ -316,6 +336,9 @@ public:
 	bool				ReadFiniteFloat( float& value );	// false on an infinity or a NaN as well
 	bool				Read64( uint64& value );
 	bool				ReadData( void* out, int count );
+	bool				ReadUnsignedShort( uint16& value );
+	bool				ReadCount( int& count, int bytes, int maxCount );	// count is 0 unless it is read and within maxCount
+	bool				ReadString( idStr& value, int bound );				// false past bound or on a NUL byte
 
 	const recordFrame_t& Frame() const
 	{
@@ -351,6 +374,7 @@ private:
 		byte			version;
 	};
 
+	idFile* 			file;			// the codec's file, NULL for an entry
 	const recordFrame_t* frame;
 	const char* 		defName;
 	const byte* 		base;

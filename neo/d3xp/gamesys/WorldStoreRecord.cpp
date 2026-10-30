@@ -4,80 +4,37 @@
 #include "WorldStore.h"
 #include "WorldStoreLocal.h"
 
-void RecordString( idFile& f, const char* value )
+//puncho start - P2b.1.2: the MREC v3 codec (WorldStoreLocal.h); the entries' sections are Record.h's. P2b.1.4: the
+// header and the entry heads through the same codec, idRecordOut and idRecordIn over the chunk's idFile; a name is a
+// STR of bound 63, a 64-bit value low word first
+void RecordWriteHeader( idRecordOut& out, const mrecHeader_t& h )
 {
-	const int length = idStr::Length( value );
-	if( length > 63 )
-	{
-		// every caller refuses or skips a longer name first (mapGraphCheck K12 at author time); reaching this is a
-		// programmer error, not content
-		gameLocal.Error( "world record name exceeds 63 bytes: %s", value );
-	}
-	f.WriteUnsignedChar( length );
-	f.Write( value, length );
-}
-
-bool RecordReadString( idFile& f, idStr& value )
-{
-	byte length;
-	char buffer[64];
-	if( f.ReadUnsignedChar( length ) != 1 || length > 63 || f.Read( buffer, length ) != length )
-	{
-		return false;
-	}
-	if( memchr( buffer, 0, length ) != NULL )
-	{
-		return false;
-	}
-	buffer[length] = '\0';
-	value = buffer;
-	return true;
-}
-
-void Record64( idFile& f, uint64 value )
-{
-	f.WriteUnsignedInt( ( unsigned int )value );
-	f.WriteUnsignedInt( ( unsigned int )( value >> 32 ) );
-}
-
-bool RecordRead64( idFile& f, uint64& value )
-{
-	unsigned int low, high;
-	if( f.ReadUnsignedInt( low ) != 4 || f.ReadUnsignedInt( high ) != 4 )
-	{
-		return false;
-	}
-	value = ( uint64 )low | ( ( uint64 )high << 32 );
-	return true;
-}
-
-//puncho start - P2b.1.2: the MREC v3 codec (WorldStoreLocal.h); the entries' sections are Record.h's
-void RecordWriteHeader( idFile& out, const mrecHeader_t& h )
-{
-	out.WriteUnsignedShort( h.version );
-	out.WriteUnsignedShort( h.flags );
-	RecordString( out, h.world );
-	Record64( out, h.instanceId );
-	out.WriteUnsignedShort( h.node );
-	out.WriteUnsignedInt( h.cellId );
-	RecordString( out, h.unit );
-	out.WriteUnsignedInt( h.unitRevision );
-	out.WriteUnsignedInt( h.entitiesCRC );
-	out.WriteUnsignedInt( h.geometryCRC );
-	out.WriteUnsignedShort( h.numMapEntities );
-	Record64( out, ( uint64 )h.lastLeft );
-	Record64( out, ( uint64 )h.cleared );
-	out.WriteUnsignedShort( h.remains );
-	out.WriteUnsignedInt( h.writerBuild );
-	out.WriteUnsignedInt( h.numEntries );
+	out.WriteUnsigned( h.version, 2 );
+	out.WriteUnsigned( h.flags, 2 );
+	out.WriteString( h.world, 63 );
+	out.Write64( h.instanceId );
+	out.WriteUnsigned( h.node, 2 );
+	out.WriteUnsigned( h.cellId, 4 );
+	out.WriteString( h.unit, 63 );
+	out.WriteUnsigned( h.unitRevision, 4 );
+	out.WriteUnsigned( h.entitiesCRC, 4 );
+	out.WriteUnsigned( h.geometryCRC, 4 );
+	out.WriteUnsigned( h.numMapEntities, 2 );
+	out.Write64( ( uint64 )h.lastLeft );
+	out.Write64( ( uint64 )h.cleared );
+	out.WriteUnsigned( h.remains, 2 );
+	out.WriteUnsigned( h.writerBuild, 4 );
+	out.WriteUnsigned( h.numEntries, 4 );
 }
 
 // v2's rules on the fields it had (flags, node, a world and a map, the entity count, the times), and C1's on the cellId:
 // a zero top byte is the reserved layer, which holds only CELL_ID_NONE and CELL_ID_PERSISTENT
 bool RecordReadHeader( idFile_Memory& in, mrecHeader_t& h, idStr& reason )
 {
+	idRecordIn r;
+	r.BeginFile( &in );
 	uint64 left, cleared;
-	if( in.ReadUnsignedShort( h.version ) != 2 )
+	if( !r.ReadUnsignedShort( h.version ) )
 	{
 		reason = "truncated header";
 		return false;
@@ -87,7 +44,7 @@ bool RecordReadHeader( idFile_Memory& in, mrecHeader_t& h, idStr& reason )
 		reason = va( "MREC version %u", h.version );
 		return false;
 	}
-	if( in.ReadUnsignedShort( h.flags ) != 2 || h.flags > 3 || !RecordReadString( in, h.world ) || h.world.IsEmpty() || !RecordRead64( in, h.instanceId ) || in.ReadUnsignedShort( h.node ) != 2 || h.node >= 256 || ( h.instanceId == 0 && h.node != 0 ) || in.ReadUnsignedInt( h.cellId ) != 4 || !RecordReadString( in, h.unit ) || h.unit.IsEmpty() || in.ReadUnsignedInt( h.unitRevision ) != 4 || in.ReadUnsignedInt( h.entitiesCRC ) != 4 || in.ReadUnsignedInt( h.geometryCRC ) != 4 || in.ReadUnsignedShort( h.numMapEntities ) != 2 || h.numMapEntities == 0 || !RecordRead64( in, left ) || left > 0x7fffffffffffffffULL || !RecordRead64( in, cleared ) || ( cleared > 0x7fffffffffffffffULL && cleared != ( uint64 ) - 1 ) || in.ReadUnsignedShort( h.remains ) != 2 || in.ReadUnsignedInt( h.writerBuild ) != 4 || in.ReadUnsignedInt( h.numEntries ) != 4 || h.numEntries > MAX_GENTITIES )
+	if( !r.ReadUnsignedShort( h.flags ) || h.flags > 3 || !r.ReadString( h.world, 63 ) || h.world.IsEmpty() || !r.Read64( h.instanceId ) || !r.ReadUnsignedShort( h.node ) || h.node >= 256 || ( h.instanceId == 0 && h.node != 0 ) || !r.ReadUnsignedInt( h.cellId ) || !r.ReadString( h.unit, 63 ) || h.unit.IsEmpty() || !r.ReadUnsignedInt( h.unitRevision ) || !r.ReadUnsignedInt( h.entitiesCRC ) || !r.ReadUnsignedInt( h.geometryCRC ) || !r.ReadUnsignedShort( h.numMapEntities ) || h.numMapEntities == 0 || !r.Read64( left ) || left > 0x7fffffffffffffffULL || !r.Read64( cleared ) || ( cleared > 0x7fffffffffffffffULL && cleared != ( uint64 ) - 1 ) || !r.ReadUnsignedShort( h.remains ) || !r.ReadUnsignedInt( h.writerBuild ) || !r.ReadUnsignedInt( h.numEntries ) || h.numEntries > MAX_GENTITIES )
 	{
 		reason = "malformed header";
 		return false;
@@ -106,11 +63,13 @@ bool RecordReadHeader( idFile_Memory& in, mrecHeader_t& h, idStr& reason )
 int RecordChunkVersion( const byte* data, int length, idStr& unit )
 {
 	idFile_Memory in( "MREC version", ( const char* )data, length );
+	idRecordIn r;
+	r.BeginFile( &in );
 	unsigned short version, flags, node;
 	uint64 instance;
 	uint32 cellId;
 	idStr world;
-	if( in.ReadUnsignedShort( version ) != 2 || version < 1 || version > MREC_VERSION || in.ReadUnsignedShort( flags ) != 2 || !RecordReadString( in, world ) || !RecordRead64( in, instance ) || ( version >= 2 && in.ReadUnsignedShort( node ) != 2 ) || ( version >= 3 && in.ReadUnsignedInt( cellId ) != 4 ) || !RecordReadString( in, unit ) )
+	if( !r.ReadUnsignedShort( version ) || version < 1 || version > MREC_VERSION || !r.ReadUnsignedShort( flags ) || !r.ReadString( world, 63 ) || !r.Read64( instance ) || ( version >= 2 && !r.ReadUnsignedShort( node ) ) || ( version >= 3 && !r.ReadUnsignedInt( cellId ) ) || !r.ReadString( unit, 63 ) )
 	{
 		unit.Clear();
 		return 0;
@@ -142,9 +101,11 @@ static bool RecordReadEntry( idFile_Memory& in, bool created, mrecEntry_t& e, id
 	e.entityCRC = 0;
 	e.ordinalHint = 0;
 	e.valid = false;
+	idRecordIn head;
+	head.BeginFile( &in );
 	uint64 when = 0;
-	const bool head = created ? ( RecordRead64( in, e.createdId ) && RecordReadString( in, e.name ) && RecordRead64( in, when ) ) : ( in.ReadUnsignedShort( e.ordinalHint ) == 2 && in.ReadUnsignedInt( e.entityCRC ) == 4 && RecordReadString( in, e.name ) );
-	if( !head || in.ReadUnsignedChar( e.flags ) != 1 || in.ReadUnsignedChar( e.numSections ) != 1 )
+	const bool framed = created ? ( head.Read64( e.createdId ) && head.ReadString( e.name, 63 ) && head.Read64( when ) ) : ( head.ReadUnsignedShort( e.ordinalHint ) && head.ReadUnsignedInt( e.entityCRC ) && head.ReadString( e.name, 63 ) );
+	if( !framed || !head.ReadByte( e.flags ) || !head.ReadByte( e.numSections ) )
 	{
 		return false;
 	}
@@ -181,12 +142,14 @@ bool RecordScanChunk( const byte* data, int length, uint64 nextIdentity, mrecHea
 	}
 	const recordFrame_t frame = RecordChunkFrame( h.cellId );
 	idRecordIn rec;
+	idRecordIn framing;	//puncho - P2b.1.4: the created count through the record codec, as the heads around it
+	framing.BeginFile( &in );
 	int previousOrdinal = -1;
 	uint64 previousId = 0;
 	uint32 count = h.numEntries;
 	for( int kind = 0; kind < 2; kind++ )
 	{
-		if( kind == 1 && ( in.ReadUnsignedInt( count ) != 4 || count > MAX_GENTITIES ) )
+		if( kind == 1 && ( !framing.ReadUnsignedInt( count ) || count > MAX_GENTITIES ) )
 		{
 			reason = "malformed created count";
 			return false;
@@ -244,7 +207,9 @@ bool RecordRewriteChunk( const byte* data, int length, uint64 nextIdentity, idFi
 	{
 		return false;
 	}
-	RecordWriteHeader( out, header );
+	idRecordOut writer;
+	writer.BeginFile( &out );
+	RecordWriteHeader( writer, header );
 	const recordFrame_t frame = RecordChunkFrame( header.cellId );
 	idRecordIn rec;
 	for( int i = 0; i < entries.Num(); i++ )
@@ -252,37 +217,37 @@ bool RecordRewriteChunk( const byte* data, int length, uint64 nextIdentity, idFi
 		const mrecEntry_t& e = entries[i];
 		if( e.created && ( i == 0 || !entries[i - 1].created ) )
 		{
-			out.WriteUnsignedInt( entries.Num() - i );
+			writer.WriteUnsigned( entries.Num() - i, 4 );
 		}
 		if( e.created )
 		{
-			Record64( out, e.createdId );
-			RecordString( out, e.name );
-			Record64( out, ( uint64 )e.createdTime );
+			writer.Write64( e.createdId );
+			writer.WriteString( e.name, 63 );
+			writer.Write64( ( uint64 )e.createdTime );
 		}
 		else
 		{
-			out.WriteUnsignedShort( e.ordinalHint );
-			out.WriteUnsignedInt( e.entityCRC );
-			RecordString( out, e.name );
+			writer.WriteUnsigned( e.ordinalHint, 2 );
+			writer.WriteUnsigned( e.entityCRC, 4 );
+			writer.WriteString( e.name, 63 );
 		}
-		out.WriteUnsignedChar( e.flags );
-		out.WriteUnsignedChar( e.numSections );
+		writer.WriteUnsigned( e.flags, 1 );
+		writer.WriteUnsigned( e.numSections, 1 );
 		RecordFrameEntry( data, header.cellId, frame, e, e.name, rec );
 		for( int s = 0; s < rec.NumSections(); s++ )
 		{
-			out.WriteUnsignedChar( rec.SectionId( s ) );
-			out.WriteUnsignedChar( rec.SectionVersion( s ) );
-			Record64( out, rec.SectionMask( s ) );
-			out.WriteUnsignedShort( rec.SectionBytes( s ) );
-			out.Write( rec.SectionData( s ), rec.SectionBytes( s ) );
+			writer.WriteUnsigned( rec.SectionId( s ), 1 );
+			writer.WriteUnsigned( rec.SectionVersion( s ), 1 );
+			writer.Write64( rec.SectionMask( s ) );
+			writer.WriteUnsigned( rec.SectionBytes( s ), 2 );
+			writer.WriteData( rec.SectionData( s ), rec.SectionBytes( s ) );
 		}
 	}
 	if( entries.Num() == 0 || !entries[entries.Num() - 1].created )
 	{
-		out.WriteUnsignedInt( 0 );
+		writer.WriteUnsigned( 0, 4 );
 	}
-	return true;
+	return !writer.Overflowed();
 }
 #endif
 
@@ -362,13 +327,15 @@ bool idWorldStore::EncodeCreated( idEntity* ent, const recordFrame_t& frame, idF
 		}
 		nextCreatedId = nextIdentity;
 	}
-	Record64( out, identity );
-	RecordString( out, recordName );
-	Record64( out, created );
-	out.WriteUnsignedChar( 0 );
-	out.WriteUnsignedChar( rec.NumSections() );
-	out.Write( rec.Data(), rec.Length() );
-	return true;
+	idRecordOut head;
+	head.BeginFile( &out );
+	head.Write64( identity );
+	head.WriteString( recordName, 63 );
+	head.Write64( created );
+	head.WriteUnsigned( 0, 1 );
+	head.WriteUnsigned( rec.NumSections(), 1 );
+	head.WriteData( rec.Data(), rec.Length() );
+	return !head.Overflowed();
 }
 
 idCorpse* SpawnCorpseRecord( const char* def, idRecordIn& rec, const recordFrame_t& frame )

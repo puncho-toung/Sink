@@ -6,281 +6,208 @@
 #include "WorldStore.h"
 #include "MapGraphLocal.h"
 
-bool idMapGraphDirector::WriteRecord( idList<byte, TAG_GAME>& bytes ) const
+//puncho start - P2b.1.4: the dungeon record (DREC v2) through MapGraph.h's struct lists and Record.h's codec. The
+// reader refuses what the hand reader refused, in its order: each list's count before any element, then per element
+// its fix-up and checks (the Check functions), the literals, the sparse flag list's order and zeros, the bools past 1,
+// a non-finite portal origin, the party and portal nodes, a short record and a byte past its end
+static void WriteRecordCondFlag( idRecordOut& rec, const dungeonLink_t& l )
 {
-	if( nodes.Num() > 256 || links.Num() > 1024 || pending.Num() > 1024 || flagDefinitions.Num() > 256 )
+	rec.WriteUnsigned( l.condFlag < 0 ? 0 : l.condFlag, 1 );
+}
+static bool ReadRecordCondFlag( idRecordIn& rec, dungeonLink_t& l )
+{
+	byte flag;
+	if( !rec.ReadByte( flag ) )
 	{
 		return false;
 	}
-	idGraphBytes b( bytes );
-	b.Put( 2, 2 );
-	b.Put( instanceId, 8 );
-	b.Put( rootSeed, 8 );
-	b.Text( graphName );
-	b.Put( graphCRC, 4 );
-	b.Put( 1, 2 );
-	b.Put( createdWorldTime, 8 );
-	b.Text( parentMap );
-	b.Text( parentLandmark );
-	b.Put( nodes.Num(), 2 );
-	for( int i = 0; i < nodes.Num(); i++ )
+	l.condFlag = flag;
+	return true;
+}
+
+SCHEMA_RECORD_STRUCT_FUNCTIONS( Node, dungeonNode_t, DUNGEON_NODE_SCHEMA )
+SCHEMA_RECORD_STRUCT_FUNCTIONS( Link, dungeonLink_t, DUNGEON_LINK_SCHEMA )
+SCHEMA_RECORD_STRUCT_FUNCTIONS( Pending, dungeonPending_t, DUNGEON_PENDING_SCHEMA )
+SCHEMA_RECORD_STRUCT_FUNCTIONS( FlagDef, graphFlag_t, DUNGEON_FLAGDEF_SCHEMA )
+
+static bool CheckNode( dungeonNode_t& n, const idMapGraphDirector& owner )
+{
+	return !n.map.IsEmpty() && n.kindIndex < 256 && n.resetPolicy <= 2 && n.state <= 3 && n.depth <= 256;
+}
+static bool CheckLink( dungeonLink_t& l, const idMapGraphDirector& owner )
+{
+	if( l.conditionMode == 0 )
 	{
-		const dungeonNode_t& n = nodes[i];
-		b.Text( n.map );
-		b.Put( n.kindIndex, 2 );
-		b.Put( n.resetPolicy, 1 );
-		b.Put( n.resetSeconds, 4 );
-		b.Put( n.state, 1 );
-		b.Put( n.visits, 2 );
-		b.Put( n.depth, 2 );
-		b.Put( n.geometryCRC, 4 );
-		b.Put( n.landmarkCRC, 4 );
+		l.condFlag = -1;
 	}
-	b.Put( links.Num(), 2 );
-	for( int i = 0; i < links.Num(); i++ )
+	return !( l.from >= owner.nodes.Num() || ( l.to != 0xffff && l.to >= owner.nodes.Num() ) || l.state > 3 || l.kind > 1 || l.conditionMode > 2 || l.fromLandmark.IsEmpty() || ( l.to == 0xffff && l.state != 3 ) );
+}
+static bool CheckPending( dungeonPending_t& p, const idMapGraphDirector& owner )
+{
+	if( p.action > 3 || p.targetMap.IsEmpty() || p.targetName.IsEmpty() || ( p.targetNode != 0xffff && p.targetNode >= owner.nodes.Num() ) )
 	{
-		const dungeonLink_t& l = links[i];
-		b.Put( l.from, 2 );
-		b.Text( l.fromLandmark );
-		b.Put( l.to, 2 );
-		b.Text( l.toLandmark );
-		b.Put( l.kind, 1 );
-		b.Put( l.state, 1 );
-		b.Put( l.condFlag < 0 ? 0 : l.condFlag, 1 );
-		b.Put( l.conditionMode, 1 );
-		b.Put( l.condValue, 2 );
+		return false;
 	}
+	for( int j = 0; j < owner.pending.Num(); j++ )
+	{
+		if( owner.pending[j].id == p.id )
+		{
+			return false;
+		}
+	}
+	if( owner.pending.Num() )
+	{
+		const dungeonPending_t& prev = owner.pending[owner.pending.Num() - 1];
+		if( p.queuedWorldTime < prev.queuedWorldTime || ( p.queuedWorldTime == prev.queuedWorldTime && p.id <= prev.id ) )
+		{
+			return false;
+		}
+	}
+	return true;
+}
+static bool CheckFlagDef( graphFlag_t& f, const idMapGraphDirector& owner )
+{
+	if( f.name.IsEmpty() )
+	{
+		return false;
+	}
+	for( int j = 0; j < owner.flagDefinitions.Num(); j++ )
+	{
+		if( f.index == owner.flagDefinitions[j].index || !f.name.Icmp( owner.flagDefinitions[j].name ) )
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+static void WriteRecordVersion( idRecordOut& rec, const idMapGraphDirector& s )
+{
+	rec.WriteUnsigned( DUNGEON_RECORD_VERSION, 2 );
+}
+static bool ReadRecordVersion( idRecordIn& rec, idMapGraphDirector& s )
+{
+	uint16 version;
+	return rec.ReadUnsignedShort( version ) && version == DUNGEON_RECORD_VERSION;
+}
+static void WriteRecordGeneratorVersion( idRecordOut& rec, const idMapGraphDirector& s )
+{
+	rec.WriteUnsigned( DUNGEON_GENERATOR_VERSION, 2 );
+}
+static bool ReadRecordGeneratorVersion( idRecordIn& rec, idMapGraphDirector& s )
+{
+	uint16 version;
+	return rec.ReadUnsignedShort( version ) && version == DUNGEON_GENERATOR_VERSION;
+}
+// the set flags only, ascending: a uint16 count, then ( uint8 index, uint16 value ) each; the reader refuses an index
+// out of order and a zero value
+static void WriteRecordFlagValues( idRecordOut& rec, const idMapGraphDirector& s )
+{
 	int count = 0;
 	for( int i = 0; i < 256; i++ )
 	{
-		if( flagValues[i] )
+		if( s.flagValues[i] )
 		{
 			count++;
 		}
 	}
-	b.Put( count, 2 );
+	rec.WriteUnsigned( count, 2 );
 	for( int i = 0; i < 256; i++ )
 	{
-		if( flagValues[i] )
+		if( s.flagValues[i] )
 		{
-			b.Put( i, 1 );
-			b.Put( flagValues[i], 2 );
+			rec.WriteUnsigned( i, 1 );
+			rec.WriteUnsigned( s.flagValues[i], 2 );
 		}
 	}
-	b.Put( partyNode, 2 );
-	b.Text( partyLandmark );
-	b.Put( portalNode, 2 );
-	b.Text( portalLandmark );
-	b.Put( pending.Num(), 2 );
-	for( int i = 0; i < pending.Num(); i++ )
-	{
-		const dungeonPending_t& p = pending[i];
-		b.Put( p.id, 4 );
-		b.Put( p.targetNode, 2 );
-		b.Text( p.targetMap );
-		b.Text( p.targetName );
-		b.Put( p.action, 1 );
-		b.Put( p.queuedWorldTime, 8 );
-	}
-	b.Text( instanceEndKind );
-	b.Put( flagDefinitions.Num(), 2 );
-	for( int i = 0; i < flagDefinitions.Num(); i++ )
-	{
-		b.Text( flagDefinitions[i].name );
-		b.Put( flagDefinitions[i].index, 1 );
-	}
-	b.Put( suspended ? 1 : 0, 1 );
-	b.Put( portalOpen ? 1 : 0, 1 );
-	for( int i = 0; i < 3; i++ )
-	{
-		uint32 bits;
-		const float coordinate = portalOrigin[i];
-		memcpy( &bits, &coordinate, 4 );
-		b.Put( bits, 4 );
-	}
-	return b.Good();
 }
-bool idMapGraphDirector::ReadRecord( const byte* data, int size )
+static bool ReadRecordFlagValues( idRecordIn& rec, idMapGraphDirector& s )
 {
-	if( size <= 0 || size > 512 * 1024 )
-	{
-		return false;
-	}
-	idMapGraphDirector temp;
-	idGraphBytes b( data, size );
-	if( b.Get( 2 ) != 2 )
-	{
-		return false;
-	}
-	temp.instanceId = b.Get( 8 );
-	temp.rootSeed = b.Get( 8 );
-	b.String( temp.graphName );
-	temp.graphCRC = b.Get( 4 );
-	if( b.Get( 2 ) != 1 )
-	{
-		return false;
-	}
-	temp.createdWorldTime = ( int64 )b.Get( 8 );
-	b.String( temp.parentMap );
-	b.String( temp.parentLandmark );
-	int count = b.Get( 2 );
-	if( count > 256 )
-	{
-		return false;
-	}
-	for( int i = 0; i < count; i++ )
-	{
-		dungeonNode_t n;
-		b.String( n.map );
-		n.kindIndex = b.Get( 2 );
-		n.resetPolicy = b.Get( 1 );
-		n.resetSeconds = b.Get( 4 );
-		n.state = b.Get( 1 );
-		n.visits = b.Get( 2 );
-		n.depth = b.Get( 2 );
-		n.geometryCRC = b.Get( 4 );
-		n.landmarkCRC = b.Get( 4 );
-		if( !b.ReadingOK() || n.map.IsEmpty() || n.kindIndex >= 256 || n.resetPolicy > 2 || n.state > 3 || n.depth > 256 )
-		{
-			return false;
-		}
-		temp.nodes.Append( n );
-	}
-	count = b.Get( 2 );
-	if( count > 1024 )
-	{
-		return false;
-	}
-	for( int i = 0; i < count; i++ )
-	{
-		dungeonLink_t l;
-		l.from = b.Get( 2 );
-		b.String( l.fromLandmark );
-		l.to = b.Get( 2 );
-		b.String( l.toLandmark );
-		l.kind = b.Get( 1 );
-		l.state = b.Get( 1 );
-		l.condFlag = b.Get( 1 );
-		l.conditionMode = b.Get( 1 );
-		l.condValue = b.Get( 2 );
-		if( l.conditionMode == 0 )
-		{
-			l.condFlag = -1;
-		}
-		if( !b.ReadingOK() || l.from >= temp.nodes.Num() || ( l.to != 0xffff && l.to >= temp.nodes.Num() ) || l.state > 3 || l.kind > 1 || l.conditionMode > 2 || l.fromLandmark.IsEmpty() || ( l.to == 0xffff && l.state != 3 ) )
-		{
-			return false;
-		}
-		temp.links.Append( l );
-	}
-	count = b.Get( 2 );
-	if( count > 256 )
+	int count;
+	if( !rec.ReadCount( count, 2, 256 ) )
 	{
 		return false;
 	}
 	int previous = -1;
 	for( int i = 0; i < count; i++ )
 	{
-		const int index = b.Get( 1 );
-		const uint16 value = b.Get( 2 );
-		if( index <= previous || !value )
+		byte index;
+		uint16 value;
+		if( !rec.ReadByte( index ) || !rec.ReadUnsignedShort( value ) || index <= previous || !value )
 		{
 			return false;
 		}
-		temp.flagValues[index] = value;
+		s.flagValues[index] = value;
 		previous = index;
 	}
-	temp.partyNode = b.Get( 2 );
-	b.String( temp.partyLandmark );
-	temp.portalNode = b.Get( 2 );
-	b.String( temp.portalLandmark );
-	if( ( temp.nodes.Num() && temp.partyNode >= temp.nodes.Num() ) || ( temp.portalNode != 0xffff && temp.portalNode >= temp.nodes.Num() ) )
+	return true;
+}
+static void WriteRecordSuspended( idRecordOut& rec, const idMapGraphDirector& s )
+{
+	rec.WriteUnsigned( s.suspended ? 1 : 0, 1 );
+}
+static bool ReadRecordSuspended( idRecordIn& rec, idMapGraphDirector& s )
+{
+	byte state;
+	if( !rec.ReadByte( state ) || state > 1 )
 	{
 		return false;
 	}
-	count = b.Get( 2 );
-	if( count > 1024 )
+	s.suspended = state != 0;
+	return true;
+}
+static void WriteRecordPortalOpen( idRecordOut& rec, const idMapGraphDirector& s )
+{
+	rec.WriteUnsigned( s.portalOpen ? 1 : 0, 1 );
+}
+static bool ReadRecordPortalOpen( idRecordIn& rec, idMapGraphDirector& s )
+{
+	byte state;
+	if( !rec.ReadByte( state ) || state > 1 )
 	{
 		return false;
 	}
-	for( int i = 0; i < count; i++ )
-	{
-		dungeonPending_t p;
-		p.id = b.Get( 4 );
-		p.targetNode = b.Get( 2 );
-		b.String( p.targetMap );
-		b.String( p.targetName );
-		p.action = b.Get( 1 );
-		p.queuedWorldTime = ( int64 )b.Get( 8 );
-		if( !b.ReadingOK() || p.action > 3 || p.targetMap.IsEmpty() || p.targetName.IsEmpty() || ( p.targetNode != 0xffff && p.targetNode >= temp.nodes.Num() ) )
-		{
-			return false;
-		}
-		for( int j = 0; j < temp.pending.Num(); j++ )
-		{
-			if( temp.pending[j].id == p.id )
-			{
-				return false;
-			}
-		}
-		if( temp.pending.Num() )
-		{
-			const dungeonPending_t& prev = temp.pending[temp.pending.Num() - 1];
-			if( p.queuedWorldTime < prev.queuedWorldTime || ( p.queuedWorldTime == prev.queuedWorldTime && p.id <= prev.id ) )
-			{
-				return false;
-			}
-		}
-		temp.pending.Append( p );
-	}
-	b.String( temp.instanceEndKind );
-	count = b.Get( 2 );
-	if( count > 256 )
+	s.portalOpen = state != 0;
+	return true;
+}
+
+SCHEMA_RECORD_STRUCT_FUNCTIONS( DungeonRecord, idMapGraphDirector, DUNGEON_RECORD_SCHEMA )
+
+// bytes is left as it was when the record cannot be written (a name past 63 bytes, a count past its list's bound)
+bool idMapGraphDirector::WriteRecord( idList<byte, TAG_GAME>& bytes ) const
+{
+	idFile_Memory file( "DREC" );
+	idRecordOut rec;
+	rec.BeginFile( &file );
+	WriteRecordDungeonRecord( rec, *this );
+	if( rec.Overflowed() )
 	{
 		return false;
 	}
-	for( int i = 0; i < count; i++ )
-	{
-		graphFlag_t f;
-		b.String( f.name );
-		f.index = b.Get( 1 );
-		if( f.name.IsEmpty() )
-		{
-			return false;
-		}
-		for( int j = 0; j < temp.flagDefinitions.Num(); j++ )
-		{
-			if( f.index == temp.flagDefinitions[j].index || !f.name.Icmp( temp.flagDefinitions[j].name ) )
-			{
-				return false;
-			}
-		}
-		temp.flagDefinitions.Append( f );
-	}
-	const int suspendState = b.Get( 1 );
-	const int portalState = b.Get( 1 );
-	if( suspendState > 1 || portalState > 1 )
+	bytes.SetNum( file.Length() );
+	memcpy( bytes.Ptr(), file.GetDataPtr(), file.Length() );
+	return true;
+}
+// restore parses into a temporary director and publishes only on success
+bool idMapGraphDirector::ReadRecord( const byte* data, int size )
+{
+	if( data == NULL || size <= 0 || size > 512 * 1024 )
 	{
 		return false;
 	}
-	temp.suspended = suspendState != 0;
-	temp.portalOpen = portalState != 0;
-	for( int i = 0; i < 3; i++ )
-	{
-		const uint32 bits = b.Get( 4 );
-		memcpy( &temp.portalOrigin[i], &bits, 4 );
-		if( ( bits & 0x7f800000U ) == 0x7f800000U )
-		{
-			return false;
-		}
-	}
-	if( !b.Good() )
+	idMapGraphDirector temp;
+	idFile_Memory file( "DREC", ( const char* )data, size );
+	idRecordIn rec;
+	rec.BeginFile( &file );
+	ReadRecordDungeonRecord( rec, temp );
+	if( !rec.good || file.Tell() != file.Length() || ( temp.nodes.Num() && temp.partyNode >= temp.nodes.Num() ) || ( temp.portalNode != 0xffff && temp.portalNode >= temp.nodes.Num() ) )
 	{
 		return false;
 	}
 	*this = temp;
 	return true;
 }
+//puncho end
 void idMapGraphDirector::StoreRecord()
 {
 	if( common->IsClient() || !worldStore.IsActive() )

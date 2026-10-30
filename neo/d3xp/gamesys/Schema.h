@@ -131,6 +131,86 @@ If you have questions concerning this license or the applicable additional terms
 #define SCHEMA_RCHECK_HAND( r, s, n, a )		( ( r ).BeginField( a ) && s::CheckRecord##n( r ) && ( r ).EndField() )
 //puncho end
 
+//puncho start - P2b.1.4: the record struct lists, the byte form of a record no entity owns (the dungeon record, the
+// recipe and their elements, MapGraph.h). SCHEMA_RECORD_STRUCT_FUNCTIONS( name, type, LIST ) makes static
+// WriteRecord<name>( idRecordOut&, const type& ) and ReadRecord<name>( idRecordIn&, type& ), which run over an idFile
+// (Record.h's BeginFile), and the typedef recordStruct<name>_t a LIST of the struct declares its elements with. Every row
+// is written, in list order: no mask, no field framing. The types, CH R and ENC RAW:
+//	U8 U16 U32 U64 I64	little endian, the width from the type; a value that does not fit fails the write; the read
+//						assigns the member from an unsigned of the width (I64: the signed value)
+//	STR					ARG the bound: a uint8 length, then the bytes; a longer string fails the write, the read refuses a
+//						longer length or a NUL byte
+//	VEC3				three float32; the read refuses a non-finite component
+//	LIST				ARG ( element, countWidth, maxCount ): the count in countWidth bytes, then each element through the
+//						element's struct functions; a count past maxCount fails the write and is refused before any
+//						element; each element read goes to the hand bool Check<element>( recordStruct<element>_t&,
+//						const type& ) and is appended only when it passes
+//	HAND				static void WriteRecord<n>( idRecordOut&, const type& ) and bool ReadRecord<n>( idRecordIn&, type& )
+//						beside the list; ARG its byte count, 0 for a variable field (not read by the expanders)
+// A failed write sets Overflowed() and writes nothing more; a failed read or check clears the sticky rec.good, and the
+// rows after it are skipped. The caller tests either after the expansion, and a reader that the file ends there.
+#define SCHEMA_RECORD_STRUCT_FUNCTIONS( name, type, LIST ) \
+	typedef type recordStruct##name##_t; \
+	static void WriteRecord##name( idRecordOut& rec, const type& s ) { LIST( SCHEMA_RECORD_STRUCT_PUT, s ) } \
+	static void ReadRecord##name( idRecordIn& rec, type& s ) { LIST( SCHEMA_RECORD_STRUCT_GET, s ) }
+#define SCHEMA_RECORD_STRUCT_PUT( s, n, TYPE, CH, ENC, ARG, BUILD )	SCHEMA_SPUT_##TYPE( rec, s, n, ARG )
+#define SCHEMA_RECORD_STRUCT_GET( s, n, TYPE, CH, ENC, ARG, BUILD )	if( rec.good ) { SCHEMA_SGET_##TYPE( rec, s, n, ARG ) }
+
+#define SCHEMA_SGET_UNSIGNED( r, s, n, T, READ )	{ T value; if( ( r ).READ( value ) ) { ( s ).n = value; } else { ( r ).good = false; } }
+#define SCHEMA_SPUT_U8( r, s, n, a )		( r ).WriteUnsigned( ( s ).n, 1 );
+#define SCHEMA_SGET_U8( r, s, n, a )		SCHEMA_SGET_UNSIGNED( r, s, n, byte, ReadByte )
+#define SCHEMA_SPUT_U16( r, s, n, a )		( r ).WriteUnsigned( ( s ).n, 2 );
+#define SCHEMA_SGET_U16( r, s, n, a )		SCHEMA_SGET_UNSIGNED( r, s, n, uint16, ReadUnsignedShort )
+#define SCHEMA_SPUT_U32( r, s, n, a )		( r ).WriteUnsigned( ( s ).n, 4 );
+#define SCHEMA_SGET_U32( r, s, n, a )		SCHEMA_SGET_UNSIGNED( r, s, n, uint32, ReadUnsignedInt )
+#define SCHEMA_SPUT_U64( r, s, n, a )		( r ).WriteUnsigned( ( s ).n, 8 );
+#define SCHEMA_SGET_U64( r, s, n, a )		SCHEMA_SGET_UNSIGNED( r, s, n, uint64, Read64 )
+#define SCHEMA_SPUT_I64( r, s, n, a )		( r ).WriteUnsigned( ( uint64 )( s ).n, 8 );
+#define SCHEMA_SGET_I64( r, s, n, a )		{ uint64 value; if( ( r ).Read64( value ) ) { ( s ).n = ( int64 )value; } else { ( r ).good = false; } }
+#define SCHEMA_SPUT_STR( r, s, n, a )		( r ).WriteString( ( s ).n, a );
+#define SCHEMA_SGET_STR( r, s, n, a )		if( !( r ).ReadString( ( s ).n, a ) ) { ( r ).good = false; }
+#define SCHEMA_SPUT_VEC3( r, s, n, a )		( r ).WriteFloat( ( s ).n[0] ); ( r ).WriteFloat( ( s ).n[1] ); ( r ).WriteFloat( ( s ).n[2] );
+#define SCHEMA_SGET_VEC3( r, s, n, a )		if( !( r ).ReadFiniteFloat( ( s ).n[0] ) || !( r ).ReadFiniteFloat( ( s ).n[1] ) || !( r ).ReadFiniteFloat( ( s ).n[2] ) ) { ( r ).good = false; }
+#define SCHEMA_SPUT_HAND( r, s, n, a )		WriteRecord##n( r, s );
+#define SCHEMA_SGET_HAND( r, s, n, a )		if( !ReadRecord##n( r, s ) ) { ( r ).good = false; }
+
+// a LIST's ARG, taken apart; the element's names are pasted through SCHEMA_CAT so the argument expands first
+#define SCHEMA_LIST_ELEMENT( e, w, m )		e
+#define SCHEMA_LIST_WIDTH( e, w, m )		w
+#define SCHEMA_LIST_MAX( e, w, m )			m
+#define SCHEMA_CAT( x, y )					SCHEMA_CAT_( x, y )
+#define SCHEMA_CAT_( x, y )					x##y
+#define SCHEMA_CAT3( x, y, z )				SCHEMA_CAT3_( x, y, z )
+#define SCHEMA_CAT3_( x, y, z )				x##y##z
+#define SCHEMA_SPUT_LIST( r, s, n, a ) \
+	( r ).WriteCount( ( s ).n.Num(), SCHEMA_LIST_WIDTH a, SCHEMA_LIST_MAX a ); \
+	for( int i = 0; i < ( s ).n.Num(); i++ ) \
+	{ \
+		SCHEMA_CAT( WriteRecord, SCHEMA_LIST_ELEMENT a )( r, ( s ).n[i] ); \
+	}
+#define SCHEMA_SGET_LIST( r, s, n, a ) \
+	{ \
+		int count; \
+		if( !( r ).ReadCount( count, SCHEMA_LIST_WIDTH a, SCHEMA_LIST_MAX a ) ) \
+		{ \
+			( r ).good = false; \
+		} \
+		for( int i = 0; i < count && ( r ).good; i++ ) \
+		{ \
+			SCHEMA_CAT3( recordStruct, SCHEMA_LIST_ELEMENT a, _t ) element; \
+			SCHEMA_CAT( ReadRecord, SCHEMA_LIST_ELEMENT a )( r, element ); \
+			if( ( r ).good && SCHEMA_CAT( Check, SCHEMA_LIST_ELEMENT a )( element, s ) ) \
+			{ \
+				( s ).n.Append( element ); \
+			} \
+			else \
+			{ \
+				( r ).good = false; \
+			} \
+		} \
+	}
+//puncho end
+
 // save types: f is the stream, s the instance, n the field, a the argument
 #define SCHEMA_SAVE_INT( f, s, n, a )			( f )->WriteInt( ( s ).n );
 #define SCHEMA_RESTORE_INT( f, s, n, a )		( f )->ReadInt( ( s ).n );

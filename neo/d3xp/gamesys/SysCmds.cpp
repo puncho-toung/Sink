@@ -4038,6 +4038,12 @@ static void Cmd_RecordTest_f( const idCmdArgs& args )
 		worldStore.TestCodec();
 		return;
 	}
+	//puncho - P2b.1.4: recordTest recipe, the recipe codec against SetMatchGameData (idMapGraphDirector::TestRecipe)
+	if( idStr::Icmp( args.Argv( 1 ), "recipe" ) == 0 )
+	{
+		mapGraphDirector.TestRecipe( gameLocal.GetMapName() );
+		return;
+	}
 	//puncho start - P2b.1.2: recordTest fuzz <n> <seed>. The current map committed (PrepareSave), then n mutants of the
 	// store's records from idRandom( seed ), each through the reader and the check ApplyCurrentMap runs before any apply
 	// (RecordScanChunk, the record's identity, each entry's check, an authored entry's sections against its entity).

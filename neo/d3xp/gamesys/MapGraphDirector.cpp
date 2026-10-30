@@ -61,17 +61,19 @@ static bool GraphTablesFingerprint( const idMapLandmarks& data, uint32& landmark
 		}
 		order.Insert( i, at );
 	}
-	idList<byte, TAG_GAME> bytes;
-	idGraphBytes b( bytes );
-	b.Put( order.Num(), 2 );
+	//puncho - P2b.1.4: through the record codec; the bytes are the ones the CRC always covered
+	idFile_Memory bytes( "landmark fingerprint" );
+	idRecordOut b;
+	b.BeginFile( &bytes );
+	b.WriteUnsigned( order.Num(), 2 );
 	for( int i = 0; i < order.Num(); i++ )
 	{
 		const landmark_t& lm = data.GetLandmark( order[i] );
-		b.Text( lm.id );
-		b.Text( lm.kind );
-		b.Put( lm.flags, 1 );
-		b.Text( lm.link );
-		b.Text( lm.sealedBy );
+		b.WriteString( lm.id, 63 );
+		b.WriteString( lm.kind, 63 );
+		b.WriteUnsigned( lm.flags, 1 );
+		b.WriteString( lm.link, 63 );
+		b.WriteString( lm.sealedBy, 63 );
 		for( int v = 0; v < 13; v++ )
 		{
 			const float value = v < 3 ? lm.origin[v] : v < 12 ? lm.axis[( v - 3 ) / 3][( v - 3 ) % 3]
@@ -81,14 +83,14 @@ static bool GraphTablesFingerprint( const idMapLandmarks& data, uint32& landmark
 			{
 				memcpy( &bits, &value, 4 );
 			}
-			b.Put( bits, 4 );
+			b.WriteUnsigned( bits, 4 );
 		}
 		const transitionVolume_t* volume = data.FindTransitionVolume( lm.id );
-		b.Put( volume ? 1 : 0, 1 );
+		b.WriteUnsigned( volume ? 1 : 0, 1 );
 		if( volume )
 		{
-			b.Put( volume->cap, 1 );
-			b.Put( volume->carryAll ? 1 : 0, 1 );
+			b.WriteUnsigned( volume->cap, 1 );
+			b.WriteUnsigned( volume->carryAll ? 1 : 0, 1 );
 			for( int v = 0; v < 6; v++ )
 			{
 				const float value = volume->bounds[v / 3][v % 3];
@@ -97,15 +99,15 @@ static bool GraphTablesFingerprint( const idMapLandmarks& data, uint32& landmark
 				{
 					memcpy( &bits, &value, 4 );
 				}
-				b.Put( bits, 4 );
+				b.WriteUnsigned( bits, 4 );
 			}
 		}
 	}
-	if( !b.Good() )
+	if( b.Overflowed() )
 	{
 		return false;
 	}
-	landmarks = CRC32_BlockChecksum( bytes.Ptr(), bytes.Num() );
+	landmarks = CRC32_BlockChecksum( bytes.GetDataPtr(), bytes.Length() );
 	return true;
 }
 static bool GraphMapFingerprint( const char* name, uint32& geometry, uint32& landmarks )
@@ -235,6 +237,11 @@ const dungeonRecipe_t& idMapGraphDirector::RecipeForLoad( const char* map )
 	}
 	return recipe;
 }
+//puncho start - P2b.1.4: the recipe through DUNGEON_RECIPE_SCHEMA and the record codec. Its version byte stays by hand
+// before the list: SetMatchGameData refuses another version without the failure path's Clear, leaving clientRecipe and
+// recipeValid set, as it always did
+SCHEMA_RECORD_STRUCT_FUNCTIONS( Recipe, dungeonRecipe_t, DUNGEON_RECIPE_SCHEMA )
+//puncho end
 //puncho - P2b.1.0: the recipe's wire bytes; WriteMatchGameData's encoder and recordDump's
 static int WriteRecipeBytes( const dungeonRecipe_t& r, byte* out, int max )
 {
@@ -242,23 +249,17 @@ static int WriteRecipeBytes( const dungeonRecipe_t& r, byte* out, int max )
 	{
 		return 0;
 	}
-	idList<byte, TAG_GAME> bytes;
-	idGraphBytes b( bytes );
-	b.Put( 1, 1 );
-	b.Put( r.flags, 1 );
-	b.Put( r.instanceId, 8 );
-	b.Put( r.rootSeed, 8 );
-	b.Put( r.graphCRC, 4 );
-	b.Put( r.currentNode, 2 );
-	b.Put( r.nodeVisits, 2 );
-	b.Put( r.variantFlags, 8 );
-	b.Text( r.worldName, 31 );
-	if( !b.Good() || bytes.Num() > max )
+	idFile_Memory bytes( "recipe" );
+	idRecordOut rec;
+	rec.BeginFile( &bytes );
+	rec.WriteUnsigned( DUNGEON_RECIPE_VERSION, 1 );
+	WriteRecordRecipe( rec, r );
+	if( rec.Overflowed() || bytes.Length() > max )
 	{
 		return -1;
 	}
-	memcpy( out, bytes.Ptr(), bytes.Num() );
-	return bytes.Num();
+	memcpy( out, bytes.GetDataPtr(), bytes.Length() );
+	return bytes.Length();
 }
 int idMapGraphDirector::WriteMatchGameData( const char* map, byte* out, int max )
 {
@@ -289,30 +290,53 @@ bool idMapGraphDirector::SetMatchGameData( const byte* data, int size )
 	{
 		return true;
 	}
-	if( size < 35 || size > 66 )
+	if( data == NULL || size < 35 || size > 66 )
 	{
 		return false;
 	}
-	idGraphBytes b( data, size );
-	if( b.Get( 1 ) != 1 )
+	idFile_Memory bytes( "recipe", ( const char* )data, size );
+	idRecordIn rec;
+	rec.BeginFile( &bytes );
+	byte version;
+	if( !rec.ReadByte( version ) || version != DUNGEON_RECIPE_VERSION )
 	{
 		return false;
 	}
-	recipe.flags = b.Get( 1 );
-	recipe.instanceId = b.Get( 8 );
-	recipe.rootSeed = b.Get( 8 );
-	recipe.graphCRC = b.Get( 4 );
-	recipe.currentNode = b.Get( 2 );
-	recipe.nodeVisits = b.Get( 2 );
-	recipe.variantFlags = b.Get( 8 );
-	b.String( recipe.worldName, 31 );
-	if( !b.Good() || recipe.flags > 1 || recipe.currentNode >= 256 || recipe.worldName.IsEmpty() || ( ( recipe.flags & 1 ) != ( recipe.instanceId != 0 ) ) )
+	ReadRecordRecipe( rec, recipe );
+	if( !rec.good || bytes.Tell() != bytes.Length() || recipe.flags > 1 || recipe.currentNode >= 256 || recipe.worldName.IsEmpty() || ( ( recipe.flags & 1 ) != ( recipe.instanceId != 0 ) ) )
 	{
 		Clear();
 		return false;
 	}
 	return true;
 }
+#if !defined( ID_RETAIL )
+//puncho - P2b.1.4: recordTest recipe. The recipe this map loaded with (recordDump's bytes) fed to SetMatchGameData,
+// which accepts it within 35-66 bytes and writes the same bytes back, then that recipe with a 32-character world name,
+// which the write refuses
+void idMapGraphDirector::TestRecipe( const char* map ) const
+{
+	byte bytes[MAX_MATCH_GAME_DATA];
+	const int length = PeekMatchGameData( map, bytes, sizeof( bytes ) );
+	idStr hex;
+	for( int i = 0; i < length; i++ )
+	{
+		hex += va( "%02x", bytes[i] );
+	}
+	gameLocal.Printf( "RECORD_RECIPE bytes=%d %s\n", length, hex.c_str() );
+	idMapGraphDirector decoded;
+	const bool accepted = length >= 35 && length <= 66 && decoded.SetMatchGameData( bytes, length );
+	byte again[MAX_MATCH_GAME_DATA];
+	const bool same = accepted && WriteRecipeBytes( decoded.recipe, again, sizeof( again ) ) == length && memcmp( again, bytes, length ) == 0;
+	dungeonRecipe_t overlong = decoded.recipe;
+	overlong.worldName.Fill( 'w', 32 );
+	const int refused = WriteRecipeBytes( overlong, again, sizeof( again ) );
+	overlong.worldName.Fill( 'w', 31 );
+	const int longest = WriteRecipeBytes( overlong, again, sizeof( again ) );
+	const bool pass = accepted && same && refused == -1 && longest == 66;
+	gameLocal.Printf( "RECORD_RECIPE %s accepted=%d rewritten=%s name32=%d name31=%d\n", pass ? "PASS" : "FAIL", accepted ? 1 : 0, same ? "equal" : "DIFF", refused, longest );
+}
+#endif
 
 void idMapGraphDirector::BeginMap( const char* map )
 {

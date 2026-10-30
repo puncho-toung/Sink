@@ -1,13 +1,9 @@
 #ifndef __GAME_WORLDSTORELOCAL_H__
 #define __GAME_WORLDSTORELOCAL_H__
 
-//puncho - P2b.1.1a: the record codec helpers that WorldStore.cpp (commit, apply, save, restore, recordDump) and
+//puncho - P2b.1.1a: the record functions that WorldStore.cpp (commit, apply, save, restore, recordDump) and
 // WorldStoreRecord.cpp (codec, created entities, binds) both call, and SysCmds.cpp's recordTest; MapLandmarks.cpp needs
-// none of them
-void RecordString( idFile& f, const char* value );
-bool RecordReadString( idFile& f, idStr& value );
-void Record64( idFile& f, uint64 value );
-bool RecordRead64( idFile& f, uint64& value );
+// none of them. P2b.1.4: their bytes go through Record.h's codec, idRecordOut and idRecordIn over the idFile
 
 //puncho start - P2b.1.2: MREC v3 (Record.h has the entries' sections). The header, little endian through idFile:
 // version, flags (bit0 visited, bit1 cleared), world, instanceId, node, cellId, unit, unitRevision, entitiesCRC,
@@ -57,7 +53,7 @@ struct mrecEntry_t
 	bool			valid;
 };
 
-void		RecordWriteHeader( idFile& out, const mrecHeader_t& header );
+void		RecordWriteHeader( idRecordOut& out, const mrecHeader_t& header );	// out over the record's file (BeginFile)
 bool		RecordReadHeader( idFile_Memory& in, mrecHeader_t& header, idStr& reason );
 // any MREC's version (1 - 3) and its map or unit name, for the line that drops an older one; 0 when unreadable
 int			RecordChunkVersion( const byte* data, int length, idStr& unit );

@@ -8,7 +8,8 @@
 ===============================================================================
 
 	The record entry codec (P2b.1.2). The bytes are little endian, put and taken a byte at a time, so the format is
-	the same on any host and no idFile call sits between a field and its bounds.
+	the same on any host and no idFile call sits between a field and its bounds. The same calls run over an idFile
+	after BeginFile (P2b.1.4): the bytes are made the same way and only Put and ReadData reach the file.
 
 ===============================================================================
 */
@@ -41,6 +42,7 @@ idRecordOut
 idRecordOut::idRecordOut()
 {
 	static const recordFrame_t none = { CELL_ID_NONE, vec3_origin, mat3_identity, RECORD_FRAME_MAP };
+	file = NULL;
 	frame = &none;
 	mapArgs.map = NULL;
 	mapArgs.def = NULL;
@@ -54,6 +56,7 @@ idRecordOut::idRecordOut()
 
 void idRecordOut::Begin( const recordFrame_t& entryFrame, bool createdEntry, const idRecordMapArgs& baseline, uint64 parent, const char* name )
 {
+	file = NULL;
 	frame = &entryFrame;
 	mapArgs = baseline;
 	defName = name;
@@ -62,6 +65,15 @@ void idRecordOut::Begin( const recordFrame_t& entryFrame, bool createdEntry, con
 	created = createdEntry;
 	poseSkipped = corpse = removed = overflow = headerWritten = false;
 	numSections = sectionId = sectionVersion = sectionStart = fieldStart = length = 0;
+	sectionMask = 0;
+}
+
+void idRecordOut::BeginFile( idFile* target )
+{
+	assert( target != NULL );
+	file = target;
+	removed = overflow = headerWritten = false;
+	numSections = length = 0;
 	sectionMask = 0;
 }
 
@@ -92,6 +104,16 @@ void idRecordOut::SetDefName( const char* name )
 
 void idRecordOut::Put( const void* bytes, int count )
 {
+	// the file mode writes through until a value fails; the file grows, so only a write error stops it
+	if( file != NULL )
+	{
+		if( !overflow )
+		{
+			overflow = file->Write( bytes, count ) != count;
+			length += count;
+		}
+		return;
+	}
 	if( overflow || removed || length + count > RECORD_MAX_ENTRY_BYTES )
 	{
 		overflow = !removed;
@@ -103,7 +125,7 @@ void idRecordOut::Put( const void* bytes, int count )
 
 void idRecordOut::BeginSection( int id, int version )
 {
-	assert( id > 0 && id < RECORD_SECTION_IDS );
+	assert( file == NULL && id > 0 && id < RECORD_SECTION_IDS );
 	sectionId = id;
 	sectionVersion = version;
 	sectionMask = 0;
@@ -125,6 +147,7 @@ bool idRecordOut::Has( int bit ) const
 // only the byte count is left to fill in at EndSection, and a section with no set field writes nothing.
 void idRecordOut::BeginField( int bytes )
 {
+	assert( file == NULL );
 	if( !headerWritten && !removed )
 	{
 		if( numSections >= RECORD_MAX_SECTIONS )
@@ -250,6 +273,52 @@ void idRecordOut::WriteData( const void* bytes, int count )
 	Put( bytes, count );
 }
 
+void idRecordOut::WriteUnsigned( uint64 value, int bytes )
+{
+	assert( bytes == 1 || bytes == 2 || bytes == 4 || bytes == 8 );
+	if( bytes < 8 && ( value >> ( bytes * 8 ) ) != 0 )
+	{
+		overflow = true;
+		return;
+	}
+	byte b[8];
+	for( int i = 0; i < bytes; i++ )
+	{
+		b[i] = ( byte )( value >> ( i * 8 ) );
+	}
+	Put( b, bytes );
+}
+
+void idRecordOut::WriteCount( int count, int bytes, int maxCount )
+{
+	if( count < 0 || count > maxCount )
+	{
+		overflow = true;
+		return;
+	}
+	WriteUnsigned( ( uint64 )count, bytes );
+}
+
+void idRecordOut::WriteString( const char* value, int bound )
+{
+	assert( bound >= 0 && bound <= 255 );
+	const int count = idStr::Length( value );
+	if( count > bound )
+	{
+		overflow = true;
+		return;
+	}
+	WriteByte( count );
+	Put( value, count );
+}
+
+void idRecordOut::WriteChunk( uint32 tag, const void* bytes, int count )
+{
+	WriteUnsigned( tag, 4 );
+	WriteUnsigned( ( uint64 )count, 4 );
+	Put( bytes, count );
+}
+
 /*
 ================
 idRecordIn
@@ -263,6 +332,7 @@ idRecordIn::idRecordIn()
 
 void idRecordIn::Begin( const recordFrame_t& entryFrame, uint32 cellId, bool createdEntry, const char* name )
 {
+	file = NULL;
 	frame = &entryFrame;
 	recordCellId = cellId;
 	created = createdEntry;
@@ -277,6 +347,18 @@ void idRecordIn::Begin( const recordFrame_t& entryFrame, uint32 cellId, bool cre
 	poseCellId = CELL_ID_NONE;
 	poseOrigin.Zero();
 	poseAxis.Identity();
+}
+
+void idRecordIn::BeginFile( idFile* source )
+{
+	assert( source != NULL );
+	file = source;
+	base = NULL;
+	overfull = false;
+	numSections = next = 0;
+	mask = 0;
+	cursor = fieldEnd = sectionEnd = 0;
+	good = true;
 }
 
 bool idRecordIn::ReadSections( const byte* data, int length, int count, int& consumed )
@@ -401,6 +483,7 @@ void idRecordIn::EndSection()
 // fields after it.
 bool idRecordIn::BeginField( int bytes )
 {
+	assert( file == NULL );
 	cursor = fieldEnd;
 	if( bytes == 0 )
 	{
@@ -432,6 +515,10 @@ bool idRecordIn::EndField()
 
 bool idRecordIn::ReadData( void* out, int count )
 {
+	if( file != NULL )
+	{
+		return count >= 0 && file->Read( out, count ) == count;
+	}
 	if( count < 0 || count > fieldEnd - cursor )
 	{
 		cursor = fieldEnd;
@@ -510,6 +597,53 @@ bool idRecordIn::Read64( uint64& value )
 		return false;
 	}
 	value = ( uint64 )low | ( ( uint64 )high << 32 );
+	return true;
+}
+
+bool idRecordIn::ReadUnsignedShort( uint16& value )
+{
+	byte b[2];
+	if( !ReadData( b, 2 ) )
+	{
+		return false;
+	}
+	value = ( uint16 )( b[0] | ( b[1] << 8 ) );
+	return true;
+}
+
+bool idRecordIn::ReadCount( int& count, int bytes, int maxCount )
+{
+	assert( bytes == 1 || bytes == 2 || bytes == 4 );
+	count = 0;
+	byte b[4];
+	if( !ReadData( b, bytes ) )
+	{
+		return false;
+	}
+	uint32 value = 0;
+	for( int i = 0; i < bytes; i++ )
+	{
+		value |= ( uint32 )b[i] << ( i * 8 );
+	}
+	if( value > ( uint32 )maxCount )
+	{
+		return false;
+	}
+	count = ( int )value;
+	return true;
+}
+
+bool idRecordIn::ReadString( idStr& value, int bound )
+{
+	assert( bound >= 0 && bound <= 255 );
+	byte count;
+	char buffer[256];
+	if( !ReadByte( count ) || count > bound || !ReadData( buffer, count ) || memchr( buffer, 0, count ) != NULL )
+	{
+		return false;
+	}
+	buffer[count] = '\0';
+	value = buffer;
 	return true;
 }
 
