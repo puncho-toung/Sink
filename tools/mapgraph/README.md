@@ -1,5 +1,15 @@
 # Offline node-map composer, format 1
 
+## Status: frozen (Phase 2B stage 1, P2b.1.9, 2026-10-29)
+
+The composer is frozen at format 1. Worldspaces come from the editor (SinkBroom's one world-coordinate document exports
+`maps/<world>.bigmap` and one cell `.map` per cell, Phase 2B stages 3 and 5), and map-graph node maps (dungeons, large interiors)
+are hand-built (Phase 2 Q5's default). No Valve 220 input path is added (Phase 2B Q19: the reader would be a medium package for a
+tool nothing uses). What stays: `compose.py` reads and writes `Version 2` brushDef3/patchDef maps only; `test_compose.py` (14
+tests) keeps passing and guards the format; `fixtures/kit.json` is the reference recipe. What replaces the composer for new
+content: the editor's export (stage 5) and the per-cell compile driver `buildworld` (stage 3). A change to this tool needs a reason
+written into `plans/map-graph/00-PHASE2B-PLAN.md`.
+
 `compose.py` assembles authored Doom 3 Version 2 `.map` segments into one ordinary
 whole map and a deterministic JSON manifest. Run dmap and bake the result offline
 using the normal engine tools. There is no runtime stitching, additive loading,
@@ -188,8 +198,8 @@ that format; so does a text editor. The project's TrenchBroom configuration read
 writes only "Doom3 (Valve)", which is Valve 220 without a `Version` line, and the engine's
 own map writer emits `Version 3`; the composer accepts neither in v1, and no tool
 converts Valve 220 to `brushDef3`. Author segments, and edit the
-`prefabs/landmarks` doorways, in DarkRadiant or by hand until a Valve 220 reader lands.
-Such a reader would translate the three plane points of world and entity brushes alike
+`prefabs/landmarks` doorways, in DarkRadiant or by hand; no Valve 220 reader is added
+(Status above). Were one ever written, it would translate the three plane points of world and entity brushes alike
 (Valve 220 entity planes are absolute; the engine subtracts the origin), shift a world
 side's offsets by minus the texture axis over its scale dot translation, with no origin
 term (`GetTextureVectors`), keep an entity side's offsets (its local coordinates do not
