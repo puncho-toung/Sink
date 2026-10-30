@@ -4682,6 +4682,20 @@ int	idGameLocal::NumAAS() const
 
 /*
 ==================
+idGameLocal::GetAASName
+==================
+*/
+const char* idGameLocal::GetAASName( int i ) const
+{
+	if( i < 0 || i >= aasNames.Num() )
+	{
+		return "?";
+	}
+	return aasNames[i].c_str();
+}
+
+/*
+==================
 idGameLocal::GetAAS
 ==================
 */

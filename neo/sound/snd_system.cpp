@@ -758,6 +758,10 @@ idSoundSystemLocal::GetSampleBytes
 int64 idSoundSystemLocal::GetSampleBytes( int& count ) const
 {
 	count = 0;
+	if( s_noSound.GetBool() )
+	{
+		return -1;	//puncho - P2b.0.2: the default samples do not measure the map's audio
+	}
 	int64 bytes = 0;
 	for( int i = 0; i < samples.Num(); i++ )
 	{

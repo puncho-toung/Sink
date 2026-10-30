@@ -130,7 +130,8 @@ struct renderMapStats_t
 
 //puncho - P2b.0.2: every loaded image by kind, summed when listMap asks (no frame work). StorageSize counts one face,
 // so a cube counts six. The kind is read off the name the light grid and probe loaders write, else the generator
-// function (render targets, the shadow atlas: per world, never per cell), else material
+// function (render targets, the shadow atlas: per world, never per cell), else material. Standalone (cinematic)
+// images are neither listed by listImages nor counted here.
 struct renderMapBytes_t
 {
 	uint64	gridImageBytes;

@@ -2868,11 +2868,15 @@ void idRenderSystemLocal::GetMapBytes( renderMapBytes_t& bytes ) const
 		{
 			continue;
 		}
-		// StorageSize counts one face (and listImages prints that one face)
+		// StorageSize counts one face/sample. FMT_R8F counts at 4 bits there, though NVRHI allocates R8_UNORM.
 		uint64 size = ( uint64 )image->StorageSize();
 		if( image->GetOpts().textureType == DTT_CUBIC )
 		{
 			size *= 6;
+		}
+		else if( image->GetOpts().textureType == DTT_2D_MULTISAMPLE )
+		{
+			size *= image->GetOpts().samples;
 		}
 		// ActuallyLoadImage's span kinds, tested in its order
 		const char* name = image->GetName();

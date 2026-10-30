@@ -771,6 +771,7 @@ public:
 	bool					budgetSpawnRefused;
 
 	int						NumAAS() const;
+	const char*				GetAASName( int i ) const;	//puncho - P2b.0.2: names captured with aasList at Init
 	idAAS* 					GetAAS( int num ) const;
 	idAAS* 					GetAAS( const char* name ) const;
 	void					SetAASAreaState( const idBounds& bounds, const int areaContents, bool closed );

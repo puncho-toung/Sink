@@ -1739,9 +1739,9 @@ bool idCommonLocal::SaveGame( const char* saveName )
 	files.Append( &stringsFile );
 	files.Append( &saveFile );
 
-	//puncho - P2b.0.1g (M3): stream is the compressed length, final now that Finish flushed the last block; SaveGame.cpp's
-	// 4 MB check reads it before Finish, at most this value. Read here, as SaveGameSync's completion (OnSaveCompleted)
-	// deletes pipelineFile
+	//puncho - P2b.0.1g (M3): stream is the final compressed length after Finish. SaveGame.cpp's 4 MB check reads the
+	// compressed length before Finish, so the final value can be larger. Capture it before SaveGameSync's completion
+	// (OnSaveCompleted) deletes pipelineFile.
 	const int saveStreamBytes = saveGateLine ? pipelineFile->Length() : 0;
 	const int saveStringBytes = saveGateLine ? stringsFile.Length() : 0;
 

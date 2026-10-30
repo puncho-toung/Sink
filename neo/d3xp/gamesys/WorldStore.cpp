@@ -1133,7 +1133,7 @@ void idWorldStore::Commit( bool leaving )
 	// the line's entries)
 	if( crcSpans )
 	{
-		common->LoadSpanAdd( SPAN_REC_ENTCRC, entCrcUs, 0, 0, 0, 0 );
+		common->LoadSpanAdd( SPAN_REC_ENTCRC, entCrcUs, 0, 0, 0, 0 );	//puncho - P2b.0.1g (M2)
 	}
 	idList<createdCandidate_t, TAG_GAME> candidates;
 	for( idEntity* ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )

@@ -134,6 +134,7 @@ public:
 	virtual void				Stats() const;
 	virtual void				GetRoutingStats( int& bytes, int& evictions, int& saturated ) const;
 	virtual int					FileBytes() const;
+	virtual int64				RoutingBytes() const;
 	virtual void				Test( const idVec3& origin );
 	virtual const idAASSettings* GetSettings() const;
 	virtual int					PointAreaNum( const idVec3& origin ) const;

@@ -4401,6 +4401,21 @@ int64 idCollisionModelManagerLocal::GetModelMemory() const
 
 /*
 ================
+idCollisionModelManagerLocal::GetPolygonIdMemory
+================
+*/
+int64 idCollisionModelManagerLocal::GetPolygonIdMemory() const
+{
+	int64 bytes = 0;
+	for( int i = 0; i < numModels; i++ )
+	{
+		bytes += ( int64 )models[i]->maxPolygonIds * sizeof( cm_polygon_t* ) + models[i]->polygonIdHash.Allocated();
+	}
+	return bytes;
+}
+
+/*
+================
 idCollisionModelManagerLocal::ModelInfo
 ================
 */
