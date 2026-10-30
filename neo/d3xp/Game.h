@@ -327,7 +327,9 @@ public:
 	virtual bool				InitFromSaveGame( const char* mapName, idRenderWorld* renderWorld, idSoundWorld* soundWorld, idFile* saveGameFile, idFile* stringTableFile, int saveGameVersion ) = 0;
 
 	// Saves the current game state, common may have written some data to the file already.
-	virtual void				SaveGame( idFile* saveGameFile, idFile* stringTableFile ) = 0;
+	//puncho - P2b.1.10k: false when the stream or the string table is past its limit (idSaveGame::Close), nothing fatal;
+	// storeBytes and objectBytes are the world store's and the objects' uncompressed bytes, for common's refusal line
+	virtual bool				SaveGame( idFile* saveGameFile, idFile* stringTableFile, int& storeBytes, int& objectBytes ) = 0;
 
 	// Pulls the current player location from the game information
 	virtual void				GetSaveGameDetails( idSaveGameDetails& gameDetails ) = 0;

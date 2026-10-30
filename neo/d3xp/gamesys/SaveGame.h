@@ -36,7 +36,7 @@ Save game related helper classes.
 
 */
 
-class idStreamTrace;	//puncho - stream-trace (P1-A1c)
+#include "StreamTrace.h"	//puncho - P2b.1.10k: idSaveGame's idFile_StreamTrace counts every save's bytes
 
 class idSaveGame
 {
@@ -44,7 +44,7 @@ public:
 	idSaveGame( idFile* savefile, idFile* stringFile, int inVersion );
 	~idSaveGame();
 
-	void					Close();
+	bool					Close();	//puncho - P2b.1.10k: false past MIN_SAVEGAME_SIZE_BYTES or MAX_SAVEGAME_STRING_TABLE_SIZE
 
 	void					WriteDecls();
 
@@ -112,6 +112,18 @@ public:
 		return file->Length();
 	}
 
+	//puncho start - P2b.1.10k: the bytes handed to the stream so far, uncompressed (GetCurrentSaveSize is the compressed
+	// length of the blocks flushed so far), and those the objects' Save chains wrote, once Close ran them
+	int						GetUncompressedSize() const
+	{
+		return counter.count;
+	}
+	int						GetObjectBytes() const
+	{
+		return objectBytes;
+	}
+	//puncho end
+
 	//puncho start - stream-trace (P1-A1c, K1): the save driver's pseudo-scopes (<program>, <events>); nothing unless the
 	// stream-trace checker armed this save
 	void					BeginTraceScope( const char* name );
@@ -127,6 +139,14 @@ private:
 	int						version;
 
 	idStreamTrace* 			streamTrace;	//puncho - stream-trace (P1-A1c): NULL unless the checker armed this save
+	//puncho start - P2b.1.10k: always between the stream and its file, and under an armed trace's own counter: the
+	// pipelined file's Length() is compressed and its Tell() asserts
+	idFile_StreamTrace		counter;
+	int						objectBytes;
+#if !defined( ID_RETAIL )
+	idList<byte>			testStream;		// g_testSaveOverflow stream: the stream's bytes so far, which size the plant
+#endif
+	//puncho end
 
 	void					CallSave_r( const idTypeInfo* cls, const idClass* obj );
 

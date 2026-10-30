@@ -1594,9 +1594,32 @@ bool idCommonLocal::SaveGame( const char* saveName )
 	game->GetServerInfo().WriteToFileHandle( &saveFile );
 
 	// let the game save its state
-	game->SaveGame( pipelineFile, &stringsFile );
+	//puncho start - P2b.1.10k: a save past the stream or string table limit is refused, not fatal. Finish joins the
+	// compressor whatever the game answered; the stream is tested again on its final compressed length, since Close saw
+	// only the blocks flushed before the last. The refusal writes no file (the slot keeps its previous save), frees the
+	// pipeline as OnSaveCompleted does for a failed save (else every later save returns above) and clears the indicator
+	// as that save's HandleCommonErrors does, then runs the success tail
+	int storeBytes = 0;
+	int objectBytes = 0;
+	const bool fits = game->SaveGame( pipelineFile, &stringsFile, storeBytes, objectBytes );
 
 	pipelineFile->Finish();
+
+	const int streamBytes = pipelineFile->Length();
+	if( !fits || streamBytes > MIN_SAVEGAME_SIZE_BYTES )
+	{
+		Warning( "save refused: stream %d strings %d store %d objects %d (limits %d/%d)", streamBytes, stringsFile.Length(), storeBytes, objectBytes, MIN_SAVEGAME_SIZE_BYTES, MAX_SAVEGAME_STRING_TABLE_SIZE );
+		delete pipelineFile;
+		pipelineFile = NULL;
+		Dialog().ShowSaveIndicator( false );
+		if( !insideExecuteMapChange )
+		{
+			renderSystem->EndAutomaticBackgroundSwaps();
+		}
+		syncNextGameFrame = true;
+		return false;
+	}
+	//puncho end
 
 	idSaveGameDetails gameDetails;
 	game->GetSaveGameDetails( gameDetails );

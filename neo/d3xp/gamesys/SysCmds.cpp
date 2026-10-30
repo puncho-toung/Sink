@@ -2681,7 +2681,8 @@ static void Cmd_TestSave_f( const idCmdArgs& args )
 
 	f = fileSystem->OpenFileWrite( "test.sav" );
 	strings = NULL;
-	gameLocal.SaveGame( f, strings );
+	int storeBytes, objectBytes;	//puncho - P2b.1.10k: unused here
+	gameLocal.SaveGame( f, strings, storeBytes, objectBytes );
 	fileSystem->CloseFile( f );
 }
 
@@ -2721,7 +2722,8 @@ static void SaveTraced( idStreamTrace& trace, idFile_Memory& saveFile, idFile_Me
 	pipeline->OpenForWriting( &saveFile );
 	{
 		idStreamTraceArm arm( &trace );
-		gameLocal.SaveGame( pipeline, &stringsFile );
+		int storeBytes, objectBytes;	//puncho - P2b.1.10k: the checker keeps a refused save's stream too: every byte is written
+		gameLocal.SaveGame( pipeline, &stringsFile, storeBytes, objectBytes );
 	}
 	pipeline->Finish();
 	delete pipeline;

@@ -508,7 +508,7 @@ save the current player state, level name, and level state
 the session may have written some data to the file already
 ============
 */
-void idGameLocal::SaveGame( idFile* f, idFile* strings )
+bool idGameLocal::SaveGame( idFile* f, idFile* strings, int& storeBytes, int& objectBytes )
 {
 	// The save commits the current map's record first; that commit leaves corpses over the cap out of the record and
 	// never deletes them from the game being saved.
@@ -740,11 +740,16 @@ void idGameLocal::SaveGame( idFile* f, idFile* strings )
 
 	// write out pending events
 	savegame.BeginTraceScope( "<events>" );	//puncho - stream-trace (P1-A1c, K1)
+	const int storeStart = savegame.GetUncompressedSize();	//puncho - P2b.1.10k
 	worldStore.Save( &savegame );
+	storeBytes = savegame.GetUncompressedSize() - storeStart;	//puncho - P2b.1.10k
 	idEvent::Save( &savegame );
 	savegame.EndTraceScope();	//puncho - stream-trace
 
-	savegame.Close();
+	//puncho start - P2b.1.10k: past a limit the save is refused, not fatal; common tests the stream again once flushed
+	const bool fits = savegame.Close();
+	objectBytes = savegame.GetObjectBytes();
+	//puncho end
 
 	int endTimeMs = Sys_Milliseconds();
 	idLib::Printf( "Save time: %dms\n", ( endTimeMs - startTimeMs ) );
@@ -754,6 +759,8 @@ void idGameLocal::SaveGame( idFile* f, idFile* strings )
 		EndTraceRecording();
 		g_recordSaveGameTrace.SetBool( false );
 	}
+
+	return fits;	//puncho - P2b.1.10k
 }
 
 /*

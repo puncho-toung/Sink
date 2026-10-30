@@ -601,7 +601,7 @@ public:
 	virtual void			SetPersistentPlayerInfo( int clientNum, const idDict& playerInfo );
 	virtual void			InitFromNewMap( const char* mapName, idRenderWorld* renderWorld, idSoundWorld* soundWorld, int gameType, int randSeed );
 	virtual bool			InitFromSaveGame( const char* mapName, idRenderWorld* renderWorld, idSoundWorld* soundWorld, idFile* saveGameFile, idFile* stringTableFile, int saveGameVersion );
-	virtual void			SaveGame( idFile* saveGameFile, idFile* stringTableFile );
+	virtual bool			SaveGame( idFile* saveGameFile, idFile* stringTableFile, int& storeBytes, int& objectBytes );	//puncho - P2b.1.10k
 	virtual void			GetSaveGameDetails( idSaveGameDetails& gameDetails );
 	virtual void			MapShutdown();
 	virtual void			CacheDictionaryMedia( const idDict* dict );

@@ -67,6 +67,11 @@ file be unloadable in some way (for example, due to script changes).
 // body inside it; a class level's Save or Restore gets its scope in CallSave_r / CallRestore_r
 //puncho end
 
+//puncho - P2b.1.10k: test scaffolding for the refusal's gate, so not in a retail build
+#if !defined( ID_RETAIL )
+idCVar g_testSaveOverflow( "g_testSaveOverflow", "0", CVAR_GAME | CVAR_CHEAT, "plants into each save, last in its stream: strings = a 5 MiB string table, stream = incompressible bytes ending the compressed stream half a block past 4 MiB, 0 = nothing" );
+#endif
+
 /*
 ================
 idSaveGame::idSaveGame()
@@ -77,9 +82,12 @@ idSaveGame::idSaveGame( idFile* savefile, idFile* stringTableFile, int saveVersi
 	//compressor = idCompressor::AllocLZW();
 	//compressor->Init( savefile, true, 8 );
 	//file = compressor;
-	file = savefile;
+	//puncho - P2b.1.10k: the stream goes through the counter
+	counter.file = savefile;
+	file = &counter;
 	stringFile = stringTableFile;
 	version = saveVersion;
+	objectBytes = 0;
 
 	// Put NULL at the start of the list so we can skip over it.
 	objects.Clear();
@@ -91,9 +99,15 @@ idSaveGame::idSaveGame( idFile* savefile, idFile* stringTableFile, int saveVersi
 	streamTrace = idStreamTrace::armed;
 	if( streamTrace != NULL )
 	{
-		file = streamTrace->Attach( savefile );
+		file = streamTrace->Attach( &counter );	//puncho - P2b.1.10k: in front of the counter
 	}
 	//puncho end
+#if !defined( ID_RETAIL )
+	if( idStr::Icmp( g_testSaveOverflow.GetString(), "stream" ) == 0 )
+	{
+		counter.capture = &testStream;	//puncho - P2b.1.10k
+	}
+#endif
 }
 
 /*
@@ -115,9 +129,12 @@ idSaveGame::~idSaveGame()
 /*
 ================
 idSaveGame::Close
+
+False past MIN_SAVEGAME_SIZE_BYTES or MAX_SAVEGAME_STRING_TABLE_SIZE: the save is refused, with every byte written. The stream's
+Length() is the compressed bytes of the blocks flushed so far, so idCommonLocal::SaveGame tests it again after Finish.
 ================
 */
-void idSaveGame::Close()
+bool idSaveGame::Close()
 {
 	WriteSoundCommands();
 
@@ -126,6 +143,7 @@ void idSaveGame::Close()
 	idClipModel::SaveTraceModels( this );
 	EndTraceScope();	//puncho - stream-trace
 
+	const int objectStart = counter.count;	//puncho - P2b.1.10k
 	for( int i = 1; i < objects.Num(); i++ )
 	{
 		//puncho start - stream-trace (P1-A1c, K1): the object index of the scopes its Save chain opens
@@ -136,8 +154,58 @@ void idSaveGame::Close()
 		//puncho end
 		CallSave_r( objects[ i ]->GetType(), objects[ i ] );
 	}
+	objectBytes = counter.count - objectStart;	//puncho - P2b.1.10k
 
 	objects.Clear();
+
+#if !defined( ID_RETAIL )
+	//puncho start - P2b.1.10k: g_testSaveOverflow's plants
+	if( idStr::Icmp( g_testSaveOverflow.GetString(), "strings" ) == 0 )
+	{
+		// 5120 distinct strings of 1020 characters: the table takes 4 + 1020 bytes for each, 5 MiB, the stream 20 KiB
+		char text[1021];
+		memset( text, 'x', sizeof( text ) - 1 );
+		text[ sizeof( text ) - 1 ] = 0;
+		for( int i = 0; i < 5120; i++ )
+		{
+			text[0] = ( char )( 'a' + i % 26 );
+			text[1] = ( char )( 'a' + ( i / 26 ) % 26 );
+			text[2] = ( char )( 'a' + i / ( 26 * 26 ) );
+			WriteString( text );
+		}
+	}
+	else if( counter.capture == &testStream )	// stream: the constructor set the capture
+	{
+		// the stream so far through a scratch pipeline, compressed as this save's is (block size, zlib settings, block
+		// checksums); then bytes deflate stores, the top byte of each idRandom state, as many as end the compressed stream
+		// at 4 MiB + 64 KiB: past the limit, inside the 33rd 128 KiB block, so only Finish's flush crosses 4 MiB and Close's
+		// test, which sees the flushed blocks (32 at most, 4 MiB), lets it through
+		idFile_Memory scratch;
+		idFile_SaveGamePipelined* pipeline = new( TAG_SAVEGAMES ) idFile_SaveGamePipelined();
+		pipeline->OpenForWriting( &scratch );
+		pipeline->Write( testStream.Ptr(), testStream.Num() );
+		pipeline->Finish();
+		const int compressed = pipeline->Length();
+		delete pipeline;
+		counter.capture = NULL;
+		testStream.Clear();
+
+		idRandom random( 0x10000 );
+		byte bytes[4096];
+		for( int left = MIN_SAVEGAME_SIZE_BYTES + idFile_SaveGamePipelined::COMPRESSED_BLOCK_SIZE / 2 - compressed; left > 0; )
+		{
+			const int num = Min( left, ( int )sizeof( bytes ) );
+			for( int i = 0; i < num; i++ )
+			{
+				random.RandomInt();
+				bytes[i] = ( byte )( ( unsigned int )random.GetSeed() >> 24 );
+			}
+			file->Write( bytes, num );
+			left -= num;
+		}
+	}
+	//puncho end
+#endif
 
 	// Save out the string table at the end of the file
 	for( int i = 0; i < stringTable.Num(); ++i )
@@ -150,7 +218,7 @@ void idSaveGame::Close()
 
 	if( file->Length() > MIN_SAVEGAME_SIZE_BYTES || stringFile->Length() > MAX_SAVEGAME_STRING_TABLE_SIZE )
 	{
-		idLib::FatalError( "OVERFLOWED SAVE GAME FILE BUFFER" );
+		return false;	//puncho - P2b.1.10k: was FatalError( "OVERFLOWED SAVE GAME FILE BUFFER" ); common prints the refusal
 	}
 
 #ifdef ID_DEBUG_MEMORY
@@ -158,6 +226,7 @@ void idSaveGame::Close()
 	gameState.StripFileExtension();
 	WriteGameState_f( idCmdArgs( va( "test %s_save", gameState.c_str() ), false ) );
 #endif
+	return true;	//puncho - P2b.1.10k
 }
 
 /*
