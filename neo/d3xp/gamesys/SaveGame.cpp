@@ -69,7 +69,7 @@ file be unloadable in some way (for example, due to script changes).
 
 //puncho - P2b.1.10k: test scaffolding for the refusal's gate, so not in a retail build
 #if !defined( ID_RETAIL )
-idCVar g_testSaveOverflow( "g_testSaveOverflow", "0", CVAR_GAME | CVAR_CHEAT, "plants into each save, last in its stream: strings = a 5 MiB string table, stream = incompressible bytes ending the compressed stream half a block past 4 MiB, 0 = nothing" );
+static idCVar g_testSaveOverflow( "g_testSaveOverflow", "0", CVAR_GAME | CVAR_CHEAT, "plants into each save, last in its stream: strings = a 5 MiB string table, stream = incompressible bytes ending the compressed stream half a block past 4 MiB, 0 = nothing" );
 #endif
 
 /*
@@ -87,7 +87,7 @@ idSaveGame::idSaveGame( idFile* savefile, idFile* stringTableFile, int saveVersi
 	file = &counter;
 	stringFile = stringTableFile;
 	version = saveVersion;
-	objectBytes = 0;
+	objectBytes = 0;	//puncho - P2b.1.10k
 
 	// Put NULL at the start of the list so we can skip over it.
 	objects.Clear();
@@ -99,13 +99,13 @@ idSaveGame::idSaveGame( idFile* savefile, idFile* stringTableFile, int saveVersi
 	streamTrace = idStreamTrace::armed;
 	if( streamTrace != NULL )
 	{
-		file = streamTrace->Attach( &counter );	//puncho - P2b.1.10k: in front of the counter
+		file = streamTrace->Attach( &counter );	//puncho - P2b.1.10k: in front of the counter, which dies with this save; the checker's trace.Finish() lets go of it
 	}
 	//puncho end
-#if !defined( ID_RETAIL )
+#if !defined( ID_RETAIL )	//puncho - dev guard (P2b.1.10k): g_testSaveOverflow stream keeps the stream's bytes to size its plant
 	if( idStr::Icmp( g_testSaveOverflow.GetString(), "stream" ) == 0 )
 	{
-		counter.capture = &testStream;	//puncho - P2b.1.10k
+		counter.capture = &testStream;
 	}
 #endif
 }

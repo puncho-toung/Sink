@@ -2677,12 +2677,22 @@ Cmd_TestSave_f
 */
 static void Cmd_TestSave_f( const idCmdArgs& args )
 {
-	idFile* f, *strings;
+	idFile* f;
 
 	f = fileSystem->OpenFileWrite( "test.sav" );
-	strings = NULL;
-	int storeBytes, objectBytes;	//puncho - P2b.1.10k: unused here
-	gameLocal.SaveGame( f, strings, storeBytes, objectBytes );
+	//puncho start - P2b.1.10k: Close writes the string table unconditionally, so it takes a memory file as SaveTraced's
+	// do (it is not kept); a refusal is printed, never silent
+	if( f == NULL )
+	{
+		return;
+	}
+	idFile_Memory strings( "test.sav_strings" );
+	int storeBytes, objectBytes;
+	if( !gameLocal.SaveGame( f, &strings, storeBytes, objectBytes ) )
+	{
+		gameLocal.Printf( "testSave: refused\n" );
+	}
+	//puncho end
 	fileSystem->CloseFile( f );
 }
 

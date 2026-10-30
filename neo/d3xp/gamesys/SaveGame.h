@@ -36,15 +36,13 @@ Save game related helper classes.
 
 */
 
-#include "StreamTrace.h"	//puncho - P2b.1.10k: idSaveGame's idFile_StreamTrace counts every save's bytes
-
 class idSaveGame
 {
 public:
 	idSaveGame( idFile* savefile, idFile* stringFile, int inVersion );
 	~idSaveGame();
 
-	bool					Close();	//puncho - P2b.1.10k: false past MIN_SAVEGAME_SIZE_BYTES or MAX_SAVEGAME_STRING_TABLE_SIZE
+	bool					Close();	//puncho - P2b.1.10k: false past MAX_SAVEGAME_STRING_TABLE_SIZE, or past MIN_SAVEGAME_SIZE_BYTES in the blocks flushed so far
 
 	void					WriteDecls();
 

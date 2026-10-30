@@ -36,7 +36,9 @@ If you have questions concerning this license or the applicable additional terms
 
 	A trace is the shape of a save stream or of a snapshot object: one entry per primitive with its type, its size
 	and, for a string, the CRC-32 of its text (never its string table offset). Nothing records until a checker arms
-	a trace, and an unarmed stream pays one pointer test per primitive. No byte of a save or a snapshot changes.
+	a trace, and an unarmed stream pays one pointer test per primitive. No byte of a save or a snapshot changes. Every
+	save goes through an idFile_StreamTrace all the same, idSaveGame::counter (P2b.1.10k, the save's uncompressed byte
+	count), so an unarmed save also pays one forwarding virtual Write per primitive.
 
 	A save trace (idStreamTrace) groups its entries in scopes, kept as a stack:
 	- one per class level, around the Save or Restore that CallSave_r / CallRestore_r runs, keyed by the object's
@@ -104,7 +106,9 @@ typedef struct streamTraceScope_s
 ================================================
 idFile_StreamTrace is the file a traced save or restore goes through: it hands every byte to the stream's own file
 and counts them, which gives each entry its offset and each bypass its size. With capture set it also keeps a copy,
-the uncompressed stream the byte compare reads.
+the uncompressed stream the byte compare reads. Every save, traced or not, also goes through one, idSaveGame::counter
+(P2b.1.10k), which counts the save's uncompressed bytes for its refusal line: an unarmed save pays one forwarding
+virtual Write per primitive.
 ================================================
 */
 class idFile_StreamTrace : public idFile

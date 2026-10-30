@@ -103,6 +103,7 @@ void gameError( const char* fmt, ... );
 #include "gamesys/Class.h"
 #include "gamesys/SysCvar.h"
 #include "gamesys/SysCmds.h"
+#include "gamesys/StreamTrace.h"	//puncho - P2b.1.10k: idSaveGame holds an idFile_StreamTrace
 #include "gamesys/SaveGame.h"
 #include "gamesys/MapLandmarks.h"
 #include "gamesys/WorldStore.h"
