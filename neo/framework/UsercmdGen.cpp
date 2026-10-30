@@ -52,8 +52,8 @@ idCVar in_invertLook( "in_invertLook", "0", CVAR_ARCHIVE | CVAR_BOOL, "inverts t
 idCVar in_mouseInvertLook( "in_mouseInvertLook", "0", CVAR_ARCHIVE | CVAR_BOOL, "inverts the look controls so the forward looks up (flight controls) - the proper way to play games!" );
 
 #if !defined( ID_RETAIL )	//puncho - P2b.0.1e (G-STORM): a loopback gate fires from the console; a cheat, so a multiplayer map load resets both
-idCVar net_testAttack( "net_testAttack", "0", CVAR_SYSTEM | CVAR_BOOL | CVAR_CHEAT, "test hook: holds BUTTON_ATTACK in every usercmd, focused or not" );
-idCVar net_testImpulse( "net_testImpulse", "0", CVAR_SYSTEM | CVAR_INTEGER | CVAR_CHEAT, "test hook: sends this impulse once in the next usercmd, then resets to 0", 0, 255 );
+	idCVar net_testAttack( "net_testAttack", "0", CVAR_SYSTEM | CVAR_BOOL | CVAR_CHEAT, "test hook: holds BUTTON_ATTACK in every usercmd while set, focused or not; the light editor's easy mode strips it" );
+	idCVar net_testImpulse( "net_testImpulse", "0", CVAR_SYSTEM | CVAR_INTEGER | CVAR_CHEAT, "test hook: sends this impulse once, in the next usercmd outside the light editor's easy mode, then resets to 0", 0, 255 );
 #endif
 
 /*
@@ -1189,16 +1189,19 @@ void idUsercmdGenLocal::MakeCurrent()
 
 #if !defined( ID_RETAIL )
 	//puncho start - P2b.0.1e (G-STORM): outside the Inhibited() test, because focus loss pauses (com_pause) and so
-	// inhibits a loopback peer; the impulse is latched as Key() latches one, and stored back below
+	// inhibits a loopback peer; the impulse is latched as Key() latches one, and stored back below (the light editor's
+	// easy mode, below, strips both). The impulse waits out easy mode, so a frame that discards it never uses it up;
+	// latching on IsModified() means a refused reset (cheats off in multiplayer) cannot fire it again every frame
 	if( net_testAttack.GetBool() )
 	{
 		cmd.buttons |= BUTTON_ATTACK;
 	}
-	if( net_testImpulse.GetInteger() != 0 )
+	if( net_testImpulse.IsModified() && net_testImpulse.GetInteger() != 0 && !ImGuiTools::EasyModeActive() )
 	{
 		cmd.impulse = net_testImpulse.GetInteger();
 		cmd.impulseSequence++;
 		net_testImpulse.SetInteger( 0 );
+		net_testImpulse.ClearModified();
 	}
 	//puncho end
 #endif

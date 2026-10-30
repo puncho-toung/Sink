@@ -365,7 +365,7 @@ GiveToPlayer
 Give items to a player: give's body over its player, so giveClient shares it (P2b.0.1e); args as give's, the item in argv 1
 ==================
 */
-static void GiveToPlayer( idPlayer* player, const idCmdArgs& args )	//puncho - P2b.0.1e: Cmd_Give_f's body over its player
+static void GiveToPlayer( idPlayer* player, const idCmdArgs& args )	//puncho - P2b.0.1e
 {
 	const char* name;
 	int			i;
@@ -549,7 +549,7 @@ static void GiveToPlayer( idPlayer* player, const idCmdArgs& args )	//puncho - P
 ==================
 Cmd_Give_f
 
-Give items to a client
+Give items to the local player
 ==================
 */
 void Cmd_Give_f( const idCmdArgs& args )
@@ -583,16 +583,16 @@ static void Cmd_GiveClient_f( const idCmdArgs& args )
 	{
 		return;
 	}
-	const int clientNum = atoi( args.Argv( 1 ) );
+	const int clientNum = idStr::IsNumeric( args.Argv( 1 ) ) ? atoi( args.Argv( 1 ) ) : -1;
 	idEntity* ent = ( clientNum >= 0 && clientNum < MAX_CLIENTS ) ? gameLocal.entities[ clientNum ] : NULL;
-	if( ent == NULL || !ent->IsType( idPlayer::Type ) )
+	if( ent == NULL || !ent->IsType( idPlayer::Type ) || static_cast< idPlayer* >( ent )->health <= 0 )
 	{
 		gameLocal.Printf( "giveClient: no player %s\n", args.Argv( 1 ) );
 		return;
 	}
 	idPlayer* player = static_cast< idPlayer* >( ent );
 
-	// the client number dropped: argv 0 is ignored by the body, which reads its item from argv 1 as give does
+	// shift by one: the client number lands in argv 0, which the body ignores, and the item in argv 1 as give's does
 	idCmdArgs giveArgs;
 	for( int i = 1; i < args.Argc(); i++ )
 	{
