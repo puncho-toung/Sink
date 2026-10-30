@@ -1692,14 +1692,16 @@ static const int RECORD_DUMP_ASPECTS = 10;
 static const char* const recordDumpAspectNames[RECORD_DUMP_ASPECTS] = { "REMOVED", "MOVED", "MOVER", "HEALTH", "BROKEN", "HIDDEN", "CORPSE", "MOTION", "BIND", "SHOWN" };
 compile_time_assert( RECORD_SHOWN == BIT( RECORD_DUMP_ASPECTS - 1 ) );
 
-// 64 bytes a line, offset first, so a moved byte shows as one changed line
+// 64 bytes a line, offset first, so a byte changed in place shows as one changed line
+static const int RECORD_DUMP_HEX_BYTES = 64;
+
 static void RecordDumpHex( idFile* out, const char* label, const byte* bytes, int length )
 {
 	static const char digits[] = "0123456789abcdef";
-	char line[64 * 2 + 1];
-	for( int offset = 0; offset < length; offset += 64 )
+	char line[RECORD_DUMP_HEX_BYTES * 2 + 1];
+	for( int offset = 0; offset < length; offset += RECORD_DUMP_HEX_BYTES )
 	{
-		const int count = Min( 64, length - offset );
+		const int count = Min( RECORD_DUMP_HEX_BYTES, length - offset );
 		for( int i = 0; i < count; i++ )
 		{
 			line[i * 2] = digits[bytes[offset + i] >> 4];
@@ -1724,17 +1726,25 @@ static void RecordDumpAspects( idFile* out, unsigned short aspects )
 	}
 }
 
-// The decoded listing of one MREC v2 payload: the header, each authored row and created entry, and per aspect the
-// number of entries with it set and clear (authored and created apart), added into the totals. The record layer's
-// commits replace this one function when the payload becomes sections and field bits.
-static void RecordDumpMap( idFile* out, int index, const byte* data, int length, int totals[2][2][RECORD_DUMP_ASPECTS] )
+// per aspect, the entries with it set ( [kind][0] ) and clear ( [kind][1] ); kind 0 the authored rows, 1 the created
+struct recordDumpTotals_t
+{
+	int			counts[2][2][RECORD_DUMP_ASPECTS];
+};
+
+// The decoded listing of one MREC v1 or v2 payload: the header, each authored row and created entry (INVALID after one
+// whose payload restore would refuse), and per aspect the number of entries with it set and clear (authored and
+// created apart), added into the totals. The record layer's commits replace this function and RecordDumpTotals when
+// the payload becomes sections and field bits.
+static void RecordDumpMap( idFile* out, int index, const byte* data, int length, recordDumpTotals_t& totals )
 {
 	idFile_Memory in( "recordDump", ( const char* )data, length );
 	unsigned short version, flags, entities, remains, node = 0;
 	unsigned int entitiesCRC, geometryCRC, count;
 	uint64 instance, left, cleared;
 	idStr world, map;
-	if( in.ReadUnsignedShort( version ) != 2 || in.ReadUnsignedShort( flags ) != 2 || !RecordReadString( in, world ) || !RecordRead64( in, instance ) || ( version >= 2 && in.ReadUnsignedShort( node ) != 2 ) || !RecordReadString( in, map ) || in.ReadUnsignedInt( entitiesCRC ) != 4 || in.ReadUnsignedInt( geometryCRC ) != 4 || in.ReadUnsignedShort( entities ) != 2 || !RecordRead64( in, left ) || !RecordRead64( in, cleared ) || in.ReadUnsignedShort( remains ) != 2 || in.ReadUnsignedInt( count ) != 4 )
+	// one MREC v1 or v2 payload, read as ApplyCurrentMap and ValidateMapRecord read it
+	if( in.ReadUnsignedShort( version ) != 2 || version < 1 || version > 2 || in.ReadUnsignedShort( flags ) != 2 || !RecordReadString( in, world ) || !RecordRead64( in, instance ) || ( version >= 2 && in.ReadUnsignedShort( node ) != 2 ) || !RecordReadString( in, map ) || in.ReadUnsignedInt( entitiesCRC ) != 4 || in.ReadUnsignedInt( geometryCRC ) != 4 || in.ReadUnsignedShort( entities ) != 2 || !RecordRead64( in, left ) || !RecordRead64( in, cleared ) || in.ReadUnsignedShort( remains ) != 2 || in.ReadUnsignedInt( count ) != 4 )
 	{
 		out->Printf( "map %d malformed header\n", index );
 		return;
@@ -1771,8 +1781,10 @@ static void RecordDumpMap( idFile* out, int index, const byte* data, int length,
 			{
 				out->Printf( "map %d created id=%llu def=%s time=%llu ", index, ( unsigned long long )id, name.c_str(), ( unsigned long long )when );
 			}
+			// as Restore validates: no BIND on an authored row, MOVED in every created entry, the payload's own bytes
+			const bool valid = ( kind == 0 ? !( aspects & RECORD_BIND ) : ( aspects & RECORD_MOVED ) != 0 ) && ValidateAspectBytes( aspects, in.GetDataPtr() + in.Tell(), size );
 			RecordDumpAspects( out, aspects );
-			out->Printf( " size=%u\n", size );
+			out->Printf( " size=%u%s\n", size, valid ? "" : " INVALID" );
 			for( int a = 0; a < RECORD_DUMP_ASPECTS; a++ )
 			{
 				counts[kind][( aspects & BIT( a ) ) ? 0 : 1][a]++;
@@ -1785,8 +1797,8 @@ static void RecordDumpMap( idFile* out, int index, const byte* data, int length,
 		out->Printf( "map %d aspect %s rows set=%d clear=%d created set=%d clear=%d\n", index, recordDumpAspectNames[a], counts[0][0][a], counts[0][1][a], counts[1][0][a], counts[1][1][a] );
 		for( int kind = 0; kind < 2; kind++ )
 		{
-			totals[kind][0][a] += counts[kind][0][a];
-			totals[kind][1][a] += counts[kind][1][a];
+			totals.counts[kind][0][a] += counts[kind][0][a];
+			totals.counts[kind][1][a] += counts[kind][1][a];
 		}
 	}
 	if( in.Tell() != in.Length() )
@@ -1795,11 +1807,19 @@ static void RecordDumpMap( idFile* out, int index, const byte* data, int length,
 	}
 }
 
+static void RecordDumpTotals( idFile* out, const recordDumpTotals_t& totals )
+{
+	for( int a = 0; a < RECORD_DUMP_ASPECTS; a++ )
+	{
+		out->Printf( "total aspect %s rows set=%d clear=%d created set=%d clear=%d\n", recordDumpAspectNames[a], totals.counts[0][0][a], totals.counts[0][1][a], totals.counts[1][0][a], totals.counts[1][1][a] );
+	}
+}
+
 void idWorldStore::DumpRecords( idFile* out ) const
 {
 	out->Printf( "recordDump 1\n" );
 	out->Printf( "store world=%s instance=%llu node=%u nextCreatedId=%llu maps=%d dungeon=%d spawned=%d map=%s worldTime=%lld\n", worldName.c_str(), ( unsigned long long )instanceId, currentNode, ( unsigned long long )nextCreatedId, records.Num(), dungeonRecords.Num(), mapSpawned.Num(), gameLocal.GetMapName(), ( long long )gameLocal.GetWorldTime() );
-	byte recipe[128];
+	byte recipe[MAX_MATCH_GAME_DATA];
 	const int recipeLength = mapGraphDirector.PeekMatchGameData( gameLocal.GetMapName(), recipe, sizeof( recipe ) );
 	out->Printf( "recipe bytes=%d\n", recipeLength );
 	RecordDumpHex( out, "recipe", recipe, Max( 0, recipeLength ) );
@@ -1810,8 +1830,8 @@ void idWorldStore::DumpRecords( idFile* out ) const
 		idStr::snPrintf( label, sizeof( label ), "drec %d", i );
 		RecordDumpHex( out, label, dungeonRecords[i].Ptr(), dungeonRecords[i].Num() );
 	}
-	int totals[2][2][RECORD_DUMP_ASPECTS];
-	memset( totals, 0, sizeof( totals ) );
+	recordDumpTotals_t totals;
+	memset( &totals, 0, sizeof( totals ) );
 	for( int i = 0; i < records.Num(); i++ )
 	{
 		const worldMapRecord_t& record = records[i];
@@ -1820,10 +1840,7 @@ void idWorldStore::DumpRecords( idFile* out ) const
 		RecordDumpHex( out, label, record.bytes.Ptr(), record.bytes.Num() );
 		RecordDumpMap( out, i, record.bytes.Ptr(), record.bytes.Num(), totals );
 	}
-	for( int a = 0; a < RECORD_DUMP_ASPECTS; a++ )
-	{
-		out->Printf( "total aspect %s rows set=%d clear=%d created set=%d clear=%d\n", recordDumpAspectNames[a], totals[0][0][a], totals[0][1][a], totals[1][0][a], totals[1][1][a] );
-	}
+	RecordDumpTotals( out, totals );
 }
 //puncho end
 #endif

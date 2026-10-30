@@ -4276,8 +4276,8 @@ static void Cmd_DumpMapState_f( const idCmdArgs& args )
 		out->Printf( "%d,", row.ordinal );
 		DumpMapStateRow( out, ent );
 	}
-	//puncho start - P2b.1.0: a row per created entity, by created id, after the map rows; an authored entity a carry
-	// stamped with a created id keeps its map row only
+	//puncho start - P2b.1.0: a row per created entity, by created id, after the map rows; stamped with a created id by a
+	// carry, an authored entity keeps only its map row
 	idList<dumpCreatedRow_t, TAG_GAME> created;
 	for( idEntity* ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
 	{
@@ -4389,7 +4389,7 @@ void idGameLocal::InitConsoleCommands()
 #if !defined( ID_RETAIL )
 	cmdSystem->AddCommand( "cm_selfTest", Cmd_CMSelfTest_f, CMD_FL_GAME | CMD_FL_CHEAT, "seeded collision bounds, contents, rotation and wrap tests" );
 	cmdSystem->AddCommand( "clipSelfTest", Cmd_ClipSelfTest_f, CMD_FL_GAME | CMD_FL_CHEAT, "seeded clip gather wrap test" );
-	cmdSystem->AddCommand( "recordDump", Cmd_RecordDump_f, CMD_FL_GAME, "write the world store's records, raw and decoded, and the recipe bytes" );	//puncho - P2b.1.0
+	cmdSystem->AddCommand( "recordDump", Cmd_RecordDump_f, CMD_FL_GAME, "write the world store's records, raw and decoded, and the bytes of the recipe this map loaded with" );	//puncho - P2b.1.0
 #endif
 	cmdSystem->AddCommand( "game_memory",			idClass::DisplayInfo_f,		CMD_FL_GAME,				"displays game class info" );
 	cmdSystem->AddCommand( "listClasses",			idClass::ListClasses_f,		CMD_FL_GAME,				"lists game classes" );

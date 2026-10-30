@@ -405,19 +405,29 @@ idCVar	fs_enableBackgroundCaching( "fs_enableBackgroundCaching", "1", CVAR_SYSTE
 idFileSystemLocal	fileSystemLocal;
 idFileSystem* 		fileSystem = &fileSystemLocal;
 
-//puncho start - P2b.1.0: fs_traceOpens <file> writes a line for each read open OpenFileReadFlags serves, "<source>
-// <path> <length>" with the source loose, zip, resource or prefetch, and for each ResolveForRead, "resolve <kind> <path>
-// <length>", so a load's opens, their sources and the resolves per open can be counted and compared. Opens come from
-// several threads; the lock orders the lines, and a comparison reads them as a sorted set as well as in order
+//puncho start - P2b.1.0: fs_traceOpens <file> writes a line for each read open OpenFileReadFlags or
+// OpenFileReadFromLayer serves, "<source> <path> <length>" with the source loose, zip, resource or prefetch, and a line
+// for each ResolveForRead that resolves or misses every layer, "resolve <kind> <path> <length>", so a load's opens, their
+// sources and the resolves per open can be counted and compared. Opens come from several threads; the lock orders the
+// lines, and a comparison reads them as a sorted set as well as in order
 #if !defined( ID_RETAIL )
 static idSysMutex	traceOpensLock;
-static idFile*		traceOpensFile;	// NULL while not tracing
+static idFile*		traceOpensFile;	// NULL while not tracing; swapped only under traceOpensLock
 static int			traceOpensLines;
 #endif
 
+/*
+================
+TraceOpensLine
+================
+*/
 static void TraceOpensLine( const char* source, const char* path, int64 length )
 {
 #if !defined( ID_RETAIL )
+	if( traceOpensFile == NULL )
+	{
+		return;	// unlocked hint; re-checked under the lock
+	}
 	idScopedCriticalSection lock( traceOpensLock );
 	if( traceOpensFile != NULL )
 	{
@@ -427,10 +437,17 @@ static void TraceOpensLine( const char* source, const char* path, int64 length )
 #endif
 }
 
+/*
+================
+TraceOpen
+
+file is the open OpenLayerFile or the prefetcher returns, never NULL
+================
+*/
 static idFile* TraceOpen( const char* source, const char* path, idFile* file )
 {
 #if !defined( ID_RETAIL )
-	if( file != NULL )
+	if( traceOpensFile != NULL )	// unlocked hint; re-checked under the lock
 	{
 		TraceOpensLine( source, path, file->Length() );
 	}
@@ -439,31 +456,41 @@ static idFile* TraceOpen( const char* source, const char* path, idFile* file )
 }
 
 #if !defined( ID_RETAIL )
-// fs_traceOpens <file under fs_savepath> starts a trace, closing the one before; no argument ends it
+/*
+================
+TraceOpens_f
+
+fs_traceOpens <file under fs_savepath> starts a trace, closing the one before; no argument ends it. The running trace
+is closed before the next file opens, so a trace restarted under the same name never shares the file with the old
+handle; a name that cannot be opened leaves tracing off
+================
+*/
 static void TraceOpens_f( const idCmdArgs& args )
 {
-	idFile* next = NULL;
-	if( args.Argc() > 1 )
-	{
-		next = fileSystem->OpenFileWrite( args.Argv( 1 ) );
-		if( next == NULL )
-		{
-			common->Printf( "fs_traceOpens: can't write %s\n", args.Argv( 1 ) );
-		}
-	}
 	idFile* previous;
 	int lines;
 	{
 		idScopedCriticalSection lock( traceOpensLock );
 		previous = traceOpensFile;
 		lines = traceOpensLines;
-		traceOpensFile = next;
+		traceOpensFile = NULL;
 		traceOpensLines = 0;
 	}
 	if( previous != NULL )
 	{
 		common->Printf( "fs_traceOpens: %d lines in %s\n", lines, previous->GetName() );
 		fileSystem->CloseFile( previous );
+	}
+	if( args.Argc() > 1 )
+	{
+		idFile* next = fileSystem->OpenFileWrite( args.Argv( 1 ) );
+		if( next == NULL )
+		{
+			common->Printf( "fs_traceOpens: can't write %s; tracing is off\n", args.Argv( 1 ) );
+			return;
+		}
+		idScopedCriticalSection lock( traceOpensLock );
+		traceOpensFile = next;
 	}
 }
 #endif

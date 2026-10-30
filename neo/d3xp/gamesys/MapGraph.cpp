@@ -1499,8 +1499,10 @@ int idMapGraphDirector::WriteMatchGameData( const char* map, byte* out, int max 
 	return WriteRecipeBytes( RecipeForLoad( map ), out, max );
 }
 #if !defined( ID_RETAIL )
-//puncho - P2b.1.0: the bytes WriteMatchGameData sends for the recipe this map loaded with. A copy resolves it, so the
-// live director's recipe cache and the new-world latch, which belong to the next load, stay as they are
+//puncho - P2b.1.0: the bytes of the recipe this map loaded with: the cached one, which BeginMap stored or RestoreRecord
+// recomputed, encoded as WriteMatchGameData encodes it. It is not what WriteMatchGameData would send now, which
+// recomputes a new world's recipe when no load continues one. A copy resolves it, so the live director's recipe cache
+// and the new-world latch, which belong to the next load, stay as they are
 int idMapGraphDirector::PeekMatchGameData( const char* map, byte* out, int max ) const
 {
 	idMapGraphDirector probe = *this;
