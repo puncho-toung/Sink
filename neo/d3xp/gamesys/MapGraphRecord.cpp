@@ -295,34 +295,29 @@ void idMapGraphDirector::StoreRecord()
 		gameLocal.Warning( "dungeon record not stored: a name exceeds 63 bytes; the previous record is kept" );
 		return;
 	}
-	worldStore.dungeonRecords.Clear();
-	if( persistentHub.Num() )
-	{
-		worldStore.dungeonRecords.Append( persistentHub );
-	}
-	worldStore.dungeonRecords.Append( record );
+	worldStore.SetDungeonRecords( persistentHub, record );
 }
 bool idMapGraphDirector::RestoreRecord()
 {
 	Clear();
-	if( worldStore.dungeonRecords.Num() == 0 )
+	if( worldStore.NumDungeonRecords() == 0 )
 	{
 		return true;
 	}
-	if( worldStore.dungeonRecords.Num() > 2 )
+	if( worldStore.NumDungeonRecords() > 2 )
 	{
 		return false;
 	}
-	for( int i = 0; i < worldStore.dungeonRecords.Num(); i++ )
+	for( int i = 0; i < worldStore.NumDungeonRecords(); i++ )
 	{
-		const idList<byte, TAG_GAME>& bytes = worldStore.dungeonRecords[i];
+		const idList<byte, TAG_GAME>& bytes = worldStore.DungeonRecord( i );
 		idMapGraphDirector record;
 		if( !record.ReadRecord( bytes.Ptr(), bytes.Num() ) )
 		{
 			Clear();
 			return false;
 		}
-		if( i == 0 && worldStore.dungeonRecords.Num() == 2 )
+		if( i == 0 && worldStore.NumDungeonRecords() == 2 )
 		{
 			if( record.instanceId != 0 )
 			{
@@ -338,9 +333,9 @@ bool idMapGraphDirector::RestoreRecord()
 		}
 	}
 	recipeValid = false;
-	const bool continuation = worldStore.continueNextLoad;
-	worldStore.continueNextLoad = true;
+	const bool continuation = worldStore.GetContinue();
+	worldStore.SetContinue( true );
 	RecipeForLoad( gameLocal.GetMapName() );
-	worldStore.continueNextLoad = continuation;
+	worldStore.SetContinue( continuation );
 	return true;
 }

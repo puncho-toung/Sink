@@ -10,26 +10,6 @@ struct mapTransition_t
 	idStr nextMap, departLandmark, arrivalLandmark;
 };
 
-struct landmark_t
-{
-	idStr id, kind;
-	idVec3 origin;
-	idMat3 axis;
-	int flags;
-	float radius;
-	idStr link, sealedBy;
-	int ordinal;
-};
-
-struct transitionVolume_t
-{
-	idBounds bounds;
-	idStr landmark;
-	int cap;
-	bool carryAll;
-	int ordinal;
-};
-
 // 63-byte def name plus identity/time, MOVED/MOVER/HEALTH/MOTION/BIND.
 static const int MAX_WORLD_CREATED_CARRY_BYTES = 151;
 
@@ -65,8 +45,8 @@ struct worldMapRecord_t
 	idList<byte, TAG_GAME> bytes;
 };
 
-// Server persistent: records/counter/world identity. Derived per load: ordinal table,
-// removed bits and landmark tables. Nothing here is predicted or updated per tic.
+// Server persistent: records/counter/world identity. Derived per load: ordinal table and
+// removed bits (the landmark tables are gameLocal.mapLandmarks'). Nothing here is predicted or updated per tic.
 class idWorldStore
 {
 public:
@@ -106,27 +86,83 @@ public:
 #endif
 	void RetireInstanceAfterActivation( uint64 identity, const char* destination );
 	void FinishMapActivation();
+	void ReplaceMapEntity( idEntity* oldEntity, idEntity* replacement );
+	//puncho start - P2b.1.1b: the director, the game and the dev commands reach the store's state through these
+	void SetWorld( const char* name, uint64 instance )
+	{
+		worldName = name;
+		instanceId = instance;
+	}
+	uint64 GetInstanceId() const
+	{
+		return instanceId;
+	}
+	unsigned short GetCurrentNode() const
+	{
+		return currentNode;
+	}
+	void SetCurrentNode( unsigned short node )
+	{
+		currentNode = node;
+	}
+	// the next BeginMap continues this world instead of clearing it; the director sets it around a load it starts
+	// and puts the previous value back when the load is refused
+	bool GetContinue() const
+	{
+		return continueNextLoad;
+	}
+	void SetContinue( bool continueLoad )
+	{
+		continueNextLoad = continueLoad;
+	}
+	void SetDungeonRecords( const idList<byte, TAG_GAME>& hub, const idList<byte, TAG_GAME>& record );
+	int NumDungeonRecords() const
+	{
+		return dungeonRecords.Num();
+	}
+	const idList<byte, TAG_GAME>& DungeonRecord( int i ) const
+	{
+		return dungeonRecords[i];
+	}
+	// a gibbed corpse: the map record keeps only their count, in 16 bits
+	void AddRemains()
+	{
+		if( remains < 65535 )
+		{
+			remains++;
+		}
+	}
+	// a client's snapshot reader writes these bits: MAX_WORLD_MAP_ORDINALS / 8 bytes, indexed by map ordinal
+	byte* RemovedBits()
+	{
+		return removed;
+	}
+	int NumSpawnRows() const
+	{
+		return mapSpawned.Num();
+	}
+	const mapSpawnRow_t& SpawnRow( int i ) const
+	{
+		return mapSpawned[i];
+	}
+	//puncho end
 	int recordMaps, recordEntries, recordCreated, recordBytes, recordDropped, corpseEvicted;
 	unsigned int commitUs, applyUs;
-	void ReadMapData( idMapFile* map );
-	const landmark_t* FindLandmark( const char* name ) const;
-	const transitionVolume_t* FindTransitionVolume( const char* name ) const;
-
-	bool continueNextLoad;
-	idStr worldName;
-	uint64 instanceId;
-	unsigned short currentNode; // load identity, never taken from the director during departure
-	idList<landmark_t, TAG_GAME> landmarks;
-	idList<transitionVolume_t, TAG_GAME> transitionVolumes;
+	//puncho - P2b.1.1b: public only for the snapshot's removed-ordinal writer and reader in Game_network.cpp (stage 6's
+	// file); stage 6 switches them to RemovedBits(), NumSpawnRows() and SpawnRow( i ) at its next edit of that file, and
+	// these two go private then
 	idList<mapSpawnRow_t, TAG_GAME> mapSpawned;
 	byte removed[MAX_WORLD_MAP_ORDINALS / 8];
-	idList<idList<byte, TAG_GAME>, TAG_GAME> dungeonRecords;
-	unsigned short remains;
-	void ReplaceMapEntity( idEntity* oldEntity, idEntity* replacement );
 
 private:
 	void Commit( bool leaving );
 	bool EncodeCreated( idEntity* ent, const idVec3& landmark, idFile_Memory& out, bool assign );
+	bool continueNextLoad;
+	idStr worldName;
+	uint64 instanceId;
+	unsigned short currentNode; // load identity, never taken from the director during departure
+	idList<idList<byte, TAG_GAME>, TAG_GAME> dungeonRecords;
+	unsigned short remains;
 	idList<worldMapRecord_t, TAG_GAME> records;
 	uint64 nextCreatedId;
 	uint64 retiringInstance;

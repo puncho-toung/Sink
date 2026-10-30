@@ -200,7 +200,7 @@ void MapGraphPortalTest_f( const idCmdArgs& args )
 	}
 	const idVec3 origin = gameLocal.entities[player]->GetPhysics()->GetOrigin();
 	mapGraphDirector.OpenTownPortalFor( gameLocal.entities[player] );
-	const landmark_t* portal = worldStore.FindLandmark( "_townportal" );
+	const landmark_t* portal = gameLocal.mapLandmarks.FindLandmark( "_townportal" );
 	const bool pass = portal && portal->origin == origin && gameLocal.FindEntity( "_dungeon_townportal" );
 	common->Printf( "mapGraphPortalTest: %s caster=%d origin=%s\n", pass ? "PASS" : "FAIL", player, origin.ToString() );
 }

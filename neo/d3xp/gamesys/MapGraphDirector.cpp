@@ -41,21 +41,21 @@ static void GraphStoreFingerprint( const idStr& map, ID_TIME_T timestamp, uint32
 	entry.landmarks = landmarks;
 }
 //puncho end
-static bool GraphTablesFingerprint( const idWorldStore& data, uint32& landmarks )
+static bool GraphTablesFingerprint( const idMapLandmarks& data, uint32& landmarks )
 {
 	idList<int, TAG_GAME> order;
-	for( int i = 0; i < data.landmarks.Num(); i++ )
+	for( int i = 0; i < data.NumLandmarks(); i++ )
 	{
-		if( data.landmarks[i].ordinal < 0 )
+		if( data.GetLandmark( i ).ordinal < 0 )
 		{
 			continue; // the town portal MapLoaded adds is no part of the map
 		}
 		int at = 0;
-		while( at < order.Num() && data.landmarks[order[at]].id.Cmp( data.landmarks[i].id ) < 0 )
+		while( at < order.Num() && data.GetLandmark( order[at] ).id.Cmp( data.GetLandmark( i ).id ) < 0 )
 		{
 			at++;
 		}
-		if( at < order.Num() && data.landmarks[order[at]].id == data.landmarks[i].id )
+		if( at < order.Num() && data.GetLandmark( order[at] ).id == data.GetLandmark( i ).id )
 		{
 			return false;
 		}
@@ -66,7 +66,7 @@ static bool GraphTablesFingerprint( const idWorldStore& data, uint32& landmarks 
 	b.Put( order.Num(), 2 );
 	for( int i = 0; i < order.Num(); i++ )
 	{
-		const landmark_t& lm = data.landmarks[order[i]];
+		const landmark_t& lm = data.GetLandmark( order[i] );
 		b.Text( lm.id );
 		b.Text( lm.kind );
 		b.Put( lm.flags, 1 );
@@ -131,7 +131,7 @@ static bool GraphMapFingerprint( const char* name, uint32& geometry, uint32& lan
 		return false;
 	}
 	geometry = map.GetGeometryCRC();
-	idWorldStore data;
+	idMapLandmarks data;
 	data.ReadMapData( &map );
 	if( !GraphTablesFingerprint( data, landmarks ) )
 	{
@@ -154,11 +154,11 @@ const dungeonRecipe_t& idMapGraphDirector::RecipeForLoad( const char* map )
 	recipe.graphCRC = 0;
 	recipe.currentNode = 0;
 	recipe.nodeVisits = 0;
-	if( !g_worldRecords.GetBool() && !worldStore.continueNextLoad )
+	if( !g_worldRecords.GetBool() && !worldStore.GetContinue() )
 	{
 		return recipe;
 	}
-	if( worldStore.continueNextLoad && !graphName.IsEmpty() )
+	if( worldStore.GetContinue() && !graphName.IsEmpty() )
 	{
 		if( suspended && persistentHub.Num() )
 		{
@@ -262,7 +262,7 @@ static int WriteRecipeBytes( const dungeonRecipe_t& r, byte* out, int max )
 }
 int idMapGraphDirector::WriteMatchGameData( const char* map, byte* out, int max )
 {
-	if( !clientRecipe && !worldStore.continueNextLoad )
+	if( !clientRecipe && !worldStore.GetContinue() )
 	{
 		recipeValid = false;
 		recipeNewWorld = true;
@@ -336,8 +336,7 @@ void idMapGraphDirector::BeginMap( const char* map )
 	predictedMap.Clear();
 	predictedFrame = -1;
 	predictionPending = false;
-	worldStore.worldName = recipe.worldName;
-	worldStore.instanceId = recipe.instanceId;
+	worldStore.SetWorld( recipe.worldName, recipe.instanceId );
 	if( !clientRecipe && !suspended )
 	{
 		if( !instanceId )
@@ -376,12 +375,12 @@ bool idMapGraphDirector::Start( const char* name, uint64 seed, const char* paren
 		return false;
 	}
 	const idMapGraphDirector previous = *this;
-	const bool previousContinue = worldStore.continueNextLoad;
+	const bool previousContinue = worldStore.GetContinue();
 	// Resolve parent strings before Generate clears the previous director.
 	idStr returnMap = GraphMapName( parent[0] ? parent : gameLocal.GetMapName() ), returnLandmark = landmark;
-	if( returnLandmark.IsEmpty() && worldStore.landmarks.Num() )
+	if( returnLandmark.IsEmpty() && gameLocal.mapLandmarks.NumLandmarks() )
 	{
-		returnLandmark = worldStore.landmarks[0].id;
+		returnLandmark = gameLocal.mapLandmarks.GetLandmark( 0 ).id;
 	}
 	idList<byte, TAG_GAME> hub;
 	if( instanceId == 0 )
@@ -449,11 +448,11 @@ bool idMapGraphDirector::Start( const char* name, uint64 seed, const char* paren
 	}
 	partyLandmark = transition.arrivalLandmark;
 	recipeValid = false;
-	worldStore.continueNextLoad = true;
+	worldStore.SetContinue( true );
 	if( !gameLocal.BeginMapTransition( transition ) )
 	{
 		*this = previous;
-		worldStore.continueNextLoad = previousContinue;
+		worldStore.SetContinue( previousContinue );
 		return false;
 	}
 	//puncho - P2.4 (bug review 2026-10-28): started from inside an instance (a suspended one is refused above), the
@@ -492,7 +491,7 @@ bool idMapGraphDirector::RequestTransition( const char* landmark )
 		refused++;
 		return false;
 	}
-	const landmark_t* lm = worldStore.FindLandmark( landmark );
+	const landmark_t* lm = gameLocal.mapLandmarks.FindLandmark( landmark );
 	if( !lm )
 	{
 		gameLocal.Warning( "unknown exit %s", landmark );
@@ -500,7 +499,7 @@ bool idMapGraphDirector::RequestTransition( const char* landmark )
 		return false;
 	}
 	const idMapGraphDirector previous = *this;
-	const bool previousContinue = worldStore.continueNextLoad;
+	const bool previousContinue = worldStore.GetContinue();
 	mapTransition_t t;
 	t.departLandmark = landmark;
 	if( instanceId && !suspended && portalOpen && !idStr::Icmp( landmark, "_townportal" ) )
@@ -608,12 +607,12 @@ bool idMapGraphDirector::RequestTransition( const char* landmark )
 	}
 	partyLandmark = t.arrivalLandmark;
 	recipeValid = false;
-	worldStore.continueNextLoad = true;
+	worldStore.SetContinue( true );
 	gameLocal.Printf( "dungeon transition node %d map %s arrival %s\n", partyNode, t.nextMap.c_str(), t.arrivalLandmark.c_str() );
 	if( !gameLocal.BeginMapTransition( t ) )
 	{
 		*this = previous;
-		worldStore.continueNextLoad = previousContinue;
+		worldStore.SetContinue( previousContinue );
 		refused++;
 		return false;
 	}
@@ -725,9 +724,9 @@ void idMapGraphDirector::PredictNext()
 	}
 	else
 	{
-		for( int i = 0; i < worldStore.landmarks.Num(); i++ )
+		for( int i = 0; i < gameLocal.mapLandmarks.NumLandmarks(); i++ )
 		{
-			const landmark_t& lm = worldStore.landmarks[i];
+			const landmark_t& lm = gameLocal.mapLandmarks.GetLandmark( i );
 			idStr map;
 			if( !( lm.flags & 2 ) )
 			{
@@ -799,9 +798,9 @@ void idMapGraphDirector::UpdateExitDoors( bool atLoad )
 	{
 		return;
 	}
-	for( int i = 0; i < worldStore.landmarks.Num(); i++ )
+	for( int i = 0; i < gameLocal.mapLandmarks.NumLandmarks(); i++ )
 	{
-		const landmark_t& lm = worldStore.landmarks[i];
+		const landmark_t& lm = gameLocal.mapLandmarks.GetLandmark( i );
 		if( lm.sealedBy.IsEmpty() )
 		{
 			continue;
@@ -843,26 +842,13 @@ void idMapGraphDirector::MapLoaded()
 	const bool atLoad = gameLocal.GameState() != GAMESTATE_ACTIVE;
 	const idMapFile* loaded = gameLocal.GetLoadedMap();
 	uint32 loadedLandmarks;
-	if( atLoad && loaded != NULL && GraphTablesFingerprint( worldStore, loadedLandmarks ) )
+	if( atLoad && loaded != NULL && GraphTablesFingerprint( gameLocal.mapLandmarks, loadedLandmarks ) )
 	{
 		GraphStoreFingerprint( GraphMapName( gameLocal.GetMapName() ), loaded->GetFileTime(), loaded->GetGeometryCRC(), loadedLandmarks );
 	}
 	if( !common->IsClient() && !suspended && portalNode != 0xffff && portalNode == partyNode && partyNode < nodes.Num() && GraphMapName( gameLocal.GetMapName() ) == nodes[partyNode].map )
 	{
-		for( int i = worldStore.landmarks.Num() - 1; i >= 0; i-- )
-		{
-			if( worldStore.landmarks[i].id == "_townportal" )
-			{
-				worldStore.landmarks.RemoveIndex( i );
-			}
-		}
-		for( int i = worldStore.transitionVolumes.Num() - 1; i >= 0; i-- )
-		{
-			if( worldStore.transitionVolumes[i].landmark == "_townportal" )
-			{
-				worldStore.transitionVolumes.RemoveIndex( i );
-			}
-		}
+		gameLocal.mapLandmarks.RemoveById( "_townportal" );
 		landmark_t landmark;
 		landmark.id = "_townportal";
 		landmark.kind = "townportal";
@@ -871,14 +857,14 @@ void idMapGraphDirector::MapLoaded()
 		landmark.flags = 3;
 		landmark.radius = 256.0f;
 		landmark.ordinal = -1;
-		worldStore.landmarks.Append( landmark );
+		gameLocal.mapLandmarks.Add( landmark );
 		transitionVolume_t volume;
 		volume.landmark = landmark.id;
 		volume.bounds = idBounds( portalOrigin - idVec3( 256, 256, 128 ), portalOrigin + idVec3( 256, 256, 128 ) );
 		volume.cap = 64;
 		volume.carryAll = true;
 		volume.ordinal = -1;
-		worldStore.transitionVolumes.Append( volume );
+		gameLocal.mapLandmarks.AddVolume( volume );
 		if( portalOpen && !gameLocal.FindEntity( "_dungeon_townportal" ) )
 		{
 			idDict args;

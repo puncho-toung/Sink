@@ -134,7 +134,7 @@ static void EndTransitionArrival()
 void idGameLocal::ClearMapTransition()
 {
 	sessionCommand.Clear();
-	worldStore.continueNextLoad = false;
+	worldStore.SetContinue( false );
 	transitionState.pending = transitionState.active = false;
 #if !defined( ID_RETAIL )
 	transitionTestPlacementPending = false;
@@ -186,7 +186,7 @@ bool idGameLocal::BeginMapTransition( const mapTransition_t& request )
 
 bool idGameLocal::TransitionPartyReady( const char* landmark ) const
 {
-	const transitionVolume_t* volume = worldStore.FindTransitionVolume( landmark );
+	const transitionVolume_t* volume = mapLandmarks.FindTransitionVolume( landmark );
 	if( volume == NULL )
 	{
 		Warning( "wait_party: no volume for landmark '%s'", landmark );
@@ -256,10 +256,11 @@ void idGameLocal::CommitMapTransition()
 {
 	if( g_showTransition.GetBool() )
 	{
-		for( int i = 0; i < worldStore.landmarks.Num(); i++ )
+		for( int i = 0; i < mapLandmarks.NumLandmarks(); i++ )
 		{
-			gameRenderWorld->DebugBounds( colorCyan, idBounds( idVec3( -8, -8, -8 ), idVec3( 8, 8, 8 ) ), worldStore.landmarks[i].origin );
-			gameRenderWorld->DebugSphere( colorCyan, idSphere( worldStore.landmarks[i].origin, worldStore.landmarks[i].radius ) );
+			const landmark_t& lm = mapLandmarks.GetLandmark( i );
+			gameRenderWorld->DebugBounds( colorCyan, idBounds( idVec3( -8, -8, -8 ), idVec3( 8, 8, 8 ) ), lm.origin );
+			gameRenderWorld->DebugSphere( colorCyan, idSphere( lm.origin, lm.radius ) );
 		}
 	}
 	if( g_showTransition.GetBool() && mapFile != NULL )
@@ -312,7 +313,7 @@ void idGameLocal::CommitMapTransition()
 	transitionState.count = transitionState.fallback = transitionState.rotationIgnored = 0;
 	transitionState.arrivalStart = 0;
 	transitionState.carryApplied = false;
-	const landmark_t* depart = worldStore.FindLandmark( transitionState.request.departLandmark );
+	const landmark_t* depart = mapLandmarks.FindLandmark( transitionState.request.departLandmark );
 #if !defined( ID_RETAIL )
 	if( transitionTestPlacementPending )
 	{
@@ -380,7 +381,7 @@ void idGameLocal::CommitMapTransition()
 		}
 		Printf( "transition_player_depart slot=%d offset=%.9g,%.9g,%.9g health=%d infoHash=%08x\n", i, record.offset.x, record.offset.y, record.offset.z, player->health, record.info.Checksum() );
 	}
-	const transitionVolume_t* volume = worldStore.FindTransitionVolume( transitionState.request.departLandmark );
+	const transitionVolume_t* volume = mapLandmarks.FindTransitionVolume( transitionState.request.departLandmark );
 	if( g_transitionCarry.GetBool() && transitionState.relative && worldStore.IsActive() && volume != NULL && volume->carryAll )
 	{
 		// Transition-only fixed scratch. Bound teams are ranked as a unit; no frame allocation.
@@ -499,7 +500,7 @@ void idGameLocal::CommitMapTransition()
 	//puncho - transitions (stage 3 review): no CarryTransitionSounds here. Detaching at commit, before the map change was
 	// accepted, left a refused change's speakers playing ownerless forever; the host now carries at MapShutdown, inside
 	// the accepted load, as clients do
-	worldStore.continueNextLoad = worldStore.IsActive();
+	worldStore.SetContinue( worldStore.IsActive() );
 	worldStore.CommitCurrentMap();
 	common->ReportTransitionMetric( TRANSITION_CARRY_US, Sys_Microseconds() - carryStart );
 	sessionCommand = transitionState.relative ? "transition " : "map ";
@@ -515,7 +516,7 @@ void idGameLocal::ApplyTransitionCarry()
 	{
 		return;
 	}
-	const landmark_t* arrival = worldStore.FindLandmark( transitionState.request.arrivalLandmark );
+	const landmark_t* arrival = mapLandmarks.FindLandmark( transitionState.request.arrivalLandmark );
 	idVec3 origin;
 	if( arrival != NULL )
 	{
@@ -633,7 +634,7 @@ bool idGameLocal::SelectTransitionSpawn( idPlayer* player, idVec3& origin, idAng
 		return false;
 	}
 	transitionPlayer_t& record = transitionState.players[index];
-	const landmark_t* arrival = worldStore.FindLandmark( transitionState.request.arrivalLandmark );
+	const landmark_t* arrival = mapLandmarks.FindLandmark( transitionState.request.arrivalLandmark );
 	if( arrival == NULL )
 	{
 		Warning( "transition: arrival '%s' missing; ordinary spawn", transitionState.request.arrivalLandmark.c_str() );

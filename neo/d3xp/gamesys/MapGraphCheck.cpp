@@ -126,11 +126,11 @@ void MapGraphCheck_f( const idCmdArgs& args )
 				KitFailure( csv, authored.name, 1, "map cannot be parsed", failures );
 				continue;
 			}
-			idWorldStore tables;
+			idMapLandmarks tables;
 			tables.ReadMapData( &map );
-			for( int i = 0; i < tables.landmarks.Num(); i++ )
+			for( int i = 0; i < tables.NumLandmarks(); i++ )
 			{
-				const landmark_t& landmark = tables.landmarks[i];
+				const landmark_t& landmark = tables.GetLandmark( i );
 				const idMapEntity* ent = map.GetEntity( landmark.ordinal );
 				if( landmark.id.IsEmpty() )
 				{
@@ -142,7 +142,7 @@ void MapGraphCheck_f( const idCmdArgs& args )
 				}
 				for( int j = 0; j < i; j++ )
 				{
-					if( !tables.landmarks[j].id.Icmp( landmark.id ) )
+					if( !tables.GetLandmark( j ).id.Icmp( landmark.id ) )
 					{
 						KitFailure( csv, authored.name, 2, "duplicate landmark id", failures );
 					}
@@ -206,7 +206,7 @@ void MapGraphCheck_f( const idCmdArgs& args )
 				{
 					const int colon = landmark.link.Find( ':' );
 					idMapFile destination;
-					idWorldStore target;
+					idMapLandmarks target;
 					const landmark_t* arrival = NULL;
 					if( colon > 0 && destination.Parse( landmark.link.Left( colon ) ) )
 					{
@@ -226,9 +226,9 @@ void MapGraphCheck_f( const idCmdArgs& args )
 					KitFailure( csv, authored.name, 5, "decl landmark absent from map", failures );
 				}
 			}
-			for( int i = 0; i < tables.transitionVolumes.Num(); i++ )
+			for( int i = 0; i < tables.NumTransitionVolumes(); i++ )
 			{
-				const transitionVolume_t& volume = tables.transitionVolumes[i];
+				const transitionVolume_t& volume = tables.GetTransitionVolume( i );
 				const landmark_t* landmark = tables.FindLandmark( volume.landmark );
 				if( landmark == NULL || !volume.bounds.ContainsPoint( landmark->origin ) )
 				{

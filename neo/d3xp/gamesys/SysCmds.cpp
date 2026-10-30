@@ -4067,12 +4067,12 @@ static void Cmd_RecordTest_f( const idCmdArgs& args )
 	}
 	if( idStr::Icmp( args.Argv( 1 ), "node" ) == 0 && args.Argc() == 3 )
 	{
-		const bool equal = worldStore.currentNode == atoi( args.Argv( 2 ) );
+		const bool equal = worldStore.GetCurrentNode() == atoi( args.Argv( 2 ) );
 		if( !equal )
 		{
 			recordTestFailures++;
 		}
-		gameLocal.Printf( "RECORD_TEST %s node=%d expected=%s\n", equal ? "PASS" : "FAIL", worldStore.currentNode, args.Argv( 2 ) );
+		gameLocal.Printf( "RECORD_TEST %s node=%d expected=%s\n", equal ? "PASS" : "FAIL", worldStore.GetCurrentNode(), args.Argv( 2 ) );
 		return;
 	}
 	if( idStr::Icmp( args.Argv( 1 ), "exists" ) == 0 && args.Argc() == 4 )
@@ -4125,9 +4125,9 @@ static void Cmd_RecordTest_f( const idCmdArgs& args )
 		recordTestBaseline.Clear();
 		recordTestMap = gameLocal.GetMapName();
 		recordTestFailures = 0;
-		for( int i = 0; i < worldStore.mapSpawned.Num(); i++ )
+		for( int i = 0; i < worldStore.NumSpawnRows(); i++ )
 		{
-			const mapSpawnRow_t& row = worldStore.mapSpawned[i];
+			const mapSpawnRow_t& row = worldStore.SpawnRow( i );
 			idEntity* ent = gameLocal.entities[row.entityNumber];
 			recordTestRow_t expected;
 			expected.ordinal = row.ordinal;
@@ -4150,15 +4150,15 @@ static void Cmd_RecordTest_f( const idCmdArgs& args )
 	if( idStr::Icmp( args.Argv( 1 ), "compare" ) == 0 )
 	{
 		int failures = 0;
-		if( recordTestBaseline.Num() == 0 || recordTestMap != gameLocal.GetMapName() || recordTestBaseline.Num() != worldStore.mapSpawned.Num() || gameLocal.IsMapTransitionActive() )
+		if( recordTestBaseline.Num() == 0 || recordTestMap != gameLocal.GetMapName() || recordTestBaseline.Num() != worldStore.NumSpawnRows() || gameLocal.IsMapTransitionActive() )
 		{
 			failures++;
-			gameLocal.Printf( "RECORD_TEST identity mismatch expected=%s actual=%s rows=%d/%d pending=%d\n", recordTestMap.c_str(), gameLocal.GetMapName(), recordTestBaseline.Num(), worldStore.mapSpawned.Num(), gameLocal.IsMapTransitionActive() );
+			gameLocal.Printf( "RECORD_TEST identity mismatch expected=%s actual=%s rows=%d/%d pending=%d\n", recordTestMap.c_str(), gameLocal.GetMapName(), recordTestBaseline.Num(), worldStore.NumSpawnRows(), gameLocal.IsMapTransitionActive() );
 		}
-		for( int i = 0; i < recordTestBaseline.Num() && i < worldStore.mapSpawned.Num(); i++ )
+		for( int i = 0; i < recordTestBaseline.Num() && i < worldStore.NumSpawnRows(); i++ )
 		{
 			const recordTestRow_t& expected = recordTestBaseline[i];
-			const mapSpawnRow_t& row = worldStore.mapSpawned[i];
+			const mapSpawnRow_t& row = worldStore.SpawnRow( i );
 			idEntity* ent = gameLocal.entities[row.entityNumber];
 			const bool present = ent != NULL && gameLocal.GetSpawnId( ent ) == row.spawnId;
 			unsigned int poseCRC = 0;
@@ -4266,9 +4266,9 @@ static void Cmd_DumpMapState_f( const idCmdArgs& args )
 		return;
 	}
 	out->Printf( "ordinal,name,def,health,hidden,x,y,z,qx,qy,qz,moverPos,locked,broken,floor\n" );	//puncho - P2b.1.0: seven state columns
-	for( int i = 0; i < worldStore.mapSpawned.Num(); i++ )
+	for( int i = 0; i < worldStore.NumSpawnRows(); i++ )
 	{
-		const mapSpawnRow_t& row = worldStore.mapSpawned[i];
+		const mapSpawnRow_t& row = worldStore.SpawnRow( i );
 		idEntity* ent = gameLocal.entities[row.entityNumber];
 		if( ent == NULL || gameLocal.GetSpawnId( ent ) != row.spawnId )
 		{
@@ -4336,7 +4336,7 @@ static void Cmd_TestPartyPlacement_f( const idCmdArgs& args )
 		gameLocal.Printf( "usage: testPartyPlacement <map> <departure> <arrival> <farPeer 0/1> (server only)\n" );
 		return;
 	}
-	if( worldStore.FindLandmark( args.Argv( 2 ) ) == NULL )
+	if( gameLocal.mapLandmarks.FindLandmark( args.Argv( 2 ) ) == NULL )
 	{
 		gameLocal.Printf( "testPartyPlacement: missing landmark\n" );
 		return;

@@ -6896,10 +6896,7 @@ void idAI::Event_PersistCorpse()
 	{
 		if( IsGibbed() )
 		{
-			if( worldStore.remains < 65535 )
-			{
-				worldStore.remains++;
-			}
+			worldStore.AddRemains();
 		}
 		else
 		{

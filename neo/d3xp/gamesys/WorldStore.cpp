@@ -125,9 +125,6 @@ idWorldStore::idWorldStore()
 	memset( removed, 0, sizeof( removed ) );
 }
 
-// The landmark and volume tables are not cleared here: they belong to the loaded map, which LoadMap reads after a
-// new world's BeginMap and skips on an unchanged same-map reload, and Restore() calls Clear() after LoadMap read
-// them. Shutdown frees them.
 void idWorldStore::Clear()
 {
 	records.Clear();
@@ -152,8 +149,17 @@ void idWorldStore::Clear()
 void idWorldStore::Shutdown()
 {
 	Clear();
-	landmarks.Clear();
-	transitionVolumes.Clear();
+}
+
+//puncho - P2b.1.1b: StoreRecord's dungeon records: the persistent hub's first while an instance runs, then the director's
+void idWorldStore::SetDungeonRecords( const idList<byte, TAG_GAME>& hub, const idList<byte, TAG_GAME>& record )
+{
+	dungeonRecords.Clear();
+	if( hub.Num() )
+	{
+		dungeonRecords.Append( hub );
+	}
+	dungeonRecords.Append( record );
 }
 
 void idWorldStore::BeginMap( const char* map )
@@ -220,7 +226,7 @@ void idWorldStore::BeginSpawn()
 	remains = 0;
 	applyingReset = false;
 	resetApplied = false;
-	if( IsActive() && gameLocal.mapFile != NULL && gameLocal.mapFile->GetNumEntities() > 65535 )
+	if( IsActive() && gameLocal.GetLoadedMap() != NULL && gameLocal.GetLoadedMap()->GetNumEntities() > 65535 )
 	{
 		gameLocal.Error( "World map has more than 65535 authored ordinals" );
 	}
@@ -333,7 +339,7 @@ struct recordRow_t
 
 void idWorldStore::Commit( bool leaving )
 {
-	if( !IsActive() || committed || common->IsClient() || gameLocal.gamestate != GAMESTATE_ACTIVE || gameLocal.mapFile == NULL )
+	if( !IsActive() || committed || common->IsClient() || gameLocal.GameState() != GAMESTATE_ACTIVE || gameLocal.GetLoadedMap() == NULL )
 	{
 		return;
 	}
@@ -375,7 +381,7 @@ void idWorldStore::Commit( bool leaving )
 			RecordExclude( excluded, ent );
 		}
 	}
-	idMapFile* map = gameLocal.mapFile;
+	const idMapFile* map = gameLocal.GetLoadedMap();
 	bool isCleared = true;
 	idList<createdCandidate_t, TAG_GAME> bodies;
 	for( idEntity* ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
@@ -689,7 +695,7 @@ void idWorldStore::Commit( bool leaving )
 
 void idWorldStore::ApplyCurrentMap()
 {
-	if( !IsActive() || common->IsClient() || gameLocal.mapFile == NULL )
+	if( !IsActive() || common->IsClient() || gameLocal.GetLoadedMap() == NULL )
 	{
 		return;
 	}
@@ -717,7 +723,7 @@ void idWorldStore::ApplyCurrentMap()
 		uint32 resetSeconds = 0;
 		if( instanceId == 0 || !mapGraphDirector.GetResetPolicy( mapName, resetPolicy, resetSeconds ) )
 		{
-			const idDict& world = gameLocal.mapFile->GetEntity( 0 )->epairs;
+			const idDict& world = gameLocal.GetLoadedMap()->GetEntity( 0 )->epairs;
 			const char* policy = world.GetString( "world_reset", "never" );
 			resetPolicy = idStr::Icmp( policy, "timed" ) == 0 ? 1 : idStr::Icmp( policy, "cleared" ) == 0 ? 2
 						  : 0;
@@ -733,7 +739,7 @@ void idWorldStore::ApplyCurrentMap()
 		}
 		remains = applyingReset ? 0 : savedRemains;
 		idList<idEntity*, TAG_GAME> deleted;
-		idMapFile* map = gameLocal.mapFile;
+		const idMapFile* map = gameLocal.GetLoadedMap();
 		const bool identical = entitiesCRC == map->GetEntitiesCRC() && numEntities == map->GetNumEntities();
 		//puncho start - P2.4 (bug review 2026-10-28): one lookup per record row, not a scan of the map and the rows. A
 		// claimed bit per map ordinal, the spawned row by binary search (rows are in ordinal order), and on an edited map
@@ -1033,7 +1039,7 @@ void idWorldStore::Restore( idRestoreGame* save )
 				chunk.ReadInt( mapSpawned[j].entityNumber );
 				chunk.ReadInt( mapSpawned[j].spawnId );
 				mapSpawned[j].departed = false;
-				if( gameLocal.mapFile == NULL || ordinal >= gameLocal.mapFile->GetNumEntities() || mapSpawned[j].entityNumber < 0 || mapSpawned[j].entityNumber >= MAX_GENTITIES || ( j > 0 && ordinal <= mapSpawned[j - 1].ordinal ) )
+				if( gameLocal.GetLoadedMap() == NULL || ordinal >= gameLocal.GetLoadedMap()->GetNumEntities() || mapSpawned[j].entityNumber < 0 || mapSpawned[j].entityNumber >= MAX_GENTITIES || ( j > 0 && ordinal <= mapSpawned[j - 1].ordinal ) )
 				{
 					save->Error( "Invalid ORDT identity" );
 				}
@@ -1352,15 +1358,16 @@ void idWorldStore::DrawDebug() const
 	}
 	if( g_showLandmarks.GetBool() )
 	{
-		for( int i = 0; i < landmarks.Num(); i++ )
+		const idMapLandmarks& tables = gameLocal.mapLandmarks;
+		for( int i = 0; i < tables.NumLandmarks(); i++ )
 		{
-			const landmark_t& lm = landmarks[i];
+			const landmark_t& lm = tables.GetLandmark( i );
 			gameRenderWorld->DebugArrow( colorCyan, lm.origin, lm.origin + lm.axis[0] * 64.0f, 8 );
 			gameRenderWorld->DrawText( lm.id, lm.origin, 0.2f, colorCyan, view );
 		}
-		for( int i = 0; i < transitionVolumes.Num(); i++ )
+		for( int i = 0; i < tables.NumTransitionVolumes(); i++ )
 		{
-			gameRenderWorld->DebugBounds( colorYellow, transitionVolumes[i].bounds );
+			gameRenderWorld->DebugBounds( colorYellow, tables.GetTransitionVolume( i ).bounds );
 		}
 	}
 }

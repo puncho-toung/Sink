@@ -1,9 +1,9 @@
 #include "../../idlib/precompiled.h"
 #pragma hdrstop
 #include "../Game_local.h"
-#include "WorldStore.h"
+#include "MapLandmarks.h"
 
-const landmark_t* idWorldStore::FindLandmark( const char* name ) const
+const landmark_t* idMapLandmarks::FindLandmark( const char* name ) const
 {
 	for( int i = 0; i < landmarks.Num(); i++ )
 	{
@@ -15,7 +15,7 @@ const landmark_t* idWorldStore::FindLandmark( const char* name ) const
 	return NULL;
 }
 
-const transitionVolume_t* idWorldStore::FindTransitionVolume( const char* name ) const
+const transitionVolume_t* idMapLandmarks::FindTransitionVolume( const char* name ) const
 {
 	for( int i = 0; i < transitionVolumes.Num(); i++ )
 	{
@@ -27,10 +27,29 @@ const transitionVolume_t* idWorldStore::FindTransitionVolume( const char* name )
 	return NULL;
 }
 
-void idWorldStore::ReadMapData( idMapFile* map )
+//puncho - P2b.1.1b: MapLoaded's town portal, re-added each load. RemoveIndex keeps the order of the rows left: a lookup
+// returns the first match
+void idMapLandmarks::RemoveById( const char* id )
 {
-	landmarks.Clear();
-	transitionVolumes.Clear();
+	for( int i = landmarks.Num() - 1; i >= 0; i-- )
+	{
+		if( landmarks[i].id == id )
+		{
+			landmarks.RemoveIndex( i );
+		}
+	}
+	for( int i = transitionVolumes.Num() - 1; i >= 0; i-- )
+	{
+		if( transitionVolumes[i].landmark == id )
+		{
+			transitionVolumes.RemoveIndex( i );
+		}
+	}
+}
+
+void idMapLandmarks::ReadMapData( const idMapFile* map )
+{
+	Clear();
 	for( int i = 1; i < map->GetNumEntities(); i++ )
 	{
 		const idMapEntity* ent = map->GetEntity( i );

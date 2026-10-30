@@ -104,6 +104,7 @@ void gameError( const char* fmt, ... );
 #include "gamesys/SysCvar.h"
 #include "gamesys/SysCmds.h"
 #include "gamesys/SaveGame.h"
+#include "gamesys/MapLandmarks.h"
 #include "gamesys/WorldStore.h"
 #include "gamesys/MapGraph.h"
 
@@ -494,6 +495,7 @@ public:
 	aiSquadDef_t			aiSquads[MAX_AI_SQUADS];
 	int						numAISquads;
 	//puncho end
+	idMapLandmarks			mapLandmarks;			//puncho - P2b.1.1b: the loaded map's landmark and transition-volume tables (MapLandmarks.h)
 	//puncho start - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): the shooter tokens. idAI::AssignShooterTokens
 	// bumps the generation once per tic after the think loop; a monster holds a token while its shooterTokenGen is the
 	// current one and the pass ran in the previous tic. Host state, never saved or replicated
@@ -899,7 +901,6 @@ public:
 	const char* 			GetMPPlayerDefName() const;
 
 private:
-	friend class idWorldStore;
 	idStr					mapFileName;			// name of the map, empty string if no map loaded
 	idMapFile* 				mapFile;				// will be NULL during the game unless in-game editing is used
 	bool					mapCycleLoaded;

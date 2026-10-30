@@ -435,7 +435,8 @@ void idGameLocal::Shutdown()
 
 	MapShutdown();
 	mapGraphDirector.Shutdown();
-	worldStore.Shutdown();	//puncho - P2.4 (bug review 2026-10-28): also frees the landmark and volume tables Clear keeps
+	worldStore.Shutdown();
+	mapLandmarks.Clear();	//puncho - P2.4 (bug review 2026-10-28), P2b.1.1b: the landmark and volume tables a map load leaves
 
 	//puncho start - ai-harness: MapShutdown flushed the rows; the file itself lives until the game shuts down
 	if( aiProfileFile != NULL )
@@ -1046,7 +1047,7 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 			mapFile = NULL;
 			Error( "Couldn't load %s", mapName );
 		}
-		worldStore.ReadMapData( mapFile );
+		mapLandmarks.ReadMapData( mapFile );	//puncho - P2b.1.1b: the tables come with each parse of the map
 	}
 	mapFileName = mapFile->GetName();
 	ReadAISquads();	//puncho - ai-avoidance (WP-A7): before the monsters spawn and look their squad up
@@ -1496,7 +1497,7 @@ void idGameLocal::InitFromNewMap( const char* mapName, idRenderWorld* renderWorl
 	mapGraphDirector.RecipeForLoad( mapName );
 	worldStore.BeginMap( mapName );
 	mapGraphDirector.BeginMap( mapName );
-	worldStore.currentNode = worldStore.instanceId != 0 ? mapGraphDirector.RecipeForLoad( mapName ).currentNode : 0;
+	worldStore.SetCurrentNode( worldStore.GetInstanceId() != 0 ? mapGraphDirector.RecipeForLoad( mapName ).currentNode : 0 );
 	Printf( "----------- Game Map Init ------------\n" );
 
 	gamestate = GAMESTATE_STARTUP;
