@@ -4461,19 +4461,12 @@ static void Cmd_RecordTest_f( const idCmdArgs& args )
 static void Cmd_ListMapRecords_f( const idCmdArgs& args )
 {
 	worldStore.ListRecords();
-	//puncho start - P2b.1.3: the spawnArgs keys builds before RECORD_IDENTITY kept the world identity in; a load
-	// deletes them (idEntity::RestoreLegacyWorldKeys) and nothing writes them, so 0
+	//puncho start - P2b.1.3: the spawnArgs keys builds before RECORD_IDENTITY kept the world identity in
+	// (idEntity::NumLegacyWorldKeys); a load deletes them and nothing writes them, so 0
 	int legacyKeys = 0;
 	for( idEntity* ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
 	{
-		for( const idKeyValue* kv = ent->spawnArgs.MatchPrefix( "_world" ); kv != NULL; kv = ent->spawnArgs.MatchPrefix( "_world", kv ) )
-		{
-			legacyKeys++;
-		}
-		for( const idKeyValue* kv = ent->spawnArgs.MatchPrefix( "_budgetClass" ); kv != NULL; kv = ent->spawnArgs.MatchPrefix( "_budgetClass", kv ) )
-		{
-			legacyKeys++;
-		}
+		legacyKeys += ent->NumLegacyWorldKeys();
 	}
 	gameLocal.Printf( "record legacy keys=%d\n", legacyKeys );
 	//puncho end

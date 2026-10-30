@@ -694,7 +694,7 @@ public:
 	idLinkList<idEntity>	entityBudgets[4];
 	int					budgetLive[4], budgetEvicted[4], budgetRefused[4];
 	int					budgetFreeSlots[2], budgetHighWater;
-	uint32					budgetJoinCounter;	//puncho - P2b.1.3: the last budgetJoinSeq JoinEntityBudget stamped
+	uint32					budgetJoinCounter;	//puncho - P2b.1.3: JoinEntityBudget stamps ++budgetJoinCounter; 0 at map start, the restored maximum seq + 1 after a restore (so the next stamp is max + 2; order is what matters)
 	int					mapStaticSkipCount;
 	int					budgetAlarm[2];
 	bool					budgetSpawnRefused;

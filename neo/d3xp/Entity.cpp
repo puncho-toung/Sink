@@ -962,11 +962,11 @@ void idEntity::RestoreWorldIdentity( idRestoreGame* savefile )
 	byte flags, budget;
 	savefile->ReadByte( flags );
 	savefile->ReadByte( budget );
-	if( ( flags & ~( WORLD_IDENTITY_CREATED | WORLD_FLAG_DEPARTED | WORLD_FLAG_TAKEN ) ) != 0 || budget > 4 )
+	if( ( flags & ~( WORLD_IDENTITY_CREATED | WORLD_FLAGS_ALL ) ) != 0 || budget > ( int )ARRAY_COUNT( gameLocal.entityBudgets ) )
 	{
 		savefile->Error( "Invalid WorldIdentity of entity '%s' (flags %02x, budget %d)", name.c_str(), flags, budget );
 	}
-	worldFlags = flags & ( WORLD_FLAG_DEPARTED | WORLD_FLAG_TAKEN );
+	worldFlags = flags & WORLD_FLAGS_ALL;
 	budgetClass = budget - 1;
 	budgetJoinSeq = 0;
 	if( budgetClass >= 0 )
@@ -1004,23 +1004,43 @@ taken from. Such a save has no join seq: its budget classes rejoin in spawn orde
 lived only between an apply and its BindCreatedRecords, but a 1429 save kept them: they are deleted too.
 ================
 */
+// every spawnArgs key a build before RECORD_IDENTITY wrote: RestoreLegacyWorldKeys deletes them, NumLegacyWorldKeys
+// counts them (listMapRecords)
+static const char* const legacyWorldKeys[] =
+{
+	"_worldCreatedId", "_worldCreatedTime", "_worldDeparted", "_worldTaken", "_budgetClass",
+	"_worldBindParent", "_worldBindJoint", "_worldBindBody", "_worldBindOrientated"
+};
+
 void idEntity::RestoreLegacyWorldKeys()
 {
-	static const char* const legacyKeys[] =
-	{
-		"_worldCreatedId", "_worldCreatedTime", "_worldDeparted", "_worldTaken", "_budgetClass",
-		"_worldBindParent", "_worldBindJoint", "_worldBindBody", "_worldBindOrientated"
-	};
 	worldCreatedId = strtoull( spawnArgs.GetString( "_worldCreatedId", "0" ), NULL, 10 );
 	worldCreatedTime = worldCreatedId != 0 ? strtoll( spawnArgs.GetString( "_worldCreatedTime", "0" ), NULL, 10 ) : 0;
 	worldFlags = ( spawnArgs.GetBool( "_worldDeparted" ) ? WORLD_FLAG_DEPARTED : 0 ) | ( spawnArgs.GetBool( "_worldTaken" ) ? WORLD_FLAG_TAKEN : 0 );
 	const int budget = spawnArgs.GetInt( "_budgetClass", "-1" );
-	budgetClass = ( budget >= 0 && budget < 4 ) ? budget : -1;
+	budgetClass = ( budget >= 0 && budget < ( int )ARRAY_COUNT( gameLocal.entityBudgets ) ) ? budget : -1;
 	budgetJoinSeq = 0;
-	for( int i = 0; i < ( int )ARRAY_COUNT( legacyKeys ); i++ )
+	for( int i = 0; i < ( int )ARRAY_COUNT( legacyWorldKeys ); i++ )
 	{
-		spawnArgs.Delete( legacyKeys[i] );
+		spawnArgs.Delete( legacyWorldKeys[i] );
 	}
+}
+
+/*
+================
+idEntity::NumLegacyWorldKeys
+
+The legacy keys this entity's spawnArgs still hold: 0 once loaded, since a load deletes them and nothing writes them
+================
+*/
+int idEntity::NumLegacyWorldKeys() const
+{
+	int count = 0;
+	for( int i = 0; i < ( int )ARRAY_COUNT( legacyWorldKeys ); i++ )
+	{
+		count += spawnArgs.FindKey( legacyWorldKeys[i] ) != NULL ? 1 : 0;
+	}
+	return count;
 }
 //puncho end
 
@@ -6650,7 +6670,7 @@ void idEntity::WriteRecordBind( idRecordOut& rec ) const
 
 // BindCreatedRecords binds every created entity once all of them have spawned: the bind waits in the store's pending
 // list until then (P2b.1.3). A carry's entry binds through the transition's own rows (ApplyTransitionCarry), after the
-// map's BindCreatedRecords, so its bind is read and left
+// map's BindCreatedRecords, so a carry's Bind field is read here and dropped: no pending bind
 bool idEntity::ApplyRecordBind( idRecordIn& rec )
 {
 	uint64 parent;

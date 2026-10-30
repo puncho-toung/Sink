@@ -76,7 +76,7 @@ public:
 	void CommitCurrentMap();
 	void ApplyCurrentMap();
 	void BindCreatedRecords();
-	void AddPendingBind( const idEntity* ent, uint64 parent, int joint, int body, bool orientated );	//puncho - P2b.1.3
+	void AddPendingBind( const idEntity* ent, uint64 parent, short joint, short body, bool orientated );	//puncho - P2b.1.3
 	bool WriteCreated( idEntity* ent, const idVec3& landmark, idFile_Memory& out );
 	bool MeasureCreated( idEntity* ent, const idVec3& landmark, idFile_Memory& out );
 	idEntity* SpawnCreated( idFile_Memory& in, const idMat3& rotation, const idVec3& landmark );

@@ -206,6 +206,7 @@ inline void	ReadFromBitMsg( netBoolEvent_t& netEvent, const idBitMsg& msg )
 // idEntity::worldFlags, the world store's marks
 static const int WORLD_FLAG_DEPARTED	= 1;	// carried out through a transition (MarkDeparted): never committed here again
 static const int WORLD_FLAG_TAKEN		= 2;	// an item a player picked up (MarkTaken): removed on revisit
+static const int WORLD_FLAGS_ALL = WORLD_FLAG_DEPARTED | WORLD_FLAG_TAKEN;	// bit 7 is WorldIdentity's created bit (Entity.cpp)
 //puncho end
 
 class idEntity : public idClass
@@ -300,6 +301,7 @@ public:
 	void					SaveWorldIdentity( idSaveGame* savefile ) const;
 	void					RestoreWorldIdentity( idRestoreGame* savefile );
 	void					RestoreLegacyWorldKeys();
+	int						NumLegacyWorldKeys() const;
 	//puncho end
 
 	const char* 			GetEntityDefName() const;

@@ -293,7 +293,7 @@ bool idWorldStore::WriteCreated( idEntity* ent, const idVec3& landmark, idFile_M
 }
 
 //puncho - P2.4 (bug review 2026-10-28): the transition carry sizes each team member before it accepts the team; that
-// pass called WriteCreated, which stamped _worldCreatedId and _worldCreatedTime for good on the members of a team it
+// pass called WriteCreated, which stamped the created identity (worldCreatedId, worldCreatedTime) for good on the members of a team it
 // then rejected and on their bind parents. This writes the same bytes, with placeholder identities of the same size,
 // and stamps nothing
 bool idWorldStore::MeasureCreated( idEntity* ent, const idVec3& landmark, idFile_Memory& out )
@@ -483,14 +483,14 @@ idEntity* idWorldStore::SpawnCreatedEntry( const char* unit, const char* def, ui
 
 
 //puncho - P2b.1.3: the bind a created entry's Bind field applied, held until BindCreatedRecords
-void idWorldStore::AddPendingBind( const idEntity* ent, uint64 parent, int joint, int body, bool orientated )
+void idWorldStore::AddPendingBind( const idEntity* ent, uint64 parent, short joint, short body, bool orientated )
 {
 	pendingBind_t& bind = pendingBinds.Alloc();
 	bind.parent = parent;
 	bind.entityNumber = ent->entityNumber;
 	bind.spawnId = gameLocal.GetSpawnId( ent );
-	bind.joint = ( short )joint;
-	bind.body = ( short )body;
+	bind.joint = joint;
+	bind.body = body;
 	bind.orientated = orientated;
 }
 

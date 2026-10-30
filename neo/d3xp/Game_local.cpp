@@ -4556,7 +4556,7 @@ void idGameLocal::ResetEntityBudgets( bool restore )
 		// (WorldIdentity), in the order it joined: by budgetJoinSeq, ties by entity number, so an entity that joined
 		// after its spawn keeps its age. The type ladder would also class the map's func_fx and debris and the props a
 		// load spawned, all unclassed under GAMESTATE_STARTUP, and slot order is not age. A save before RECORD_IDENTITY
-		// holds no seq (RestoreLegacyWorldKeys leaves 0, a join never stamps it): its entities take their place in
+		// holds no seq (RestoreLegacyWorldKeys leaves 0, which a join never stamps): its entities take their place in
 		// spawnedEntities, which the save keeps in spawn order, the order they rejoined in before
 		idList<idEntity*, TAG_GAME> joined;
 		for( idEntity* ent = spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
@@ -4645,12 +4645,15 @@ void idGameLocal::ListBudgets( bool order ) const
 		Printf( "bud_%s_live %i bud_%s_evicted %i bud_%s_refused %i\n", budgetNames[i], budgetLive[i], budgetNames[i], budgetEvicted[i], budgetNames[i], budgetRefused[i] );
 	}
 	//puncho start - P2b.1.3: each class oldest first, the order it evicts in, with the seq a restore rejoins it by
-	for( int i = 0; i < 4 && order; i++ )
+	if( order )
 	{
-		int position = 0;
-		for( idEntity* ent = entityBudgets[i].Next(); ent != NULL; ent = ent->budgetNode.Next() )
+		for( int i = 0; i < 4; i++ )
 		{
-			Printf( "bud_%s_order %i entity=%i seq=%u name=%s\n", budgetNames[i], position++, ent->entityNumber, ent->budgetJoinSeq, ent->name.c_str() );
+			int position = 0;
+			for( idEntity* ent = entityBudgets[i].Next(); ent != NULL; ent = ent->budgetNode.Next() )
+			{
+				Printf( "bud_%s_order %i entity=%i seq=%u name=%s\n", budgetNames[i], position++, ent->entityNumber, ent->budgetJoinSeq, ent->name.c_str() );
+			}
 		}
 	}
 	//puncho end
