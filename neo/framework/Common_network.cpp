@@ -77,8 +77,6 @@ idCVar net_interpolationSlowdownStart( "net_interpolationSlowdownStart", "0.5", 
 // Extrapolation is now disabled
 idCVar net_maxExtrapolationInMS( "net_maxExtrapolationInMS", "0", CVAR_INTEGER, "Max time in MS that extrapolation is allowed to occur." );
 
-static const int SNAP_USERCMDS = 8192;
-
 /*
 ===============
 idCommonLocal::IsMultiplayer
@@ -323,23 +321,6 @@ void idCommonLocal::ProcessSnapshot( idSnapShot& ss )
 		}
 	}
 	*/
-
-	// Read usercmds from other players
-	for( int p = 0; p < MAX_PLAYERS; p++ )
-	{
-		if( p == game->GetLocalClientNum() )
-		{
-			continue;
-		}
-		idBitMsg msg;
-		if( ss.GetObjectMsgByID( SNAP_USERCMDS + p, msg ) )
-		{
-			NetReadUsercmds( p, msg );
-		}
-	}
-
-
-
 
 	// Set server game time here so that it accurately reflects the time when this frame was saved out, in case any serialize function needs it.
 	int oldTime = Game()->GetServerGameTimeMs();
