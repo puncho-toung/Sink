@@ -586,7 +586,7 @@ extern idGameEdit* 				gameEdit;
 ===============================================================================
 */
 
-const int GAME_API_VERSION		= 12; // P2b stage 1: GetLevelKeep, RefusesMapWithPeers, FormatMapRows virtual, bool SaveGame
+const int GAME_API_VERSION		= 12; // P2b stage 1: GetLevelKeep, RefusesMapWithPeers, FormatMapRows virtual, LoadPhase slot, skipStaticsCap, IsResident, IsSampleResident, bool SaveGame
 
 typedef struct
 {

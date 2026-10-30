@@ -472,7 +472,7 @@ public:
 	bool PrepareMatchGameData( idMatchParameters& parms );
 	virtual int LevelKeepGrace() const;
 	virtual int GetLevelKeep() const;
-	virtual void FormatMapRows( char rows[6][256], bool high[6] ) const;
+	virtual void FormatMapRows( char rows[MAP_STAT_ROWS][MAP_STAT_ROW_CHARS], bool high[MAP_STAT_ROWS] ) const;
 	virtual void ReportLevelCache( int manager, int loaded, int kept, int purged, int pinned, int64 bytes );
 	virtual bool IsLevelAssetPinned( int type, const char* name, int filter = -1, int repeat = -1, int usage = -1, int cubeMap = -1 ) const;
 	virtual void				LoadPacifierInfo( VERIFY_FORMAT_STRING const char* fmt, ... );

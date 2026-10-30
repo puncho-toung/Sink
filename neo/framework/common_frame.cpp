@@ -76,6 +76,8 @@ idCVar net_drawDebugHud( "net_drawDebugHud", "0", CVAR_SYSTEM | CVAR_INTEGER, "0
 
 idCVar timescale( "timescale", "1", CVAR_SYSTEM | CVAR_FLOAT, "Number of game frames to run per render frame", 0.001f, 100.0f );
 
+extern idCVar com_transitionOverlayMs;	// Common_load.cpp
+
 
 idCVar com_mapRowsLog( "com_mapRowsLog", "", CVAR_SYSTEM, "write per-frame MAP counters to maprows/<plain name>.csv" );
 static idFile* mapRowsFile;
@@ -99,7 +101,7 @@ bool ValidDiagnosticName( const char* name )
 	return true;
 }
 
-void idCommonLocal::FormatMapRows( char rows[6][256], bool high[6] ) const
+void idCommonLocal::FormatMapRows( char rows[MAP_STAT_ROWS][MAP_STAT_ROW_CHARS], bool high[MAP_STAT_ROWS] ) const
 {
 	renderMapStats_t r = {};
 	mapGameStats_t g = {};
@@ -475,7 +477,6 @@ void idCommonLocal::Draw()
 		Sys_Sleep( com_sleepDraw.GetInteger() );
 	}
 
-	extern idCVar com_transitionOverlayMs;
 	if( insideExecuteMapChange && IsGameDrivenLoad() && transitionLoadStartTime != 0 &&
 		com_transitionOverlayMs.GetInteger() >= 0 && Sys_Milliseconds() - transitionLoadStartTime < com_transitionOverlayMs.GetInteger() )
 	{

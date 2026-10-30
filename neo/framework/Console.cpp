@@ -489,10 +489,10 @@ float idConsoleLocal::DrawFPS( float y )
 
 		if( com_showFPS.GetInteger() >= 5 )
 		{
-			char rows[6][256];
-			bool high[6];
+			char rows[MAP_STAT_ROWS][MAP_STAT_ROW_CHARS];
+			bool high[MAP_STAT_ROWS];
 			commonLocal.FormatMapRows( rows, high );
-			for( int i = 0; i < 6; i++ )
+			for( int i = 0; i < MAP_STAT_ROWS; i++ )
 			{
 				ImGui::TextColored( high[i] ? ImVec4( 1, 0.2f, 0.2f, 1 ) : colorLtGrey, "%s", rows[i] );
 			}

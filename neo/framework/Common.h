@@ -72,6 +72,10 @@ enum loadPhase_t
 	LOAD_PHASE_COUNT
 };
 
+// the MAP rows of com_showFPS 5 and listMap (idCommon::FormatMapRows)
+const int MAP_STAT_ROWS			= 6;
+const int MAP_STAT_ROW_CHARS	= 256;
+
 bool ValidDiagnosticName( const char* name );
 
 extern idCVar com_engineHz;
@@ -334,11 +338,19 @@ public:
 
 	virtual						~idCommon() {}
 
-	virtual void LoadPhase( loadPhase_t phase ) {}
+	virtual void				LoadPhase( loadPhase_t phase ) {}
 	//puncho start - P2b.1.6: com_levelKeep as set, for the game and the sound system (LevelKeepGrace is the load-gated grace)
-	virtual int GetLevelKeep() const { return 0; }
-	// the six MAP rows of com_showFPS 5 and listMap; high[i] is set when row i is near a cap
-	virtual void FormatMapRows( char rows[6][256], bool high[6] ) const {}
+	virtual int					GetLevelKeep() const { return 0; }
+	// the MAP rows of com_showFPS 5 and listMap, high[i] true when row i is near a cap; this default writes empty rows,
+	// all false
+	virtual void				FormatMapRows( char rows[MAP_STAT_ROWS][MAP_STAT_ROW_CHARS], bool high[MAP_STAT_ROWS] ) const
+	{
+		for( int i = 0; i < MAP_STAT_ROWS; i++ )
+		{
+			rows[i][0] = '\0';
+			high[i] = false;
+		}
+	}
 	//puncho end
 
 	// Initialize everything.

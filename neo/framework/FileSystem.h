@@ -78,8 +78,6 @@ typedef enum
 	FIND_YES
 } findFile_t;
 
-unsigned int FileReadBytes();
-
 // file list for directory listings
 class idFileList
 {

@@ -407,6 +407,7 @@ idFileSystemLocal	fileSystemLocal;
 idFileSystem* 		fileSystem = &fileSystemLocal;
 
 extern thread_local bool fileReadContainer;	// File.cpp; ReadFromBGL sets it, and FileReadBytes leaves those reads out
+unsigned int FileReadBytes();	// File.cpp; bytes read from disk, container reads (fileReadContainer) left out
 
 //puncho start - P2b.1.0: fs_traceOpens <file> writes a line for each read open OpenFileReadFlags or
 // OpenFileReadFromLayer serves, "<source> <path> <length>" with the source loose, zip, resource or prefetch, and a line

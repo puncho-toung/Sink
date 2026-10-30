@@ -3831,10 +3831,10 @@ static void Cmd_ListMap_f( const idCmdArgs& args )
 		gameLocal.Printf( "listMap: no map loaded\n" );
 		return;
 	}
-	char rows[6][256];
-	bool high[6];
+	char rows[MAP_STAT_ROWS][MAP_STAT_ROW_CHARS];
+	bool high[MAP_STAT_ROWS];
 	common->FormatMapRows( rows, high );
-	for( int i = 0; i < 6; i++ )
+	for( int i = 0; i < MAP_STAT_ROWS; i++ )
 	{
 		gameLocal.Printf( "%s\n", rows[i] );
 	}
