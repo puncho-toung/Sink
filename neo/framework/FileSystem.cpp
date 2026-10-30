@@ -144,10 +144,6 @@ struct searchpath_t
 	idList< idZipContainer* > zipFiles;
 };
 
-// search flags when opening a file
-#define FSFLAG_SEARCH_DIRS		( 1 << 0 )
-#define FSFLAG_RETURN_FILE_MEM	( 1 << 1 )
-
 class idFileSystemLocal : public idFileSystem
 {
 public:
@@ -173,7 +169,7 @@ public:
 	virtual bool			RenameFile( const char* relativePath, const char* newName, const char* basePath = "fs_savepath" );
 	virtual void MountPrefetchResource( const char* name );
 	virtual void ReleasePrefetchResource();
-	virtual bool ResolveForRead( const char* path, resolvedFile_t& out, const char* gamedir = NULL );
+	virtual bool LocateFile( const char* path, resolvedFile_t& out, int searchFlags, const char* gamedir = NULL );
 	virtual idFile* 		OpenFileReadFlags( const char* relativePath, int searchFlags, bool allowCopyFiles = true, const char* gamedir = NULL );
 	virtual idFile* 		OpenFileRead( const char* relativePath, bool allowCopyFiles = true, const char* gamedir = NULL );
 	virtual idFile* 		OpenFileReadMemory( const char* relativePath, bool allowCopyFiles = true, const char* gamedir = NULL );
@@ -245,7 +241,7 @@ public:
 
 	virtual void			StartPreload( const idStrList& _preload );
 	virtual void			StopPreload();
-	idFile* 				GetResourceFile( const char* fileName, bool memFile, int layer );
+	idFile* 				GetResourceFile( const idResourceCacheEntry& rc, bool memFile );
 	bool					GetResourceCacheEntry( const char* fileName, idResourceCacheEntry& rc, int layer = -1 );
 	virtual int				ReadFromBGL( idFile* _resourceFile, void* _buffer, int _offset, int _len );
 	virtual unsigned int	GetReadBytes() const;
@@ -330,7 +326,7 @@ private:
 	int		resourceBufferAvailable;
 	int		numFilesOpenedAsCached;
 
-	//puncho - transitions (stage 3 review): the predicted map's container, opened for ResolveForRead only, outside the
+	//puncho - transitions (stage 3 review): the predicted map's container, opened for LocateFile only, outside the
 	// search order, so it neither stays mounted nor shadows the current map's container for on-demand loads
 	idResourceContainer*	prefetchResource = NULL;
 	int						prefetchResourceLayer = -1;
@@ -365,6 +361,10 @@ private:
 	//puncho start - MP-A5 (K21, K21a, K43)
 	void					GetLayerFileList( const char* relativePath, const idStrList& extensions, idStrList& list, idHashIndex& hashIndex, bool fullRelativePath, bool allowSubdirsForResourcePaks, const char* gamedir, int layer );
 	idFile*					OpenLayerFile( const char* relativePath, int searchFlags, bool allowCopyFiles, const char* gamedir, int layer );
+	// P2b.1.5: the one search of a read, the identity of what it found, and the open half
+	bool					FindInLayer( const char* relativePath, int searchFlags, const char* gamedir, int layer, int resolveFlags, resolvedFile_t& out );
+	bool					FillIdentity( const char* relativePath, const resolvedFile_t& found, resolvedFile_t& out );
+	idFile*					OpenResolvedFile( const char* relativePath, int searchFlags, bool allowCopyFiles, const resolvedFile_t& found );
 	bool					LayerHoldsFile( const char* relativePath, int layer );
 	void					AddLayerPath( int layer, const char* relativePath );
 	void					ListLayerDir( int layer, const char* relativeDir );
@@ -384,7 +384,7 @@ private:
 	void					ReOpenCacheFiles();
 
 	// RB: PK4 support
-	idFile* 				GetZipFile( const char* fileName, bool memFile, int layer );
+	idFile* 				GetZipFile( const idZipCacheEntry& rc, const char* fileName, bool memFile );
 	bool					GetZipCacheEntry( const char* fileName, idZipCacheEntry& rc, int layer = -1 );
 };
 
@@ -411,9 +411,10 @@ unsigned int FileReadBytes();	// File.cpp; bytes read from disk, container reads
 
 //puncho start - P2b.1.0: fs_traceOpens <file> writes a line for each read open OpenFileReadFlags or
 // OpenFileReadFromLayer serves, "<source> <path> <length>" with the source loose, zip, resource or prefetch, and a line
-// for each ResolveForRead that resolves or misses every layer, "resolve <kind> <path> <length>", so a load's opens, their
-// sources and the resolves per open can be counted and compared. Opens come from several threads; the lock orders the
-// lines, and a comparison reads them as a sorted set as well as in order
+// for each LocateFile or served open that reads a file's identity, "resolve <kind> <path> <length>" ("resolve miss" for a
+// LocateFile that misses every layer), so a load's opens, their sources and the resolves per open can be counted and
+// compared. Opens come from several threads; the lock orders the lines, and a comparison reads them as a sorted set as
+// well as in order
 #if !defined( ID_RETAIL )
 static idSysMutex	traceOpensLock;
 static idFile*		traceOpensFile;	// NULL while not tracing; swapped only under traceOpensLock
@@ -3570,9 +3571,9 @@ idVec2i idFileSystemLocal::AddResourceFile( const char* resourceFileName )
 ================
 idFileSystemLocal::MountPrefetchResource
 
-The container AddResourceFile would append to the last search path at the map's load, opened privately so ResolveForRead
-yields the descriptors that load will see. A container already in the search order (a map loaded before) needs nothing:
-the load adds no container, so the current resolution is the load's.
+The container AddResourceFile would append to the last search path at the map's load, opened privately so LocateFile
+(RESOLVE_PREDICTED) yields the descriptors that load will see. A container already in the search order (a map loaded
+before) needs nothing: the load adds no container, so the current resolution is the load's.
 ================
 */
 void idFileSystemLocal::MountPrefetchResource( const char* name )
@@ -4194,68 +4195,57 @@ bool idFileSystemLocal::GetZipCacheEntry( const char* fileName, idZipCacheEntry&
 ========================
 idFileSystemLocal::GetZipFile
 
-Returns NULL
+The open of the .pk4 entry FindInLayer found, rc in its container's table
 ========================
 */
-idFile* idFileSystemLocal::GetZipFile( const char* fileName, bool memFile, int layer )
+idFile* idFileSystemLocal::GetZipFile( const idZipCacheEntry& rc, const char* fileName, bool memFile )
 {
-	if( !UsingZipFiles() )
+	if( fs_debugResources.GetBool() )
 	{
-		return NULL;
+		idLib::Printf( "RES: loading file %s\n", rc.filename.c_str() );
 	}
 
-	static idZipCacheEntry rc;
-	if( GetZipCacheEntry( fileName, rc, layer ) )
+	idFile_InZip* file = rc.owner->OpenFile( rc, fileName );
+
+	// RB: TODO I don't like that we always create a new idFile_Memory buffer instead of reusing
+	// the temporary resourceBufferPtr. This needs some profiling
+
+	if( file != NULL && ( ( memFile /*|| rc.length <= resourceBufferAvailable*/ ) || rc.length < 8 * 1024 * 1024 ) )
 	{
-		if( fs_debugResources.GetBool() )
+		byte* buf = NULL;
+		//if( rc.length < resourceBufferAvailable )
+		//{
+		//	buf = resourceBufferPtr;
+		//	resourceBufferAvailable = 0;
+		//}
+		//else
 		{
-			idLib::Printf( "RES: loading file %s\n", rc.filename.c_str() );
-		}
-
-		idFile_InZip* file = rc.owner->OpenFile( rc, fileName );
-
-		// RB: TODO I don't like that we always create a new idFile_Memory buffer instead of reusing
-		// the temporary resourceBufferPtr. This needs some profiling
-
-		if( file != NULL && ( ( memFile /*|| rc.length <= resourceBufferAvailable*/ ) || rc.length < 8 * 1024 * 1024 ) )
-		{
-			byte* buf = NULL;
-			//if( rc.length < resourceBufferAvailable )
-			//{
-			//	buf = resourceBufferPtr;
-			//	resourceBufferAvailable = 0;
-			//}
-			//else
+			if( fs_debugResources.GetBool() )
 			{
-				if( fs_debugResources.GetBool() )
-				{
-					idLib::Printf( "MEM: Allocating %05llu bytes for a resource load\n", rc.length );
-				}
-				buf = ( byte* )Mem_Alloc( rc.length, TAG_TEMP );
+				idLib::Printf( "MEM: Allocating %05llu bytes for a resource load\n", rc.length );
 			}
-			file->Read( ( void* )buf, rc.length );
+			buf = ( byte* )Mem_Alloc( rc.length, TAG_TEMP );
+		}
+		file->Read( ( void* )buf, rc.length );
 
-			//if( buf == resourceBufferPtr )
-			//{
-			//	file->SetResourceBuffer( buf );
-			//	return file;
-			//}
-			//else
+		//if( buf == resourceBufferPtr )
+		//{
+		//	file->SetResourceBuffer( buf );
+		//	return file;
+		//}
+		//else
+		{
+			idFile_Memory* mfile = new idFile_Memory( rc.filename, ( const char* )buf, rc.length );
+			if( mfile != NULL )
 			{
-				idFile_Memory* mfile = new idFile_Memory( rc.filename, ( const char* )buf, rc.length );
-				if( mfile != NULL )
-				{
-					mfile->TakeDataOwnership();
-					mfile->SetTimestamp( file->Timestamp() );	//puncho - OQ-B5: the copy keeps the entry's time
-					delete file;
-					return mfile;
-				}
+				mfile->TakeDataOwnership();
+				mfile->SetTimestamp( file->Timestamp() );	//puncho - OQ-B5: the copy keeps the entry's time
+				delete file;
+				return mfile;
 			}
 		}
-		return file;
 	}
-
-	return NULL;
+	return file;
 }
 
 // RB en
@@ -4264,67 +4254,271 @@ idFile* idFileSystemLocal::GetZipFile( const char* fileName, bool memFile, int l
 ========================
 idFileSystemLocal::GetResourceFile
 
-Returns NULL
+The open of the .resources entry FindInLayer found, rc in its container's table
 ========================
 */
-idFile* idFileSystemLocal::GetResourceFile( const char* fileName, bool memFile, int layer )
+idFile* idFileSystemLocal::GetResourceFile( const idResourceCacheEntry& rc, bool memFile )
 {
-	if( !UsingResourceFiles() )
+	if( fs_debugResources.GetBool() )
 	{
-		return NULL;
+		idLib::Printf( "RES: loading file %s\n", rc.filename.c_str() );
 	}
 
-	static idResourceCacheEntry rc;
-	if( GetResourceCacheEntry( fileName, rc, layer ) )
+	idFile_InnerResource* file = new idFile_InnerResource( rc.filename, rc.owner->resourceFile, rc.offset, rc.length );
+
+	// DG: add parenthesis to make sure this block is only entered when file != NULL - bug found by clang.
+	if( file != NULL && ( ( memFile || rc.length <= resourceBufferAvailable ) || rc.length < 8 * 1024 * 1024 ) )
 	{
-		if( fs_debugResources.GetBool() )
+		byte* buf = NULL;
+		if( rc.length < resourceBufferAvailable )
 		{
-			idLib::Printf( "RES: loading file %s\n", rc.filename.c_str() );
+			buf = resourceBufferPtr;
+			resourceBufferAvailable = 0;
 		}
-
-		idFile_InnerResource* file = new idFile_InnerResource( rc.filename, rc.owner->resourceFile, rc.offset, rc.length );
-
-		// DG: add parenthesis to make sure this block is only entered when file != NULL - bug found by clang.
-		if( file != NULL && ( ( memFile || rc.length <= resourceBufferAvailable ) || rc.length < 8 * 1024 * 1024 ) )
+		else
 		{
-			byte* buf = NULL;
-			if( rc.length < resourceBufferAvailable )
+			if( fs_debugResources.GetBool() )
 			{
-				buf = resourceBufferPtr;
-				resourceBufferAvailable = 0;
+				idLib::Printf( "MEM: Allocating %05d bytes for a resource load\n", rc.length );
 			}
-			else
-			{
-				if( fs_debugResources.GetBool() )
-				{
-					idLib::Printf( "MEM: Allocating %05d bytes for a resource load\n", rc.length );
-				}
-				buf = ( byte* )Mem_Alloc( rc.length, TAG_TEMP );
-			}
-			file->Read( ( void* )buf, rc.length );
+			buf = ( byte* )Mem_Alloc( rc.length, TAG_TEMP );
+		}
+		file->Read( ( void* )buf, rc.length );
 
-			if( buf == resourceBufferPtr )
+		if( buf == resourceBufferPtr )
+		{
+			file->SetResourceBuffer( buf );
+			return file;
+		}
+		else
+		{
+			idFile_Memory* mfile = new idFile_Memory( rc.filename, ( const char* )buf, rc.length );
+			if( mfile != NULL )
 			{
-				file->SetResourceBuffer( buf );
-				return file;
-			}
-			else
-			{
-				idFile_Memory* mfile = new idFile_Memory( rc.filename, ( const char* )buf, rc.length );
-				if( mfile != NULL )
-				{
-					mfile->TakeDataOwnership();
-					delete file;
-					return mfile;
-				}
+				mfile->TakeDataOwnership();
+				delete file;
+				return mfile;
 			}
 		}
-		return file;
 	}
-
-	return NULL;
+	return file;
 }
 
+
+//puncho start - P2b.1.5
+/*
+===========
+idFileSystemLocal::FindInLayer
+
+The one search of a read: the container or directory of one layer that serves relativePath, in OpenFileReadFlags'
+order (.pk4 then .resources first under fs_resourceLoadPriority 1, then loose files under FSFLAG_SEARCH_DIRS, then
+.pk4 then .resources under 0; no container under another value). It fills kind and the container and entry only: a
+packed file's entry in its container's table, or a loose file opened (handle, the caller's to open from or close)
+with its search path and OS path. No stat, readlink or zip entry open, so an open pays what OpenLayerFile always paid.
+RESOLVE_PREDICTED (LocateFile for the prefetch walk) first consults the predicted map's private container in the layer
+its load appends it to, newest first; GetResourceCacheEntry finds the same entry once the load mounts it
+===========
+*/
+bool idFileSystemLocal::FindInLayer( const char* relativePath, int searchFlags, const char* gamedir, int layer, int resolveFlags, resolvedFile_t& out )
+{
+	const int priority = fs_resourceLoadPriority.GetInteger();
+	for( int pass = 0; pass < 2; pass++ )
+	{
+		if( priority == ( pass == 0 ? 1 : 0 ) && ( UsingZipFiles() || UsingResourceFiles() ) && strchr( relativePath, ':' ) == NULL )
+		{
+			// the name the container tables hash, as GetZipCacheEntry and GetResourceCacheEntry build it
+			idStrStatic< MAX_OSPATH > canonical = relativePath;
+			canonical.BackSlashesToSlashes();
+			canonical.ToLower();
+
+			// RB: .pk4 files have a higher priority than .resources because they are aimed for modding
+			if( UsingZipFiles() )
+			{
+				for( int sp = searchPaths.Num() - 1; sp >= 0; sp-- )
+				{
+					if( searchPaths[sp].layer != layer )
+					{
+						continue;
+					}
+					for( int idx = searchPaths[sp].zipFiles.Num() - 1; idx >= 0; idx-- )
+					{
+						const idZipContainer* zip = searchPaths[sp].zipFiles[idx];
+						const int key = zip->cacheHash.GenerateKey( canonical, false );
+						for( int index = zip->cacheHash.GetFirst( key ); index != idHashIndex::NULL_INDEX; index = zip->cacheHash.GetNext( index ) )
+						{
+							if( idStr::Icmp( zip->cacheTable[index].filename, canonical ) == 0 )
+							{
+								out.kind = 2;
+								out.zipEntry = &zip->cacheTable[index];
+								return true;
+							}
+						}
+					}
+				}
+			}
+
+			if( UsingResourceFiles() )
+			{
+				if( ( resolveFlags & RESOLVE_PREDICTED ) != 0 && prefetchResource != NULL && layer == prefetchResourceLayer )
+				{
+					const int key = prefetchResource->cacheHash.GenerateKey( canonical, false );
+					for( int index = prefetchResource->cacheHash.GetFirst( key ); index != idHashIndex::NULL_INDEX; index = prefetchResource->cacheHash.GetNext( index ) )
+					{
+						if( idStr::Icmp( prefetchResource->cacheTable[index].filename, canonical ) == 0 )
+						{
+							out.kind = 1;
+							out.resourceEntry = &prefetchResource->cacheTable[index];
+							return true;
+						}
+					}
+				}
+				for( int sp = searchPaths.Num() - 1; sp >= 0; sp-- )
+				{
+					if( searchPaths[sp].layer != layer )
+					{
+						continue;
+					}
+					for( int idx = searchPaths[sp].resourceFiles.Num() - 1; idx >= 0; idx-- )
+					{
+						const idResourceContainer* rc = searchPaths[sp].resourceFiles[idx];
+						const int key = rc->cacheHash.GenerateKey( canonical, false );
+						for( int index = rc->cacheHash.GetFirst( key ); index != idHashIndex::NULL_INDEX; index = rc->cacheHash.GetNext( index ) )
+						{
+							if( idStr::Icmp( rc->cacheTable[index].filename, canonical ) == 0 )
+							{
+								out.kind = 1;
+								out.resourceEntry = &rc->cacheTable[index];
+								return true;
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if( pass == 0 && ( searchFlags & FSFLAG_SEARCH_DIRS ) != 0 )
+		{
+			for( int sp = searchPaths.Num() - 1; sp >= 0; sp-- )
+			{
+				if( searchPaths[sp].layer != layer || ( gamedir != NULL && gamedir[0] != 0 && searchPaths[sp].gamedir != gamedir ) )
+				{
+					continue;
+				}
+				idStr netpath = BuildOSPath( searchPaths[sp].path, searchPaths[sp].gamedir, relativePath );
+				out.handle = OpenOSFile( netpath, FS_READ );
+				if( out.handle != NULL )
+				{
+					// opened by its whole path; the open half's copy keeps MAX_OSPATH - 1 bytes of an OS path a caller passed
+					idStr::Copynz( out.osPath, netpath, sizeof( out.osPath ) );
+					out.kind = 0;
+					out.searchPath = sp;
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
+/*
+===========
+idFileSystemLocal::FillIdentity
+
+The identity of the file FindInLayer found, whole in out (zeroed first, so a descriptor holds no pointer and no stale
+byte, and two compare by memcmp): where its bytes are, and the times, sizes and CRC by which the prefetch worker and
+Prefetch_Take tell the same bytes. A loose file's handle stays the caller's. False when the identity cannot be read
+===========
+*/
+bool idFileSystemLocal::FillIdentity( const char* relativePath, const resolvedFile_t& found, resolvedFile_t& out )
+{
+	assert( &found != &out );
+	memset( &out, 0, sizeof( out ) );
+	struct stat st;
+	if( found.kind == 2 )
+	{
+		const idZipCacheEntry& zip = *found.zipEntry;
+		idStr::Copynz( out.osPath, zip.owner->GetFileName(), sizeof( out.osPath ) );
+		//puncho - transitions (stage 3 review): one open per resolve. OpenFile, as any VFS open does, positions
+		// the container's parsed handle on the entry, which then gives its descriptor; a separate unzOpen
+		// re-read the archive's end of central directory for every resolve and every prefetch hit
+		idFile* file = zip.owner->OpenFile( zip, relativePath );
+		unz_file_info64 info;
+		const bool valid = unzGetCurrentFileInfo64( zip.owner->zipFileHandle, &info, out.entryName, sizeof( out.entryName ), NULL, 0, NULL, 0 ) == UNZ_OK;
+		out.timestamp = file->Timestamp();
+		delete file;
+		if( !valid ) { return false; }
+		out.kind = 2;
+		out.offset = zip.offset;
+		out.length = info.uncompressed_size;
+		out.compressedSize = info.compressed_size;
+		out.crc = info.crc;
+		if( stat( out.osPath, &st ) != 0 ) { return false; }
+		out.archiveTime = st.st_mtime;
+		out.archiveSize = st.st_size;
+		TraceOpensLine( "resolve zip", relativePath, out.length );	//puncho - P2b.1.0
+		return true;
+	}
+	if( found.kind == 1 )
+	{
+		const idResourceCacheEntry& resource = *found.resourceEntry;
+		out.kind = 1;
+		idStr::Copynz( out.osPath, resource.owner->resourceFile->GetFullPath(), sizeof( out.osPath ) );
+		out.offset = resource.offset;
+		out.length = resource.length;
+		if( stat( out.osPath, &st ) != 0 ) { return false; }
+		out.archiveTime = st.st_mtime;
+		out.archiveSize = st.st_size;
+		TraceOpensLine( "resolve resource", relativePath, out.length );	//puncho - P2b.1.0
+		return true;
+	}
+	out.kind = 0;
+	out.length = DirectFileLength( found.handle );
+	out.timestamp = Sys_FileTimeStamp( found.handle );	// idFile_Permanent::Timestamp's
+	idStr::Copynz( out.osPath, found.osPath, sizeof( out.osPath ) );
+#if defined( __linux__ )
+	// OpenOSFile may have found a case-folded basename. Reopen that exact inode's path.
+	char descriptor[64];
+	idStr::snPrintf( descriptor, sizeof( descriptor ), "/proc/self/fd/%d", fileno( found.handle ) );
+	const ssize_t length = readlink( descriptor, out.osPath, sizeof( out.osPath ) - 1 );
+	if( length > 0 ) { out.osPath[length] = 0; }
+#endif
+	out.archiveTime = out.timestamp;
+	out.archiveSize = out.length;
+	TraceOpensLine( "resolve loose", relativePath, out.length );	//puncho - P2b.1.0
+	return true;
+}
+
+/*
+===========
+idFileSystemLocal::LocateFile
+
+The file a read open would serve, top layer down through FindInLayer, with its identity (FillIdentity); out is zero
+when no layer holds it
+===========
+*/
+bool idFileSystemLocal::LocateFile( const char* path, resolvedFile_t& out, int searchFlags, const char* gamedir )
+{
+	assert( !Prefetch_IsWorker() );
+	memset( &out, 0, sizeof( out ) );
+	if( path == NULL || path[0] == 0 || strstr( path, ".." ) || strstr( path, "::" ) ) { return false; }
+	if( path[0] == '/' || path[0] == '\\' ) { path++; }
+	for( int layer = layerNames.Num() - 1; layer >= 0; layer-- )
+	{
+		resolvedFile_t found;
+		if( FindInLayer( path, searchFlags, gamedir, layer, searchFlags & RESOLVE_PREDICTED, found ) )
+		{
+			const bool identified = FillIdentity( path, found, out );
+			if( found.kind == 0 )
+			{
+				CloseOSFile( found.handle );
+			}
+			return identified;
+		}
+	}
+	TraceOpensLine( "resolve miss", path, 0 );	//puncho - P2b.1.0
+	return false;
+}
+//puncho end
 
 /*
 ===========
@@ -4336,112 +4530,6 @@ Used for streaming data out of either a
 separate file or a ZIP file.
 ===========
 */
-bool idFileSystemLocal::ResolveForRead( const char* path, resolvedFile_t& out, const char* gamedir )
-{
-	assert( !Prefetch_IsWorker() );
-	memset( &out, 0, sizeof( out ) );
-	if( path == NULL || path[0] == 0 || strstr( path, ".." ) || strstr( path, "::" ) ) { return false; }
-	if( path[0] == '/' || path[0] == '\\' ) { path++; }
-	for( int layer = layerNames.Num() - 1; layer >= 0; layer-- )
-	{
-		// Match OpenLayerFile, including priority values other than 0/1.
-		for( int pass = 0; pass < 2; pass++ )
-		{
-			if( fs_resourceLoadPriority.GetInteger() == ( pass == 0 ? 1 : 0 ) )
-			{
-				idZipCacheEntry zip;
-				if( UsingZipFiles() && GetZipCacheEntry( path, zip, layer ) )
-				{
-					idStr::Copynz( out.osPath, zip.owner->GetFileName(), sizeof( out.osPath ) );
-					//puncho - transitions (stage 3 review): one open per resolve. OpenFile, as any VFS open does, positions
-					// the container's parsed handle on the entry, which then gives its descriptor; a separate unzOpen
-					// re-read the archive's end of central directory for every resolve and every prefetch hit
-					idFile* file = zip.owner->OpenFile( zip, path );
-					unz_file_info64 info;
-					const bool valid = unzGetCurrentFileInfo64( zip.owner->zipFileHandle, &info, out.entryName, sizeof( out.entryName ), NULL, 0, NULL, 0 ) == UNZ_OK;
-					out.timestamp = file->Timestamp();
-					delete file;
-					if( !valid ) { return false; }
-					out.kind = 2;
-					out.offset = zip.offset;
-					out.length = info.uncompressed_size;
-					out.compressedSize = info.compressed_size;
-					out.crc = info.crc;
-					struct stat st;
-					if( stat( out.osPath, &st ) != 0 ) { return false; }
-					out.archiveTime = st.st_mtime;
-					out.archiveSize = st.st_size;
-					TraceOpensLine( "resolve zip", path, out.length );	//puncho - P2b.1.0
-					return true;
-				}
-				idResourceCacheEntry resource;
-				// The predicted map's private container resolves first in the last search path's layer, where its load
-				// appends it (newest first); GetResourceCacheEntry then finds the same entry once the load mounts it.
-				bool predicted = false;
-				if( UsingResourceFiles() && prefetchResource != NULL && layer == prefetchResourceLayer && strchr( path, ':' ) == NULL )
-				{
-					idStrStatic< MAX_OSPATH > canonical = path;
-					canonical.BackSlashesToSlashes();
-					canonical.ToLower();
-					const int key = prefetchResource->cacheHash.GenerateKey( canonical, false );
-					for( int index = prefetchResource->cacheHash.GetFirst( key ); index != idHashIndex::NULL_INDEX && !predicted; index = prefetchResource->cacheHash.GetNext( index ) )
-					{
-						if( idStr::Icmp( prefetchResource->cacheTable[index].filename, canonical ) == 0 )
-						{
-							resource = prefetchResource->cacheTable[index];
-							predicted = true;
-						}
-					}
-				}
-				if( predicted || ( UsingResourceFiles() && GetResourceCacheEntry( path, resource, layer ) ) )
-				{
-					out.kind = 1;
-					idStr::Copynz( out.osPath, resource.owner->resourceFile->GetFullPath(), sizeof( out.osPath ) );
-					out.offset = resource.offset;
-					out.length = resource.length;
-					struct stat st;
-					if( stat( out.osPath, &st ) != 0 ) { return false; }
-					out.archiveTime = st.st_mtime;
-					out.archiveSize = st.st_size;
-					TraceOpensLine( "resolve resource", path, out.length );	//puncho - P2b.1.0
-					return true;
-				}
-			}
-			if( pass == 0 )
-			{
-				for( int sp = searchPaths.Num() - 1; sp >= 0; sp-- )
-				{
-					const searchpath_t& search = searchPaths[sp];
-					if( search.layer != layer || ( gamedir != NULL && gamedir[0] && search.gamedir != gamedir ) ) { continue; }
-					idStr netpath = BuildOSPath( search.path, search.gamedir, path );
-					idFileHandle handle = OpenOSFile( netpath, FS_READ );
-					if( handle == NULL ) { continue; }
-					idFile_Permanent* file = new( TAG_IDFILE ) idFile_Permanent();
-					file->o = handle;
-					file->mode = 1 << FS_READ;
-					out.length = DirectFileLength( handle );
-					out.timestamp = file->Timestamp();
-					idStr::Copynz( out.osPath, netpath, sizeof( out.osPath ) );
-#if defined( __linux__ )
-					// OpenOSFile may have found a case-folded basename. Reopen that exact inode's path.
-					char descriptor[64];
-					idStr::snPrintf( descriptor, sizeof( descriptor ), "/proc/self/fd/%d", fileno( handle ) );
-					const ssize_t length = readlink( descriptor, out.osPath, sizeof( out.osPath ) - 1 );
-					if( length > 0 ) { out.osPath[length] = 0; }
-#endif
-					delete file;
-					out.archiveTime = out.timestamp;
-					out.archiveSize = out.length;
-					TraceOpensLine( "resolve loose", path, out.length );	//puncho - P2b.1.0
-					return true;
-				}
-			}
-		}
-	}
-	TraceOpensLine( "resolve miss", path, 0 );	//puncho - P2b.1.0
-	return false;
-}
-
 idFile* idFileSystemLocal::OpenFileReadFlags( const char* relativePath, int searchFlags, bool allowCopyFiles, const char* gamedir )
 {
 
@@ -4483,216 +4571,198 @@ idFile* idFileSystemLocal::OpenFileReadFlags( const char* relativePath, int sear
 	}
 
 	assert( !Prefetch_IsWorker() );
-	if( !fs_buildResources.GetBool() && !fs_copyfiles.GetBool() )
-	{
-		idFile* prefetched = Prefetch_Open( relativePath, ( searchFlags & FSFLAG_SEARCH_DIRS ) != 0, gamedir );
-		if( prefetched != NULL ) { return TraceOpen( "prefetch", relativePath, prefetched ); }	//puncho - P2b.1.0
-	}
 
 	//puncho start - MP-A5 (K21a): files are served layer by layer, top down, so a packed file in a higher layer beats
 	// a loose copy in a lower one; with one layer this is the single search of every path
-	for( int layer = layerNames.Num() - 1; layer >= 0; layer-- )
+	resolvedFile_t found;
+	int layer = layerNames.Num() - 1;
+	while( layer >= 0 && !FindInLayer( relativePath, searchFlags, gamedir, layer, 0, found ) )
 	{
-		idFile* f = OpenLayerFile( relativePath, searchFlags, allowCopyFiles, gamedir, layer );
-		if( f != NULL )
+		layer--;
+	}
+	//puncho end
+
+	//puncho start - P2b.1.5: while a load is served from the prefetch store, a path it holds ready takes the identity
+	// of what this search found, and Prefetch_Take serves its bytes only when they are what the walk read: one search
+	// either way, and no identity work for any other open (at com_prefetch 0 an open pays the one branch)
+	if( prefetchServing && !fs_buildResources.GetBool() && !fs_copyfiles.GetBool() )
+	{
+		const resolvedFile_t* held = Prefetch_Ready( relativePath );
+		if( held != NULL )
 		{
-			return f;
+			// a descriptor is 3 KB: the second one is on the heap, so every open's frame holds one and stays under a page
+			resolvedFile_t* source = ( resolvedFile_t* )Mem_Alloc( sizeof( resolvedFile_t ), TAG_IDFILE );
+			if( layer < 0 || found.kind != held->kind || !FillIdentity( relativePath, found, *source ) )
+			{
+				source->kind = -1;	// nothing this open serves can be the walk's bytes: a miss
+			}
+			idFile* prefetched = Prefetch_Take( relativePath, *source );
+			Mem_Free( source );
+			if( prefetched != NULL )
+			{
+				if( found.kind == 0 )
+				{
+					CloseOSFile( found.handle );
+				}
+				return TraceOpen( "prefetch", relativePath, prefetched );	//puncho - P2b.1.0
+			}
 		}
 	}
+	//puncho end
 
-	if( fs_debug.GetInteger() )
+	if( layer < 0 )
 	{
-		common->Printf( "Can't find %s\n", relativePath );
+		if( fs_debug.GetInteger() )
+		{
+			common->Printf( "Can't find %s\n", relativePath );
+		}
+		return NULL;
 	}
-
-	return NULL;
+	return OpenResolvedFile( relativePath, searchFlags, allowCopyFiles, found );
 }
 
+//puncho start - MP-A5 (K21a), P2b.1.5
 /*
 ===========
 idFileSystemLocal::OpenLayerFile
 
-One layer's part of OpenFileReadFlags: .pk4 and .resources first under fs_resourceLoadPriority 1, then loose files,
-then .pk4 and .resources under 0
+One layer's copy of a file, for OpenFileReadFromLayer: FindInLayer, then its open half
 ===========
 */
 idFile* idFileSystemLocal::OpenLayerFile( const char* relativePath, int searchFlags, bool allowCopyFiles, const char* gamedir, int layer )
 {
+	resolvedFile_t found;
+	if( !FindInLayer( relativePath, searchFlags, gamedir, layer, 0, found ) )
+	{
+		return NULL;
+	}
+	return OpenResolvedFile( relativePath, searchFlags, allowCopyFiles, found );
+}
+
+/*
+===========
+idFileSystemLocal::OpenResolvedFile
+
+The open half of a read: the file FindInLayer found, a loose one with fs_copyfiles' copy and fs_buildResources' list
+===========
+*/
+idFile* idFileSystemLocal::OpenResolvedFile( const char* relativePath, int searchFlags, bool allowCopyFiles, const resolvedFile_t& found )
+{
+	if( found.kind == 2 )
+	{
+		return TraceOpen( "zip", relativePath, GetZipFile( *found.zipEntry, relativePath, ( searchFlags & FSFLAG_RETURN_FILE_MEM ) != 0 ) );	//puncho - P2b.1.0
+	}
+	if( found.kind == 1 )
+	{
+		return TraceOpen( "resource", relativePath, GetResourceFile( *found.resourceEntry, ( searchFlags & FSFLAG_RETURN_FILE_MEM ) != 0 ) );	//puncho - P2b.1.0
+	}
+	const int sp = found.searchPath;
 	//puncho end
-	// RB: .pk4 files have a higher priority than .resources because they are aimed for modding
-	if( UsingZipFiles() && fs_resourceLoadPriority.GetInteger() == 1 )
-	{
-		idFile* rf = GetZipFile( relativePath, ( searchFlags & FSFLAG_RETURN_FILE_MEM ) != 0, layer );
-		if( rf != NULL )
-		{
-			return TraceOpen( "zip", relativePath, rf );	//puncho - P2b.1.0
-		}
-	}
-	// RB end
 
-	if( UsingResourceFiles() && fs_resourceLoadPriority.GetInteger() == 1 )
+	idFile_Permanent* file = new( TAG_IDFILE ) idFile_Permanent();
+	file->o = found.handle;
+	file->name = relativePath;
+	file->fullPath = found.osPath;
+	file->mode = ( 1 << FS_READ );
+	file->fileSize = DirectFileLength( file->o );
+	if( fs_debug.GetInteger() )
 	{
-		idFile* rf = GetResourceFile( relativePath, ( searchFlags & FSFLAG_RETURN_FILE_MEM ) != 0, layer );
-		if( rf != NULL )
-		{
-			return TraceOpen( "resource", relativePath, rf );	//puncho - P2b.1.0
-		}
+		common->Printf( "idFileSystem::OpenFileRead: %s (found in '%s/%s')\n", relativePath, searchPaths[sp].path.c_str(), searchPaths[sp].gamedir.c_str() );
 	}
 
-	//
-	// search through the path, one element at a time
-	//
-	if( searchFlags & FSFLAG_SEARCH_DIRS )
+	// if fs_copyfiles is set
+	if( allowCopyFiles )
 	{
-		for( int sp = searchPaths.Num() - 1; sp >= 0; sp-- )
+
+		idStr copypath;
+		idStr name;
+		copypath = BuildOSPath( fs_savepath.GetString(), searchPaths[sp].gamedir, relativePath );
+		file->fullPath.ExtractFileName( name );
+		copypath.StripFilename();
+		copypath += PATHSEPARATOR_STR;
+		copypath += name;
+
+		if( fs_buildResources.GetBool() )
 		{
-			if( searchPaths[sp].layer != layer )	//puncho - MP-A5 (K21a)
+			idStrStatic< MAX_OSPATH > relativePath = OSPathToRelativePath( copypath );
+			relativePath.BackSlashesToSlashes();
+			relativePath.ToLower();
+
+			if( IsSoundSample( relativePath ) )
 			{
-				continue;
-			}
-			if( gamedir != NULL && gamedir[0] != 0 )
-			{
-				if( searchPaths[sp].gamedir != gamedir )
+				idStrStatic< MAX_OSPATH > samplePath = relativePath;
+				samplePath.SetFileExtension( "idwav" );
+				if( samplePath.Find( "generated/" ) == -1 )
 				{
-					continue;
+					samplePath.Insert( "generated/", 0 );
 				}
-			}
-
-			idStr netpath = BuildOSPath( searchPaths[sp].path, searchPaths[sp].gamedir, relativePath );
-			idFileHandle fp = OpenOSFile( netpath, FS_READ );
-			if( !fp )
-			{
-				continue;
-			}
-
-			idFile_Permanent* file = new( TAG_IDFILE ) idFile_Permanent();
-			file->o = fp;
-			file->name = relativePath;
-			file->fullPath = netpath;
-			file->mode = ( 1 << FS_READ );
-			file->fileSize = DirectFileLength( file->o );
-			if( fs_debug.GetInteger() )
-			{
-				common->Printf( "idFileSystem::OpenFileRead: %s (found in '%s/%s')\n", relativePath, searchPaths[sp].path.c_str(), searchPaths[sp].gamedir.c_str() );
-			}
-
-			// if fs_copyfiles is set
-			if( allowCopyFiles )
-			{
-
-				idStr copypath;
-				idStr name;
-				copypath = BuildOSPath( fs_savepath.GetString(), searchPaths[sp].gamedir, relativePath );
-				netpath.ExtractFileName( name );
-				copypath.StripFilename();
-				copypath += PATHSEPARATOR_STR;
-				copypath += name;
-
-				if( fs_buildResources.GetBool() )
+				fileManifest.AddUnique( samplePath );
+				if( relativePath.Find( "/vo/", false ) >= 0 )
 				{
-					idStrStatic< MAX_OSPATH > relativePath = OSPathToRelativePath( copypath );
-					relativePath.BackSlashesToSlashes();
-					relativePath.ToLower();
-
-					if( IsSoundSample( relativePath ) )
+					// this is vo so add the language variants
+					for( int i = 0; i < Sys_NumLangs(); i++ )
 					{
-						idStrStatic< MAX_OSPATH > samplePath = relativePath;
+						const char* lang = Sys_Lang( i );
+						if( idStr::Icmp( lang, ID_LANG_ENGLISH ) == 0 )
+						{
+							continue;
+						}
+						samplePath = relativePath;
+						samplePath.Replace( "/vo/", va( "/vo/%s/", lang ) );
 						samplePath.SetFileExtension( "idwav" );
 						if( samplePath.Find( "generated/" ) == -1 )
 						{
 							samplePath.Insert( "generated/", 0 );
 						}
 						fileManifest.AddUnique( samplePath );
-						if( relativePath.Find( "/vo/", false ) >= 0 )
-						{
-							// this is vo so add the language variants
-							for( int i = 0; i < Sys_NumLangs(); i++ )
-							{
-								const char* lang = Sys_Lang( i );
-								if( idStr::Icmp( lang, ID_LANG_ENGLISH ) == 0 )
-								{
-									continue;
-								}
-								samplePath = relativePath;
-								samplePath.Replace( "/vo/", va( "/vo/%s/", lang ) );
-								samplePath.SetFileExtension( "idwav" );
-								if( samplePath.Find( "generated/" ) == -1 )
-								{
-									samplePath.Insert( "generated/", 0 );
-								}
-								fileManifest.AddUnique( samplePath );
 
-							}
-						}
 					}
-					else if( relativePath.Icmpn( "guis/", 5 ) == 0 )
-					{
-						// this is a gui so add the language variants
-						for( int i = 0; i < Sys_NumLangs(); i++ )
-						{
-							const char* lang = Sys_Lang( i );
-							if( idStr::Icmp( lang, ID_LANG_ENGLISH ) == 0 )
-							{
-								fileManifest.Append( relativePath );
-								continue;
-							}
-							idStrStatic< MAX_OSPATH > guiPath = relativePath;
-							guiPath.Replace( "guis/", va( "guis/%s/", lang ) );
-							fileManifest.Append( guiPath );
-						}
-					}
-					else
-					{
-						// never add .amp files
-						if( strstr( relativePath, ".amp" ) == NULL )
-						{
-							fileManifest.Append( relativePath );
-						}
-					}
-
-				}
-
-				if( fs_copyfiles.GetBool() )
-				{
-					CopyFile( netpath, copypath );
 				}
 			}
-
-			if( searchFlags & FSFLAG_RETURN_FILE_MEM )
+			else if( relativePath.Icmpn( "guis/", 5 ) == 0 )
 			{
-				idFile_Memory* memFile = new( TAG_IDFILE ) idFile_Memory( file->name );
-				memFile->SetLength( file->fileSize );
-				file->Read( ( void* )memFile->GetDataPtr(), file->fileSize );
-				delete file;
-				memFile->TakeDataOwnership();
-				return TraceOpen( "loose", relativePath, memFile );	//puncho - P2b.1.0
+				// this is a gui so add the language variants
+				for( int i = 0; i < Sys_NumLangs(); i++ )
+				{
+					const char* lang = Sys_Lang( i );
+					if( idStr::Icmp( lang, ID_LANG_ENGLISH ) == 0 )
+					{
+						fileManifest.Append( relativePath );
+						continue;
+					}
+					idStrStatic< MAX_OSPATH > guiPath = relativePath;
+					guiPath.Replace( "guis/", va( "guis/%s/", lang ) );
+					fileManifest.Append( guiPath );
+				}
+			}
+			else
+			{
+				// never add .amp files
+				if( strstr( relativePath, ".amp" ) == NULL )
+				{
+					fileManifest.Append( relativePath );
+				}
 			}
 
-			return TraceOpen( "loose", relativePath, file );	//puncho - P2b.1.0
 		}
-	}
 
-	// RB: .pk4 files have a higher priority than .resources because they are aimed for modding
-	if( UsingZipFiles() && fs_resourceLoadPriority.GetInteger() == 0 )
-	{
-		idFile* rf = GetZipFile( relativePath, ( searchFlags & FSFLAG_RETURN_FILE_MEM ) != 0, layer );
-		if( rf != NULL )
+		if( fs_copyfiles.GetBool() )
 		{
-			return TraceOpen( "zip", relativePath, rf );	//puncho - P2b.1.0
+			CopyFile( found.osPath, copypath );
 		}
 	}
-	// RB end
 
-	if( UsingResourceFiles() && fs_resourceLoadPriority.GetInteger() == 0 )
+	if( searchFlags & FSFLAG_RETURN_FILE_MEM )
 	{
-		idFile* rf = GetResourceFile( relativePath, ( searchFlags & FSFLAG_RETURN_FILE_MEM ) != 0, layer );
-		if( rf != NULL )
-		{
-			return TraceOpen( "resource", relativePath, rf );	//puncho - P2b.1.0
-		}
+		idFile_Memory* memFile = new( TAG_IDFILE ) idFile_Memory( file->name );
+		memFile->SetLength( file->fileSize );
+		file->Read( ( void* )memFile->GetDataPtr(), file->fileSize );
+		delete file;
+		memFile->TakeDataOwnership();
+		return TraceOpen( "loose", relativePath, memFile );	//puncho - P2b.1.0
 	}
 
-	return NULL;
+	return TraceOpen( "loose", relativePath, file );	//puncho - P2b.1.0
 }
 
 //puncho start - MP-A5 (K21)

@@ -28,7 +28,8 @@ static int requestRing[MAX_PREFETCH_ENTRIES], completionRing[MAX_PREFETCH_ENTRIE
 static std::atomic<int> requestHead( 0 ), requestTail( 0 ), completionHead( 0 ), completionTail( 0 );
 static std::atomic<bool> prefetchAbort( false ), requestsDone( false ), workerFinished( true );
 static thread_local bool onPrefetchWorker;
-static bool workerStarted, prefetchActive, prefetchServing;
+static bool workerStarted, prefetchActive;
+bool prefetchServing;	//puncho - P2b.1.5: Prefetch.h; the VFS tests it before an open consults the store
 static int mapEntryCount;
 static int entryCount, resolveIndex, completedCount, hitCount, missCount, skippedCount;
 static uint64 reservedBytes, hitBytes, maxSliceUs;
@@ -231,7 +232,7 @@ static void Prefetch_Add( const char* path )
 	{
 		if( name == prefetchEntries[i].path ) { return; }
 	}
-	// source stays unset until ResolveForRead fills it; nothing reads it before ready
+	// source stays unset until LocateFile fills it; nothing reads it before ready
 	prefetchEntry_t& entry = prefetchEntries[entryCount];
 	idStr::Copynz( entry.path, name, MAX_OSPATH );
 	entry.bytes = NULL;
@@ -408,7 +409,7 @@ void Prefetch_Pump()
 		}
 		const int index = resolveIndex++;
 		prefetchEntry_t& entry = prefetchEntries[index];
-		const bool resolved = fileSystem->ResolveForRead( entry.path, entry.source );
+		const bool resolved = fileSystem->LocateFile( entry.path, entry.source, FSFLAG_SEARCH_DIRS | RESOLVE_PREDICTED );
 		const uint64 resolveUs = Sys_Microseconds() - stepStart;
 		maxResolveUs = Max( maxResolveUs, resolveUs );
 		resolveOverruns += resolveUs > sliceBudget;
@@ -464,39 +465,60 @@ void Prefetch_BeginLoad()
 	prefetchServing = com_prefetch.GetBool() && entryCount > 0;
 }
 
-idFile* Prefetch_Open( const char* path, bool searchDirs, const char* gamedir )
+//puncho start - P2b.1.5
+// the store's entry for path, -1 when it holds none
+static int Prefetch_Find( const char* path )
 {
-	if( !prefetchServing ) { return NULL; }
 	idStrStatic< MAX_OSPATH > name = path;
 	name.BackSlashesToSlashes();
 	name.ToLower();
 	const int key = prefetchHash.GenerateKey( name, false );
 	for( int i = prefetchHash.First( key ); i != -1; i = prefetchHash.Next( i ) )
 	{
-		prefetchEntry_t& entry = prefetchEntries[i];
-		if( name != entry.path ) { continue; }
-		resolvedFile_t current;
-		// A loose file serves only a caller that searches directories, as OpenLayerFile does.
-		if( entry.ready && ( searchDirs || entry.source.kind != 0 ) && fileSystem->ResolveForRead( path, current, gamedir ) && memcmp( &current, &entry.source, sizeof( current ) ) == 0 )
-		{
-			//puncho - transitions (stage 3 review): the file takes the buffer (TakeDataOwnership frees it with Mem_Free,
-			// as it was allocated), so an opener that keeps it past EndLevelLoad (a RoQ cinematic) never reads freed
-			// bytes; a second open of the path goes to the VFS
-			idFile_Memory* file = new( TAG_IDFILE ) idFile_Memory( path, ( const char* )entry.bytes, ( int )entry.source.length );
-			file->TakeDataOwnership();
-			file->SetTimestamp( entry.source.timestamp );
-			entry.bytes = NULL;
-			entry.ready = false;
-			entry.used = true;
-			hitCount++;
-			hitBytes += entry.source.length;
-			return file;
-		}
+		if( name == prefetchEntries[i].path ) { return i; }
+	}
+	return -1;
+}
+
+const resolvedFile_t* Prefetch_Ready( const char* path )
+{
+	if( !prefetchServing ) { return NULL; }
+	const int index = Prefetch_Find( path );
+	if( index == -1 ) { return NULL; }
+	if( !prefetchEntries[index].ready )
+	{
 		missCount++;
 		return NULL;
 	}
-	return NULL;
+	return &prefetchEntries[index].source;
 }
+
+idFile* Prefetch_Take( const char* path, const resolvedFile_t& source )
+{
+	if( !prefetchServing ) { return NULL; }
+	const int index = Prefetch_Find( path );
+	if( index == -1 ) { return NULL; }
+	prefetchEntry_t& entry = prefetchEntries[index];
+	// both descriptors were zeroed whole before their identity was filled (FillIdentity), so memcmp compares fields
+	if( !entry.ready || source.kind < 0 || memcmp( &source, &entry.source, sizeof( source ) ) != 0 )
+	{
+		missCount++;
+		return NULL;
+	}
+	//puncho - transitions (stage 3 review): the file takes the buffer (TakeDataOwnership frees it with Mem_Free,
+	// as it was allocated), so an opener that keeps it past EndLevelLoad (a RoQ cinematic) never reads freed
+	// bytes; a second open of the path goes to the VFS
+	idFile_Memory* file = new( TAG_IDFILE ) idFile_Memory( path, ( const char* )entry.bytes, ( int )entry.source.length );
+	file->TakeDataOwnership();
+	file->SetTimestamp( entry.source.timestamp );
+	entry.bytes = NULL;
+	entry.ready = false;
+	entry.used = true;
+	hitCount++;
+	hitBytes += entry.source.length;
+	return file;
+}
+//puncho end
 
 void Prefetch_EndLoad()
 {

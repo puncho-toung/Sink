@@ -105,6 +105,13 @@ private:
 	idStrList				list;
 };
 
+// search flags when opening a file
+#define FSFLAG_SEARCH_DIRS		( 1 << 0 )
+#define FSFLAG_RETURN_FILE_MEM	( 1 << 1 )
+//puncho - P2b.1.5: LocateFile's searchFlags only, the prefetch walk's: the predicted map's container, which
+// MountPrefetchResource opens outside the search order, answers first in its layer
+#define RESOLVE_PREDICTED		( 1 << 2 )
+
 struct resolvedFile_t;
 
 class idFileSystem
@@ -153,6 +160,13 @@ public:
 	// Creates the given OS path for as far as it doesn't exist already.
 	virtual void			CreateOSPath( const char* OSPath ) = 0;
 
+	virtual void MountPrefetchResource( const char* name ) {}
+	virtual void ReleasePrefetchResource() {}
+	//puncho - P2b.1.5: the file a read open would serve, top layer down, as OpenFileReadFlags searches (searchFlags
+	// FSFLAG_SEARCH_DIRS, and RESOLVE_PREDICTED for the prefetch walk), with its identity: where its bytes are and the
+	// times, sizes and CRC that tell the same bytes. False when no layer holds it or its identity cannot be read
+	virtual bool LocateFile( const char* path, resolvedFile_t& out, int searchFlags, const char* gamedir = NULL ) { return false; }
+
 	// Reads a complete file.
 	// Returns the length of the file, or -1 on failure.
 	// A null buffer will just return the file length without loading.
@@ -160,9 +174,6 @@ public:
 	// As a quick check for existance. -1 length == not present.
 	// A 0 byte will always be appended at the end, so string ops are safe.
 	// The buffer should be considered read-only, because it may be cached for other uses.
-	virtual void MountPrefetchResource( const char* name ) {}
-	virtual void ReleasePrefetchResource() {}
-	virtual bool ResolveForRead( const char* path, resolvedFile_t& out, const char* gamedir = NULL ) { return false; }
 	virtual int				ReadFile( const char* relativePath, void** buffer, ID_TIME_T* timestamp = NULL ) = 0;
 
 	// Frees the memory allocated by ReadFile.

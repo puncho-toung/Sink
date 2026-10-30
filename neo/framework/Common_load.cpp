@@ -2260,7 +2260,7 @@ CONSOLE_COMMAND( comparePreload, "compare two maps' shared cooked asset manifest
 				path.SetFileExtension( "idwav" );
 			}
 			resolvedFile_t source;
-			const uint64 size = fileSystem->ResolveForRead( path, source ) ? source.length : 0;
+			const uint64 size = fileSystem->LocateFile( path, source, FSFLAG_SEARCH_DIRS ) ? source.length : 0;
 			shared[entry.resType]++;
 			bytes[entry.resType] += size;
 			common->Printf( "PRELOAD shared type=%d cooked_bytes=%llu %s\n", entry.resType, ( unsigned long long )size, entry.resourceName.c_str() );
