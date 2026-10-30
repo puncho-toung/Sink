@@ -128,6 +128,21 @@ struct renderMapStats_t
 	int		portals;
 };
 
+//puncho - P2b.0.2: every loaded image by kind, summed when listMap asks (no frame work). StorageSize counts one face,
+// so a cube counts six. The kind is read off the name the light grid and probe loaders write, else the generator
+// function (render targets, the shadow atlas: per world, never per cell), else material
+struct renderMapBytes_t
+{
+	uint64	gridImageBytes;
+	uint64	probeImageBytes;
+	uint64	generatedImageBytes;
+	uint64	materialImageBytes;
+	int		gridImages;
+	int		probeImages;
+	int		generatedImages;
+	int		materialImages;
+};
+
 // CPU counters and timers
 struct performanceCounters_t
 {
@@ -350,6 +365,7 @@ public:
 	// but they can still be registered at a later time
 	// if necessary.
 	virtual void			GetMapStats( renderMapStats_t& stats ) const = 0;
+	virtual void			GetMapBytes( renderMapBytes_t& bytes ) const = 0;
 	virtual void			ListMapLightGrids() const = 0;
 	virtual void			BeginLevelLoad() = 0;
 	virtual void			EndLevelLoad() = 0;

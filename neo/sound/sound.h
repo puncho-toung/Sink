@@ -325,6 +325,10 @@ public:
 
 	// prints memory info
 	virtual void			PrintMemInfo( MemInfo_t* mi ) = 0;
+
+	//puncho - P2b.0.2: the buffer bytes of every sample (listSamples' sum, defaulted ones included); count is the
+	// number holding bytes
+	virtual int64			GetSampleBytes( int& count ) const = 0;
 };
 
 extern idSoundSystem*	soundSystem;

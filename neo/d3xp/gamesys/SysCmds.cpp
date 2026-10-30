@@ -3890,6 +3890,42 @@ static void Cmd_ListMap_f( const idCmdArgs& args )
 	{
 		gameLocal.Printf( "%s\n", rows[i] );
 	}
+	//puncho start - P2b.0.2: resident bytes by kind, summed here and never per frame; KB as the rows above
+	{
+		renderMapStats_t r = {};
+		renderMapBytes_t b = {};
+		renderSystem->GetMapStats( r );
+		renderSystem->GetMapBytes( b );
+		int models, samples;
+		const int64 modelBytes = renderModelManager->GetResidentBytes( models );
+		const int64 sampleBytes = soundSystem->GetSampleBytes( samples );
+		char row[1024];
+		int used = idStr::snPrintf( row, sizeof( row ), "MAP bytes gridImg %llu/%d probeImg %llu/%d genImg %llu/%d matImg %llu/%d models %lld/%d samples %lld/%d cm %lld aas",
+									( unsigned long long )( b.gridImageBytes / 1024 ), b.gridImages, ( unsigned long long )( b.probeImageBytes / 1024 ), b.probeImages,
+									( unsigned long long )( b.generatedImageBytes / 1024 ), b.generatedImages, ( unsigned long long )( b.materialImageBytes / 1024 ), b.materialImages,
+									( long long )( modelBytes / 1024 ), models, ( long long )( sampleBytes / 1024 ), samples, ( long long )( collisionModelManager->GetModelMemory() / 1024 ) );
+		// aasNames is private: a type whose file did not load is named by the aas_types key idGameLocal::Init walked in
+		// the order it built aasList; a loaded file names its own type, which a later reloadDecls cannot reorder
+		const idDict* types = gameLocal.FindEntityDefDict( "aas_types", false );
+		const idKeyValue* kv = ( types != NULL ) ? types->MatchPrefix( "type" ) : NULL;
+		for( int i = 0; i < gameLocal.NumAAS(); i++ )
+		{
+			const idAAS* aas = gameLocal.GetAAS( i );	// NULL when the type's file did not load
+			const char* type = ( kv != NULL ) ? kv->GetValue().c_str() : "?";
+			int cacheBytes = 0, evictions, saturated;
+			if( aas != NULL )
+			{
+				type = aas->GetSettings()->fileExtension.c_str();
+				aas->GetRoutingStats( cacheBytes, evictions, saturated );
+			}
+			used += idStr::snPrintf( row + used, sizeof( row ) - used, " %s:%d+%d", type, ( aas != NULL ) ? aas->FileBytes() / 1024 : 0, cacheBytes / 1024 );
+			kv = ( kv != NULL ) ? types->MatchPrefix( "type", kv ) : NULL;
+		}
+		idStr::snPrintf( row + used, sizeof( row ) - used, " pvs %llu itab %llu static %llu+%llu", ( unsigned long long )( gameLocal.pvs.GetMapBytes() / 1024 ),
+						 ( unsigned long long )( r.interactionBytes / 1024 ), ( unsigned long long )( r.staticVertexBytes / 1024 ), ( unsigned long long )( r.staticIndexBytes / 1024 ) );
+		gameLocal.Printf( "%s\n", row );
+	}
+	//puncho end
 	unsigned int digest;
 	CRC32_InitChecksum( digest );
 	int open = 0;

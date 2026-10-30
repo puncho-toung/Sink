@@ -750,6 +750,24 @@ void idSoundSystemLocal::PrintMemInfo( MemInfo_t* mi )
 {
 }
 
+/*
+========================
+idSoundSystemLocal::GetSampleBytes
+========================
+*/
+int64 idSoundSystemLocal::GetSampleBytes( int& count ) const
+{
+	count = 0;
+	int64 bytes = 0;
+	for( int i = 0; i < samples.Num(); i++ )
+	{
+		const int size = samples[i]->BufferSize();
+		count += size > 0 ? 1 : 0;
+		bytes += size;
+	}
+	return bytes;
+}
+
 void idSoundSystemLocal::PurgeUnusedLevelCache()
 {
 	int purged = 0, resident = 0, pins = 0;

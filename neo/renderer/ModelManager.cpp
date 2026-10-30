@@ -75,6 +75,7 @@ public:
 	virtual void			Preload( const idPreloadManifest& manifest );
 
 	virtual	void			PrintMemInfo( MemInfo_t* mi );
+	virtual int64			GetResidentBytes( int& count ) const;
 
 private:
 	friend bool Prefetch_ModelResident( const char* name );
@@ -1110,16 +1111,8 @@ void idRenderModelManagerLocal::EndLevelLoad()
 	deviceManager->GetDevice()->executeCommandList( commandList );
 #endif
 
-	int resident = 0;
-	int64 bytes = 0;
-	for( int i = 0; i < models.Num(); i++ )
-	{
-		if( models[i]->IsLoaded() )
-		{
-			resident++;
-			bytes += models[i]->Memory();
-		}
-	}
+	int resident;
+	const int64 bytes = GetResidentBytes( resident );
 	common->ReportLevelCache( 1, loadCount, resident, purgeCount, pinnedCount, bytes );
 	// _D3XP added this
 	int	end = Sys_Milliseconds();
@@ -1133,6 +1126,26 @@ void idRenderModelManagerLocal::EndLevelLoad()
 	common->ReportTransitionMetric( TRANSITION_MODEL_BUFFER_US, transitionBufferUs );
 	common->ReportTransitionMetric( TRANSITION_STATIC_UPLOAD_US, transitionStaticUs );
 	common->ReportTransitionMetric( TRANSITION_MODEL_US, Sys_Microseconds() - transitionMetricStart );
+}
+
+/*
+=================
+idRenderModelManagerLocal::GetResidentBytes
+=================
+*/
+int64 idRenderModelManagerLocal::GetResidentBytes( int& count ) const
+{
+	count = 0;
+	int64 bytes = 0;
+	for( int i = 0; i < models.Num(); i++ )
+	{
+		if( models[i]->IsLoaded() )
+		{
+			count++;
+			bytes += models[i]->Memory();
+		}
+	}
+	return bytes;
 }
 
 /*

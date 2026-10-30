@@ -545,6 +545,7 @@ public:
 
 	// prints memory info
 	virtual void			PrintMemInfo( MemInfo_t* mi );
+	virtual int64			GetSampleBytes( int& count ) const;
 
 	//-------------------------
 

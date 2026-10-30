@@ -150,6 +150,8 @@ public:
 	virtual int				PointContents( const idVec3 p, cmHandle_t model ) = 0;
 
 	virtual int GetNumModels() const = 0;
+	//puncho - P2b.0.2: usedMemory summed over the loaded models ( collisionModelInfo all's total )
+	virtual int64 GetModelMemory() const = 0;
 #if !defined( ID_RETAIL )
 	virtual void SelfTest( int count, int seed ) = 0;	//puncho - dev guard (P2 review): cm_selfTest is test scaffolding
 #endif

@@ -168,6 +168,9 @@ public:
 
 	// print memory info
 	virtual	void			PrintMemInfo( MemInfo_t* mi ) = 0;
+
+	//puncho - P2b.0.2: the bytes of the loaded models (listModels' sum); count is the number of them
+	virtual int64			GetResidentBytes( int& count ) const = 0;
 };
 
 // this will be statically pointed at a private implementation

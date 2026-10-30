@@ -436,6 +436,7 @@ public:
 	virtual void				PushPointIntoAreaNum( int areaNum, idVec3& point ) const = 0;
 	virtual bool				Trace( aasTrace_t& trace, const idVec3& start, const idVec3& end ) const = 0;
 	virtual void				PrintInfo() const = 0;
+	virtual int					MemorySize() const = 0;	//puncho - P2b.0.2: for idAAS::FileBytes
 
 protected:
 	idStr						name;

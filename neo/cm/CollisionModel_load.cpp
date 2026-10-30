@@ -4386,6 +4386,21 @@ void idCollisionModelManagerLocal::AccumulateModelInfo( cm_model_t* model )
 
 /*
 ================
+idCollisionModelManagerLocal::GetModelMemory
+================
+*/
+int64 idCollisionModelManagerLocal::GetModelMemory() const
+{
+	int64 bytes = 0;
+	for( int i = 0; i < numModels; i++ )
+	{
+		bytes += models[i]->usedMemory;
+	}
+	return bytes;
+}
+
+/*
+================
 idCollisionModelManagerLocal::ModelInfo
 ================
 */

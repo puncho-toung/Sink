@@ -333,6 +333,7 @@ class idCollisionModelManagerLocal : public idCollisionModelManager
 {
 public:
 	int GetNumModels() const { return numModels; }
+	int64 GetModelMemory() const;
 #if !defined( ID_RETAIL )
 	void SelfTest( int count, int seed );
 	unsigned int SelfTestDigest( int count, int seed );

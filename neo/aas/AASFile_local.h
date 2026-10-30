@@ -61,12 +61,12 @@ public:
 	virtual void				PushPointIntoAreaNum( int areaNum, idVec3& point ) const;
 	virtual bool				Trace( aasTrace_t& trace, const idVec3& start, const idVec3& end ) const;
 	virtual void				PrintInfo() const;
+	virtual int					MemorySize() const;
 
 public:
 	bool						Load( const idStr& fileName, unsigned int mapFileCRC );
 	bool						Write( const idStr& fileName, unsigned int mapFileCRC );
 
-	int							MemorySize() const;
 	void						ReportRoutingEfficiency() const;
 	void						Optimize();
 	void						LinkReversedReachability();

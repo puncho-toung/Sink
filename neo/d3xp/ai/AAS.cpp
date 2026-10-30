@@ -150,6 +150,20 @@ void idAASLocal::Stats() const
 
 /*
 ============
+idAASLocal::FileBytes
+============
+*/
+int idAASLocal::FileBytes() const
+{
+	if( !file )
+	{
+		return 0;
+	}
+	return file->MemorySize();
+}
+
+/*
+============
 idAASLocal::GetSettings
 ============
 */
