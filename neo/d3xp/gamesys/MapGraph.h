@@ -172,6 +172,7 @@ class idMapGraphDirector
 public:
 	idMapGraphDirector();
 	static unsigned int transitions, refused, inhibited, prefetches;
+	static unsigned int hubWrites, hubDecodes;	//puncho - P2b.1.10e: writes of persistentHub, GetFlag's decodes of it (listDungeon)
 	void Init();
 	void Shutdown();
 	void Clear();
@@ -233,6 +234,20 @@ private:
 	idStr recipeMap;
 	bool recipeValid, clientRecipe, recipeNewWorld;
 	idList<byte, TAG_GAME> persistentHub;
+	//puncho start - P2b.1.10e: the suspended hub's flags. persistentHub's bytes stay the authority; GetFlag decodes their
+	// flags into this cache on its first call after a write of them (HubWritten marks each write stale), and SetFlag fills
+	// it from the hub it has just encoded. Copied with the director, so a copy's cache answers for the copy's bytes
+	enum
+	{
+		HUB_FLAGS_STALE,
+		HUB_FLAGS_DECODED,
+		HUB_FLAGS_FAILED		// the bytes did not decode: the director's own flags answer, as before the cache
+	};
+	void HubWritten();
+	mutable idList<graphFlag_t, TAG_GAME> hubFlagDefinitions;
+	mutable uint16 hubFlagValues[256];
+	mutable int8 hubFlagsState;
+	//puncho end
 	idStr predictedMap; // last prediction sent; cleared per map load so each load announces its own
 	int predictedFrame;
 	bool predictionPending;

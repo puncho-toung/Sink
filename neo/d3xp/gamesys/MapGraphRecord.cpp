@@ -255,12 +255,14 @@ bool idMapGraphDirector::RestoreRecord()
 				return false;
 			}
 			persistentHub = bytes;
+			HubWritten();	//puncho - P2b.1.10e
 		}
 		else
 		{
 			idList<byte, TAG_GAME> hub = persistentHub;
 			*this = record;
 			persistentHub = hub;
+			HubWritten();	//puncho - P2b.1.10e: the record's cache answered for its own (empty) hub
 		}
 	}
 	recipeValid = false;

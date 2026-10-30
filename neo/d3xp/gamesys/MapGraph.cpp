@@ -454,6 +454,8 @@ unsigned int idMapGraphDirector::transitions;
 unsigned int idMapGraphDirector::refused;
 unsigned int idMapGraphDirector::inhibited;
 unsigned int idMapGraphDirector::prefetches;
+unsigned int idMapGraphDirector::hubWrites;
+unsigned int idMapGraphDirector::hubDecodes;
 
 void idMapGraphDirector::Clear()
 {
@@ -477,6 +479,8 @@ void idMapGraphDirector::Clear()
 	recipeValid = clientRecipe = suspended = recipeNewWorld = portalOpen = false;
 	portalOrigin.Zero();
 	persistentHub.Clear();
+	hubFlagDefinitions.Clear();	//puncho - P2b.1.10e: the cache follows persistentHub; Clear is no write to count
+	hubFlagsState = HUB_FLAGS_STALE;
 	recipeMap.Clear();
 	recipe.worldName.Clear();
 	recipe.flags = 0;

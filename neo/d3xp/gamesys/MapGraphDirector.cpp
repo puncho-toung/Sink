@@ -474,6 +474,7 @@ bool idMapGraphDirector::Start( const char* name, uint64 seed, const char* paren
 		}
 	}
 	persistentHub = hub;
+	HubWritten();	//puncho - P2b.1.10e
 	instanceId = worldStore.AllocateInstanceId( seed );
 	createdWorldTime = gameLocal.GetWorldTime();
 	parentMap = returnMap;
@@ -669,27 +670,58 @@ bool idMapGraphDirector::RequestTransition( const char* landmark )
 	transitions++;
 	return true;
 }
+//puncho start - P2b.1.10e
+// a flag's value by name in one director's definitions and values; 0 for a name it does not define
+static int LookupGraphFlag( const idList<graphFlag_t, TAG_GAME>& definitions, const uint16* values, const char* name )
+{
+	int index = -1;
+	for( int i = 0; i < definitions.Num(); i++ )
+	{
+		if( !definitions[i].name.Icmp( name ) )
+		{
+			index = definitions[i].index;
+			break;
+		}
+	}
+	return index >= 0 ? values[index] : 0;
+}
+
+// a write of persistentHub: the flag cache answers for the old bytes no more
+void idMapGraphDirector::HubWritten()
+{
+	hubFlagsState = HUB_FLAGS_STALE;
+	hubWrites++;
+}
+
+// Suspended, the hub's flags answer: decoded from persistentHub once per write of it. A decoded hub is never suspended
+// with bytes of its own (the record holds no persistentHub), so its own definitions answered, as the cache does
 int idMapGraphDirector::GetFlag( const char* name ) const
 {
 	if( suspended && persistentHub.Num() )
 	{
-		idMapGraphDirector hub;
-		if( hub.ReadRecord( persistentHub.Ptr(), persistentHub.Num() ) )
+		if( hubFlagsState == HUB_FLAGS_STALE )
 		{
-			return hub.GetFlag( name );
+			idMapGraphDirector hub;
+			hubDecodes++;
+			if( hub.ReadRecord( persistentHub.Ptr(), persistentHub.Num() ) )
+			{
+				hubFlagDefinitions = hub.flagDefinitions;
+				memcpy( hubFlagValues, hub.flagValues, sizeof( hubFlagValues ) );
+				hubFlagsState = HUB_FLAGS_DECODED;
+			}
+			else
+			{
+				hubFlagsState = HUB_FLAGS_FAILED;
+			}
+		}
+		if( hubFlagsState == HUB_FLAGS_DECODED )
+		{
+			return LookupGraphFlag( hubFlagDefinitions, hubFlagValues, name );
 		}
 	}
-	int index = -1;
-	for( int i = 0; i < flagDefinitions.Num(); i++ )
-	{
-		if( !flagDefinitions[i].name.Icmp( name ) )
-		{
-			index = flagDefinitions[i].index;
-			break;
-		}
-	}
-	return index >= 0 ? flagValues[index] : 0;
+	return LookupGraphFlag( flagDefinitions, flagValues, name );
 }
+//puncho end
 void idMapGraphDirector::SetFlag( const char* name, int value )
 {
 	if( common->IsClient() )
@@ -702,7 +734,16 @@ void idMapGraphDirector::SetFlag( const char* name, int value )
 		if( hub.ReadRecord( persistentHub.Ptr(), persistentHub.Num() ) )
 		{
 			hub.SetFlag( name, value );
-			hub.WriteRecord( persistentHub );
+			//puncho start - P2b.1.10e: re-encoded at once; the bytes hold the hub's flags as they are now, so they
+			// fill the cache and no decode follows the write. A failed encode leaves the bytes, and the cache, as they were
+			if( hub.WriteRecord( persistentHub ) )
+			{
+				HubWritten();
+				hubFlagDefinitions = hub.flagDefinitions;
+				memcpy( hubFlagValues, hub.flagValues, sizeof( hubFlagValues ) );
+				hubFlagsState = HUB_FLAGS_DECODED;
+			}
+			//puncho end
 		}
 		return;
 	}
@@ -1089,7 +1130,10 @@ void idMapGraphDirector::ApplyPending()
 				}
 			}
 			hub.ApplyPending();
-			hub.WriteRecord( persistentHub );
+			if( hub.WriteRecord( persistentHub ) )
+			{
+				HubWritten();	//puncho - P2b.1.10e: the next GetFlag decodes the consumed hub
+			}
 		}
 	}
 	//puncho - P2.4 (bug review 2026-10-28): an ACTIVATE is posted with a live player as activator, 1 ms out, as stock
@@ -1266,6 +1310,7 @@ void idMapGraphDirector::Dump( idFile* file ) const
 void idMapGraphDirector::Init()
 {
 	transitions = refused = inhibited = prefetches = 0;
+	hubWrites = hubDecodes = 0;	//puncho - P2b.1.10e
 	Clear();
 #if !defined( ID_RETAIL )
 	cmdSystem->AddCommand( "mapGraphPortalTest", MapGraphPortalTest_f, CMD_FL_GAME | CMD_FL_CHEAT, "verify an explicit player portal caster" );

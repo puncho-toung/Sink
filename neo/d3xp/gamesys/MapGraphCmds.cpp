@@ -41,6 +41,10 @@ void MapGraphDump_f( const idCmdArgs& args )
 void ListDungeon_f( const idCmdArgs& args )
 {
 	common->Printf( "dungeon %s node %d visits %d nodes %d links %d pending %d\n", mapGraphDirector.graphName.c_str(), mapGraphDirector.partyNode, mapGraphDirector.GetNodeVisits(), mapGraphDirector.nodes.Num(), mapGraphDirector.links.Num(), mapGraphDirector.pending.Num() );
+#if !defined( ID_RETAIL )
+	//puncho - P2b.1.10e: the hub flag cache's dev counters, since the director's Init: a decode a write at most
+	common->Printf( "dungeon hub flags: writes %u decodes %u\n", idMapGraphDirector::hubWrites, idMapGraphDirector::hubDecodes );
+#endif
 }
 void ListMapGraphs_f( const idCmdArgs& args )
 {
