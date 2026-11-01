@@ -390,8 +390,8 @@ idCVar g_grabberDamping(			"g_grabberDamping",			"0.5",			CVAR_GAME | CVAR_FLOAT
 
 idCVar g_xp_bind_run_once(          "g_xp_bind_run_once",		"0",			CVAR_GAME | CVAR_BOOL | CVAR_ARCHIVE, "Rebind all controls once for D3XP." );
 
-idCVar g_dormantDistance( "g_dormantDistance", "1", CVAR_GAME | CVAR_BOOL, "enable authored distance dormancy" );
-idCVar g_dormantRadiusScale( "g_dormantRadiusScale", "1", CVAR_GAME | CVAR_FLOAT, "scale authored dormancy radius" );
+idCVar g_dormantDistance( "g_dormantDistance", "1", CVAR_GAME | CVAR_BOOL, "enable the distance tier: authored radii, or under g_dormantDistanceFirst every dormancy entity" );
+idCVar g_dormantRadiusScale( "g_dormantRadiusScale", "1", CVAR_GAME | CVAR_FLOAT, "scale the dormancy radius: authored, or under g_dormantDistanceFirst the world's too" );
 idCVar g_dormantWakeBudget( "g_dormantWakeBudget", "4", CVAR_GAME | CVAR_INTEGER, "nonurgent distance wakes per tic; zero unlimited" );
 idCVar g_dormantWakeUrgent( "g_dormantWakeUrgent", "1024", CVAR_GAME | CVAR_FLOAT, "distance for urgent wakes" );
 idCVar g_dormantWakeMaxDelay( "g_dormantWakeMaxDelay", "250", CVAR_GAME | CVAR_INTEGER, "maximum deferred wake delay in game milliseconds" );
@@ -401,8 +401,8 @@ idCVar g_dormantCatchUp( "g_dormantCatchUp", "1", CVAR_GAME | CVAR_BOOL, "run au
 idCVar g_dormantCatchUpMinMs( "g_dormantCatchUpMinMs", "5000", CVAR_GAME | CVAR_INTEGER, "minimum dormant duration for catch-up" );
 //puncho start - P2b.2.2b-ii (plans/map-graph/stages/S2b-2-entity-tables.md K7): distance-first dormancy on every map; host-side,
 // neither synced nor archived
-idCVar g_dormantDistanceFirst( "g_dormantDistanceFirst", "0", CVAR_GAME | CVAR_BOOL, "1 = a dormancy entity sleeps by distance alone, connected or not: its dormant_radius, else the world radius, from each player's origin and view source; 0 = the stock area test, the distance tier only for an authored radius in a connected area" );
-idCVar g_dormantWorldRadius( "g_dormantWorldRadius", "10240", CVAR_GAME | CVAR_FLOAT, "the world dormancy radius under g_dormantDistanceFirst when the worldspawn has no dormant_radius; read at each map load" );
+idCVar g_dormantDistanceFirst( "g_dormantDistanceFirst", "0", CVAR_GAME | CVAR_BOOL, "1 = sleep by distance alone, connected or not: dormant_radius, else the world radius" );
+idCVar g_dormantWorldRadius( "g_dormantWorldRadius", "10240", CVAR_GAME | CVAR_FLOAT, "world dormancy radius when the worldspawn sets none (its dormant_radius 0 turns it off); read at map load" );
 //puncho end
 
 // RB: new game mode vars

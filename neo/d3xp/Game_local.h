@@ -71,6 +71,7 @@ class idMenuHandler_Shell;
 class EnvironmentProbe; // RB
 
 const int MAX_CLIENTS			= MAX_PLAYERS;
+const int MAX_DORMANT_SOURCES	= 2 * MAX_CLIENTS;	// each player and its view source (P2b.2.2b-ii)
 const int MAX_CLIENTS_IN_PVS	= MAX_CLIENTS >> 3;
 // 14 bits since 2026-10-23: 16384 entity slots. The width is baked into spawn ids (the other
 // 18 bits carry the slot's generation, MAX_SPAWN_GENERATION below), idEntityPtr, saves (gated by
@@ -603,10 +604,10 @@ public:
 	//puncho start - ai-harness (plans/ai-harness/00-PLAN.md §2.2, §2.5): host-side debug state, never saved or replicated
 	void					PrefetchMap( const char* name ) { common->PrefetchMap( name ); }
 	virtual int GetPlayerOrigins( idVec3* origins, int maxOrigins ) const;
-	idVec3				dormantSources[2 * MAX_CLIENTS];	//puncho - P2b.2.2b-ii: each player and its view source under g_dormantDistanceFirst
+	idVec3				dormantSources[MAX_DORMANT_SOURCES];	//puncho - P2b.2.2b-ii: each player and its view source under g_dormantDistanceFirst
 	int					numDormantSources;
 	int					dormantWakesRemaining;
-	float				dormantWorldRadius;		//puncho - P2b.2.2b-ii: worldspawn dormant_radius, else g_dormantWorldRadius; read by LoadMap, never saved
+	float				dormantWorldRadius;		//puncho - P2b.2.2b-ii: worldspawn dormant_radius (0 turns it off), else g_dormantWorldRadius; read by LoadMap, never saved
 	aiTicStats_t			aiStats;				// the live tic census, zeroed after SortActiveEntityList
 	//puncho start - P2b.0.3: never inside aiTicStats_t, which idAI::Think and RunAIStats sum and difference as an int array
 	passTicStats_t			passStats;				// the timed tic's record, zeroed at its start (PassProfileBeginTic)

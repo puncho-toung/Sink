@@ -4326,32 +4326,45 @@ static void Cmd_CheckPVSAreas_f( const idCmdArgs& args )
 
 static void Cmd_ListDormancy_f( const idCmdArgs& args )
 {
-	//puncho start - P2b.2.2b-ii: under distance first every dormancy row (HOT_DORMANCY) sleeps by a radius, the def's or
-	// the world's: each is listed with its scaled radius and outer radius and its distance to the nearest source of the
-	// last SetupPlayerPVS, as DormantDistanceTier measures them; at 0 the authored rows as before
+	//puncho start - P2b.2.2b-ii: a header at either value. Under distance first every dormancy row (HOT_DORMANCY), each with
+	// its route (tier, or area under g_dormantDistance 0 or a radius of 0, where the radius columns mean nothing), its scaled
+	// radius and outer radius and its distance to the nearest source of the last SetupPlayerPVS; at 0, after the header, the
+	// authored rows as before. The radius rule is DoDormantTests' and the scale DormantDistanceTier's, copied: they change
+	// together. SetupPlayerPVS runs only on the host, so a client has no sources to measure from
+	if( common->IsClient() )
+	{
+		gameLocal.Printf( "dormancy: the sources are the host's (SetupPlayerPVS runs only there)\n" );
+		return;
+	}
 	const bool distanceFirst = g_dormantDistanceFirst.GetBool();
 	gameLocal.Printf( "dormancy: distance first %d, world radius %.0f, %d sources\n", distanceFirst ? 1 : 0, gameLocal.dormantWorldRadius,
 					  gameLocal.numDormantSources );
-	for( int i = 0; distanceFirst && i < MAX_GENTITIES; i++ )
+	if( distanceFirst )
 	{
-		const idEntity* entity = gameLocal.entities[i];
-		if( entity == NULL || ( gameLocal.entityHot.think[ i ].bits & HOT_DORMANCY ) == 0 )
+		for( int i = 0; i < MAX_GENTITIES; i++ )
 		{
-			continue;
+			const idEntity* entity = gameLocal.entities[i];
+			if( entity == NULL || ( gameLocal.entityHot.think[ i ].bits & HOT_DORMANCY ) == 0 )
+			{
+				continue;
+			}
+			const float effectiveRadius = ( entity->dormantRadius > 0.0f ) ? entity->dormantRadius : gameLocal.dormantWorldRadius;
+			const bool tier = g_dormantDistance.GetBool() && effectiveRadius > 0.0f;
+			const float scale = Max( 0.0f, g_dormantRadiusScale.GetFloat() ) * entity->DormantRadiusScale();
+			const float radius = effectiveRadius * scale;
+			float distanceSqr = idMath::INFINITUM;
+			for( int s = 0; s < gameLocal.numDormantSources; s++ )
+			{
+				distanceSqr = Min( distanceSqr, ( entity->GetPhysics()->GetOrigin() - gameLocal.dormantSources[ s ] ).LengthSqr() );
+			}
+			gameLocal.Printf( "dormant entity %d %s %s radius %.0f outer %.0f distance %.0f asleep %d awakened %d neverDormant %d requested %d deferred %d\n",
+							  i, entity->name.c_str(), tier ? "tier" : "area", radius, radius + entity->dormantHysteresis * scale, idMath::Sqrt( distanceSqr ),
+							  entity->fl.isDormant, entity->fl.hasAwakened, entity->fl.neverDormant, entity->dormantWakeRequested, entity->dormantWakeDeferredAt );
 		}
-		const float scale = Max( 0.0f, g_dormantRadiusScale.GetFloat() ) * entity->DormantRadiusScale();
-		const float radius = ( entity->dormantRadius > 0.0f ? entity->dormantRadius : gameLocal.dormantWorldRadius ) * scale;
-		float distanceSqr = idMath::INFINITUM;
-		for( int s = 0; s < gameLocal.numDormantSources; s++ )
-		{
-			distanceSqr = Min( distanceSqr, ( entity->GetPhysics()->GetOrigin() - gameLocal.dormantSources[ s ] ).LengthSqr() );
-		}
-		gameLocal.Printf( "dormant entity %d %s radius %.0f outer %.0f distance %.0f asleep %d awakened %d neverDormant %d requested %d deferred %d\n",
-						  i, entity->name.c_str(), radius, radius + entity->dormantHysteresis * scale, idMath::Sqrt( distanceSqr ), entity->fl.isDormant,
-						  entity->fl.hasAwakened, entity->fl.neverDormant, entity->dormantWakeRequested, entity->dormantWakeDeferredAt );
+		return;
 	}
 	//puncho end
-	for( int i = 0; !distanceFirst && i < MAX_GENTITIES; i++ )
+	for( int i = 0; i < MAX_GENTITIES; i++ )
 	{
 		const idEntity* entity = gameLocal.entities[i];
 		if( entity != NULL && entity->dormantRadius > 0.0f )

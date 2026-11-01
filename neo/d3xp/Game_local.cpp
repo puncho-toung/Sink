@@ -1065,16 +1065,17 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	ReadAISquads();	//puncho - ai-avoidance (WP-A7): before the monsters spawn and look their squad up
 	//puncho start - P2b.2.2b-ii: the world dormancy radius, read before any dormancy test, once per map and again by a load
 	// (InitFromSaveGame runs LoadMap; the radius is never saved): the worldspawn's dormant_radius when the key is set, else
-	// g_dormantWorldRadius. A plain map and a worldspace take the same rule (phase plan C11)
-	const bool worldRadiusKey = mapFile->GetEntity( 0 )->epairs.GetFloat( "dormant_radius", "0", dormantWorldRadius );
-	if( !worldRadiusKey )
+	// g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off. A plain map and a worldspace take the
+	// same rule (phase plan C11)
+	const bool hasWorldspawnRadius = mapFile->GetEntity( 0 )->epairs.GetFloat( "dormant_radius", "0", dormantWorldRadius );
+	if( !hasWorldspawnRadius )
 	{
 		dormantWorldRadius = g_dormantWorldRadius.GetFloat();
 	}
 	dormantWorldRadius = Max( 0.0f, dormantWorldRadius );
 	if( g_dormantDistanceFirst.GetBool() )
 	{
-		Printf( "dormancy: distance first, world radius %.0f (%s)\n", dormantWorldRadius, worldRadiusKey ? "worldspawn dormant_radius" : "g_dormantWorldRadius" );
+		Printf( "dormancy: distance first, world radius %.0f (%s)\n", dormantWorldRadius, hasWorldspawnRadius ? "worldspawn dormant_radius" : "g_dormantWorldRadius" );
 	}
 	//puncho end
 
@@ -2690,13 +2691,22 @@ void idGameLocal::SetupPlayerPVS()
 			else { source = player; }
 		}
 		//puncho start - P2b.2.2b-ii: distance first measures from the player's body and from its view source, so a remote
-		// camera cannot sleep a monster beside its player; two a player, so dormantSources holds 2 * MAX_CLIENTS
+		// camera cannot sleep a monster beside its player; two a player, so dormantSources holds MAX_DORMANT_SOURCES
 		if( g_dormantDistanceFirst.GetBool() )
 		{
-			if( numDormantSources < 2 * MAX_CLIENTS ) { dormantSources[numDormantSources++] = player->GetPhysics()->GetOrigin(); }
-			if( source != player && numDormantSources < 2 * MAX_CLIENTS ) { dormantSources[numDormantSources++] = source->GetPhysics()->GetOrigin(); }
+			if( numDormantSources < MAX_DORMANT_SOURCES )
+			{
+				dormantSources[numDormantSources++] = player->GetPhysics()->GetOrigin();
+			}
+			if( source != player && numDormantSources < MAX_DORMANT_SOURCES )
+			{
+				dormantSources[numDormantSources++] = source->GetPhysics()->GetOrigin();
+			}
 		}
-		else if( numDormantSources < MAX_CLIENTS ) { dormantSources[numDormantSources++] = source->GetPhysics()->GetOrigin(); }
+		else if( numDormantSources < MAX_CLIENTS )
+		{
+			dormantSources[numDormantSources++] = source->GetPhysics()->GetOrigin();
+		}
 		//puncho end
 
 

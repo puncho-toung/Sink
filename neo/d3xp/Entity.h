@@ -717,7 +717,7 @@ private:
 	bool					DoDormantTests();				// dormant == on the active list, but out of PVS
 	//puncho start - P2b.1.10d: DoDormantTests' parts, called only beneath it (Entity.cpp)
 	bool					DormantAreaTest( bool connected );
-	bool					DormantDistanceTier( float effectiveRadius );	//puncho - P2b.2.2b-ii: the authored radius, or under distance first the world's
+	bool					DormantDistanceTier( float effectiveRadius );	//puncho - P2b.2.2b-ii: the def's dormant_radius when positive, else (distance first) the world radius
 	void					DormantDebugDraw( const idVec4& color, float distance, float radius ) const;
 	//puncho end
 	//puncho start - P2b.0.3: the timed twins of CheckDormant, UpdatePVSAreas() and Present (Entity.cpp), out of line so

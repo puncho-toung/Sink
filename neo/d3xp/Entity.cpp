@@ -1255,7 +1255,8 @@ void idEntity::DormantCatchUp( int elapsedMs )
 
 //puncho start - P2b.1.10d: DoDormantTests in its parts, which run the tests in the order the one function did: never
 // dormant; then, in a player's connected area with the authored distance tier on, the tier; else the area tests (closed
-// off from every player, or the PVS wake). Each part draws g_showDormancy's bounds where the one function did
+// off from every player, or the PVS wake). Each part draws g_showDormancy's bounds where the one function did. Under
+// g_dormantDistanceFirst (P2b.2.2b-ii) the tier runs first, connected or not, by the def's or the world radius
 /*
 ================
 idEntity::DoDormantTests
