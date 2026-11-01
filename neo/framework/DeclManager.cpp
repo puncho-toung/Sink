@@ -1216,7 +1216,7 @@ void idDeclManagerLocal::Init()
 	// RB begin
 	cmdSystem->AddCommand( "exportEntitiesToBlender", ExportEntityDefsToBlender_f, CMD_FL_SYSTEM, "exports all entity and model defs to _bl/entities.json" );
 	cmdSystem->AddCommand( "exportMaterialsToBlender", ExportMaterialsToBlender_f, CMD_FL_SYSTEM, "exports all materials to _bl/entities.json" );
-	cmdSystem->AddCommand( "exportFGD", ExportEntityDefsToTrenchBroom_f, CMD_FL_SYSTEM, "exports all entity and model defs to _tb/fgd/DOOM-3-*.fgd; the light class also declares the engine's light_* and math_* keys, every class its schema keys (drift in schema-drift.txt)" );
+	cmdSystem->AddCommand( "exportFGD", ExportEntityDefsToTrenchBroom_f, CMD_FL_SYSTEM, "exports all entity and model defs to _tb/fgd/DOOM-3-*.fgd; the light class also declares the engine's light_* and math_* keys; schema drift goes to _tb/fgd/schema-drift.txt" );
 	cmdSystem->AddCommand( "exportModelsToTrenchBroom", ExportModelsToTrenchBroom_f, CMD_FL_SYSTEM, "exports all generated models like blwo, base .. to _tb/*.obj" );
 	cmdSystem->AddCommand( "exportImagesToTrenchBroom", ExportImagesToTrenchBroom_f, CMD_FL_SYSTEM, "exports all generated bimages to _tb/*.png" );
 
@@ -2692,10 +2692,6 @@ static const evarPrefix_t EvarPrefixes[] =
 
 static const int NumEvarPrefixes = sizeof( EvarPrefixes ) / sizeof( evarPrefix_t );
 
-//puncho - P2b.2.4: the FGD property type of a schema row, by schemaKeyType_t (Game.h); a keyed row is never SCHEMA_KEY_NONE
-static const char* const FGD_SCHEMA_TYPES[] = { NULL, "integer", "float", "choices", "string" };
-compile_time_assert( sizeof( FGD_SCHEMA_TYPES ) / sizeof( FGD_SCHEMA_TYPES[ 0 ] ) == SCHEMA_KEY_STRING + 1 );
-
 struct LocalEvar_t
 {
 	int	type;
@@ -2791,6 +2787,10 @@ static const fgdLightKey_t FGD_LIGHT_KEYS[] =
 };
 
 static const int FGD_NUM_LIGHT_KEYS = sizeof( FGD_LIGHT_KEYS ) / sizeof( FGD_LIGHT_KEYS[ 0 ] );
+
+//puncho - P2b.2.4: the FGD property type of a schema row, by schemaKeyType_t (Game.h); a keyed row is never SCHEMA_KEY_NONE
+static const char* const FGD_SCHEMA_TYPES[] = { NULL, "integer", "float", "choices", "string" };
+compile_time_assert( sizeof( FGD_SCHEMA_TYPES ) / sizeof( FGD_SCHEMA_TYPES[ 0 ] ) == SCHEMA_KEY_STRING + 1 );
 
 // every inherit walk stops here, so a cyclic chain cannot hang the export
 static const int FGD_MAX_INHERIT_DEPTH = 32;
@@ -2950,13 +2950,38 @@ static const idKeyValue* FGD_FindInheritedKey( const idDeclEntityDef* decl, cons
 
 /*
 ================
-FGD_SchemaKeys
+FGD_IsSameDefault
 
-K( decl ): the rows of decl's spawnclass chain (idGame::GetSchemaKeys, the root class first) that have a key and an
-FGD text, one per key: a key listed again further down the chain keeps its slot and takes the more derived row.
+Two schema rows have the same DEFAULT: both NODEF (NULL), or the same text
 ================
 */
-static void FGD_SchemaKeys( const idDeclEntityDef* decl, idList<const schemaKey_t*>& keys )
+static bool FGD_IsSameDefault( const char* a, const char* b )
+{
+	if( a == NULL || b == NULL )
+	{
+		return ( a == b );
+	}
+	return ( idStr::Cmp( a, b ) == 0 );
+}
+
+// one key of K( decl ): the row that stands for it and, for the drift's override line, whether its rows disagree
+struct fgdSchemaKey_t
+{
+	const schemaKey_t*	row;			// the most derived row of the key
+	bool				overridden;		// two of the key's rows differ in type or DEFAULT
+	idStr				defaults;		// every row's DEFAULT in chain order: " \"D\"", or " NODEF"
+};
+
+/*
+================
+FGD_CollectSchemaKeys
+
+K( decl ): one entry per key of decl's spawnclass chain (idGame::GetSchemaKeys, the root class first), NOEDIT rows
+included. A key listed again further down the chain keeps its slot and takes the more derived row. The schema block
+and the drift both read this walk.
+================
+*/
+static void FGD_CollectSchemaKeys( const idDeclEntityDef* decl, idList<fgdSchemaKey_t>& keys )
 {
 	keys.SetNum( 0 );
 
@@ -2970,43 +2995,72 @@ static void FGD_SchemaKeys( const idDeclEntityDef* decl, idList<const schemaKey_
 	for( int i = 0; i < chain.Num(); i++ )
 	{
 		const schemaKey_t* row = chain[ i ];
-		if( row->key == NULL || row->editor == NULL )
+		if( row->key == NULL )
 		{
 			continue;
 		}
 		assert( row->type > SCHEMA_KEY_NONE && row->type <= SCHEMA_KEY_STRING );
 
+		const char* rowDefault = ( row->defaultValue != NULL ) ? va( " \"%s\"", row->defaultValue ) : " NODEF";
+
 		int slot = 0;
-		while( slot < keys.Num() && idStr::Icmp( keys[ slot ]->key, row->key ) != 0 )
+		while( slot < keys.Num() && idStr::Icmp( keys[ slot ].row->key, row->key ) != 0 )
 		{
 			slot++;
 		}
 
 		if( slot < keys.Num() )
 		{
-			keys[ slot ] = row;
+			fgdSchemaKey_t& key = keys[ slot ];
+			key.overridden |= ( row->type != key.row->type || !FGD_IsSameDefault( row->defaultValue, key.row->defaultValue ) );
+			key.defaults += rowDefault;
+			key.row = row;
 		}
 		else
 		{
-			keys.Append( row );
+			fgdSchemaKey_t& key = keys.Alloc();
+			key.row = row;
+			key.overridden = false;
+			key.defaults = rowDefault;
 		}
 	}
 }
 
 /*
 ================
-FGD_SameDefault
+FGD_WriteDefault
 
-Two schema rows have the same DEFAULT: both NODEF (NULL), or the same text
+The " : default" of a property line by its value type, a schemaKeyType_t: an integer or a bool unquoted and whole (a
+quoted integer default does not parse, and a decimal one warns "Found float default value for integer property" before
+TrenchBroom truncates it to the int atoi gives, FgdParser.cpp parseDefaultIntegerValue), a float unquoted when whole and
+quoted when not (FGD convention; TrenchBroom warns only on an unquoted decimal), a string quoted. An empty value, or a
+number type whose value is no number, prints none.
 ================
 */
-static bool FGD_SameDefault( const char* a, const char* b )
+static void FGD_WriteDefault( idFile* file, int fgdType, const char* value )
 {
-	if( a == NULL || b == NULL )
+	if( fgdType == SCHEMA_KEY_STRING )
 	{
-		return ( a == b );
+		if( value[ 0 ] != '\0' )
+		{
+			file->Printf( " : \"%s\"", value );
+		}
 	}
-	return ( idStr::Cmp( a, b ) == 0 );
+	else if( FGD_IsNumber( value ) )
+	{
+		if( fgdType != SCHEMA_KEY_FLOAT )
+		{
+			file->Printf( " : %d", atoi( value ) );
+		}
+		else if( idStr::FindChar( value, '.' ) == -1 )
+		{
+			file->Printf( " : %s", value );
+		}
+		else
+		{
+			file->Printf( " : \"%s\"", value );
+		}
+	}
 }
 //puncho end
 
@@ -3128,7 +3182,8 @@ idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f
 Writes the entityDefs with editor_* keys, their own or an ancestor's, to _tb/fgd/DOOM-3-*.fgd.
 A class whose spawnclass is idLight also gets FGD_LIGHT_KEYS, the light keys the engine reads.
 Every class gets its spawnclass's schema keys (K9), and _tb/fgd/schema-drift.txt lists each def
-value that differs from its schema row's DEFAULT.
+value that differs from its schema row's DEFAULT (schema lines) and each key whose rows differ
+inside one class chain (override lines).
 ================
 */
 void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args )
@@ -3781,7 +3836,8 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 			file->Printf( "[\n" );
 
 			//puncho - P2b.2.4: every key this class has printed (K9, the one emitted-key set), tested before each line below so
-			// that no key prints twice; idDict compares keys as FindKey does
+			// that no key prints twice. idDict::FindKey compares keys ignoring case, stricter than TrenchBroom's exact match:
+			// two spellings of one key print once
 			idDict emitted;
 
 			const bool lightClass = ( idStr::Icmp( decl->GetName(), "light" ) == 0 );
@@ -3860,22 +3916,27 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 				const bool hasDefault = ( !value.IsEmpty() && desc.Icmp( value ) != 0 );
 
 				const char* typeName;
+				int fgdType;	//puncho - P2b.2.4 (review): the default's value type, for FGD_WriteDefault
 				switch( evarType )
 				{
 					case EVAR_INT :
 						typeName = "integer";
+						fgdType = SCHEMA_KEY_INTEGER;
 						break;
 
 					case EVAR_FLOAT :
 						typeName = "float";
+						fgdType = SCHEMA_KEY_FLOAT;
 						break;
 
 					case EVAR_BOOL :
 						typeName = "choices";
+						fgdType = SCHEMA_KEY_BOOL;
 						break;
 
 					case EVAR_COLOR :
 						typeName = "color1";
+						fgdType = SCHEMA_KEY_STRING;
 						break;
 
 					case EVAR_MATERIAL :
@@ -3885,6 +3946,7 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 					case EVAR_STRING :
 					default:
 						typeName = "string";
+						fgdType = SCHEMA_KEY_STRING;
 						break;
 				}
 
@@ -3895,6 +3957,7 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 
 					evarType = EVAR_STRING;
 					typeName = linkType;
+					fgdType = SCHEMA_KEY_STRING;
 					if( desc.IsEmpty() )
 					{
 						if( nameKey )
@@ -3921,35 +3984,7 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 
 				if( hasDefault )
 				{
-					if( evarType == EVAR_INT || evarType == EVAR_BOOL )
-					{
-						// unquoted and whole: a quoted integer default does not parse, and a decimal one warns
-						// "Found float default value for integer property" before TrenchBroom truncates it
-						// to the same int that atoi gives (FgdParser.cpp parseDefaultIntegerValue)
-						if( FGD_IsNumber( value ) )
-						{
-							file->Printf( " : %d", atoi( value ) );
-						}
-					}
-					else if( evarType == EVAR_FLOAT )
-					{
-						// FGD convention: a whole number unquoted, a decimal one quoted (TrenchBroom warns only on an unquoted decimal)
-						if( FGD_IsNumber( value ) )
-						{
-							if( value.Find( '.' ) == -1 )
-							{
-								file->Printf( " : %s", value.c_str() );
-							}
-							else
-							{
-								file->Printf( " : \"%s\"", value.c_str() );
-							}
-						}
-					}
-					else
-					{
-						file->Printf( " : \"%s\"", value.c_str() );
-					}
+					FGD_WriteDefault( file, fgdType, value.c_str() );	//puncho - P2b.2.4 (review): the schema block's rule too
 				}
 
 				file->Printf( "%s", ( evarType == EVAR_BOOL ) ? FGD_BOOL_CHOICES : "\n" );
@@ -3963,28 +3998,38 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 				emitted.Set( "target", "" );
 			}
 
-			//puncho start - P2b.2.4: the schema keys (K9): K( class ) less the keys dictToWrite holds, the keys printed above and
-			// the (key, default) pairs of K( baseDecl ), which TrenchBroom inherits through base(); a key whose default changes
+			//puncho start - P2b.2.4: the schema keys (K9): K( class ) less the standing rows with no FGD text, the keys dictToWrite
+			// holds, the keys printed above, the keys base()'s chain prints already as a def value or an editor var, and the
+			// (key, default) pairs of K( baseDecl ), which TrenchBroom inherits through base(); a key whose default changes
 			// below the base is written again. The def's value is the default when the def sets the key (Q14), else the row's
-			// DEFAULT; a NODEF row the def does not set prints none.
-			idList<const schemaKey_t*> schemaKeys;
-			idList<const schemaKey_t*> baseSchemaKeys;
-			FGD_SchemaKeys( decl, schemaKeys );
-			FGD_SchemaKeys( baseDecl, baseSchemaKeys );
+			// DEFAULT; a NODEF row the def does not set prints none. Keys compare ignoring case, as FindKey does.
+			idList<fgdSchemaKey_t> schemaKeys;
+			idList<fgdSchemaKey_t> baseSchemaKeys;
+			FGD_CollectSchemaKeys( decl, schemaKeys );
+			if( baseDecl != NULL )
+			{
+				FGD_CollectSchemaKeys( baseDecl, baseSchemaKeys );
+			}
 			for( int i = 0; i < schemaKeys.Num(); i++ )
 			{
-				const schemaKey_t* row = schemaKeys[ i ];
-				if( dictToWrite.FindKey( row->key ) != NULL || emitted.FindKey( row->key ) != NULL )
+				const schemaKey_t* row = schemaKeys[ i ].row;
+				if( row->editor == NULL || dictToWrite.FindKey( row->key ) != NULL || emitted.FindKey( row->key ) != NULL )
 				{
 					continue;
 				}
 
-				bool inherited = false;
-				for( int j = 0; j < baseSchemaKeys.Num(); j++ )
+				bool inherited = ( FGD_FindInheritedKey( baseDecl, row->key ) != NULL );
+				for( int j = 0; j < baseEvars.Num() && !inherited; j++ )
 				{
-					if( idStr::Icmp( baseSchemaKeys[ j ]->key, row->key ) == 0 )
+					inherited = ( baseEvars[ j ].name.Icmp( row->key ) == 0 );
+				}
+
+				for( int j = 0; j < baseSchemaKeys.Num() && !inherited; j++ )
+				{
+					const schemaKey_t* baseRow = baseSchemaKeys[ j ].row;
+					if( idStr::Icmp( baseRow->key, row->key ) == 0 )
 					{
-						inherited = FGD_SameDefault( baseSchemaKeys[ j ]->defaultValue, row->defaultValue );
+						inherited = ( baseRow->editor != NULL && FGD_IsSameDefault( baseRow->defaultValue, row->defaultValue ) );
 						break;
 					}
 				}
@@ -3994,48 +4039,18 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 					continue;
 				}
 
+				const char* value = ( row->defaultValue != NULL ) ? row->defaultValue : "";
 				const idKeyValue* defKv = FGD_FindInheritedKey( decl, row->key );
-				const idStr value = FGD_CleanString( ( defKv != NULL ) ? defKv->GetValue().c_str() : ( ( row->defaultValue != NULL ) ? row->defaultValue : "" ) );
+				if( defKv != NULL )
+				{
+					value = defKv->GetValue().c_str();
+				}
 
 				file->Printf( "\t%s(%s) : \"%s\"", row->key, FGD_SCHEMA_TYPES[ row->type ], FGD_CleanString( row->editor ).c_str() );
-
-				// as for the editor vars: an integer or a bool unquoted and whole, a float unquoted when whole and quoted
-				// when not, a word only for a string; an empty value is no default
-				if( row->type == SCHEMA_KEY_STRING )
-				{
-					if( !value.IsEmpty() )
-					{
-						file->Printf( " : \"%s\"", value.c_str() );
-					}
-				}
-				else if( FGD_IsNumber( value ) )
-				{
-					if( row->type != SCHEMA_KEY_FLOAT )
-					{
-						file->Printf( " : %d", atoi( value ) );
-					}
-					else if( value.Find( '.' ) == -1 )
-					{
-						file->Printf( " : %s", value.c_str() );
-					}
-					else
-					{
-						file->Printf( " : \"%s\"", value.c_str() );
-					}
-				}
-
+				FGD_WriteDefault( file, row->type, FGD_CleanString( value ).c_str() );
 				file->Printf( "%s", ( row->type == SCHEMA_KEY_BOOL ) ? FGD_BOOL_CHOICES : "\n" );
 				emitted.Set( row->key, "" );
 				totalSchemaKeysCount++;
-			}
-
-			// worldspawn's world dormancy radius (P2b.2.2b-ii), which idGameLocal::LoadMap reads and no def declares
-			if( !linkClass && emitted.FindKey( "dormant_radius" ) == NULL )
-			{
-				file->Printf( "\tdormant_radius(float) : \"World dormancy radius, read at map load: under g_dormantDistanceFirst 1 a monster "
-							  "whose own dormant_radius is 0 sleeps past this distance from every player. Without the key "
-							  "g_dormantWorldRadius decides; 0 turns the world radius off, leaving the stock area test.\"\n" );
-				emitted.Set( "dormant_radius", "" );
 			}
 			//puncho end
 
@@ -4055,7 +4070,9 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 
 					if( lightKey.defaultValue != NULL )
 					{
-						// as for the editor vars: a whole number unquoted, a decimal or a word quoted
+						// as for the editor vars: a whole number unquoted, a decimal or a word quoted. Not FGD_WriteDefault:
+						// math_falloff and math_pattern are choices keys whose defaults are words, which it prints for a
+						// string only, and the table carries the FGD type name, not a value type
 						if( idStr::Icmp( lightKey.type, "string" ) != 0 && FGD_IsNumber( lightKey.defaultValue ) && idStr::FindChar( lightKey.defaultValue, '.' ) == -1 )
 						{
 							file->Printf( " : %s", lightKey.defaultValue );
@@ -4086,12 +4103,14 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 
 	}
 
-	//puncho start - P2b.2.4: the schema drift (K9, Q14), never an error: for each decl exported to any file, a key whose rows
-	// differ inside the spawnclass's chain (override), and the standing row's DEFAULT against the def's value when the def
-	// sets the key (the def's value is the one spawned); numbers compare as numbers, anything else as text
+	//puncho start - P2b.2.4: the schema drift (K9, Q14), never an error. Per decl exported to any file, over K( decl ):
+	// "decl<TAB>key<TAB>override "D1" "D2" ..." for a key whose rows differ in type or DEFAULT inside the spawnclass's chain,
+	// every row's DEFAULT in chain order (NODEF unquoted), and "decl<TAB>key<TAB>schema "D" def "V"" when the def sets the
+	// key to a value other than the standing row's DEFAULT (the def's value is the one spawned); numbers compare as
+	// numbers, anything else as text
 	{
 		idStrList driftLines;
-		idList<const schemaKey_t*> chain;
+		idList<fgdSchemaKey_t> schemaKeys;
 		for( int d = 0; d < count; d++ )
 		{
 			const idDeclEntityDef* decl = defsSorted[ d ];
@@ -4102,66 +4121,33 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 				exported = FGD_IsExported( decl, f, ignoreList );
 			}
 
-			const idKeyValue* spawnclass = FGD_FindInheritedKey( decl, "spawnclass" );
-			if( !exported || spawnclass == NULL || !game->GetSchemaKeys( spawnclass->GetValue(), chain ) )
+			if( !exported )
 			{
 				continue;
 			}
 
-			for( int i = 0; i < chain.Num(); i++ )
+			FGD_CollectSchemaKeys( decl, schemaKeys );
+			for( int i = 0; i < schemaKeys.Num(); i++ )
 			{
-				const schemaKey_t* row = chain[ i ];
-				if( row->key == NULL )
+				const fgdSchemaKey_t& key = schemaKeys[ i ];
+				if( key.overridden )
 				{
-					continue;
+					driftLines.Append( va( "%s\t%s\toverride%s", decl->GetName(), key.row->key, key.defaults.c_str() ) );
 				}
 
-				// the key's first row speaks for all of its rows
-				bool seen = false;
-				for( int j = 0; j < i && !seen; j++ )
-				{
-					seen = ( chain[ j ]->key != NULL && idStr::Icmp( chain[ j ]->key, row->key ) == 0 );
-				}
-
-				if( seen )
-				{
-					continue;
-				}
-
-				// the most derived row stands; the rows' defaults in chain order when any two rows differ
-				const schemaKey_t* standing = row;
-				bool overridden = false;
-				idStr defaults = ( row->defaultValue != NULL ) ? va( " \"%s\"", row->defaultValue ) : " NODEF";
-				for( int j = i + 1; j < chain.Num(); j++ )
-				{
-					const schemaKey_t* later = chain[ j ];
-					if( later->key == NULL || idStr::Icmp( later->key, row->key ) != 0 )
-					{
-						continue;
-					}
-
-					overridden |= ( later->type != standing->type || !FGD_SameDefault( later->defaultValue, standing->defaultValue ) );
-					defaults += ( later->defaultValue != NULL ) ? va( " \"%s\"", later->defaultValue ) : " NODEF";
-					standing = later;
-				}
-
-				if( overridden )
-				{
-					driftLines.Append( va( "%s\t%s\toverride%s", decl->GetName(), row->key, defaults.c_str() ) );
-				}
-
-				const idKeyValue* defKv = FGD_FindInheritedKey( decl, row->key );
-				if( standing->defaultValue == NULL || defKv == NULL )
+				const idKeyValue* defKv = FGD_FindInheritedKey( decl, key.row->key );
+				if( key.row->defaultValue == NULL || defKv == NULL )
 				{
 					continue;
 				}
 
 				const char* defValue = defKv->GetValue().c_str();
-				const bool differ = ( FGD_IsNumber( defValue ) && FGD_IsNumber( standing->defaultValue ) ) ?
-									( atof( defValue ) != atof( standing->defaultValue ) ) : ( idStr::Cmp( defValue, standing->defaultValue ) != 0 );
+				const char* rowDefault = key.row->defaultValue;
+				const bool differ = ( FGD_IsNumber( defValue ) && FGD_IsNumber( rowDefault ) ) ?
+									( atof( defValue ) != atof( rowDefault ) ) : ( idStr::Cmp( defValue, rowDefault ) != 0 );
 				if( differ )
 				{
-					driftLines.Append( va( "%s\t%s\tschema \"%s\" def \"%s\"", decl->GetName(), row->key, standing->defaultValue, defValue ) );
+					driftLines.Append( va( "%s\t%s\tschema \"%s\" def \"%s\"", decl->GetName(), key.row->key, rowDefault, defValue ) );
 				}
 			}
 		}
@@ -4181,7 +4167,7 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 			{
 				driftFile->Printf( "%s\n", driftLines[ i ].c_str() );
 			}
-			common->Printf( "%d schema drift lines written to %s\n", driftLines.Num(), driftFileName );
+			common->Printf( "Wrote %d Schema Drift Lines to %s.\n", driftLines.Num(), driftFileName );
 		}
 	}
 	//puncho end

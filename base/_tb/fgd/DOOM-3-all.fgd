@@ -20514,7 +20514,7 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	no_stamina(string) : "disables stamina so the player can always run"
 	no_Weapons(string) : "only fists and no melee attacks"
 	def_player(string) : "player def to use when spawning this world"
-	dormant_radius(float) : "World dormancy radius, read at map load: under g_dormantDistanceFirst 1 a monster whose own dormant_radius is 0 sleeps past this distance from every player. Without the key g_dormantWorldRadius decides; 0 turns the world radius off, leaving the stock area test."
+	dormant_radius(float) : "World dormancy radius, read at map load: under g_dormantDistance 1 and g_dormantDistanceFirst 1 a dormancy entity whose own dormant_radius is 0 sleeps past it, times g_dormantRadiusScale. 0 turns it off, leaving the stock area test; unset, g_dormantWorldRadius (10240) decides."
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "sprites/camera.png", "scale": 0.03125 }) = xbox_hellhole_cam : "No description"
