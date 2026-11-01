@@ -4472,10 +4472,10 @@ static void RecordTestMixedList()
 //puncho start - P2b.2.3b: recordTest valuerows (K1; rev 4, goals-r1 F3). One value R row of each keyable type, with a
 // KEY and a DEFAULT, spawned through SCHEMA_SPAWN and recorded as a class records. A created entry has no baseline and
 // writes every row. An authored entry's def holds a value other than the schema DEFAULT for every key, and its map
-// entity two more: it writes nothing while the values are the spawn's, and all six rows once play has changed each,
-// three of them back to their schema DEFAULT. Each leaves (DIFF, WRITE, framing, CHECK) and returns (READ onto a fresh spawn of
-// its baseline, or onto poisoned values for the created entry); last, the check refuses a non-finite float and a bool
-// byte past 1.
+// entity two more: it writes nothing while the values are the spawn's, all six rows once play has changed each (three
+// of them back to their schema DEFAULT), and only FLOAT and STRING when play changed only those. Each leaves (DIFF,
+// WRITE, framing, CHECK) and returns (READ onto a fresh spawn of its baseline, or onto poisoned values for the created
+// entry); last, the check refuses a non-finite float and a bool byte past 1.
 enum recordTestValueEnum_t
 {
 	RECORD_TEST_VALUE_A,
@@ -4617,7 +4617,7 @@ static void RecordTestValueRows()
 	authored.Spawn( spawnArgs );
 	failures += ( authored.intValue == 8 && authored.floatValue == 0.5f && !authored.boolValue && authored.vecValue == idVec3( 7.0f, 8.0f, 9.0f ) &&
 				  authored.stringValue == "granite" && authored.enumValue == RECORD_TEST_VALUE_B ) ? 0 : 1;
-	int authoredBytes[2] = { -1, -1 };
+	int authoredBytes[3] = { -1, -1, -1 };
 	returned.Spawn( spawnArgs );
 	failures += ( RecordTestValueTrip( frame, authored, false, baseline, 0, 0, returned, authoredBytes[0] ) && returned.Equals( authored ) ) ? 0 : 1;
 	authored.intValue = 5;
@@ -4628,6 +4628,14 @@ static void RecordTestValueRows()
 	authored.enumValue = RECORD_TEST_VALUE_C;
 	returned.Spawn( spawnArgs );
 	failures += ( RecordTestValueTrip( frame, authored, false, baseline, allRows, RECORD_SECTION_HEADER_BYTES + 4 + 4 + 1 + 12 + ( 2 + 1 + 6 ) + 4, returned, authoredBytes[1] ) &&
+				  returned.Equals( authored ) ) ? 0 : 1;
+	// only FLOAT and STRING changed since the spawn: only their two bits
+	authored.Spawn( spawnArgs );
+	authored.floatValue = 1.5f;
+	authored.stringValue = "basalt";
+	const uint64 floatAndString = BIT( recordTestValues_t::RF_floatValue ) | BIT( recordTestValues_t::RF_stringValue );
+	returned.Spawn( spawnArgs );
+	failures += ( RecordTestValueTrip( frame, authored, false, baseline, floatAndString, RECORD_SECTION_HEADER_BYTES + 4 + ( 2 + 1 + 6 ), returned, authoredBytes[2] ) &&
 				  returned.Equals( authored ) ) ? 0 : 1;
 
 	// the check: the created entry with its float made infinite, then with its bool byte 2 (after the section header,
@@ -4651,8 +4659,8 @@ static void RecordTestValueRows()
 	}
 	failures += refused == 2 ? 0 : 1;
 
-	gameLocal.Printf( "RECORD_TEST %s valuerows recordRows=%d created=%d authored=%d,%d refused=%d failures=%d\n", failures == 0 ? "PASS" : "FAIL",
-					  recordTestValues_t::VALUE_RECORD_FIELDS, createdBytes, authoredBytes[0], authoredBytes[1], refused, failures );
+	gameLocal.Printf( "RECORD_TEST %s valuerows recordRows=%d created=%d authored=%d,%d,%d refused=%d failures=%d\n", failures == 0 ? "PASS" : "FAIL",
+					  recordTestValues_t::VALUE_RECORD_FIELDS, createdBytes, authoredBytes[0], authoredBytes[1], authoredBytes[2], refused, failures );
 }
 //puncho end
 
