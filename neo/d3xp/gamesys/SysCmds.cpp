@@ -3181,6 +3181,24 @@ static void SpawnRead_MoveableHealth( const idEntity* ent, idStr& value )
 	value = va( "%d", ent->health );
 }
 
+// P2b.2.5a: the unsaved members batch a moves, and idItemTeam's nuggetName, an unsaved member its Spawn writes by hand
+// (a pointer into spawnArgs, NULL when the key is empty)
+static void SpawnRead_ItemTeamTeam( const idEntity* ent, idStr& value )
+{
+	value = va( "%d", static_cast<const idItemTeam*>( ent )->team );
+}
+
+static void SpawnRead_ItemTeamNuggetName( const idEntity* ent, idStr& value )
+{
+	const char* nuggetName = static_cast<const idItemTeam*>( ent )->NuggetName();
+	value = ( nuggetName != NULL ) ? nuggetName : "";
+}
+
+static void SpawnRead_MoveableItemRepeatSmoke( const idEntity* ent, idStr& value )
+{
+	value = va( "%d", static_cast<const idMoveableItem*>( ent )->RepeatSmoke() ? 1 : 0 );
+}
+
 typedef struct spawnReadProbe_s
 {
 	const idTypeInfo* 		type;		// the class whose Spawn writes the member; its subclasses are probed too
@@ -3203,6 +3221,9 @@ static const spawnReadProbe_t spawnReadProbe[] =
 	{ &idMoveable::Type,	"unbindOnDeath",		SpawnRead_MoveableUnbindOnDeath },
 	{ &idMoveable::Type,	"allowStep",			SpawnRead_MoveableAllowStep },
 	{ &idMoveable::Type,	"health",				SpawnRead_MoveableHealth },
+	{ &idItemTeam::Type,	"team",					SpawnRead_ItemTeamTeam },
+	{ &idItemTeam::Type,	"nuggetName",			SpawnRead_ItemTeamNuggetName },
+	{ &idMoveableItem::Type,	"repeatSmoke",		SpawnRead_MoveableItemRepeatSmoke },
 };
 static const int NUM_SPAWN_READ_PROBES = ARRAY_COUNT( spawnReadProbe );
 

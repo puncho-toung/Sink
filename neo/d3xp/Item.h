@@ -210,6 +210,10 @@ public:
 
 	static void				DropItems( idAnimatedEntity* ent, const char* type, idList<idEntity*>* list, bool essential );
 	static idEntity*			DropItem( const char* classname, const idVec3& origin, const idMat3& axis, const idVec3& velocity, int activateDelay, int removeDelay, bool essential );
+	bool					RepeatSmoke() const	//puncho - P2b.2.5a: testSpawnRead's row
+	{
+		return repeatSmoke;
+	}
 
 	virtual void			WriteToSnapshot( idBitMsg& msg ) const;
 	virtual void			ReadFromSnapshot( const idBitMsg& msg );
@@ -248,6 +252,10 @@ public:
 
 	virtual void			FreeLightDef();
 	virtual void			Present();
+	const char* 			NuggetName() const	//puncho - P2b.2.5a: testSpawnRead's row
+	{
+		return nuggetName;
+	}
 
 	// networking
 	virtual void			WriteToSnapshot( idBitMsg& msg ) const;
