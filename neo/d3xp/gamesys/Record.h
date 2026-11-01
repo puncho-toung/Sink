@@ -340,6 +340,12 @@ public:
 	bool				ReadUnsignedInt( uint32& value );
 	bool				ReadFloat( float& value );
 	bool				ReadFiniteFloat( float& value );	// false on an infinity or a NaN as well
+	//puncho start - P2b.2.3b: a value R row's BOOL, and the checks that read a value row without a member to take it
+	bool				ReadBool( bool& value );			// false on a byte past 1
+	bool				CheckBool();
+	bool				CheckFiniteFloats( int count );
+	bool				CheckString( int bound );
+	//puncho end
 	bool				Read64( uint64& value );
 	bool				ReadData( void* out, int count );
 	bool				ReadUnsignedShort( uint16& value );

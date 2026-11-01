@@ -292,8 +292,8 @@ void idRecordOut::WriteData( const void* bytes, int count )
 	Put( bytes, count );
 }
 
-// WriteUnsigned, WriteCount, WriteString and WriteChunk are the file mode's: an entry's fields write through the calls
-// above, inside their field bounds, and through WriteString for a value R row's STRING (P2b.2.3b)
+// WriteUnsigned, WriteCount and WriteChunk are the file mode's (they assert it); WriteString serves both: a struct row's
+// STR in a file, a value R row's STRING inside an entry's field (P2b.2.3b)
 void idRecordOut::WriteUnsigned( uint64 value, int bytes )
 {
 	assert( file != NULL );
@@ -612,6 +612,44 @@ bool idRecordIn::ReadFiniteFloat( float& value )
 	memcpy( &value, &bits, 4 );
 	return true;
 }
+
+//puncho start - P2b.2.3b
+bool idRecordIn::ReadBool( bool& value )
+{
+	byte b;
+	if( !ReadByte( b ) || b > 1 )
+	{
+		return false;
+	}
+	value = ( b != 0 );
+	return true;
+}
+
+bool idRecordIn::CheckBool()
+{
+	bool value;
+	return ReadBool( value );
+}
+
+bool idRecordIn::CheckFiniteFloats( int count )
+{
+	float value;
+	for( int i = 0; i < count; i++ )
+	{
+		if( !ReadFiniteFloat( value ) )
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+bool idRecordIn::CheckString( int bound )
+{
+	idStr value;
+	return ReadString( value, bound );
+}
+//puncho end
 
 bool idRecordIn::Read64( uint64& value )
 {

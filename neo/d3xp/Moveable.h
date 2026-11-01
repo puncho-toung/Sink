@@ -67,7 +67,7 @@ extern const idEventDef EV_IsAtRest;
 	X( s, density,				FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"density",				"0.5",	"Volume of the object times the density is the mass.",	KEYONLY ) \
 	X( s, friction,				FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"friction",				"0.05",	"Friction with contacting surfaces in the range [0-1] where 0 is no friction.",	KEYONLY ) \
 	X( s, bouncyness,			FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"bouncyness",			"0.6",	"How much the object bounces in the range [0-1] where 0 is no bounce.",	KEYONLY ) \
-	X( s, mass,					FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"mass",					"10",	"Mass of the object (overrides density).",	KEYONLY ) \
+	X( s, mass,					FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"mass",					NODEF,	"Mass of the object (overrides density); without the key the mass is density times the clip model's volume.",	KEYONLY ) \
 	X( s, clipmodel,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"clipmodel",			"",		"Model to be used for collision detection.",	KEYONLY ) \
 	X( s, clipshrink,			INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"clipshrink",			"0",	"Shrink the visual model with an epsilon and use it as a clip model.",	KEYONLY ) \
 	X( s, nodrop,				BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"nodrop",				"0",	"Do not drop to the floor.",	KEYONLY ) \

@@ -55,9 +55,9 @@ If you have questions concerning this license or the applicable additional terms
 	  test away, so a stock field restores with the code the hand-written call compiled to.
 	- The last four columns are the spawn side (C6): the spawnArg key or NOKEY, the spawn value when the key is absent
 	  or NODEF (the constructor's), the FGD text or NOEDIT, and where the value lives: OBJ (a member of s), HOT (a
-	  column of the hot table, C6), BOTH (the column, mirrored in the member) or KEYONLY (read at spawn, stored
-	  nowhere by the schema; hand code may still read it). SCHEMA_SPAWN, SCHEMA_FGD, SCHEMA_KEYCHECK and a value R
-	  row's SCHEMA_RECORD_DIFF read them (P2b.2.3b, below).
+	  column of the hot table, C6), BOTH (the column, mirrored in the member) or KEYONLY (a key hand code reads at
+	  spawn; the schema stores and reads nothing, it lists the key for the FGD and KEYCHECK). SCHEMA_SPAWN, SCHEMA_FGD,
+	  SCHEMA_KEYCHECK and a value R row's SCHEMA_RECORD_DIFF read them (P2b.2.3b, below).
 
 	The compiler expands a list into statements inside a hand-written function whose stream is savefile or msg, so
 	what runs is still read in one place; code that is about no single field goes before or after the expansion:
@@ -67,10 +67,11 @@ If you have questions concerning this license or the applicable additional terms
 			MOVEABLE_SCHEMA( SCHEMA_SAVE, ( *this ) )
 		}
 
-	SCHEMA_SAVE, SCHEMA_RESTORE, SCHEMA_WRITE and SCHEMA_READ. No generator, no build step, no registry walked at run
-	time: the precedent is CLASS_PROTOTYPE and the event tables (Class.h). A list is a #define in the header of the
-	class it lists, inert until expanded, so only the .cpp files that expand one include this file, and Game_local.h for
-	the class headers whose bodies expand a record list's SCHEMA_RECORD_INDEX.
+	SCHEMA_SAVE, SCHEMA_RESTORE, SCHEMA_WRITE and SCHEMA_READ. No generator, no build step, no registry walked per tic
+	(CLASS_SCHEMA_KEYS fills two idTypeInfo members at static init; only idGame::GetSchemaKeys reads them): the
+	precedent is CLASS_PROTOTYPE and the event tables (Class.h). A list is a #define in the header of the class it lists,
+	inert until expanded, so only the .cpp files that expand one include this file, and Game_local.h for the class
+	headers whose bodies expand a record list's SCHEMA_RECORD_INDEX.
 
 	K8: a field the schema cannot express is a HAND entry. It stays hand-written, at its position, in the member
 	functions Save<name> and Restore<name>, or Write<name>ToSnapshot and Read<name>FromSnapshot on the wire.
@@ -168,20 +169,6 @@ ID_INLINE bool idSchemaRecordChanged( const D& mapArgs, const char* key, const c
 	idSchemaGet( mapArgs, key, def, baseline );
 	return baseline != member;
 }
-
-template< class D, class S, class T >
-ID_INLINE bool idSchemaRecordChanged( const D&, schemaNull_t, S, const T& )
-{
-	static_assert( sizeof( T ) == 0, "a value R row takes a KEY" );
-	return true;
-}
-
-template< class D, class T >
-ID_INLINE bool idSchemaRecordChanged( const D&, const char*, schemaNull_t, const T& )
-{
-	static_assert( sizeof( T ) == 0, "a value R row takes a literal DEFAULT: a NODEF baseline would be uninitialised" );
-	return true;
-}
 //puncho end
 
 // one entry, per direction
@@ -246,7 +233,7 @@ ID_INLINE bool idSchemaRecordChanged( const D&, const char*, schemaNull_t, const
 // body is inside its row's gate, so a list that also holds S, W and NOCH rows names an RF_ only for its R rows
 #define SCHEMA_RECORD_INDEX( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )	SCHEMA_R_##CH( RF_##n, )
 #define SCHEMA_RECORD_NAME( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )	SCHEMA_R_##CH( #n, )
-#define SCHEMA_RECORD_DIFF( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )	SCHEMA_R_##CH( if( SCHEMA_RCHANGED_##TYPE( rec, s, n, ARG, KEY, DEFAULT ) ) rec.Set( RF_##n ); )
+#define SCHEMA_RECORD_DIFF( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )	SCHEMA_R_##CH( static_assert( SCHEMA_FGDTYPE_##TYPE == SCHEMA_KEY_NONE || ( !idSchemaIsNull( KEY ) && !idSchemaIsNull( DEFAULT ) ), #n ": a value R row takes a KEY and a literal DEFAULT" ); if( SCHEMA_RCHANGED_##TYPE( rec, s, n, ARG, KEY, DEFAULT ) ) rec.Set( RF_##n ); )
 #define SCHEMA_RECORD_WRITE( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )	SCHEMA_R_##CH( if( rec.Has( RF_##n ) ) { SCHEMA_RPUT_##TYPE( rec, s, n, ARG ) } )
 #define SCHEMA_RECORD_READ( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )	SCHEMA_R_##CH( if( rec.Has( RF_##n ) && !( SCHEMA_RGET_##TYPE( rec, s, n, ARG ) ) ) { rec.good = false; } )
 #define SCHEMA_RECORD_CHECK( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )	SCHEMA_R_##CH( if( rec.Has( RF_##n ) && !( SCHEMA_RCHECK_##TYPE( rec, s, n, ARG ) ) ) { rec.good = false; } )
@@ -262,9 +249,10 @@ ID_INLINE bool idSchemaRecordChanged( const D&, const char*, schemaNull_t, const
 // tests the same, Entity.cpp RecordHealthChanged), or when the member differs from its authored baseline. Each is a
 // field framed at its type's size, ARG unused: INT and ENUM int32, FLOAT float32, BOOL a byte, VEC3 three float32,
 // STRING a variable field holding a str of at most SCHEMA_RECORD_STR_BOUND bytes. A get reads into the member and a
-// check into a temporary (INT and ENUM need none: any four bytes are one); both refuse a non-finite float, a bool byte
-// past 1, and a string past its bound or holding a NUL. The codec types (U8 to I64, STR, LIST) take no KEY and have no
-// RCHANGED.
+// check reads without one (idRecordIn's Check*; INT and ENUM need none: any four bytes are one); both refuse a
+// non-finite float, a bool byte past 1, and a string past its bound or holding a NUL. A value row without a KEY and a
+// literal DEFAULT has no baseline to compare, and DIFF's static_assert refuses it. The codec types (U8 to I64, STR,
+// LIST) take no KEY and have no RCHANGED.
 #define SCHEMA_RECORD_STR_BOUND						63
 #define SCHEMA_RCHANGED_VALUE( r, K, D, member )	( ( r ).IsCreated() || idSchemaRecordChanged( ( r ).MapArgs(), K, D, member ) )
 #define SCHEMA_RCHANGED_INT( r, s, n, a, K, D )		SCHEMA_RCHANGED_VALUE( r, K, D, ( s ).n )
@@ -281,57 +269,16 @@ ID_INLINE bool idSchemaRecordChanged( const D&, const char*, schemaNull_t, const
 #define SCHEMA_RCHECK_ENUM( r, s, n, a )			( ( r ).BeginField( 4 ) )
 #define SCHEMA_RPUT_FLOAT( r, s, n, a )				( r ).BeginField( 4 ); ( r ).WriteFloat( ( s ).n ); ( r ).EndField( 4 );
 #define SCHEMA_RGET_FLOAT( r, s, n, a )				( ( r ).BeginField( 4 ) && ( r ).ReadFiniteFloat( ( s ).n ) && ( r ).EndField() )
-#define SCHEMA_RCHECK_FLOAT( r, s, n, a )			( ( r ).BeginField( 4 ) && idSchemaCheckFloats( r, 1 ) && ( r ).EndField() )
+#define SCHEMA_RCHECK_FLOAT( r, s, n, a )			( ( r ).BeginField( 4 ) && ( r ).CheckFiniteFloats( 1 ) && ( r ).EndField() )
 #define SCHEMA_RPUT_BOOL( r, s, n, a )				( r ).BeginField( 1 ); ( r ).WriteByte( ( s ).n ? 1 : 0 ); ( r ).EndField( 1 );
-#define SCHEMA_RGET_BOOL( r, s, n, a )				( ( r ).BeginField( 1 ) && idSchemaReadBool( r, ( s ).n ) && ( r ).EndField() )
-#define SCHEMA_RCHECK_BOOL( r, s, n, a )			( ( r ).BeginField( 1 ) && idSchemaCheckBool( r ) && ( r ).EndField() )
+#define SCHEMA_RGET_BOOL( r, s, n, a )				( ( r ).BeginField( 1 ) && ( r ).ReadBool( ( s ).n ) && ( r ).EndField() )
+#define SCHEMA_RCHECK_BOOL( r, s, n, a )			( ( r ).BeginField( 1 ) && ( r ).CheckBool() && ( r ).EndField() )
 #define SCHEMA_RPUT_VEC3( r, s, n, a )				( r ).BeginField( 12 ); ( r ).WriteFloat( ( s ).n[0] ); ( r ).WriteFloat( ( s ).n[1] ); ( r ).WriteFloat( ( s ).n[2] ); ( r ).EndField( 12 );
 #define SCHEMA_RGET_VEC3( r, s, n, a )				( ( r ).BeginField( 12 ) && ( r ).ReadFiniteFloat( ( s ).n[0] ) && ( r ).ReadFiniteFloat( ( s ).n[1] ) && ( r ).ReadFiniteFloat( ( s ).n[2] ) && ( r ).EndField() )
-#define SCHEMA_RCHECK_VEC3( r, s, n, a )			( ( r ).BeginField( 12 ) && idSchemaCheckFloats( r, 3 ) && ( r ).EndField() )
+#define SCHEMA_RCHECK_VEC3( r, s, n, a )			( ( r ).BeginField( 12 ) && ( r ).CheckFiniteFloats( 3 ) && ( r ).EndField() )
 #define SCHEMA_RPUT_STRING( r, s, n, a )			( r ).BeginField( 0 ); ( r ).WriteString( ( s ).n, SCHEMA_RECORD_STR_BOUND ); ( r ).EndField( 0 );
 #define SCHEMA_RGET_STRING( r, s, n, a )			( ( r ).BeginField( 0 ) && ( r ).ReadString( ( s ).n, SCHEMA_RECORD_STR_BOUND ) && ( r ).EndField() )
-#define SCHEMA_RCHECK_STRING( r, s, n, a )			( ( r ).BeginField( 0 ) && idSchemaCheckString( r ) && ( r ).EndField() )
-
-// the reads a get and a check share, over idRecordIn (Record.h comes after this file in Game_local.h)
-template< class R >
-ID_INLINE bool idSchemaReadBool( R& rec, bool& value )
-{
-	byte b;
-	if( !rec.ReadByte( b ) || b > 1 )
-	{
-		return false;
-	}
-	value = ( b != 0 );
-	return true;
-}
-
-template< class R >
-ID_INLINE bool idSchemaCheckBool( R& rec )
-{
-	bool value;
-	return idSchemaReadBool( rec, value );
-}
-
-template< class R >
-ID_INLINE bool idSchemaCheckFloats( R& rec, int count )
-{
-	float value;
-	for( int i = 0; i < count; i++ )
-	{
-		if( !rec.ReadFiniteFloat( value ) )
-		{
-			return false;
-		}
-	}
-	return true;
-}
-
-template< class R >
-ID_INLINE bool idSchemaCheckString( R& rec )
-{
-	idStr value;
-	return rec.ReadString( value, SCHEMA_RECORD_STR_BOUND );
-}
+#define SCHEMA_RCHECK_STRING( r, s, n, a )			( ( r ).BeginField( 0 ) && ( r ).CheckString( SCHEMA_RECORD_STR_BOUND ) && ( r ).EndField() )
 //puncho end
 
 //puncho start - P2b.1.4: the record struct lists, the byte form of a record no entity owns (the dungeon record, the

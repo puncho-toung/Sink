@@ -130,8 +130,7 @@ void idMoveable::Spawn()
 	friction = idMath::ClampFloat( 0.0f, 1.0f, friction );
 	spawnArgs.GetFloat( "bouncyness", "0.6", bouncyness );	// HAND: clamped
 	bouncyness = idMath::ClampFloat( 0.0f, 1.0f, bouncyness );
-	//puncho - P2b.2.3b: the keyed rows (Moveable.h): broken, def_damage, monster_damage, fx_collide, the two damage
-	// velocities, explode, unbindondeath, allowStep and health, read where the first of them was
+	//puncho - P2b.2.3b: MOVEABLE_SCHEMA's keyed rows (Moveable.h), read where the first of them, explode, was
 	MOVEABLE_SCHEMA( SCHEMA_SPAWN, ( *this ) )
 
 	nextCollideFxTime = 0;

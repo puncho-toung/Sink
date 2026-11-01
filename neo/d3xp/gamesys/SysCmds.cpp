@@ -4472,8 +4472,8 @@ static void RecordTestMixedList()
 //puncho start - P2b.2.3b: recordTest valuerows (K1; rev 4, goals-r1 F3). One value R row of each keyable type, with a
 // KEY and a DEFAULT, spawned through SCHEMA_SPAWN and recorded as a class records. A created entry has no baseline and
 // writes every row. An authored entry's def holds a value other than the schema DEFAULT for every key, and its map
-// entity two more: it writes nothing while the values are the spawn's, and exactly the rows play changed after, two of
-// them back to their schema DEFAULT. Each leaves (DIFF, WRITE, framing, CHECK) and returns (READ onto a fresh spawn of
+// entity two more: it writes nothing while the values are the spawn's, and all six rows once play has changed each,
+// three of them back to their schema DEFAULT. Each leaves (DIFF, WRITE, framing, CHECK) and returns (READ onto a fresh spawn of
 // its baseline, or onto poisoned values for the created entry); last, the check refuses a non-finite float and a bool
 // byte past 1.
 enum recordTestValueEnum_t
@@ -4541,13 +4541,11 @@ struct recordTestValues_t
 	}
 };
 
-static const recordFrame_t recordTestValueFrame = { CELL_ID_NONE, vec3_origin, mat3_identity, RECORD_FRAME_MAP };
-
 // frames the entry's bytes into in and runs the section's check, as the store does before any apply
-static bool RecordTestValueCheck( const byte* data, int length, bool created, uint64 mask, idRecordIn& in )
+static bool RecordTestValueCheck( const recordFrame_t& frame, const byte* data, int length, bool created, uint64 mask, idRecordIn& in )
 {
 	int consumed;
-	in.Begin( recordTestValueFrame, CELL_ID_NONE, created, "" );
+	in.Begin( frame, CELL_ID_NONE, created, "" );
 	if( !in.ReadSections( data, length, 1, consumed ) || consumed != length || in.SectionMask( 0 ) != mask )
 	{
 		return false;
@@ -4560,10 +4558,11 @@ static bool RecordTestValueCheck( const byte* data, int length, bool created, ui
 
 // one leave and return: the entry's bytes are length long with mask set (no section when mask is 0), pass the check,
 // and read onto returned
-static bool RecordTestValueTrip( const recordTestValues_t& left, bool created, const idRecordMapArgs& baseline, uint64 mask, int length, recordTestValues_t& returned, int& bytes )
+static bool RecordTestValueTrip( const recordFrame_t& frame, const recordTestValues_t& left, bool created, const idRecordMapArgs& baseline, uint64 mask, int length,
+								 recordTestValues_t& returned, int& bytes )
 {
 	idRecordOut out;
-	out.Begin( recordTestValueFrame, created, baseline, 0, "" );
+	out.Begin( frame, created, baseline, 0, "" );
 	left.WriteRecord( out );
 	bytes = out.Length();
 	if( out.Overflowed() || out.Length() != length || out.NumSections() != ( mask != 0 ? 1 : 0 ) )
@@ -4575,7 +4574,7 @@ static bool RecordTestValueTrip( const recordTestValues_t& left, bool created, c
 		return true;
 	}
 	idRecordIn in;
-	if( !RecordTestValueCheck( out.Data(), out.Length(), created, mask, in ) )
+	if( !RecordTestValueCheck( frame, out.Data(), out.Length(), created, mask, in ) )
 	{
 		return false;
 	}
@@ -4585,6 +4584,7 @@ static bool RecordTestValueTrip( const recordTestValues_t& left, bool created, c
 
 static void RecordTestValueRows()
 {
+	static const recordFrame_t frame = { CELL_ID_NONE, vec3_origin, mat3_identity, RECORD_FRAME_MAP };
 	static const idRecordMapArgs noBaseline = { NULL, NULL };
 	const uint64 allRows = BIT( recordTestValues_t::VALUE_RECORD_FIELDS ) - 1;
 	int failures = 0;
@@ -4598,7 +4598,7 @@ static void RecordTestValueRows()
 	const int createdLength = RECORD_SECTION_HEADER_BYTES + 4 + 4 + 1 + 12 + ( 2 + 1 + 5 ) + 4;
 	recordTestValues_t returned = { -1, -1.0f, false, idVec3( -1.0f, -1.0f, -1.0f ), "", RECORD_TEST_VALUE_A };
 	int createdBytes = 0;
-	failures += ( RecordTestValueTrip( created, true, noBaseline, allRows, createdLength, returned, createdBytes ) && returned.Equals( created ) ) ? 0 : 1;
+	failures += ( RecordTestValueTrip( frame, created, true, noBaseline, allRows, createdLength, returned, createdBytes ) && returned.Equals( created ) ) ? 0 : 1;
 
 	// the authored entry: its spawnArgs are the map entity's epairs over the def's keys, as an entity spawns
 	idDict mapArgs, defArgs;
@@ -4619,20 +4619,21 @@ static void RecordTestValueRows()
 				  authored.stringValue == "granite" && authored.enumValue == RECORD_TEST_VALUE_B ) ? 0 : 1;
 	int authoredBytes[2] = { -1, -1 };
 	returned.Spawn( spawnArgs );
-	failures += ( RecordTestValueTrip( authored, false, baseline, 0, 0, returned, authoredBytes[0] ) && returned.Equals( authored ) ) ? 0 : 1;
+	failures += ( RecordTestValueTrip( frame, authored, false, baseline, 0, 0, returned, authoredBytes[0] ) && returned.Equals( authored ) ) ? 0 : 1;
 	authored.intValue = 5;
+	authored.floatValue = 1.5f;
 	authored.boolValue = true;
 	authored.vecValue.z = 10.0f;
+	authored.stringValue = "basalt";
 	authored.enumValue = RECORD_TEST_VALUE_C;
-	const uint64 changedRows = BIT( recordTestValues_t::RF_intValue ) | BIT( recordTestValues_t::RF_boolValue ) | BIT( recordTestValues_t::RF_vecValue ) | BIT( recordTestValues_t::RF_enumValue );
 	returned.Spawn( spawnArgs );
-	failures += ( RecordTestValueTrip( authored, false, baseline, changedRows, RECORD_SECTION_HEADER_BYTES + 4 + 1 + 12 + 4, returned, authoredBytes[1] ) &&
+	failures += ( RecordTestValueTrip( frame, authored, false, baseline, allRows, RECORD_SECTION_HEADER_BYTES + 4 + 4 + 1 + 12 + ( 2 + 1 + 6 ) + 4, returned, authoredBytes[1] ) &&
 				  returned.Equals( authored ) ) ? 0 : 1;
 
 	// the check: the created entry with its float made infinite, then with its bool byte 2 (after the section header,
 	// the int's four bytes, the float's four, the bool's one)
 	idRecordOut out;
-	out.Begin( recordTestValueFrame, true, noBaseline, 0, "" );
+	out.Begin( frame, true, noBaseline, 0, "" );
 	created.WriteRecord( out );
 	int refused = 0;
 	if( !out.Overflowed() && out.Length() == createdLength )
@@ -4643,10 +4644,10 @@ static void RecordTestValueRows()
 		idRecordIn in;
 		memcpy( bytes, out.Data(), createdLength );
 		memcpy( bytes + floatAt, infinity, sizeof( infinity ) );
-		refused += RecordTestValueCheck( bytes, createdLength, true, allRows, in ) ? 0 : 1;
+		refused += RecordTestValueCheck( frame, bytes, createdLength, true, allRows, in ) ? 0 : 1;
 		memcpy( bytes, out.Data(), createdLength );
 		bytes[floatAt + 4] = 2;
-		refused += RecordTestValueCheck( bytes, createdLength, true, allRows, in ) ? 0 : 1;
+		refused += RecordTestValueCheck( frame, bytes, createdLength, true, allRows, in ) ? 0 : 1;
 	}
 	failures += refused == 2 ? 0 : 1;
 

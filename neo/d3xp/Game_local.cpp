@@ -6997,10 +6997,28 @@ bool idGameLocal::CheckInCinematic()
 //puncho start - P2b.2.3b
 /*
 =============
+GetSchemaKeys_r
+
+A class's super first, then its own rows, so the chain's root lists first (idClass::CallSpawnFunc's order).
+=============
+*/
+static void GetSchemaKeys_r( const idTypeInfo* c, idList<const schemaKey_t*>& keys )
+{
+	if( c->super != NULL )
+	{
+		GetSchemaKeys_r( c->super, keys );
+	}
+	for( int i = 0; i < c->numSchemaKeys; i++ )
+	{
+		keys.Append( &c->schemaKeys[i] );
+	}
+}
+
+/*
+=============
 idGameLocal::GetSchemaKeys
 
-The rows CLASS_SCHEMA_KEYS registered on each class of spawnclass's chain, the root first: the chain is walked up
-once for its depth, then each level is reached from spawnclass again, so nothing is held but the caller's list.
+The rows CLASS_SCHEMA_KEYS registered on each class of spawnclass's chain, the root first, each class's in list order.
 =============
 */
 bool idGameLocal::GetSchemaKeys( const char* spawnclass, idList<const schemaKey_t*>& keys ) const
@@ -7011,23 +7029,7 @@ bool idGameLocal::GetSchemaKeys( const char* spawnclass, idList<const schemaKey_
 	{
 		return false;
 	}
-	int depth = 0;
-	for( const idTypeInfo* c = type; c != NULL; c = c->super )
-	{
-		depth++;
-	}
-	for( int level = depth - 1; level >= 0; level-- )
-	{
-		const idTypeInfo* c = type;
-		for( int i = 0; i < level; i++ )
-		{
-			c = c->super;
-		}
-		for( int i = 0; i < c->numSchemaKeys; i++ )
-		{
-			keys.Append( &c->schemaKeys[i] );
-		}
-	}
+	GetSchemaKeys_r( type, keys );
 	return true;
 }
 //puncho end
