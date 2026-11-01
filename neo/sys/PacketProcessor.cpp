@@ -187,7 +187,16 @@ idPacketProcessor::QueueReliableMessage
 */
 bool idPacketProcessor::QueueReliableMessage( byte type, const byte* data, int dataLen )
 {
-	return reliable.Append( reliableSequenceSend++, &type, 1, data, dataLen );
+	//puncho start - P2b.0.6: the high-water of the send queue, kept per queued message (not per packet)
+	if( !reliable.Append( reliableSequenceSend++, &type, 1, data, dataLen ) )
+	{
+		return false;
+	}
+	reliableHighWaterNum = Max( reliableHighWaterNum, reliable.Num() );
+	reliableHighWaterBytes = Max( reliableHighWaterBytes, reliable.GetDataLength() );
+	reliableLargestMsg = Max( reliableLargestMsg, 1 + dataLen );
+	return true;
+	//puncho end
 }
 
 /*

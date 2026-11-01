@@ -95,6 +95,39 @@ double Sys_GetClockTicks()
 	// RB end
 }
 
+//puncho start - P2b.0.3 (plans/map-graph/stages/S2b-0-gates-measurements.md, section 6): the hardware counters are the Linux
+// perf_event_open group in sys/posix/posix_main.cpp; here the open fails and g_passProfile 2 falls back to 1
+/*
+================
+Sys_PerfCountersOpen
+================
+*/
+bool Sys_PerfCountersOpen()
+{
+	Sys_Printf( "Sys_PerfCountersOpen: no hardware counters on this platform\n" );
+	return false;
+}
+
+/*
+================
+Sys_PerfCountersRead
+================
+*/
+bool Sys_PerfCountersRead( uint64[ SYS_NUM_PERF_COUNTERS ] )
+{
+	return false;
+}
+
+/*
+================
+Sys_PerfCountersClose
+================
+*/
+void Sys_PerfCountersClose()
+{
+}
+//puncho end
+
 /*
 ================
 Sys_ClockTicksPerSecond

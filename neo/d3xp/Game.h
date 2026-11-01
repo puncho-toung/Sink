@@ -589,7 +589,7 @@ extern idGameEdit* 				gameEdit;
 ===============================================================================
 */
 
-const int GAME_API_VERSION		= 12; // P2b stage 1: GetLevelKeep, RefusesMapWithPeers, FormatMapRows virtual, LoadPhase slot, skipStaticsCap, IsResident, IsSampleResident, bool SaveGame
+const int GAME_API_VERSION		= 13; // P2b stage 1: GetLevelKeep, RefusesMapWithPeers, FormatMapRows virtual, LoadPhase slot, skipStaticsCap, IsResident, IsSampleResident, bool SaveGame; stage 0: idCommon::LoadSpanAdd/LoadSpanName, idFileSystem::GetReadUs/GetThreadReadBytes
 
 typedef struct
 {

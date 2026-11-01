@@ -156,6 +156,11 @@ idCVar ai_profile(					"ai_profile",				"0",			CVAR_GAME | CVAR_INTEGER, "1 = ti
 idCVar g_aiStats(					"g_aiStats",				"0",			CVAR_GAME | CVAR_INTEGER, "1 = AI rows in the com_showFPS 4 window; 2 = plus one aistats: console line per second and a COMBAT_KILL line per death; 3 = plus the five slowest idAI" );
 idCVar ai_profileLog(				"ai_profileLog",			"",				CVAR_GAME, "file name: appends one CSV row per tic to <fs_savepath>/aiprofile/<name>.csv; empty closes the file" );
 //puncho end
+//puncho start - P2b.0.3 (plans/map-graph/stages/S2b-0-gates-measurements.md §6): the entity pass profile in ai_profileLog's
+// appended columns; host-side measurement, not archived, synced or cheat-flagged
+idCVar g_passProfile(				"g_passProfile",			"0",			CVAR_GAME | CVAR_INTEGER, "1 = time RunFrame's entity passes into ai_profileLog's pass columns, one whole tic in g_passProfileEvery entity by entity; 2 = plus L2 misses, cycles and instructions around the whole passes (Linux perf counters; falls back to 1 when they cannot open)", 0, 2 );
+idCVar g_passProfileEvery(			"g_passProfileEvery",		"8",			CVAR_GAME | CVAR_INTEGER, "g_passProfile times one whole tic in this many, so a timed tic's walk, think sum and walk overhead come from the same entities", 1, 1024 );
+//puncho end
 //puncho start - ai-combat (plans/ai-combat/00-PLAN.md §2.7): host-side measurement; not archived, synced or cheat-flagged
 idCVar ai_benchSeed(				"ai_benchSeed",				"0",			CVAR_GAME | CVAR_INTEGER, "seed of the game's random number generator at map load in single player; 0 = stock (0); multiplayer keeps the server's seed" );
 //puncho end

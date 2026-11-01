@@ -79,7 +79,121 @@ idCVar timescale( "timescale", "1", CVAR_SYSTEM | CVAR_FLOAT, "Number of game fr
 extern idCVar com_transitionOverlayMs;	// Common_load.cpp
 
 
-idCVar com_mapRowsLog( "com_mapRowsLog", "", CVAR_SYSTEM, "write per-frame MAP counters to maprows/<plain name>.csv" );
+//puncho - P2b.0.1g: NOCHEAT, as a cvar without it is a cheat that every multiplayer map load resets
+// (ResetFlaggedVariables( CVAR_CHEAT )): mid-way through a loopback gate's logs, before a joiner's gate lines
+idCVar com_gateLines( "com_gateLines", "0", CVAR_SYSTEM | CVAR_BOOL | CVAR_NOCHEAT, "print the gate lines to the console" );
+idCVar com_gateTimingLog( "com_gateTimingLog", "", CVAR_SYSTEM | CVAR_NOCHEAT, "write per-frame timing to gatetiming/<plain name>.csv" );
+static idFile* gateTimingFile;
+static char gateTimingName[128];
+static char gateTimingBuffer[65536];
+static int gateTimingUsed;
+static int gateTimingFlushTime;
+
+/*
+========================
+CloseGateTimingLog
+
+Writes the buffered tail and closes; also called from idCommonLocal::CloseLogFile.
+========================
+*/
+void CloseGateTimingLog()
+{
+	if( gateTimingFile != NULL )
+	{
+		gateTimingFile->Write( gateTimingBuffer, gateTimingUsed );
+		fileSystem->CloseFile( gateTimingFile );
+		gateTimingFile = NULL;
+		common->Printf( "gate timing CSV closed: %s\n", gateTimingName );
+	}
+	gateTimingName[0] = 0;
+	gateTimingUsed = 0;
+}
+
+/*
+========================
+LogGateTiming
+
+One row per frame of DrawFPS's timing arithmetic (Console.cpp) and nothing else. The same
+code is patched into every binary a gate compares, so it must cost the same in each; it
+runs on the main thread after WaitForThread, before mainFrameTiming takes this frame, so
+the game columns are the previous frame's (as on the HUD) while tics is this frame's.
+usRB/usGPU are the last swap's (an out-of-sequence UpdateScreen re-latches them).
+========================
+*/
+static void LogGateTiming( int tics )
+{
+	// registration and every Set mark the cvar modified, so the default costs two inline tests
+	if( gateTimingFile == NULL && !com_gateTimingLog.IsModified() )
+	{
+		return;
+	}
+	com_gateTimingLog.ClearModified();
+	const char* name = com_gateTimingLog.GetString();
+	if( idStr::Cmp( name, gateTimingName ) )
+	{
+		CloseGateTimingLog();
+		if( name[0] )
+		{
+			// ValidDiagnosticName's rule, carried here because the base binary lacks it
+			bool plain = strlen( name ) < sizeof( gateTimingName );
+			for( const char* p = name; plain && *p; p++ )
+			{
+				plain = ( *p >= 'a' && *p <= 'z' ) || ( *p >= 'A' && *p <= 'Z' ) || ( *p >= '0' && *p <= '9' ) || *p == '_' || *p == '-';
+			}
+			if( !plain )
+			{
+				common->Warning( "com_gateTimingLog requires a plain name" );
+				com_gateTimingLog.SetString( "" );
+				return;
+			}
+			char path[160];
+			idStr::snPrintf( path, sizeof( path ), "gatetiming/%s.csv", name );
+			gateTimingFile = fileSystem->OpenFileWrite( path, "fs_savepath" );
+			if( gateTimingFile == NULL )
+			{
+				com_gateTimingLog.SetString( "" );
+				return;
+			}
+			idStr::Copynz( gateTimingName, name, sizeof( gateTimingName ) );
+			// into the buffer, not idFile::Printf, which allocates and writes \r\n
+			gateTimingUsed = idStr::snPrintf( gateTimingBuffer, sizeof( gateTimingBuffer ), "frame,ms,tics,usFrameBusy,usFrameIdle,usGameRF,usGame,usRF,usRB,usGPU\n" );
+			gateTimingFlushTime = Sys_Milliseconds();
+			common->Printf( "gate timing CSV opened: %s\n", path );
+		}
+	}
+	if( gateTimingFile == NULL )
+	{
+		return;
+	}
+	// a row is at most 183 characters
+	if( gateTimingUsed + 256 > ( int )sizeof( gateTimingBuffer ) )
+	{
+		gateTimingFile->Write( gateTimingBuffer, gateTimingUsed );
+		gateTimingUsed = 0;
+	}
+	// DrawFPS's arithmetic under DrawFPS's names (Console.cpp)
+	const frameTiming_t& m = commonLocal.mainFrameTiming;
+	const frameTiming_t& f = commonLocal.frameTiming;
+	const uint64 gameThreadTotalTime = m.finishDrawTime - m.startGameTime;
+	const uint64 gameThreadGameTime = m.finishGameTime - m.startGameTime;
+	const uint64 gameThreadRenderTime = m.finishDrawTime - m.finishGameTime;
+	const uint64 rendererBackEndTime = commonLocal.GetRendererBackEndMicroseconds();
+	const uint64 rendererGPUTime = commonLocal.GetRendererGPUMicroseconds();
+	const int64 frameIdleTime = int64( m.startGameTime ) - int64( m.finishSyncTime );
+	const int64 frameBusyTime = int64( f.finishSyncTime ) - int64( m.startGameTime );
+	const int now = Sys_Milliseconds();
+	gateTimingUsed += idStr::snPrintf( gateTimingBuffer + gateTimingUsed, 256, "%d,%d,%d,%lld,%lld,%lld,%lld,%lld,%lld,%lld\n", idLib::frameNumber, now, tics, ( long long )frameBusyTime, ( long long )frameIdleTime, ( long long )gameThreadTotalTime, ( long long )gameThreadGameTime, ( long long )gameThreadRenderTime, ( long long )rendererBackEndTime, ( long long )rendererGPUTime );
+	// Write without Flush: Flush is FlushFileBuffers on Windows, a disk sync inside the next frame
+	if( now - gateTimingFlushTime >= 1000 )
+	{
+		gateTimingFile->Write( gateTimingBuffer, gateTimingUsed );
+		gateTimingUsed = 0;
+		gateTimingFlushTime = now;
+	}
+}
+
+//puncho - P2b.0.1g: NOCHEAT, as the gate cvars above
+idCVar com_mapRowsLog( "com_mapRowsLog", "", CVAR_SYSTEM | CVAR_NOCHEAT, "write per-frame MAP counters to maprows/<plain name>.csv" );
 static idFile* mapRowsFile;
 static char mapRowsName[128];
 static char mapRowsBuffer[65536];
@@ -164,7 +278,7 @@ void idCommonLocal::LogMapRows( int tics )
 				com_mapRowsLog.SetString( "" ); return;
 			}
 			idStr::Copynz( mapRowsName, name, sizeof( mapRowsName ) );
-			mapRowsFile->Printf( "frame,ms,tics,usFrameBusy,usFrameIdle,usGameRF,usGame,usRF,usRB,usGPU,usMOC,views,draws,tris,shadowViews,shadowDraws,shadowTris,atlasPct,viewEntities,shadowEntities,viewLights,staticVtxKB,staticIdxKB,frameKB,entityDefs,lightDefs,envprobeDefs,interactionKB,areas,portals,pvsKB,lightGridKB,entities,activeEntities,nonReplicated,cmModels,clipTrans,clipRot,clipMotion,clipContents,clipContacts,clipGathers,clipCandidates,clipUs,allocGameTic,allocMainFrame,probesConsidered,drawSurfs,drawSurfsClamped,atlasFailed,lightRefsWalked,contactedCapHits,skipStatics,usFindView,usAddLights,cullDistEntities,cullPixelEntities,cullLights,fadedLights,cullShadowSkips,lightRefsWalkedMax,gatherAreas,gatherMismatch,lodEntities1,lodEntities2,lodEntities3,lodTrisSaved,lodSwitches,lodThrash,lodCacheBuilds,mocOccluderTris,mocSkippedSize,mocSkippedBudget,mocSpotTests,mocSpotCulls,viewEntsUnder4px,viewEntsUnder16px,viewEntsBeyond8k,ent_highWater,ent_refused,spawnStaticsSkipped,aasCacheBytes,aasCacheEvictions,aasTravelSaturated,bud_debris_live,bud_debris_evicted,bud_debris_refused,bud_fx_live,bud_fx_evicted,bud_fx_refused,bud_item_live,bud_item_evicted,bud_item_refused,bud_gib_live,bud_gib_evicted,bud_gib_refused,itab_mode,itab_entries,itab_capacity,itab_maxProbe,itab_mismatches,itab_lateInserts,gai_ms,rec_maps,rec_entries,rec_created,rec_bytes,rec_dropped,rec_commitUs,rec_applyUs,corpse_live,corpse_evicted,dg_transitions,dg_refused,dg_inhibited,dg_prefetches\n" );
+			mapRowsFile->Printf( "frame,ms,tics,usFrameBusy,usFrameIdle,usGameRF,usGame,usRF,usRB,usGPU,usMOC,views,draws,tris,shadowViews,shadowDraws,shadowTris,atlasPct,viewEntities,shadowEntities,viewLights,staticVtxKB,staticIdxKB,frameKB,entityDefs,lightDefs,envprobeDefs,interactionKB,areas,portals,pvsKB,lightGridKB,entities,activeEntities,nonReplicated,cmModels,clipTrans,clipRot,clipMotion,clipContents,clipContacts,clipGathers,clipCandidates,clipUs,allocGameTic,allocMainFrame,probesConsidered,drawSurfs,drawSurfsClamped,atlasFailed,lightRefsWalked,contactedCapHits,skipStatics,usFindView,usAddLights,cullDistEntities,cullPixelEntities,cullLights,fadedLights,cullShadowSkips,lightRefsWalkedMax,gatherAreas,gatherMismatch,lodEntities1,lodEntities2,lodEntities3,lodTrisSaved,lodSwitches,lodThrash,lodCacheBuilds,mocOccluderTris,mocSkippedSize,mocSkippedBudget,mocSpotTests,mocSpotCulls,viewEntsUnder4px,viewEntsUnder16px,viewEntsBeyond8k,ent_highWater,ent_refused,spawnStaticsSkipped,aasCacheBytes,aasCacheEvictions,aasTravelSaturated,bud_debris_live,bud_debris_evicted,bud_debris_refused,bud_fx_live,bud_fx_evicted,bud_fx_refused,bud_item_live,bud_item_evicted,bud_item_refused,bud_gib_live,bud_gib_evicted,bud_gib_refused,itab_mode,itab_entries,itab_capacity,itab_maxProbe,itab_mismatches,itab_lateInserts,gai_ms,rec_maps,rec_entries,rec_created,rec_bytes,rec_dropped,rec_commitUs,rec_applyUs,corpse_live,corpse_evicted,dg_transitions,dg_refused,dg_inhibited,dg_prefetches,md5Skins\n" );
 			mapRowsFlushTime = Sys_Milliseconds();
 			Printf( "MAP CSV opened: %s\n", path );
 		}
@@ -250,7 +364,8 @@ void idCommonLocal::LogMapRows( int tics )
 		r.interactionGenerateMS,
 		g.recordMaps, g.recordEntries, g.recordCreated, g.recordBytes, g.recordDropped,
 		g.recordCommitUs, g.recordApplyUs, g.corpseLive, g.corpseEvicted,
-		g.dungeonTransitions, g.dungeonRefused, g.dungeonInhibited, g.dungeonPrefetches
+		g.dungeonTransitions, g.dungeonRefused, g.dungeonInhibited, g.dungeonPrefetches,
+		stats_frontend.c_generateMd5	//puncho - P2b.0.1g: md5Skins, one frame behind like every stats_frontend column; a plain int incremented from parallel R_AddSingleModel jobs
 	};
 	char row[2048];
 	int length = 0;
@@ -1274,6 +1389,7 @@ void idCommonLocal::Frame()
 
 		mapMainAllocations = Mem_GetAllocationCount() - frameAllocStart;
 		LogMapRows( numGameFrames );
+		LogGateTiming( numGameFrames );
 		mainFrameTiming = frameTiming;
 
 		session->GetSaveGameManager().Pump();
@@ -1282,6 +1398,7 @@ void idCommonLocal::Frame()
 	{
 		DrainPrintRelay();
 		// an ERP_DROP was thrown
+		LoadPhase( LOAD_PHASE_COUNT );	//puncho - P2b.0.4b: a load it cut short ends its timeline unwritten, the span switch with it
 #if defined(USE_DOOMCLASSIC)
 		if( currentGame == DOOM_CLASSIC || currentGame == DOOM2_CLASSIC )
 		{

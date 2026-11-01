@@ -172,6 +172,8 @@ void idCommonLocal::EndRedirect()
 	rd_flush = NULL;
 }
 
+extern void CloseGateTimingLog();
+
 /*
 ==================
 idCommonLocal::CloseLogFile
@@ -181,6 +183,7 @@ void idCommonLocal::CloseLogFile()
 {
 	DrainPrintRelay();
 	CloseMapRowsLog();
+	CloseGateTimingLog();
 	if( logFile )
 	{
 		com_logFile.SetBool( false ); // make sure no further VPrintf attempts to open the log file again

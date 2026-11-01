@@ -361,23 +361,16 @@ void Cmd_KillRagdolls_f( const idCmdArgs& args )
 
 /*
 ==================
-Cmd_Give_f
+GiveToPlayer
 
-Give items to a client
+Give items to a player: give's body over its player, so giveClient shares it (P2b.0.1e); args as give's, the item in argv 1
 ==================
 */
-void Cmd_Give_f( const idCmdArgs& args )
+static void GiveToPlayer( idPlayer* player, const idCmdArgs& args )	//puncho - P2b.0.1e
 {
 	const char* name;
 	int			i;
 	bool		give_all;
-	idPlayer*	player;
-
-	player = gameLocal.GetLocalPlayer();
-	if( !player || !gameLocal.CheatsOk() )
-	{
-		return;
-	}
 
 	name = args.Argv( 1 );
 
@@ -551,6 +544,66 @@ void Cmd_Give_f( const idCmdArgs& args )
 		gameLocal.Printf( "unknown item\n" );
 	}
 }
+
+//puncho start - P2b.0.1e: give on the local player and giveClient on any, one body
+/*
+==================
+Cmd_Give_f
+
+Give items to the local player
+==================
+*/
+void Cmd_Give_f( const idCmdArgs& args )
+{
+	idPlayer* player = gameLocal.GetLocalPlayer();
+	if( !player || !gameLocal.CheatsOk() )
+	{
+		return;
+	}
+	GiveToPlayer( player, args );
+}
+
+#if !defined( ID_RETAIL )
+/*
+==================
+Cmd_GiveClient_f
+
+giveClient <clientNum> <item> ...: give for any player, run on the host (P2b.0.1e, G-STORM). give acts on the local
+player of the process that runs it, and a client's inventory is overwritten by the host's snapshot, so a host arms a
+joiner with this; the weapons line is the host-side read of what it now holds
+==================
+*/
+static void Cmd_GiveClient_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 3 )
+	{
+		gameLocal.Printf( "usage: giveClient <clientNum> <item> ...\n" );
+		return;
+	}
+	if( !gameLocal.CheatsOk( false ) )
+	{
+		return;
+	}
+	const int clientNum = idStr::IsNumeric( args.Argv( 1 ) ) ? atoi( args.Argv( 1 ) ) : -1;
+	idEntity* ent = ( clientNum >= 0 && clientNum < MAX_CLIENTS ) ? gameLocal.entities[ clientNum ] : NULL;
+	if( ent == NULL || !ent->IsType( idPlayer::Type ) || static_cast< idPlayer* >( ent )->health <= 0 )
+	{
+		gameLocal.Printf( "giveClient: no player %s\n", args.Argv( 1 ) );
+		return;
+	}
+	idPlayer* player = static_cast< idPlayer* >( ent );
+
+	// shift by one: the client number lands in argv 0, which the body ignores, and the item in argv 1 as give's does
+	idCmdArgs giveArgs;
+	for( int i = 1; i < args.Argc(); i++ )
+	{
+		giveArgs.AppendArg( args.Argv( i ) );
+	}
+	GiveToPlayer( player, giveArgs );
+	gameLocal.Printf( "giveClient %d %s: weapons 0x%08x health %d\n", clientNum, args.Argv( 2 ), player->inventory.weapons, player->health );
+}
+#endif
+//puncho end
 
 /*
 ==================
@@ -3850,6 +3903,37 @@ static void Cmd_ListMap_f( const idCmdArgs& args )
 	{
 		gameLocal.Printf( "%s\n", rows[i] );
 	}
+	//puncho start - P2b.0.2: resident bytes by kind, summed here and never per frame; KB as the rows above
+	{
+		renderMapStats_t r = {};
+		renderMapBytes_t b = {};
+		renderSystem->GetMapStats( r );
+		renderSystem->GetMapBytes( b );
+		int models, samples;
+		const int64 modelBytes = renderModelManager->GetResidentBytes( models );
+		const int64 sampleBytes = soundSystem->GetSampleBytes( samples );
+		char row[1024];
+		int used = idStr::snPrintf( row, sizeof( row ), "MAP bytes gridImg %llu/%d probeImg %llu/%d genImg %llu/%d matImg %llu/%d models %lld/%d samples %lld/%d cm %lld+%lld aas",
+									( unsigned long long )( b.gridImageBytes / 1024 ), b.gridImages, ( unsigned long long )( b.probeImageBytes / 1024 ), b.probeImages,
+									( unsigned long long )( b.generatedImageBytes / 1024 ), b.generatedImages, ( unsigned long long )( b.materialImageBytes / 1024 ), b.materialImages,
+									( long long )( modelBytes / 1024 ), models, ( long long )( sampleBytes < 0 ? -1 : sampleBytes / 1024 ), samples,
+									( long long )( collisionModelManager->GetModelMemory() / 1024 ), ( long long )( collisionModelManager->GetPolygonIdMemory() / 1024 ) );
+		for( int i = 0; i < gameLocal.NumAAS(); i++ )
+		{
+			const idAAS* aas = gameLocal.GetAAS( i );	// NULL when the type's file did not load
+			int cacheBytes = 0, evictions, saturated;
+			if( aas != NULL )
+			{
+				aas->GetRoutingStats( cacheBytes, evictions, saturated );
+			}
+			used += idStr::snPrintf( row + used, sizeof( row ) - used, " %s:%d+%d+%lld", gameLocal.GetAASName( i ), ( aas != NULL ) ? aas->FileBytes() / 1024 : 0,
+									 cacheBytes / 1024, ( long long )( ( aas != NULL ) ? aas->RoutingBytes() / 1024 : 0 ) );
+		}
+		idStr::snPrintf( row + used, sizeof( row ) - used, " pvs %llu itab %llu static %llu+%llu keep %d", ( unsigned long long )( gameLocal.pvs.GetMapBytes() / 1024 ),
+						 ( unsigned long long )( r.interactionBytes / 1024 ), ( unsigned long long )( r.staticVertexBytes / 1024 ), ( unsigned long long )( r.staticIndexBytes / 1024 ), common->LevelKeepGrace() );
+		gameLocal.Printf( "%s\n", row );
+	}
+	//puncho end
 	unsigned int digest;
 	CRC32_InitChecksum( digest );
 	int open = 0;
@@ -4711,6 +4795,9 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "sayTeam",				Cmd_SayTeam_f,				CMD_FL_GAME,				"team text chat" );
 	cmdSystem->AddCommand( "addChatLine",			Cmd_AddChatLine_f,			CMD_FL_GAME,				"internal use - core to game chat lines" );
 	cmdSystem->AddCommand( "give",					Cmd_Give_f,					CMD_FL_GAME | CMD_FL_CHEAT,	"gives one or more items" );
+#if !defined( ID_RETAIL )
+	cmdSystem->AddCommand( "giveClient",			Cmd_GiveClient_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"giveClient <clientNum> <item> ...: give for any player (a host arming a joiner)" );	//puncho - P2b.0.1e
+#endif
 	cmdSystem->AddCommand( "centerview",			Cmd_CenterView_f,			CMD_FL_GAME,				"centers the view" );
 	cmdSystem->AddCommand( "god",					Cmd_God_f,					CMD_FL_GAME | CMD_FL_CHEAT,	"enables god mode" );
 	cmdSystem->AddCommand( "notarget",				Cmd_Notarget_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"disables the player as a target" );

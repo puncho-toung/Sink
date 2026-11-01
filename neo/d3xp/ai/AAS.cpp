@@ -120,6 +120,7 @@ idAASLocal::Shutdown
 */
 void idAASLocal::Shutdown()
 {
+	idScopedLoadSpan freeSpan( SPAN_FREE_AAS );
 	if( file )
 	{
 		ShutdownRouting();
@@ -145,6 +146,42 @@ void idAASLocal::Stats() const
 	common->Printf( "[%s]\n", file->GetName() );
 	file->PrintInfo();
 	RoutingStats();
+}
+
+/*
+============
+idAASLocal::FileBytes
+============
+*/
+int idAASLocal::FileBytes() const
+{
+	if( !file )
+	{
+		return 0;
+	}
+	return file->MemorySize();
+}
+
+/*
+============
+idAASLocal::RoutingBytes
+============
+*/
+int64 idAASLocal::RoutingBytes() const
+{
+	if( !file )
+	{
+		return 0;
+	}
+	// Match CalculateAreaTravelTimes and SetupRoutingCache's allocations, not the evictable caches.
+	int64 bytes = ( int64 )numAreaTravelTimes * sizeof( unsigned short );
+	bytes += ( int64 )file->GetNumClusters() * sizeof( idRoutingCache** );
+	bytes += ( int64 )areaCacheIndexSize * sizeof( idRoutingCache* );
+	bytes += ( int64 )portalCacheIndexSize * sizeof( idRoutingCache* );
+	bytes += ( int64 )file->GetNumAreas() * sizeof( idRoutingUpdate );
+	bytes += ( ( int64 )file->GetNumPortals() + 1 ) * sizeof( idRoutingUpdate );
+	bytes += ( int64 )file->GetNumAreas() * sizeof( unsigned short );
+	return bytes;
 }
 
 /*

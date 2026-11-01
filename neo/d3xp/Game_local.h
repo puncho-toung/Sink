@@ -377,6 +377,75 @@ ID_INLINE idAIProfileScope::~idAIProfileScope()
 }
 //puncho end
 
+//puncho start - P2b.0.3 (plans/map-graph/stages/S2b-0-gates-measurements.md §6): the entity pass profile, g_passProfile.
+// One record per timed tic: Sys_GetClockTicks sums per pass and the calls the per-entity sites counted, turned into
+// microseconds once per ai_profileLog row (RunAIStats). Host-side debug state, never saved or replicated.
+
+// the timed twins of the per-entity sites stay out of line, so the untimed site keeps the parent's code and size
+#ifdef _MSC_VER
+	#define PASS_NOINLINE		__declspec( noinline )
+#else
+	#define PASS_NOINLINE		__attribute__(( noinline ))
+#endif
+
+enum passTag_t
+{
+	PASS_TAG_NONE,				// no timed walk runs: each per-entity site costs one test of this and takes its untimed body
+	PASS_TAG_WALK,				// RunFrame's TIME_GROUP1 walks (or the cinematic or g_timeentities walk) on a level-1 tic:
+								// RunEntityThink, CheckDormant, UpdatePVSAreas() and Present run their timed twins
+	PASS_TAG_TG2				// RunTimeGroup2 on a level-1 tic: its thinks are timed (taken out of usWalkTG2), the nested
+								// sites are not; RunSharedThink's walk is timed whole and untagged
+};
+
+enum passCounted_t				// the whole passes g_passProfile 2 reads the hardware counters around
+{
+	PASS_COUNTED_PVS,
+	PASS_COUNTED_SORT,
+	PASS_COUNTED_WALK,
+	PASS_COUNTED_EVENTS,
+	PASS_COUNTED_NUM
+};
+
+struct passTicStats_t
+{
+	// whole passes, in RunFrame order
+	double		tPVS;			// SetupPlayerPVS
+	double		tSort;			// SortActiveEntityList
+	double		tThinkWalk;		// the think walks alone
+	double		tTG2;			// RunTimeGroup2, its thinks included
+	double		tShared;		// RunSharedThink
+	double		tPost;			// after RunSharedThink: neighbour grid, shooter tokens, projectile catch-up
+	double		tPrune;			// the unlinking of entities that stopped thinking
+	double		tEvents;		// ServiceEvents, ServiceFastEvents, the map graph director
+	// per entity, level 1 only, inside the TIME_GROUP1 walks (PASS_TAG_WALK) but tTG2Thinks; gross: each holds its own
+	// bracket and the nested ones (a CheckDormant that updates PVS areas holds that bracket too)
+	double		tThinkSum;		// RunEntityThink in the TIME_GROUP1 walks
+	double		tSleeperThink;	// those whose entity is dormant on return
+	double		tTG2Thinks;		// RunEntityThink in RunTimeGroup2
+	double		tDormantAsleep;	// CheckDormant returning true
+	double		tDormantAwake;	// CheckDormant returning false
+	double		tPVSAreas;		// UpdatePVSAreas()
+	double		tPresent;		// idEntity::Present past its TH_UPDATEVISUALS test
+	double		tPresentDef;	// its AddEntityDef / UpdateEntityDef
+	double		tPresentFar;	// the same for maxVisDist > 0 beyond it from every player origin
+	int			numWalk;		// thinks in the TIME_GROUP1 walks (RunFrame's num)
+	int			nSleeperThink;
+	int			nTG2;			// RunTimeGroup2's thinks
+	int			nShared;		// RunSharedThink's calls
+	int			nDormantAsleep;
+	int			nDormantAwake;
+	int			nPVSAreas;
+	int			nPresent;
+	int			nPresentDef;
+	int			nPresentFar;
+	int			nNestedClock;	// clock pairs the nested sites made inside the walks' thinks (the summarizer nets them)
+	bool		perEntity;		// a level-1 tic: the per-entity sites ran timed; level 2 times whole passes only
+	bool		counted;		// level 2: every counter read of the tic succeeded
+	uint64		counters[ PASS_COUNTED_NUM ][ SYS_NUM_PERF_COUNTERS ];	// L2 misses, cycles, instructions per pass; last, so a
+								// timed entity writes the one or two cache lines above
+};
+//puncho end
+
 //puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md §3.3, WP-A5): one live actor in the neighbour grid, as physics
 // left it at the end of the tic the grid was built in. POD, copied by value; the chain through nextInCell is per bucket
 const int	MAX_AI_NEIGHBORS		= 1024;
@@ -490,6 +559,7 @@ public:
 	idHashIndex				entityHash;				// hash table to quickly find entities by name
 	idWorldspawn* 			world;					// world entity
 	idLinkList<idEntity>	spawnedEntities;		// all spawned entities
+	int						numSpawnedEntities;		//puncho - P2b.0.3: spawnedEntities' length, kept where the list changes
 	idLinkList<idEntity>	activeEntities;			// all thinking entities (idEntity::thinkFlags != 0)
 	idLinkList<idEntity>	aimAssistEntities;		// all aim Assist entities
 	int						numEntitiesToDeactivate;// number of entities that became inactive in current frame
@@ -536,6 +606,11 @@ public:
 	int					numDormantSources;
 	int					dormantWakesRemaining;
 	aiTicStats_t			aiStats;				// the live tic census, zeroed after SortActiveEntityList
+	//puncho start - P2b.0.3: never inside aiTicStats_t, which idAI::Think and RunAIStats sum and difference as an int array
+	passTicStats_t			passStats;				// the timed tic's record, zeroed at its start (PassProfileBeginTic)
+	passTag_t				passTag;				// the timed walk running, else PASS_TAG_NONE: the per-entity sites test only this
+	bool					passTimed;				// this tic is timed (g_passProfile set, one tic in g_passProfileEvery)
+	//puncho end
 	snapStats_t				snapStats;				// written by ServerWriteSnapshot on the main thread between game frames
 	aiHudStats_t			aiHudStats;				// the last tic's record for the HUD, filled by RunAIStats
 	int						aiThinkRing[ 128 ];		// per-tic usThink by framenum, for the HUD peak
@@ -605,7 +680,7 @@ public:
 	virtual int				GetTimeGroupTime( int timeGroup );
 
 	void					ComputeSlowScale();
-	void					RunTimeGroup2( idUserCmdMgr& userCmdMgr );
+	int						RunTimeGroup2( idUserCmdMgr& userCmdMgr );	//puncho - P2b.0.3: returns its thinks
 
 	void					ResetSlowTimeVars();
 	void					QuickSlowmoReset();
@@ -635,6 +710,7 @@ public:
 	void					RunAllUserCmdsForPlayer( idUserCmdMgr& cmdMgr, const int playerNumber );
 	void					RunSingleUserCmd( usercmd_t& cmd, idPlayer& player );
 	void					RunEntityThink( idEntity& ent, idUserCmdMgr& userCmdMgr );
+	PASS_NOINLINE void		RunEntityThinkTimed( idEntity& ent, idUserCmdMgr& userCmdMgr );	//puncho - P2b.0.3: the timed twin
 	virtual bool			Draw( int clientNum );
 	//puncho start - ai-harness
 	virtual const aiHudStats_t*	GetAIStats() const;
@@ -732,6 +808,7 @@ public:
 	bool					budgetSpawnRefused;
 
 	int						NumAAS() const;
+	const char*				GetAASName( int i ) const;	//puncho - P2b.0.2: names captured with aasList at Init
 	idAAS* 					GetAAS( int num ) const;
 	idAAS* 					GetAAS( const char* name ) const;
 	void					SetAASAreaState( const idBounds& bounds, const int areaContents, bool closed );
@@ -1057,8 +1134,10 @@ private:
 	void					BuildNeighborGrid();	// ai-avoidance (WP-A5): after the think loop (AI_crowd.cpp)
 	void					ReadAISquads();			// ai-avoidance (WP-A7): the ai_squad markers of mapFile (AI_crowd.cpp)
 	//puncho end
+	void					PassProfileBeginTic();	//puncho - P2b.0.3: g_passProfile's level and the tic's sampling, before SetupPlayerPVS
+	void					PassProfileShutdown();	//puncho - P2b.0.3: closes level 2's counter group (Shutdown)
 
-	void					RunSharedThink();
+	int						RunSharedThink();		//puncho - P2b.0.3: returns its calls
 
 	void					InitScriptForMap();
 	void					SetScriptFPS( const float com_engineHz );

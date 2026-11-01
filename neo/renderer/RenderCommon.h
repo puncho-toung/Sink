@@ -1011,6 +1011,7 @@ public:
 	virtual idRenderWorld* 	AllocRenderWorld();
 	virtual void			FreeRenderWorld( idRenderWorld* rw );
 	virtual void			GetMapStats( renderMapStats_t& stats ) const;
+	virtual void			GetMapBytes( renderMapBytes_t& bytes ) const;
 	virtual void			ListMapLightGrids() const;
 	virtual void			BeginLevelLoad();
 	virtual void			EndLevelLoad();

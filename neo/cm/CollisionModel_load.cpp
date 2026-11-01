@@ -459,6 +459,7 @@ idCollisionModelManagerLocal::FreeMap
 */
 void idCollisionModelManagerLocal::FreeMap()
 {
+	idScopedLoadSpan freeSpan( SPAN_FREE_CM );
 	int i;
 
 	if( !loaded )
@@ -4381,6 +4382,36 @@ void idCollisionModelManagerLocal::AccumulateModelInfo( cm_model_t* model )
 		model->numMergedPolys += models[i]->numMergedPolys;
 		model->usedMemory += models[i]->usedMemory;
 	}
+}
+
+/*
+================
+idCollisionModelManagerLocal::GetModelMemory
+================
+*/
+int64 idCollisionModelManagerLocal::GetModelMemory() const
+{
+	int64 bytes = 0;
+	for( int i = 0; i < numModels; i++ )
+	{
+		bytes += models[i]->usedMemory;
+	}
+	return bytes;
+}
+
+/*
+================
+idCollisionModelManagerLocal::GetPolygonIdMemory
+================
+*/
+int64 idCollisionModelManagerLocal::GetPolygonIdMemory() const
+{
+	int64 bytes = 0;
+	for( int i = 0; i < numModels; i++ )
+	{
+		bytes += ( int64 )models[i]->maxPolygonIds * sizeof( cm_polygon_t* ) + models[i]->polygonIdHash.Allocated();
+	}
+	return bytes;
 }
 
 /*

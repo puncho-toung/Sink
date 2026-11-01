@@ -2852,6 +2852,59 @@ void idRenderSystemLocal::GetMapStats( renderMapStats_t& stats ) const
 
 /*
 ========================
+idRenderSystemLocal::GetMapBytes
+
+listMap's MAP bytes row. Console commands run at the top of a frame, after the last frame's
+WaitForThread and before this frame's backend, so no thread loads an image while the list is walked.
+========================
+*/
+void idRenderSystemLocal::GetMapBytes( renderMapBytes_t& bytes ) const
+{
+	memset( &bytes, 0, sizeof( bytes ) );
+	for( int i = 0; i < globalImages->images.Num(); i++ )
+	{
+		const idImage* image = globalImages->images[i];
+		if( !image->IsLoaded() )
+		{
+			continue;
+		}
+		// StorageSize counts one face/sample. FMT_R8F counts at 4 bits there, though NVRHI allocates R8_UNORM.
+		uint64 size = ( uint64 )image->StorageSize();
+		if( image->GetOpts().textureType == DTT_CUBIC )
+		{
+			size *= 6;
+		}
+		else if( image->GetOpts().textureType == DTT_2D_MULTISAMPLE )
+		{
+			size *= image->GetOpts().samples;
+		}
+		// ActuallyLoadImage's span kinds, tested in its order
+		const char* name = image->GetName();
+		if( idStr::FindText( name, "_lightgrid_", false ) != -1 )
+		{
+			bytes.gridImageBytes += size;
+			bytes.gridImages++;
+		}
+		else if( idStr::FindText( name, "_envprobe_", false ) != -1 )
+		{
+			bytes.probeImageBytes += size;
+			bytes.probeImages++;
+		}
+		else if( image->IsGenerated() )
+		{
+			bytes.generatedImageBytes += size;
+			bytes.generatedImages++;
+		}
+		else
+		{
+			bytes.materialImageBytes += size;
+			bytes.materialImages++;
+		}
+	}
+}
+
+/*
+========================
 idRenderSystemLocal::BeginLevelLoad
 ========================
 */

@@ -38,6 +38,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "../sys/sys_lobby_backend.h"
 #include "Prefetch.h"
 #include "../renderer/Image.h"
+#include <atomic>
 
 
 #define LAUNCH_TITLE_DOOM_EXECUTABLE		"doom1.exe"
@@ -72,18 +73,78 @@ static bool loadWasSavegame;
 static const char* loadPhaseNames[LOAD_PHASE_COUNT] = {
 	"MOVE", "BEGIN", "UNLOAD", "PURGE", "LOADGUI", "PRELOAD", "RENDER_WORLD", "MAP_PARSE", "CM", "GAME_INIT", "PVS", "AAS", "MEDIA", "SCRIPT", "SPAWN", "POST_SPAWN", "RESTORE", "SESSION", "FIRST_FRAME", "END_RENDER", "END_SOUND", "END_DECL", "END_UI", "END_FS", "SETTLE", "AUTOSAVE", "INTERACTIONS", "FINISH"
 };
+//puncho - P2b.0.4b: images load on the main and on the game thread, so a span adds atomically, 64 bits as
+// Image_load.cpp's imageLoadBytes does; one row per cache line, so two threads adding to two spans share none
+struct alignas( 64 ) loadSpanRow_t
+{
+	std::atomic<uint64> us, calls, maxStepUs, readBytes, readUs, imageBytes, pacifierUs;
+};
+static loadSpanRow_t loadSpanRows[LOAD_SPAN_COUNT];
+static char loadSpanNames[LOAD_SPAN_COUNT][32];
+extern thread_local uint64 loadPacifierUs;	// framework/File.cpp, beside the read twins the spans snapshot with it
+static const char* loadSpanDefaultNames[LOAD_SPAN_COUNT] =
+{
+	"RW_PROC", "LIGHTGRID_FILE", "LIGHTGRID_IMAGES", "PROBE_DEFS", "IMG_GRID", "IMG_PROBE", "IMG_GEN", "IMG_MAT", "MDL_LOAD", "AAS_0", "AAS_1", "AAS_2", "AAS_3", "AAS_4", "AAS_5", "AAS_6", "AAS_7", "REC_MAPCRC", "REC_ENTCRC", "FREE_RW", "FREE_IMG", "FREE_STATIC", "FREE_CM", "FREE_AAS", "FREE_ENTS"
+};
+
+void idCommonLocal::LoadSpanAdd( loadSpan_t span, uint64 us, int64 readBytes, int64 readUs, int64 imageBytes, int64 pacifierUs )
+{
+	if( span < 0 || span >= LOAD_SPAN_COUNT )
+	{
+		return;
+	}
+	loadSpanRow_t& row = loadSpanRows[span];
+	row.us.fetch_add( us, std::memory_order_relaxed );
+	row.calls.fetch_add( 1, std::memory_order_relaxed );
+	// the hitch a call would be at runtime, without the loading screen's frames
+	const uint64 stepUs = us - ( uint64 )pacifierUs;
+	uint64 maxStepUs = row.maxStepUs.load( std::memory_order_relaxed );
+	// reloads maxStepUs on failure; ends once the row holds a value >= stepUs
+	while( stepUs > maxStepUs && !row.maxStepUs.compare_exchange_weak( maxStepUs, stepUs, std::memory_order_relaxed ) )
+	{
+	}
+	row.readBytes.fetch_add( ( uint64 )readBytes, std::memory_order_relaxed );
+	row.readUs.fetch_add( ( uint64 )readUs, std::memory_order_relaxed );
+	row.imageBytes.fetch_add( ( uint64 )imageBytes, std::memory_order_relaxed );
+	row.pacifierUs.fetch_add( ( uint64 )pacifierUs, std::memory_order_relaxed );
+}
+
+void idCommonLocal::LoadSpanName( loadSpan_t span, const char* name )
+{
+	if( span < 0 || span >= LOAD_SPAN_COUNT )
+	{
+		return;
+	}
+	idStr::Copynz( loadSpanNames[span], name, sizeof( loadSpanNames[span] ) );
+}
 
 void idCommonLocal::LoadPhase( loadPhase_t phase )
 {
 	if( !com_loadTimeline.GetBool() && !com_loadTimelineLog.GetString()[0] && !com_transitionTimelineLog.GetString()[0] )
 	{
 		loadCurrentPhase = -1;
+		if( loadSpanTiming.load( std::memory_order_relaxed ) )
+		{
+			loadSpanTiming.store( false, std::memory_order_relaxed );
+		}
 		return;
 	}
 	if( phase == LOAD_MOVE || ( phase == LOAD_BEGIN && loadCurrentPhase != LOAD_MOVE ) )
 	{
 		memset( loadRows, 0, sizeof( loadRows ) );
 		loadCurrentPhase = -1;
+		for( int i = 0; i < LOAD_SPAN_COUNT; i++ )
+		{
+			loadSpanRow_t& row = loadSpanRows[i];
+			row.us.store( 0, std::memory_order_relaxed );
+			row.calls.store( 0, std::memory_order_relaxed );
+			row.maxStepUs.store( 0, std::memory_order_relaxed );
+			row.readBytes.store( 0, std::memory_order_relaxed );
+			row.readUs.store( 0, std::memory_order_relaxed );
+			row.imageBytes.store( 0, std::memory_order_relaxed );
+			row.pacifierUs.store( 0, std::memory_order_relaxed );
+		}
+		memset( loadSpanNames, 0, sizeof( loadSpanNames ) );
 	}
 	const uint64 now = Sys_Microseconds();
 	const unsigned int reads = fileSystem->GetReadBytes();
@@ -105,6 +166,7 @@ void idCommonLocal::LoadPhase( loadPhase_t phase )
 		loadWasSavegame = mapSpawnData.savegameFile != NULL;
 	}
 	loadCurrentPhase = phase == LOAD_PHASE_COUNT ? -1 : phase;
+	loadSpanTiming.store( loadCurrentPhase >= 0, std::memory_order_relaxed );	// spans and their clocks run from the first phase to FINISH's end
 	loadPhaseStart = now;
 	loadReadStart = reads;
 	loadResourceStart = resources;
@@ -154,13 +216,50 @@ void idCommonLocal::FinishLoadTimeline()
 			csv->Printf( "%d,%s,%s,%d,%d,%s,%llu,%llu,%lld,%lld,%lld\n", loadIndex, currentMapName.c_str(), loadPreviousMap, loadWasSavegame ? 1 : 0, i, loadPhaseNames[i], ( unsigned long long )row.us, ( unsigned long long )row.readBytes, ( long long )row.imageBytes, ( long long )row.vertexBytes, ( long long )row.indexBytes );
 		}
 	}
+	// the spans go to their own file after the phase rows, so P2.0.6's file keeps its layout. REC_MAPCRC and REC_ENTCRC
+	// hold the console path only (P2b.0.1g): a game-driven transition commits in the leaving tic, before LOAD_MOVE, with
+	// the switch off, and a console load's rows hold the leaving map's commit under the arriving map's name; the record
+	// commit line carries both paths' CRC costs under com_gateLines
+	idFile* spans = NULL;
 	if( csv != NULL )
 	{
 		fileSystem->CloseFile( csv );
+		char spansPath[160];
+		idStr::snPrintf( spansPath, sizeof( spansPath ), "loadtimeline/%s_spans.csv", name );
+		spans = fileSystem->OpenFileAppend( spansPath, true, "fs_savepath" );
+		if( spans != NULL && spans->Length() == 0 )
+		{
+			spans->Printf( "loadIndex,map,span,name,us,calls,maxStepUs,readBytes,readUs,imageBytes,cpuUs,pacifierUs\n" );
+		}
 	}
 	if( com_loadTimeline.GetBool() )
 	{
 		Printf( "LOAD total %llu us (BEGIN..FINISH)\n", ( unsigned long long )total );
+	}
+	for( int i = 0; i < LOAD_SPAN_COUNT; i++ )
+	{
+		const loadSpanRow_t& row = loadSpanRows[i];
+		const unsigned long long us = row.us.load( std::memory_order_relaxed );
+		const unsigned long long calls = row.calls.load( std::memory_order_relaxed );
+		const unsigned long long maxStepUs = row.maxStepUs.load( std::memory_order_relaxed );
+		const unsigned long long readBytes = row.readBytes.load( std::memory_order_relaxed );
+		const unsigned long long readUs = row.readUs.load( std::memory_order_relaxed );
+		const unsigned long long imageBytes = row.imageBytes.load( std::memory_order_relaxed );
+		const unsigned long long pacifierUs = row.pacifierUs.load( std::memory_order_relaxed );
+		const long long cpuUs = ( long long )us - ( long long )readUs - ( long long )pacifierUs;
+		const char* spanName = loadSpanNames[i][0] ? loadSpanNames[i] : loadSpanDefaultNames[i];
+		if( com_loadTimeline.GetBool() && calls > 0 )
+		{
+			Printf( "SPAN %02d %-18s %llu us calls %llu maxStep %llu read %llu readUs %llu image %llu cpu %lld pacifier %llu\n", i, spanName, us, calls, maxStepUs, readBytes, readUs, imageBytes, cpuUs, pacifierUs );
+		}
+		if( spans != NULL )
+		{
+			spans->Printf( "%d,%s,%d,%s,%llu,%llu,%llu,%llu,%llu,%llu,%lld,%llu\n", loadIndex, currentMapName.c_str(), i, spanName, us, calls, maxStepUs, readBytes, readUs, imageBytes, cpuUs, pacifierUs );
+		}
+	}
+	if( spans != NULL )
+	{
+		fileSystem->CloseFile( spans );
 	}
 }
 
@@ -341,6 +440,7 @@ idCVar com_disableAllSaves( "com_disableAllSaves", "0", CVAR_SYSTEM | CVAR_BOOL,
 
 
 extern idCVar sys_lang;
+extern idCVar com_gateLines;
 
 extern idCVar g_demoMode;
 
@@ -520,6 +620,7 @@ void idCommonLocal::MoveToNewMap( const char* mapName, bool devmap )
 		mapSpawnData.persistentPlayerInfo = game->GetPersistentPlayerInfo( 0 );
 	}
 	session->QuitMatchToTitle();
+	bool started = false;	// P2b.0.4b: a refused session step ends the timeline LOAD_MOVE opened
 	if( WaitForSessionState( idSession::IDLE ) )
 	{
 		session->CreatePartyLobby( matchParameters );
@@ -532,12 +633,18 @@ void idCommonLocal::MoveToNewMap( const char* mapName, bool devmap )
 				{
 					//puncho - transitions (stage 3 review): the committed crossing is refused here too; release it
 					game->ClearMapTransition();
+					LoadPhase( LOAD_PHASE_COUNT );	// P2b.0.4b: ends the timeline unwritten, the span switch with it
 					return;
 				}
 				session->UpdateMatchParms( matchParameters );
 				session->StartMatch();
+				started = true;
 			}
 		}
+	}
+	if( !started )
+	{
+		LoadPhase( LOAD_PHASE_COUNT );
 	}
 }
 
@@ -740,6 +847,7 @@ void idCommonLocal::ExecuteMapChange()
 	if( session->GetState() != idSession::LOADING )
 	{
 		idLib::Warning( "Session state is not LOADING in ExecuteMapChange" );
+		LoadPhase( LOAD_PHASE_COUNT );	// P2b.0.4b: ends the timeline unwritten, the span switch with it
 		return;
 	}
 
@@ -756,12 +864,14 @@ void idCommonLocal::ExecuteMapChange()
 	{
 		Warning( "map load refused: invalid match game data" );
 		LeaveGame();
+		LoadPhase( LOAD_PHASE_COUNT );	// P2b.0.4b: ends the timeline unwritten, the span switch with it
 		return;
 	}
 
 	if( matchParameters.numSlots <= 0 )
 	{
 		idLib::Warning( "numSlots <= 0 in ExecuteMapChange" );
+		LoadPhase( LOAD_PHASE_COUNT );	// P2b.0.4b: ends the timeline unwritten, the span switch with it
 		return;
 	}
 
@@ -1008,6 +1118,7 @@ void idCommonLocal::ExecuteMapChange()
 				loadGUI = NULL;
 				fileSystem->EndLevelLoad();
 				LeaveGame();
+				LoadPhase( LOAD_PHASE_COUNT );	// P2b.0.4b: ends the timeline unwritten, the span switch with it
 				return;
 			}
 			UpdateLevelLoadPacifier();
@@ -1221,6 +1332,17 @@ void idCommonLocal::UpdateLevelLoadPacifier()
 		return;
 	}
 
+	//puncho - P2b.0.4b: the spans leave out the pacifier (loading-screen frames, session pumps), which streaming at runtime
+	// never runs, less the reads it makes; the total is assigned, not added, so a nested call counts once
+	const bool pacifierTimed = loadSpanTiming.load( std::memory_order_relaxed );
+	uint64 pacifierStart = 0, pacifierReadUs = 0, pacifierTotal = 0;
+	if( pacifierTimed )
+	{
+		pacifierStart = Sys_Microseconds();
+		pacifierReadUs = FileThreadReadUs();
+		pacifierTotal = loadPacifierUs;
+	}
+
 	const int sessionUpdateTime = common->IsMultiplayer() ? 16 : 100;
 
 	const int time = Sys_Milliseconds();
@@ -1304,6 +1426,11 @@ void idCommonLocal::UpdateLevelLoadPacifier()
 		{
 			renderSystem->BeginAutomaticBackgroundSwaps( icon );
 		}
+	}
+
+	if( pacifierTimed )
+	{
+		loadPacifierUs = pacifierTotal + ( Sys_Microseconds() - pacifierStart ) - ( FileThreadReadUs() - pacifierReadUs );
 	}
 }
 
@@ -1569,6 +1696,11 @@ bool idCommonLocal::SaveGame( const char* saveName )
 		renderSystem->BeginAutomaticBackgroundSwaps( AUTORENDER_DIALOGICON );
 	}
 
+	//puncho - P2b.0.1g (M3): the SAVE gate line's ms times the save's own work, MakeWritable through pipelineFile->Finish;
+	// SaveGameSync's write, its 10 ms polling sleeps and the saved-games refresh are left out; off, no clock is read
+	const bool saveGateLine = com_gateLines.GetBool();
+	const uint64 saveStartUs = saveGateLine ? Sys_Microseconds() : 0;
+
 	// Make sure the file is writable and the contents are cleared out (Set to write from the start of file)
 	saveFile.MakeWritable();
 	saveFile.Clear( false );
@@ -1604,6 +1736,7 @@ bool idCommonLocal::SaveGame( const char* saveName )
 	const bool fits = game->SaveGame( pipelineFile, &stringsFile, storeBytes, objectBytes );
 
 	pipelineFile->Finish();
+	const uint64 saveUs = saveGateLine ? Sys_Microseconds() - saveStartUs : 0;	//puncho - P2b.0.1g (M3)
 
 	const int streamBytes = pipelineFile->Length();
 	if( !fits || streamBytes > MIN_SAVEGAME_SIZE_BYTES )
@@ -1634,7 +1767,23 @@ bool idCommonLocal::SaveGame( const char* saveName )
 	files.Append( &stringsFile );
 	files.Append( &saveFile );
 
-	session->SaveGameSync( gameDetails.slotName, files, gameDetails );
+	//puncho - P2b.0.1g (M3): stream is the final compressed length after Finish. SaveGame.cpp's 4 MB check reads the
+	// compressed length before Finish, so the final value can be larger. Capture it before SaveGameSync's completion
+	// (OnSaveCompleted) deletes pipelineFile.
+	const int saveStreamBytes = saveGateLine ? pipelineFile->Length() : 0;
+	const int saveStringBytes = saveGateLine ? stringsFile.Length() : 0;
+
+	const saveGameHandle_t saveHandle = session->SaveGameSync( gameDetails.slotName, files, gameDetails );
+
+	//puncho start - P2b.0.1g (M3): wsto is the world store chunk's length, which idWorldStore::Save checked against
+	// MAX_WORLD_BYTES (mapGameStats_t::recordBytes); no line for a save that never started (handle 0)
+	if( saveGateLine && saveHandle != 0 )
+	{
+		mapGameStats_t stats = {};
+		game->GetMapStats( stats );
+		Printf( "SAVE %s stream %d strings %d wsto %d ms %.3f\n", gameDetails.slotName.c_str(), saveStreamBytes, saveStringBytes, stats.recordBytes, saveUs * 0.001 );
+	}
+	//puncho end
 
 	if( !insideExecuteMapChange )
 	{
