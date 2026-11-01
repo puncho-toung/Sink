@@ -994,7 +994,13 @@ void idEvent::Save( idSaveGame* savefile )
 		savefile->WriteString( event->typeinfo->classname );
 		savefile->WriteObject( event->object );
 		savefile->WriteInt( event->eventdef->GetArgSize() );
-		savefile->Write( event->data, event->eventdef->GetArgSize() );
+		//puncho start - P2b.2.7: as Restore reads it; a zero-size Write moves no byte but leaves the stream trace an
+		// entry no read matches (testSaveRoundTrip on ai_harness with a pending <immediateremove>)
+		if( event->eventdef->GetArgSize() )
+		{
+			savefile->Write( event->data, event->eventdef->GetArgSize() );
+		}
+		//puncho end
 
 		event = event->eventNode.Next();
 	}
