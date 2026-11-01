@@ -84,7 +84,7 @@ static char loadSpanNames[LOAD_SPAN_COUNT][32];
 extern thread_local uint64 loadPacifierUs;	// framework/File.cpp, beside the read twins the spans snapshot with it
 static const char* loadSpanDefaultNames[LOAD_SPAN_COUNT] =
 {
-	"RW_PROC", "LIGHTGRID_FILE", "LIGHTGRID_IMAGES", "PROBE_DEFS", "IMG_GRID", "IMG_PROBE", "IMG_GEN", "IMG_MAT", "MDL_LOAD", "AAS_0", "AAS_1", "AAS_2", "AAS_3", "AAS_4", "AAS_5", "AAS_6", "AAS_7", "REC_MAPCRC", "REC_ENTCRC", "FREE_RW", "FREE_IMG", "FREE_STATIC", "FREE_CM", "FREE_AAS", "FREE_ENTS"
+	"RW_PROC", "LIGHTGRID_FILE", "LIGHTGRID_IMAGES", "PROBE_DEFS", "IMG_GRID", "IMG_PROBE", "IMG_GEN", "IMG_MAT", "MDL_LOAD", "AAS_0", "AAS_1", "AAS_2", "AAS_3", "AAS_4", "AAS_5", "AAS_6", "AAS_7", "REC_MAPCRC", "REC_ENTCRC", "FREE_RW", "FREE_IMG", "FREE_STATIC", "FREE_CM", "FREE_AAS", "FREE_ENTS", "ENTITY_TABLE"
 };
 
 void idCommonLocal::LoadSpanAdd( loadSpan_t span, uint64 us, int64 readBytes, int64 readUs, int64 imageBytes, int64 pacifierUs )

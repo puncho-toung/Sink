@@ -2022,7 +2022,7 @@ void idPlayer::Spawn()
 	}
 
 	// allow thinking during cinematics
-	cinematic = true;
+	SetCinematic( true );	//puncho - P2b.2.1a
 
 	if( common->IsMultiplayer() )
 	{
@@ -9314,7 +9314,7 @@ void idPlayer::Think()
 		playerView.CalculateShake();
 	}
 
-	if( !( thinkFlags & TH_THINK ) )
+	if( !( GetThinkFlags() & TH_THINK ) )
 	{
 		gameLocal.Printf( "player %d not thinking?\n", entityNumber );
 	}
@@ -10118,7 +10118,7 @@ void idPlayer::Damage( idEntity* inflictor, idEntity* attacker, const idVec3& di
 	int			damage;
 	int			armorSave;
 
-	SetTimeState ts( timeGroup );
+	SetTimeState ts( GetTimeGroup() );
 
 	if( !fl.takedamage || noclip || spectating || gameLocal.inCinematic )
 	{

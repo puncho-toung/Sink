@@ -660,6 +660,7 @@ set(GAMED3XP_INCLUDES
 	d3xp/BrittleFracture.h
 	d3xp/Camera.h
 	d3xp/Entity.h
+	d3xp/EntityHot.h
 	d3xp/EnvironmentProbe.h
 	d3xp/Fx.h
 	d3xp/Game.h
@@ -697,6 +698,7 @@ set(GAMED3XP_SOURCES
 	d3xp/BrittleFracture.cpp
 	d3xp/Camera.cpp
 	d3xp/Entity.cpp
+	d3xp/EntityPasses.cpp
 	d3xp/EnvironmentProbe.cpp
 	d3xp/Fx.cpp
 	d3xp/GameEdit.cpp

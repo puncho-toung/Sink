@@ -1220,7 +1220,7 @@ void idAnim::CallFrameCommands( idEntity* ent, int from, int to ) const
 							gameLocal.Printf( "census %c frametrigger %s from %s\n", common->IsClient() ? 'C' : 'S', target->name.c_str(), ent->name.c_str() );
 						}
 						//puncho end
-						SetTimeState ts( target->timeGroup );
+						SetTimeState ts( target->GetTimeGroup() );
 						target->Signal( SIG_TRIGGER );
 						target->ProcessEvent( &EV_Activate, ent );
 						target->TriggerGuis();

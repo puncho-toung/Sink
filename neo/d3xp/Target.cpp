@@ -344,14 +344,14 @@ idTarget_WaitForButton::Event_Activate
 */
 void idTarget_WaitForButton::Event_Activate( idEntity* activator )
 {
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		BecomeInactive( TH_THINK );
 	}
 	else
 	{
 		// always allow during cinematics
-		cinematic = true;
+		SetCinematic( true );	//puncho - P2b.2.1a
 		BecomeActive( TH_THINK );
 	}
 }
@@ -365,7 +365,7 @@ void idTarget_WaitForButton::Think()
 {
 	idPlayer* player;
 
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		player = gameLocal.GetLocalPlayer();
 		if( player != NULL && ( !( player->oldButtons & BUTTON_ATTACK ) ) && ( player->usercmd.buttons & BUTTON_ATTACK ) )
@@ -574,7 +574,7 @@ void idTarget_FadeEntity::Event_Activate( idEntity* activator )
 	}
 
 	// always allow during cinematics
-	cinematic = true;
+	SetCinematic( true );	//puncho - P2b.2.1a
 	BecomeActive( TH_THINK );
 
 	ent = this;
@@ -605,7 +605,7 @@ void idTarget_FadeEntity::Think()
 	idVec4		fadeTo;
 	float		frac;
 
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		GetColor( fadeTo );
 		if( gameLocal.time >= fadeEnd )
@@ -1067,7 +1067,7 @@ void idTarget_SetInfluence::Spawn()
 	restoreOnTrigger = false;
 
 	// always allow during cinematics
-	cinematic = true;
+	SetCinematic( true );	//puncho - P2b.2.1a
 }
 
 /*
@@ -1386,7 +1386,7 @@ idTarget_SetInfluence::Think
 */
 void idTarget_SetInfluence::Think()
 {
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		idPlayer* player = gameLocal.GetLocalPlayer();
 		player->SetInfluenceFov( fovSetting.GetCurrentValue( gameLocal.time ) );
@@ -1627,7 +1627,7 @@ idTarget_SetFov::Event_Activate
 void idTarget_SetFov::Event_Activate( idEntity* activator )
 {
 	// always allow during cinematics
-	cinematic = true;
+	SetCinematic( true );	//puncho - P2b.2.1a
 
 	idPlayer* player = gameLocal.GetLocalPlayer();
 	fovSetting.Init( gameLocal.time, SEC2MS( spawnArgs.GetFloat( "time" ) ), player ? player->DefaultFov() : g_fov.GetFloat(), spawnArgs.GetFloat( "fov" ) );
@@ -1641,7 +1641,7 @@ idTarget_SetFov::Think
 */
 void idTarget_SetFov::Think()
 {
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		idPlayer* player = gameLocal.GetLocalPlayer();
 		player->SetInfluenceFov( fovSetting.GetCurrentValue( gameLocal.time ) );

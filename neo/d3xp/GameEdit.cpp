@@ -79,7 +79,7 @@ idCursor3D::Present
 void idCursor3D::Present()
 {
 	// don't present to the renderer if the entity hasn't changed
-	if( !( thinkFlags & TH_UPDATEVISUALS ) )
+	if( !( GetThinkFlags() & TH_UPDATEVISUALS ) )
 	{
 		return;
 	}
@@ -98,7 +98,7 @@ idCursor3D::Think
 */
 void idCursor3D::Think()
 {
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		drag.Evaluate( gameLocal.time );
 	}

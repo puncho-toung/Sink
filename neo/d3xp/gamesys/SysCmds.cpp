@@ -163,6 +163,76 @@ void Cmd_ActiveEntityList_f( const idCmdArgs& args )
 	gameLocal.Printf( "...%d active entities\n", count );
 }
 
+//puncho start - P2b.2.1a
+/*
+===================
+Cmd_ListEntityTable_f
+
+listEntityTable [n]: the hot table (d3xp/EntityHot.h): the latched switches, the live rows and their bits, the active
+mirror, the spatial passes, the counters, the BSS bytes and sizeof( idEntity ); with n, that entity number's row.
+===================
+*/
+static void Cmd_ListEntityTable_f( const idCmdArgs& args )
+{
+	const idEntityHot& hot = gameLocal.entityHot;
+	if( args.Argc() > 1 )
+	{
+		const int n = atoi( args.Argv( 1 ) );
+		if( n < 0 || n >= MAX_GENTITIES )
+		{
+			gameLocal.Printf( "listEntityTable: no entity number %s\n", args.Argv( 1 ) );
+			return;
+		}
+		const idEntity* ent = gameLocal.entities[ n ];
+		const hotThink_t& row = hot.think[ n ];
+		const hotSpatial_t& spatial = hot.spatial[ n ];
+		gameLocal.Printf( "%5d %-24s thinkFlags %02x bits %02x tier %d moved %d active slot %d\n", n, ent != NULL ? ent->GetName() : "(empty)",
+						  row.thinkFlags, row.bits, row.tier, hot.moved[ n ], hot.activeIndex[ n ] );
+		gameLocal.Printf( "      spatial origin ( %s ) bounds ( %s ) ( %s ) tic %d\n", spatial.origin.ToString(), spatial.absBounds[0].ToString(),
+						  spatial.absBounds[1].ToString(), spatial.tic );
+		return;
+	}
+
+	int live = 0;
+	int thinking = 0;
+	int bits[6] = { 0 };
+	for( int n = 0; n < MAX_GENTITIES; n++ )
+	{
+		if( gameLocal.entities[ n ] == NULL )
+		{
+			continue;
+		}
+		live++;
+		thinking += hot.think[ n ].thinkFlags != 0 ? 1 : 0;
+		for( int b = 0; b < 6; b++ )
+		{
+			bits[b] += ( hot.think[ n ].bits >> b ) & 1;
+		}
+	}
+	int tombstones = 0;
+	for( int i = 0; i < hot.activeNum; i++ )
+	{
+		tombstones += hot.activeOrder[ i ] < 0 ? 1 : 0;
+	}
+	const double ticksPerUs = Sys_ClockTicksPerSecond() * 1e-6;
+	const int bssBytes = sizeof( hot.think ) + sizeof( hot.spatial ) + sizeof( hot.moved ) + sizeof( hot.activeOrder ) + sizeof( hot.activeIndex );
+
+	gameLocal.Printf( "entityTable: g_entityTable %d verify %d (latched), mirror %s, %d spatial consumers\n", hot.tableOn, hot.verifyOn,
+					  hot.activeMaintained ? "maintained" : "off", hot.spatialConsumers );
+	gameLocal.Printf( "rows: %d live, %d thinking; dormancy %d shared %d phased %d skip %d cinematic %d timeGroup2 %d\n", live, thinking,
+					  bits[0], bits[1], bits[2], bits[3], bits[4], bits[5] );
+	gameLocal.Printf( "mirror: %d slots, %d live, %d tombstones, cursor %d; activeRebuilds %d, tombstoned %d, compactions %d\n", hot.activeNum,
+					  hot.activeNum - tombstones, tombstones, hot.activeCursor, hot.activeRebuilds, hot.activeTombstones, hot.activeCompactions );
+	gameLocal.Printf( "spatial: %d passes, %d rows, %.2f us a pass, %.1f ns a row; full refresh %d rows, %.1f ns a row\n", hot.spatialPasses,
+					  hot.spatialRows, hot.spatialPasses > 0 ? hot.spatialTicks / ticksPerUs / hot.spatialPasses : 0.0,
+					  hot.spatialRows > 0 ? hot.spatialTicks / ticksPerUs * 1000.0 / hot.spatialRows : 0.0, hot.spatialFullRows,
+					  hot.spatialFullRows > 0 ? hot.spatialFullTicks / ticksPerUs * 1000.0 / hot.spatialFullRows : 0.0 );
+	gameLocal.Printf( "hotMismatch %d droppedWrites %d\n", hot.hotMismatch, hot.droppedWrites );
+	gameLocal.Printf( "BSS %d bytes (%d a row of %d), entityHot %d bytes, sizeof( idEntity ) %d\n", bssBytes, bssBytes / MAX_GENTITIES,
+					  MAX_GENTITIES, ( int )sizeof( idEntityHot ), ( int )sizeof( idEntity ) );
+}
+//puncho end
+
 /*
 ===================
 Cmd_ListSpawnArgs_f
@@ -5365,6 +5435,7 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "listThreads",			idThread::ListThreads_f,	CMD_FL_GAME | CMD_FL_CHEAT,	"lists script threads" );
 	cmdSystem->AddCommand( "listEntities",			Cmd_EntityList_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"lists game entities" );
 	cmdSystem->AddCommand( "listActiveEntities",	Cmd_ActiveEntityList_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"lists active game entities" );
+	cmdSystem->AddCommand( "listEntityTable",		Cmd_ListEntityTable_f,		CMD_FL_GAME,				"listEntityTable [n]: the hot table's switches, rows, mirror and counters, or entity n's row" );	//puncho - P2b.2.1a
 	cmdSystem->AddCommand( "listMonsters",			idAI::List_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"lists monsters" );
 	cmdSystem->AddCommand( "listSpawnArgs",			Cmd_ListSpawnArgs_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"list the spawn args of an entity", idGameLocal::ArgCompletion_EntityName );
 	cmdSystem->AddCommand( "listSpawnIds",			Cmd_ListSpawnIds_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"lists the spawn-id generations of the map's entities, with a digest" );	//puncho - identity (P1-A2)

@@ -1946,7 +1946,7 @@ void idElevator::Event_Touch( idEntity* other, trace_t* trace )
 
 	lastTouchTime = gameLocal.slow.time;
 
-	if( thinkFlags & TH_PHYSICS )
+	if( GetThinkFlags() & TH_PHYSICS )
 	{
 		return;
 	}
@@ -3867,7 +3867,7 @@ void idDoor::ClientThink( const int curTime, const float fraction, const bool pr
 
 	idMover_Binary::ClientThink( curTime, fraction, predict );
 
-	if( thinkFlags & TH_PHYSICS )
+	if( GetThinkFlags() & TH_PHYSICS )
 	{
 		// update trigger position
 		if( GetMasterPosition( masterOrigin, masterAxis ) )
@@ -3896,7 +3896,7 @@ void idDoor::Think()
 
 	idMover_Binary::Think();
 
-	if( thinkFlags & TH_PHYSICS )
+	if( GetThinkFlags() & TH_PHYSICS )
 	{
 		// update trigger position
 		if( GetMasterPosition( masterOrigin, masterAxis ) )
@@ -4818,7 +4818,7 @@ void idPlat::RunPhysics_NoBlocking()
 	bool		moved;
 
 	// don't run physics if not enabled
-	if( !( thinkFlags & TH_PHYSICS ) )
+	if( !( GetThinkFlags() & TH_PHYSICS ) )
 	{
 		// however do update any animation controllers
 		if( UpdateAnimationControllers() )
@@ -4931,7 +4931,7 @@ void idPlat::ClientThink( const int curTime, const float fraction, const bool pr
 
 	Present();
 
-	if ( thinkFlags & TH_PHYSICS ) {
+	if ( GetThinkFlags() & TH_PHYSICS ) {
 		// update trigger position
 		if ( GetMasterPosition( masterOrigin, masterAxis ) ) {
 			if ( trigger ) {
@@ -4954,7 +4954,7 @@ void idPlat::Think()
 
 	idMover_Binary::Think();
 
-	if( thinkFlags & TH_PHYSICS )
+	if( GetThinkFlags() & TH_PHYSICS )
 	{
 		// update trigger position
 		if( GetMasterPosition( masterOrigin, masterAxis ) )

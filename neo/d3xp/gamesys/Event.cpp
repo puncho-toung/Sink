@@ -488,7 +488,7 @@ void idEvent::Schedule( idClass* obj, const idTypeInfo* type, int time )
 
 	eventNode.Remove();
 
-	if( obj->IsType( idEntity::Type ) && ( ( ( idEntity* )( obj ) )->timeGroup == TIME_GROUP2 ) )
+	if( obj->IsType( idEntity::Type ) && ( ( ( idEntity* )( obj ) )->GetTimeGroup() == TIME_GROUP2 ) )
 	{
 		event = FastEventQueue.Next();
 		while( ( event != NULL ) && ( this->time >= event->time ) )

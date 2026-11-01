@@ -240,14 +240,21 @@ public:
 	idDict					spawnArgs;				// key/value pairs used to spawn and initialize entity
 	idScriptObject			scriptObject;			// contains all script defined data for this entity
 
+	//puncho - P2b.2.1a: thinkFlags, cinematic and timeGroup are the hot table's think group (BOTH, EntityHot.h): private
+	// where they stood, so no offset moves, and written only by SetThinkFlags, SetCinematic and SetTimeGroup, which write
+	// the column with them; the constructor and Restore set them alone (RegisterRow and SyncAll copy them)
+private:
 	int						thinkFlags;				// TH_? flags
+public:
 	float					dormantRadius;
 	float					dormantHysteresis;
 	float					dormantEngagedScale;
 	int						dormantWakeDeferredAt;
 	bool					dormantWakeRequested;
 	int						dormantStart;			// time that the entity was first closed off from player
+private:
 	bool					cinematic;				// during cinematics, entity will only think if cinematic is set
+public:
 
 	renderView_t* 			renderView;				// for camera views from this entity
 	idEntity* 				cameraTarget;			// any remoteRenderMap shaders will use this
@@ -274,7 +281,9 @@ public:
 		bool				skipReplication		: 1; // don't replicate this entity over the network.
 	} fl;
 
+private:
 	int						timeGroup;
+public:
 
 	bool					noGrab;
 
@@ -329,6 +338,35 @@ public:
 	void					BecomeInactive( int flags );
 	void					UpdatePVSAreas( const idVec3& pos );
 	void					BecomeReplicated();
+	//puncho start - P2b.2.1a: the think group's accessors; a setter writes the member and its hot table column together
+	int						GetThinkFlags() const
+	{
+		return thinkFlags;
+	}
+	int						GetTimeGroup() const
+	{
+		return timeGroup;
+	}
+	bool					IsCinematic() const
+	{
+		return cinematic;
+	}
+	void					SetThinkFlags( int flags )
+	{
+		thinkFlags = flags;
+		gameLocal.entityHot.SetThinkFlags( entityNumber, flags );
+	}
+	void					SetTimeGroup( int group )
+	{
+		timeGroup = group;
+		gameLocal.entityHot.SetTimeGroup( entityNumber, group );
+	}
+	void					SetCinematic( bool enable )
+	{
+		cinematic = enable;
+		gameLocal.entityHot.SetCinematic( entityNumber, enable );
+	}
+	//puncho end
 
 	// visuals
 	virtual void			Present();

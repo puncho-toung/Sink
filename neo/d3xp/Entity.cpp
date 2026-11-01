@@ -678,7 +678,7 @@ void idEntity::Spawn()
 		// make sure we're hidden, since a spawn function might not set it up right
 		PostEventMS( &EV_Hide, 0 );
 	}
-	cinematic = spawnArgs.GetBool( "cinematic", "0" );
+	SetCinematic( spawnArgs.GetBool( "cinematic", "0" ) );	//puncho - P2b.2.1a
 
 	networkSync = spawnArgs.FindKey( "networkSync" );
 	if( networkSync )
@@ -800,6 +800,11 @@ idEntity::~idEntity()
 		BecomeInactive( thinkFlags );
 	}
 	activeNode.Remove();
+	//puncho - P2b.2.1a: the mirror loses the entry with the node, since the slot can be reused before the next rebuild
+	if( gameLocal.entityHot.activeMaintained )
+	{
+		gameLocal.entityHot.ActiveTombstone( entityNumber );
+	}
 
 	Signal( SIG_REMOVED );
 
@@ -1685,12 +1690,17 @@ void idEntity::BecomeActive( int flags )
 	}
 
 	int oldFlags = thinkFlags;
-	thinkFlags |= flags;
+	SetThinkFlags( thinkFlags | flags );	//puncho - P2b.2.1a
 	if( thinkFlags )
 	{
 		if( !IsActive() )
 		{
 			activeNode.AddToEnd( gameLocal.activeEntities );
+			//puncho - P2b.2.1a: appended in the list's order, so a walk over the mirror meets it as the list walk would
+			if( gameLocal.entityHot.activeMaintained )
+			{
+				gameLocal.entityHot.ActiveAppend( entityNumber );
+			}
 		}
 		else if( !oldFlags )
 		{
@@ -1725,7 +1735,7 @@ void idEntity::BecomeInactive( int flags )
 
 	if( thinkFlags )
 	{
-		thinkFlags &= ~flags;
+		SetThinkFlags( thinkFlags & ~flags );	//puncho - P2b.2.1a
 		if( !thinkFlags && IsActive() )
 		{
 			gameLocal.numEntitiesToDeactivate++;
@@ -2145,6 +2155,7 @@ idEntity::ClearPVSAreas
 void idEntity::ClearPVSAreas()
 {
 	numPVSAreas = -1;
+	gameLocal.entityHot.MarkMoved( entityNumber );	//puncho - P2b.2.1a: the spatial pass refreshes the row (K5)
 }
 
 /*
@@ -2734,7 +2745,7 @@ void idEntity::FinishBind()
 	JoinTeam( bindMaster );
 
 	// if our bindMaster is enabled during a cinematic, we must be, too
-	cinematic = bindMaster->cinematic;
+	SetCinematic( bindMaster->cinematic );	//puncho - P2b.2.1a
 
 	// make sure the team master is active so that physics get run
 	teamMaster->BecomeActive( TH_PHYSICS );
@@ -7098,13 +7109,14 @@ idEntity::DetermineTimeGroup
 */
 void idEntity::DetermineTimeGroup( bool slowmo )
 {
+	//puncho - P2b.2.1a: through the setter, as the grabber's writes (Grabber.cpp)
 	if( slowmo || common->IsMultiplayer() )
 	{
-		timeGroup = TIME_GROUP1;
+		SetTimeGroup( TIME_GROUP1 );
 	}
 	else
 	{
-		timeGroup = TIME_GROUP2;
+		SetTimeGroup( TIME_GROUP2 );
 	}
 }
 
@@ -7313,7 +7325,7 @@ idAnimatedEntity::UpdateAnimation
 void idAnimatedEntity::UpdateAnimation()
 {
 	// don't do animations if they're not enabled
-	if( !( thinkFlags & TH_ANIMATE ) )
+	if( !( GetThinkFlags() & TH_ANIMATE ) )
 	{
 		return;
 	}
@@ -7507,7 +7519,7 @@ void idAnimatedEntity::AddLocalDamageEffect( jointHandle_t jointNum, const idVec
 	idVec3 origin, dir;
 	idMat3 axis;
 
-	SetTimeState ts( timeGroup );
+	SetTimeState ts( GetTimeGroup() );
 
 	axis = renderEntity.joints[jointNum].ToMat3() * renderEntity.axis;
 	origin = renderEntity.origin + renderEntity.joints[jointNum].ToVec3() * renderEntity.axis;
@@ -7624,7 +7636,7 @@ void idAnimatedEntity::UpdateDamageEffects()
 		axis *= renderEntity.axis;
 		origin = renderEntity.origin + origin * renderEntity.axis;
 		start = origin + de->localOrigin * axis;
-		if( !gameLocal.smokeParticles->EmitSmoke( de->type, de->time, gameLocal.random.CRandomFloat(), start, axis, timeGroup /*_D3XP*/ ) )
+		if( !gameLocal.smokeParticles->EmitSmoke( de->type, de->time, gameLocal.random.CRandomFloat(), start, axis, GetTimeGroup() /*_D3XP*/ ) )
 		{
 			de->time = 0;
 		}

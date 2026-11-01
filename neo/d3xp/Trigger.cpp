@@ -1401,7 +1401,7 @@ idTrigger_Touch::Think
 */
 void idTrigger_Touch::Think()
 {
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		TouchEntities();
 	}
@@ -1415,7 +1415,7 @@ idTrigger_Touch::Event_Trigger
 */
 void idTrigger_Touch::Event_Trigger( idEntity* activator )
 {
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		BecomeInactive( TH_THINK );
 	}

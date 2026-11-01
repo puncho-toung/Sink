@@ -161,6 +161,11 @@ idCVar ai_profileLog(				"ai_profileLog",			"",				CVAR_GAME, "file name: append
 idCVar g_passProfile(				"g_passProfile",			"0",			CVAR_GAME | CVAR_INTEGER, "1 = time RunFrame's entity passes into ai_profileLog's pass columns, one whole tic in g_passProfileEvery entity by entity; 2 = plus L2 misses, cycles and instructions around the whole passes (Linux perf counters; falls back to 1 when they cannot open)", 0, 2 );
 idCVar g_passProfileEvery(			"g_passProfileEvery",		"8",			CVAR_GAME | CVAR_INTEGER, "g_passProfile times one whole tic in this many, so a timed tic's walk, think sum and walk overhead come from the same entities", 1, 1024 );
 //puncho end
+//puncho start - P2b.2.1a (plans/map-graph/stages/S2b-2-entity-tables.md K3, K5, K6): the hot table (d3xp/EntityHot.h);
+// latched once per tic, host-side, neither synced nor archived
+idCVar g_entityTable(				"g_entityTable",			"0",			CVAR_GAME | CVAR_BOOL, "1 = keep the hot table's active mirror in the active list's order; 0 = today's walks over the same storage, bit for bit" );
+idCVar g_entityTableVerify(			"g_entityTableVerify",		"0",			CVAR_GAME | CVAR_BOOL | CVAR_CHEAT, "compare every hot table row with its entity, and the active mirror with the list, at the end of each tic; prints the first 8 differences (listEntityTable's hotMismatch counts them all)" );
+//puncho end
 //puncho start - ai-combat (plans/ai-combat/00-PLAN.md §2.7): host-side measurement; not archived, synced or cheat-flagged
 idCVar ai_benchSeed(				"ai_benchSeed",				"0",			CVAR_GAME | CVAR_INTEGER, "seed of the game's random number generator at map load in single player; 0 = stock (0); multiplayer keeps the server's seed" );
 //puncho end

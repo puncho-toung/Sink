@@ -2000,7 +2000,7 @@ void idActor::Attach( idEntity* ent )
 	idMat3 newAxis = rotate * axis;
 	ent->SetAxis( newAxis );
 	ent->BindToJoint( this, joint, true );
-	ent->cinematic = cinematic;
+	ent->SetCinematic( IsCinematic() );	//puncho - P2b.2.1a
 }
 
 /*
@@ -2509,7 +2509,7 @@ void idActor::Damage( idEntity* inflictor, idEntity* attacker, const idVec3& dir
 		damageNotByFists = true;
 	}
 
-	SetTimeState ts( timeGroup );
+	SetTimeState ts( GetTimeGroup() );
 
 	// Helltime boss is immune to all projectiles except the helltime killer
 	if( finalBoss && idStr::Icmp( GetEntityDefName(), "monster_hunter_helltime" ) == 0 &&  idStr::Icmp( inflictor->GetEntityDefName(), "projectile_helltime_killer" ) )

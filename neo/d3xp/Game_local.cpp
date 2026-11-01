@@ -233,6 +233,7 @@ void idGameLocal::Clear()
 	spawnedEntities.Clear();
 	numSpawnedEntities = 0;	//puncho - P2b.0.3
 	activeEntities.Clear();
+	entityHot.Clear();	//puncho - P2b.2.1a
 	numEntitiesToDeactivate = 0;
 	sortPushers = false;
 	sortTeamMasters = false;
@@ -520,7 +521,7 @@ bool idGameLocal::SaveGame( idFile* f, idFile* strings, int& storeBytes, int& ob
 	idEntity* ent;
 	idEntity* link;
 
-	int startTimeMs = Sys_Milliseconds();
+	const uint64 startTimeUs = Sys_Microseconds();	//puncho - P2b.2.1a: microseconds (goals-r1 F7), the line keeps its ms
 	if( g_recordSaveGameTrace.GetBool() )
 	{
 		bool result = BeginTraceRecording( "e:\\savegame_trace.pix2" );
@@ -754,8 +755,8 @@ bool idGameLocal::SaveGame( idFile* f, idFile* strings, int& storeBytes, int& ob
 	objectBytes = savegame.GetObjectBytes();
 	//puncho end
 
-	int endTimeMs = Sys_Milliseconds();
-	idLib::Printf( "Save time: %dms\n", ( endTimeMs - startTimeMs ) );
+	const uint64 saveUs = Sys_Microseconds() - startTimeUs;	//puncho - P2b.2.1a
+	idLib::Printf( "Save time: %dms (%llu us)\n", ( int )( saveUs / 1000 ), ( unsigned long long )saveUs );
 
 	if( g_recordSaveGameTrace.GetBool() )
 	{
@@ -1094,6 +1095,12 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	spawnedEntities.Clear();
 	numSpawnedEntities = 0;	//puncho - P2b.0.3
 	activeEntities.Clear();
+	//puncho start - P2b.2.1a: the hot table's rows and mirror go with the list (ENTITY_TABLE: goals-r1 F7)
+	{
+		idScopedLoadSpan tableSpan( SPAN_ENTITY_TABLE );
+		entityHot.Clear();
+	}
+	//puncho end
 	aimAssistEntities.Clear();
 	numEntitiesToDeactivate = 0;
 	sortTeamMasters = false;
@@ -1906,6 +1913,17 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 	savegame.EndTraceScope();	//puncho - stream-trace
 
 	savegame.RestoreObjects();
+	//puncho start - P2b.2.1a: Restore read the think members directly and the list was relinked above, past the setters
+	// and the mirror: the rows and the mirror again from the restored entities (ENTITY_TABLE: goals-r1 F7)
+	{
+		idScopedLoadSpan tableSpan( SPAN_ENTITY_TABLE );
+		entityHot.SyncAll();
+		if( entityHot.activeMaintained )
+		{
+			entityHot.ActiveRebuild();
+		}
+	}
+	//puncho end
 	worldStore.RestoreOrdinals();
 	mapGraphDirector.MapLoaded();
 
@@ -2827,6 +2845,11 @@ void idGameLocal::SortActiveEntityList()
 				ent->activeNode.AddToFront( activeEntities );
 			}
 		}
+		//puncho - P2b.2.1a: inside the body that reordered, never after the call, which runs every tic (goals-r1 F2)
+		if( entityHot.activeMaintained )
+		{
+			entityHot.ActiveRebuild();
+		}
 	}
 
 	// if the active entity list needs to be reordered to place pushers at the front
@@ -2878,6 +2901,11 @@ void idGameLocal::SortActiveEntityList()
 				}
 			}
 		}
+		//puncho - P2b.2.1a
+		if( entityHot.activeMaintained )
+		{
+			entityHot.ActiveRebuild();
+		}
 	}
 
 	sortTeamMasters = false;
@@ -2915,7 +2943,7 @@ int idGameLocal::RunTimeGroup2( idUserCmdMgr& userCmdMgr )
 
 	for( ent = activeEntities.Next(); ent != NULL; ent = ent->activeNode.Next() )
 	{
-		if( ent->timeGroup != TIME_GROUP2 )
+		if( ent->GetTimeGroup() != TIME_GROUP2 )
 		{
 			continue;
 		}
@@ -3291,6 +3319,9 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			GameVerify_BeginTic();
 			//puncho end
 
+			//puncho - P2b.2.1a: the hot table's switches for this tic, outside the timed passes (EntityPasses.cpp)
+			entityHot.LatchTic( g_entityTable.GetBool(), g_entityTableVerify.GetBool() );
+
 			//puncho start - P2b.0.3: a timed tic brackets the passes from here to the events
 			PassProfileBeginTic();
 			if( passTimed )
@@ -3349,7 +3380,7 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 				num = 0;
 				for( ent = activeEntities.Next(); ent != NULL; ent = ent->activeNode.Next() )
 				{
-					if( g_cinematic.GetBool() && inCinematic && !ent->cinematic )
+					if( g_cinematic.GetBool() && inCinematic && !ent->IsCinematic() )
 					{
 						ent->GetPhysics()->UpdateTime( time );
 						continue;
@@ -3373,7 +3404,7 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 					num = 0;
 					for( ent = activeEntities.Next(); ent != NULL; ent = ent->activeNode.Next() )
 					{
-						if( g_cinematic.GetBool() && !ent->cinematic )
+						if( g_cinematic.GetBool() && !ent->IsCinematic() )
 						{
 							ent->GetPhysics()->UpdateTime( time );
 							continue;
@@ -3387,7 +3418,7 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 					num = 0;
 					for( ent = activeEntities.Next(); ent != NULL; ent = ent->activeNode.Next() )
 					{
-						if( ent->timeGroup != TIME_GROUP1 )
+						if( ent->GetTimeGroup() != TIME_GROUP1 )
 						{
 							continue;
 						}
@@ -3465,11 +3496,16 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 				for( ent = activeEntities.Next(); ent != NULL; ent = next_ent )
 				{
 					next_ent = ent->activeNode.Next();
-					if( !ent->thinkFlags )
+					if( !ent->GetThinkFlags() )
 					{
 						ent->activeNode.Remove();
 						c++;
 					}
+				}
+				//puncho - P2b.2.1a: inside the prune, which runs only on a tic that deactivated (goals-r1 F2)
+				if( entityHot.activeMaintained )
+				{
+					entityHot.ActiveRebuild();
 				}
 				//assert( numEntitiesToDeactivate == c );
 				numEntitiesToDeactivate = 0;
@@ -3520,6 +3556,15 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			//puncho end
 
 			timer_events.Stop();
+
+			//puncho start - P2b.2.1a: the tic-end spatial rows for their consumers, then g_entityTableVerify's compare of
+			// every row and the mirror against the entities and the list (EntityPasses.cpp); outside the timed passes
+			entityHot.SpatialPass();
+			if( entityHot.verifyOn )
+			{
+				entityHot.Verify();
+			}
+			//puncho end
 
 			//puncho start - camera-relative WP-CRV: the tic's state is final; walkTics prints its pose and queues its capture
 			GameVerify_EndTic();
@@ -5346,6 +5391,7 @@ void idGameLocal::RegisterEntity( idEntity* ent, int forceSpawnId, const idDict&
 	spawnIds[ spawn_entnum ] = gen;
 	//puncho end
 	ent->entityNumber = spawn_entnum;
+	entityHot.RegisterRow( ent );	//puncho - P2b.2.1a: the row from the constructor's members, now the entity has a number
 	ent->spawnNode.AddToEnd( spawnedEntities );
 	numSpawnedEntities++;	//puncho - P2b.0.3
 
@@ -5406,6 +5452,7 @@ void idGameLocal::UnregisterEntity( idEntity* ent )
 		{
 			firstFreeEntityIndex[ freeListType ] = worldStore.IsActive() && freeListType == 0 ? Max( mapSpawnCount, ent->entityNumber ) : ent->entityNumber;
 		}
+		entityHot.UnregisterRow( ent->entityNumber );	//puncho - P2b.2.1a
 		ent->entityNumber = ENTITYNUM_NONE;
 	}
 }
@@ -5454,6 +5501,7 @@ idEntity* idGameLocal::SpawnEntityType( const idTypeInfo& classdef, const idDict
 		}
 		obj = classdef.CreateInstance();
 		obj->CallSpawn();
+		entityHot.SyncRow( static_cast<idEntity*>( obj ) );	//puncho - P2b.2.1a: the row as Spawn left the members
 		JoinEntityBudget( static_cast<idEntity*>( obj ), budget );
 	}
 
@@ -5557,6 +5605,7 @@ bool idGameLocal::SpawnEntityDef( const idDict& args, idEntity** ent, bool setDe
 
 		if( obj->IsType( idEntity::Type ) )
 		{
+			entityHot.SyncRow( static_cast<idEntity*>( obj ) );	//puncho - P2b.2.1a: the row as Spawn left the members
 			JoinEntityBudget( static_cast<idEntity*>( obj ), budget );
 			GrowMaxObstacleRadius( static_cast<idEntity*>( obj ) );	//puncho - ai-avoidance (WP-A4)
 		}
@@ -6873,7 +6922,7 @@ void idGameLocal::SetCamera( idCamera* cam )
 			// kill any active monsters that are enemies of the player
 			for( ent = spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
 			{
-				if( ent->cinematic || ent->fl.isDormant )
+				if( ent->IsCinematic() || ent->fl.isDormant )
 				{
 					// only kill entities that aren't needed for cinematics and aren't dormant
 					continue;
@@ -8058,7 +8107,7 @@ void idGameLocal::GetMapStats( mapGameStats_t& stats ) const
 	{
 		stats.entities++;
 		stats.corpseLive += ent->IsType( idCorpse::Type ) ? 1 : 0;
-		if( ent->thinkFlags != 0 )
+		if( ent->GetThinkFlags() != 0 )
 		{
 			stats.activeEntities++;
 		}

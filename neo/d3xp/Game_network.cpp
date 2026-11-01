@@ -1958,7 +1958,7 @@ void idGameLocal::ClientRunFrame( idUserCmdMgr& cmdMgr, bool lastPredictFrame, g
 	// run prediction on all active entities
 	for( ent = activeEntities.Next(); ent != NULL; ent = ent->activeNode.Next() )
 	{
-		ent->thinkFlags |= TH_PHYSICS;
+		ent->SetThinkFlags( ent->GetThinkFlags() | TH_PHYSICS );	//puncho - P2b.2.1a: through the setter (EntityHot.h)
 
 		if( ent->entityNumber != GetLocalClientNum() )
 		{

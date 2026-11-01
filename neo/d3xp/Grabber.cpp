@@ -269,7 +269,7 @@ void idGrabber::StartDrag( idEntity* grabEnt, int id )
 	}
 
 	// Move the object to the fast group (helltime)
-	grabEnt->timeGroup = TIME_GROUP2;
+	grabEnt->SetTimeGroup( TIME_GROUP2 );	//puncho - P2b.2.1a
 
 	// Handle specific class types
 	if( grabEnt->IsType( idProjectile::Type ) )
@@ -368,14 +368,14 @@ void idGrabber::StopDrag( bool dropOnly )
 		// If a cinematic has started, allow dropped object to think in cinematics
 		if( gameLocal.inCinematic )
 		{
-			ent->cinematic = true;
+			ent->SetCinematic( true );	//puncho - P2b.2.1a
 		}
 
 		// Restore Gravity
 		ent->GetPhysics()->SetGravity( saveGravity );
 
 		// Move the object back to the slow group (helltime)
-		ent->timeGroup = TIME_GROUP1;
+		ent->SetTimeGroup( TIME_GROUP1 );	//puncho - P2b.2.1a
 
 		if( holdingAF )
 		{

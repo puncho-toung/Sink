@@ -110,6 +110,7 @@ void gameError( const char* fmt, ... );
 #include "gamesys/Schema.h"	//puncho - P2b.1.2: the record lists' RF_ enums expand inside the class bodies below
 #include "gamesys/Record.h"	//puncho - P2b.1.2: idRecordOut, idRecordIn, recordFrame_t
 #include "gamesys/MapGraph.h"
+#include "EntityHot.h"	//puncho - P2b.2.1a: idGameLocal holds the hot table
 
 #include "script/Script_Program.h"
 
@@ -1157,6 +1158,12 @@ private:
 	void					RandomizeInitialSpawns();
 
 	bool					SimulateProjectiles();
+
+	//puncho start - P2b.2.1a: the hot table, rows by entity number as entities[] (EntityHot.h). The last member, so no
+	// other moves: beside entities[] it shifted every later member by its 933,960 bytes
+public:
+	idEntityHot				entityHot;
+	//puncho end
 };
 
 //============================================================================

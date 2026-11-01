@@ -566,7 +566,7 @@ void idBrittleFracture::Present()
 {
 
 	// don't present to the renderer if the entity hasn't changed
-	if( !( thinkFlags & TH_UPDATEVISUALS ) )
+	if( !( GetThinkFlags() & TH_UPDATEVISUALS ) )
 	{
 		return;
 	}
@@ -626,7 +626,7 @@ void idBrittleFracture::Think()
 		return;
 	}
 
-	if( thinkFlags & TH_PHYSICS )
+	if( GetThinkFlags() & TH_PHYSICS )
 	{
 
 		startTime = gameLocal.previousTime;

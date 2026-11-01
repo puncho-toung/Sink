@@ -1286,7 +1286,7 @@ void idAI::Think()
 	}
 	//puncho end
 
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		// clear out the enemy when he dies or is hidden
 		idActor* enemyEnt = enemy.GetEntity();
@@ -1410,7 +1410,7 @@ void idAI::Think()
 		AI_SPECIAL_DAMAGE = 0;
 		AI_PUSHED = false;
 	}
-	else if( thinkFlags & TH_PHYSICS )
+	else if( GetThinkFlags() & TH_PHYSICS )
 	{
 		//puncho start - ai-harness: Minions::Move::Physics, so the Anim::Controllers reached through RunPhysics stays inside usMovePhysics (00-PLAN.md §2.1, D2)
 		{
@@ -4415,7 +4415,7 @@ const idDeclParticle* idAI::SpawnParticlesOnJoint( particleEmitter_t& pe, const 
 			pe.time = gameLocal.time;
 		}
 		pe.particle = static_cast<const idDeclParticle*>( declManager->FindType( DECL_PARTICLE, particleName ) );
-		gameLocal.smokeParticles->EmitSmoke( pe.particle, pe.time, gameLocal.random.CRandomFloat(), origin, axis, timeGroup /*_D3XP*/ );
+		gameLocal.smokeParticles->EmitSmoke( pe.particle, pe.time, gameLocal.random.CRandomFloat(), origin, axis, GetTimeGroup() /*_D3XP*/ );
 	}
 
 	return pe.particle;
@@ -4835,7 +4835,7 @@ void idAI::Activate( idEntity* activator )
 		}
 
 		// update the script in cinematics so that entities don't start anims or show themselves a frame late.
-		if( cinematic )
+		if( IsCinematic() )
 		{
 			UpdateAIScript();
 
@@ -6232,7 +6232,7 @@ idAI::UpdateParticles
 */
 void idAI::UpdateParticles()
 {
-	if( ( thinkFlags & TH_UPDATEPARTICLES ) && !IsHidden() )
+	if( ( GetThinkFlags() & TH_UPDATEPARTICLES ) && !IsHidden() )
 	{
 		idVec3 realVector;
 		idMat3 realAxis;
@@ -6257,7 +6257,7 @@ void idAI::UpdateParticles()
 					realVector = physicsObj.GetOrigin() + ( realVector + modelOffset ) * ( viewAxis * physicsObj.GetGravityAxis() );
 				}
 
-				if( !gameLocal.smokeParticles->EmitSmoke( particles[i].particle, particles[i].time, gameLocal.random.CRandomFloat(), realVector, realAxis, timeGroup /*_D3XP*/ ) )
+				if( !gameLocal.smokeParticles->EmitSmoke( particles[i].particle, particles[i].time, gameLocal.random.CRandomFloat(), realVector, realAxis, GetTimeGroup() /*_D3XP*/ ) )
 				{
 					if( restartParticles )
 					{

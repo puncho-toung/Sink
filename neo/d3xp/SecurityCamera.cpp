@@ -377,7 +377,7 @@ void idSecurityCamera::Think()
 	float pct;
 	float travel;
 
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		if( g_showEntityInfo.GetBool() )
 		{
@@ -394,7 +394,7 @@ void idSecurityCamera::Think()
 	// run physics
 	RunPhysics();
 
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		if( CanSeePlayer() )
 		{
@@ -614,7 +614,7 @@ Present is called to allow entities to generate refEntities, lights, etc for the
 void idSecurityCamera::Present()
 {
 	// don't present to the renderer if the entity hasn't changed
-	if( !( thinkFlags & TH_UPDATEVISUALS ) )
+	if( !( GetThinkFlags() & TH_UPDATEVISUALS ) )
 	{
 		return;
 	}

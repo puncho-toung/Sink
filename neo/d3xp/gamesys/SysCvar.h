@@ -103,6 +103,10 @@ extern idCVar	ai_profileLog;
 extern idCVar	g_passProfile;
 extern idCVar	g_passProfileEvery;
 //puncho end
+//puncho start - P2b.2.1a
+extern idCVar	g_entityTable;
+extern idCVar	g_entityTableVerify;
+//puncho end
 //puncho start - ai-combat
 extern idCVar	ai_benchSeed;
 //puncho end

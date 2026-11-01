@@ -141,12 +141,12 @@ idItem::UpdateRenderEntity
 bool idItem::UpdateRenderEntity( renderEntity_s* renderEntity, const renderView_t* renderView ) const
 {
 
-	if( lastRenderViewTime == renderView->time[timeGroup] )
+	if( lastRenderViewTime == renderView->time[GetTimeGroup()] )
 	{
 		return false;
 	}
 
-	lastRenderViewTime = renderView->time[timeGroup];
+	lastRenderViewTime = renderView->time[GetTimeGroup()];
 
 	// check for glow highlighting if near the center of the view
 	idVec3 dir = renderEntity->origin - renderView->vieworg;
@@ -154,7 +154,7 @@ bool idItem::UpdateRenderEntity( renderEntity_s* renderEntity, const renderView_
 	float d = dir * renderView->viewaxis[0];
 
 	// two second pulse cycle
-	float cycle = ( renderView->time[timeGroup] - inViewTime ) / 2000.0f;
+	float cycle = ( renderView->time[GetTimeGroup()] - inViewTime ) / 2000.0f;
 
 	if( d > 0.94f )
 	{
@@ -164,7 +164,7 @@ bool idItem::UpdateRenderEntity( renderEntity_s* renderEntity, const renderView_
 			if( cycle > lastCycle )
 			{
 				// restart at the beginning
-				inViewTime = renderView->time[timeGroup];
+				inViewTime = renderView->time[GetTimeGroup()];
 				cycle = 0.0f;
 			}
 		}
@@ -242,7 +242,7 @@ idItem::Think
 */
 void idItem::Think()
 {
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		if( spin )
 		{
@@ -1869,7 +1869,7 @@ void idMoveableItem::Spawn()
 	float density, friction, bouncyness, tsize;
 	idStr clipModelName;
 	idBounds bounds;
-	SetTimeState ts( timeGroup );
+	SetTimeState ts( GetTimeGroup() );
 
 	// create a trigger for item pickup
 	spawnArgs.GetFloat( "triggersize", "16.0", tsize );
@@ -1946,7 +1946,7 @@ void idMoveableItem::ClientThink( const int curTime, const float fraction, const
 
 	InterpolatePhysicsOnly( fraction );
 
-	if( thinkFlags & TH_PHYSICS )
+	if( GetThinkFlags() & TH_PHYSICS )
 	{
 		// update trigger position
 		trigger->Link( gameLocal.clip, this, 0, GetPhysics()->GetOrigin(), mat3_identity );
@@ -1965,15 +1965,15 @@ void idMoveableItem::Think()
 
 	RunPhysics();
 
-	if( thinkFlags & TH_PHYSICS )
+	if( GetThinkFlags() & TH_PHYSICS )
 	{
 		// update trigger position
 		trigger->Link( gameLocal.clip, this, 0, GetPhysics()->GetOrigin(), mat3_identity );
 	}
 
-	if( thinkFlags & TH_UPDATEPARTICLES )
+	if( GetThinkFlags() & TH_UPDATEPARTICLES )
 	{
-		if( !gameLocal.smokeParticles->EmitSmoke( smoke, smokeTime, gameLocal.random.CRandomFloat(), GetPhysics()->GetOrigin(), GetPhysics()->GetAxis(), timeGroup /*_D3XP*/ ) )
+		if( !gameLocal.smokeParticles->EmitSmoke( smoke, smokeTime, gameLocal.random.CRandomFloat(), GetPhysics()->GetOrigin(), GetPhysics()->GetAxis(), GetTimeGroup() /*_D3XP*/ ) )
 		{
 			if( !repeatSmoke )
 			{
@@ -2220,7 +2220,7 @@ void idMoveableItem::Gib( const idVec3& dir, const char* damageDefName )
 	if( *smokeName != '\0' )
 	{
 		const idDeclParticle* smoke = static_cast<const idDeclParticle*>( declManager->FindType( DECL_PARTICLE, smokeName ) );
-		gameLocal.smokeParticles->EmitSmoke( smoke, gameLocal.time, gameLocal.random.CRandomFloat(), renderEntity.origin, renderEntity.axis, timeGroup /*_D3XP*/ );
+		gameLocal.smokeParticles->EmitSmoke( smoke, gameLocal.time, gameLocal.random.CRandomFloat(), renderEntity.origin, renderEntity.axis, GetTimeGroup() /*_D3XP*/ );
 	}
 	// remove the entity
 	PostEventMS( &EV_Remove, 0 );

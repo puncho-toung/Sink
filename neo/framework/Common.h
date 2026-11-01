@@ -108,6 +108,7 @@ enum loadSpan_t
 	SPAN_FREE_CM,
 	SPAN_FREE_AAS,
 	SPAN_FREE_ENTS,
+	SPAN_ENTITY_TABLE,	//puncho - P2b.2.1a: the hot table's clears and its restore rebuild (EntityHot.h)
 	LOAD_SPAN_COUNT
 };
 

@@ -202,7 +202,7 @@ void idPlayerStart::TeleportPlayer( idPlayer* player )
 	const char* viewName = spawnArgs.GetString( "visualView", "" );
 	idEntity* ent = viewName ? gameLocal.FindEntity( viewName ) : NULL;
 
-	SetTimeState ts( player->timeGroup );
+	SetTimeState ts( player->GetTimeGroup() );
 
 	if( f && ent != NULL )
 	{
@@ -341,7 +341,7 @@ idActivator::Think
 void idActivator::Think()
 {
 	RunPhysics();
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		if( TouchTriggers() )
 		{
@@ -361,7 +361,7 @@ idActivator::Activate
 */
 void idActivator::Event_Activate( idEntity* activator )
 {
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		BecomeInactive( TH_THINK );
 	}
@@ -811,7 +811,7 @@ void idSpring::Think()
 	// run physics
 	RunPhysics();
 
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		// evaluate force
 		spring.Evaluate( gameLocal.time );
@@ -929,7 +929,7 @@ idForceField::Toggle
 */
 void idForceField::Toggle()
 {
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		BecomeInactive( TH_THINK );
 	}
@@ -962,7 +962,7 @@ idForceField::Think
 */
 void idForceField::Think()
 {
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		// evaluate force
 		forceField.Evaluate( gameLocal.time );
@@ -1792,7 +1792,7 @@ idStaticEntity::Think
 void idStaticEntity::Think()
 {
 	idEntity::Think();
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		if( runGui && renderEntity.gui[0] )
 		{
@@ -2103,7 +2103,7 @@ idFuncShootProjectile::Think
 */
 void idFuncShootProjectile::Think()
 {
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		// time to spawn a new projectile?
 		if( mRespawnTime > 0 && mRespawnTime <= gameLocal.GetTime() )
@@ -2176,7 +2176,7 @@ idFuncShootProjectile::Event_Activate
 */
 void idFuncShootProjectile::Event_Activate( idEntity* activator )
 {
-	if( ( thinkFlags & TH_THINK ) != 0 )
+	if( ( GetThinkFlags() & TH_THINK ) != 0 )
 	{
 		if( mShootSpeed == 0.0f && mRespawnTime == 0 )
 		{
@@ -2200,7 +2200,7 @@ void idFuncShootProjectile::Event_Activate( idEntity* activator )
 		mRespawnTime = 0;
 	}
 
-	if( ( thinkFlags & TH_THINK ) != 0 )
+	if( ( GetThinkFlags() & TH_THINK ) != 0 )
 	{
 		// currently active, deactivate
 		BecomeInactive( TH_THINK );
@@ -2395,7 +2395,7 @@ idFuncSmoke::Event_Activate
 void idFuncSmoke::Event_Activate( idEntity* activator )
 {
 	dormantWakeRequested = true;
-	if( thinkFlags & TH_UPDATEPARTICLES )
+	if( GetThinkFlags() & TH_UPDATEPARTICLES )
 	{
 		restart = false;
 		return;
@@ -2422,9 +2422,9 @@ void idFuncSmoke::Think()
 		return;
 	}
 
-	if( ( thinkFlags & TH_UPDATEPARTICLES ) && !IsHidden() )
+	if( ( GetThinkFlags() & TH_UPDATEPARTICLES ) && !IsHidden() )
 	{
-		if( !gameLocal.smokeParticles->EmitSmoke( smoke, smokeTime, gameLocal.random.CRandomFloat(), GetPhysics()->GetOrigin(), GetPhysics()->GetAxis(), timeGroup /*_D3XP*/ ) )
+		if( !gameLocal.smokeParticles->EmitSmoke( smoke, smokeTime, gameLocal.random.CRandomFloat(), GetPhysics()->GetOrigin(), GetPhysics()->GetAxis(), GetTimeGroup() /*_D3XP*/ ) )
 		{
 			if( restart )
 			{
@@ -2498,7 +2498,7 @@ idTextEntity::Think
 */
 void idTextEntity::Think()
 {
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		gameRenderWorld->DrawText( text, GetPhysics()->GetOrigin(), 0.25, colorWhite, playerOriented ? gameLocal.GetLocalPlayer()->viewAngles.ToMat3() : GetPhysics()->GetAxis().Transpose(), 1 );
 		for( int i = 0; i < targets.Num(); i++ )
@@ -3278,7 +3278,7 @@ idEarthQuake::Think
 */
 void idEarthQuake::Think()
 {
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		if( gameLocal.time > shakeStopTime )
 		{
@@ -3733,7 +3733,7 @@ void idPhantomObjects::Event_Activate( idEntity* activator )
 	float frac;
 	float scale;
 
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		BecomeInactive( TH_THINK );
 		return;
@@ -3805,9 +3805,9 @@ void idPhantomObjects::Think()
 		return;
 	}
 
-	if( !( thinkFlags & TH_THINK ) )
+	if( !( GetThinkFlags() & TH_THINK ) )
 	{
-		BecomeInactive( thinkFlags & ~TH_THINK );
+		BecomeInactive( GetThinkFlags() & ~TH_THINK );
 		return;
 	}
 

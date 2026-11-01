@@ -516,7 +516,7 @@ idMoveable::Think
 */
 void idMoveable::Think()
 {
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		if( !FollowInitialSplinePath() )
 		{
@@ -816,7 +816,7 @@ idBarrel::Think
 */
 void idBarrel::Think()
 {
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		if( !FollowInitialSplinePath() )
 		{
@@ -1142,7 +1142,7 @@ void idExplodingBarrel::AddParticles( const char* name, bool burn )
 {
 	if( name && *name )
 	{
-		int explicitTimeGroup = timeGroup;
+		int explicitTimeGroup = GetTimeGroup();
 		SetTimeState explicitTS( explicitTimeGroup );
 		if( particleModelDefHandle >= 0 )
 		{
