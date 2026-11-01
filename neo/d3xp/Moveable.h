@@ -43,22 +43,22 @@ extern const idEventDef EV_IsAtRest;
 //puncho start - schema (P1-A1a): the nested physics saves as a static object and is the whole snapshot; the initial
 // spline is a hatch (K8): it saves the spline's start time and its restore rebuilds the spline between two reads
 #define MOVEABLE_SCHEMA( X, s ) \
-	X( s, brokenModel,			STRING,	S,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, damage,				STRING,	S,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, monsterDamage,		STRING,	S,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, attacker,				OBJECT,	S,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, fxCollide,			STRING,	S,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, nextCollideFxTime,	INT,	S,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, minDamageVelocity,	FLOAT,	S,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, maxDamageVelocity,	FLOAT,	S,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, explode,				BOOL,	S,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, unbindOnDeath,		BOOL,	S,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, allowStep,			BOOL,	S,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, canDamage,			BOOL,	S,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, nextDamageTime,		INT,	S,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, nextSoundTime,		INT,	S,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, InitialSpline,		HAND,	S,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, physicsObj,			STATIC,	SW,	RAW,	0,	SCHEMA_STOCK )
+	X( s, brokenModel,			STRING,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, damage,				STRING,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, monsterDamage,		STRING,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, attacker,				OBJECT,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, fxCollide,			STRING,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, nextCollideFxTime,	INT,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, minDamageVelocity,	FLOAT,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, maxDamageVelocity,	FLOAT,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, explode,				BOOL,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, unbindOnDeath,		BOOL,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, allowStep,			BOOL,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, canDamage,			BOOL,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, nextDamageTime,		INT,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, nextSoundTime,		INT,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, InitialSpline,		HAND,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, physicsObj,			STATIC,	SW,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ )
 //puncho end
 
 class idMoveable : public idEntity

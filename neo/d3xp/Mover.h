@@ -222,7 +222,7 @@ struct floorInfo_s
 //puncho - P2b.1.2: idElevator's map record section (Record.h, RECORD_SECTION_ELEVATOR): the floor it is at, HAND in
 // Mover.cpp; the elevator's Pose is this row's (SkipPose)
 #define ELEVATOR_RECORD_SCHEMA( X, s ) \
-	X( s, Floor,		HAND,	R,	RAW,	1,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA )
+	X( s, Floor,		HAND,	R,	RAW,	1,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ )
 
 class idElevator : public idMover
 {
@@ -321,7 +321,7 @@ typedef enum
 //puncho - P2b.1.2: idMover_Binary's map record section (Record.h, RECORD_SECTION_MOVER_BINARY): the position and the
 // lock, HAND in Mover.cpp; a binary mover's Pose is this row's (SkipPose)
 #define MOVER_BINARY_RECORD_SCHEMA( X, s ) \
-	X( s, MoverState,	HAND,	R,	RAW,	2,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA )
+	X( s, MoverState,	HAND,	R,	RAW,	2,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ )
 
 class idMover_Binary : public idEntity
 {

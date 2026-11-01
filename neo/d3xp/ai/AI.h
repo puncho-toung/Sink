@@ -299,7 +299,7 @@ private:
 // the corpse it leaves. Written by idAI and idCorpse, applied and checked by the idCorpse the store builds for it
 // (Corpse.cpp); ARG 0, a variable field
 #define AI_RECORD_SCHEMA( X, s ) \
-	X( s, Corpse,		HAND,	R,	RAW,	0,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA )
+	X( s, Corpse,		HAND,	R,	RAW,	0,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ )
 
 class idAI : public idActor
 {

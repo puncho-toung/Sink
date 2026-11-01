@@ -4188,6 +4188,193 @@ static int RecordFuzzRandom( idRandom& rng, int limit )
 	return limit > 0 ? ( int )( value % ( uint32 )limit ) : 0;
 }
 
+//puncho start - P2b.2.3a: recordTest mixedlist (K1). One list holding every kind of row a class's list holds once its
+// record rows merge in: an S row and a NOCH row, which the record expanders drop, an R row and an SR row. Each half
+// runs the expansions as a class does: the record through idRecordOut and idRecordIn (DIFF, WRITE, framing, CHECK,
+// READ) with both R fields changed and then with Recorded unchanged, the save through idSaveGame and idRestoreGame on
+// memory files, the wire through an idBitMsg, where no row writes a bit
+#define RECORD_TEST_MIXED_SCHEMA( X, s ) \
+	X( s, saved,	INT,	S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, unsent,	INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, Recorded,	HAND,	R,		RAW,	4,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, Both,		HAND,	SR,		RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ )
+
+static const int RECORD_TEST_MIXED_SECTION = RECORD_SECTION_IDS - 1;	// never stored, so no entry check sees the id
+
+struct recordTestMixed_t
+{
+	enum
+	{
+		RECORD_TEST_MIXED_SCHEMA( SCHEMA_INDEX, _ )
+		MIXED_FIELDS
+	};
+	enum
+	{
+		RECORD_TEST_MIXED_SCHEMA( SCHEMA_RECORD_INDEX, _ )
+		MIXED_RECORD_FIELDS
+	};
+	// SF_ numbers every row, RF_ only the rows with R
+	compile_time_assert( MIXED_FIELDS == 4 && SF_unsent == 1 && SF_Both == 3 );
+	compile_time_assert( MIXED_RECORD_FIELDS == 2 && RF_Recorded == 0 && RF_Both == 1 );
+
+	int			saved;
+	int			unsent;
+	int			recorded;
+	int			both;
+
+	void WriteRecord( idRecordOut& rec ) const
+	{
+		rec.BeginSection( RECORD_TEST_MIXED_SECTION, 1 );
+		RECORD_TEST_MIXED_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
+		RECORD_TEST_MIXED_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
+		rec.EndSection();
+	}
+	bool ApplyRecord( idRecordIn& rec )
+	{
+		if( !rec.BeginSection( RECORD_TEST_MIXED_SECTION ) )
+		{
+			return false;
+		}
+		RECORD_TEST_MIXED_SCHEMA( SCHEMA_RECORD_READ, ( *this ) )
+		rec.EndSection();
+		return rec.good;
+	}
+	static bool CheckRecordSection( idRecordIn& rec )
+	{
+		RECORD_TEST_MIXED_SCHEMA( SCHEMA_RECORD_CHECK, recordTestMixed_t )
+		return rec.good;
+	}
+	void Save( idSaveGame* savefile ) const
+	{
+		RECORD_TEST_MIXED_SCHEMA( SCHEMA_SAVE, ( *this ) )
+	}
+	void Restore( idRestoreGame* savefile )
+	{
+		RECORD_TEST_MIXED_SCHEMA( SCHEMA_RESTORE, ( *this ) )
+	}
+	void WriteToSnapshot( idBitMsg& msg ) const
+	{
+		RECORD_TEST_MIXED_SCHEMA( SCHEMA_WRITE, ( *this ) )
+	}
+	void ReadFromSnapshot( const idBitMsg& msg )
+	{
+		RECORD_TEST_MIXED_SCHEMA( SCHEMA_READ, ( *this ) )
+	}
+
+	// Recorded: four bytes, written when it is not 0, so a recorded 0 fails the check
+	bool RecordRecordedChanged( const idRecordOut& rec ) const
+	{
+		return recorded != 0;
+	}
+	void WriteRecordRecorded( idRecordOut& rec ) const
+	{
+		rec.WriteInt( recorded );
+	}
+	bool ApplyRecordRecorded( idRecordIn& rec )
+	{
+		return rec.ReadInt( recorded );
+	}
+	static bool CheckRecordRecorded( idRecordIn& rec )
+	{
+		int value;
+		return rec.ReadInt( value ) && value != 0;
+	}
+	// Both: a variable field holding one int, always written; saved as an int
+	bool RecordBothChanged( const idRecordOut& rec ) const
+	{
+		return true;
+	}
+	void WriteRecordBoth( idRecordOut& rec ) const
+	{
+		rec.WriteInt( both );
+	}
+	bool ApplyRecordBoth( idRecordIn& rec )
+	{
+		return rec.ReadInt( both );
+	}
+	static bool CheckRecordBoth( idRecordIn& rec )
+	{
+		int value;
+		return rec.ReadInt( value );
+	}
+	void SaveBoth( idSaveGame* savefile ) const
+	{
+		savefile->WriteInt( both );
+	}
+	void RestoreBoth( idRestoreGame* savefile )
+	{
+		savefile->ReadInt( both );
+	}
+};
+
+static void RecordTestMixedList()
+{
+	static const recordFrame_t frame = { CELL_ID_NONE, vec3_origin, mat3_identity, RECORD_FRAME_MAP };
+	static const idRecordMapArgs noBaseline = { NULL, NULL };
+	static const char* const names[] = { RECORD_TEST_MIXED_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
+	verify_array_size( names, recordTestMixed_t::MIXED_RECORD_FIELDS );
+	int failures = ( idStr::Cmp( names[recordTestMixed_t::RF_Recorded], "Recorded" ) != 0 || idStr::Cmp( names[recordTestMixed_t::RF_Both], "Both" ) != 0 ) ? 1 : 0;
+
+	// the record: the section header, Recorded's four bytes when it changed, Both's length and four bytes
+	const recordTestMixed_t source[2] = { { 11, 22, 33, 44 }, { 11, 22, 0, 44 } };
+	const uint64 masks[2] = { BIT( recordTestMixed_t::RF_Recorded ) | BIT( recordTestMixed_t::RF_Both ), BIT( recordTestMixed_t::RF_Both ) };
+	const int lengths[2] = { RECORD_SECTION_HEADER_BYTES + 4 + 2 + 4, RECORD_SECTION_HEADER_BYTES + 2 + 4 };
+	int recordBytes[2] = { 0, 0 };
+	for( int i = 0; i < 2; i++ )
+	{
+		idRecordOut out;
+		out.Begin( frame, true, noBaseline, 0, "" );
+		source[i].WriteRecord( out );
+		recordBytes[i] = out.Length();
+		idRecordIn in;
+		int consumed;
+		in.Begin( frame, CELL_ID_NONE, true, "" );
+		bool good = !out.Overflowed() && out.NumSections() == 1 && out.Length() == lengths[i];
+		good = good && in.ReadSections( out.Data(), out.Length(), 1, consumed ) && consumed == lengths[i] && in.SectionMask( 0 ) == masks[i];
+		if( good )
+		{
+			in.BeginSectionAt( 0 );
+			good = recordTestMixed_t::CheckRecordSection( in );
+			in.EndSection();
+			good = good && in.good;
+			in.Rewind();
+			recordTestMixed_t applied = { -1, -1, -1, -1 };
+			good = good && applied.ApplyRecord( in ) && in.Done();
+			good = good && applied.saved == -1 && applied.unsent == -1 && applied.recorded == ( i == 0 ? 33 : -1 ) && applied.both == 44;
+		}
+		failures += good ? 0 : 1;
+	}
+
+	// the save: saved and Both, eight bytes; Close then appends the stream's tail, which this test does not read
+	idFile_Memory saveFile( "recordTestMixed" );
+	idFile_Memory stringFile( "recordTestMixedStrings" );
+	int saveBytes;
+	{
+		idSaveGame save( &saveFile, &stringFile, BUILD_NUMBER );
+		source[0].Save( &save );
+		saveBytes = saveFile.Length();
+	}
+	idFile_Memory readFile( "recordTestMixed", ( const char* )saveFile.GetDataPtr(), saveBytes );	// the const data opens it for reading
+	idRestoreGame restore( &readFile, &stringFile, BUILD_NUMBER );
+	recordTestMixed_t restored = { -1, -1, -1, -1 };
+	restored.Restore( &restore );
+	failures += ( saveBytes != 8 || readFile.Tell() != saveBytes || restored.saved != 11 || restored.unsent != -1 || restored.recorded != -1 || restored.both != 44 ) ? 1 : 0;
+
+	// the wire: no W row
+	byte buffer[16];
+	idBitMsg msg;
+	msg.InitWrite( buffer, sizeof( buffer ) );
+	source[0].WriteToSnapshot( msg );
+	const int wireBytes = msg.GetSize();
+	msg.BeginReading();
+	restored.ReadFromSnapshot( msg );
+	failures += ( wireBytes != 0 || msg.GetReadCount() != 0 ) ? 1 : 0;
+
+	gameLocal.Printf( "RECORD_TEST %s mixedlist rows=%d recordRows=%d recordBytes=%d,%d saveBytes=%d wireBytes=%d failures=%d\n", failures == 0 ? "PASS" : "FAIL",
+					  recordTestMixed_t::MIXED_FIELDS, recordTestMixed_t::MIXED_RECORD_FIELDS, recordBytes[0], recordBytes[1], saveBytes, wireBytes, failures );
+}
+//puncho end
+
 static void Cmd_RecordTest_f( const idCmdArgs& args )
 {
 	if( !gameLocal.CheatsOk() || args.Argc() < 2 )
@@ -4221,6 +4408,18 @@ static void Cmd_RecordTest_f( const idCmdArgs& args )
 		mapGraphDirector.TestRecipe( gameLocal.GetMapName() );
 		return;
 	}
+	//puncho start - P2b.2.3a: recordTest mixedlist; its save half closes the way a save does, with the map's sound world
+	if( idStr::Icmp( args.Argv( 1 ), "mixedlist" ) == 0 )
+	{
+		if( gameLocal.GameState() != GAMESTATE_ACTIVE )
+		{
+			gameLocal.Printf( "RECORD_TEST FAIL mixedlist needs a map\n" );
+			return;
+		}
+		RecordTestMixedList();
+		return;
+	}
+	//puncho end
 	//puncho start - P2b.1.2: recordTest fuzz <n> <seed>. The current map committed (PrepareSave), then n mutants of the
 	// store's records from idRandom( seed ), each through the reader and the check ApplyCurrentMap runs before any apply
 	// (RecordScanChunk, the record's identity, each entry's check, an authored entry's sections against its entity).

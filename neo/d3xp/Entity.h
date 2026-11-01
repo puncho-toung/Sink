@@ -177,22 +177,22 @@ inline void	ReadFromBitMsg( netBoolEvent_t& netEvent, const idBitMsg& msg )
 // here: WriteBindToSnapshot packs master, orientation, joint or body into one word and ReadBindFromSnapshot applies it
 // through Bind calls, so a subclass's snapshot list would carry it as a HAND entry named Bind (K8)
 #define ENTITY_BIND_SCHEMA( X, s ) \
-	X( s, bindMaster,	OBJECT,	S,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, bindJoint,	JOINT,	S,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, bindBody,		INT,	S,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, teamMaster,	OBJECT,	S,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, teamChain,	OBJECT,	S,	RAW,	0,	SCHEMA_STOCK )
+	X( s, bindMaster,	OBJECT,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, bindJoint,	JOINT,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, bindBody,		INT,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, teamMaster,	OBJECT,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, teamChain,	OBJECT,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ )
 //puncho end
 
 //puncho start - P2b.1.2: idEntity's map record section (Record.h, RECORD_SECTION_ENTITY): the pose, the health, the
 // visibility, a carry's motion and a created entry's bind master. Every row is HAND (Record<n>Changed, WriteRecord<n>,
 // ApplyRecord<n>, static CheckRecord<n>, Entity.cpp) and its ARG is its byte count; R rows append only
 #define ENTITY_RECORD_SCHEMA( X, s ) \
-	X( s, Pose,			HAND,	R,	RAW,	28,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA ) \
-	X( s, Health,		HAND,	R,	RAW,	4,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA ) \
-	X( s, Visibility,	HAND,	R,	RAW,	1,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA ) \
-	X( s, Motion,		HAND,	R,	RAW,	24,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA ) \
-	X( s, Bind,			HAND,	R,	RAW,	13,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA )
+	X( s, Pose,			HAND,	R,	RAW,	28,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, Health,		HAND,	R,	RAW,	4,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, Visibility,	HAND,	R,	RAW,	1,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, Motion,		HAND,	R,	RAW,	24,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, Bind,			HAND,	R,	RAW,	13,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ )
 //puncho end
 
 //puncho start - P2b.1.3: idEntity's world identity, saved after mpGUIState as one HAND entry (SaveWorldIdentity,
@@ -201,7 +201,7 @@ inline void	ReadFromBitMsg( netBoolEvent_t& netEvent, const idBitMsg& msg )
 // high) when created: 2 bytes an entity, 4 more budgeted, 16 more created. Older saves kept it in spawnArgs keys
 // (RestoreLegacyWorldKeys)
 #define ENTITY_WORLD_SCHEMA( X, s ) \
-	X( s, WorldIdentity,	HAND,	S,	RAW,	0,	BUILD_NUMBER_SAVE_VERSION_RECORD_IDENTITY )
+	X( s, WorldIdentity,	HAND,	S,	RAW,	0,	BUILD_NUMBER_SAVE_VERSION_RECORD_IDENTITY,	NOKEY,	NODEF,	NOEDIT,	OBJ )
 
 // idEntity::worldFlags, the world store's marks
 static const int WORLD_FLAG_DEPARTED	= 1;	// carried out through a transition (MarkDeparted): never committed here again

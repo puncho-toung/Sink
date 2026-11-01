@@ -37,21 +37,26 @@ If you have questions concerning this license or the applicable additional terms
 	A schema is one #define field list per record, class or struct, beside the members it lists:
 
 		#define MOVEABLE_SCHEMA( X, s ) \
-			X( s, nextSoundTime,	INT,	S,	RAW,	0,	SCHEMA_STOCK ) \
-			X( s, physicsObj,		STATIC,	SW,	RAW,	0,	SCHEMA_STOCK )
+			X( s, nextSoundTime,	INT,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+			X( s, physicsObj,		STATIC,	SW,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ )
 
 	- s is the instance the expansion works on, passed per direction: idPhysics_Player saves current and saved,
 	  writes snapshots from current and reads them into next.
 	- The type picks the one idSaveGame / idRestoreGame call the field always had, so the bytes do not change, and a
 	  member of another type does not compile.
 	- The channels are S (save), W (wire: snapshots) and R (record), in that order: S, W, R, SW, SR, WR, SWR. R is the
-	  map record's (MREC v3, P2b.1.2): the SCHEMA_RECORD_ expanders below and gamesys/Record.h.
+	  map record's (MREC v3, P2b.1.2): the SCHEMA_RECORD_ expanders below and gamesys/Record.h. NOCH is a row no
+	  channel carries: SCHEMA_INDEX numbers it like any other, SCHEMA_RECORD_INDEX skips it.
 	- The encoding is the wire form, RAW, BITS or DELTA; a save is always raw. Its argument, 0 when unused: BITS takes
 	  ( exponentBits, mantissaBits ), DELTA the base field, which comes earlier in the list. A LIST takes its element
 	  type, a STRUCTLIST the name of the element functions SCHEMA_STRUCT_FUNCTIONS made.
 	- The build number is the one that added the field. A restore reads it only from saves of that build or later,
 	  and leaves the spawn value otherwise. SCHEMA_STOCK marks a field every save this tree reads has, and folds the
 	  test away, so a stock field restores with the code the hand-written call compiled to.
+	- The last four columns are the spawn side (C6): the spawnArg key or NOKEY, the spawn value when the key is absent
+	  or NODEF (the constructor's), the FGD text or NOEDIT, and where the value lives: OBJ (a member of s), HOT (a
+	  column of entityHot), BOTH (the column, mirrored in the member) or KEYONLY (read at spawn, stored nowhere). No
+	  expander reads them yet.
 
 	The compiler expands a list into statements inside a hand-written function whose stream is savefile or msg, so
 	what runs is still read in one place; code that is about no single field goes before or after the expansion:
@@ -84,13 +89,19 @@ If you have questions concerning this license or the applicable additional terms
 
 #define SCHEMA_STOCK		0
 
+//puncho - P2b.2.3a: the spawn side's absent values (C6). OBJ, HOT, BOTH, KEYONLY, NOCH and the channels are pasted
+// into gate names, so they are never defined
+#define NOKEY				nullptr
+#define NODEF				nullptr
+#define NOEDIT				nullptr
+
 // one entry, per direction
-#define SCHEMA_SAVE( s, n, TYPE, CH, ENC, ARG, BUILD )		SCHEMA_S_##CH( SCHEMA_SAVE_##TYPE( savefile, s, n, ARG ) )
-#define SCHEMA_RESTORE( s, n, TYPE, CH, ENC, ARG, BUILD )	SCHEMA_S_##CH( if( ( BUILD ) == SCHEMA_STOCK || savefile->GetBuildNumber() >= ( BUILD ) ) { SCHEMA_RESTORE_##TYPE( savefile, s, n, ARG ) } )
-#define SCHEMA_WRITE( s, n, TYPE, CH, ENC, ARG, BUILD )		SCHEMA_W_##CH( SCHEMA_WRITE_##TYPE##_##ENC( msg, s, n, ARG ) )
-#define SCHEMA_READ( s, n, TYPE, CH, ENC, ARG, BUILD )		SCHEMA_W_##CH( SCHEMA_READ_##TYPE##_##ENC( msg, s, n, ARG ) )
-// numbers the fields SF_<field> in an enum inside the class; nothing expands it yet, MD7's dirty mask will
-#define SCHEMA_INDEX( s, n, TYPE, CH, ENC, ARG, BUILD )		SF_##n,
+#define SCHEMA_SAVE( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )		SCHEMA_S_##CH( SCHEMA_SAVE_##TYPE( savefile, s, n, ARG ) )
+#define SCHEMA_RESTORE( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )	SCHEMA_S_##CH( if( ( BUILD ) == SCHEMA_STOCK || savefile->GetBuildNumber() >= ( BUILD ) ) { SCHEMA_RESTORE_##TYPE( savefile, s, n, ARG ) } )
+#define SCHEMA_WRITE( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )		SCHEMA_W_##CH( SCHEMA_WRITE_##TYPE##_##ENC( msg, s, n, ARG ) )
+#define SCHEMA_READ( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )		SCHEMA_W_##CH( SCHEMA_READ_##TYPE##_##ENC( msg, s, n, ARG ) )
+// numbers the fields SF_<field> in an enum inside the class, NOCH rows included; nothing expands it yet, MD7's dirty mask will
+#define SCHEMA_INDEX( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )		SF_##n,
 
 // the channel gates
 #define SCHEMA_S_S( x )		x
@@ -100,6 +111,7 @@ If you have questions concerning this license or the applicable additional terms
 #define SCHEMA_S_W( x )
 #define SCHEMA_S_R( x )
 #define SCHEMA_S_WR( x )
+#define SCHEMA_S_NOCH( x )	//puncho - P2b.2.3a
 #define SCHEMA_W_W( x )		x
 #define SCHEMA_W_SW( x )	x
 #define SCHEMA_W_WR( x )	x
@@ -107,6 +119,7 @@ If you have questions concerning this license or the applicable additional terms
 #define SCHEMA_W_S( x )
 #define SCHEMA_W_R( x )
 #define SCHEMA_W_SR( x )
+#define SCHEMA_W_NOCH( x )	//puncho - P2b.2.3a
 //puncho start - P2b.1.2: the record channel's gates, variadic so an enumerator's comma passes through
 #define SCHEMA_R_R( ... )	__VA_ARGS__
 #define SCHEMA_R_SR( ... )	__VA_ARGS__
@@ -115,14 +128,16 @@ If you have questions concerning this license or the applicable additional terms
 #define SCHEMA_R_S( ... )
 #define SCHEMA_R_W( ... )
 #define SCHEMA_R_SW( ... )
+#define SCHEMA_R_NOCH( ... )	//puncho - P2b.2.3a
 
-// the record channel, per R row: rec is the idRecordOut or idRecordIn, s the instance (the class name for CHECK)
-#define SCHEMA_RECORD_INDEX( s, n, TYPE, CH, ENC, ARG, BUILD )	SCHEMA_R_##CH( RF_##n, )
-#define SCHEMA_RECORD_NAME( s, n, TYPE, CH, ENC, ARG, BUILD )	SCHEMA_R_##CH( #n, )
-#define SCHEMA_RECORD_DIFF( s, n, TYPE, CH, ENC, ARG, BUILD )	SCHEMA_R_##CH( if( SCHEMA_RCHANGED_##TYPE( rec, s, n, ARG ) ) rec.Set( RF_##n ); )
-#define SCHEMA_RECORD_WRITE( s, n, TYPE, CH, ENC, ARG, BUILD )	SCHEMA_R_##CH( if( rec.Has( RF_##n ) ) { SCHEMA_RPUT_##TYPE( rec, s, n, ARG ) } )
-#define SCHEMA_RECORD_READ( s, n, TYPE, CH, ENC, ARG, BUILD )	SCHEMA_R_##CH( if( rec.Has( RF_##n ) && !( SCHEMA_RGET_##TYPE( rec, s, n, ARG ) ) ) { rec.good = false; } )
-#define SCHEMA_RECORD_CHECK( s, n, TYPE, CH, ENC, ARG, BUILD )	SCHEMA_R_##CH( if( rec.Has( RF_##n ) && !( SCHEMA_RCHECK_##TYPE( rec, s, n, ARG ) ) ) { rec.good = false; } )
+// the record channel, per R row: rec is the idRecordOut or idRecordIn, s the instance (the class name for CHECK). Each
+// body is inside its row's gate, so a list that also holds S, W and NOCH rows names an RF_ only for its R rows
+#define SCHEMA_RECORD_INDEX( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )	SCHEMA_R_##CH( RF_##n, )
+#define SCHEMA_RECORD_NAME( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )	SCHEMA_R_##CH( #n, )
+#define SCHEMA_RECORD_DIFF( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )	SCHEMA_R_##CH( if( SCHEMA_RCHANGED_##TYPE( rec, s, n, ARG ) ) rec.Set( RF_##n ); )
+#define SCHEMA_RECORD_WRITE( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )	SCHEMA_R_##CH( if( rec.Has( RF_##n ) ) { SCHEMA_RPUT_##TYPE( rec, s, n, ARG ) } )
+#define SCHEMA_RECORD_READ( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )	SCHEMA_R_##CH( if( rec.Has( RF_##n ) && !( SCHEMA_RGET_##TYPE( rec, s, n, ARG ) ) ) { rec.good = false; } )
+#define SCHEMA_RECORD_CHECK( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )	SCHEMA_R_##CH( if( rec.Has( RF_##n ) && !( SCHEMA_RCHECK_##TYPE( rec, s, n, ARG ) ) ) { rec.good = false; } )
 
 // record HAND rows: the field functions, inside the byte bounds of the field
 #define SCHEMA_RCHANGED_HAND( r, s, n, a )		( s ).Record##n##Changed( r )
@@ -154,8 +169,8 @@ If you have questions concerning this license or the applicable additional terms
 	typedef type recordStruct##name##_t; \
 	static void WriteRecord##name( idRecordOut& rec, const type& s ) { LIST( SCHEMA_RECORD_STRUCT_PUT, s ) } \
 	static void ReadRecord##name( idRecordIn& rec, type& s ) { LIST( SCHEMA_RECORD_STRUCT_GET, s ) }
-#define SCHEMA_RECORD_STRUCT_PUT( s, n, TYPE, CH, ENC, ARG, BUILD )	compile_time_assert( ( BUILD ) == SCHEMA_STOCK ); SCHEMA_SROW_##CH##_##ENC( SCHEMA_RSPUT_##TYPE( rec, s, n, ARG ) )
-#define SCHEMA_RECORD_STRUCT_GET( s, n, TYPE, CH, ENC, ARG, BUILD )	compile_time_assert( ( BUILD ) == SCHEMA_STOCK ); SCHEMA_SROW_##CH##_##ENC( if( rec.good ) { SCHEMA_RSGET_##TYPE( rec, s, n, ARG ) } )
+#define SCHEMA_RECORD_STRUCT_PUT( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )	compile_time_assert( ( BUILD ) == SCHEMA_STOCK ); SCHEMA_SROW_##CH##_##ENC( SCHEMA_RSPUT_##TYPE( rec, s, n, ARG ) )
+#define SCHEMA_RECORD_STRUCT_GET( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )	compile_time_assert( ( BUILD ) == SCHEMA_STOCK ); SCHEMA_SROW_##CH##_##ENC( if( rec.good ) { SCHEMA_RSGET_##TYPE( rec, s, n, ARG ) } )
 // the one gate a struct row passes: SCHEMA_SROW_<CH>_<ENC> exists only for R and RAW
 #define SCHEMA_SROW_R_RAW( ... )			__VA_ARGS__
 
