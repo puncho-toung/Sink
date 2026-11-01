@@ -284,6 +284,27 @@ struct contentDigests_t
 #define CONTENT_DIGESTS_WIRE_SIZE( numLayers )	( CONTENT_DIGEST_COUNT * 4 + 1 + ( numLayers ) * LAYER_DIGEST_COUNT * 4 )
 //puncho end
 
+//puncho start - P2b.2.3b: one schema row's spawn side (C6, K1), as CLASS_SCHEMA_KEYS (gamesys/Schema.h) builds it for a
+// class's list; the FGD exporter reads a class's rows through idGame::GetSchemaKeys
+enum schemaKeyType_t
+{
+	SCHEMA_KEY_NONE		= 0,	// no FGD value: the row's type takes no key
+	SCHEMA_KEY_INTEGER	= 1,
+	SCHEMA_KEY_FLOAT	= 2,
+	SCHEMA_KEY_BOOL		= 3,
+	SCHEMA_KEY_STRING	= 4
+};
+
+struct schemaKey_t
+{
+	const char* 	field;			// the row's name
+	const char* 	key;			// the spawnArg, NULL for a row without one
+	const char* 	defaultValue;	// the spawn value when the key is absent, NULL for the constructor's
+	const char* 	editor;			// the FGD text, NULL for none
+	int				type;			// schemaKeyType_t
+};
+//puncho end
+
 class idGame
 {
 public:
@@ -445,6 +466,10 @@ public:
 	virtual void				Shell_SetGameComplete() = 0;
 	virtual bool				SkipCinematicScene() = 0;
 	virtual bool				CheckInCinematic() = 0;
+
+	//puncho - P2b.2.3b: every schema row of spawnclass's chain, the root class's first, each class's in list order;
+	// false when no class has that name
+	virtual bool				GetSchemaKeys( const char* spawnclass, idList<const schemaKey_t*>& keys ) const = 0;
 };
 
 extern idGame* 					game;
@@ -589,7 +614,7 @@ extern idGameEdit* 				gameEdit;
 ===============================================================================
 */
 
-const int GAME_API_VERSION		= 13; // P2b stage 1: GetLevelKeep, RefusesMapWithPeers, FormatMapRows virtual, LoadPhase slot, skipStaticsCap, IsResident, IsSampleResident, bool SaveGame; stage 0: idCommon::LoadSpanAdd/LoadSpanName, idFileSystem::GetReadUs/GetThreadReadBytes
+const int GAME_API_VERSION		= 14; // P2b stage 2: GetSchemaKeys; stage 1: GetLevelKeep, RefusesMapWithPeers, FormatMapRows virtual, LoadPhase slot, skipStaticsCap, IsResident, IsSampleResident, bool SaveGame; stage 0: idCommon::LoadSpanAdd/LoadSpanName, idFileSystem::GetReadUs/GetThreadReadBytes
 
 typedef struct
 {

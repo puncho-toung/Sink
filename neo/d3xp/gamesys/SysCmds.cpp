@@ -187,6 +187,47 @@ void Cmd_ListSpawnArgs_f( const idCmdArgs& args )
 	}
 }
 
+//puncho start - P2b.2.3b
+/*
+===================
+Cmd_ListSchemaKeys_f
+
+listSchemaKeys <class>: the rows of the class's chain that read a spawnArg (idGame::GetSchemaKeys: the root class
+first, each class's in list order), with the key's FGD type, default and editor text.
+===================
+*/
+static void Cmd_ListSchemaKeys_f( const idCmdArgs& args )
+{
+	static const char* const typeNames[] = { "none", "integer", "float", "bool", "string" };
+	verify_array_size( typeNames, SCHEMA_KEY_STRING + 1 );
+
+	if( args.Argc() < 2 )
+	{
+		gameLocal.Printf( "usage: listSchemaKeys <class>\n" );
+		return;
+	}
+	idList<const schemaKey_t*> keys;
+	if( !gameLocal.GetSchemaKeys( args.Argv( 1 ), keys ) )
+	{
+		gameLocal.Printf( "listSchemaKeys: no class %s\n", args.Argv( 1 ) );
+		return;
+	}
+	int keyed = 0;
+	for( int i = 0; i < keys.Num(); i++ )
+	{
+		const schemaKey_t& row = *keys[i];
+		if( row.key == NULL )
+		{
+			continue;
+		}
+		gameLocal.Printf( "%-22s %-22s %-8s %-8s %s\n", row.field, row.key, typeNames[row.type], row.defaultValue != NULL ? va( "\"%s\"", row.defaultValue ) : "NODEF",
+						  row.editor != NULL ? row.editor : "" );
+		keyed++;
+	}
+	gameLocal.Printf( "listSchemaKeys: %s: %d keyed rows of %d\n", args.Argv( 1 ), keyed, keys.Num() );
+}
+//puncho end
+
 /*
 ===================
 Cmd_ReloadScript_f
@@ -4428,6 +4469,192 @@ static void RecordTestMixedList()
 }
 //puncho end
 
+//puncho start - P2b.2.3b: recordTest valuerows (K1; rev 4, goals-r1 F3). One value R row of each keyable type, with a
+// KEY and a DEFAULT, spawned through SCHEMA_SPAWN and recorded as a class records. A created entry has no baseline and
+// writes every row. An authored entry's def holds a value other than the schema DEFAULT for every key, and its map
+// entity two more: it writes nothing while the values are the spawn's, and exactly the rows play changed after, two of
+// them back to their schema DEFAULT. Each leaves (DIFF, WRITE, framing, CHECK) and returns (READ onto a fresh spawn of
+// its baseline, or onto poisoned values for the created entry); last, the check refuses a non-finite float and a bool
+// byte past 1.
+enum recordTestValueEnum_t
+{
+	RECORD_TEST_VALUE_A,
+	RECORD_TEST_VALUE_B,
+	RECORD_TEST_VALUE_C
+};
+
+#define RECORD_TEST_VALUE_SCHEMA( X, s ) \
+	X( s, intValue,		INT,	R,	RAW,	0,	SCHEMA_STOCK,	"test_int",		"5",		NOEDIT,	OBJ ) \
+	X( s, floatValue,	FLOAT,	R,	RAW,	0,	SCHEMA_STOCK,	"test_float",	"0.25",		NOEDIT,	OBJ ) \
+	X( s, boolValue,	BOOL,	R,	RAW,	0,	SCHEMA_STOCK,	"test_bool",	"1",		NOEDIT,	OBJ ) \
+	X( s, vecValue,		VEC3,	R,	RAW,	0,	SCHEMA_STOCK,	"test_vec",		"1 2 3",	NOEDIT,	OBJ ) \
+	X( s, stringValue,	STRING,	R,	RAW,	0,	SCHEMA_STOCK,	"test_string",	"stone",	NOEDIT,	OBJ ) \
+	X( s, enumValue,	ENUM,	R,	RAW,	0,	SCHEMA_STOCK,	"test_enum",	"2",		NOEDIT,	OBJ )
+
+RECORD_TEST_VALUE_SCHEMA( SCHEMA_KEYCHECK, 0 )
+
+struct recordTestValues_t
+{
+	enum
+	{
+		RECORD_TEST_VALUE_SCHEMA( SCHEMA_RECORD_INDEX, _ )
+		VALUE_RECORD_FIELDS
+	};
+
+	int						intValue;
+	float					floatValue;
+	bool					boolValue;
+	idVec3					vecValue;
+	idStr					stringValue;
+	recordTestValueEnum_t	enumValue;
+
+	void Spawn( const idDict& spawnArgs )
+	{
+		RECORD_TEST_VALUE_SCHEMA( SCHEMA_SPAWN, ( *this ) )
+	}
+	void WriteRecord( idRecordOut& rec ) const
+	{
+		rec.BeginSection( RECORD_TEST_MIXED_SECTION, 1 );
+		RECORD_TEST_VALUE_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
+		RECORD_TEST_VALUE_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
+		rec.EndSection();
+	}
+	bool ApplyRecord( idRecordIn& rec )
+	{
+		if( !rec.BeginSection( RECORD_TEST_MIXED_SECTION ) )
+		{
+			return false;
+		}
+		RECORD_TEST_VALUE_SCHEMA( SCHEMA_RECORD_READ, ( *this ) )
+		rec.EndSection();
+		return rec.good;
+	}
+	static bool CheckRecordSection( idRecordIn& rec )
+	{
+		RECORD_TEST_VALUE_SCHEMA( SCHEMA_RECORD_CHECK, recordTestValues_t )
+		return rec.good;
+	}
+	bool Equals( const recordTestValues_t& other ) const
+	{
+		return intValue == other.intValue && floatValue == other.floatValue && boolValue == other.boolValue && vecValue == other.vecValue &&
+			   stringValue == other.stringValue && enumValue == other.enumValue;
+	}
+};
+
+static const recordFrame_t recordTestValueFrame = { CELL_ID_NONE, vec3_origin, mat3_identity, RECORD_FRAME_MAP };
+
+// frames the entry's bytes into in and runs the section's check, as the store does before any apply
+static bool RecordTestValueCheck( const byte* data, int length, bool created, uint64 mask, idRecordIn& in )
+{
+	int consumed;
+	in.Begin( recordTestValueFrame, CELL_ID_NONE, created, "" );
+	if( !in.ReadSections( data, length, 1, consumed ) || consumed != length || in.SectionMask( 0 ) != mask )
+	{
+		return false;
+	}
+	in.BeginSectionAt( 0 );
+	const bool good = recordTestValues_t::CheckRecordSection( in );
+	in.EndSection();
+	return good && in.good;
+}
+
+// one leave and return: the entry's bytes are length long with mask set (no section when mask is 0), pass the check,
+// and read onto returned
+static bool RecordTestValueTrip( const recordTestValues_t& left, bool created, const idRecordMapArgs& baseline, uint64 mask, int length, recordTestValues_t& returned, int& bytes )
+{
+	idRecordOut out;
+	out.Begin( recordTestValueFrame, created, baseline, 0, "" );
+	left.WriteRecord( out );
+	bytes = out.Length();
+	if( out.Overflowed() || out.Length() != length || out.NumSections() != ( mask != 0 ? 1 : 0 ) )
+	{
+		return false;
+	}
+	if( mask == 0 )
+	{
+		return true;
+	}
+	idRecordIn in;
+	if( !RecordTestValueCheck( out.Data(), out.Length(), created, mask, in ) )
+	{
+		return false;
+	}
+	in.Rewind();
+	return returned.ApplyRecord( in ) && in.Done();
+}
+
+static void RecordTestValueRows()
+{
+	static const idRecordMapArgs noBaseline = { NULL, NULL };
+	const uint64 allRows = BIT( recordTestValues_t::VALUE_RECORD_FIELDS ) - 1;
+	int failures = 0;
+
+	// the created entry, spawned from no keys: the schema DEFAULTs, every row written (STRING: a length, then a str)
+	const idDict noArgs;
+	recordTestValues_t created;
+	created.Spawn( noArgs );
+	failures += ( created.intValue == 5 && created.floatValue == 0.25f && created.boolValue && created.vecValue == idVec3( 1.0f, 2.0f, 3.0f ) &&
+				  created.stringValue == "stone" && created.enumValue == RECORD_TEST_VALUE_C ) ? 0 : 1;
+	const int createdLength = RECORD_SECTION_HEADER_BYTES + 4 + 4 + 1 + 12 + ( 2 + 1 + 5 ) + 4;
+	recordTestValues_t returned = { -1, -1.0f, false, idVec3( -1.0f, -1.0f, -1.0f ), "", RECORD_TEST_VALUE_A };
+	int createdBytes = 0;
+	failures += ( RecordTestValueTrip( created, true, noBaseline, allRows, createdLength, returned, createdBytes ) && returned.Equals( created ) ) ? 0 : 1;
+
+	// the authored entry: its spawnArgs are the map entity's epairs over the def's keys, as an entity spawns
+	idDict mapArgs, defArgs;
+	mapArgs.Set( "test_float", "0.5" );
+	mapArgs.Set( "test_string", "granite" );
+	defArgs.Set( "test_int", "8" );
+	defArgs.Set( "test_float", "0.75" );
+	defArgs.Set( "test_bool", "0" );
+	defArgs.Set( "test_vec", "7 8 9" );
+	defArgs.Set( "test_string", "marble" );
+	defArgs.Set( "test_enum", "1" );
+	idDict spawnArgs = mapArgs;
+	spawnArgs.SetDefaults( &defArgs );
+	const idRecordMapArgs baseline = { &mapArgs, &defArgs };
+	recordTestValues_t authored;
+	authored.Spawn( spawnArgs );
+	failures += ( authored.intValue == 8 && authored.floatValue == 0.5f && !authored.boolValue && authored.vecValue == idVec3( 7.0f, 8.0f, 9.0f ) &&
+				  authored.stringValue == "granite" && authored.enumValue == RECORD_TEST_VALUE_B ) ? 0 : 1;
+	int authoredBytes[2] = { -1, -1 };
+	returned.Spawn( spawnArgs );
+	failures += ( RecordTestValueTrip( authored, false, baseline, 0, 0, returned, authoredBytes[0] ) && returned.Equals( authored ) ) ? 0 : 1;
+	authored.intValue = 5;
+	authored.boolValue = true;
+	authored.vecValue.z = 10.0f;
+	authored.enumValue = RECORD_TEST_VALUE_C;
+	const uint64 changedRows = BIT( recordTestValues_t::RF_intValue ) | BIT( recordTestValues_t::RF_boolValue ) | BIT( recordTestValues_t::RF_vecValue ) | BIT( recordTestValues_t::RF_enumValue );
+	returned.Spawn( spawnArgs );
+	failures += ( RecordTestValueTrip( authored, false, baseline, changedRows, RECORD_SECTION_HEADER_BYTES + 4 + 1 + 12 + 4, returned, authoredBytes[1] ) &&
+				  returned.Equals( authored ) ) ? 0 : 1;
+
+	// the check: the created entry with its float made infinite, then with its bool byte 2 (after the section header,
+	// the int's four bytes, the float's four, the bool's one)
+	idRecordOut out;
+	out.Begin( recordTestValueFrame, true, noBaseline, 0, "" );
+	created.WriteRecord( out );
+	int refused = 0;
+	if( !out.Overflowed() && out.Length() == createdLength )
+	{
+		static const byte infinity[4] = { 0x00, 0x00, 0x80, 0x7f };
+		const int floatAt = RECORD_SECTION_HEADER_BYTES + 4;
+		byte bytes[createdLength];
+		idRecordIn in;
+		memcpy( bytes, out.Data(), createdLength );
+		memcpy( bytes + floatAt, infinity, sizeof( infinity ) );
+		refused += RecordTestValueCheck( bytes, createdLength, true, allRows, in ) ? 0 : 1;
+		memcpy( bytes, out.Data(), createdLength );
+		bytes[floatAt + 4] = 2;
+		refused += RecordTestValueCheck( bytes, createdLength, true, allRows, in ) ? 0 : 1;
+	}
+	failures += refused == 2 ? 0 : 1;
+
+	gameLocal.Printf( "RECORD_TEST %s valuerows recordRows=%d created=%d authored=%d,%d refused=%d failures=%d\n", failures == 0 ? "PASS" : "FAIL",
+					  recordTestValues_t::VALUE_RECORD_FIELDS, createdBytes, authoredBytes[0], authoredBytes[1], refused, failures );
+}
+//puncho end
+
 static void Cmd_RecordTest_f( const idCmdArgs& args )
 {
 	if( !gameLocal.CheatsOk() || args.Argc() < 2 )
@@ -4470,6 +4697,13 @@ static void Cmd_RecordTest_f( const idCmdArgs& args )
 			return;
 		}
 		RecordTestMixedList();
+		return;
+	}
+	//puncho end
+	//puncho start - P2b.2.3b: recordTest valuerows, records and dicts only
+	if( idStr::Icmp( args.Argv( 1 ), "valuerows" ) == 0 )
+	{
+		RecordTestValueRows();
 		return;
 	}
 	//puncho end
@@ -5118,6 +5352,7 @@ void idGameLocal::InitConsoleCommands()
 #endif
 	cmdSystem->AddCommand( "game_memory",			idClass::DisplayInfo_f,		CMD_FL_GAME,				"displays game class info" );
 	cmdSystem->AddCommand( "listClasses",			idClass::ListClasses_f,		CMD_FL_GAME,				"lists game classes" );
+	cmdSystem->AddCommand( "listSchemaKeys",		Cmd_ListSchemaKeys_f,		CMD_FL_GAME,				"listSchemaKeys <class>: the schema rows of the class's chain that read a spawnArg, root first" );	//puncho - P2b.2.3b
 	cmdSystem->AddCommand( "listThreads",			idThread::ListThreads_f,	CMD_FL_GAME | CMD_FL_CHEAT,	"lists script threads" );
 	cmdSystem->AddCommand( "listEntities",			Cmd_EntityList_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"lists game entities" );
 	cmdSystem->AddCommand( "listActiveEntities",	Cmd_ActiveEntityList_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"lists active game entities" );

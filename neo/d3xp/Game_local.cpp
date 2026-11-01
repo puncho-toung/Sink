@@ -6993,6 +6993,44 @@ bool idGameLocal::CheckInCinematic()
 {
 	return inCinematic;
 }
+
+//puncho start - P2b.2.3b
+/*
+=============
+idGameLocal::GetSchemaKeys
+
+The rows CLASS_SCHEMA_KEYS registered on each class of spawnclass's chain, the root first: the chain is walked up
+once for its depth, then each level is reached from spawnclass again, so nothing is held but the caller's list.
+=============
+*/
+bool idGameLocal::GetSchemaKeys( const char* spawnclass, idList<const schemaKey_t*>& keys ) const
+{
+	keys.SetNum( 0 );
+	const idTypeInfo* type = idClass::GetClass( spawnclass );
+	if( type == NULL )
+	{
+		return false;
+	}
+	int depth = 0;
+	for( const idTypeInfo* c = type; c != NULL; c = c->super )
+	{
+		depth++;
+	}
+	for( int level = depth - 1; level >= 0; level-- )
+	{
+		const idTypeInfo* c = type;
+		for( int i = 0; i < level; i++ )
+		{
+			c = c->super;
+		}
+		for( int i = 0; i < c->numSchemaKeys; i++ )
+		{
+			keys.Append( &c->schemaKeys[i] );
+		}
+	}
+	return true;
+}
+//puncho end
 /*
 ======================
 idGameLocal::SpreadLocations

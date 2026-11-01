@@ -383,6 +383,9 @@ public:
 
 	idHierarchy<idTypeInfo>		node;
 
+	const schemaKey_t* 			schemaKeys;			//puncho - P2b.2.3b: this level's list rows (CLASS_SCHEMA_KEYS), NULL for none
+	int							numSchemaKeys;
+
 	idTypeInfo( const char* classname, const char* superclass,
 				idEventFunc<idClass>* eventCallbacks, idClass * ( *CreateInstance )(), void ( idClass::*Spawn )(),
 				void ( idClass::*Save )( idSaveGame* savefile ) const, void	( idClass::*Restore )( idRestoreGame* savefile ),

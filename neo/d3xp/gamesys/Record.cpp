@@ -34,6 +34,25 @@ bool idRecordMapArgs::GetBool( const char* key, const char* defaultString ) cons
 	return atoi( GetString( key, defaultString ) ) != 0;
 }
 
+//puncho start - P2b.2.3b
+float idRecordMapArgs::GetFloat( const char* key, const char* defaultString ) const
+{
+	return atof( GetString( key, defaultString ) );
+}
+
+void idRecordMapArgs::GetString( const char* key, const char* defaultString, idStr& out ) const
+{
+	out = GetString( key, defaultString );
+}
+
+// idDict::GetVector's parse: a NULL default is "0 0 0", missing components stay 0
+void idRecordMapArgs::GetVector( const char* key, const char* defaultString, idVec3& out ) const
+{
+	out.Zero();
+	sscanf( GetString( key, defaultString != NULL ? defaultString : "0 0 0" ), "%f %f %f", &out.x, &out.y, &out.z );
+}
+//puncho end
+
 /*
 ================
 idRecordOut
@@ -274,7 +293,7 @@ void idRecordOut::WriteData( const void* bytes, int count )
 }
 
 // WriteUnsigned, WriteCount, WriteString and WriteChunk are the file mode's: an entry's fields write through the calls
-// above, inside their field bounds
+// above, inside their field bounds, and through WriteString for a value R row's STRING (P2b.2.3b)
 void idRecordOut::WriteUnsigned( uint64 value, int bytes )
 {
 	assert( file != NULL );
@@ -305,7 +324,6 @@ void idRecordOut::WriteCount( int count, int bytes, int maxCount )
 
 void idRecordOut::WriteString( const char* value, int bound )
 {
-	assert( file != NULL );
 	assert( bound >= 0 && bound <= 255 );
 	const int count = idStr::Length( value );
 	if( count > bound )

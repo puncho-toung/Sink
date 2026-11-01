@@ -41,24 +41,39 @@ extern const idEventDef EV_BecomeNonSolid;
 extern const idEventDef EV_IsAtRest;
 
 //puncho start - schema (P1-A1a): the nested physics saves as a static object and is the whole snapshot; the initial
-// spline is a hatch (K8): it saves the spline's start time and its restore rebuilds the spline between two reads
+// spline is a hatch (K8): it saves the spline's start time and its restore rebuilds the spline between two reads.
+// P2b.2.3b, the pilot (K1, K2): Spawn reads the keyed rows through one SCHEMA_SPAWN; health is read here again over
+// idEntity's read (the most-derived row is the class's default); the KEYONLY rows are the keys Spawn reads by hand
+// (clamped, derived or tested in place), listed so the FGD has them
 #define MOVEABLE_SCHEMA( X, s ) \
-	X( s, brokenModel,			STRING,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
-	X( s, damage,				STRING,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
-	X( s, monsterDamage,		STRING,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
-	X( s, attacker,				OBJECT,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
-	X( s, fxCollide,			STRING,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
-	X( s, nextCollideFxTime,	INT,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
-	X( s, minDamageVelocity,	FLOAT,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
-	X( s, maxDamageVelocity,	FLOAT,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
-	X( s, explode,				BOOL,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
-	X( s, unbindOnDeath,		BOOL,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
-	X( s, allowStep,			BOOL,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
-	X( s, canDamage,			BOOL,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
-	X( s, nextDamageTime,		INT,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
-	X( s, nextSoundTime,		INT,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
-	X( s, InitialSpline,		HAND,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
-	X( s, physicsObj,			STATIC,	SW,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ )
+	X( s, brokenModel,			STRING,	S,		RAW,	0,	SCHEMA_STOCK,	"broken",				"",		"Visual model to be used when the health drops down to or below zero.",	OBJ ) \
+	X( s, damage,				STRING,	S,		RAW,	0,	SCHEMA_STOCK,	"def_damage",			"",		"Damage definition if it damages things it collides with.",	OBJ ) \
+	X( s, monsterDamage,		STRING,	S,		RAW,	0,	SCHEMA_STOCK,	"monster_damage",		"",		"Damage definition used instead of def_damage when it hits a monster.",	OBJ ) \
+	X( s, attacker,				OBJECT,	S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,					NODEF,	NOEDIT,	OBJ ) \
+	X( s, fxCollide,			STRING,	S,		RAW,	0,	SCHEMA_STOCK,	"fx_collide",			"",		"FX system to start at impact position when object collides.",	OBJ ) \
+	X( s, nextCollideFxTime,	INT,	S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,					NODEF,	NOEDIT,	OBJ ) \
+	X( s, minDamageVelocity,	FLOAT,	S,		RAW,	0,	SCHEMA_STOCK,	"minDamageVelocity",	"300",	"Impact speed below which the object does no damage.",	OBJ ) \
+	X( s, maxDamageVelocity,	FLOAT,	S,		RAW,	0,	SCHEMA_STOCK,	"maxDamageVelocity",	"700",	"Impact speed at which the object does its full damage.",	OBJ ) \
+	X( s, explode,				BOOL,	S,		RAW,	0,	SCHEMA_STOCK,	"explode",				"0",	"If set to 1 the moveable explodes and is removed when the health drops down to or below zero.",	OBJ ) \
+	X( s, unbindOnDeath,		BOOL,	S,		RAW,	0,	SCHEMA_STOCK,	"unbindondeath",		"0",	"Unbind entity when health drops down to or below zero.",	OBJ ) \
+	X( s, allowStep,			BOOL,	S,		RAW,	0,	SCHEMA_STOCK,	"allowStep",			"1",	"Set to 0 to prevent monsters from ever walking over this object.",	OBJ ) \
+	X( s, canDamage,			BOOL,	S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,					NODEF,	NOEDIT,	OBJ ) \
+	X( s, nextDamageTime,		INT,	S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,					NODEF,	NOEDIT,	OBJ ) \
+	X( s, nextSoundTime,		INT,	S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,					NODEF,	NOEDIT,	OBJ ) \
+	X( s, InitialSpline,		HAND,	S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,					NODEF,	NOEDIT,	OBJ ) \
+	X( s, physicsObj,			STATIC,	SW,		RAW,	0,	SCHEMA_STOCK,	NOKEY,					NODEF,	NOEDIT,	OBJ ) \
+	X( s, health,				INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"health",				"0",	"If set the visual model changes to 'broken' when the health drops down to or below zero.",	OBJ ) \
+	X( s, damageWhenActive,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"damageWhenActive",		"0",	"Only damage when active ( currently for the vagary and influence stuff ).",	KEYONLY ) \
+	X( s, density,				FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"density",				"0.5",	"Volume of the object times the density is the mass.",	KEYONLY ) \
+	X( s, friction,				FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"friction",				"0.05",	"Friction with contacting surfaces in the range [0-1] where 0 is no friction.",	KEYONLY ) \
+	X( s, bouncyness,			FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"bouncyness",			"0.6",	"How much the object bounces in the range [0-1] where 0 is no bounce.",	KEYONLY ) \
+	X( s, mass,					FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"mass",					"10",	"Mass of the object (overrides density).",	KEYONLY ) \
+	X( s, clipmodel,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"clipmodel",			"",		"Model to be used for collision detection.",	KEYONLY ) \
+	X( s, clipshrink,			INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"clipshrink",			"0",	"Shrink the visual model with an epsilon and use it as a clip model.",	KEYONLY ) \
+	X( s, nodrop,				BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"nodrop",				"0",	"Do not drop to the floor.",	KEYONLY ) \
+	X( s, noimpact,				BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"noimpact",				"0",	"Do not activate by the impact of other objects.",	KEYONLY ) \
+	X( s, notPushable,			BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"notPushable",			"0",	"Do not allow to be pushed.",	KEYONLY ) \
+	X( s, nonsolid,				BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"nonsolid",				"0",	"Make the object non-solid.",	KEYONLY )
 //puncho end
 
 class idMoveable : public idEntity

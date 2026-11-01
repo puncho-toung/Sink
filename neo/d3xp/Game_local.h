@@ -746,6 +746,7 @@ public:
 	virtual void			ClientReadSnapshot( const idSnapShot& ss );
 	virtual void			ClientRunFrame( idUserCmdMgr& cmdMgr, bool lastPredictFrame, gameReturn_t& ret );
 	virtual void			GetContentDigests( contentDigests_t& digests ) const;	//puncho - version rule (MP-A0), Game_network.cpp
+	virtual bool			GetSchemaKeys( const char* spawnclass, idList<const schemaKey_t*>& keys ) const;	//puncho - P2b.2.3b
 	void					BuildReturnValue( gameReturn_t& ret );
 
 	virtual int				GetMPGameModes( const char** * gameModes, const char** * gameModesDisplay );

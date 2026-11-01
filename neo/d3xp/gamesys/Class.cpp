@@ -84,6 +84,8 @@ idTypeInfo::idTypeInfo( const char* classname, const char* superclass, idEventFu
 	this->freeEventMap		= false;
 	typeNum					= 0;
 	lastChild				= 0;
+	schemaKeys				= NULL;			//puncho - P2b.2.3b: set after this by the class's CLASS_SCHEMA_KEYS registrar
+	numSchemaKeys			= 0;
 
 	// Check if any subclasses were initialized before their superclass
 	for( type = typelist; type != NULL; type = type->next )

@@ -100,6 +100,11 @@ public:
 	const char* 		GetString( const char* key, const char* defaultString = "" ) const;
 	int					GetInt( const char* key, const char* defaultString = "0" ) const;
 	bool				GetBool( const char* key, const char* defaultString = "0" ) const;
+	//puncho start - P2b.2.3b: the getters a value R row's baseline reads through idSchemaGet, parsed as idDict's are
+	float				GetFloat( const char* key, const char* defaultString = "0" ) const;
+	void				GetString( const char* key, const char* defaultString, idStr& out ) const;
+	void				GetVector( const char* key, const char* defaultString, idVec3& out ) const;
+	//puncho end
 };
 
 /*
