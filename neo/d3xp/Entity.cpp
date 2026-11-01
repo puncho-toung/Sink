@@ -1273,10 +1273,25 @@ bool idEntity::DoDormantTests()
 		return false;
 	}
 
+	//puncho start - P2b.2.2b-ii (plans/map-graph/math-2b/S2b-2/core/Dormancy.cpp DormancyEvaluate): distance first, on
+	// every map. The radius is the def's when positive (a NaN takes the world's too), else the world radius LoadMap
+	// read; the tier runs whether or not the area is connected, so a monster behind a closed door inside the radius
+	// stays awake and one past it sleeps in a connected area. g_dormantDistance 0 or a radius of 0 keeps the area test
+	if( g_dormantDistanceFirst.GetBool() )
+	{
+		const float radius = ( dormantRadius > 0.0f ) ? dormantRadius : gameLocal.dormantWorldRadius;
+		if( g_dormantDistance.GetBool() && radius > 0.0f )
+		{
+			return DormantDistanceTier( radius );
+		}
+		return DormantAreaTest( gameLocal.InPlayerConnectedArea( this ) );
+	}
+	//puncho end
+
 	const bool connected = gameLocal.InPlayerConnectedArea( this );
 	if( connected && g_dormantDistance.GetBool() && dormantRadius > 0.0f )
 	{
-		return DormantDistanceTier();
+		return DormantDistanceTier( dormantRadius );
 	}
 	return DormantAreaTest( connected );
 }
@@ -1335,15 +1350,25 @@ bool idEntity::DormantAreaTest( bool connected )
 ================
 idEntity::DormantDistanceTier
 
-The authored distance tier (g_dormantDistance, dormant_radius), in a player's connected area: the distance to the
-nearest dormancy source against the scaled radius, with hysteresis on the way out, a wake budget per tic and the
-deferred and forced wakes.
+The distance tier (g_dormantDistance): the distance to the nearest dormancy source against the scaled radius, with
+hysteresis on the way out, a wake budget per tic and the deferred and forced wakes. effectiveRadius is the authored
+dormant_radius in a player's connected area, or under g_dormantDistanceFirst the def's or the world's anywhere.
 ================
 */
-bool idEntity::DormantDistanceTier()
+bool idEntity::DormantDistanceTier( float effectiveRadius )
 {
+	//puncho - P2b.2.2b-ii: the unseen test made once, here, so a never-woken sleeper out of every player's PVS returns before
+	// the scale, the origin and the distance, for both callers (the 0 path's authored tier and distance first). Ahead of its
+	// unseen return the full path only counts a violation, which needs hasAwakened or a deferral, draws, which needs
+	// g_showDormancy, and resets dormantWakeDeferredAt, already 0. InPlayerPVS runs on exactly the rows it ran on below
+	const bool unseen = !fl.hasAwakened && !dormantWakeRequested && !gameLocal.InPlayerPVS( this );
+	if( unseen && dormantWakeDeferredAt == 0 && g_showDormancy.GetInteger() <= 0 )
+	{
+		gameLocal.aiStats.dormUnseen++;
+		return true;
+	}
 	const float scale = Max( 0.0f, g_dormantRadiusScale.GetFloat() ) * DormantRadiusScale();
-	const float radius = dormantRadius * scale;
+	const float radius = effectiveRadius * scale;
 	const float outerRadius = radius + dormantHysteresis * scale;
 	float distanceSqr = idMath::INFINITUM;
 	for( int i = 0; i < gameLocal.numDormantSources; i++ )
@@ -1406,7 +1431,7 @@ bool idEntity::DormantDistanceTier()
 	}
 	if( !dormantWakeRequested )
 	{
-		if( !fl.hasAwakened && !gameLocal.InPlayerPVS( this ) )
+		if( unseen )	//puncho - P2b.2.2b-ii: was !fl.hasAwakened && !gameLocal.InPlayerPVS( this ), the same rows (above)
 		{
 			gameLocal.aiStats.dormUnseen++;
 			dormantWakeDeferredAt = 0;

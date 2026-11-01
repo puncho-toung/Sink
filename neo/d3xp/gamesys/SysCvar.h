@@ -342,5 +342,9 @@ extern idCVar g_dormantStats;
 extern idCVar g_showDormancy;
 extern idCVar g_dormantCatchUp;
 extern idCVar g_dormantCatchUpMinMs;
+//puncho start - P2b.2.2b-ii
+extern idCVar g_dormantDistanceFirst;
+extern idCVar g_dormantWorldRadius;
+//puncho end
 
 #endif /* !__SYS_CVAR_H__ */

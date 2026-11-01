@@ -399,6 +399,11 @@ idCVar g_dormantStats( "g_dormantStats", "0", CVAR_GAME | CVAR_BOOL, "collect ke
 idCVar g_showDormancy( "g_showDormancy", "0", CVAR_GAME | CVAR_INTEGER, "1 colored bounds; 2 distance/radius labels" );
 idCVar g_dormantCatchUp( "g_dormantCatchUp", "1", CVAR_GAME | CVAR_BOOL, "run authored catch-up hook after long dormant sleep" );
 idCVar g_dormantCatchUpMinMs( "g_dormantCatchUpMinMs", "5000", CVAR_GAME | CVAR_INTEGER, "minimum dormant duration for catch-up" );
+//puncho start - P2b.2.2b-ii (plans/map-graph/stages/S2b-2-entity-tables.md K7): distance-first dormancy on every map; host-side,
+// neither synced nor archived
+idCVar g_dormantDistanceFirst( "g_dormantDistanceFirst", "0", CVAR_GAME | CVAR_BOOL, "1 = a dormancy entity sleeps by distance alone, connected or not: its dormant_radius, else the world radius, from each player's origin and view source; 0 = the stock area test, the distance tier only for an authored radius in a connected area" );
+idCVar g_dormantWorldRadius( "g_dormantWorldRadius", "10240", CVAR_GAME | CVAR_FLOAT, "the world dormancy radius under g_dormantDistanceFirst when the worldspawn has no dormant_radius; read at each map load" );
+//puncho end
 
 // RB: new game mode vars
 idCVar ng_classicFlashlight(		"ng_classicFlashlight",		"0",			CVAR_GAME | CVAR_BOOL | CVAR_ARCHIVE | CVAR_NEW, "Classic flash light weapon" );

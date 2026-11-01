@@ -211,6 +211,7 @@ void idGameLocal::Clear()
 {
 	numDormantSources = 0;
 	dormantWakesRemaining = 0;
+	dormantWorldRadius = 0.0f;	//puncho - P2b.2.2b-ii: LoadMap reads it
 	memset( &mapClipStart, 0, sizeof( mapClipStart ) );
 	mapAllocStart = 0;
 	mapAllocTic = 0;
@@ -1062,6 +1063,20 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	}
 	mapFileName = mapFile->GetName();
 	ReadAISquads();	//puncho - ai-avoidance (WP-A7): before the monsters spawn and look their squad up
+	//puncho start - P2b.2.2b-ii: the world dormancy radius, read before any dormancy test, once per map and again by a load
+	// (InitFromSaveGame runs LoadMap; the radius is never saved): the worldspawn's dormant_radius when the key is set, else
+	// g_dormantWorldRadius. A plain map and a worldspace take the same rule (phase plan C11)
+	const bool worldRadiusKey = mapFile->GetEntity( 0 )->epairs.GetFloat( "dormant_radius", "0", dormantWorldRadius );
+	if( !worldRadiusKey )
+	{
+		dormantWorldRadius = g_dormantWorldRadius.GetFloat();
+	}
+	dormantWorldRadius = Max( 0.0f, dormantWorldRadius );
+	if( g_dormantDistanceFirst.GetBool() )
+	{
+		Printf( "dormancy: distance first, world radius %.0f (%s)\n", dormantWorldRadius, worldRadiusKey ? "worldspawn dormant_radius" : "g_dormantWorldRadius" );
+	}
+	//puncho end
 
 	// map-only helpers (idDeclEntityDef::IsMapOnlyClass) lose their primitives; the geometry CRC was taken at parse
 	for( int i = 1; i < mapFile->GetNumEntities(); i++ )
@@ -2674,7 +2689,15 @@ void idGameLocal::SetupPlayerPVS()
 			if( camera != NULL ) { source = camera; }
 			else { source = player; }
 		}
-		if( numDormantSources < MAX_CLIENTS ) { dormantSources[numDormantSources++] = source->GetPhysics()->GetOrigin(); }
+		//puncho start - P2b.2.2b-ii: distance first measures from the player's body and from its view source, so a remote
+		// camera cannot sleep a monster beside its player; two a player, so dormantSources holds 2 * MAX_CLIENTS
+		if( g_dormantDistanceFirst.GetBool() )
+		{
+			if( numDormantSources < 2 * MAX_CLIENTS ) { dormantSources[numDormantSources++] = player->GetPhysics()->GetOrigin(); }
+			if( source != player && numDormantSources < 2 * MAX_CLIENTS ) { dormantSources[numDormantSources++] = source->GetPhysics()->GetOrigin(); }
+		}
+		else if( numDormantSources < MAX_CLIENTS ) { dormantSources[numDormantSources++] = source->GetPhysics()->GetOrigin(); }
+		//puncho end
 
 
 		if( playerPVS.i == -1 )

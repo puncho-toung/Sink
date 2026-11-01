@@ -4326,7 +4326,32 @@ static void Cmd_CheckPVSAreas_f( const idCmdArgs& args )
 
 static void Cmd_ListDormancy_f( const idCmdArgs& args )
 {
-	for( int i = 0; i < MAX_GENTITIES; i++ )
+	//puncho start - P2b.2.2b-ii: under distance first every dormancy row (HOT_DORMANCY) sleeps by a radius, the def's or
+	// the world's: each is listed with its scaled radius and outer radius and its distance to the nearest source of the
+	// last SetupPlayerPVS, as DormantDistanceTier measures them; at 0 the authored rows as before
+	const bool distanceFirst = g_dormantDistanceFirst.GetBool();
+	gameLocal.Printf( "dormancy: distance first %d, world radius %.0f, %d sources\n", distanceFirst ? 1 : 0, gameLocal.dormantWorldRadius,
+					  gameLocal.numDormantSources );
+	for( int i = 0; distanceFirst && i < MAX_GENTITIES; i++ )
+	{
+		const idEntity* entity = gameLocal.entities[i];
+		if( entity == NULL || ( gameLocal.entityHot.think[ i ].bits & HOT_DORMANCY ) == 0 )
+		{
+			continue;
+		}
+		const float scale = Max( 0.0f, g_dormantRadiusScale.GetFloat() ) * entity->DormantRadiusScale();
+		const float radius = ( entity->dormantRadius > 0.0f ? entity->dormantRadius : gameLocal.dormantWorldRadius ) * scale;
+		float distanceSqr = idMath::INFINITUM;
+		for( int s = 0; s < gameLocal.numDormantSources; s++ )
+		{
+			distanceSqr = Min( distanceSqr, ( entity->GetPhysics()->GetOrigin() - gameLocal.dormantSources[ s ] ).LengthSqr() );
+		}
+		gameLocal.Printf( "dormant entity %d %s radius %.0f outer %.0f distance %.0f asleep %d awakened %d neverDormant %d requested %d deferred %d\n",
+						  i, entity->name.c_str(), radius, radius + entity->dormantHysteresis * scale, idMath::Sqrt( distanceSqr ), entity->fl.isDormant,
+						  entity->fl.hasAwakened, entity->fl.neverDormant, entity->dormantWakeRequested, entity->dormantWakeDeferredAt );
+	}
+	//puncho end
+	for( int i = 0; !distanceFirst && i < MAX_GENTITIES; i++ )
 	{
 		const idEntity* entity = gameLocal.entities[i];
 		if( entity != NULL && entity->dormantRadius > 0.0f )
@@ -5482,7 +5507,7 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "where",					Cmd_GetViewpos_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"prints the current view position" );
 	cmdSystem->AddCommand( "listBudgets", Cmd_ListBudgets_f, CMD_FL_GAME, "list transient budget counters and entity high water; listBudgets order adds each class's join order" );
 	cmdSystem->AddCommand( "checkPVSAreas", Cmd_CheckPVSAreas_f, CMD_FL_GAME, "list entities touching more than four PVS areas" );
-	cmdSystem->AddCommand( "listDormancy", Cmd_ListDormancy_f, CMD_FL_GAME, "list authored dormancy entities and wake state" );
+	cmdSystem->AddCommand( "listDormancy", Cmd_ListDormancy_f, CMD_FL_GAME, "list dormancy entities, their radius and wake state: every dormancy row under g_dormantDistanceFirst, else the authored ones" );
 	cmdSystem->AddCommand( "listMapStatics", Cmd_ListMapStatics_f, CMD_FL_GAME, "list static spawn-skip eligibility and retained entity numbers" );
 	cmdSystem->AddCommand( "saveTestView", Cmd_SaveTestView_f, CMD_FL_GAME, "save a single-player view for the next testmap" );
 	cmdSystem->AddCommand( "getviewpos",			Cmd_GetViewpos_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"prints the current view position" );

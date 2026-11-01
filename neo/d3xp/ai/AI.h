@@ -305,7 +305,7 @@ private:
 // for every class (Entity.cpp); listed on idAI, the class whose defs author them, for the FGD (CLASS_SCHEMA_KEYS in
 // AI_events.cpp beside idAI's CLASS_DECLARATION)
 #define AI_SCHEMA( X, s ) \
-	X( s, dormant_radius,		FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"dormant_radius",		"0",	"Distance from the nearest player past which the monster sleeps, in an area connected to a player, with g_dormantDistance 1; 0 keeps the stock area test.",	KEYONLY ) \
+	X( s, dormant_radius,		FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"dormant_radius",		"0",	"Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds anywhere and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius); under 0 only in an area connected to a player, and 0 keeps the stock area test.",	KEYONLY ) \
 	X( s, dormant_hysteresis,	FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"dormant_hysteresis",	"1024",	"How far past dormant_radius an awake monster must be before it sleeps again.",	KEYONLY ) \
 	X( s, dormant_engagedScale,	FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"dormant_engagedScale",	"2",	"Scale on dormant_radius and dormant_hysteresis while the monster has a living enemy.",	KEYONLY ) \
 	X( s, neverDormant,			BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"neverDormant",			"0",	"If set to 1, monsters do not sleep outside your PVS.",	KEYONLY )
