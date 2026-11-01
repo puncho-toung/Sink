@@ -4189,14 +4189,14 @@ static int RecordFuzzRandom( idRandom& rng, int limit )
 }
 
 //puncho start - P2b.2.3a: recordTest mixedlist (K1). One list holding every kind of row a class's list holds once its
-// record rows merge in: an S row and a NOCH row, which the record expanders drop, an R row and an SR row. Each half
-// runs the expansions as a class does: the record through idRecordOut and idRecordIn (DIFF, WRITE, framing, CHECK,
-// READ) with both R fields changed and then with Recorded unchanged, the save through idSaveGame and idRestoreGame on
-// memory files, the wire through an idBitMsg, where no row writes a bit
+// record rows merge in: an S row and a NOCH row, which the record expanders drop, an R row and an SR row. The test
+// records, saves and sends it as a class does: the record through idRecordOut and idRecordIn (DIFF, WRITE, framing,
+// CHECK, READ) with both R fields changed and then with Value unchanged, the save through idSaveGame and idRestoreGame
+// on memory files, the wire through an idBitMsg, where no row writes a bit
 #define RECORD_TEST_MIXED_SCHEMA( X, s ) \
 	X( s, saved,	INT,	S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
 	X( s, unsent,	INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
-	X( s, Recorded,	HAND,	R,		RAW,	4,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, Value,	HAND,	R,		RAW,	4,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
 	X( s, Both,		HAND,	SR,		RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ )
 
 static const int RECORD_TEST_MIXED_SECTION = RECORD_SECTION_IDS - 1;	// never stored, so no entry check sees the id
@@ -4215,11 +4215,11 @@ struct recordTestMixed_t
 	};
 	// SF_ numbers every row, RF_ only the rows with R
 	compile_time_assert( MIXED_FIELDS == 4 && SF_unsent == 1 && SF_Both == 3 );
-	compile_time_assert( MIXED_RECORD_FIELDS == 2 && RF_Recorded == 0 && RF_Both == 1 );
+	compile_time_assert( MIXED_RECORD_FIELDS == 2 && RF_Value == 0 && RF_Both == 1 );
 
 	int			saved;
 	int			unsent;
-	int			recorded;
+	int			value;
 	int			both;
 
 	void WriteRecord( idRecordOut& rec ) const
@@ -4261,23 +4261,23 @@ struct recordTestMixed_t
 		RECORD_TEST_MIXED_SCHEMA( SCHEMA_READ, ( *this ) )
 	}
 
-	// Recorded: four bytes, written when it is not 0, so a recorded 0 fails the check
-	bool RecordRecordedChanged( const idRecordOut& rec ) const
+	// Value: four bytes, written when it is not 0, so a recorded 0 fails the check
+	bool RecordValueChanged( const idRecordOut& rec ) const
 	{
-		return recorded != 0;
+		return value != 0;
 	}
-	void WriteRecordRecorded( idRecordOut& rec ) const
+	void WriteRecordValue( idRecordOut& rec ) const
 	{
-		rec.WriteInt( recorded );
+		rec.WriteInt( value );
 	}
-	bool ApplyRecordRecorded( idRecordIn& rec )
+	bool ApplyRecordValue( idRecordIn& rec )
 	{
-		return rec.ReadInt( recorded );
+		return rec.ReadInt( value );
 	}
-	static bool CheckRecordRecorded( idRecordIn& rec )
+	static bool CheckRecordValue( idRecordIn& rec )
 	{
-		int value;
-		return rec.ReadInt( value ) && value != 0;
+		int read;
+		return rec.ReadInt( read ) && read != 0;
 	}
 	// Both: a variable field holding one int, always written; saved as an int
 	bool RecordBothChanged( const idRecordOut& rec ) const
@@ -4294,8 +4294,8 @@ struct recordTestMixed_t
 	}
 	static bool CheckRecordBoth( idRecordIn& rec )
 	{
-		int value;
-		return rec.ReadInt( value );
+		int read;
+		return rec.ReadInt( read );
 	}
 	void SaveBoth( idSaveGame* savefile ) const
 	{
@@ -4313,11 +4313,11 @@ static void RecordTestMixedList()
 	static const idRecordMapArgs noBaseline = { NULL, NULL };
 	static const char* const names[] = { RECORD_TEST_MIXED_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
 	verify_array_size( names, recordTestMixed_t::MIXED_RECORD_FIELDS );
-	int failures = ( idStr::Cmp( names[recordTestMixed_t::RF_Recorded], "Recorded" ) != 0 || idStr::Cmp( names[recordTestMixed_t::RF_Both], "Both" ) != 0 ) ? 1 : 0;
+	int failures = ( idStr::Cmp( names[recordTestMixed_t::RF_Value], "Value" ) != 0 || idStr::Cmp( names[recordTestMixed_t::RF_Both], "Both" ) != 0 ) ? 1 : 0;
 
-	// the record: the section header, Recorded's four bytes when it changed, Both's length and four bytes
+	// the record: the section header, Value's four bytes when it changed, Both's length and four bytes
 	const recordTestMixed_t source[2] = { { 11, 22, 33, 44 }, { 11, 22, 0, 44 } };
-	const uint64 masks[2] = { BIT( recordTestMixed_t::RF_Recorded ) | BIT( recordTestMixed_t::RF_Both ), BIT( recordTestMixed_t::RF_Both ) };
+	const uint64 masks[2] = { BIT( recordTestMixed_t::RF_Value ) | BIT( recordTestMixed_t::RF_Both ), BIT( recordTestMixed_t::RF_Both ) };
 	const int lengths[2] = { RECORD_SECTION_HEADER_BYTES + 4 + 2 + 4, RECORD_SECTION_HEADER_BYTES + 2 + 4 };
 	int recordBytes[2] = { 0, 0 };
 	for( int i = 0; i < 2; i++ )
@@ -4340,25 +4340,23 @@ static void RecordTestMixedList()
 			in.Rewind();
 			recordTestMixed_t applied = { -1, -1, -1, -1 };
 			good = good && applied.ApplyRecord( in ) && in.Done();
-			good = good && applied.saved == -1 && applied.unsent == -1 && applied.recorded == ( i == 0 ? 33 : -1 ) && applied.both == 44;
+			good = good && applied.saved == -1 && applied.unsent == -1 && applied.value == ( i == 0 ? 33 : -1 ) && applied.both == 44;
 		}
 		failures += good ? 0 : 1;
 	}
 
-	// the save: saved and Both, eight bytes; Close then appends the stream's tail, which this test does not read
+	// the save: saved and Both, eight bytes
 	idFile_Memory saveFile( "recordTestMixed" );
 	idFile_Memory stringFile( "recordTestMixedStrings" );
-	int saveBytes;
-	{
-		idSaveGame save( &saveFile, &stringFile, BUILD_NUMBER );
-		source[0].Save( &save );
-		saveBytes = saveFile.Length();
-	}
+	idSaveGame save( &saveFile, &stringFile, BUILD_NUMBER );
+	source[0].Save( &save );
+	const int saveBytes = saveFile.Length();
+	save.Close();	// appends the sound commands and trace models, which this test does not read
 	idFile_Memory readFile( "recordTestMixed", ( const char* )saveFile.GetDataPtr(), saveBytes );	// the const data opens it for reading
 	idRestoreGame restore( &readFile, &stringFile, BUILD_NUMBER );
 	recordTestMixed_t restored = { -1, -1, -1, -1 };
 	restored.Restore( &restore );
-	failures += ( saveBytes != 8 || readFile.Tell() != saveBytes || restored.saved != 11 || restored.unsent != -1 || restored.recorded != -1 || restored.both != 44 ) ? 1 : 0;
+	failures += ( saveBytes != 8 || readFile.Tell() != saveBytes || restored.saved != 11 || restored.unsent != -1 || restored.value != -1 || restored.both != 44 ) ? 1 : 0;
 
 	// the wire: no W row
 	byte buffer[16];
@@ -4408,7 +4406,7 @@ static void Cmd_RecordTest_f( const idCmdArgs& args )
 		mapGraphDirector.TestRecipe( gameLocal.GetMapName() );
 		return;
 	}
-	//puncho start - P2b.2.3a: recordTest mixedlist; its save half closes the way a save does, with the map's sound world
+	//puncho start - P2b.2.3a: recordTest mixedlist; its save closes the way a save does, with the map's sound world
 	if( idStr::Icmp( args.Argv( 1 ), "mixedlist" ) == 0 )
 	{
 		if( gameLocal.GameState() != GAMESTATE_ACTIVE )

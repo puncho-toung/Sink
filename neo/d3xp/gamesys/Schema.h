@@ -55,8 +55,8 @@ If you have questions concerning this license or the applicable additional terms
 	  test away, so a stock field restores with the code the hand-written call compiled to.
 	- The last four columns are the spawn side (C6): the spawnArg key or NOKEY, the spawn value when the key is absent
 	  or NODEF (the constructor's), the FGD text or NOEDIT, and where the value lives: OBJ (a member of s), HOT (a
-	  column of entityHot), BOTH (the column, mirrored in the member) or KEYONLY (read at spawn, stored nowhere). No
-	  expander reads them yet.
+	  column of the hot table, C6), BOTH (the column, mirrored in the member) or KEYONLY (read at spawn, stored
+	  nowhere). No expander reads them yet.
 
 	The compiler expands a list into statements inside a hand-written function whose stream is savefile or msg, so
 	what runs is still read in one place; code that is about no single field goes before or after the expansion:
@@ -90,7 +90,7 @@ If you have questions concerning this license or the applicable additional terms
 #define SCHEMA_STOCK		0
 
 //puncho - P2b.2.3a: the spawn side's absent values (C6). OBJ, HOT, BOTH, KEYONLY, NOCH and the channels are pasted
-// into gate names, so they are never defined
+// into gate names, STORE into SCHEMA_SPAWN_ from P2b.2.3b, so none is ever defined
 #define NOKEY				nullptr
 #define NODEF				nullptr
 #define NOEDIT				nullptr
@@ -98,10 +98,11 @@ If you have questions concerning this license or the applicable additional terms
 // one entry, per direction
 #define SCHEMA_SAVE( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )		SCHEMA_S_##CH( SCHEMA_SAVE_##TYPE( savefile, s, n, ARG ) )
 #define SCHEMA_RESTORE( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )	SCHEMA_S_##CH( if( ( BUILD ) == SCHEMA_STOCK || savefile->GetBuildNumber() >= ( BUILD ) ) { SCHEMA_RESTORE_##TYPE( savefile, s, n, ARG ) } )
-#define SCHEMA_WRITE( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )		SCHEMA_W_##CH( SCHEMA_WRITE_##TYPE##_##ENC( msg, s, n, ARG ) )
+#define SCHEMA_WRITE( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )	SCHEMA_W_##CH( SCHEMA_WRITE_##TYPE##_##ENC( msg, s, n, ARG ) )
 #define SCHEMA_READ( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )		SCHEMA_W_##CH( SCHEMA_READ_##TYPE##_##ENC( msg, s, n, ARG ) )
-// numbers the fields SF_<field> in an enum inside the class, NOCH rows included; nothing expands it yet, MD7's dirty mask will
-#define SCHEMA_INDEX( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )		SF_##n,
+// numbers the fields SF_<field> in an enum inside the class, NOCH rows included; only recordTest mixedlist expands it
+// yet, MD7's dirty mask will
+#define SCHEMA_INDEX( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )	SF_##n,
 
 // the channel gates
 #define SCHEMA_S_S( x )		x
