@@ -1216,7 +1216,7 @@ void idDeclManagerLocal::Init()
 	// RB begin
 	cmdSystem->AddCommand( "exportEntitiesToBlender", ExportEntityDefsToBlender_f, CMD_FL_SYSTEM, "exports all entity and model defs to _bl/entities.json" );
 	cmdSystem->AddCommand( "exportMaterialsToBlender", ExportMaterialsToBlender_f, CMD_FL_SYSTEM, "exports all materials to _bl/entities.json" );
-	cmdSystem->AddCommand( "exportFGD", ExportEntityDefsToTrenchBroom_f, CMD_FL_SYSTEM, "exports all entity and model defs to _tb/fgd/DOOM-3-*.fgd; the light class also declares the engine's light_* and math_* keys" );
+	cmdSystem->AddCommand( "exportFGD", ExportEntityDefsToTrenchBroom_f, CMD_FL_SYSTEM, "exports all entity and model defs to _tb/fgd/DOOM-3-*.fgd; the light class also declares the engine's light_* and math_* keys, every class its schema keys (drift in schema-drift.txt)" );
 	cmdSystem->AddCommand( "exportModelsToTrenchBroom", ExportModelsToTrenchBroom_f, CMD_FL_SYSTEM, "exports all generated models like blwo, base .. to _tb/*.obj" );
 	cmdSystem->AddCommand( "exportImagesToTrenchBroom", ExportImagesToTrenchBroom_f, CMD_FL_SYSTEM, "exports all generated bimages to _tb/*.png" );
 
@@ -2692,6 +2692,10 @@ static const evarPrefix_t EvarPrefixes[] =
 
 static const int NumEvarPrefixes = sizeof( EvarPrefixes ) / sizeof( evarPrefix_t );
 
+//puncho - P2b.2.4: the FGD property type of a schema row, by schemaKeyType_t (Game.h); a keyed row is never SCHEMA_KEY_NONE
+static const char* const FGD_SCHEMA_TYPES[] = { NULL, "integer", "float", "choices", "string" };
+compile_time_assert( sizeof( FGD_SCHEMA_TYPES ) / sizeof( FGD_SCHEMA_TYPES[ 0 ] ) == SCHEMA_KEY_STRING + 1 );
+
 struct LocalEvar_t
 {
 	int	type;
@@ -2920,6 +2924,92 @@ static const idDeclEntityDef* FGD_FindParent( const idDeclEntityDef* decl )
 	return parent;
 }
 
+//puncho start - P2b.2.4: the schema keys (K9)
+/*
+================
+FGD_FindInheritedKey
+
+The key's pair in decl or, failing that, in its nearest ancestor that sets it: the value the merged def holds at run
+time, which EDITOR_EXPORTDEFS leaves unmerged. Keys compare as idDict::FindKey does, case-insensitively.
+================
+*/
+static const idKeyValue* FGD_FindInheritedKey( const idDeclEntityDef* decl, const char* key )
+{
+	for( int depth = 0; decl != NULL && depth < FGD_MAX_INHERIT_DEPTH; depth++ )
+	{
+		const idKeyValue* kv = decl->dict.FindKey( key );
+		if( kv != NULL )
+		{
+			return kv;
+		}
+
+		decl = FGD_FindParent( decl );
+	}
+	return NULL;
+}
+
+/*
+================
+FGD_SchemaKeys
+
+K( decl ): the rows of decl's spawnclass chain (idGame::GetSchemaKeys, the root class first) that have a key and an
+FGD text, one per key: a key listed again further down the chain keeps its slot and takes the more derived row.
+================
+*/
+static void FGD_SchemaKeys( const idDeclEntityDef* decl, idList<const schemaKey_t*>& keys )
+{
+	keys.SetNum( 0 );
+
+	const idKeyValue* spawnclass = FGD_FindInheritedKey( decl, "spawnclass" );
+	idList<const schemaKey_t*> chain;
+	if( spawnclass == NULL || !game->GetSchemaKeys( spawnclass->GetValue(), chain ) )
+	{
+		return;
+	}
+
+	for( int i = 0; i < chain.Num(); i++ )
+	{
+		const schemaKey_t* row = chain[ i ];
+		if( row->key == NULL || row->editor == NULL )
+		{
+			continue;
+		}
+		assert( row->type > SCHEMA_KEY_NONE && row->type <= SCHEMA_KEY_STRING );
+
+		int slot = 0;
+		while( slot < keys.Num() && idStr::Icmp( keys[ slot ]->key, row->key ) != 0 )
+		{
+			slot++;
+		}
+
+		if( slot < keys.Num() )
+		{
+			keys[ slot ] = row;
+		}
+		else
+		{
+			keys.Append( row );
+		}
+	}
+}
+
+/*
+================
+FGD_SameDefault
+
+Two schema rows have the same DEFAULT: both NODEF (NULL), or the same text
+================
+*/
+static bool FGD_SameDefault( const char* a, const char* b )
+{
+	if( a == NULL || b == NULL )
+	{
+		return ( a == b );
+	}
+	return ( idStr::Cmp( a, b ) == 0 );
+}
+//puncho end
+
 /*
 ================
 FGD_CollectEvars
@@ -3037,6 +3127,8 @@ idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f
 
 Writes the entityDefs with editor_* keys, their own or an ancestor's, to _tb/fgd/DOOM-3-*.fgd.
 A class whose spawnclass is idLight also gets FGD_LIGHT_KEYS, the light keys the engine reads.
+Every class gets its spawnclass's schema keys (K9), and _tb/fgd/schema-drift.txt lists each def
+value that differs from its schema row's DEFAULT.
 ================
 */
 void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args )
@@ -3181,6 +3273,7 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 		// the classes written to this file
 		int totalEntitiesCount = 0;
 		int totalModelsCount = 0;
+		int totalSchemaKeysCount = 0;	//puncho - P2b.2.4: the schema block's lines
 
 		idStr fgdFileName;
 		fgdFileName.Format( "_tb/fgd/DOOM-3-%s.fgd", filenames[ f ].c_str() );
@@ -3687,6 +3780,10 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 			}
 			file->Printf( "[\n" );
 
+			//puncho - P2b.2.4: every key this class has printed (K9, the one emitted-key set), tested before each line below so
+			// that no key prints twice; idDict compares keys as FindKey does
+			idDict emitted;
+
 			const bool lightClass = ( idStr::Icmp( decl->GetName(), "light" ) == 0 );
 			if( lightClass )
 			{
@@ -3709,23 +3806,28 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 					"\t\t4 : \"Fast strobe\"\n"
 					"\t\t9 : \"Slow strobe\"\n"
 					"\t]\n" );
+				emitted.Set( "style", "" );
 			}
 
 			// every class but worldspawn can be named and can target others
 			const bool linkClass = ( idStr::Icmp( decl->GetName(), "worldspawn" ) != 0 );
-			bool wroteName = false;
-			bool wroteTarget = false;
 
 			for( int i = 0; i < dictToWrite.GetNumKeyVals(); i++ )
 			{
 				kv = dictToWrite.GetKeyVal( i );
 
+				idStr cleanKey = kv->GetKey();
+				if( cleanKey.Icmp( "color" ) == 0 )
+				{
+					cleanKey = "_color";
+				}
+
 				// Keys TrenchBroom must not offer: an FGD key cannot hold whitespace, and a substitute
 				// would not be the engine's key; origin belongs to TrenchBroom, and a default there would
-				// move the entity; the light's style is the Choices block above.
+				// move the entity; a key printed already, as the light's style in the Choices block above.
 				if( kv->GetKey().Find( ' ' ) != -1 || kv->GetKey().Find( '\t' ) != -1 ||
 						kv->GetKey().Icmp( "origin" ) == 0 ||
-						( lightClass && kv->GetKey().Icmp( "style" ) == 0 ) )
+						emitted.FindKey( cleanKey ) != NULL )
 				{
 					continue;
 				}
@@ -3747,12 +3849,6 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 					{
 						ev = &baseEvars[ j ];
 					}
-				}
-
-				idStr cleanKey = kv->GetKey();
-				if( cleanKey.Icmp( "color" ) == 0 )
-				{
-					cleanKey = "_color";
 				}
 
 				// regular spawn arguments are plain strings without a description
@@ -3814,15 +3910,6 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 							desc = FGD_LINK_DESC;
 						}
 					}
-
-					if( nameKey )
-					{
-						wroteName = true;
-					}
-					else if( cleanKey.Cmp( "target" ) == 0 )
-					{
-						wroteTarget = true;
-					}
 				}
 
 				// the spawnclass comes from the entityDef and must not be edited; so do dmapOnly and mapOnlyKind,
@@ -3866,21 +3953,100 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 				}
 
 				file->Printf( "%s", ( evarType == EVAR_BOOL ) ? FGD_BOOL_CHOICES : "\n" );
+				emitted.Set( cleanKey, "" );
 			}
 
 			if( linkClass )
 			{
-				FGD_WriteLinkProperties( file, wroteName, wroteTarget );
+				FGD_WriteLinkProperties( file, emitted.FindKey( "name" ) != NULL, emitted.FindKey( "target" ) != NULL );
+				emitted.Set( "name", "" );
+				emitted.Set( "target", "" );
 			}
 
-			// The keys the engine reads for a light. dictToWrite holds every key the loop above wrote (its
-			// skips and renames never touch a light key), so a key the class declares keeps that declaration.
+			//puncho start - P2b.2.4: the schema keys (K9): K( class ) less the keys dictToWrite holds, the keys printed above and
+			// the (key, default) pairs of K( baseDecl ), which TrenchBroom inherits through base(); a key whose default changes
+			// below the base is written again. The def's value is the default when the def sets the key (Q14), else the row's
+			// DEFAULT; a NODEF row the def does not set prints none.
+			idList<const schemaKey_t*> schemaKeys;
+			idList<const schemaKey_t*> baseSchemaKeys;
+			FGD_SchemaKeys( decl, schemaKeys );
+			FGD_SchemaKeys( baseDecl, baseSchemaKeys );
+			for( int i = 0; i < schemaKeys.Num(); i++ )
+			{
+				const schemaKey_t* row = schemaKeys[ i ];
+				if( dictToWrite.FindKey( row->key ) != NULL || emitted.FindKey( row->key ) != NULL )
+				{
+					continue;
+				}
+
+				bool inherited = false;
+				for( int j = 0; j < baseSchemaKeys.Num(); j++ )
+				{
+					if( idStr::Icmp( baseSchemaKeys[ j ]->key, row->key ) == 0 )
+					{
+						inherited = FGD_SameDefault( baseSchemaKeys[ j ]->defaultValue, row->defaultValue );
+						break;
+					}
+				}
+
+				if( inherited )
+				{
+					continue;
+				}
+
+				const idKeyValue* defKv = FGD_FindInheritedKey( decl, row->key );
+				const idStr value = FGD_CleanString( ( defKv != NULL ) ? defKv->GetValue().c_str() : ( ( row->defaultValue != NULL ) ? row->defaultValue : "" ) );
+
+				file->Printf( "\t%s(%s) : \"%s\"", row->key, FGD_SCHEMA_TYPES[ row->type ], FGD_CleanString( row->editor ).c_str() );
+
+				// as for the editor vars: an integer or a bool unquoted and whole, a float unquoted when whole and quoted
+				// when not, a word only for a string; an empty value is no default
+				if( row->type == SCHEMA_KEY_STRING )
+				{
+					if( !value.IsEmpty() )
+					{
+						file->Printf( " : \"%s\"", value.c_str() );
+					}
+				}
+				else if( FGD_IsNumber( value ) )
+				{
+					if( row->type != SCHEMA_KEY_FLOAT )
+					{
+						file->Printf( " : %d", atoi( value ) );
+					}
+					else if( value.Find( '.' ) == -1 )
+					{
+						file->Printf( " : %s", value.c_str() );
+					}
+					else
+					{
+						file->Printf( " : \"%s\"", value.c_str() );
+					}
+				}
+
+				file->Printf( "%s", ( row->type == SCHEMA_KEY_BOOL ) ? FGD_BOOL_CHOICES : "\n" );
+				emitted.Set( row->key, "" );
+				totalSchemaKeysCount++;
+			}
+
+			// worldspawn's world dormancy radius (P2b.2.2b-ii), which idGameLocal::LoadMap reads and no def declares
+			if( !linkClass && emitted.FindKey( "dormant_radius" ) == NULL )
+			{
+				file->Printf( "\tdormant_radius(float) : \"World dormancy radius, read at map load: under g_dormantDistanceFirst 1 a monster "
+							  "whose own dormant_radius is 0 sleeps past this distance from every player. Without the key "
+							  "g_dormantWorldRadius decides; 0 turns the world radius off, leaving the stock area test.\"\n" );
+				emitted.Set( "dormant_radius", "" );
+			}
+			//puncho end
+
+			// the keys the engine reads for a light, each unless a line above printed it, so a key the class declares
+			// keeps that declaration
 			if( idStr::Icmp( mergedDict.GetString( "spawnclass" ), "idLight" ) == 0 )
 			{
 				for( int i = 0; i < FGD_NUM_LIGHT_KEYS; i++ )
 				{
 					const fgdLightKey_t& lightKey = FGD_LIGHT_KEYS[ i ];
-					if( dictToWrite.FindKey( lightKey.key ) != NULL )
+					if( emitted.FindKey( lightKey.key ) != NULL )
 					{
 						continue;
 					}
@@ -3901,6 +4067,7 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 					}
 
 					file->Printf( "%s", ( lightKey.choices != NULL ) ? lightKey.choices : "\n" );
+					emitted.Set( lightKey.key, "" );
 				}
 			}
 
@@ -3915,8 +4082,109 @@ void idDeclManagerLocal::ExportEntityDefsToTrenchBroom_f( const idCmdArgs& args 
 		common->Printf( "----------------------------\n" );
 		common->Printf( "Wrote %d Entities.\n", totalEntitiesCount );
 		common->Printf( "Wrote %d Models.\n", totalModelsCount );
+		common->Printf( "Wrote %d Schema Keys.\n", totalSchemaKeysCount );	//puncho - P2b.2.4
 
 	}
+
+	//puncho start - P2b.2.4: the schema drift (K9, Q14), never an error: for each decl exported to any file, a key whose rows
+	// differ inside the spawnclass's chain (override), and the standing row's DEFAULT against the def's value when the def
+	// sets the key (the def's value is the one spawned); numbers compare as numbers, anything else as text
+	{
+		idStrList driftLines;
+		idList<const schemaKey_t*> chain;
+		for( int d = 0; d < count; d++ )
+		{
+			const idDeclEntityDef* decl = defsSorted[ d ];
+
+			bool exported = false;
+			for( int f = 0; f < filenames.Num() && !exported; f++ )
+			{
+				exported = FGD_IsExported( decl, f, ignoreList );
+			}
+
+			const idKeyValue* spawnclass = FGD_FindInheritedKey( decl, "spawnclass" );
+			if( !exported || spawnclass == NULL || !game->GetSchemaKeys( spawnclass->GetValue(), chain ) )
+			{
+				continue;
+			}
+
+			for( int i = 0; i < chain.Num(); i++ )
+			{
+				const schemaKey_t* row = chain[ i ];
+				if( row->key == NULL )
+				{
+					continue;
+				}
+
+				// the key's first row speaks for all of its rows
+				bool seen = false;
+				for( int j = 0; j < i && !seen; j++ )
+				{
+					seen = ( chain[ j ]->key != NULL && idStr::Icmp( chain[ j ]->key, row->key ) == 0 );
+				}
+
+				if( seen )
+				{
+					continue;
+				}
+
+				// the most derived row stands; the rows' defaults in chain order when any two rows differ
+				const schemaKey_t* standing = row;
+				bool overridden = false;
+				idStr defaults = ( row->defaultValue != NULL ) ? va( " \"%s\"", row->defaultValue ) : " NODEF";
+				for( int j = i + 1; j < chain.Num(); j++ )
+				{
+					const schemaKey_t* later = chain[ j ];
+					if( later->key == NULL || idStr::Icmp( later->key, row->key ) != 0 )
+					{
+						continue;
+					}
+
+					overridden |= ( later->type != standing->type || !FGD_SameDefault( later->defaultValue, standing->defaultValue ) );
+					defaults += ( later->defaultValue != NULL ) ? va( " \"%s\"", later->defaultValue ) : " NODEF";
+					standing = later;
+				}
+
+				if( overridden )
+				{
+					driftLines.Append( va( "%s\t%s\toverride%s", decl->GetName(), row->key, defaults.c_str() ) );
+				}
+
+				const idKeyValue* defKv = FGD_FindInheritedKey( decl, row->key );
+				if( standing->defaultValue == NULL || defKv == NULL )
+				{
+					continue;
+				}
+
+				const char* defValue = defKv->GetValue().c_str();
+				const bool differ = ( FGD_IsNumber( defValue ) && FGD_IsNumber( standing->defaultValue ) ) ?
+									( atof( defValue ) != atof( standing->defaultValue ) ) : ( idStr::Cmp( defValue, standing->defaultValue ) != 0 );
+				if( differ )
+				{
+					driftLines.Append( va( "%s\t%s\tschema \"%s\" def \"%s\"", decl->GetName(), row->key, standing->defaultValue, defValue ) );
+				}
+			}
+		}
+
+		// by decl, then key: the tab sorts below every character of a name
+		driftLines.SortWithTemplate( idSort_Str() );
+
+		const char* driftFileName = "_tb/fgd/schema-drift.txt";
+		idFileLocal driftFile( fileSystem->OpenFileWrite( driftFileName, "fs_basepath" ) );
+		if( driftFile == NULL )
+		{
+			common->Warning( "Failed to write the schema drift to %s", driftFileName );
+		}
+		else
+		{
+			for( int i = 0; i < driftLines.Num(); i++ )
+			{
+				driftFile->Printf( "%s\n", driftLines[ i ].c_str() );
+			}
+			common->Printf( "%d schema drift lines written to %s\n", driftLines.Num(), driftFileName );
+		}
+	}
+	//puncho end
 
 	com_editors &= ~EDITOR_EXPORTDEFS;
 

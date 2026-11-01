@@ -1458,6 +1458,14 @@
 	smoke_wound_flesh(string) : "Smoke effect to emit from wounds."
 	gravityDir(string) : "Direction of gravity.  Defines the character's concept of 'down'."
 	name(target_source) : "Entity name; other entities target this"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass base(monster_zsec_machinegun) model({ "path": "_tb/models/md5/monsters/zombies/zsec_machinegun/zsecmachinegun.obj" }) = character_soldier_machinegun
@@ -5443,6 +5451,14 @@ Do not use in game. For testing only."
 	lights_off(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/gravgun_intro/marine_gravmesh.obj" }) = erebus1_cinematic_marine_gravitygun : "No description"
@@ -5469,6 +5485,14 @@ Do not use in game. For testing only."
 	snd_footstep(string) : "" : "player_sounds_footstep"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/intro/stock_marine_gravitygun.obj" }) = erebus1_cinematic_marine_gravitygun_end : "No description"
@@ -5488,6 +5512,14 @@ Do not use in game. For testing only."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/erebus5/e5_player.obj" }) = erebus1_cinematic_player_end : "No description"
@@ -5506,6 +5538,14 @@ Do not use in game. For testing only."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/erebus5/e5_player.obj" }) = erebus1_cinematic_player_fill : "No description"
@@ -5519,6 +5559,14 @@ Do not use in game. For testing only."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/erebus5/e5_player.obj" }) = erebus1_cinematic_player_start : "No description"
@@ -5532,6 +5580,14 @@ Do not use in game. For testing only."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-8 -8 -8, 8 8 8) model({ "path": "_tb/models/md5/chars/marine.obj" }) = erebus1_ggun_marine_die : "Ragdoll dying marine"
@@ -5624,6 +5680,14 @@ Do not use in game. For testing only."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/intro/stock_marine_flashlight.obj" }) = erebus1_intro_flash : "No description"
@@ -5662,6 +5726,14 @@ Do not use in game. For testing only."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/intro/stock_marine_flashlight.obj" }) = erebus1_intro_flash_for_roq : "No description"
@@ -5675,6 +5747,14 @@ Do not use in game. For testing only."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/intro/stock_marine.obj" }) = erebus1_intro_marine1 : "No description"
@@ -5713,6 +5793,14 @@ Do not use in game. For testing only."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/intro/stock_marine.obj" }) = erebus1_intro_marine1_for_roq : "No description"
@@ -5726,6 +5814,14 @@ Do not use in game. For testing only."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/intro/stock_marine.obj" }) = erebus1_intro_marine2 : "No description"
@@ -5764,6 +5860,14 @@ Do not use in game. For testing only."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/intro/stock_marine.obj" }) = erebus1_intro_marine2_for_roq : "No description"
@@ -5777,6 +5881,14 @@ Do not use in game. For testing only."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/intro/stock_marine.obj" }) = erebus1_intro_marine3 : "No description"
@@ -5815,6 +5927,14 @@ Do not use in game. For testing only."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/intro/stock_marine.obj" }) = erebus1_intro_marine3_for_roq : "No description"
@@ -5828,6 +5948,14 @@ Do not use in game. For testing only."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/intro/mcneil.obj" }) = erebus1_intro_mcneil : "No description"
@@ -5866,6 +5994,14 @@ Do not use in game. For testing only."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/intro/stock_marine_pda.obj" }) = erebus1_intro_pda : "No description"
@@ -5904,6 +6040,14 @@ Do not use in game. For testing only."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/intro/stock_marine_pda.obj" }) = erebus1_intro_pda_for_roq : "No description"
@@ -5917,6 +6061,14 @@ Do not use in game. For testing only."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/intro/player_heartartifact.obj" }) = erebus1_intro_plyr_heart : "No description"
@@ -5956,6 +6108,14 @@ Do not use in game. For testing only."
 	skin(string) : "" : "skins/intro/playerartifact"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/intro/player_heartartifact.obj" }) = erebus1_intro_plyr_heart_p3 : "No description"
@@ -5973,6 +6133,14 @@ Do not use in game. For testing only."
 	skin(string) : "" : "skins/intro/playerartifact"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/intro/player_helmet.obj" }) = erebus1_intro_plyr_helmet : "No description"
@@ -6011,6 +6179,14 @@ Do not use in game. For testing only."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) = erebus1_intro_rocks2 : "No description"
@@ -6073,6 +6249,14 @@ Do not use in game. For testing only."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass base(cin_base) model({ "path": "_tb/models/md5/cinematics/intro_eric/intro_rocks_p3.obj" }) = erebus1_rocks_p3
@@ -6369,6 +6553,14 @@ Do not use in game. For testing only."
 	snd_mcneil_triggered_full(string) : "" : "e5_mcneil_triggered_full"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "sprites/camera.png", "scale": 0.03125 }) = erebus5_cloud_cinematic_camera_cam : "No description"
@@ -6415,6 +6607,14 @@ Do not use in game. For testing only."
 	health(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "sprites/camera.png", "scale": 0.03125 }) = erebus5_envirosuit_off_cam : "No description"
@@ -6795,6 +6995,22 @@ you func_remove it after it is shot if it's blocking an entrance."
 	spawnclass(string) readonly : "" : "idTarget_Damage"
 	def_damage(string) : "" : "damage_generic"
 	damage(string) : "damage def to be used."
+	name(target_source) : "Entity name; other entities target this"
+	target(target_destination) : "Entity to trigger; target1..targetN also link"
+]
+
+@PointClass color(255 127 0) = func_decal : "Compile-time decal projector: dmap bakes 'material' onto world and inlined geometry inside a box 'depth' units deep centred on the origin, projecting along the entity's reverse forward axis (place it on the surface facing out of it). Movers and non-inlined func_statics are skipped (runtime decals cover them). Never spawned in game. The material must be discrete (DECAL_MACRO). 'target' aims the projector at another entity instead of 'angles'."
+[
+	dmapOnly(string) readonly : "" : "1"
+	material(string) : "decal material (discrete, e.g. DECAL_MACRO)"
+	size(string) : "width height, in units, on the plane through the origin" : "64 64"
+	depth(float) : "projection depth in units, centred on the origin (default 32)" : 32
+	fade(float) : "fade depth at the far end in units, at most depth/2, 0 = hard edge (default 8)" : 8
+	parallel(choices) : "1 = orthographic, 0 = perspective from depth/2 in front of the origin" : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
 ]
@@ -17781,6 +17997,7 @@ Prefer func_group for unreferenced brush detail. spawnSkipStatics may omit inlin
 @PointClass color(0 255 0) = info_landing : "Explicit party landing slot, index 0 through 7"
 [
 	dmapOnly(string) readonly : "" : "1"
+	mapOnlyKind(string) readonly : "" : "landing"
 	index(integer) : "Party player index" : 0
 	landmark(string) : "Arrival doorway id"
 	name(target_source) : "Entity name; other entities target this"
@@ -17790,6 +18007,7 @@ Prefer func_group for unreferenced brush detail. spawnSkipStatics may omit inlin
 @SolidClass color(0 255 255) = info_landmark : "Map graph doorway; landmark identity survives editor group renames"
 [
 	dmapOnly(string) readonly : "" : "1"
+	mapOnlyKind(string) readonly : "" : "landmark"
 	radius(float) : "Arrival placement radius" : 256
 	entry(choices) : "Arrivals may use this doorway" : 1 =
 	[
@@ -17869,9 +18087,9 @@ Prefer func_group for unreferenced brush detail. spawnSkipStatics may omit inlin
 [
 	spawnclass(string) readonly : "" : "idPortalSky"
 	hide(string) : "" : "1"
-	triggered(string) : "This portal sky will be inactive at start, and must be triggered to become active.  All additional portalsky areas must have this flag set."
 	parallax_scale(float) : "Sky view parallax scale (0 = fixed sky camera; 0.001 moves the sky camera 1 unit per 1000 units of player movement)" : 0
 	parallax_origin(string) : "Player-space reference point for the parallax" : "0 0 0"
+	triggered(string) : "This portal sky will be inactive at start, and must be triggered to become active.  All additional portalsky areas must have this flag set."
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
 ]
@@ -18558,6 +18776,65 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 	leave_demonic_mat(string) : "leaves the demonic shader when the effect expires.. color is still reverted back."
 	proxymodel(string) : "A proxy model in OBJ file format automatically set by RBDoom so it can be displayed in TrenchBroom"
 	name(target_source) : "Entity name; other entities target this"
+	light_radius(string) : "Point light half extents x y z; without it the single light value is used" : "300 300 300"
+	light_center(string) : "Light and shadow centre offset inside the volume; for a parallel light the direction to the light" : "0 0 0"
+	light_target(string) : "Spot frustum target in light space; with light_right and light_up it makes a spot light"
+	light_right(string) : "Spot frustum right vector in light space; needs light_target and light_up"
+	light_up(string) : "Spot frustum up vector in light space; needs light_target and light_right"
+	light_start(string) : "Optional spot near plane point in light space"
+	light_end(string) : "Optional spot far plane point in light space; defaults to light_target"
+	light_origin(string) : "Shine from this world point instead of the entity origin, for a light with a fixture model"
+	light_angles(string) : "Pitch yaw roll of such a light; rotation and light_rotation override it"
+	parallel(choices) : "Sun light: parallel rays from the light_center direction" : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	noshadows(choices) : "The light casts no shadows" : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nospecular(choices) : "The light adds no specular highlights, diffuse only" : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	math_enabled(choices) : "Shade with the math_* falloff curve instead of the light texture falloff" : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	math_falloff(choices) : "Math light falloff curve over the light volume" : "invsquare_clamped" =
+	[
+		"invsquare" : "Inverse square (unbounded)"
+		"linear" : "Linear"
+		"smooth" : "Smooth"
+		"exponential" : "Exponential"
+		"invsquare_clamped" : "Inverse square (clamped), PBR safe"
+	]
+	math_falloff_exp(float) : "Falloff exponent, 0.1 to 16; unused by linear and smooth" : "2.0"
+	math_inner_radius(float) : "Fraction of the falloff distance, 0 to 1, at full strength before the curve starts" : "0.0"
+	math_shape_exp(float) : "Spot only: beam shape exponent 1.5 to 32; 2 is an ellipse, 16 nearly a rectangle" : "2.0"
+	math_penumbra(float) : "Spot only: soft edge width of the beam, 0 to 1" : "0.15"
+	math_pattern(choices) : "Math light pattern that modulates the falloff" : "none" =
+	[
+		"none" : "None"
+		"subsurface" : "Subsurface (warm halo)"
+		"ice" : "Ice (cool noise)"
+		"caustic" : "Caustic (sharp noise)"
+		"banded" : "Banded (sine rings)"
+		"granular" : "Granular (stippled)"
+	]
+	math_pattern_strength(float) : "Pattern strength, 0 to 1" : "0.0"
+	math_pattern_scale(float) : "Pattern scale; larger is finer" : "1.0"
+	math_pattern_phase(float) : "Pattern phase; shifts the pattern" : "0.0"
+	math_energy_clamp(choices) : "Clamp the falloff to 0..1 like a light texture; off lets it reach 64 near the source" : 1 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	math_style(integer) : "Math light brightness style, repeating like style: -1 None, 0 Normal, 1 Flicker A, 2 Slow Strong Pulse, 3 Candle A, 4 Fast Strobe, 5 Gentle Pulse, 6 Flicker B, 7 Candle B, 8 Candle C, 9 Slow Strobe, 10 Fluorescent Flicker, 11 Slow Pulse (no black)" : -1
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "sprites/camera.png", "scale": 0.03125 }) = lm_ending_camera : "No description"
@@ -18606,6 +18883,14 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/le_hell_post/marine_mesh.obj" }) = lm_ending_marine2 : "No description"
@@ -18622,6 +18907,14 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/le_hell_post/marine_mesh.obj" }) = lm_ending_marine3 : "No description"
@@ -18638,6 +18931,14 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/le_hell_post/meyers_mesh.obj" }) = lm_ending_meyers : "No description"
@@ -18654,6 +18955,14 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/le_hell_post/marine_mesh.obj" }) = lm_enpro_marine1 : "No description"
@@ -18667,6 +18976,14 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) = lm_enpro_meyers_new : "No description"
@@ -18680,6 +18997,14 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/le_hell_post/meyers_mesh.obj" }) = lm_exis_meyers_01 : "No description"
@@ -18698,6 +19023,14 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 	meyers_animation(string) : "" : "meyers_exis_anim_01_new"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/le_hell_post/meyers_mesh.obj" }) = lm_exis_meyers_02 : "No description"
@@ -18708,6 +19041,14 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 	meyers_animation(string) : "" : "meyers_exis_anim_02_new"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/le_hell_post/meyers_mesh.obj" }) = lm_exis_meyers_03 : "No description"
@@ -18721,6 +19062,14 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/le_hell_post/guardian_cinematic_mesh.obj" }) = lm_guardian_ending : "No description"
@@ -18769,6 +19118,14 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 	def_charge(string) : "" : "damage_guardianCharge"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "sprites/camera.png", "scale": 0.03125 }) = lm_guardian_ending_cam : "No description"
@@ -18939,6 +19296,14 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 	snd_death(string) : "" : "monster_demon_guardian_die"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass base(cin_base) model({ "path": "_tb/models/md5/cinematics/maledict_death/player_heartartifact_end.obj" }) = maledict_death_player_heart
@@ -18969,6 +19334,14 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 	health(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/maledict_death/player_turnrun_end.obj" }) = maledict_death_player_run : "No description"
@@ -18991,6 +19364,14 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 	health(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/maledict_death/player_turnrun_end.obj" }) = maledict_death_player_turnrun : "No description"
@@ -19013,6 +19394,14 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 	health(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass base(cin_base) model({ "path": "_tb/models/md5/cinematics/maledict_death/skull.obj" }) = maledict_death_skull
@@ -21044,6 +21433,9 @@ Use it to place all kinds of models"
 	smoke_wound_flesh(string) : "Smoke effect to emit from wounds."
 	gravityDir(string) : "Direction of gravity.  Defines the character's concept of 'down'."
 	name(target_source) : "Entity name; other entities target this"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
 ]
 
 @PointClass base(monster_default) size(-24 -24 0, 24 24 68) model({ "path": "_tb/models/md5/monsters/archvile/archvile.obj" }) = monster_demon_archvile : "Target 1 or more monsters to act as minions.  Minions will remain hidden until they are spawned in by the archvile."
@@ -21373,6 +21765,13 @@ Use it to place all kinds of models"
 @PointClass base(monster_demon_imp) model({ "path": "_tb/models/md5/monsters/imp/imp.obj" }) = monster_demon_imp_d3xp
 [
 	model(string) : "" : "monster_demon_imp_d3xp"
+	name(target_source) : "Entity name; other entities target this"
+	target(target_destination) : "Entity to trigger; target1..targetN also link"
+]
+
+@PointClass base(monster_demon_imp) = monster_demon_imp_melee
+[
+	scriptobject(string) : "" : "monster_demon_imp_melee"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
 ]
@@ -23928,6 +24327,10 @@ model for collision detection. Such a collision model is specified with the
 	fx_collide(string) : "FX system to start at impact position when object collides."
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	def_damage(string) : "Damage definition if it damages things it collides with."
+	monster_damage(string) : "Damage definition used instead of def_damage when it hits a monster."
+	minDamageVelocity(float) : "Impact speed below which the object does no damage." : 300
+	maxDamageVelocity(float) : "Impact speed at which the object does its full damage." : 700
 ]
 
 @PointClass base(moveable_base) color(255 127 0) size(-8 -8 -8, 8 8 8) = moveable_base_barrel : "Moveable barrel. Works just like a moveable_base. However the barrel
@@ -24150,6 +24553,55 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	triggerOnRespawn(string) : "if set to no zero will trigger targets this many seconds after being killed"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	broken(string) : "Visual model to be used when the health drops down to or below zero."
+	def_damage(string) : "Damage definition if it damages things it collides with."
+	monster_damage(string) : "Damage definition used instead of def_damage when it hits a monster."
+	fx_collide(string) : "FX system to start at impact position when object collides."
+	minDamageVelocity(float) : "Impact speed below which the object does no damage." : 300
+	maxDamageVelocity(float) : "Impact speed at which the object does its full damage." : 700
+	explode(choices) : "If set to 1 the moveable explodes and is removed when the health drops down to or below zero." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	unbindondeath(choices) : "Unbind entity when health drops down to or below zero." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	allowStep(choices) : "Set to 0 to prevent monsters from ever walking over this object." : 1 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	damageWhenActive(choices) : "Only damage when active ( currently for the vagary and influence stuff )." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	mass(float) : "Mass of the object (overrides density); without the key the mass is density times the clip model's volume."
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(integer) : "Shrink the visual model with an epsilon and use it as a clip model." : 0
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	noimpact(choices) : "Do not activate by the impact of other objects." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	notPushable(choices) : "Do not allow to be pushed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nonsolid(choices) : "Make the object non-solid." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(0 127 204) size(-8 -8 0, 8 8 48) model({ "path": "_tb/models/mapobjects/washroom/airtank.obj" }) = moveable_burningtank : "Moveable barrel. Works just like a func_moveable. However the barrel
@@ -24181,6 +24633,55 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	triggerOnRespawn(string) : "if set to no zero will trigger targets this many seconds after being killed"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	broken(string) : "Visual model to be used when the health drops down to or below zero."
+	def_damage(string) : "Damage definition if it damages things it collides with."
+	monster_damage(string) : "Damage definition used instead of def_damage when it hits a monster."
+	fx_collide(string) : "FX system to start at impact position when object collides."
+	minDamageVelocity(float) : "Impact speed below which the object does no damage." : 300
+	maxDamageVelocity(float) : "Impact speed at which the object does its full damage." : 700
+	explode(choices) : "If set to 1 the moveable explodes and is removed when the health drops down to or below zero." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	unbindondeath(choices) : "Unbind entity when health drops down to or below zero." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	allowStep(choices) : "Set to 0 to prevent monsters from ever walking over this object." : 1 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	damageWhenActive(choices) : "Only damage when active ( currently for the vagary and influence stuff )." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	mass(float) : "Mass of the object (overrides density); without the key the mass is density times the clip model's volume."
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(integer) : "Shrink the visual model with an epsilon and use it as a clip model." : 0
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	noimpact(choices) : "Do not activate by the impact of other objects." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	notPushable(choices) : "Do not allow to be pushed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nonsolid(choices) : "Make the object non-solid." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass base(moveable_base_barrel) model({ "path": "_tb/models/mapobjects/cannister/cannister.obj" }) = moveable_cannister
@@ -24607,6 +25108,55 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	triggerOnRespawn(string) : "if set to no zero will trigger targets this many seconds after being killed"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	broken(string) : "Visual model to be used when the health drops down to or below zero."
+	def_damage(string) : "Damage definition if it damages things it collides with."
+	monster_damage(string) : "Damage definition used instead of def_damage when it hits a monster."
+	fx_collide(string) : "FX system to start at impact position when object collides."
+	minDamageVelocity(float) : "Impact speed below which the object does no damage." : 300
+	maxDamageVelocity(float) : "Impact speed at which the object does its full damage." : 700
+	explode(choices) : "If set to 1 the moveable explodes and is removed when the health drops down to or below zero." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	unbindondeath(choices) : "Unbind entity when health drops down to or below zero." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	allowStep(choices) : "Set to 0 to prevent monsters from ever walking over this object." : 1 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	damageWhenActive(choices) : "Only damage when active ( currently for the vagary and influence stuff )." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	mass(float) : "Mass of the object (overrides density); without the key the mass is density times the clip model's volume."
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(integer) : "Shrink the visual model with an epsilon and use it as a clip model." : 0
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	noimpact(choices) : "Do not activate by the impact of other objects." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	notPushable(choices) : "Do not allow to be pushed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nonsolid(choices) : "Make the object non-solid." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(0 127 204) size(-16 -16 0, 16 16 48) model({ "path": "_tb/models/mapobjects/fuel_barrel/exp_barrel.obj" }) = moveable_explodingbarrel_slime : "Moveable barrel. Works just like a func_moveable. However the barrel
@@ -24639,6 +25189,55 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	triggerOnRespawn(string) : "if set to no zero will trigger targets this many seconds after being killed"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	broken(string) : "Visual model to be used when the health drops down to or below zero."
+	def_damage(string) : "Damage definition if it damages things it collides with."
+	monster_damage(string) : "Damage definition used instead of def_damage when it hits a monster."
+	fx_collide(string) : "FX system to start at impact position when object collides."
+	minDamageVelocity(float) : "Impact speed below which the object does no damage." : 300
+	maxDamageVelocity(float) : "Impact speed at which the object does its full damage." : 700
+	explode(choices) : "If set to 1 the moveable explodes and is removed when the health drops down to or below zero." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	unbindondeath(choices) : "Unbind entity when health drops down to or below zero." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	allowStep(choices) : "Set to 0 to prevent monsters from ever walking over this object." : 1 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	damageWhenActive(choices) : "Only damage when active ( currently for the vagary and influence stuff )." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	mass(float) : "Mass of the object (overrides density); without the key the mass is density times the clip model's volume."
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(integer) : "Shrink the visual model with an epsilon and use it as a clip model." : 0
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	noimpact(choices) : "Do not activate by the impact of other objects." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	notPushable(choices) : "Do not allow to be pushed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nonsolid(choices) : "Make the object non-solid." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(0 127 204) size(-8 -8 0, 8 8 48) model({ "path": "_tb/models/mapobjects/washroom/airtank.obj" }) = moveable_explodingtank : "Moveable barrel. Works just like a func_moveable. However the barrel
@@ -24670,6 +25269,55 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	triggerOnRespawn(string) : "if set to no zero will trigger targets this many seconds after being killed"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	broken(string) : "Visual model to be used when the health drops down to or below zero."
+	def_damage(string) : "Damage definition if it damages things it collides with."
+	monster_damage(string) : "Damage definition used instead of def_damage when it hits a monster."
+	fx_collide(string) : "FX system to start at impact position when object collides."
+	minDamageVelocity(float) : "Impact speed below which the object does no damage." : 300
+	maxDamageVelocity(float) : "Impact speed at which the object does its full damage." : 700
+	explode(choices) : "If set to 1 the moveable explodes and is removed when the health drops down to or below zero." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	unbindondeath(choices) : "Unbind entity when health drops down to or below zero." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	allowStep(choices) : "Set to 0 to prevent monsters from ever walking over this object." : 1 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	damageWhenActive(choices) : "Only damage when active ( currently for the vagary and influence stuff )." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	mass(float) : "Mass of the object (overrides density); without the key the mass is density times the clip model's volume."
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(integer) : "Shrink the visual model with an epsilon and use it as a clip model." : 0
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	noimpact(choices) : "Do not activate by the impact of other objects." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	notPushable(choices) : "Do not allow to be pushed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nonsolid(choices) : "Make the object non-solid." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass base(moveable_base_fixed) model({ "path": "_tb/models/mapobjects/lab/filecabinet1/filecabinet1.obj" }) = moveable_filecabinet1
@@ -25339,6 +25987,16 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	def_damage(string) : "" : "damage_moveable_player"
 	monster_damage(string) : "" : "damage_moveable_small"
 	damageWhenActive(string) : "Only damage when active ( currently for the vagary and influence stuff )" : "1"
+	name(target_source) : "Entity name; other entities target this"
+	target(target_destination) : "Entity to trigger; target1..targetN also link"
+]
+
+@PointClass base(moveable_base_fixed) model({ "path": "_tb/models/mapobjects/pbr/macbethchart/macbethchart.obj" }) = moveable_macbethchart
+[
+	model(string) : "" : "models/mapobjects/pbr/macbethchart/macbethchart.glb"
+	density(string) : "Volume of the object times the density is the mass." : "0.01"
+	friction(string) : "Friction with contacting surfaces in the range [0-1] where 0 is no friction." : "0.2"
+	bouncyness(string) : "How much the object bounces in the range [0-1] where 0 is no bounce." : "0.3"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
 ]
@@ -26283,6 +26941,14 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_speech_g(string) : "" : "p2_mcneil_speech_07"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "_tb/models/md5/cinematics/erebus5/e5_player.obj" }) = phobos2_cinematic_player : "No description"
@@ -26306,6 +26972,14 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 76) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/md5/cinematics/phobos2/playeroutro.obj" }) = phobos2_cinematic_player_death : "No description"
@@ -26393,6 +27067,14 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	cinematic(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	neverDormant(choices) : "If set to 1, monsters do not sleep outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(255 127 76) size(-16 -16 0, 16 16 32) = phobos2_mcneil_fem : "No description"
@@ -28223,6 +28905,7 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 @SolidClass color(0 178 255) = trigger_transition : "Map-only carry volume paired with a landmark"
 [
 	dmapOnly(string) readonly : "" : "1"
+	mapOnlyKind(string) readonly : "" : "volume"
 	cap(integer) : "Most entities carried across, 0 through 64" : 64
 	carry(string) : "all carries the entities inside the volume; any other value carries none" : "all"
 	landmark(string) : "Doorway id"
@@ -29767,6 +30450,7 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	no_stamina(string) : "disables stamina so the player can always run"
 	no_Weapons(string) : "only fists and no melee attacks"
 	def_player(string) : "player def to use when spawning this world"
+	dormant_radius(float) : "World dormancy radius, read at map load: under g_dormantDistanceFirst 1 a monster whose own dormant_radius is 0 sleeps past this distance from every player. Without the key g_dormantWorldRadius decides; 0 turns the world radius off, leaving the stock area test."
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "sprites/camera.png", "scale": 0.03125 }) = xbox_hellhole_cam : "No description"
