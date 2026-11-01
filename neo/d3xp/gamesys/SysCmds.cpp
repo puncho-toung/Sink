@@ -2989,37 +2989,27 @@ static void Cmd_TestSnapTraceCompare_f( const idCmdArgs& args )
 
 //puncho start - P2b.2.7: the spawn probe (K12), test scaffolding
 #if !defined( ID_RETAIL )
-/*
-================================================
-idSpawnReadProbe holds the read functions of spawnReadProbe[]. A class whose members are probed names it a friend,
-so a row reads a protected member without an accessor the game would carry.
-================================================
-*/
-class idSpawnReadProbe
-{
-public:
-	static void				MoveableMinDamageVelocity( const idEntity* ent, idStr& value );
-};
-
 // nine significant digits tell any two floats apart, so two builds' files compare with cmp
-void idSpawnReadProbe::MoveableMinDamageVelocity( const idEntity* ent, idStr& value )
+static void SpawnRead_MoveableMinDamageVelocity( const idEntity* ent, idStr& value )
 {
-	value = va( "%.9g", static_cast< const idMoveable* >( ent )->minDamageVelocity );
+	value = va( "%.9g", static_cast<const idMoveable*>( ent )->MinDamageVelocity() );
 }
 
 typedef struct spawnReadProbe_s
 {
 	const idTypeInfo* 		type;		// the class whose Spawn writes the member; its subclasses are probed too
 	const char* 			member;
-	void					( *read )( const idEntity* ent, idStr& value );
+	void	( *read )( const idEntity* ent, idStr& value );	// called only on an entity of type or a subclass, so it casts unchecked
 } spawnReadProbe_t;
 
 // one row per member a Spawn conversion moves, appended by each batch in a commit before its conversion, so the
-// build the conversion is compared against prints the same rows
+// build the conversion is compared against prints the same rows; a protected member gets a const accessor in its
+// class, as dumpMapState's columns do (Mover.h RecordFloor)
 static const spawnReadProbe_t spawnReadProbe[] =
 {
-	{ &idMoveable::Type,	"minDamageVelocity",	idSpawnReadProbe::MoveableMinDamageVelocity },
+	{ &idMoveable::Type,	"minDamageVelocity",	SpawnRead_MoveableMinDamageVelocity },
 };
+static const int NUM_SPAWN_READ_PROBES = ARRAY_COUNT( spawnReadProbe );
 
 /*
 ==================
@@ -3059,7 +3049,7 @@ static void Cmd_TestSpawnRead_f( const idCmdArgs& args )
 		{
 			continue;
 		}
-		for( int r = 0; r < ( int )ARRAY_COUNT( spawnReadProbe ); r++ )
+		for( int r = 0; r < NUM_SPAWN_READ_PROBES; r++ )
 		{
 			const spawnReadProbe_t& row = spawnReadProbe[ r ];
 			if( !ent->IsType( *row.type ) )
@@ -3072,7 +3062,7 @@ static void Cmd_TestSpawnRead_f( const idCmdArgs& args )
 		}
 	}
 
-	gameLocal.Printf( "testSpawnRead: %d lines from %d probe rows to %s\n", lines, ( int )ARRAY_COUNT( spawnReadProbe ), out->GetFullPath() );
+	gameLocal.Printf( "testSpawnRead: %d lines from %d probe rows to %s\n", lines, NUM_SPAWN_READ_PROBES, out->GetFullPath() );
 	fileSystem->CloseFile( out );
 }
 #endif
