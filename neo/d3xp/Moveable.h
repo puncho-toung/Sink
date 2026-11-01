@@ -97,6 +97,8 @@ public:
 	}
 
 protected:
+	friend class			idSpawnReadProbe;		//puncho - P2b.2.7: testSpawnRead (SysCmds.cpp) prints the probed members
+
 	idPhysics_RigidBody		physicsObj;				// physics object
 	idStr					brokenModel;			// model set when health drops down to or below zero
 	idStr					damage;					// if > 0 apply damage to hit entities

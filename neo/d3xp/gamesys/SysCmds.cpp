@@ -2987,6 +2987,97 @@ static void Cmd_TestSnapTraceCompare_f( const idCmdArgs& args )
 }
 //puncho end
 
+//puncho start - P2b.2.7: the spawn probe (K12), test scaffolding
+#if !defined( ID_RETAIL )
+/*
+================================================
+idSpawnReadProbe holds the read functions of spawnReadProbe[]. A class whose members are probed names it a friend,
+so a row reads a protected member without an accessor the game would carry.
+================================================
+*/
+class idSpawnReadProbe
+{
+public:
+	static void				MoveableMinDamageVelocity( const idEntity* ent, idStr& value );
+};
+
+// nine significant digits tell any two floats apart, so two builds' files compare with cmp
+void idSpawnReadProbe::MoveableMinDamageVelocity( const idEntity* ent, idStr& value )
+{
+	value = va( "%.9g", static_cast< const idMoveable* >( ent )->minDamageVelocity );
+}
+
+typedef struct spawnReadProbe_s
+{
+	const idTypeInfo* 		type;		// the class whose Spawn writes the member; its subclasses are probed too
+	const char* 			member;
+	void					( *read )( const idEntity* ent, idStr& value );
+} spawnReadProbe_t;
+
+// one row per member a Spawn conversion moves, appended by each batch in a commit before its conversion, so the
+// build the conversion is compared against prints the same rows
+static const spawnReadProbe_t spawnReadProbe[] =
+{
+	{ &idMoveable::Type,	"minDamageVelocity",	idSpawnReadProbe::MoveableMinDamageVelocity },
+};
+
+/*
+==================
+Cmd_TestSpawnRead_f
+
+testSpawnRead <file>: in entity number order, a line "entnum class member value" for every probe row the entity's
+class has. Run by two builds on one map at the same tic (gates-2b/streamtrace/run.sh --fresh), the files are equal
+unless a conversion changed a spawn value.
+==================
+*/
+static void Cmd_TestSpawnRead_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 2 )
+	{
+		gameLocal.Printf( "usage: testSpawnRead <file under fs_savepath>\n" );
+		return;
+	}
+	if( gameLocal.GameState() != GAMESTATE_ACTIVE )
+	{
+		gameLocal.Printf( "testSpawnRead: needs a map running\n" );
+		return;
+	}
+
+	idFile* out = fileSystem->OpenFileWrite( args.Argv( 1 ) );
+	if( out == NULL )
+	{
+		gameLocal.Printf( "testSpawnRead: FAIL: can't write %s\n", args.Argv( 1 ) );
+		return;
+	}
+
+	int lines = 0;
+	idStr value;
+	for( int e = 0; e < gameLocal.num_entities; e++ )
+	{
+		const idEntity* ent = gameLocal.entities[ e ];
+		if( ent == NULL )
+		{
+			continue;
+		}
+		for( int r = 0; r < ( int )ARRAY_COUNT( spawnReadProbe ); r++ )
+		{
+			const spawnReadProbe_t& row = spawnReadProbe[ r ];
+			if( !ent->IsType( *row.type ) )
+			{
+				continue;
+			}
+			row.read( ent, value );
+			out->Printf( "%d %s %s %s\n", e, row.type->classname, row.member, value.c_str() );
+			lines++;
+		}
+	}
+
+	gameLocal.Printf( "testSpawnRead: %d lines from %d probe rows to %s\n", lines, ( int )ARRAY_COUNT( spawnReadProbe ), out->GetFullPath() );
+	fileSystem->CloseFile( out );
+}
+#endif
+//puncho end
+
 //puncho start - identity (P1-A2)
 /*
 ==================
@@ -4842,6 +4933,9 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "testSaveTraceCompare",	Cmd_TestSaveTraceCompare_f,	CMD_FL_GAME | CMD_FL_CHEAT,	"testSaveTraceCompare <file>: compares the current save trace with one an earlier build wrote" );
 	cmdSystem->AddCommand( "testSnapTraceCompare",	Cmd_TestSnapTraceCompare_f,	CMD_FL_GAME,				"testSnapTraceCompare <host file> <client file>: matches a client's net_snapTrace reads with the host's writes" );
 	//puncho end
+#if !defined( ID_RETAIL )	//puncho - P2b.2.7: the spawn probe is test scaffolding
+	cmdSystem->AddCommand( "testSpawnRead",			Cmd_TestSpawnRead_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"testSpawnRead <file>: writes each probed spawn member of every entity, in entity order, for a compare between builds" );
+#endif
 	cmdSystem->AddCommand( "testSpawnChurn",		Cmd_TestSpawnChurn_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"spawns and deletes entities to test the per-slot spawn-id generation" );	//puncho - identity (P1-A2)
 	//puncho start - gate tools for plans/phase1/02-FIXES.md track F3
 	cmdSystem->AddCommand( "testLaunch",			Cmd_TestLaunch_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"testLaunch <projectileDef> <target> [dmgPower]: launches a projectile at an entity as this peer's weapon would" );
