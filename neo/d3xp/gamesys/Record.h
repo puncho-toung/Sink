@@ -35,10 +35,10 @@ class idEntity;
 enum recordSectionId_t
 {
 	RECORD_SECTION_ENTITY			= 1,	// ENTITY_RECORD_SCHEMA (Entity.h)
-	RECORD_SECTION_MOVER_BINARY		= 2,	// MOVER_BINARY_RECORD_SCHEMA (Mover.h)
+	RECORD_SECTION_MOVER_BINARY		= 2,	// MOVER_BINARY_SCHEMA's R rows (Mover.h)
 	RECORD_SECTION_DAMAGABLE		= 3,	// DAMAGABLE_RECORD_SCHEMA (Misc.h)
 	RECORD_SECTION_AI				= 4,	// AI_RECORD_SCHEMA (ai/AI.h); an idCorpse writes it too
-	RECORD_SECTION_ELEVATOR			= 5,	// ELEVATOR_RECORD_SCHEMA (Mover.h)
+	RECORD_SECTION_ELEVATOR			= 5,	// ELEVATOR_SCHEMA's R rows (Mover.h)
 	RECORD_SECTION_LAST				= RECORD_SECTION_ELEVATOR,	// the highest id in use; the ids up to it are all in use
 	RECORD_SECTION_IDS				= 64
 };

@@ -892,6 +892,8 @@ EVENT( EV_Explode,					idExplodingBarrel::Event_Explode )
 EVENT( EV_TriggerTargets,			idExplodingBarrel::Event_TriggerTargets )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idExplodingBarrel, EXPLODING_BARREL_SCHEMA )	//puncho - P2b.2.5a: the FGD's rows and the row checks (Schema.h)
+
 /*
 ================
 idExplodingBarrel::idExplodingBarrel
@@ -993,7 +995,9 @@ idExplodingBarrel::Spawn
 */
 void idExplodingBarrel::Spawn()
 {
-	health = spawnArgs.GetInt( "health", "5" );	// HAND: not converted (P2b.2.5a); the barrel's default over idMoveable's row
+	//puncho - P2b.2.5a: the keyed rows (Moveable.h): health, the barrel's default over idMoveable's row, and time, read where
+	// the first of them was
+	EXPLODING_BARREL_SCHEMA( SCHEMA_SPAWN, ( *this ) )
 	fl.takedamage = true;
 	isStable = true;
 	fl.networkSync = true;
@@ -1004,7 +1008,6 @@ void idExplodingBarrel::Spawn()
 	lightDefHandle = -1;
 	lightTime = 0;
 	particleTime = 0;
-	time = spawnArgs.GetFloat( "time" );	// HAND: not converted (P2b.2.5a)
 	memset( &particleRenderEntity, 0, sizeof( particleRenderEntity ) );
 	memset( &light, 0, sizeof( light ) );
 }

@@ -74,6 +74,33 @@
 	inv_name(string) : "" : "Ammo Belt"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/bfg_ammo/bfg_ammo.obj" }) = ammo_bfg_small : "Small BFG ammo"
@@ -88,6 +115,33 @@
 	inv_name(string) : "" : "BFG Ammo"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/bullet_ammo/bullet_large.obj" }) = ammo_bloodstone_normal : "Artifact Charge"
@@ -104,6 +158,33 @@
 	snd_respawn(string) : "" : "sound_item_respawn"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/bullet_ammo/bullet_small.obj" }) = ammo_bloodstone_small : "Artifact Charge"
@@ -120,6 +201,33 @@
 	snd_respawn(string) : "" : "sound_item_respawn"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/bullet_ammo/bullet_large.obj" }) = ammo_bullets_large : "Large bullets"
@@ -134,6 +242,33 @@
 	snd_respawn(string) : "" : "sound_item_respawn"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/bullet_ammo/bullet_small.obj" }) = ammo_bullets_small : "Small bullets"
@@ -148,6 +283,33 @@
 	snd_respawn(string) : "" : "sound_item_respawn"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/cell_ammo/cells_large.obj" }) = ammo_cells_large : "Large cells"
@@ -162,6 +324,33 @@
 	inv_name(string) : "" : "Cells"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/cell_ammo/cells_small.obj" }) = ammo_cells_small : "Small cells"
@@ -176,6 +365,33 @@
 	inv_name(string) : "" : "Cells"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/clip_ammo/clip_large.obj" }) = ammo_clip_large : "Large ammo clip"
@@ -190,6 +406,33 @@
 	inv_name(string) : "" : "Clip"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/clip_ammo/clip_small.obj" }) = ammo_clip_small : "Small ammo clip"
@@ -204,6 +447,33 @@
 	inv_name(string) : "" : "Clip"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/grenade_ammo/grenade.obj" }) = ammo_grenade_small : "Small grenade ammo"
@@ -219,6 +489,33 @@
 	inv_name(string) : "" : "grenades"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/rocket_ammo/rocket_large.obj" }) = ammo_rockets_large : "Large rockets"
@@ -233,6 +530,33 @@
 	inv_name(string) : "" : "Rockets"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/rocket_ammo/rocket_small.obj" }) = ammo_rockets_small : "Small rockets"
@@ -247,6 +571,33 @@
 	inv_name(string) : "" : "Rockets"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/shells_ammo/shells_large.obj" }) = ammo_shells_large : "Large shells"
@@ -261,6 +612,33 @@
 	inv_name(string) : "" : "Shells"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/shells_ammo/shells_small.obj" }) = ammo_shells_small : "Small shells"
@@ -275,6 +653,33 @@
 	snd_respawn(string) : "" : "sound_item_respawn"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass base(character_default) size(-16 -16 0, 16 16 74) model({ "path": "_tb/models/md5/chars/labcoat.obj" }) = char_betruger
@@ -3516,6 +3921,17 @@ trigger will toggle the activator on and off.  Activator will disable itself whe
 	snd_opened(string) : "looping sound for it's opened state."
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	damage(float) : "Damage to inflict on entities that block the mover." : 0
+	solid(choices) : "Whether the mover is solid to other entities." : 1 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nopush(choices) : "Set to 1 to disable pushing objects that block the mover." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass base(func_bobbing) size(-8 -8 0, 8 8 16) model({{
@@ -3679,6 +4095,33 @@ you func_remove it after it is shot if it's blocking an entrance."
 	triggerBlocked(target_destination) : "name of entity to trigger when door is blocked, can be iterated with triggerBlocked2, 3 etc."
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	updateStatus(integer) : "Set to 2 to set shaderparm 7 of the buddy entities to 1 when the mover reaches its second position and 0 at its first." : 0
+	team(string) : "Binary movers with the same team name move together; the first one spawned is the master."
+	solid(choices) : "Whether the mover is solid to other entities." : 1 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nopush(choices) : "Set to 1 to disable pushing objects that block the mover." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	damage(float) : "Damage to inflict on entities that block the door." : 0
+	player_only(choices) : "Only a player opens the door; while it is closed, monsters route as if it were a wall." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	syncLock(string) : "Name of a door that must be closed before this door will open."
+	requires(string) : "Inventory item the activator must hold for the door to open."
+	removeItem(integer) : "Set to 1 to take the required item from the activator." : 0
+	continuous(choices) : "The door triggers itself at spawn and after each wait, so it keeps opening and closing." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	delay(float) : "Seconds after spawn before a continuous door first triggers itself." : 0
 ]
 
 @PointClass base(func_door) size(-8 -8 0, 8 8 16) model({{
@@ -3726,6 +4169,20 @@ Repeat floor1_ height and door info with floor2_ etc.. for as many floors as you
 	statusgui(string) : "entity name to update floor info, can use statusgui2..3..4..etc. for multiple updates.  if appended with _num it will target an optional specific gui number on the entity this is handy for models with multiple guis."
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	damage(float) : "How much damage to cause entities that block the mover." : 0
+	health(integer) : "When non-zero, how much damage to take before triggering targets." : 0
+	solid(choices) : "Whether the mover is solid to other entities." : 1 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nopush(choices) : "Set to 1 to disable pushing objects that block the mover." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	returnTime(float) : "Seconds after arriving at another floor before the elevator goes back to returnFloor; 0 stays." : 0
+	returnFloor(integer) : "Floor the elevator goes back to after returnTime." : 0
 ]
 
 @PointClass base(func_elevator) size(-8 -8 0, 8 8 16) model({{
@@ -3933,6 +4390,17 @@ Pendulum frequency is a physical constant based on the length of the beam and gr
 	snd_opened(string) : "looping sound for it's opened state."
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	damage(float) : "Damage to inflict on entities that block the mover." : 0
+	solid(choices) : "Whether the mover is solid to other entities." : 1 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nopush(choices) : "Set to 1 to disable pushing objects that block the mover." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(0 127 204) size(-8 -8 -8, 8 8 8) = func_phantom_objects : "Causes moveable objects to fly at player when triggered.  triggering toggles it on/off."
@@ -3966,6 +4434,23 @@ Pendulum frequency is a physical constant based on the length of the beam and gr
 	snd_opened(string) : "looping sound for it's opened state."
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	wait(float) : "Wait before returning (-1 = never return)." : 1
+	updateStatus(integer) : "Set to 2 to set shaderparm 7 of the buddy entities to 1 when the mover reaches its second position and 0 at its first." : 0
+	team(string) : "Binary movers with the same team name move together; the first one spawned is the master."
+	solid(choices) : "Whether the mover is solid to other entities." : 1 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nopush(choices) : "Set to 1 to disable pushing objects that block the mover." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	damage(float) : "Damage to inflict on entities that block the plat." : 0
+	accel_time(float) : "Seconds to accelerate to full speed." : "0.25"
+	decel_time(float) : "Seconds to decelerate to a stop." : "0.25"
+	time(float) : "Movement time in seconds; overrides speed."
 ]
 
 @PointClass base(func_plat) size(-8 -8 0, 8 8 16) model({{
@@ -4012,6 +4497,12 @@ Pendulum frequency is a physical constant based on the length of the beam and gr
 	solid(string) : "set to zero to make non-solid"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	damage(float) : "Damage to inflict on entities that block the mover." : 0
+	nopush(choices) : "Set to 1 to disable pushing objects that block the mover." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @SolidClass color(0 127 204) = func_rotating : "Generic rotating entity.  It will rotate around the Z axis by default.  Targeting entity will cause it to start or stop rotating."
@@ -4036,6 +4527,17 @@ Pendulum frequency is a physical constant based on the length of the beam and gr
 	]
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	damage(float) : "Damage to inflict on entities that block the mover." : 0
+	solid(choices) : "Whether the mover is solid to other entities." : 1 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nopush(choices) : "Set to 1 to disable pushing objects that block the mover." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass base(func_rotating) size(-8 -8 0, 8 8 16) model({{
@@ -14442,6 +14944,27 @@ Prefer func_group for unreferenced brush detail. spawnSkipStatics may omit inlin
 	inv_id(string) : "id number as defined in guis/itemdefs.h"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass base(item_default) color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/videocd/videocd_world.obj" }) = item_deploycd : "Video Disk"
@@ -14867,6 +15390,31 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 	script_captured(string) : "script on item captured"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	team(integer) : "The flag's team: 0 red, 1 blue." : 0
+	skin_carried(string) : "Skin while a player carries the flag."
+	nugget_name(string) : "Entity def the carried flag drops as nuggets."
+	gravity(integer) : "Gravity on the flag along z." : -30
 ]
 
 @PointClass base(item_default) color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/videocd/videocd_world.obj" }) = item_videocd : "Video Disk"
@@ -18506,6 +19054,24 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(ammo_bfg_small) size(-8 -8 0, 8 8 16) model({ "path": "_tb/models/items/bfg_ammo/d3xp_bfg_ammo.obj" }) = moveable_ammo_bfg_small
@@ -18519,6 +19085,24 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(ammo_bullets_large) model({ "path": "_tb/models/items/bullet_ammo/d3xp_bullet_large_lo.obj" }) = moveable_ammo_bullets_large
@@ -18532,6 +19116,24 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(ammo_bullets_small) size(-8 -8 0, 8 8 16) model({ "path": "_tb/models/items/bullet_ammo/d3xp_bullet_small.obj" }) = moveable_ammo_bullets_small
@@ -18545,6 +19147,24 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(ammo_cells_large) model({ "path": "_tb/models/items/cell_ammo/d3xp_cells_large.obj" }) = moveable_ammo_cells_large
@@ -18558,6 +19178,24 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(ammo_cells_small) size(-8 -8 0, 8 8 16) model({ "path": "_tb/models/items/cell_ammo/d3xp_cells_small.obj" }) = moveable_ammo_cells_small
@@ -18571,6 +19209,24 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(ammo_clip_large) model({ "path": "_tb/models/items/clip_ammo/d3xp_clip_large_lo.obj" }) = moveable_ammo_clip_large
@@ -18584,6 +19240,24 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(ammo_clip_small) model({ "path": "_tb/models/items/clip_ammo/d3xp_clip_small_lo.obj" }) = moveable_ammo_clip_small
@@ -18597,6 +19271,24 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(ammo_grenade_small) size(-8 -8 0, 8 8 16) model({ "path": "_tb/models/items/grenade_ammo/d3xp_grenade_lo.obj" }) = moveable_ammo_grenade_small
@@ -18610,6 +19302,24 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(ammo_rockets_large) model({ "path": "_tb/models/items/rocket_ammo/d3xp_rocket_large_lo.obj" }) = moveable_ammo_rockets_large
@@ -18623,6 +19333,24 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(ammo_rockets_small) model({ "path": "_tb/models/items/rocket_ammo/d3xp_rocket_small_lo.obj" }) = moveable_ammo_rockets_small
@@ -18636,6 +19364,24 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(ammo_shells_large) model({ "path": "_tb/models/items/shells_ammo/d3xp_shells_large_lo.obj" }) = moveable_ammo_shells_large
@@ -18649,6 +19395,24 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(ammo_shells_small) size(-8 -8 0, 8 8 16) model({ "path": "_tb/models/items/shells_ammo/d3xp_shells_small_lo.obj" }) = moveable_ammo_shells_small
@@ -18662,6 +19426,24 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(moveable_base_fixed) = moveable_ancient_buzz_blade
@@ -19962,6 +20744,23 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(item_aircannister) model({ "path": "_tb/models/mapobjects/phobos/envirotank.obj" }) = moveable_item_aircannister_exis
@@ -19975,6 +20774,23 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(item_armor_security) model({ "path": "_tb/models/items/armor/d3xp_armor_lo.obj" }) = moveable_item_armor_security
@@ -19988,6 +20804,23 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(item_armor_shard) size(-8 -8 0, 8 8 16) model({ "path": "_tb/models/items/armor/d3xp_armor_shard_lo.obj" }) = moveable_item_armor_shard
@@ -20001,6 +20834,23 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(item_backpack) model({ "path": "_tb/models/items/powerups/d3xp_backpack.obj" }) = moveable_item_backpack
@@ -20015,6 +20865,23 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(weapon_bfg) model({ "path": "_tb/models/weapons/bfg/bfg_world_rotated.obj" }) = moveable_item_bfg
@@ -20027,6 +20894,24 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(weapon_chaingun) = moveable_item_chaingun
@@ -20038,6 +20923,24 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(weapon_chainsaw) = moveable_item_chainsaw
@@ -20048,6 +20951,24 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	bouncyness(string) : "" : "0"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(item_default) = moveable_item_default
@@ -20055,6 +20976,26 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	spawnclass(string) readonly : "" : "idMoveableItem"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	density(float) : "Volume of the object times the density is the mass." : "0.5"
+	friction(float) : "Friction with contacting surfaces in the range [0-1] where 0 is no friction." : "0.05"
+	bouncyness(float) : "How much the object bounces in the range [0-1] where 0 is no bounce." : "0.6"
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(item_envirotank) model({ "path": "_tb/models/mapobjects/phobos/envirotank.obj" }) = moveable_item_envirotank
@@ -20068,6 +21009,23 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(weapon_flashlight) = moveable_item_flashlight
@@ -20080,6 +21038,24 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	no_touch(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(weapon_flashlight_new) = moveable_item_flashlight_new
@@ -20091,6 +21067,24 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	no_touch(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(weapon_handgrenade) model({ "path": "_tb/models/weapons/grenades/grenades_world.obj" }) = moveable_item_grenades
@@ -20103,6 +21097,24 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(moveable_item_default) model({ "path": "_tb/models/gibs/head_pork.obj" }) = moveable_item_head_pork
@@ -20189,6 +21201,24 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(item_medkit) size(-8 -8 0, 8 8 16) model({ "path": "_tb/models/items/medkit/d3xp_medkit_large.obj" }) = moveable_item_medkit
@@ -20202,6 +21232,23 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(item_medkit_small) size(-8 -8 0, 8 8 16) model({ "path": "_tb/models/items/medkit/d3xp_medkit_small.obj" }) = moveable_item_medkit_small
@@ -20215,6 +21262,23 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(item_pda) model({ "path": "_tb/models/items/pda/pda_world.obj" }) = moveable_item_pda
@@ -20230,6 +21294,23 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(moveable_item_default) model({ "path": "_tb/models/gibs/pelvis_pork.obj" }) = moveable_item_pelvis_pork
@@ -20254,6 +21335,24 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(weapon_plasmagun) = moveable_item_plasmagun
@@ -20265,6 +21364,24 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(weapon_rocketlauncher) = moveable_item_rocketlauncher
@@ -20276,6 +21393,24 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(moveable_item_default) model({ "path": "_tb/models/gibs/rup2_leg_pork.obj" }) = moveable_item_rup2_leg_pork
@@ -20340,6 +21475,24 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(weapon_shotgun_double) model({ "path": "_tb/models/weapons/doublebarrel/doublebarrel_w.obj" }) = moveable_item_shotgun_double
@@ -20355,6 +21508,24 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	damageWhenActive(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(moveable_item_default) model({ "path": "_tb/models/mapobjects/skeleton_gibs/generibone_lo.obj" }) = moveable_item_skelgib_bone
@@ -20785,6 +21956,24 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	inv_adrenaline(string) : "" : "30"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
 ]
 
 @PointClass base(moveable_base_fixed) model({ "path": "_tb/models/mapobjects/hellhole/d3xp_rubbleA.obj" }) = moveable_rubble_01
@@ -21300,6 +22489,28 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_acquire(string) : "" : "pickup_adrenaline"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/powerups/berserker.obj" }) = powerup_berserk : "Berserk"
@@ -21317,6 +22528,28 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	inv_name(string) : "" : "Beserk Powerup"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/powerups/invisibility.obj" }) = powerup_invisibility : "Invisibility"
@@ -21331,6 +22564,28 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_aquire(string) : "" : "invisibility_pickup"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/mp_invuln/mp_invun_lo1.obj" }) = powerup_invulnerability : "Invulnerability"
@@ -21345,6 +22600,28 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_acquire(string) : "" : "invisibility_pickup"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/powerups/megasphere_world.obj" }) = powerup_megahealth : "MegaHealth"
@@ -21362,6 +22639,28 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	inv_name(string) : "" : "Megahealth Powerup"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass base(func_animate) color(255 127 76) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/md5/props/adrenaline.obj" }) = prop_adrenaline
@@ -22587,6 +23886,33 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	controllerShakeLowTime(string) : "" : "750"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) = weapon_bloodstone_active1 : "Artifact"
@@ -22615,6 +23941,33 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	snd_respawn(string) : "" : "sound_weapon_respawn"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) = weapon_bloodstone_active2 : "Artifact"
@@ -22643,6 +23996,33 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	snd_respawn(string) : "" : "sound_weapon_respawn"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) = weapon_bloodstone_active3 : "Artifact"
@@ -22670,6 +24050,33 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	snd_respawn(string) : "" : "sound_weapon_respawn"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) = weapon_bloodstone_passive : "Artifact"
@@ -22705,6 +24112,33 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	snd_respawn(string) : "" : "sound_weapon_respawn"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/weapons/chaingun/w_chaingun.obj" }) = weapon_chaingun : "Chaingun"
@@ -22770,6 +24204,33 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	controllerShakeLowTime(string) : "" : "250"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/weapons/chainsaw/w_chainsaw.obj" }) = weapon_chainsaw : "Chainsaw"
@@ -22835,6 +24296,33 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	controllerConstantShakeLowTime(string) : "" : "250"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/flashlight/flashlight2_world.obj" }) = weapon_flashlight : "Flashlight"
@@ -22878,6 +24366,33 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	skin_off_invis(string) : "" : "skins/models/weapons/flashlight_off_invis"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/flashlight/flashlight2_world.obj" }) = weapon_flashlight_new : "Flashlight"
@@ -22922,6 +24437,28 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	start_off(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/weapons/grabber/grabber_world.obj" }) = weapon_grabber : "Grabber"
@@ -23008,6 +24545,33 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	skin_invisible(string) : "" : "skins/grabber_invis"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/grenade_ammo/grenade.obj" }) = weapon_handgrenade : "Hand Grenade"
@@ -23053,6 +24617,33 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	controllerShakeLowTime(string) : "" : "100"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/weapons/machinegun/w_machinegun.obj" }) = weapon_machinegun : "Machinegun"
@@ -23113,6 +24704,33 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	controllerShakeLowTime(string) : "" : "60"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/weapons/pistol/w_pistol.obj" }) = weapon_pistol : "Pistol"
@@ -23165,6 +24783,33 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	controllerShakeLowTime(string) : "" : "120"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/weapons/plasmagun/plasmagun_world.obj" }) = weapon_plasmagun : "Plasma Gun"
@@ -23224,6 +24869,33 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	controllerShakeLowTime(string) : "" : "75"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/weapons/rocketlauncher/w_rocketlauncher.obj" }) = weapon_rocketlauncher : "Rocket Launcher"
@@ -23279,6 +24951,33 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	controllerShakeLowTime(string) : "" : "750"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/weapons/shotgun/w_shotgun2.obj" }) = weapon_shotgun : "Shotgun"
@@ -23331,6 +25030,33 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	controllerShakeLowTime(string) : "" : "250"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/weapons/doublebarrel/doublebarrel_w.obj" }) = weapon_shotgun_double : "Double Barrel Shotgun"
@@ -23388,6 +25114,33 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	controllerShakeLowTime(string) : "" : "350"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/weapons/soulcube/w_soulcube.obj" }) = weapon_soulcube : "Soul Cube"
@@ -23436,6 +25189,33 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	controllerShakeLowTime(string) : "" : "250"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggersize(float) : "Amount to expand the pickup trigger by."
+	start_off(choices) : "The item starts hidden, with no pickup trigger." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	owner(string) : "Name of an entity the item is given to when it spawns."
+	spin(choices) : "The item rotates and bobs; in multiplayer every item but a CTF flag does." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFirst(choices) : "The item can be picked up only after it has been triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @SolidClass color(0 0 0) = worldspawn : "Every map should have exactly one worldspawn."

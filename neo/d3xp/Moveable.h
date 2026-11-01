@@ -227,6 +227,12 @@ private:
 ===============================================================================
 */
 
+//puncho - P2b.2.5a: idExplodingBarrel's spawn rows (K2), Spawn only (the Save is hand-written): health again over
+// idMoveable's row, with the barrel's default, and time, which the barrel saves and nothing reads (no FGD line)
+#define EXPLODING_BARREL_SCHEMA( X, s ) \
+	X( s, health,	INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"health",	"5",	"How much health the barrel has; if burn is set to 1, the health is effectively doubled, so it has to be killed twice to explode.",	OBJ ) \
+	X( s, time,		FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"time",		"0",	NOEDIT,	OBJ )
+
 class idExplodingBarrel : public idBarrel
 {
 public:
