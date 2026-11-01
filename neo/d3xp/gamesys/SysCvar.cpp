@@ -401,7 +401,7 @@ idCVar g_dormantCatchUp( "g_dormantCatchUp", "1", CVAR_GAME | CVAR_BOOL, "run au
 idCVar g_dormantCatchUpMinMs( "g_dormantCatchUpMinMs", "5000", CVAR_GAME | CVAR_INTEGER, "minimum dormant duration for catch-up" );
 //puncho start - P2b.2.2b-ii (plans/map-graph/stages/S2b-2-entity-tables.md K7): distance-first dormancy on every map; host-side,
 // neither synced nor archived
-idCVar g_dormantDistanceFirst( "g_dormantDistanceFirst", "0", CVAR_GAME | CVAR_BOOL, "1 = sleep by distance alone, connected or not: dormant_radius, else the world radius" );
+idCVar g_dormantDistanceFirst( "g_dormantDistanceFirst", "1", CVAR_GAME | CVAR_BOOL, "1 = sleep by distance alone, connected or not: dormant_radius, else the world radius" );
 idCVar g_dormantWorldRadius( "g_dormantWorldRadius", "10240", CVAR_GAME | CVAR_FLOAT, "world dormancy radius when the worldspawn sets none (its dormant_radius 0 turns it off); read at map load" );
 //puncho end
 
