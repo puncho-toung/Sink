@@ -96,7 +96,8 @@ public:
 	void RetireInstanceAfterActivation( uint64 identity, const char* destination );
 	void FinishMapActivation();
 	void ReplaceMapEntity( idEntity* oldEntity, idEntity* replacement );
-	//puncho - P2b.2.1b: idEntityHot::SetCell's hook when an entity's cellId changes; empty until stage 7 (P2b.7.1)
+	//puncho - P2b.2.1b: idEntityHot::SetCell's hook when an entity's cellId changes, called after the row is written (a
+	// body reading entityHot.cell[ n ] sees the new id); empty until stage 7 (P2b.7.1)
 	void OnCellChanged( idEntity* ent, uint32 oldCell, uint32 newCell )
 	{
 	}

@@ -212,12 +212,12 @@ static void Cmd_ListEntityTable_f( const idCmdArgs& args )
 		const idEntity* ent = gameLocal.entities[ n ];
 		const hotThink_t& row = hot.think[ n ];
 		const hotSpatial_t& spatial = hot.spatial[ n ];
+		const hotCell_t& cellRow = hot.cell[ n ];	//puncho - P2b.2.1b
 		gameLocal.Printf( "%5d %-24s thinkFlags %02x bits %02x tier %d moved %d active slot %d\n", n, ent != NULL ? ent->GetName() : "(empty)",
 						  row.thinkFlags, row.bits, row.tier, hot.moved[ n ], hot.activeIndex[ n ] );
 		gameLocal.Printf( "      spatial origin ( %s ) bounds ( %s ) ( %s ) tic %d\n", spatial.origin.ToString(), spatial.absBounds[0].ToString(),
 						  spatial.absBounds[1].ToString(), spatial.tic );
-		gameLocal.Printf( "      cell %u home %u ord %d flags %d\n", hot.cell[ n ].cellId, hot.cell[ n ].homeCellId, hot.cell[ n ].cellOrdinal,
-						  hot.cell[ n ].cellFlags );	//puncho - P2b.2.1b
+		gameLocal.Printf( "      cell %u home %u ord %d flags %d\n", cellRow.cellId, cellRow.homeCellId, cellRow.cellOrdinal, cellRow.cellFlags );	//puncho - P2b.2.1b
 		return;
 	}
 

@@ -176,9 +176,10 @@ void idEntityHot::SyncRow( const idEntity* ent )
 idEntityHot::SyncAll
 
 after RestoreObjects, which read the think members directly: HotSyncAll over gameLocal.entities in entity order. The
-think, spatial and moved rows only: the cell group keeps what registration wrote until stage 4's load path sets it (K4);
-a spatial row is the physics now when a consumer is registered, else the cleared row. The load's Clear left the
-switches off, so no consumer is registered here and the first RunFrame's latch refreshes the rows
+think, spatial and moved rows only: a restore registers no entity, so the cell group keeps LoadMap's Clear values until
+stage 4's load path sets it (K4); a spatial row is the physics now when a consumer is registered, else the cleared row.
+The load's Clear left the switches off, so no consumer is registered here and the first RunFrame's latch refreshes the
+rows
 ================
 */
 void idEntityHot::SyncAll()
@@ -430,6 +431,7 @@ void idEntityHot::SetCell( int entityNumber, uint32 cellId )
 	{
 		return;
 	}
+	assert( gameLocal.entities[ entityNumber ] != NULL );
 	const uint32 oldCell = cell[ entityNumber ].cellId;
 	if( oldCell == cellId )
 	{
@@ -448,7 +450,7 @@ the cell an entity spawned from and its ordinal there: stage 4's map spawn (P2b.
 */
 void idEntityHot::SetHome( int entityNumber, uint32 homeCellId, int cellOrdinal )
 {
-	assert( cellOrdinal >= 0 && cellOrdinal <= CELL_ORDINAL_NONE );
+	assert( cellOrdinal >= 0 && cellOrdinal < CELL_ORDINAL_NONE );	// ResetRow writes the sentinel, SetHome never does
 	if( RowWritable( entityNumber ) )
 	{
 		cell[ entityNumber ].homeCellId = homeCellId;

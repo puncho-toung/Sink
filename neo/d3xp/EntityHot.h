@@ -144,7 +144,9 @@ public:
 	bool					tableOn;
 	bool					verifyOn;
 	bool					activeMaintained;					// tableOn || verifyOn: the mirror follows the list
-	byte					pad[1];								// to a whole cache line: idGameLocal's last member
+	// pads sizeof to a multiple of 64 (asserted below), not the address: gameLocal is 32-byte aligned, so entityHot, the
+	// last member of idGameLocal, and every array in it start 32 bytes into a cache line
+	byte					pad[1];
 
 	// after the tail, so that adding it moved no member above
 	hotCell_t				cell[MAX_GENTITIES];
