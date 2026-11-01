@@ -37,19 +37,21 @@ If you have questions concerning this license or the applicable additional terms
 
 static const int MAX_MISMATCH_LINES = 8;	// g_entityTableVerify prints this many differences a map, then counts
 
+compile_time_assert( TH_UPDATEPARTICLES < 0x100 );	// hotThink_t::thinkFlags holds TH_* in a byte
+
 /*
 ================
-HotThinkRow
+idEntityHot::ThinkRow
 
 the think row an entity's members and class make: what registration, SyncRow and SyncAll write and what
 g_entityTableVerify expects
 ================
 */
-static hotThink_t HotThinkRow( const idEntity* ent )
+hotThink_t idEntityHot::ThinkRow( const idEntity* ent )
 {
 	hotThink_t row;
 	row.thinkFlags = ( byte )ent->GetThinkFlags();
-	row.bits = ( byte )( idEntityHot::ClassBits( *ent->GetType() ) | ( ent->IsCinematic() ? HOT_CINEMATIC : 0 ) | ( ent->GetTimeGroup() == TIME_GROUP2 ? HOT_TIMEGROUP2 : 0 ) );
+	row.bits = ( byte )( ClassBits( *ent->GetType() ) | ( ent->IsCinematic() ? HOT_CINEMATIC : 0 ) | ( ent->GetTimeGroup() == TIME_GROUP2 ? HOT_TIMEGROUP2 : 0 ) );
 	row.tier = 0;
 	row.pad = 0;
 	return row;
@@ -59,8 +61,9 @@ static hotThink_t HotThinkRow( const idEntity* ent )
 ================
 idEntityHot::Clear
 
-idGameLocal::Clear and LoadMap: every row, the mirror and the counters. The switches and the consumers stay as the
-last tic latched them, so a mirror maintained across a map change follows the new map's spawns
+idGameLocal::Clear and LoadMap: every row, the mirror, the counters and the switches. The latch is per map: nothing
+maintains the mirror or marks a row through a load (a client never latches at all), and the map's first RunFrame
+latches from off, so a switch that is on rebuilds the mirror and refreshes every spatial row on that tic
 ================
 */
 void idEntityHot::Clear()
@@ -69,6 +72,11 @@ void idEntityHot::Clear()
 	memset( spatial, 0, sizeof( spatial ) );
 	memset( moved, 0, sizeof( moved ) );
 	ActiveClear();
+
+	tableOn = false;
+	verifyOn = false;
+	activeMaintained = false;
+	spatialConsumers = 0;
 
 	droppedWrites = 0;
 	activeRebuilds = 0;
@@ -117,7 +125,7 @@ void idEntityHot::RegisterRow( const idEntity* ent )
 {
 	if( ResetRow( ent->entityNumber ) )
 	{
-		SetThink( ent->entityNumber, HotThinkRow( ent ) );
+		SetThink( ent->entityNumber, ThinkRow( ent ) );
 	}
 }
 
@@ -149,7 +157,7 @@ after each CallSpawn: the think row again from the spawned members, and the spat
 */
 void idEntityHot::SyncRow( const idEntity* ent )
 {
-	if( SetThink( ent->entityNumber, HotThinkRow( ent ) ) && spatialConsumers > 0 )
+	if( SetThink( ent->entityNumber, ThinkRow( ent ) ) && spatialConsumers > 0 )
 	{
 		RefreshSpatial( ent->entityNumber );
 	}
@@ -160,8 +168,9 @@ void idEntityHot::SyncRow( const idEntity* ent )
 idEntityHot::SyncAll
 
 after RestoreObjects, which read the think members directly: HotSyncAll over gameLocal.entities in entity order. The
-think, spatial and moved rows only (rev 4, draft W8: P2b.2.1b's cell group keeps its registration values); a spatial
-row is the physics now when a consumer is registered, else the cleared row
+think, spatial and moved rows only (P2b.2.1b's cell group keeps its registration values); a spatial row is the physics
+now when a consumer is registered, else the cleared row. The load's Clear left the switches off, so no consumer is
+registered here and the first RunFrame's latch refreshes the rows
 ================
 */
 void idEntityHot::SyncAll()
@@ -176,7 +185,7 @@ void idEntityHot::SyncAll()
 		{
 			continue;
 		}
-		if( SetThink( ent->entityNumber, HotThinkRow( ent ) ) && spatialConsumers > 0 )
+		if( SetThink( ent->entityNumber, ThinkRow( ent ) ) && spatialConsumers > 0 )
 		{
 			RefreshSpatial( ent->entityNumber );
 		}
@@ -188,8 +197,8 @@ void idEntityHot::SyncAll()
 idEntityHot::LatchTic
 
 RunFrame, before SetupPlayerPVS: the switches for the tic. The mirror is rebuilt from the list on the table's 0 -> 1
-edge and on the maintenance false -> true edge (verify set while the table is 0: rev 4, draft W3), since nothing kept
-it while it was off. g_entityTableVerify is the spatial rows' consumer in this stage: it registers on its 0 -> 1 edge,
+edge and on the maintenance false -> true edge (verify set while the table is 0), since nothing kept it while it was
+off. g_entityTableVerify is the spatial rows' consumer in this stage: it registers on its 0 -> 1 edge,
 which refreshes every live row once, and leaves on its 1 -> 0 edge
 ================
 */
@@ -252,10 +261,12 @@ idEntityHot::SpatialPass
 RunFrame, after the events and the map graph director, before GameVerify_EndTic: the tic-end spatial rows (K5). The
 active rows that ran physics join the rows ClearPVSAreas marked, then every marked row is refreshed in entity order.
 A consumer keeps the mirror maintained (the verify consumer is a switch of the latch), so the active rows are read
-from activeOrder and the think rows, not from the entities
+from activeOrder and the think rows, not from the entities. The marks are read over the slots in use: below
+numEntities (gameLocal.num_entities), and the top range it never covers, where the world and multiplayer's
+non-replicated entities live (RegisterEntity)
 ================
 */
-void idEntityHot::SpatialPass()
+void idEntityHot::SpatialPass( int numEntities )
 {
 	if( spatialConsumers <= 0 )
 	{
@@ -271,24 +282,29 @@ void idEntityHot::SpatialPass()
 			moved[ n ] = 1;
 		}
 	}
-	// eight marks a test: a few dozen rows move in a tic, of up to MAX_GENTITIES
+	// eight marks a test: a few dozen rows move in a tic
+	const int low = Min( ( numEntities + 7 ) & ~7, MAX_GENTITIES );
+	const int ranges[2][2] = { { 0, low }, { Max( low, ENTITYNUM_FIRST_NON_REPLICATED & ~7 ), MAX_GENTITIES } };
 	int rows = 0;
-	for( int w = 0; w < MAX_GENTITIES; w += 8 )
+	for( int r = 0; r < 2; r++ )
 	{
-		uint64 marks;
-		memcpy( &marks, &moved[ w ], sizeof( marks ) );
-		if( marks == 0 )
+		for( int w = ranges[ r ][ 0 ]; w < ranges[ r ][ 1 ]; w += 8 )
 		{
-			continue;
-		}
-		for( int n = w; n < w + 8; n++ )
-		{
-			if( moved[ n ] != 0 )
+			uint64 marks;
+			memcpy( &marks, &moved[ w ], sizeof( marks ) );
+			if( marks == 0 )
 			{
-				moved[ n ] = 0;
-				if( RefreshSpatial( n ) )
+				continue;
+			}
+			for( int n = w; n < w + 8; n++ )
+			{
+				if( moved[ n ] != 0 )
 				{
-					rows++;
+					moved[ n ] = 0;
+					if( RefreshSpatial( n ) )
+					{
+						rows++;
+					}
 				}
 			}
 		}
@@ -339,7 +355,7 @@ void idEntityHot::Verify()
 			}
 			continue;
 		}
-		const hotThink_t want = HotThinkRow( ent );
+		const hotThink_t want = ThinkRow( ent );
 		if( row.thinkFlags != ent->GetThinkFlags() )
 		{
 			MismatchLine( n, "thinkFlags", row.thinkFlags, ent->GetThinkFlags() );
@@ -396,7 +412,8 @@ void idEntityHot::Verify()
 ================
 idEntityHot::ResetRow
 
-the core's HotResetRow (the cell group is P2b.2.1b's)
+a row's think, spatial and moved bytes to zero; refuses and counts ENTITYNUM_NONE (the core's HotResetRow; the cell
+group is P2b.2.1b's)
 ================
 */
 bool idEntityHot::ResetRow( int entityNumber )
@@ -415,7 +432,7 @@ bool idEntityHot::ResetRow( int entityNumber )
 ================
 idEntityHot::SetThink
 
-the core's HotSetThink
+a row's think group, written whole; refuses and counts ENTITYNUM_NONE (the core's HotSetThink)
 ================
 */
 bool idEntityHot::SetThink( int entityNumber, const hotThink_t& value )
@@ -468,7 +485,7 @@ void idEntityHot::ActiveTombstone( int entityNumber )
 idEntityHot::ActiveCompact
 
 stable; maps activeCursor to ( live entries in [0, cursor] ) - 1, so a walk's post-Think increment lands on the first
-live entry after the old cursor whether or not the current one is still live (rev 4, draft W9). Returns the cursor
+live entry after the old cursor whether or not the current one is still live. Returns the cursor
 ================
 */
 int idEntityHot::ActiveCompact()
@@ -526,8 +543,9 @@ bool idEntityHot::ActiveAppend( int entityNumber )
 ================
 idEntityHot::ActiveRebuild
 
-the mirror from the list, in its order: on the latch's edges, inside each sort body that ran, inside the prune and
-after a restore relinked the list; never after SortActiveEntityList, which runs every tic
+the mirror from the list, in its order: on the latch's edges, inside each sort body that ran and inside the prune;
+never after SortActiveEntityList, which runs every tic. A restore relinks the list past the mirror, but its load
+cleared the latch, so the map's first latch rebuilds
 ================
 */
 void idEntityHot::ActiveRebuild()

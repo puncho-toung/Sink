@@ -195,7 +195,7 @@ static void Cmd_ListEntityTable_f( const idCmdArgs& args )
 
 	int live = 0;
 	int thinking = 0;
-	int bits[6] = { 0 };
+	int bits[HOT_BIT_COUNT] = { 0 };
 	for( int n = 0; n < MAX_GENTITIES; n++ )
 	{
 		if( gameLocal.entities[ n ] == NULL )
@@ -204,7 +204,7 @@ static void Cmd_ListEntityTable_f( const idCmdArgs& args )
 		}
 		live++;
 		thinking += hot.think[ n ].thinkFlags != 0 ? 1 : 0;
-		for( int b = 0; b < 6; b++ )
+		for( int b = 0; b < HOT_BIT_COUNT; b++ )
 		{
 			bits[b] += ( hot.think[ n ].bits >> b ) & 1;
 		}
@@ -227,8 +227,8 @@ static void Cmd_ListEntityTable_f( const idCmdArgs& args )
 					  hot.spatialRows, hot.spatialPasses > 0 ? hot.spatialTicks / ticksPerUs / hot.spatialPasses : 0.0,
 					  hot.spatialRows > 0 ? hot.spatialTicks / ticksPerUs * 1000.0 / hot.spatialRows : 0.0, hot.spatialFullRows,
 					  hot.spatialFullRows > 0 ? hot.spatialFullTicks / ticksPerUs * 1000.0 / hot.spatialFullRows : 0.0 );
-	gameLocal.Printf( "hotMismatch %d droppedWrites %d\n", hot.hotMismatch, hot.droppedWrites );
-	gameLocal.Printf( "BSS %d bytes (%d a row of %d), entityHot %d bytes, sizeof( idEntity ) %d\n", bssBytes, bssBytes / MAX_GENTITIES,
+	gameLocal.Printf( "counters: hotMismatch %d droppedWrites %d\n", hot.hotMismatch, hot.droppedWrites );
+	gameLocal.Printf( "memory: BSS %d bytes (%d a row of %d), entityHot %d bytes, sizeof( idEntity ) %d\n", bssBytes, bssBytes / MAX_GENTITIES,
 					  MAX_GENTITIES, ( int )sizeof( idEntityHot ), ( int )sizeof( idEntity ) );
 }
 //puncho end

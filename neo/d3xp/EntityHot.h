@@ -36,24 +36,26 @@ If you have questions concerning this license or the applicable additional terms
 
 	gameLocal.entityHot holds a row per entity number, as gameLocal.entities[] does, in fixed arrays: nothing is
 	allocated, saved or replicated, and every byte is derived. RegisterEntity fills a row when it gives an entity its
-	number and UnregisterEntity resets it; a write for ENTITYNUM_NONE, an entity before the one or after the other, is
-	dropped and counted (droppedWrites).
+	number and UnregisterEntity resets it; a write for ENTITYNUM_NONE (before RegisterEntity or after
+	UnregisterEntity) is dropped and counted (droppedWrites).
 
-	think	thinkFlags, timeGroup and cinematic, and the class bits. idEntity's three members are private and only their
-			setters (SetThinkFlags, SetTimeGroup, SetCinematic) write them, the column with the member, so the column is
-			authoritative and the member a copy (BOTH). The constructor and Restore set the members alone: registration
-			copies the constructor's values into the row, SyncAll the restored ones.
+	think	thinkFlags, timeGroup and cinematic, and the class bits. idEntity's three members are private, and its setters
+			(SetThinkFlags, SetTimeGroup, SetCinematic) write the member and the column together, so the two agree
+			(BOTH): idEntity's readers read the member, the table's passes read the column. The constructor and Restore
+			write the members alone; registration copies the constructor's values into the row, SyncAll the restored
+			ones.
 	spatial	the physics origin and absolute bounds as the spatial pass left them at the end of a tic, for passes outside
 			the think walk; valid until the next think walk, so a reader inside a walk reads physics. Kept only while a
 			consumer is registered: the registration refreshes every live row once, then each pass refreshes the rows
 			ClearPVSAreas marked (MarkMoved) and the active rows with TH_PHYSICS.
 	mirror	the active list as entity numbers in the list's order (activeOrder, -1 a tombstone) and its inverse
 			(activeIndex), maintained only while g_entityTable is latched 1 or g_entityTableVerify is set: an append
-			tombstones the entity's old entry first, a full array compacts in place, and a sort, a prune or a restore
-			rebuilds it from the list. The rule is plans/map-graph/math-2b/S2b-2/core/ActiveMirror.cpp, frozen.
+			tombstones the entity's old entry first, a full array compacts in place, and a sort, a prune or the latch's
+			edges rebuild it from the list. The rule is plans/map-graph/math-2b/S2b-2/core/ActiveMirror.cpp, frozen.
 
-	g_entityTable 0 runs today's walks over the same storage, bit for bit (C9). Game thread only: inside RunFrame, and
-	the snapshot writer between frames.
+	The switches are latched per map: Clear turns them off, and the first RunFrame latches them from off, so a mirror
+	that is on is rebuilt and a consumer refreshes every row on that tic. g_entityTable 0 walks the active list as
+	stock does, bit for bit (C9). Game thread only: inside RunFrame, and the snapshot writer between frames.
 
 ===============================================================================
 */
@@ -70,7 +72,9 @@ enum hotBits_t
 	HOT_CINEMATIC	= 0x10,		// idEntity::cinematic
 	HOT_TIMEGROUP2	= 0x20		// idEntity::timeGroup is TIME_GROUP2
 };
+const int HOT_BIT_COUNT = 6;
 
+// TH_* in a byte: EntityPasses.cpp asserts it, since Entity.h comes after this file
 struct hotThink_t
 {
 	byte					thinkFlags;		// TH_*
@@ -96,16 +100,13 @@ public:
 	byte					moved[MAX_GENTITIES];				// 1: marked for the next spatial pass
 	int						activeOrder[2 * MAX_GENTITIES];		// entity numbers in the active list's order, -1 a tombstone
 	int						activeIndex[MAX_GENTITIES];			// the slot of n in activeOrder, -1 none
+
+	// listEntityTable's clocks and counters, reset by Clear
+	double					spatialTicks;						// the spatial passes' clock ticks (Sys_GetClockTicks)
+	double					spatialFullTicks;					// the last registration's full refresh
 	int						activeNum;							// slots in use, tombstones included
 	int						activeCursor;						// a walk's slot (P2b.2.2a), -1 outside a walk
-
-	// the switches as LatchTic read them at the start of the tic; derived, never saved
-	bool					tableOn;
-	bool					verifyOn;
-	bool					activeMaintained;					// tableOn || verifyOn: the mirror follows the list
 	int						spatialConsumers;
-
-	// listEntityTable's counters, reset by Clear
 	int						droppedWrites;
 	int						activeRebuilds;
 	int						activeTombstones;
@@ -113,43 +114,50 @@ public:
 	int						hotMismatch;						// g_entityTableVerify's differences; the first 8 are printed
 	int						spatialPasses;						// passes that ran (a consumer was registered)
 	int						spatialRows;						// rows those passes refreshed
-	double					spatialTicks;						// their clock ticks (Sys_GetClockTicks)
 	int						spatialFullRows;					// rows of the last registration's full refresh
-	double					spatialFullTicks;
+
+	// the switches as LatchTic read them at the start of the tic; per map (Clear), never saved
+	bool					tableOn;
+	bool					verifyOn;
+	bool					activeMaintained;					// tableOn || verifyOn: the mirror follows the list
+	byte					pad[1];								// to a whole cache line: idGameLocal's last member
 
 	void					Clear();
 	void					RegisterRow( const idEntity* ent );
 	void					UnregisterRow( int entityNumber );
 	void					SyncRow( const idEntity* ent );
 	void					SyncAll();
-	static int				ClassBits( const idTypeInfo& type );
 
-	// the BOTH setters' column writes (idEntity::SetThinkFlags, SetTimeGroup, SetCinematic)
+	// the column half of idEntity's setters: called only from them, never alone
 	void					SetThinkFlags( int entityNumber, int flags );
 	void					SetTimeGroup( int entityNumber, int timeGroup );
 	void					SetCinematic( int entityNumber, bool cinematic );
 	void					MarkMoved( int entityNumber );
 
 	void					LatchTic( bool table, bool verify );
-	void					SpatialPass();
+	void					SpatialPass( int numEntities );
 	void					Verify();
 
 	// the frozen core (math-2b/S2b-2/core/ActiveMirror.cpp) as members: maxEntities is MAX_GENTITIES, the listOrder of
 	// ActiveRebuild is gameLocal.activeEntities and the restored rows of SyncAll are gameLocal.entities
+	void					ActiveTombstone( int entityNumber );
+	bool					ActiveAppend( int entityNumber );
+	void					ActiveRebuild();
+
+private:
 	bool					ResetRow( int entityNumber );
 	bool					SetThink( int entityNumber, const hotThink_t& value );
 	void					ActiveClear();
-	void					ActiveTombstone( int entityNumber );
 	int						ActiveCompact();
-	bool					ActiveAppend( int entityNumber );
-	void					ActiveRebuild();
 	static bool				ActiveLatchNeedsRebuild( bool tableWasOn, bool maintenanceWasOn, bool tableOn, bool verifyOn );
-
-private:
+	static int				ClassBits( const idTypeInfo& type );
+	static hotThink_t		ThinkRow( const idEntity* ent );
 	bool					RowWritable( int entityNumber );
 	bool					RefreshSpatial( int entityNumber );
 	void					MismatchLine( int entityNumber, const char* what, int table, int entity );
 };
+compile_time_assert( ( sizeof( idEntityHot ) & 63 ) == 0 );
+compile_time_assert( MAX_GENTITIES % 8 == 0 );	// SpatialPass tests the marks eight at a time
 
 // every column write's rule: ENTITYNUM_NONE and anything outside the table is counted, never written
 ID_INLINE bool idEntityHot::RowWritable( int entityNumber )

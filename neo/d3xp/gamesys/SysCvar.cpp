@@ -163,7 +163,7 @@ idCVar g_passProfileEvery(			"g_passProfileEvery",		"8",			CVAR_GAME | CVAR_INTE
 //puncho end
 //puncho start - P2b.2.1a (plans/map-graph/stages/S2b-2-entity-tables.md K3, K5, K6): the hot table (d3xp/EntityHot.h);
 // latched once per tic, host-side, neither synced nor archived
-idCVar g_entityTable(				"g_entityTable",			"0",			CVAR_GAME | CVAR_BOOL, "1 = keep the hot table's active mirror in the active list's order; 0 = today's walks over the same storage, bit for bit" );
+idCVar g_entityTable(				"g_entityTable",			"0",			CVAR_GAME | CVAR_BOOL, "1 = keep the hot table's active mirror in the active list's order; 0 = walk the active list as stock does" );
 idCVar g_entityTableVerify(			"g_entityTableVerify",		"0",			CVAR_GAME | CVAR_BOOL | CVAR_CHEAT, "compare every hot table row with its entity, and the active mirror with the list, at the end of each tic; prints the first 8 differences (listEntityTable's hotMismatch counts them all)" );
 //puncho end
 //puncho start - ai-combat (plans/ai-combat/00-PLAN.md §2.7): host-side measurement; not archived, synced or cheat-flagged

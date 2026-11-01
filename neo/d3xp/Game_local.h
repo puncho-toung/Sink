@@ -1160,7 +1160,7 @@ private:
 	bool					SimulateProjectiles();
 
 	//puncho start - P2b.2.1a: the hot table, rows by entity number as entities[] (EntityHot.h). The last member, so no
-	// other moves: beside entities[] it shifted every later member by its 933,960 bytes
+	// other moves: beside entities[] it shifted every later member by its size
 public:
 	idEntityHot				entityHot;
 	//puncho end

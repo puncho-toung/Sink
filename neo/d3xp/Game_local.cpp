@@ -521,7 +521,7 @@ bool idGameLocal::SaveGame( idFile* f, idFile* strings, int& storeBytes, int& ob
 	idEntity* ent;
 	idEntity* link;
 
-	const uint64 startTimeUs = Sys_Microseconds();	//puncho - P2b.2.1a: microseconds (goals-r1 F7), the line keeps its ms
+	const uint64 startTimeUs = Sys_Microseconds();	//puncho - P2b.2.1a: microseconds, the line keeps its ms
 	if( g_recordSaveGameTrace.GetBool() )
 	{
 		bool result = BeginTraceRecording( "e:\\savegame_trace.pix2" );
@@ -1095,7 +1095,7 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	spawnedEntities.Clear();
 	numSpawnedEntities = 0;	//puncho - P2b.0.3
 	activeEntities.Clear();
-	//puncho start - P2b.2.1a: the hot table's rows and mirror go with the list (ENTITY_TABLE: goals-r1 F7)
+	//puncho start - P2b.2.1a: the hot table's rows, mirror and switches go with the list (the ENTITY_TABLE span)
 	{
 		idScopedLoadSpan tableSpan( SPAN_ENTITY_TABLE );
 		entityHot.Clear();
@@ -1913,15 +1913,12 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 	savegame.EndTraceScope();	//puncho - stream-trace
 
 	savegame.RestoreObjects();
-	//puncho start - P2b.2.1a: Restore read the think members directly and the list was relinked above, past the setters
-	// and the mirror: the rows and the mirror again from the restored entities (ENTITY_TABLE: goals-r1 F7)
+	//puncho start - P2b.2.1a: Restore read the think members directly, past the setters: the rows again from the restored
+	// entities (the ENTITY_TABLE span). The list was relinked past the mirror too, which LoadMap's clear switched off;
+	// the first RunFrame's latch rebuilds it
 	{
 		idScopedLoadSpan tableSpan( SPAN_ENTITY_TABLE );
 		entityHot.SyncAll();
-		if( entityHot.activeMaintained )
-		{
-			entityHot.ActiveRebuild();
-		}
 	}
 	//puncho end
 	worldStore.RestoreOrdinals();
@@ -2845,7 +2842,7 @@ void idGameLocal::SortActiveEntityList()
 				ent->activeNode.AddToFront( activeEntities );
 			}
 		}
-		//puncho - P2b.2.1a: inside the body that reordered, never after the call, which runs every tic (goals-r1 F2)
+		//puncho - P2b.2.1a: inside the body that reordered, never after the call, which runs every tic
 		if( entityHot.activeMaintained )
 		{
 			entityHot.ActiveRebuild();
@@ -3502,7 +3499,7 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 						c++;
 					}
 				}
-				//puncho - P2b.2.1a: inside the prune, which runs only on a tic that deactivated (goals-r1 F2)
+				//puncho - P2b.2.1a: inside the prune, which runs only on a tic that deactivated
 				if( entityHot.activeMaintained )
 				{
 					entityHot.ActiveRebuild();
@@ -3559,7 +3556,7 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 
 			//puncho start - P2b.2.1a: the tic-end spatial rows for their consumers, then g_entityTableVerify's compare of
 			// every row and the mirror against the entities and the list (EntityPasses.cpp); outside the timed passes
-			entityHot.SpatialPass();
+			entityHot.SpatialPass( num_entities );
 			if( entityHot.verifyOn )
 			{
 				entityHot.Verify();

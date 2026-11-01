@@ -1690,8 +1690,11 @@ void idEntity::BecomeActive( int flags )
 	}
 
 	int oldFlags = thinkFlags;
-	SetThinkFlags( thinkFlags | flags );	//puncho - P2b.2.1a
-	if( thinkFlags )
+	//puncho - P2b.2.1a: the test reads a local: the setter's byte store to the column may alias the member, so a test of
+	// thinkFlags after it would load the member again
+	const int newFlags = thinkFlags | flags;
+	SetThinkFlags( newFlags );
+	if( newFlags )
 	{
 		if( !IsActive() )
 		{
@@ -1735,8 +1738,10 @@ void idEntity::BecomeInactive( int flags )
 
 	if( thinkFlags )
 	{
-		SetThinkFlags( thinkFlags & ~flags );	//puncho - P2b.2.1a
-		if( !thinkFlags && IsActive() )
+		//puncho - P2b.2.1a: as BecomeActive
+		const int newFlags = thinkFlags & ~flags;
+		SetThinkFlags( newFlags );
+		if( !newFlags && IsActive() )
 		{
 			gameLocal.numEntitiesToDeactivate++;
 		}
@@ -7109,7 +7114,6 @@ idEntity::DetermineTimeGroup
 */
 void idEntity::DetermineTimeGroup( bool slowmo )
 {
-	//puncho - P2b.2.1a: through the setter, as the grabber's writes (Grabber.cpp)
 	if( slowmo || common->IsMultiplayer() )
 	{
 		SetTimeGroup( TIME_GROUP1 );
