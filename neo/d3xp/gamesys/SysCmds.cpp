@@ -2995,6 +2995,52 @@ static void SpawnRead_MoveableMinDamageVelocity( const idEntity* ent, idStr& val
 	value = va( "%.9g", static_cast<const idMoveable*>( ent )->MinDamageVelocity() );
 }
 
+// P2b.2.3b: the members the idMoveable pilot moves
+static void SpawnRead_MoveableBrokenModel( const idEntity* ent, idStr& value )
+{
+	value = static_cast<const idMoveable*>( ent )->BrokenModel();
+}
+
+static void SpawnRead_MoveableDamage( const idEntity* ent, idStr& value )
+{
+	value = static_cast<const idMoveable*>( ent )->DamageDef();
+}
+
+static void SpawnRead_MoveableMonsterDamage( const idEntity* ent, idStr& value )
+{
+	value = static_cast<const idMoveable*>( ent )->MonsterDamageDef();
+}
+
+static void SpawnRead_MoveableFxCollide( const idEntity* ent, idStr& value )
+{
+	value = static_cast<const idMoveable*>( ent )->FxCollide();
+}
+
+static void SpawnRead_MoveableMaxDamageVelocity( const idEntity* ent, idStr& value )
+{
+	value = va( "%.9g", static_cast<const idMoveable*>( ent )->MaxDamageVelocity() );
+}
+
+static void SpawnRead_MoveableExplode( const idEntity* ent, idStr& value )
+{
+	value = va( "%d", static_cast<const idMoveable*>( ent )->Explodes() ? 1 : 0 );
+}
+
+static void SpawnRead_MoveableUnbindOnDeath( const idEntity* ent, idStr& value )
+{
+	value = va( "%d", static_cast<const idMoveable*>( ent )->UnbindOnDeath() ? 1 : 0 );
+}
+
+static void SpawnRead_MoveableAllowStep( const idEntity* ent, idStr& value )
+{
+	value = va( "%d", static_cast<const idMoveable*>( ent )->AllowStep() ? 1 : 0 );
+}
+
+static void SpawnRead_MoveableHealth( const idEntity* ent, idStr& value )
+{
+	value = va( "%d", ent->health );
+}
+
 typedef struct spawnReadProbe_s
 {
 	const idTypeInfo* 		type;		// the class whose Spawn writes the member; its subclasses are probed too
@@ -3008,6 +3054,15 @@ typedef struct spawnReadProbe_s
 static const spawnReadProbe_t spawnReadProbe[] =
 {
 	{ &idMoveable::Type,	"minDamageVelocity",	SpawnRead_MoveableMinDamageVelocity },
+	{ &idMoveable::Type,	"brokenModel",			SpawnRead_MoveableBrokenModel },
+	{ &idMoveable::Type,	"damage",				SpawnRead_MoveableDamage },
+	{ &idMoveable::Type,	"monsterDamage",		SpawnRead_MoveableMonsterDamage },
+	{ &idMoveable::Type,	"fxCollide",			SpawnRead_MoveableFxCollide },
+	{ &idMoveable::Type,	"maxDamageVelocity",	SpawnRead_MoveableMaxDamageVelocity },
+	{ &idMoveable::Type,	"explode",				SpawnRead_MoveableExplode },
+	{ &idMoveable::Type,	"unbindOnDeath",		SpawnRead_MoveableUnbindOnDeath },
+	{ &idMoveable::Type,	"allowStep",			SpawnRead_MoveableAllowStep },
+	{ &idMoveable::Type,	"health",				SpawnRead_MoveableHealth },
 };
 static const int NUM_SPAWN_READ_PROBES = ARRAY_COUNT( spawnReadProbe );
 

@@ -99,6 +99,36 @@ public:
 	{
 		return minDamageVelocity;
 	}
+	//puncho start - P2b.2.3b: testSpawnRead's rows
+	const idStr& 			BrokenModel() const
+	{
+		return brokenModel;
+	}
+	const idStr& 			DamageDef() const
+	{
+		return damage;
+	}
+	const idStr& 			MonsterDamageDef() const
+	{
+		return monsterDamage;
+	}
+	const idStr& 			FxCollide() const
+	{
+		return fxCollide;
+	}
+	float					MaxDamageVelocity() const
+	{
+		return maxDamageVelocity;
+	}
+	bool					Explodes() const
+	{
+		return explode;
+	}
+	bool					UnbindOnDeath() const
+	{
+		return unbindOnDeath;
+	}
+	//puncho end
 
 protected:
 	idPhysics_RigidBody		physicsObj;				// physics object
