@@ -168,13 +168,39 @@ void Cmd_ActiveEntityList_f( const idCmdArgs& args )
 ===================
 Cmd_ListEntityTable_f
 
-listEntityTable [n]: the hot table (d3xp/EntityHot.h): the latched switches, the live rows and their bits, the active
-mirror, the spatial passes, the counters, the BSS bytes and sizeof( idEntity ); with n, that entity number's row.
+listEntityTable [n | cell]: the hot table (d3xp/EntityHot.h): the latched switches, the live rows and their bits, the
+active mirror, the spatial passes, the counters, the BSS bytes and sizeof( idEntity ); with n, that entity number's row;
+with cell, every live row's cell group.
 ===================
 */
 static void Cmd_ListEntityTable_f( const idCmdArgs& args )
 {
 	const idEntityHot& hot = gameLocal.entityHot;
+	//puncho - P2b.2.1b: the cell group, a line per live row, then how many rows still hold the registration values
+	if( args.Argc() > 1 && idStr::Icmp( args.Argv( 1 ), "cell" ) == 0 )
+	{
+		int live = 0;
+		int unplaced = 0;
+		for( int n = 0; n < MAX_GENTITIES; n++ )
+		{
+			const idEntity* ent = gameLocal.entities[ n ];
+			if( ent == NULL )
+			{
+				continue;
+			}
+			const hotCell_t& row = hot.cell[ n ];
+			gameLocal.Printf( "%5d %-24s cell %u home %u ord %d flags %d\n", n, ent->GetName(), row.cellId, row.homeCellId, row.cellOrdinal,
+							  row.cellFlags );
+			live++;
+			if( row.cellId == CELL_ID_NONE && row.homeCellId == CELL_ID_NONE && row.cellOrdinal == CELL_ORDINAL_NONE && row.cellFlags == 0 )
+			{
+				unplaced++;
+			}
+		}
+		gameLocal.Printf( "cell: %d live rows, %d unplaced (cell %u home %u ord %d flags 0)\n", live, unplaced, CELL_ID_NONE, CELL_ID_NONE,
+						  CELL_ORDINAL_NONE );
+		return;
+	}
 	if( args.Argc() > 1 )
 	{
 		const int n = atoi( args.Argv( 1 ) );
@@ -190,6 +216,8 @@ static void Cmd_ListEntityTable_f( const idCmdArgs& args )
 						  row.thinkFlags, row.bits, row.tier, hot.moved[ n ], hot.activeIndex[ n ] );
 		gameLocal.Printf( "      spatial origin ( %s ) bounds ( %s ) ( %s ) tic %d\n", spatial.origin.ToString(), spatial.absBounds[0].ToString(),
 						  spatial.absBounds[1].ToString(), spatial.tic );
+		gameLocal.Printf( "      cell %u home %u ord %d flags %d\n", hot.cell[ n ].cellId, hot.cell[ n ].homeCellId, hot.cell[ n ].cellOrdinal,
+						  hot.cell[ n ].cellFlags );	//puncho - P2b.2.1b
 		return;
 	}
 
@@ -215,7 +243,8 @@ static void Cmd_ListEntityTable_f( const idCmdArgs& args )
 		tombstones += hot.activeOrder[ i ] < 0 ? 1 : 0;
 	}
 	const double ticksPerUs = Sys_ClockTicksPerSecond() * 1e-6;
-	const int bssBytes = sizeof( hot.think ) + sizeof( hot.spatial ) + sizeof( hot.moved ) + sizeof( hot.activeOrder ) + sizeof( hot.activeIndex );
+	const int bssBytes = sizeof( hot.think ) + sizeof( hot.spatial ) + sizeof( hot.moved ) + sizeof( hot.activeOrder ) + sizeof( hot.activeIndex )
+						 + sizeof( hot.cell );	//puncho - P2b.2.1b
 
 	gameLocal.Printf( "entityTable: g_entityTable %d verify %d (latched), mirror %s, %d spatial consumers\n", hot.tableOn, hot.verifyOn,
 					  hot.activeMaintained ? "maintained" : "off", hot.spatialConsumers );
@@ -5435,7 +5464,7 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "listThreads",			idThread::ListThreads_f,	CMD_FL_GAME | CMD_FL_CHEAT,	"lists script threads" );
 	cmdSystem->AddCommand( "listEntities",			Cmd_EntityList_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"lists game entities" );
 	cmdSystem->AddCommand( "listActiveEntities",	Cmd_ActiveEntityList_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"lists active game entities" );
-	cmdSystem->AddCommand( "listEntityTable",		Cmd_ListEntityTable_f,		CMD_FL_GAME,				"listEntityTable [n]: the hot table's switches, rows, mirror and counters, or entity n's row" );	//puncho - P2b.2.1a
+	cmdSystem->AddCommand( "listEntityTable",		Cmd_ListEntityTable_f,		CMD_FL_GAME,				"listEntityTable [n | cell]: the hot table's switches, rows, mirror and counters, entity n's row, or every live row's cell group" );	//puncho - P2b.2.1a, P2b.2.1b
 	cmdSystem->AddCommand( "listMonsters",			idAI::List_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"lists monsters" );
 	cmdSystem->AddCommand( "listSpawnArgs",			Cmd_ListSpawnArgs_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"list the spawn args of an entity", idGameLocal::ArgCompletion_EntityName );
 	cmdSystem->AddCommand( "listSpawnIds",			Cmd_ListSpawnIds_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"lists the spawn-id generations of the map's entities, with a digest" );	//puncho - identity (P1-A2)

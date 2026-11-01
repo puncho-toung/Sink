@@ -29,10 +29,12 @@ If you have questions concerning this license or the applicable additional terms
 #ifndef __ENTITYHOT_H__
 #define __ENTITYHOT_H__
 
+#include "../idlib/CellId.h"	// C1's cell ids for the cell group (Lib.h includes it first)
+
 /*
 ===============================================================================
 
-	The hot table (P2b.2.1a; plans/map-graph/stages/S2b-2-entity-tables.md K3, K5, K6)
+	The hot table (P2b.2.1a, P2b.2.1b; plans/map-graph/stages/S2b-2-entity-tables.md K3, K4, K5, K6)
 
 	gameLocal.entityHot holds a row per entity number, as gameLocal.entities[] does, in fixed arrays: nothing is
 	allocated, saved or replicated, and every byte is derived. RegisterEntity fills a row when it gives an entity its
@@ -52,6 +54,11 @@ If you have questions concerning this license or the applicable additional terms
 			(activeIndex), maintained only while g_entityTable is latched 1 or g_entityTableVerify is set: an append
 			tombstones the entity's old entry first, a full array compacts in place, and a sort, a prune or the latch's
 			edges rebuild it from the list. The rule is plans/map-graph/math-2b/S2b-2/core/ActiveMirror.cpp, frozen.
+	cell	the cell the entity is in and the cell it spawned from (C1's ids), its spawn ordinal there, and cellFlags.
+			Registration, unregistration and Clear write CELL_ID_NONE, CELL_ID_NONE, CELL_ORDINAL_NONE, 0, and no stage
+			2 code writes a row after: stage 4 calls SetHome at a map spawn and SetCell for the rows that move, stage
+			7's store owns CELL_FLAG_ELSEWHERE. Machine-local and never saved; SyncAll leaves it alone, so after a load
+			a row holds its registration values until stage 4's load path sets them.
 
 	The switches are latched per map: Clear turns them off, and the first RunFrame latches them from off, so a mirror
 	that is on is rebuilt and a consumer refreshes every row on that tic. g_entityTable 0 walks the active list as
@@ -92,6 +99,23 @@ struct hotSpatial_t
 };
 compile_time_assert( sizeof( hotSpatial_t ) == 40 );
 
+// hotCell_t::cellFlags
+enum hotCellFlags_t
+{
+	CELL_FLAG_ELSEWHERE		= 0x01		// stage 7's store, its only writer (S2b-7)
+};
+const int CELL_ORDINAL_NONE = 0xFFFF;	// cellOrdinal until SetHome
+
+struct hotCell_t
+{
+	uint32					cellId;			// the cell the entity is in; after registration SetCell is its only writer
+	uint32					homeCellId;		// the cell it spawned from (SetHome)
+	uint16					cellOrdinal;	// its spawn ordinal in homeCellId (SetHome)
+	byte					cellFlags;		// CELL_FLAG_*
+	byte					pad;
+};
+compile_time_assert( sizeof( hotCell_t ) == 12 );
+
 class idEntityHot
 {
 public:
@@ -122,6 +146,9 @@ public:
 	bool					activeMaintained;					// tableOn || verifyOn: the mirror follows the list
 	byte					pad[1];								// to a whole cache line: idGameLocal's last member
 
+	// after the tail, so that adding it moved no member above
+	hotCell_t				cell[MAX_GENTITIES];
+
 	void					Clear();
 	void					RegisterRow( const idEntity* ent );
 	void					UnregisterRow( int entityNumber );
@@ -133,6 +160,10 @@ public:
 	void					SetTimeGroup( int entityNumber, int timeGroup );
 	void					SetCinematic( int entityNumber, bool cinematic );
 	void					MarkMoved( int entityNumber );
+
+	// the cell group's writers, for stages 4 and 7; nothing in stage 2 calls them
+	void					SetCell( int entityNumber, uint32 cellId );
+	void					SetHome( int entityNumber, uint32 homeCellId, int cellOrdinal );
 
 	void					LatchTic( bool table, bool verify );
 	void					SpatialPass( int numEntities );

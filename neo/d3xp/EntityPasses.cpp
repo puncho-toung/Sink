@@ -37,6 +37,9 @@ If you have questions concerning this license or the applicable additional terms
 
 static const int MAX_MISMATCH_LINES = 8;	// g_entityTableVerify prints this many differences a map, then counts
 
+// the cell group's registration values (K4): no cell, no home cell, no ordinal, no flag
+static const hotCell_t cellRowNone = { CELL_ID_NONE, CELL_ID_NONE, CELL_ORDINAL_NONE, 0, 0 };
+
 compile_time_assert( TH_UPDATEPARTICLES < 0x100 );	// hotThink_t::thinkFlags holds TH_* in a byte
 
 /*
@@ -63,7 +66,8 @@ idEntityHot::Clear
 
 idGameLocal::Clear and LoadMap: every row, the mirror, the counters and the switches. The latch is per map: nothing
 maintains the mirror or marks a row through a load (a client never latches at all), and the map's first RunFrame
-latches from off, so a switch that is on rebuilds the mirror and refreshes every spatial row on that tic
+latches from off, so a switch that is on rebuilds the mirror and refreshes every spatial row on that tic. The cell
+rows take the registration values, all but ENTITYNUM_NONE's, which nothing writes
 ================
 */
 void idEntityHot::Clear()
@@ -71,6 +75,10 @@ void idEntityHot::Clear()
 	memset( think, 0, sizeof( think ) );
 	memset( spatial, 0, sizeof( spatial ) );
 	memset( moved, 0, sizeof( moved ) );
+	for( int n = 0; n < ENTITYNUM_NONE; n++ )
+	{
+		cell[ n ] = cellRowNone;
+	}
 	ActiveClear();
 
 	tableOn = false;
@@ -168,9 +176,9 @@ void idEntityHot::SyncRow( const idEntity* ent )
 idEntityHot::SyncAll
 
 after RestoreObjects, which read the think members directly: HotSyncAll over gameLocal.entities in entity order. The
-think, spatial and moved rows only (P2b.2.1b's cell group keeps its registration values); a spatial row is the physics
-now when a consumer is registered, else the cleared row. The load's Clear left the switches off, so no consumer is
-registered here and the first RunFrame's latch refreshes the rows
+think, spatial and moved rows only: the cell group keeps what registration wrote until stage 4's load path sets it (K4);
+a spatial row is the physics now when a consumer is registered, else the cleared row. The load's Clear left the
+switches off, so no consumer is registered here and the first RunFrame's latch refreshes the rows
 ================
 */
 void idEntityHot::SyncAll()
@@ -410,10 +418,50 @@ void idEntityHot::Verify()
 
 /*
 ================
+idEntityHot::SetCell
+
+the only writer of cellId after registration: stage 4 keeps it current for the rows that move (P2b.4.9a); a change
+calls the world store's OnCellChanged, empty until stage 7
+================
+*/
+void idEntityHot::SetCell( int entityNumber, uint32 cellId )
+{
+	if( !RowWritable( entityNumber ) )
+	{
+		return;
+	}
+	const uint32 oldCell = cell[ entityNumber ].cellId;
+	if( oldCell == cellId )
+	{
+		return;
+	}
+	cell[ entityNumber ].cellId = cellId;
+	worldStore.OnCellChanged( gameLocal.entities[ entityNumber ], oldCell, cellId );
+}
+
+/*
+================
+idEntityHot::SetHome
+
+the cell an entity spawned from and its ordinal there: stage 4's map spawn (P2b.4.7)
+================
+*/
+void idEntityHot::SetHome( int entityNumber, uint32 homeCellId, int cellOrdinal )
+{
+	assert( cellOrdinal >= 0 && cellOrdinal <= CELL_ORDINAL_NONE );
+	if( RowWritable( entityNumber ) )
+	{
+		cell[ entityNumber ].homeCellId = homeCellId;
+		cell[ entityNumber ].cellOrdinal = ( uint16 )cellOrdinal;
+	}
+}
+
+/*
+================
 idEntityHot::ResetRow
 
-a row's think, spatial and moved bytes to zero; refuses and counts ENTITYNUM_NONE (the core's HotResetRow; the cell
-group is P2b.2.1b's)
+a row's think, spatial and moved bytes to zero and its cell group to the registration values; refuses and counts
+ENTITYNUM_NONE (the core's HotResetRow)
 ================
 */
 bool idEntityHot::ResetRow( int entityNumber )
@@ -425,6 +473,7 @@ bool idEntityHot::ResetRow( int entityNumber )
 	memset( &think[ entityNumber ], 0, sizeof( think[ entityNumber ] ) );
 	memset( &spatial[ entityNumber ], 0, sizeof( spatial[ entityNumber ] ) );
 	moved[ entityNumber ] = 0;
+	cell[ entityNumber ] = cellRowNone;
 	return true;
 }
 
