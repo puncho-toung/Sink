@@ -44,7 +44,8 @@ extern const idEventDef EV_IsAtRest;
 // spline is a hatch (K8): it saves the spline's start time and its restore rebuilds the spline between two reads.
 // P2b.2.3b, the pilot (K1, K2): Spawn reads the keyed rows through one SCHEMA_SPAWN; health is read here again over
 // idEntity's read (the most-derived row is the class's default); the KEYONLY rows are the keys Spawn reads by hand
-// (clamped, derived or tested in place), listed so the FGD has them
+// (clamped, derived or tested in place) and, P2b.2.5a (review), the keys its events and helpers read late, listed so the
+// FGD has them
 #define MOVEABLE_SCHEMA( X, s ) \
 	X( s, brokenModel,			STRING,	S,		RAW,	0,	SCHEMA_STOCK,	"broken",				"",		"Visual model to be used when the health drops down to or below zero.",	OBJ ) \
 	X( s, damage,				STRING,	S,		RAW,	0,	SCHEMA_STOCK,	"def_damage",			"",		"Damage definition if it damages things it collides with.",	OBJ ) \
@@ -73,7 +74,14 @@ extern const idEventDef EV_IsAtRest;
 	X( s, nodrop,				BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"nodrop",				"0",	"Do not drop to the floor.",	KEYONLY ) \
 	X( s, noimpact,				BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"noimpact",				"0",	"Do not activate by the impact of other objects.",	KEYONLY ) \
 	X( s, notPushable,			BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"notPushable",			"0",	"Do not allow to be pushed.",	KEYONLY ) \
-	X( s, nonsolid,				BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"nonsolid",				"0",	"Make the object non-solid.",	KEYONLY )
+	X( s, nonsolid,				BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"nonsolid",				"0",	"Make the object non-solid.",	KEYONLY ) \
+	X( s, model,				STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"model",				NODEF,	"Visual model; also the clip model when clipmodel is not set.",	KEYONLY ) \
+	X( s, init_velocity,		VEC3,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"init_velocity",		"0 0 0",	"Initial linear velocity set when activated.",	KEYONLY ) \
+	X( s, init_avelocity,		VEC3,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"init_avelocity",		"0 0 0",	"Initial angular velocity set when activated.",	KEYONLY ) \
+	X( s, init_velocityDelay,	FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"init_velocityDelay",	"0",	"Delay in seconds before the initial linear velocity is set after being activated.",	KEYONLY ) \
+	X( s, init_avelocityDelay,	FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"init_avelocityDelay",	"0",	"Delay in seconds before the initial angular velocity is set after being activated.",	KEYONLY ) \
+	X( s, initialSplineTime,	INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"initialSplineTime",	"300",	"Number of milliseconds the moveable should follow the initial spline path.",	KEYONLY ) \
+	X( s, owner,				STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"owner",				NODEF,	"Name of the entity the script event setOwnerFromSpawnArgs makes the owner.",	KEYONLY )
 //puncho end
 
 class idMoveable : public idEntity
@@ -228,10 +236,25 @@ private:
 */
 
 //puncho - P2b.2.5a: idExplodingBarrel's spawn rows (K2), Spawn only (the Save is hand-written): health again over
-// idMoveable's row, with the barrel's default, and time, which the barrel saves and nothing reads (no FGD line)
+// idMoveable's row, with the barrel's default, and time, which the barrel saves and nothing reads (no FGD line); KEYONLY,
+// the keys its burn, explosion and respawn read late
 #define EXPLODING_BARREL_SCHEMA( X, s ) \
-	X( s, health,	INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"health",	"5",	"How much health the barrel has; if burn is set to 1, the health is effectively doubled, so it has to be killed twice to explode.",	OBJ ) \
-	X( s, time,		FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"time",		"0",	NOEDIT,	OBJ )
+	X( s, health,				INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"health",				"5",	"How much health the barrel has; if burn is set to 1, the health is effectively doubled, so it has to be killed twice to explode.",	OBJ ) \
+	X( s, time,					FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"time",					"0",	NOEDIT,	OBJ ) \
+	X( s, burn,					FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"burn",					"0",	"Number of seconds to burn before exploding.",	KEYONLY ) \
+	X( s, model_burn,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"model_burn",			"",		"Particle model to show while on fire.",	KEYONLY ) \
+	X( s, model_damage,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"model_damage",			"",		"Model to leave as the damaged base.",	KEYONLY ) \
+	X( s, model_detonate,		STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"model_detonate",		"",		"Particle model to switch to for the explosion.",	KEYONLY ) \
+	X( s, mtr_lightexplode,		STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"mtr_lightexplode",		"",		"Light shader to use for the explosion.",	KEYONLY ) \
+	X( s, mtr_burnmark,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"mtr_burnmark",			"",		"Shader to use for the burn decal.",	KEYONLY ) \
+	X( s, light_radius,			FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"light_radius",			"0",	"Radius of the explosion's light.",	KEYONLY ) \
+	X( s, def_splash_damage,	STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"def_splash_damage",	"damage_explosion",	"Damage definition of the explosion's splash damage.",	KEYONLY ) \
+	X( s, triggerTargets,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"triggerTargets",		"0",	"If set to 1 will trigger targets after being killed.",	KEYONLY ) \
+	X( s, respawn,				FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"respawn",				"0",	"If non-zero, the number of seconds to respawn after being killed.",	KEYONLY ) \
+	X( s, respawn_range,		INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"respawn_range",		"256",	"No player within this distance for the barrel to respawn.",	KEYONLY ) \
+	X( s, respawn_again,		INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"respawn_again",		"10",	"Seconds to try again when a player is in range.",	KEYONLY ) \
+	X( s, model,				STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"model",				NODEF,	"Visual model, set again when the barrel respawns.",	KEYONLY ) \
+	X( s, explode_lapse,		INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"explode_lapse",		"1000",	"Milliseconds after the explosion in which a client still plays its effects.",	KEYONLY )
 
 class idExplodingBarrel : public idBarrel
 {

@@ -1700,6 +1700,8 @@ void idObjective::Event_HideObjective( idEntity* e )
 CLASS_DECLARATION( idItem, idVideoCDItem )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idVideoCDItem, VIDEO_CD_ITEM_SCHEMA )	//puncho - P2b.2.5a (review): the FGD's rows and the row checks (Schema.h)
+
 /*
 ================
 idVideoCDItem::GiveToPlayer
@@ -1733,6 +1735,8 @@ bool idVideoCDItem::GiveToPlayer( idPlayer* player, unsigned int giveFlags )
 
 CLASS_DECLARATION( idItem, idPDAItem )
 END_CLASS
+
+CLASS_SCHEMA_KEYS( idPDAItem, PDA_ITEM_SCHEMA )	//puncho - P2b.2.5a (review): the FGD's rows and the row checks (Schema.h)
 
 /*
 ================
@@ -2273,6 +2277,8 @@ void idMoveableItem::Event_Gib( const char* damageDefName )
 CLASS_DECLARATION( idMoveableItem, idMoveablePDAItem )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idMoveablePDAItem, MOVEABLE_PDA_ITEM_SCHEMA )	//puncho - P2b.2.5a (review): the FGD's rows and the row checks (Schema.h)
+
 /*
 ================
 idMoveablePDAItem::GiveToPlayer
@@ -2316,6 +2322,8 @@ bool idMoveablePDAItem::GiveToPlayer( idPlayer* player, unsigned int giveFlags )
 CLASS_DECLARATION( idEntity, idItemRemover )
 EVENT( EV_Activate,		idItemRemover::Event_Trigger )
 END_CLASS
+
+CLASS_SCHEMA_KEYS( idItemRemover, ITEM_REMOVER_SCHEMA )	//puncho - P2b.2.5a (review): the FGD's rows and the row checks (Schema.h)
 
 /*
 ================
@@ -2365,6 +2373,8 @@ EVENT( EV_Activate,			idObjectiveComplete::Event_Trigger )
 EVENT( EV_HideObjective,	idObjectiveComplete::Event_HideObjective )
 EVENT( EV_GetPlayerPos,		idObjectiveComplete::Event_GetPlayerPos )
 END_CLASS
+
+CLASS_SCHEMA_KEYS( idObjectiveComplete, OBJECTIVE_COMPLETE_SCHEMA )	//puncho - P2b.2.5a (review): the FGD's rows and the row checks (Schema.h)
 
 /*
 ================

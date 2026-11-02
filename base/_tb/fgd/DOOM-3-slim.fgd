@@ -101,6 +101,23 @@
 		0 : "No"
 		1 : "Yes"
 	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/bfg_ammo/bfg_ammo.obj" }) = ammo_bfg_small : "Small BFG ammo"
@@ -138,6 +155,23 @@
 		1 : "Yes"
 	]
 	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
@@ -185,6 +219,23 @@
 		0 : "No"
 		1 : "Yes"
 	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/bullet_ammo/bullet_small.obj" }) = ammo_bloodstone_small : "Artifact Charge"
@@ -224,6 +275,23 @@
 		1 : "Yes"
 	]
 	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
@@ -269,6 +337,23 @@
 		0 : "No"
 		1 : "Yes"
 	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/bullet_ammo/bullet_small.obj" }) = ammo_bullets_small : "Small bullets"
@@ -306,6 +391,23 @@
 		1 : "Yes"
 	]
 	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
@@ -351,6 +453,23 @@
 		0 : "No"
 		1 : "Yes"
 	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/cell_ammo/cells_small.obj" }) = ammo_cells_small : "Small cells"
@@ -388,6 +507,23 @@
 		1 : "Yes"
 	]
 	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
@@ -433,6 +569,23 @@
 		0 : "No"
 		1 : "Yes"
 	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/clip_ammo/clip_small.obj" }) = ammo_clip_small : "Small ammo clip"
@@ -470,6 +623,23 @@
 		1 : "Yes"
 	]
 	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
@@ -516,6 +686,23 @@
 		0 : "No"
 		1 : "Yes"
 	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/rocket_ammo/rocket_large.obj" }) = ammo_rockets_large : "Large rockets"
@@ -553,6 +740,23 @@
 		1 : "Yes"
 	]
 	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
@@ -598,6 +802,23 @@
 		0 : "No"
 		1 : "Yes"
 	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/shells_ammo/shells_large.obj" }) = ammo_shells_large : "Large shells"
@@ -639,6 +860,23 @@
 		0 : "No"
 		1 : "Yes"
 	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/shells_ammo/shells_small.obj" }) = ammo_shells_small : "Small shells"
@@ -676,6 +914,23 @@
 		1 : "Yes"
 	]
 	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
@@ -4107,6 +4362,11 @@ you func_remove it after it is shot if it's blocking an entrance."
 		0 : "No"
 		1 : "Yes"
 	]
+	continuous(choices) : "The door triggers itself at spawn and after each wait, so it keeps opening and closing." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 	damage(float) : "Damage to inflict on entities that block the door." : 0
 	player_only(choices) : "Only a player opens the door; while it is closed, monsters route as if it were a wall." : 0 =
 	[
@@ -4116,11 +4376,6 @@ you func_remove it after it is shot if it's blocking an entrance."
 	syncLock(string) : "Name of a door that must be closed before this door will open."
 	requires(string) : "Inventory item the activator must hold for the door to open."
 	removeItem(integer) : "Set to 1 to take the required item from the activator." : 0
-	continuous(choices) : "The door triggers itself at spawn and after each wait, so it keeps opening and closing." : 0 =
-	[
-		0 : "No"
-		1 : "Yes"
-	]
 	delay(float) : "Seconds after spawn before a continuous door first triggers itself." : 0
 ]
 
@@ -4183,6 +4438,12 @@ Repeat floor1_ height and door info with floor2_ etc.. for as many floors as you
 	]
 	returnTime(float) : "Seconds after arriving at another floor before the elevator goes back to returnFloor; 0 stays." : 0
 	returnFloor(integer) : "Floor the elevator goes back to after returnTime." : 0
+	trigger(choices) : "Touched or activated, the elevator goes to triggerFloor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerFloor(integer) : "Floor to go to when trigger is set." : 0
 ]
 
 @PointClass base(func_elevator) size(-8 -8 0, 8 8 16) model({{
@@ -4447,6 +4708,17 @@ Pendulum frequency is a physical constant based on the length of the beam and gr
 		0 : "No"
 		1 : "Yes"
 	]
+	toggle(choices) : "Wait at each position until triggered again." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	continuous(choices) : "The mover triggers itself again after each wait, so it keeps moving." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	locked(integer) : "Non-zero while the mover is locked; a door's lock writes it." : 0
 	damage(float) : "Damage to inflict on entities that block the plat." : 0
 	accel_time(float) : "Seconds to accelerate to full speed." : "0.25"
 	decel_time(float) : "Seconds to decelerate to a stop." : "0.25"
@@ -5029,6 +5301,18 @@ Prefer func_group for unreferenced brush detail. spawnSkipStatics may omit inlin
 		0 : "No"
 		1 : "Yes"
 	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass base(item_default) color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/videocd/videocd_world.obj" }) = item_deploycd : "Video Disk"
@@ -5349,6 +5633,7 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 	dropToFloor(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	pda_name(string) : "Name of the .pda decl to give to the player."
 ]
 
 @PointClass base(item_default) color(76 76 255) size(-16 -16 0, 16 16 32) = item_powercell : "Power Cell"
@@ -5475,10 +5760,41 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 		0 : "No"
 		1 : "Yes"
 	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 	team(integer) : "The flag's team: 0 red, 1 blue." : 0
 	skin_carried(string) : "Skin while a player carries the flag."
 	nugget_name(string) : "Entity def the carried flag drops as nuggets."
 	gravity(integer) : "Gravity on the flag along z." : -30
+	skin(string) : "Skin while no player carries the flag."
+	pickupDelay(integer) : "Milliseconds after a drop before the flag can be picked up again." : 500
+	clipmodel(string) : "Model to be used for collision detection."
+	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	nodrop(choices) : "Do not drop to the floor." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	smoke_trail(string) : "Particle system to trail while the item moves."
+	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass base(item_default) color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/videocd/videocd_world.obj" }) = item_videocd : "Video Disk"
@@ -9136,6 +9452,7 @@ Use it to place all kinds of models"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(ammo_bfg_small) size(-8 -8 0, 8 8 16) model({ "path": "_tb/models/items/bfg_ammo/d3xp_bfg_ammo.obj" }) = moveable_ammo_bfg_small
@@ -9167,6 +9484,7 @@ Use it to place all kinds of models"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(ammo_bullets_large) model({ "path": "_tb/models/items/bullet_ammo/d3xp_bullet_large_lo.obj" }) = moveable_ammo_bullets_large
@@ -9198,6 +9516,7 @@ Use it to place all kinds of models"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(ammo_bullets_small) size(-8 -8 0, 8 8 16) model({ "path": "_tb/models/items/bullet_ammo/d3xp_bullet_small.obj" }) = moveable_ammo_bullets_small
@@ -9229,6 +9548,7 @@ Use it to place all kinds of models"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(ammo_cells_large) model({ "path": "_tb/models/items/cell_ammo/d3xp_cells_large.obj" }) = moveable_ammo_cells_large
@@ -9260,6 +9580,7 @@ Use it to place all kinds of models"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(ammo_cells_small) size(-8 -8 0, 8 8 16) model({ "path": "_tb/models/items/cell_ammo/d3xp_cells_small.obj" }) = moveable_ammo_cells_small
@@ -9291,6 +9612,7 @@ Use it to place all kinds of models"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(ammo_clip_large) model({ "path": "_tb/models/items/clip_ammo/d3xp_clip_large_lo.obj" }) = moveable_ammo_clip_large
@@ -9322,6 +9644,7 @@ Use it to place all kinds of models"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(ammo_clip_small) model({ "path": "_tb/models/items/clip_ammo/d3xp_clip_small_lo.obj" }) = moveable_ammo_clip_small
@@ -9353,6 +9676,7 @@ Use it to place all kinds of models"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(ammo_grenade_small) size(-8 -8 0, 8 8 16) model({ "path": "_tb/models/items/grenade_ammo/d3xp_grenade_lo.obj" }) = moveable_ammo_grenade_small
@@ -9384,6 +9708,7 @@ Use it to place all kinds of models"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(ammo_rockets_large) model({ "path": "_tb/models/items/rocket_ammo/d3xp_rocket_large_lo.obj" }) = moveable_ammo_rockets_large
@@ -9415,6 +9740,7 @@ Use it to place all kinds of models"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(ammo_rockets_small) model({ "path": "_tb/models/items/rocket_ammo/d3xp_rocket_small_lo.obj" }) = moveable_ammo_rockets_small
@@ -9446,6 +9772,7 @@ Use it to place all kinds of models"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(ammo_shells_large) model({ "path": "_tb/models/items/shells_ammo/d3xp_shells_large_lo.obj" }) = moveable_ammo_shells_large
@@ -9477,6 +9804,7 @@ Use it to place all kinds of models"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(ammo_shells_small) size(-8 -8 0, 8 8 16) model({ "path": "_tb/models/items/shells_ammo/d3xp_shells_small_lo.obj" }) = moveable_ammo_shells_small
@@ -9508,6 +9836,7 @@ Use it to place all kinds of models"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(moveable_base_fixed) = moveable_ancient_buzz_blade
@@ -9687,6 +10016,8 @@ model for collision detection. Such a collision model is specified with the
 	monster_damage(string) : "Damage definition used instead of def_damage when it hits a monster."
 	minDamageVelocity(float) : "Impact speed below which the object does no damage." : 300
 	maxDamageVelocity(float) : "Impact speed at which the object does its full damage." : 700
+	model(string) : "Visual model; also the clip model when clipmodel is not set."
+	owner(string) : "Name of the entity the script event setOwnerFromSpawnArgs makes the owner."
 ]
 
 @PointClass base(moveable_base) color(255 127 0) size(-8 -8 -8, 8 8 8) = moveable_base_barrel : "Moveable barrel. Works just like a moveable_base. However the barrel
@@ -9958,6 +10289,13 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		0 : "No"
 		1 : "Yes"
 	]
+	init_velocity(string) : "Initial linear velocity set when activated." : "0 0 0"
+	init_avelocity(string) : "Initial angular velocity set when activated." : "0 0 0"
+	init_velocityDelay(float) : "Delay in seconds before the initial linear velocity is set after being activated." : 0
+	init_avelocityDelay(float) : "Delay in seconds before the initial angular velocity is set after being activated." : 0
+	initialSplineTime(integer) : "Number of milliseconds the moveable should follow the initial spline path." : 300
+	owner(string) : "Name of the entity the script event setOwnerFromSpawnArgs makes the owner."
+	explode_lapse(integer) : "Milliseconds after the explosion in which a client still plays its effects." : 1000
 ]
 
 @PointClass color(0 127 204) size(-8 -8 0, 8 8 48) model({ "path": "_tb/models/mapobjects/washroom/airtank.obj" }) = moveable_burningtank : "Moveable barrel. Works just like a func_moveable. However the barrel
@@ -10038,6 +10376,15 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		0 : "No"
 		1 : "Yes"
 	]
+	init_velocity(string) : "Initial linear velocity set when activated." : "0 0 0"
+	init_avelocity(string) : "Initial angular velocity set when activated." : "0 0 0"
+	init_velocityDelay(float) : "Delay in seconds before the initial linear velocity is set after being activated." : 0
+	init_avelocityDelay(float) : "Delay in seconds before the initial angular velocity is set after being activated." : 0
+	initialSplineTime(integer) : "Number of milliseconds the moveable should follow the initial spline path." : 300
+	owner(string) : "Name of the entity the script event setOwnerFromSpawnArgs makes the owner."
+	light_radius(float) : "Radius of the explosion's light." : 0
+	def_splash_damage(string) : "Damage definition of the explosion's splash damage." : "damage_explosion"
+	explode_lapse(integer) : "Milliseconds after the explosion in which a client still plays its effects." : 1000
 ]
 
 @PointClass base(moveable_base_barrel) model({ "path": "_tb/models/mapobjects/cannister/cannister.obj" }) = moveable_cannister
@@ -10513,6 +10860,13 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		0 : "No"
 		1 : "Yes"
 	]
+	init_velocity(string) : "Initial linear velocity set when activated." : "0 0 0"
+	init_avelocity(string) : "Initial angular velocity set when activated." : "0 0 0"
+	init_velocityDelay(float) : "Delay in seconds before the initial linear velocity is set after being activated." : 0
+	init_avelocityDelay(float) : "Delay in seconds before the initial angular velocity is set after being activated." : 0
+	initialSplineTime(integer) : "Number of milliseconds the moveable should follow the initial spline path." : 300
+	owner(string) : "Name of the entity the script event setOwnerFromSpawnArgs makes the owner."
+	explode_lapse(integer) : "Milliseconds after the explosion in which a client still plays its effects." : 1000
 ]
 
 @PointClass color(0 127 204) size(-16 -16 0, 16 16 48) model({ "path": "_tb/models/mapobjects/fuel_barrel/exp_barrel.obj" }) = moveable_explodingbarrel_slime : "Moveable barrel. Works just like a func_moveable. However the barrel
@@ -10594,6 +10948,13 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		0 : "No"
 		1 : "Yes"
 	]
+	init_velocity(string) : "Initial linear velocity set when activated." : "0 0 0"
+	init_avelocity(string) : "Initial angular velocity set when activated." : "0 0 0"
+	init_velocityDelay(float) : "Delay in seconds before the initial linear velocity is set after being activated." : 0
+	init_avelocityDelay(float) : "Delay in seconds before the initial angular velocity is set after being activated." : 0
+	initialSplineTime(integer) : "Number of milliseconds the moveable should follow the initial spline path." : 300
+	owner(string) : "Name of the entity the script event setOwnerFromSpawnArgs makes the owner."
+	explode_lapse(integer) : "Milliseconds after the explosion in which a client still plays its effects." : 1000
 ]
 
 @PointClass color(0 127 204) size(-8 -8 0, 8 8 48) model({ "path": "_tb/models/mapobjects/washroom/airtank.obj" }) = moveable_explodingtank : "Moveable barrel. Works just like a func_moveable. However the barrel
@@ -10674,6 +11035,15 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		0 : "No"
 		1 : "Yes"
 	]
+	init_velocity(string) : "Initial linear velocity set when activated." : "0 0 0"
+	init_avelocity(string) : "Initial angular velocity set when activated." : "0 0 0"
+	init_velocityDelay(float) : "Delay in seconds before the initial linear velocity is set after being activated." : 0
+	init_avelocityDelay(float) : "Delay in seconds before the initial angular velocity is set after being activated." : 0
+	initialSplineTime(integer) : "Number of milliseconds the moveable should follow the initial spline path." : 300
+	owner(string) : "Name of the entity the script event setOwnerFromSpawnArgs makes the owner."
+	light_radius(float) : "Radius of the explosion's light." : 0
+	def_splash_damage(string) : "Damage definition of the explosion's splash damage." : "damage_explosion"
+	explode_lapse(integer) : "Milliseconds after the explosion in which a client still plays its effects." : 1000
 ]
 
 @PointClass base(moveable_base_fixed) model({ "path": "_tb/models/mapobjects/lab/filecabinet1/filecabinet1.obj" }) = moveable_filecabinet1
@@ -10825,6 +11195,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(item_aircannister) model({ "path": "_tb/models/mapobjects/phobos/envirotank.obj" }) = moveable_item_aircannister_exis
@@ -10855,6 +11226,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(item_armor_security) model({ "path": "_tb/models/items/armor/d3xp_armor_lo.obj" }) = moveable_item_armor_security
@@ -10885,6 +11257,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(item_armor_shard) size(-8 -8 0, 8 8 16) model({ "path": "_tb/models/items/armor/d3xp_armor_shard_lo.obj" }) = moveable_item_armor_shard
@@ -10915,6 +11288,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(item_backpack) model({ "path": "_tb/models/items/powerups/d3xp_backpack.obj" }) = moveable_item_backpack
@@ -10946,6 +11320,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(weapon_bfg) model({ "path": "_tb/models/weapons/bfg/bfg_world_rotated.obj" }) = moveable_item_bfg
@@ -10976,6 +11351,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(weapon_chaingun) = moveable_item_chaingun
@@ -11005,6 +11381,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(weapon_chainsaw) = moveable_item_chainsaw
@@ -11033,6 +11410,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(item_default) = moveable_item_default
@@ -11060,6 +11438,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(item_envirotank) model({ "path": "_tb/models/mapobjects/phobos/envirotank.obj" }) = moveable_item_envirotank
@@ -11090,6 +11469,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(weapon_flashlight) = moveable_item_flashlight
@@ -11120,6 +11500,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(weapon_flashlight_new) = moveable_item_flashlight_new
@@ -11149,6 +11530,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(weapon_handgrenade) model({ "path": "_tb/models/weapons/grenades/grenades_world.obj" }) = moveable_item_grenades
@@ -11179,6 +11561,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(moveable_item_default) model({ "path": "_tb/models/gibs/head_pork.obj" }) = moveable_item_head_pork
@@ -11283,6 +11666,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(item_medkit) size(-8 -8 0, 8 8 16) model({ "path": "_tb/models/items/medkit/d3xp_medkit_large.obj" }) = moveable_item_medkit
@@ -11313,6 +11697,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(item_medkit_small) size(-8 -8 0, 8 8 16) model({ "path": "_tb/models/items/medkit/d3xp_medkit_small.obj" }) = moveable_item_medkit_small
@@ -11343,6 +11728,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(item_pda) model({ "path": "_tb/models/items/pda/pda_world.obj" }) = moveable_item_pda
@@ -11375,6 +11761,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(moveable_item_default) model({ "path": "_tb/models/gibs/pelvis_pork.obj" }) = moveable_item_pelvis_pork
@@ -11417,6 +11804,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(weapon_plasmagun) = moveable_item_plasmagun
@@ -11446,6 +11834,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(weapon_rocketlauncher) = moveable_item_rocketlauncher
@@ -11475,6 +11864,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(moveable_item_default) model({ "path": "_tb/models/gibs/rup2_leg_pork.obj" }) = moveable_item_rup2_leg_pork
@@ -11557,6 +11947,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(weapon_shotgun_double) model({ "path": "_tb/models/weapons/doublebarrel/doublebarrel_w.obj" }) = moveable_item_shotgun_double
@@ -11590,6 +11981,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(moveable_item_default) model({ "path": "_tb/models/mapobjects/skeleton_gibs/generibone_lo.obj" }) = moveable_item_skelgib_bone
@@ -12038,6 +12430,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	smoke_trail(string) : "Particle system to trail while the item moves."
+	smoke_gib(string) : "Particle system to emit when the item is gibbed."
 ]
 
 @PointClass base(moveable_base_fixed) model({ "path": "_tb/models/mapobjects/hellhole/d3xp_rubbleA.obj" }) = moveable_rubble_01
@@ -12575,6 +12968,22 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		0 : "No"
 		1 : "Yes"
 	]
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/powerups/berserker.obj" }) = powerup_berserk : "Berserk"
@@ -12610,6 +13019,22 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
@@ -12650,6 +13075,22 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		0 : "No"
 		1 : "Yes"
 	]
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/mp_invuln/mp_invun_lo1.obj" }) = powerup_invulnerability : "Invulnerability"
@@ -12682,6 +13123,22 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
@@ -12721,6 +13178,22 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
@@ -13977,6 +14450,23 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 		0 : "No"
 		1 : "Yes"
 	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) = weapon_bloodstone_active1 : "Artifact"
@@ -14028,6 +14518,23 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 		1 : "Yes"
 	]
 	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
@@ -14087,6 +14594,23 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 		0 : "No"
 		1 : "Yes"
 	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) = weapon_bloodstone_active3 : "Artifact"
@@ -14137,6 +14661,23 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 		1 : "Yes"
 	]
 	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
@@ -14199,6 +14740,23 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 		1 : "Yes"
 	]
 	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
@@ -14295,6 +14853,23 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 		0 : "No"
 		1 : "Yes"
 	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/weapons/chainsaw/w_chainsaw.obj" }) = weapon_chainsaw : "Chainsaw"
@@ -14387,6 +14962,23 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 		0 : "No"
 		1 : "Yes"
 	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/flashlight/flashlight2_world.obj" }) = weapon_flashlight : "Flashlight"
@@ -14457,6 +15049,23 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 		0 : "No"
 		1 : "Yes"
 	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/flashlight/flashlight2_world.obj" }) = weapon_flashlight_new : "Flashlight"
@@ -14519,6 +15128,23 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 		1 : "Yes"
 	]
 	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
@@ -14636,6 +15262,23 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 		0 : "No"
 		1 : "Yes"
 	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/items/grenade_ammo/grenade.obj" }) = weapon_handgrenade : "Hand Grenade"
@@ -14704,6 +15347,23 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 		1 : "Yes"
 	]
 	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
@@ -14795,6 +15455,23 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 		0 : "No"
 		1 : "Yes"
 	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/weapons/pistol/w_pistol.obj" }) = weapon_pistol : "Pistol"
@@ -14870,6 +15547,23 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 		1 : "Yes"
 	]
 	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
@@ -14960,6 +15654,23 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 		0 : "No"
 		1 : "Yes"
 	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/weapons/rocketlauncher/w_rocketlauncher.obj" }) = weapon_rocketlauncher : "Rocket Launcher"
@@ -15042,6 +15753,23 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 		0 : "No"
 		1 : "Yes"
 	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/weapons/shotgun/w_shotgun2.obj" }) = weapon_shotgun : "Shotgun"
@@ -15117,6 +15845,23 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 		1 : "Yes"
 	]
 	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
@@ -15205,6 +15950,23 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 		0 : "No"
 		1 : "Yes"
 	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 76 255) size(-16 -16 0, 16 16 32) model({ "path": "_tb/models/weapons/soulcube/w_soulcube.obj" }) = weapon_soulcube : "Soul Cube"
@@ -15276,6 +16038,23 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 		1 : "Yes"
 	]
 	no_touch(choices) : "Trigger to give to the player instead of picking up." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	respawn(float) : "Seconds after a pickup before the item respawns; 0 never, except in multiplayer (20)." : 0
+	no_respawn(choices) : "The item never respawns." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	fxRespawn(string) : "FX to play half a second before the item respawns."
+	inv_carry(choices) : "If set to 1, is carried as opposed to instant use." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	inv_objective(choices) : "An objective item, kept after its pickup rather than removed." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"

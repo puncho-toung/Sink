@@ -233,12 +233,18 @@ struct floorInfo_s
 
 //puncho - P2b.1.2: idElevator's map record section (Record.h, RECORD_SECTION_ELEVATOR): the floor it is at, HAND in
 // Mover.cpp; the elevator's Pose is this row's (SkipPose). P2b.2.5a: the class's one list (C6), the record row first, so
-// RF_Floor stays 0; then the spawn rows (K2), Spawn only, which Spawn reads through one SCHEMA_SPAWN
+// RF_Floor stays 0; then the spawn rows (K2), Spawn only, which Spawn reads through one SCHEMA_SPAWN, and KEYONLY the keys
+// its events and moves read late
 #define ELEVATOR_SCHEMA( X, s ) \
 	X( s, Floor,		HAND,	R,		RAW,	1,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
 	X( s, pendingFloor,	INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"floor",		"1",	"Floor number to start on, 1 through the number of floors.",	OBJ ) \
 	X( s, returnTime,	FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"returnTime",	"0",	"Seconds after arriving at another floor before the elevator goes back to returnFloor; 0 stays.",	OBJ ) \
-	X( s, returnFloor,	INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"returnFloor",	"0",	"Floor the elevator goes back to after returnTime.",	OBJ )
+	X( s, returnFloor,	INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"returnFloor",	"0",	"Floor the elevator goes back to after returnTime.",	OBJ ) \
+	X( s, innerdoor,	STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"innerdoor",	"",		"Door name for interior doors; these move with the elevator.",	KEYONLY ) \
+	X( s, trigger,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"trigger",		"0",	"Touched or activated, the elevator goes to triggerFloor.",	KEYONLY ) \
+	X( s, triggerFloor,	INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"triggerFloor",	"0",	"Floor to go to when trigger is set.",	KEYONLY ) \
+	X( s, pauseOnFloor,	INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"pauseOnFloor",	"-1",	"Floor to pause on before opening doors.",	KEYONLY ) \
+	X( s, pauseTime,	FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"pauseTime",	"0",	"Time to pause if pauseOnFloor is defined.",	KEYONLY )
 
 class idElevator : public idMover
 {
@@ -337,14 +343,18 @@ typedef enum
 //puncho - P2b.1.2: idMover_Binary's map record section (Record.h, RECORD_SECTION_MOVER_BINARY): the position and the
 // lock, HAND in Mover.cpp; a binary mover's Pose is this row's (SkipPose). P2b.2.5a: the class's one list (C6), the record
 // row first, so RF_MoverState stays 0; then the spawn rows (K2), Spawn only: the keyed members Spawn reads through one
-// SCHEMA_SPAWN, and KEYONLY the keys it reads by hand (team into a local, solid and nopush tested in place)
+// SCHEMA_SPAWN, and KEYONLY the keys it reads by hand (team into a local, solid and nopush tested in place) and the keys
+// its moves and record read late (locked, which idDoor also writes)
 #define MOVER_BINARY_SCHEMA( X, s ) \
 	X( s, MoverState,	HAND,	R,		RAW,	2,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
 	X( s, wait,			FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"wait",			"0",	"Wait before returning (-1 = never return).",	OBJ ) \
 	X( s, updateStatus,	INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"updateStatus",	"0",	"Set to 2 to set shaderparm 7 of the buddy entities to 1 when the mover reaches its second position and 0 at its first.",	OBJ ) \
 	X( s, team,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"team",			"",		"Binary movers with the same team name move together; the first one spawned is the master.",	KEYONLY ) \
 	X( s, solid,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"solid",		"1",	"Whether the mover is solid to other entities.",	KEYONLY ) \
-	X( s, nopush,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"nopush",		"0",	"Set to 1 to disable pushing objects that block the mover.",	KEYONLY )
+	X( s, nopush,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"nopush",		"0",	"Set to 1 to disable pushing objects that block the mover.",	KEYONLY ) \
+	X( s, toggle,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"toggle",		"0",	"Wait at each position until triggered again.",	KEYONLY ) \
+	X( s, continuous,	BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"continuous",	"0",	"The mover triggers itself again after each wait, so it keeps moving.",	KEYONLY ) \
+	X( s, locked,		INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"locked",		"0",	"Non-zero while the mover is locked; a door's lock writes it.",	KEYONLY )
 
 class idMover_Binary : public idEntity
 {
@@ -625,14 +635,18 @@ private:
 */
 
 //puncho - P2b.2.5a: the periodic movers' spawn rows (K2), Spawn only: idMover_Periodic reads damage through one
-// SCHEMA_SPAWN; the KEYONLY rows are the keys each Spawn reads by hand (into locals or tested in place)
+// SCHEMA_SPAWN; the KEYONLY rows are the keys each Spawn reads by hand (into locals or tested in place) and the keys the
+// rotater's and the riser's Event_Activate read late
 #define MOVER_PERIODIC_SCHEMA( X, s ) \
 	X( s, damage,		FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"damage",		"0",	"Damage to inflict on entities that block the mover.",	OBJ ) \
 	X( s, solid,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"solid",		"1",	"Whether the mover is solid to other entities.",	KEYONLY )
 
 #define ROTATER_SCHEMA( X, s ) \
 	X( s, nopush,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"nopush",		"0",	"Set to 1 to disable pushing objects that block the mover.",	KEYONLY ) \
-	X( s, start_on,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"start_on",		"0",	"Set to 1 to rotate when spawned.",	KEYONLY )
+	X( s, start_on,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"start_on",		"0",	"Set to 1 to rotate when spawned.",	KEYONLY ) \
+	X( s, speed,		FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"speed",		"100",	"Degrees per second of rotation.",	KEYONLY ) \
+	X( s, x_axis,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"x_axis",		"0",	"Set to 1 to rotate around x-axis.",	KEYONLY ) \
+	X( s, y_axis,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"y_axis",		"0",	"Set to 1 to rotate around y-axis.",	KEYONLY )
 
 #define BOBBER_SCHEMA( X, s ) \
 	X( s, speed,		FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"speed",		"4",	"Seconds to complete a bob cycle.",	KEYONLY ) \
@@ -650,7 +664,10 @@ private:
 
 #define RISER_SCHEMA( X, s ) \
 	X( s, solid,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"solid",		"1",	"Whether the mover is solid to other entities.",	KEYONLY ) \
-	X( s, nopush,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"nopush",		"0",	"Set to 1 to disable pushing objects that block the mover.",	KEYONLY )
+	X( s, nopush,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"nopush",		"0",	"Set to 1 to disable pushing objects that block the mover.",	KEYONLY ) \
+	X( s, hide,			BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"hide",			"0",	"Triggered while it is visible, the riser hides instead of rising.",	KEYONLY ) \
+	X( s, time,			FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"time",			"4",	"Seconds to rise.",	KEYONLY ) \
+	X( s, height,		FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"height",		"32",	"Height to rise.",	KEYONLY )
 
 class idMover_Periodic : public idEntity
 {

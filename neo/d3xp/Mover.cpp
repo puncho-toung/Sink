@@ -3746,9 +3746,8 @@ void idDoor::Spawn()
 	// default speed of 400
 	spawnArgs.GetFloat( "speed", "400", speed );	// HAND: a local
 
-	//puncho - P2b.2.5a: the keyed rows (Mover.h): wait (the door's default, 3), damage, triggersize, crusher, no_touch,
-	// player_only, syncLock (a door that must be closed before this door will open), buddy, requires and removeItem, read
-	// where the first of them was
+	//puncho - P2b.2.5a: DOOR_SCHEMA's keyed rows (Mover.h), wait with the door's default (3) over idMover_Binary's, read
+	// where wait was
 	DOOR_SCHEMA( SCHEMA_SPAWN, ( *this ) )
 
 	// default lip of 8 units
