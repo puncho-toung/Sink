@@ -3067,7 +3067,7 @@ void idGameLocal::RunEntityThinkTimed( idEntity& ent, idUserCmdMgr& userCmdMgr )
 	{
 		RunAllUserCmdsForPlayer( userCmdMgr, ent.entityNumber );
 	}
-	//puncho - P2b.2.2b-i: RunEntityThink's lifted test, inside the clock pair
+	//puncho start - P2b.2.2b-i: RunEntityThink's lifted test, inside the clock pair
 	else if( entityHot.dormancyOn && ( entityHot.think[ ent.entityNumber ].bits & HOT_DORMANCY ) != 0 )
 	{
 		if( ent.CheckDormant() )
@@ -3081,6 +3081,7 @@ void idGameLocal::RunEntityThinkTimed( idEntity& ent, idUserCmdMgr& userCmdMgr )
 			entityHot.dormancyCheckedFor = -1;
 		}
 	}
+	//puncho end
 	else
 	{
 		ent.Think();
