@@ -1222,27 +1222,12 @@ idPhysics_StaticMulti::WriteToSnapshot
 void idPhysics_StaticMulti::WriteToSnapshot( idBitMsg& msg ) const
 {
 	int i;
-	idCQuat quat, localQuat;
 
 	msg.WriteByte( current.Num() );
 
 	for( i = 0; i < current.Num(); i++ )
 	{
-		quat = current[i].axis.ToCQuat();
-		localQuat = current[i].localAxis.ToCQuat();
-
-		msg.WriteFloat( current[i].origin[0] );
-		msg.WriteFloat( current[i].origin[1] );
-		msg.WriteFloat( current[i].origin[2] );
-		msg.WriteFloat( quat.x );
-		msg.WriteFloat( quat.y );
-		msg.WriteFloat( quat.z );
-		msg.WriteDeltaFloat( current[i].origin[0], current[i].localOrigin[0] );
-		msg.WriteDeltaFloat( current[i].origin[1], current[i].localOrigin[1] );
-		msg.WriteDeltaFloat( current[i].origin[2], current[i].localOrigin[2] );
-		msg.WriteDeltaFloat( quat.x, localQuat.x );
-		msg.WriteDeltaFloat( quat.y, localQuat.y );
-		msg.WriteDeltaFloat( quat.z, localQuat.z );
+		WriteStaticPState( msg, current[i] );	//puncho - P2b.2.5d: each part through the static pair (Physics_Static.h)
 	}
 }
 
@@ -1254,7 +1239,6 @@ idPhysics_StaticMulti::ReadFromSnapshot
 void idPhysics_StaticMulti::ReadFromSnapshot( const idBitMsg& msg )
 {
 	int i, num;
-	idCQuat quat, localQuat;
 
 	num = msg.ReadByte();
 	assert( num == current.Num() );
@@ -1265,6 +1249,6 @@ void idPhysics_StaticMulti::ReadFromSnapshot( const idBitMsg& msg )
 
 	for( i = 0; i < current.Num(); i++ )
 	{
-		next[i] = ReadStaticInterpolatePStateFromSnapshot( msg );
+		ReadStaticPState( msg, next[i] );	//puncho - P2b.2.5d: each part through the static pair (Physics_Static.h)
 	}
 }

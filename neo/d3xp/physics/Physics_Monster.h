@@ -49,6 +49,18 @@ typedef enum
 	MM_FALLING
 } monsterMoveResult_t;
 
+//puncho start - P2b.2.5d: the wire sends origin, velocity in exponent and mantissa bits, localOrigin as a delta on origin,
+// pushVelocity as deltas on 0.0f in those bits, atRest and onGround (the constants are Physics_Monster.cpp's);
+// WriteToSnapshot and ReadFromSnapshot both expand current
+#define MONSTER_PSTATE_SCHEMA( X, s ) \
+	X( s, origin,			VEC3,	W,	RAW,	0,			SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, velocity,			VEC3,	W,	BITS,	( MONSTER_VELOCITY_EXPONENT_BITS, MONSTER_VELOCITY_MANTISSA_BITS ),	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, localOrigin,		VEC3,	W,	DELTA,	origin,		SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, pushVelocity,		VEC3,	W,	ZDELTA,	( MONSTER_VELOCITY_EXPONENT_BITS, MONSTER_VELOCITY_MANTISSA_BITS ),	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, atRest,			INT,	W,	RAW,	0,			SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, onGround,			BOOL,	W,	BIT,	0,			SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ )
+//puncho end
+
 typedef struct monsterPState_s
 {
 	int						atRest;

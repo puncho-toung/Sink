@@ -935,6 +935,75 @@ int idPhysics_Static::GetAngularEndTime() const
 	return 0;
 }
 
+//puncho start - P2b.2.5d: STATIC_PSTATE_WRITE_SCHEMA's and STATIC_INTERP_READ_SCHEMA's HAND rows (Physics_Static.h),
+// hand-written at their place in the list
+/*
+================
+WriteStaticPState_Axis
+================
+*/
+static void WriteStaticPState_Axis( idBitMsg& msg, const staticPState_t& s )
+{
+	const idCQuat quat = s.axis.ToCQuat();
+
+	msg.WriteFloat( quat.x );
+	msg.WriteFloat( quat.y );
+	msg.WriteFloat( quat.z );
+}
+
+/*
+================
+WriteStaticPState_LocalAxis
+
+A delta on the axis's idCQuat, which WriteStaticPState_Axis sent
+================
+*/
+static void WriteStaticPState_LocalAxis( idBitMsg& msg, const staticPState_t& s )
+{
+	const idCQuat quat = s.axis.ToCQuat();
+	const idCQuat localQuat = s.localAxis.ToCQuat();
+
+	msg.WriteDeltaFloat( quat.x, localQuat.x );
+	msg.WriteDeltaFloat( quat.y, localQuat.y );
+	msg.WriteDeltaFloat( quat.z, localQuat.z );
+}
+
+/*
+================
+ReadStaticPState_Axis
+================
+*/
+static void ReadStaticPState_Axis( const idBitMsg& msg, staticInterpolatePState_t& s )
+{
+	idCQuat quat;
+
+	quat.x = msg.ReadFloat();
+	quat.y = msg.ReadFloat();
+	quat.z = msg.ReadFloat();
+	s.axis = quat.ToQuat();
+}
+
+/*
+================
+ReadStaticPState_LocalAxis
+
+A delta on the axis's idCQuat: idCQuat::ToQuat kept its x y z, so s.axis holds the floats ReadStaticPState_Axis read
+================
+*/
+static void ReadStaticPState_LocalAxis( const idBitMsg& msg, staticInterpolatePState_t& s )
+{
+	idCQuat localQuat;
+
+	localQuat.x = msg.ReadDeltaFloat( s.axis.x );
+	localQuat.y = msg.ReadDeltaFloat( s.axis.y );
+	localQuat.z = msg.ReadDeltaFloat( s.axis.z );
+	s.localAxis = localQuat.ToQuat();
+}
+
+SCHEMA_WIRE_STRUCT_WRITE( StaticPState, staticPState_t, STATIC_PSTATE_WRITE_SCHEMA )
+SCHEMA_WIRE_STRUCT_READ( StaticPState, staticInterpolatePState_t, STATIC_INTERP_READ_SCHEMA )
+//puncho end
+
 /*
 ================
 idPhysics_Static::WriteToSnapshot
@@ -942,23 +1011,7 @@ idPhysics_Static::WriteToSnapshot
 */
 void idPhysics_Static::WriteToSnapshot( idBitMsg& msg ) const
 {
-	idCQuat quat, localQuat;
-
-	quat = current.axis.ToCQuat();
-	localQuat = current.localAxis.ToCQuat();
-
-	msg.WriteFloat( current.origin[0] );
-	msg.WriteFloat( current.origin[1] );
-	msg.WriteFloat( current.origin[2] );
-	msg.WriteFloat( quat.x );
-	msg.WriteFloat( quat.y );
-	msg.WriteFloat( quat.z );
-	msg.WriteDeltaFloat( current.origin[0], current.localOrigin[0] );
-	msg.WriteDeltaFloat( current.origin[1], current.localOrigin[1] );
-	msg.WriteDeltaFloat( current.origin[2], current.localOrigin[2] );
-	msg.WriteDeltaFloat( quat.x, localQuat.x );
-	msg.WriteDeltaFloat( quat.y, localQuat.y );
-	msg.WriteDeltaFloat( quat.z, localQuat.z );
+	WriteStaticPState( msg, current );	//puncho - P2b.2.5d: STATIC_PSTATE_WRITE_SCHEMA (Physics_Static.h)
 }
 
 /*
@@ -968,11 +1021,9 @@ idPhysics_Base::ReadFromSnapshot
 */
 void idPhysics_Static::ReadFromSnapshot( const idBitMsg& msg )
 {
-	idCQuat quat, localQuat;
-
 	previous = next;
 
-	next = ReadStaticInterpolatePStateFromSnapshot( msg );
+	ReadStaticPState( msg, next );	//puncho - P2b.2.5d: STATIC_INTERP_READ_SCHEMA (Physics_Static.h)
 }
 
 /*
@@ -1007,25 +1058,6 @@ staticInterpolatePState_t ConvertPStateToInterpolateState( const staticPState_t&
 	interpolateState.axis = state.axis.ToQuat();
 
 	return interpolateState;
-}
-
-/*
-================
-ReadStaticInterpolatePStateFromSnapshot
-================
-*/
-staticInterpolatePState_t ReadStaticInterpolatePStateFromSnapshot( const idBitMsg& msg )
-{
-	staticInterpolatePState_t state;
-
-	state.origin = ReadFloatArray< idVec3 >( msg );
-	const idCQuat cAxis = ReadFloatArray< idCQuat >( msg );
-	state.localOrigin = ReadDeltaFloatArray( msg, state.origin );
-	state.localAxis = ReadDeltaFloatArray( msg, cAxis ).ToQuat();
-
-	state.axis = cAxis.ToQuat();
-
-	return state;
 }
 
 /*

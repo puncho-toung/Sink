@@ -49,7 +49,9 @@ If you have questions concerning this license or the applicable additional terms
 	  channel carries: SCHEMA_INDEX numbers it like any other, SCHEMA_RECORD_INDEX skips it.
 	- The encoding is the wire form, RAW, BITS or DELTA; a save is always raw. Its argument, 0 when unused: BITS takes
 	  ( exponentBits, mantissaBits ), DELTA the base field, which comes earlier in the list. A LIST takes its element
-	  type, a STRUCTLIST the name of the element functions SCHEMA_STRUCT_FUNCTIONS made.
+	  type, a STRUCTLIST the name of the element functions SCHEMA_STRUCT_FUNCTIONS made. The physics pairs (P2b.2.5d)
+	  add ZDELTA, a VEC3 or VEC6 as deltas on 0.0f in ( exponentBits, mantissaBits ), BIT, a BOOL as one bit, and FHAND
+	  (K8 below).
 	- The build number is the one that added the field. A restore reads it only from saves of that build or later,
 	  and leaves the spawn value otherwise. SCHEMA_STOCK marks a field every save this tree reads has, and folds the
 	  test away, so a stock field restores with the code the hand-written call compiled to.
@@ -74,7 +76,9 @@ If you have questions concerning this license or the applicable additional terms
 	headers whose bodies expand a record list's SCHEMA_RECORD_INDEX.
 
 	K8: a field the schema cannot express is a HAND entry. It stays hand-written, at its position, in the member
-	functions Save<name> and Restore<name>, or Write<name>ToSnapshot and Read<name>FromSnapshot on the wire.
+	functions Save<name> and Restore<name>, or Write<name>ToSnapshot and Read<name>FromSnapshot on the wire. A state struct
+	has no member to call, so a HAND row of a struct's W list is ENC FHAND, ARG the list's stem: the free functions
+	Write<stem>_<name> and Read<stem>_<name> beside the list (P2b.2.5d).
 
 	The record channel (P2b.1.2). A class's R rows are its record section: SCHEMA_RECORD_INDEX numbers them RF_<field>
 	in an enum inside the class (Game_local.h includes this file before every class header that holds one), the bit of
@@ -430,6 +434,36 @@ ID_INLINE bool idSchemaRecordChanged( const D& mapArgs, const char* key, const c
 #define SCHEMA_READ_STATIC_RAW( m, s, n, a )	( s ).n.ReadFromSnapshot( m );
 #define SCHEMA_WRITE_HAND_RAW( m, s, n, a )		( s ).Write##n##ToSnapshot( m );
 #define SCHEMA_READ_HAND_RAW( m, s, n, a )		( s ).Read##n##FromSnapshot( m );
+
+//puncho start - P2b.2.5d: the physics pairs' wire forms, as the stock pairs wrote them (K11): FLOAT raw or in ARG's
+// ( exponentBits, mantissaBits ), INT a long, BOOL BIT one bit
+#define SCHEMA_WRITE_FLOAT_RAW( m, s, n, a )	( m ).WriteFloat( ( s ).n );
+#define SCHEMA_READ_FLOAT_RAW( m, s, n, a )		( s ).n = ( m ).ReadFloat();
+#define SCHEMA_WRITE_FLOAT_BITS( m, s, n, a )	( m ).WriteFloat( ( s ).n, SCHEMA_PAIR a );
+#define SCHEMA_READ_FLOAT_BITS( m, s, n, a )	( s ).n = ( m ).ReadFloat a;
+#define SCHEMA_WRITE_INT_RAW( m, s, n, a )		( m ).WriteLong( ( s ).n );
+#define SCHEMA_READ_INT_RAW( m, s, n, a )		( s ).n = ( m ).ReadLong();
+#define SCHEMA_WRITE_BOOL_BIT( m, s, n, a )		( m ).WriteBits( ( s ).n, 1 );
+#define SCHEMA_READ_BOOL_BIT( m, s, n, a )		( s ).n = ( m ).ReadBits( 1 ) != 0;
+// ZDELTA, a VEC3 or VEC6 as deltas on 0.0f in ARG's ( exponentBits, mantissaBits )
+#define SCHEMA_WRITE_VEC3_ZDELTA( m, s, n, a )	( m ).WriteDeltaFloat( 0.0f, ( s ).n[0], SCHEMA_PAIR a ); ( m ).WriteDeltaFloat( 0.0f, ( s ).n[1], SCHEMA_PAIR a ); ( m ).WriteDeltaFloat( 0.0f, ( s ).n[2], SCHEMA_PAIR a );
+#define SCHEMA_READ_VEC3_ZDELTA( m, s, n, a )	( s ).n[0] = ( m ).ReadDeltaFloat( 0.0f, SCHEMA_PAIR a ); ( s ).n[1] = ( m ).ReadDeltaFloat( 0.0f, SCHEMA_PAIR a ); ( s ).n[2] = ( m ).ReadDeltaFloat( 0.0f, SCHEMA_PAIR a );
+#define SCHEMA_WRITE_VEC6_ZDELTA( m, s, n, a )	( m ).WriteDeltaFloat( 0.0f, ( s ).n[0], SCHEMA_PAIR a ); ( m ).WriteDeltaFloat( 0.0f, ( s ).n[1], SCHEMA_PAIR a ); ( m ).WriteDeltaFloat( 0.0f, ( s ).n[2], SCHEMA_PAIR a ); ( m ).WriteDeltaFloat( 0.0f, ( s ).n[3], SCHEMA_PAIR a ); ( m ).WriteDeltaFloat( 0.0f, ( s ).n[4], SCHEMA_PAIR a ); ( m ).WriteDeltaFloat( 0.0f, ( s ).n[5], SCHEMA_PAIR a );
+#define SCHEMA_READ_VEC6_ZDELTA( m, s, n, a )	( s ).n[0] = ( m ).ReadDeltaFloat( 0.0f, SCHEMA_PAIR a ); ( s ).n[1] = ( m ).ReadDeltaFloat( 0.0f, SCHEMA_PAIR a ); ( s ).n[2] = ( m ).ReadDeltaFloat( 0.0f, SCHEMA_PAIR a ); ( s ).n[3] = ( m ).ReadDeltaFloat( 0.0f, SCHEMA_PAIR a ); ( s ).n[4] = ( m ).ReadDeltaFloat( 0.0f, SCHEMA_PAIR a ); ( s ).n[5] = ( m ).ReadDeltaFloat( 0.0f, SCHEMA_PAIR a );
+// FHAND, a struct list's HAND row (a state struct has no member to call): the free functions Write<ARG>_<n>( idBitMsg&,
+// const type& ) and Read<ARG>_<n>( const idBitMsg&, type& ) beside the list, one per state type it is expanded over
+#define SCHEMA_WRITE_HAND_FHAND( m, s, n, a )	Write##a##_##n( m, s );
+#define SCHEMA_READ_HAND_FHAND( m, s, n, a )	Read##a##_##n( m, s );
+
+// the struct functions of a W list: SCHEMA_WIRE_STRUCT_FUNCTIONS( name, type, LIST ) makes Write<name>( idBitMsg&,
+// const type& ) and Read<name>( const idBitMsg&, type& ); a pair that writes one state type and reads another
+// (idPhysics_Static's) makes each direction from its own list with SCHEMA_WIRE_STRUCT_WRITE and SCHEMA_WIRE_STRUCT_READ,
+// since the other direction of either type would not read back exactly. Unlike SCHEMA_STRUCT_FUNCTIONS they are not
+// static: the list's class .cpp defines them and its header declares them, for every class that sends the state
+#define SCHEMA_WIRE_STRUCT_WRITE( name, type, LIST )		void Write##name( idBitMsg& msg, const type& s ) { LIST( SCHEMA_WRITE, s ) }
+#define SCHEMA_WIRE_STRUCT_READ( name, type, LIST )			void Read##name( const idBitMsg& msg, type& s ) { LIST( SCHEMA_READ, s ) }
+#define SCHEMA_WIRE_STRUCT_FUNCTIONS( name, type, LIST )	SCHEMA_WIRE_STRUCT_WRITE( name, type, LIST ) SCHEMA_WIRE_STRUCT_READ( name, type, LIST )
+//puncho end
 
 //puncho start - P2b.2.3b: spawn types (K1). A stored row reads into its member, a HOT row into its column through the
 // setter (the hot table lands with P2b.2.1a), a KEYONLY row not at all; the keyable types are INT FLOAT BOOL STRING
