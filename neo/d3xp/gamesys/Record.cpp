@@ -720,7 +720,7 @@ The section table: per id the list's version, its row count, its check, the clas
 recordDump prints. A list's names come from its own rows (SCHEMA_RECORD_NAME), so the table cannot drift from the list.
 ================
 */
-static const char* const entityRecordNames[] = { ENTITY_RECORD_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
+static const char* const entityRecordNames[] = { ENTITY_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
 static const char* const moverBinaryRecordNames[] = { MOVER_BINARY_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
 static const char* const damagableRecordNames[] = { DAMAGABLE_RECORD_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
 static const char* const aiRecordNames[] = { AI_RECORD_SCHEMA( SCHEMA_RECORD_NAME, _ ) };

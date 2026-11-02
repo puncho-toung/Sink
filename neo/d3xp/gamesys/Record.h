@@ -34,7 +34,7 @@ class idEntity;
 // section ids are never reused; 6 - 63 are reserved for MP-D1's conversions
 enum recordSectionId_t
 {
-	RECORD_SECTION_ENTITY			= 1,	// ENTITY_RECORD_SCHEMA (Entity.h)
+	RECORD_SECTION_ENTITY			= 1,	// ENTITY_SCHEMA's R rows (Entity.h)
 	RECORD_SECTION_MOVER_BINARY		= 2,	// MOVER_BINARY_SCHEMA's R rows (Mover.h)
 	RECORD_SECTION_DAMAGABLE		= 3,	// DAMAGABLE_RECORD_SCHEMA (Misc.h)
 	RECORD_SECTION_AI				= 4,	// AI_RECORD_SCHEMA (ai/AI.h); an idCorpse writes it too

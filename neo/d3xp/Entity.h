@@ -184,15 +184,67 @@ inline void	ReadFromBitMsg( netBoolEvent_t& netEvent, const idBitMsg& msg )
 	X( s, teamChain,	OBJECT,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ )
 //puncho end
 
-//puncho start - P2b.1.2: idEntity's map record section (Record.h, RECORD_SECTION_ENTITY): the pose, the health, the
-// visibility, a carry's motion and a created entry's bind master. Every row is HAND (Record<n>Changed, WriteRecord<n>,
-// ApplyRecord<n>, static CheckRecord<n>, Entity.cpp) and its ARG is its byte count; R rows append only
-#define ENTITY_RECORD_SCHEMA( X, s ) \
-	X( s, Pose,			HAND,	R,	RAW,	28,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
-	X( s, Health,		HAND,	R,	RAW,	4,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
-	X( s, Visibility,	HAND,	R,	RAW,	1,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
-	X( s, Motion,		HAND,	R,	RAW,	24,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
-	X( s, Bind,			HAND,	R,	RAW,	13,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ )
+//puncho start - P2b.2.5b: the dormancy keys (P2.2.6), a slice of ENTITY_SCHEMA that Restore expands too, since no save
+// holds them; Spawn and Restore clamp each to >= 0 right after the expansion. No FGD text, as every ENTITY_SCHEMA row: the
+// classes that test dormancy carry it in their own lists (AI_SCHEMA). OBJ until MP-E1's hot dormancy group makes them HOT
+// (C6)
+#define ENTITY_DORMANCY_SCHEMA( X, s ) \
+	X( s, dormantRadius,		FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"dormant_radius",		"0",	NOEDIT,	OBJ ) \
+	X( s, dormantHysteresis,	FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"dormant_hysteresis",	"1024",	NOEDIT,	OBJ ) \
+	X( s, dormantEngagedScale,	FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"dormant_engagedScale",	"2",	NOEDIT,	OBJ )
+
+// P2b.1.2, P2b.2.5b: idEntity's one list (C6). First the map record section (Record.h, RECORD_SECTION_ENTITY): the pose,
+// the health, the visibility, a carry's motion and a created entry's bind master, every row HAND (Record<n>Changed,
+// WriteRecord<n>, ApplyRecord<n>, static CheckRecord<n>, Entity.cpp) with its byte count as ARG; R rows append only, so
+// RF_Pose through RF_Bind keep 0-4. Then the spawn rows (K2), Spawn only (Save is hand-written, with the bind and world
+// slices below): the keyed members Spawn reads through one SCHEMA_SPAWN, the dormancy slice among them, and KEYONLY the
+// keys it reads by hand (fl bitfields, the cinematic setter, locals) or reads late (Restore, InitDefaultPhysics,
+// Event_SpawnBind, Event_RestorePosition). No row has FGD text: these rows reach every class, and a text would print in
+// every class that names no base, so the FGD keeps today's lines for these keys; the rows feed the drift, KEYCHECK and
+// listSchemaKeys
+#define ENTITY_SCHEMA( X, s ) \
+	X( s, Pose,					HAND,	R,		RAW,	28,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, Health,				HAND,	R,		RAW,	4,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, Visibility,			HAND,	R,		RAW,	1,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, Motion,				HAND,	R,		RAW,	24,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, Bind,					HAND,	R,		RAW,	13,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, noGrab,				BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"noGrab",			"0",	NOEDIT,	OBJ ) \
+	ENTITY_DORMANCY_SCHEMA( X, s ) \
+	X( s, health,				INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"health",			"0",	NOEDIT,	OBJ ) \
+	X( s, skin_xray,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"skin_xray",		NODEF,	NOEDIT,	KEYONLY ) \
+	X( s, cameraTarget,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"cameraTarget",		NODEF,	NOEDIT,	KEYONLY ) \
+	X( s, solidForTeam,			BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"solidForTeam",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, neverDormant,			BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"neverDormant",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, hide,					BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"hide",				"0",	NOEDIT,	KEYONLY ) \
+	X( s, cinematic,			BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"cinematic",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, networkSync,			BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"networkSync",		NODEF,	NOEDIT,	KEYONLY ) \
+	X( s, name,					STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"name",				NODEF,	NOEDIT,	KEYONLY ) \
+	X( s, model,				STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"model",			NODEF,	NOEDIT,	KEYONLY ) \
+	X( s, bind,					STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"bind",				NODEF,	NOEDIT,	KEYONLY ) \
+	X( s, s_transition,			BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"s_transition",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, s_global,				BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"s_global",			"0",	NOEDIT,	KEYONLY ) \
+	X( s, s_shader,				STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"s_shader",			"",		NOEDIT,	KEYONLY ) \
+	X( s, scriptobject,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"scriptobject",		NODEF,	NOEDIT,	KEYONLY ) \
+	X( s, slowmo,				BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"slowmo",			"1",	NOEDIT,	KEYONLY ) \
+	X( s, maxVisDist,			FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"maxVisDist",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, minVisPixels,			FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"minVisPixels",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, cullShadow,			BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"cullShadow",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, lodScale,				FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"lodScale",			"1",	NOEDIT,	KEYONLY ) \
+	X( s, clipmodel,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"clipmodel",		NODEF,	NOEDIT,	KEYONLY ) \
+	X( s, noclipmodel,			BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"noclipmodel",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, mins,					VEC3,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"mins",				NODEF,	NOEDIT,	KEYONLY ) \
+	X( s, maxs,					VEC3,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"maxs",				NODEF,	NOEDIT,	KEYONLY ) \
+	X( s, size,					VEC3,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"size",				NODEF,	NOEDIT,	KEYONLY ) \
+	X( s, cylinder,				INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"cylinder",			"0",	NOEDIT,	KEYONLY ) \
+	X( s, cone,					INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"cone",				"0",	NOEDIT,	KEYONLY ) \
+	X( s, bindOrientated,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"bindOrientated",	"1",	NOEDIT,	KEYONLY ) \
+	X( s, bindToJoint,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"bindToJoint",		NODEF,	NOEDIT,	KEYONLY ) \
+	X( s, bindToBody,			INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"bindToBody",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, bindanim,				STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"bindanim",			NODEF,	NOEDIT,	KEYONLY ) \
+	X( s, anim,					STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"anim",				NODEF,	NOEDIT,	KEYONLY ) \
+	X( s, origin,				VEC3,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"origin",			"0 0 0",	NOEDIT,	KEYONLY ) \
+	X( s, rotation,				STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"rotation",			"1 0 0 0 1 0 0 0 1",	NOEDIT,	KEYONLY ) \
+	X( s, angle,				FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"angle",			"0",	NOEDIT,	KEYONLY )
 //puncho end
 
 //puncho start - P2b.1.3: idEntity's world identity, saved after mpGUIState as one HAND entry (SaveWorldIdentity,
@@ -574,10 +626,10 @@ public:
 	void					ReadFromSnapshot_Ex( const idBitMsg& msg );
 	virtual void			ReadFromSnapshot( const idBitMsg& msg );
 	//puncho start - P2b.1.2: the map record (Record.h). An override writes or reads its own section after its parent's,
-	// so an entry's sections are root first; the field functions are ENTITY_RECORD_SCHEMA's HAND rows
+	// so an entry's sections are root first; the field functions are ENTITY_SCHEMA's HAND R rows
 	enum
 	{
-		ENTITY_RECORD_SCHEMA( SCHEMA_RECORD_INDEX, _ )
+		ENTITY_SCHEMA( SCHEMA_RECORD_INDEX, _ )
 		ENTITY_RECORD_FIELDS
 	};
 	compile_time_assert( ENTITY_RECORD_FIELDS <= 64 );

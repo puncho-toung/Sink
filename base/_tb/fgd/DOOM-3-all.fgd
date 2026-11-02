@@ -7817,8 +7817,8 @@ Repeat floor1_ height and door info with floor2_ etc.. for as many floors as you
 	statusgui(string) : "entity name to update floor info, can use statusgui2..3..4..etc. for multiple updates.  if appended with _num it will target an optional specific gui number on the entity this is handy for models with multiple guis."
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
-	damage(float) : "How much damage to cause entities that block the mover." : 0
 	health(integer) : "When non-zero, how much damage to take before triggering targets." : 0
+	damage(float) : "How much damage to cause entities that block the mover." : 0
 	solid(choices) : "Whether the mover is solid to other entities." : 1 =
 	[
 		0 : "No"
@@ -9577,6 +9577,7 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 	script_captured(string) : "script on item captured"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
 	[
 		0 : "No"
@@ -9616,7 +9617,6 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 	gravity(integer) : "Gravity on the flag along z." : -30
 	skin(string) : "Skin while no player carries the flag."
 	pickupDelay(integer) : "Milliseconds after a drop before the flag can be picked up again." : 500
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -9704,6 +9704,19 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 	leave_demonic_mat(string) : "leaves the demonic shader when the effect expires.. color is still reverted back."
 	proxymodel(string) : "A proxy model in OBJ file format automatically set by RBDoom so it can be displayed in TrenchBroom"
 	name(target_source) : "Entity name; other entities target this"
+	ls_frametime(integer) : "Milliseconds each letter of the light style lasts." : 100
+	midnight_override(choices) : "The light stays on in a Midnight CTF game." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	num_styles(integer) : "Number of light_style0.. keys; 0 uses the twelve predefined Quake styles." : 0
+	nonsolid(choices) : "A breakable light, and its broken model, are not solid." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	def_damage(string) : "Radius damage def to apply when the light breaks."
 	light_radius(string) : "Point light half extents x y z; without it the single light value is used" : "300 300 300"
 	light_center(string) : "Light and shadow centre offset inside the volume; for a parallel light the direction to the light" : "0 0 0"
 	light_target(string) : "Spot frustum target in light space; with light_right and light_up it makes a spot light"
@@ -14924,13 +14937,13 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -14956,13 +14969,13 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -14988,13 +15001,13 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -15020,13 +15033,13 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -15052,13 +15065,13 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -15084,13 +15097,13 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -15116,13 +15129,13 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -15148,13 +15161,13 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -15180,13 +15193,13 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -15212,13 +15225,13 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -15244,13 +15257,13 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -15276,13 +15289,13 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -15308,13 +15321,13 @@ Use it to place all kinds of models"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -15502,11 +15515,11 @@ model for collision detection. Such a collision model is specified with the
 	fx_collide(string) : "FX system to start at impact position when object collides."
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	model(string) : "Visual model; also the clip model when clipmodel is not set."
 	def_damage(string) : "Damage definition if it damages things it collides with."
 	monster_damage(string) : "Damage definition used instead of def_damage when it hits a monster."
 	minDamageVelocity(float) : "Impact speed below which the object does no damage." : 300
 	maxDamageVelocity(float) : "Impact speed at which the object does its full damage." : 700
-	model(string) : "Visual model; also the clip model when clipmodel is not set."
 	owner(string) : "Name of the entity the script event setOwnerFromSpawnArgs makes the owner."
 ]
 
@@ -15730,6 +15743,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	triggerOnRespawn(string) : "if set to no zero will trigger targets this many seconds after being killed"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	broken(string) : "Visual model to be used when the health drops down to or below zero."
 	def_damage(string) : "Damage definition if it damages things it collides with."
 	monster_damage(string) : "Damage definition used instead of def_damage when it hits a monster."
@@ -15757,7 +15771,6 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	mass(float) : "Mass of the object (overrides density); without the key the mass is density times the clip model's volume."
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(integer) : "Shrink the visual model with an epsilon and use it as a clip model." : 0
 	nodrop(choices) : "Do not drop to the floor." : 0 =
 	[
@@ -15817,6 +15830,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	triggerOnRespawn(string) : "if set to no zero will trigger targets this many seconds after being killed"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	broken(string) : "Visual model to be used when the health drops down to or below zero."
 	def_damage(string) : "Damage definition if it damages things it collides with."
 	monster_damage(string) : "Damage definition used instead of def_damage when it hits a monster."
@@ -15844,7 +15858,6 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	mass(float) : "Mass of the object (overrides density); without the key the mass is density times the clip model's volume."
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(integer) : "Shrink the visual model with an epsilon and use it as a clip model." : 0
 	nodrop(choices) : "Do not drop to the floor." : 0 =
 	[
@@ -16301,6 +16314,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	triggerOnRespawn(string) : "if set to no zero will trigger targets this many seconds after being killed"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	broken(string) : "Visual model to be used when the health drops down to or below zero."
 	def_damage(string) : "Damage definition if it damages things it collides with."
 	monster_damage(string) : "Damage definition used instead of def_damage when it hits a monster."
@@ -16328,7 +16342,6 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	mass(float) : "Mass of the object (overrides density); without the key the mass is density times the clip model's volume."
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(integer) : "Shrink the visual model with an epsilon and use it as a clip model." : 0
 	nodrop(choices) : "Do not drop to the floor." : 0 =
 	[
@@ -16389,6 +16402,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	triggerOnRespawn(string) : "if set to no zero will trigger targets this many seconds after being killed"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	broken(string) : "Visual model to be used when the health drops down to or below zero."
 	def_damage(string) : "Damage definition if it damages things it collides with."
 	monster_damage(string) : "Damage definition used instead of def_damage when it hits a monster."
@@ -16416,7 +16430,6 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	mass(float) : "Mass of the object (overrides density); without the key the mass is density times the clip model's volume."
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(integer) : "Shrink the visual model with an epsilon and use it as a clip model." : 0
 	nodrop(choices) : "Do not drop to the floor." : 0 =
 	[
@@ -16476,6 +16489,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	triggerOnRespawn(string) : "if set to no zero will trigger targets this many seconds after being killed"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	broken(string) : "Visual model to be used when the health drops down to or below zero."
 	def_damage(string) : "Damage definition if it damages things it collides with."
 	monster_damage(string) : "Damage definition used instead of def_damage when it hits a monster."
@@ -16503,7 +16517,6 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	mass(float) : "Mass of the object (overrides density); without the key the mass is density times the clip model's volume."
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(integer) : "Shrink the visual model with an epsilon and use it as a clip model." : 0
 	nodrop(choices) : "Do not drop to the floor." : 0 =
 	[
@@ -16668,12 +16681,12 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -16699,12 +16712,12 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -16730,12 +16743,12 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -16761,12 +16774,12 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -16793,12 +16806,12 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -16823,13 +16836,13 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -16853,13 +16866,13 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -16882,13 +16895,13 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	bouncyness(string) : "" : "0"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -16908,12 +16921,12 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	spawnclass(string) readonly : "" : "idMoveableItem"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -16942,12 +16955,12 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -16972,13 +16985,13 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	no_touch(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -17002,13 +17015,13 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	no_touch(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -17033,13 +17046,13 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -17138,13 +17151,13 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -17170,12 +17183,12 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -17201,12 +17214,12 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -17234,12 +17247,12 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -17276,13 +17289,13 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -17306,13 +17319,13 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -17336,13 +17349,13 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -17419,13 +17432,13 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	snd_bounce(string) : "" : "smallbox"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -17453,13 +17466,13 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	damageWhenActive(string) : "" : "1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -17902,13 +17915,13 @@ Only add model, model_detonate or model_burn or health to override defaults"
 	inv_adrenaline(string) : "" : "30"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	clipmodel(string) : "Model to be used for collision detection."
 	triggersize(float) : "Amount to expand the pickup trigger by." : "16.0"
 	repeatSmoke(choices) : "Never stop updating the smoke_trail particles." : 0 =
 	[
 		0 : "No"
 		1 : "Yes"
 	]
-	clipmodel(string) : "Model to be used for collision detection."
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
 		0 : "No"
@@ -20517,6 +20530,8 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	]
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	call(string) : "Script function to call when triggered."
+	delay(float) : "Seconds to wait before firing after triggered." : 0
 ]
 
 @SolidClass base(trigger_ctf_flag_default) = trigger_ctf_blueflag
@@ -20533,6 +20548,7 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	eventflag(string) : "" : "flagcapture"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	team(integer) : "Team of the flag the trigger answers: 0 red, 1 blue, -1 either." : 0
 ]
 
 @SolidClass base(trigger_multiple) = trigger_ctf_nodrop
@@ -20586,6 +20602,22 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	angleLimit(string) : "angle limit in degress that player must be within"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	random_delay(float) : "Delay variance. Trigger waits delay + or - random_delay before firing targets." : 0
+	triggerWithSelf(choices) : "Activate the targets with the trigger itself as the activator, not the entity that set it off." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	flashlight_trigger(choices) : "Triggered by the flashlight's beam instead of a touch." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	toggleTriggerFirst(choices) : "After each touch, wait for a trigger again before the next." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(204 25 51) size(-8 -8 -8, 8 8 8) = trigger_fade : "Fades the screen to fadeColor over fadeTime ( in seconds )."
@@ -20595,6 +20627,7 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	fadeTime(string) : "How long it takes to fade." : "1.0"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	call(string) : "Script function to call when triggered."
 ]
 
 @SolidClass color(127 127 127) = trigger_flashlight : "Variable sized trigger that is activated by shining the flashlight on it.  Must be targeted at one or more entities.  The basic time between firing is a random time between (wait - random) and (wait + random)."
@@ -20614,6 +20647,22 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	triggerFirst(string) : "don't activate until triggered."
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggerWithSelf(choices) : "Activate the targets with the trigger itself as the activator, not the entity that set it off." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	facing(choices) : "A player triggers it only while facing along its axis, within angleLimit." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	angleLimit(float) : "Angle limit in degrees that player must be within." : 30
+	toggleTriggerFirst(choices) : "After each touch, wait for a trigger again before the next." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(204 25 51) size(-8 -8 -8, 8 8 8) = trigger_guioverlay : "Toggles an overlay gui full screen over the view."
@@ -20632,6 +20681,17 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	delay(string) : "delay between damage in seconds defaults to 1"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	call(string) : "Script function to call when triggered."
+	playerOnly(choices) : "Only players are hurt." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	kick_from_center(choices) : "The damage pushes away from the trigger's origin." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @SolidClass color(127 127 127) = trigger_multiple : "Variable sized repeatable trigger.  Must be targeted at one or more entities.  The basic time between firing is a random time between (wait - random) and (wait + random)."
@@ -20650,6 +20710,27 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	triggerFirst(string) : "don't activate until triggered."
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	triggerWithSelf(choices) : "Activate the targets with the trigger itself as the activator, not the entity that set it off." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	flashlight_trigger(choices) : "Triggered by the flashlight's beam instead of a touch." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	facing(choices) : "A player triggers it only while facing along its axis, within angleLimit." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	angleLimit(float) : "Angle limit in degrees that player must be within." : 30
+	toggleTriggerFirst(choices) : "After each touch, wait for a trigger again before the next." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @SolidClass color(127 127 127) = trigger_once : "Variable sized single-use trigger.  Must be targeted at one or more entities."
@@ -20667,6 +20748,28 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	triggerFirst(string) : "don't activate until triggered."
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	random_delay(float) : "Delay variance. Trigger waits delay + or - random_delay before firing targets." : 0
+	triggerWithSelf(choices) : "Activate the targets with the trigger itself as the activator, not the entity that set it off." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	flashlight_trigger(choices) : "Triggered by the flashlight's beam instead of a touch." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	facing(choices) : "A player triggers it only while facing along its axis, within angleLimit." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	angleLimit(float) : "Angle limit in degrees that player must be within." : 30
+	toggleTriggerFirst(choices) : "After each touch, wait for a trigger again before the next." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @SolidClass color(127 127 127) = trigger_once_entityname : "Variable sized single-use trigger that only responds to a specific entity.  Must be targeted at one or more entities.  The basic time between firing is a random time between (wait - random) and (wait + random)."
@@ -20682,6 +20785,11 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	noTouch(string) : "cannot be touched, must be triggered."
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	testPartialName(choices) : "Entityname can exist in any part touching entity." =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(127 127 127) size(-64 -64 -16, 64 64 16) = trigger_presize : "Variable sized repeatable trigger.  Must be targeted at one or more entities.  The basic time between firing is a random time between (wait - random) and (wait + random)."
@@ -20698,6 +20806,33 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	removeItem(string) : "if above item is removed from inventory when used."
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	random_delay(float) : "Delay variance. Trigger waits delay + or - random_delay before firing targets." : 0
+	triggerFirst(choices) : "Don't activate until triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerWithSelf(choices) : "Activate the targets with the trigger itself as the activator, not the entity that set it off." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	flashlight_trigger(choices) : "Triggered by the flashlight's beam instead of a touch." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	facing(choices) : "A player triggers it only while facing along its axis, within angleLimit." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	angleLimit(float) : "Angle limit in degrees that player must be within." : 30
+	toggleTriggerFirst(choices) : "After each touch, wait for a trigger again before the next." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 25 153) size(-8 -8 -8, 8 8 8) model({ "path": "sprites/joystick.png", "scale": 0.03125 }) = trigger_relay : "Non-touchable repeatable trigger.  Used as a proxy for triggering multiple targets in script, or from other entities.  Must be targeted at one or more entities.  The basic time between firing is a random time between (wait - random) and (wait + random)."
@@ -20712,6 +20847,43 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	removeItem(string) : "if above item is removed from inventory when used."
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	random_delay(float) : "Delay variance. Trigger waits delay + or - random_delay before firing targets." : 0
+	triggerFirst(choices) : "Don't activate until triggered." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	triggerWithSelf(choices) : "Activate the targets with the trigger itself as the activator, not the entity that set it off." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	anyTouch(choices) : "Anything can touch it, players, mobs." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	noClient(choices) : "Can't be touched by players, but can be touched by other entities (func_activators, for instance)." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	flashlight_trigger(choices) : "Triggered by the flashlight's beam instead of a touch." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	facing(choices) : "A player triggers it only while facing along its axis, within angleLimit." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	angleLimit(float) : "Angle limit in degrees that player must be within." : 30
+	toggleTriggerFirst(choices) : "After each touch, wait for a trigger again before the next." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass color(76 25 153) size(-8 -8 -8, 8 8 8) = trigger_timer : "Repeatedly fires its targets.  Can be turned on or off by using.  The basic time between firing is a random time between (wait - random) and (wait + random)."
@@ -20723,6 +20895,9 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	call(string) : "script function to call when triggered."
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	delay(float) : "Seconds after it is turned on before it first fires." : 0
+	onName(string) : "When set, only the entity of this name can turn the timer on."
+	offName(string) : "When set, only the entity of this name can turn the timer off."
 ]
 
 @SolidClass color(127 127 127) = trigger_touch : "Continuously tests whether other entities are touching and calls a scriptfunction for any such entities.Be carefull using this trigger because when active this trigger is fairly expensive."

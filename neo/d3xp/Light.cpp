@@ -71,6 +71,8 @@ EVENT( EV_Light_FadeIn,			idLight::Event_FadeIn )
 EVENT( EV_Light_UpdateModelTarget, idLight::Event_UpdateModelTarget )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idLight, LIGHT_SCHEMA )	//puncho - P2b.2.5b: the FGD's rows and the row checks (Schema.h)
+
 
 /*
 ================
@@ -384,32 +386,8 @@ archives object for save game file
 */
 void idLight::Save( idSaveGame* savefile ) const
 {
-	savefile->WriteRenderLight( renderLight );
-
-	// RB keep it for savegame compatibility but we have no support for dmap generated shadow models
-	savefile->WriteBool( false );
-
-	savefile->WriteVec3( localLightOrigin );
-	savefile->WriteMat3( localLightAxis );
-
-	savefile->WriteString( brokenModel );
-	savefile->WriteInt( levels );
-	savefile->WriteInt( currentLevel );
-
-	savefile->WriteVec3( baseColor );
-	savefile->WriteBool( breakOnTrigger );
-	savefile->WriteInt( count );
-	savefile->WriteInt( triggercount );
-	savefile->WriteObject( lightParent );
-
-	savefile->WriteVec4( fadeFrom );
-	savefile->WriteVec4( fadeTo );
-	savefile->WriteInt( fadeStart );
-	savefile->WriteInt( fadeEnd );
-	savefile->WriteBool( soundWasPlaying );
-
 	// RB: TODO light styles
-	modelTarget.Save( savefile );
+	LIGHT_SCHEMA( SCHEMA_SAVE, ( *this ) )	//puncho - P2b.2.5b: the list is in Light.h
 }
 
 /*
@@ -421,8 +399,31 @@ unarchives object from save game file
 */
 void idLight::Restore( idRestoreGame* savefile )
 {
-	bool hadPrelightModel;
+	LIGHT_SCHEMA( SCHEMA_RESTORE, ( *this ) )	//puncho - P2b.2.5b: the list is in Light.h
 
+	lightDefHandle = -1;
+
+	SetLightLevel();
+}
+
+//puncho start - P2b.2.5b: LIGHT_SCHEMA's HAND rows, hand-written at their place in the list (K8)
+/*
+================
+idLight::SaveRenderLight
+================
+*/
+void idLight::SaveRenderLight( idSaveGame* savefile ) const
+{
+	savefile->WriteRenderLight( renderLight );
+}
+
+/*
+================
+idLight::RestoreRenderLight
+================
+*/
+void idLight::RestoreRenderLight( idRestoreGame* savefile )
+{
 	savefile->ReadRenderLight( renderLight );
 	const float distanceScale = gameLocal.world != NULL ? gameLocal.world->spawnArgs.GetFloat( "maxVisDistScale", "1" ) : 1.0f;
 	const float pixelScale = gameLocal.world != NULL ? gameLocal.world->spawnArgs.GetFloat( "minVisPixelsScale", "1" ) : 1.0f;
@@ -432,37 +433,70 @@ void idLight::Restore( idRestoreGame* savefile )
 	// light styles are not saved (light_styles restarts empty, lightStyle -1), so math_style restarts
 	// off with them instead of reading the constructor's zero as style 0
 	renderLight.mathLight.style = -1;
-
-	savefile->ReadBool( hadPrelightModel );
-
-	savefile->ReadVec3( localLightOrigin );
-	savefile->ReadMat3( localLightAxis );
-
-	savefile->ReadString( brokenModel );
-	savefile->ReadInt( levels );
-	savefile->ReadInt( currentLevel );
-
-	savefile->ReadVec3( baseColor );
-	savefile->ReadBool( breakOnTrigger );
-	savefile->ReadInt( count );
-	savefile->ReadInt( triggercount );
-	savefile->ReadObject( reinterpret_cast<idClass*&>( lightParent ) );
-
-	savefile->ReadVec4( fadeFrom );
-	savefile->ReadVec4( fadeTo );
-	savefile->ReadInt( fadeStart );
-	savefile->ReadInt( fadeEnd );
-	savefile->ReadBool( soundWasPlaying );
-
-	if( savefile->GetBuildNumber() >= BUILD_NUMBER_SAVE_VERSION_LIGHT_MODELTARGET_CHANGE )
-	{
-		modelTarget.Restore( savefile );
-	}
-
-	lightDefHandle = -1;
-
-	SetLightLevel();
 }
+
+/*
+================
+idLight::SavePrelightModel
+================
+*/
+void idLight::SavePrelightModel( idSaveGame* savefile ) const
+{
+	// RB keep it for savegame compatibility but we have no support for dmap generated shadow models
+	savefile->WriteBool( false );
+}
+
+/*
+================
+idLight::RestorePrelightModel
+================
+*/
+void idLight::RestorePrelightModel( idRestoreGame* savefile )
+{
+	bool hadPrelightModel;
+	savefile->ReadBool( hadPrelightModel );
+}
+
+/*
+================
+idLight::SaveFadeFrom
+================
+*/
+void idLight::SaveFadeFrom( idSaveGame* savefile ) const
+{
+	savefile->WriteVec4( fadeFrom );
+}
+
+/*
+================
+idLight::RestoreFadeFrom
+================
+*/
+void idLight::RestoreFadeFrom( idRestoreGame* savefile )
+{
+	savefile->ReadVec4( fadeFrom );
+}
+
+/*
+================
+idLight::SaveFadeTo
+================
+*/
+void idLight::SaveFadeTo( idSaveGame* savefile ) const
+{
+	savefile->WriteVec4( fadeTo );
+}
+
+/*
+================
+idLight::RestoreFadeTo
+================
+*/
+void idLight::RestoreFadeTo( idRestoreGame* savefile )
+{
+	savefile->ReadVec4( fadeTo );
+}
+//puncho end
 
 /*
 ================
@@ -492,7 +526,8 @@ void idLight::Spawn()
 	nextBaseColor.Set( renderLight.shaderParms[ SHADERPARM_RED ], renderLight.shaderParms[ SHADERPARM_GREEN ], renderLight.shaderParms[ SHADERPARM_BLUE ] );
 
 	// set the number of light levels
-	spawnArgs.GetInt( "levels", "1", levels );
+	//puncho - P2b.2.5b: LIGHT_SCHEMA's keyed rows (Light.h), read where levels was
+	LIGHT_SCHEMA( SCHEMA_SPAWN, ( *this ) )
 	currentLevel = levels;
 	if( levels <= 0 )
 	{
@@ -500,7 +535,7 @@ void idLight::Spawn()
 	}
 
 	// make sure the demonic shader is cached
-	if( spawnArgs.GetString( "mat_demonic", NULL, &demonic_shader ) )
+	if( spawnArgs.GetString( "mat_demonic", NULL, &demonic_shader ) )	// HAND: a pointer, applied only when present
 	{
 		declManager->FindType( DECL_MATERIAL, demonic_shader );
 	}
@@ -514,33 +549,25 @@ void idLight::Spawn()
 
 	lightDefHandle = -1;		// no static version yet
 
-	spawnArgs.GetBool( "start_off", "0", start_off );
+	spawnArgs.GetBool( "start_off", "0", start_off );	// HAND: a local
 	if( start_off )
 	{
 		Off();
 	}
 
 	// Midnight CTF
-	if( gameLocal.mpGame.IsGametypeFlagBased() && gameLocal.serverInfo.GetBool( "si_midnight" ) && !spawnArgs.GetBool( "midnight_override" ) )
+	if( gameLocal.mpGame.IsGametypeFlagBased() && gameLocal.serverInfo.GetBool( "si_midnight" ) && !spawnArgs.GetBool( "midnight_override" ) )	// HAND: tested in place
 	{
 		Off();
 	}
 
-	health = spawnArgs.GetInt( "health", "0" );
-	spawnArgs.GetString( "broken", "", brokenModel );
-	spawnArgs.GetBool( "break", "0", breakOnTrigger );
-	spawnArgs.GetInt( "count", "1", count );
-
 // jmarshall
-	lightStyleFrameTime = spawnArgs.GetInt( "ls_frametime", "100" );
-	lightStyle = spawnArgs.GetInt( "style", -1 );
-
-	int numStyles = spawnArgs.GetInt( "num_styles", "0" );
+	int numStyles = spawnArgs.GetInt( "num_styles", "0" );	// HAND: a local
 	if( numStyles > 0 )
 	{
 		for( int i = 0; i < numStyles; i++ )
 		{
-			idStr style = spawnArgs.GetString( va( "light_style%d", i ) );
+			idStr style = spawnArgs.GetString( va( "light_style%d", i ) );	// HAND: a computed key
 			light_styles.Append( style );
 		}
 	}
@@ -550,7 +577,7 @@ void idLight::Spawn()
 		static_assert( sizeof( predef_lightstyles ) / sizeof( predef_lightstyles[ 0 ] ) == ML_NUM_STYLES, "math_style indexes the predefined light style table" );
 		for( int i = 0; i < 12; i++ )
 		{
-			idStr style = spawnArgs.GetString( va( "light_style%d", i ), predef_lightstyles[ i ] );
+			idStr style = spawnArgs.GetString( va( "light_style%d", i ), predef_lightstyles[ i ] );	// HAND: a computed key
 			light_styles.Append( style );
 		}
 	}
@@ -566,10 +593,10 @@ void idLight::Spawn()
 	// if we have a health make light breakable
 	if( health )
 	{
-		idStr model = spawnArgs.GetString( "model" );		// get the visual model
+		idStr model = spawnArgs.GetString( "model" );		// HAND: a local, the visual model
 		if( !model.Length() )
 		{
-			model = spawnArgs.GetString( "modelTarget" );
+			model = spawnArgs.GetString( "modelTarget" );	// HAND: a local
 			if( !model.Length() )
 			{
 				gameLocal.Error( "Breakable light without a model set on entity #%d(%s)", entityNumber, name.c_str() );
@@ -615,7 +642,7 @@ void idLight::Spawn()
 			}
 		}
 
-		GetPhysics()->SetContents( spawnArgs.GetBool( "nonsolid" ) ? 0 : CONTENTS_SOLID );
+		GetPhysics()->SetContents( spawnArgs.GetBool( "nonsolid" ) ? 0 : CONTENTS_SOLID );	// HAND: tested in place
 
 		// make sure the collision model gets cached
 		idClipModel::CheckModel( brokenModel );
@@ -623,7 +650,7 @@ void idLight::Spawn()
 
 	// RB: link func_static modelTarget
 	//modelTarget = NULL;
-	const char* target = spawnArgs.GetString( "modelTarget" );
+	const char* target = spawnArgs.GetString( "modelTarget" );	// HAND: a local
 	if( target != NULL && target[0] != '\0' )
 	{
 		PostEventMS( &EV_Light_UpdateModelTarget, 0 );

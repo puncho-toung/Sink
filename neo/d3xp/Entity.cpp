@@ -188,6 +188,8 @@ EVENT( EV_GetGuiParmFloat,		idEntity::Event_GetGuiParmFloat )
 EVENT( EV_GuiNamedEvent,		idEntity::Event_GuiNamedEvent )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idEntity, ENTITY_SCHEMA )	//puncho - P2b.2.5b: the FGD's rows and the row checks (Schema.h)
+
 /*
 ================
 UpdateGuiParms
@@ -614,7 +616,7 @@ void idEntity::Spawn()
 
 	gameLocal.RegisterEntity( this, -1, gameLocal.GetSpawnArgs() );
 
-	spawnArgs.GetString( "classname", NULL, &classname );
+	spawnArgs.GetString( "classname", NULL, &classname );	// HAND: a pointer, the entity def's name
 	const idDeclEntityDef* def = gameLocal.FindEntityDef( classname, false );
 	if( def )
 	{
@@ -628,13 +630,11 @@ void idEntity::Spawn()
 
 	renderEntity.entityNum = entityNumber;
 
-	noGrab = spawnArgs.GetBool( "noGrab", "0" );
-
 	xraySkin = NULL;
 	renderEntity.xrayIndex = 1;
 
 	idStr str;
-	if( spawnArgs.GetString( "skin_xray", "", str ) )
+	if( spawnArgs.GetString( "skin_xray", "", str ) )	// HAND: a local, applied only when present
 	{
 		xraySkin = declManager->FindSkin( str.c_str() );
 	}
@@ -653,7 +653,7 @@ void idEntity::Spawn()
 	refSound.listenerId = entityNumber + 1;
 
 	cameraTarget = NULL;
-	temp = spawnArgs.GetString( "cameraTarget" );
+	temp = spawnArgs.GetString( "cameraTarget" );	// HAND: a local, looked up late (EV_UpdateCameraTarget)
 	if( temp.Length() > 0 )
 	{
 		// update the camera taget
@@ -665,22 +665,26 @@ void idEntity::Spawn()
 		UpdateGuiParms( renderEntity.gui[ i ], &spawnArgs );
 	}
 
-	fl.solidForTeam = spawnArgs.GetBool( "solidForTeam", "0" );
-	fl.neverDormant = spawnArgs.GetBool( "neverDormant", "0" );
-	dormantRadius = Max( 0.0f, spawnArgs.GetFloat( "dormant_radius", "0" ) );
-	dormantHysteresis = Max( 0.0f, spawnArgs.GetFloat( "dormant_hysteresis", "1024" ) );
-	dormantEngagedScale = Max( 0.0f, spawnArgs.GetFloat( "dormant_engagedScale", "2" ) );
+	fl.solidForTeam = spawnArgs.GetBool( "solidForTeam", "0" );	// HAND: fl bitfield
+	fl.neverDormant = spawnArgs.GetBool( "neverDormant", "0" );	// HAND: fl bitfield
+	//puncho start - P2b.2.5b: ENTITY_SCHEMA's keyed rows (Entity.h), noGrab, the dormancy slice and health, read where the
+	// dormancy keys were; the dormancy values are clamped after it, as before
+	ENTITY_SCHEMA( SCHEMA_SPAWN, ( *this ) )
+	dormantRadius = Max( 0.0f, dormantRadius );
+	dormantHysteresis = Max( 0.0f, dormantHysteresis );
+	dormantEngagedScale = Max( 0.0f, dormantEngagedScale );
+	//puncho end
 	dormantWakeDeferredAt = 0;
 	dormantWakeRequested = false;
-	fl.hidden = spawnArgs.GetBool( "hide", "0" );
+	fl.hidden = spawnArgs.GetBool( "hide", "0" );	// HAND: fl bitfield
 	if( fl.hidden )
 	{
 		// make sure we're hidden, since a spawn function might not set it up right
 		PostEventMS( &EV_Hide, 0 );
 	}
-	SetCinematic( spawnArgs.GetBool( "cinematic", "0" ) );	//puncho - P2b.2.1a
+	SetCinematic( spawnArgs.GetBool( "cinematic", "0" ) );	//puncho - P2b.2.1a // HAND: an argument, the setter writes the think column
 
-	networkSync = spawnArgs.FindKey( "networkSync" );
+	networkSync = spawnArgs.FindKey( "networkSync" );	// HAND: a pointer, applied only when present
 	if( networkSync )
 	{
 		fl.networkSync = ( atoi( networkSync->GetValue() ) != 0 );
@@ -698,11 +702,11 @@ void idEntity::Spawn()
 #endif
 
 	// every object will have a unique name
-	temp = spawnArgs.GetString( "name", va( "%s_%s_%d", GetClassname(), spawnArgs.GetString( "classname" ), entityNumber ) );
+	temp = spawnArgs.GetString( "name", va( "%s_%s_%d", GetClassname(), spawnArgs.GetString( "classname" ), entityNumber ) );	// HAND: a local, a computed default
 	SetName( temp );
 
 	// if we have targets, wait until all entities are spawned to get them
-	if( spawnArgs.MatchPrefix( "target" ) || spawnArgs.MatchPrefix( "guiTarget" ) )
+	if( spawnArgs.MatchPrefix( "target" ) || spawnArgs.MatchPrefix( "guiTarget" ) )	// HAND: prefixes
 	{
 		if( gameLocal.GameState() == GAMESTATE_STARTUP )
 		{
@@ -715,14 +719,12 @@ void idEntity::Spawn()
 		}
 	}
 
-	health = spawnArgs.GetInt( "health" );
-
 	InitDefaultPhysics( origin, axis, def );
 
 	SetOrigin( origin );
 	SetAxis( axis );
 
-	temp = spawnArgs.GetString( "model" );
+	temp = spawnArgs.GetString( "model" );	// HAND: a local
 	if( temp.Length() > 0 )
 	{
 		SetModel( temp );
@@ -754,15 +756,15 @@ void idEntity::Spawn()
 	}
 	// RB end
 
-	if( spawnArgs.GetString( "bind", "", temp ) )
+	if( spawnArgs.GetString( "bind", "", temp ) )	// HAND: a local, bound late (EV_SpawnBind)
 	{
 		PostEventMS( &EV_SpawnBind, 0 );
 	}
 
 	// auto-start a sound on the entity
-	if( IsType( idSound::Type ) && spawnArgs.GetBool( "s_transition" ) && spawnArgs.GetBool( "s_global" ) )
+	if( IsType( idSound::Type ) && spawnArgs.GetBool( "s_transition" ) && spawnArgs.GetBool( "s_global" ) )	// HAND: tested in place
 	{
-		refSound.referenceSound = gameSoundWorld->AdoptCarriedEmitter( spawnArgs.GetString( "s_shader" ) );
+		refSound.referenceSound = gameSoundWorld->AdoptCarriedEmitter( spawnArgs.GetString( "s_shader" ) );	// HAND: an argument
 		renderEntity.referenceSound = refSound.referenceSound;
 	}
 	if( refSound.shader && !refSound.waitfortrigger && refSound.referenceSound == NULL )
@@ -771,7 +773,7 @@ void idEntity::Spawn()
 	}
 
 	// setup script object
-	if( ShouldConstructScriptObjectAtSpawn() && spawnArgs.GetString( "scriptobject", NULL, &scriptObjectName ) )
+	if( ShouldConstructScriptObjectAtSpawn() && spawnArgs.GetString( "scriptobject", NULL, &scriptObjectName ) )	// HAND: a pointer
 	{
 		if( !scriptObject.SetType( scriptObjectName ) )
 		{
@@ -782,7 +784,7 @@ void idEntity::Spawn()
 	}
 
 	// determine time group
-	DetermineTimeGroup( spawnArgs.GetBool( "slowmo", "1" ) );
+	DetermineTimeGroup( spawnArgs.GetBool( "slowmo", "1" ) );	// HAND: an argument
 }
 
 /*
@@ -1072,9 +1074,12 @@ void idEntity::Restore( idRestoreGame* savefile )
 
 	savefile->ReadInt( thinkFlags );
 	savefile->ReadInt( dormantStart );
-	dormantRadius = Max( 0.0f, spawnArgs.GetFloat( "dormant_radius", "0" ) );
-	dormantHysteresis = Max( 0.0f, spawnArgs.GetFloat( "dormant_hysteresis", "1024" ) );
-	dormantEngagedScale = Max( 0.0f, spawnArgs.GetFloat( "dormant_engagedScale", "2" ) );
+	//puncho start - P2b.2.5b: the dormancy slice (Entity.h), which no save holds: read from spawnArgs and clamped, as Spawn
+	ENTITY_DORMANCY_SCHEMA( SCHEMA_SPAWN, ( *this ) )
+	dormantRadius = Max( 0.0f, dormantRadius );
+	dormantHysteresis = Max( 0.0f, dormantHysteresis );
+	dormantEngagedScale = Max( 0.0f, dormantEngagedScale );
+	//puncho end
 	dormantWakeDeferredAt = 0;
 	dormantWakeRequested = false;
 	//puncho start - dormancy (P2 review)
@@ -6588,7 +6593,7 @@ void idEntity::ReadFromSnapshot_Ex( const idBitMsg&  msg )
 	ReadFromSnapshot( msg );
 }
 
-//puncho start - P2b.1.2: idEntity's map record section (ENTITY_RECORD_SCHEMA, Record.h)
+//puncho start - P2b.1.2: idEntity's map record section (ENTITY_SCHEMA's R rows, Record.h)
 
 /*
 ================
@@ -6632,8 +6637,8 @@ void idEntity::WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const
 {
 	assert( &frame == &rec.Frame() );
 	rec.BeginSection( RECORD_SECTION_ENTITY, RECORD_VERSION_ENTITY );
-	ENTITY_RECORD_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
-	ENTITY_RECORD_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
+	ENTITY_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
+	ENTITY_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
 	rec.EndSection();
 }
 
@@ -6647,7 +6652,7 @@ recordApply_t idEntity::ApplyRecord( idRecordIn& rec, const recordFrame_t& frame
 	assert( &frame == &rec.Frame() );
 	if( rec.BeginSection( RECORD_SECTION_ENTITY ) )
 	{
-		ENTITY_RECORD_SCHEMA( SCHEMA_RECORD_READ, ( *this ) )
+		ENTITY_SCHEMA( SCHEMA_RECORD_READ, ( *this ) )
 		rec.EndSection();
 	}
 	return rec.good ? RECORD_APPLIED : RECORD_INVALID;
@@ -6660,7 +6665,7 @@ idEntity::CheckRecordSection
 */
 bool idEntity::CheckRecordSection( idRecordIn& rec )
 {
-	ENTITY_RECORD_SCHEMA( SCHEMA_RECORD_CHECK, idEntity )
+	ENTITY_SCHEMA( SCHEMA_RECORD_CHECK, idEntity )
 	return rec.good;
 }
 

@@ -48,6 +48,8 @@ EVENT( EV_Enable,	idTrigger::Event_Enable )
 EVENT( EV_Disable,	idTrigger::Event_Disable )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idTrigger, TRIGGER_SCHEMA )	//puncho - P2b.2.5b: the FGD's rows and the row checks (Schema.h)
+
 /*
 ================
 idTrigger::DrawDebugInfo
@@ -184,6 +186,27 @@ idTrigger::Save
 */
 void idTrigger::Save( idSaveGame* savefile ) const
 {
+	TRIGGER_SCHEMA( SCHEMA_SAVE, ( *this ) )	//puncho - P2b.2.5b: the list is in Trigger.h
+}
+
+/*
+================
+idTrigger::Restore
+================
+*/
+void idTrigger::Restore( idRestoreGame* savefile )
+{
+	TRIGGER_SCHEMA( SCHEMA_RESTORE, ( *this ) )	//puncho - P2b.2.5b: the list is in Trigger.h
+}
+
+//puncho start - P2b.2.5b: TRIGGER_SCHEMA's HAND row, hand-written at its place in the list (K8): the function by name
+/*
+================
+idTrigger::SaveScriptFunction
+================
+*/
+void idTrigger::SaveScriptFunction( idSaveGame* savefile ) const
+{
 	if( scriptFunction )
 	{
 		savefile->WriteString( scriptFunction->Name() );
@@ -196,10 +219,10 @@ void idTrigger::Save( idSaveGame* savefile ) const
 
 /*
 ================
-idTrigger::Restore
+idTrigger::RestoreScriptFunction
 ================
 */
-void idTrigger::Restore( idRestoreGame* savefile )
+void idTrigger::RestoreScriptFunction( idRestoreGame* savefile )
 {
 	idStr funcname;
 	savefile->ReadString( funcname );
@@ -216,6 +239,7 @@ void idTrigger::Restore( idRestoreGame* savefile )
 		scriptFunction = NULL;
 	}
 }
+//puncho end
 
 /*
 ================
@@ -256,7 +280,7 @@ void idTrigger::Spawn()
 {
 	GetPhysics()->SetContents( CONTENTS_TRIGGER );
 
-	idStr funcname = spawnArgs.GetString( "call", "" );
+	idStr funcname = spawnArgs.GetString( "call", "" );	// HAND: a local, the function's name
 	if( funcname.Length() )
 	{
 		scriptFunction = gameLocal.program.FindFunction( funcname );
@@ -288,6 +312,8 @@ EVENT( EV_Activate,			idTrigger_Multi::Event_Trigger )
 EVENT( EV_TriggerAction,	idTrigger_Multi::Event_TriggerAction )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idTrigger_Multi, TRIGGER_MULTI_SCHEMA )	//puncho - P2b.2.5b: the FGD's rows and the row checks (Schema.h)
+
 
 /*
 ================
@@ -315,17 +341,7 @@ idTrigger_Multi::Save
 */
 void idTrigger_Multi::Save( idSaveGame* savefile ) const
 {
-	savefile->WriteFloat( wait );
-	savefile->WriteFloat( random );
-	savefile->WriteFloat( delay );
-	savefile->WriteFloat( random_delay );
-	savefile->WriteInt( nextTriggerTime );
-	savefile->WriteString( requires );
-	savefile->WriteInt( removeItem );
-	savefile->WriteBool( touchClient );
-	savefile->WriteBool( touchOther );
-	savefile->WriteBool( triggerFirst );
-	savefile->WriteBool( triggerWithSelf );
+	TRIGGER_MULTI_SCHEMA( SCHEMA_SAVE, ( *this ) )	//puncho - P2b.2.5b: the list is in Trigger.h
 }
 
 /*
@@ -335,17 +351,7 @@ idTrigger_Multi::Restore
 */
 void idTrigger_Multi::Restore( idRestoreGame* savefile )
 {
-	savefile->ReadFloat( wait );
-	savefile->ReadFloat( random );
-	savefile->ReadFloat( delay );
-	savefile->ReadFloat( random_delay );
-	savefile->ReadInt( nextTriggerTime );
-	savefile->ReadString( requires );
-	savefile->ReadInt( removeItem );
-	savefile->ReadBool( touchClient );
-	savefile->ReadBool( touchOther );
-	savefile->ReadBool( triggerFirst );
-	savefile->ReadBool( triggerWithSelf );
+	TRIGGER_MULTI_SCHEMA( SCHEMA_RESTORE, ( *this ) )	//puncho - P2b.2.5b: the list is in Trigger.h
 }
 
 /*
@@ -362,10 +368,8 @@ so, the basic time between firing is a random time between
 */
 void idTrigger_Multi::Spawn()
 {
-	spawnArgs.GetFloat( "wait", "0.5", wait );
-	spawnArgs.GetFloat( "random", "0", random );
-	spawnArgs.GetFloat( "delay", "0", delay );
-	spawnArgs.GetFloat( "random_delay", "0", random_delay );
+	//puncho - P2b.2.5b: TRIGGER_MULTI_SCHEMA's keyed rows (Trigger.h), read where wait was
+	TRIGGER_MULTI_SCHEMA( SCHEMA_SPAWN, ( *this ) )
 
 	if( random && ( random >= wait ) && ( wait >= 0 ) )
 	{
@@ -379,22 +383,17 @@ void idTrigger_Multi::Spawn()
 		gameLocal.Warning( "idTrigger_Multi '%s' at (%s) has random_delay >= delay", name.c_str(), GetPhysics()->GetOrigin().ToString( 0 ) );
 	}
 
-	spawnArgs.GetString( "requires", "", requires );
-	spawnArgs.GetInt( "removeItem", "0", removeItem );
-	spawnArgs.GetBool( "triggerFirst", "0", triggerFirst );
-	spawnArgs.GetBool( "triggerWithSelf", "0", triggerWithSelf );
-
-	if( spawnArgs.GetBool( "anyTouch" ) )
+	if( spawnArgs.GetBool( "anyTouch" ) )	// HAND: tested in place
 	{
 		touchClient = true;
 		touchOther = true;
 	}
-	else if( spawnArgs.GetBool( "noTouch" ) )
+	else if( spawnArgs.GetBool( "noTouch" ) )	// HAND: tested in place
 	{
 		touchClient = false;
 		touchOther = false;
 	}
-	else if( spawnArgs.GetBool( "noClient" ) )
+	else if( spawnArgs.GetBool( "noClient" ) )	// HAND: tested in place
 	{
 		touchClient = false;
 		touchOther = true;
@@ -407,7 +406,7 @@ void idTrigger_Multi::Spawn()
 
 	nextTriggerTime = 0;
 
-	if( spawnArgs.GetBool( "flashlight_trigger" ) )
+	if( spawnArgs.GetBool( "flashlight_trigger" ) )	// HAND: tested in place
 	{
 		GetPhysics()->SetContents( CONTENTS_FLASHLIGHT_TRIGGER );
 	}
@@ -610,6 +609,8 @@ EVENT( EV_Activate,			idTrigger_EntityName::Event_Trigger )
 EVENT( EV_TriggerAction,	idTrigger_EntityName::Event_TriggerAction )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idTrigger_EntityName, TRIGGER_ENTITYNAME_SCHEMA )	//puncho - P2b.2.5b: the FGD's rows and the row checks (Schema.h)
+
 /*
 ================
 idTrigger_EntityName::idTrigger_EntityName
@@ -633,14 +634,7 @@ idTrigger_EntityName::Save
 */
 void idTrigger_EntityName::Save( idSaveGame* savefile ) const
 {
-	savefile->WriteFloat( wait );
-	savefile->WriteFloat( random );
-	savefile->WriteFloat( delay );
-	savefile->WriteFloat( random_delay );
-	savefile->WriteInt( nextTriggerTime );
-	savefile->WriteBool( triggerFirst );
-	savefile->WriteString( entityName );
-	savefile->WriteBool( testPartialName );
+	TRIGGER_ENTITYNAME_SCHEMA( SCHEMA_SAVE, ( *this ) )	//puncho - P2b.2.5b: the list is in Trigger.h
 }
 
 /*
@@ -650,14 +644,7 @@ idTrigger_EntityName::Restore
 */
 void idTrigger_EntityName::Restore( idRestoreGame* savefile )
 {
-	savefile->ReadFloat( wait );
-	savefile->ReadFloat( random );
-	savefile->ReadFloat( delay );
-	savefile->ReadFloat( random_delay );
-	savefile->ReadInt( nextTriggerTime );
-	savefile->ReadBool( triggerFirst );
-	savefile->ReadString( entityName );
-	savefile->ReadBool( testPartialName );
+	TRIGGER_ENTITYNAME_SCHEMA( SCHEMA_RESTORE, ( *this ) )	//puncho - P2b.2.5b: the list is in Trigger.h
 }
 
 /*
@@ -667,10 +654,9 @@ idTrigger_EntityName::Spawn
 */
 void idTrigger_EntityName::Spawn()
 {
-	spawnArgs.GetFloat( "wait", "0.5", wait );
-	spawnArgs.GetFloat( "random", "0", random );
-	spawnArgs.GetFloat( "delay", "0", delay );
-	spawnArgs.GetFloat( "random_delay", "0", random_delay );
+	//puncho - P2b.2.5b: TRIGGER_ENTITYNAME_SCHEMA's keyed rows (Trigger.h), read where wait was; testPartialName keeps the
+	// constructor's false unless the key is set (NODEF), as its getter's default did
+	TRIGGER_ENTITYNAME_SCHEMA( SCHEMA_SPAWN, ( *this ) )
 
 	if( random && ( random >= wait ) && ( wait >= 0 ) )
 	{
@@ -684,9 +670,6 @@ void idTrigger_EntityName::Spawn()
 		gameLocal.Warning( "idTrigger_EntityName '%s' at (%s) has random_delay >= delay", name.c_str(), GetPhysics()->GetOrigin().ToString( 0 ) );
 	}
 
-	spawnArgs.GetBool( "triggerFirst", "0", triggerFirst );
-
-	entityName = spawnArgs.GetString( "entityname" );
 	if( !entityName.Length() )
 	{
 		gameLocal.Error( "idTrigger_EntityName '%s' at (%s) doesn't have 'entityname' key specified", name.c_str(), GetPhysics()->GetOrigin().ToString( 0 ) );
@@ -694,12 +677,10 @@ void idTrigger_EntityName::Spawn()
 
 	nextTriggerTime = 0;
 
-	if( !spawnArgs.GetBool( "noTouch" ) )
+	if( !spawnArgs.GetBool( "noTouch" ) )	// HAND: tested in place
 	{
 		GetPhysics()->SetContents( CONTENTS_TRIGGER );
 	}
-
-	testPartialName = spawnArgs.GetBool( "testPartialName", testPartialName );
 }
 
 /*
@@ -867,6 +848,8 @@ EVENT( EV_Timer,		idTrigger_Timer::Event_Timer )
 EVENT( EV_Activate,		idTrigger_Timer::Event_Use )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idTrigger_Timer, TRIGGER_TIMER_SCHEMA )	//puncho - P2b.2.5b: the FGD's rows and the row checks (Schema.h)
+
 /*
 ================
 idTrigger_Timer::idTrigger_Timer
@@ -887,12 +870,7 @@ idTrigger_Timer::Save
 */
 void idTrigger_Timer::Save( idSaveGame* savefile ) const
 {
-	savefile->WriteFloat( random );
-	savefile->WriteFloat( wait );
-	savefile->WriteBool( on );
-	savefile->WriteFloat( delay );
-	savefile->WriteString( onName );
-	savefile->WriteString( offName );
+	TRIGGER_TIMER_SCHEMA( SCHEMA_SAVE, ( *this ) )	//puncho - P2b.2.5b: the list is in Trigger.h
 }
 
 /*
@@ -902,12 +880,7 @@ idTrigger_Timer::Restore
 */
 void idTrigger_Timer::Restore( idRestoreGame* savefile )
 {
-	savefile->ReadFloat( random );
-	savefile->ReadFloat( wait );
-	savefile->ReadBool( on );
-	savefile->ReadFloat( delay );
-	savefile->ReadString( onName );
-	savefile->ReadString( offName );
+	TRIGGER_TIMER_SCHEMA( SCHEMA_RESTORE, ( *this ) )	//puncho - P2b.2.5b: the list is in Trigger.h
 }
 
 /*
@@ -920,12 +893,7 @@ Can be turned on or off by using.
 */
 void idTrigger_Timer::Spawn()
 {
-	spawnArgs.GetFloat( "random", "1", random );
-	spawnArgs.GetFloat( "wait", "1", wait );
-	spawnArgs.GetBool( "start_on", "0", on );
-	spawnArgs.GetFloat( "delay", "0", delay );
-	onName = spawnArgs.GetString( "onName" );
-	offName = spawnArgs.GetString( "offName" );
+	TRIGGER_TIMER_SCHEMA( SCHEMA_SPAWN, ( *this ) )	//puncho - P2b.2.5b: the keyed rows (Trigger.h)
 
 	if( random >= wait && wait >= 0 )
 	{
@@ -1027,6 +995,8 @@ EVENT( EV_Activate,	idTrigger_Count::Event_Trigger )
 EVENT( EV_TriggerAction,	idTrigger_Count::Event_TriggerAction )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idTrigger_Count, TRIGGER_COUNT_SCHEMA )	//puncho - P2b.2.5b: the FGD's rows and the row checks (Schema.h)
+
 /*
 ================
 idTrigger_Count::idTrigger_Count
@@ -1046,9 +1016,7 @@ idTrigger_Count::Save
 */
 void idTrigger_Count::Save( idSaveGame* savefile ) const
 {
-	savefile->WriteInt( goal );
-	savefile->WriteInt( count );
-	savefile->WriteFloat( delay );
+	TRIGGER_COUNT_SCHEMA( SCHEMA_SAVE, ( *this ) )	//puncho - P2b.2.5b: the list is in Trigger.h
 }
 
 /*
@@ -1058,9 +1026,7 @@ idTrigger_Count::Restore
 */
 void idTrigger_Count::Restore( idRestoreGame* savefile )
 {
-	savefile->ReadInt( goal );
-	savefile->ReadInt( count );
-	savefile->ReadFloat( delay );
+	TRIGGER_COUNT_SCHEMA( SCHEMA_RESTORE, ( *this ) )	//puncho - P2b.2.5b: the list is in Trigger.h
 }
 
 /*
@@ -1070,8 +1036,7 @@ idTrigger_Count::Spawn
 */
 void idTrigger_Count::Spawn()
 {
-	spawnArgs.GetInt( "count", "1", goal );
-	spawnArgs.GetFloat( "delay", "0", delay );
+	TRIGGER_COUNT_SCHEMA( SCHEMA_SPAWN, ( *this ) )	//puncho - P2b.2.5b: count into goal and delay, the keyed rows (Trigger.h)
 	count = 0;
 }
 
@@ -1129,6 +1094,8 @@ EVENT( EV_Touch,		idTrigger_Hurt::Event_Touch )
 EVENT( EV_Activate,		idTrigger_Hurt::Event_Toggle )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idTrigger_Hurt, TRIGGER_HURT_SCHEMA )	//puncho - P2b.2.5b: the FGD's rows and the row checks (Schema.h)
+
 
 /*
 ================
@@ -1149,9 +1116,7 @@ idTrigger_Hurt::Save
 */
 void idTrigger_Hurt::Save( idSaveGame* savefile ) const
 {
-	savefile->WriteBool( on );
-	savefile->WriteFloat( delay );
-	savefile->WriteInt( nextTime );
+	TRIGGER_HURT_SCHEMA( SCHEMA_SAVE, ( *this ) )	//puncho - P2b.2.5b: the list is in Trigger.h
 }
 
 /*
@@ -1161,9 +1126,7 @@ idTrigger_Hurt::Restore
 */
 void idTrigger_Hurt::Restore( idRestoreGame* savefile )
 {
-	savefile->ReadBool( on );
-	savefile->ReadFloat( delay );
-	savefile->ReadInt( nextTime );
+	TRIGGER_HURT_SCHEMA( SCHEMA_RESTORE, ( *this ) )	//puncho - P2b.2.5b: the list is in Trigger.h
 }
 
 /*
@@ -1176,8 +1139,7 @@ idTrigger_Hurt::Spawn
 */
 void idTrigger_Hurt::Spawn()
 {
-	spawnArgs.GetBool( "on", "1", on );
-	spawnArgs.GetFloat( "delay", "1.0", delay );
+	TRIGGER_HURT_SCHEMA( SCHEMA_SPAWN, ( *this ) )	//puncho - P2b.2.5b: on and delay, the keyed rows (Trigger.h)
 	nextTime = gameLocal.time;
 	Enable();
 }
@@ -1246,6 +1208,8 @@ CLASS_DECLARATION( idTrigger, idTrigger_Fade )
 EVENT( EV_Activate,		idTrigger_Fade::Event_Trigger )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idTrigger_Fade, TRIGGER_FADE_SCHEMA )	//puncho - P2b.2.5b: the FGD's rows and the row checks (Schema.h)
+
 /*
 ================
 idTrigger_Fade::Event_Trigger
@@ -1278,6 +1242,8 @@ void idTrigger_Fade::Event_Trigger( idEntity* activator )
 CLASS_DECLARATION( idTrigger, idTrigger_Touch )
 EVENT( EV_Activate,		idTrigger_Touch::Event_Trigger )
 END_CLASS
+
+CLASS_SCHEMA_KEYS( idTrigger_Touch, TRIGGER_TOUCH_SCHEMA )	//puncho - P2b.2.5b: the FGD's rows and the row checks (Schema.h)
 
 
 /*
@@ -1314,7 +1280,7 @@ void idTrigger_Touch::Spawn()
 	// remove the collision model from the physics object
 	GetPhysics()->SetClipModel( NULL, 1.0f );
 
-	if( spawnArgs.GetBool( "start_on" ) )
+	if( spawnArgs.GetBool( "start_on" ) )	// HAND: tested in place
 	{
 		BecomeActive( TH_THINK );
 	}
@@ -1327,7 +1293,7 @@ idTrigger_Touch::Save
 */
 void idTrigger_Touch::Save( idSaveGame* savefile )
 {
-	savefile->WriteClipModel( clipModel );
+	TRIGGER_TOUCH_SCHEMA( SCHEMA_SAVE, ( *this ) )	//puncho - P2b.2.5b: the list is in Trigger.h
 }
 
 /*
@@ -1337,8 +1303,30 @@ idTrigger_Touch::Restore
 */
 void idTrigger_Touch::Restore( idRestoreGame* savefile )
 {
+	TRIGGER_TOUCH_SCHEMA( SCHEMA_RESTORE, ( *this ) )	//puncho - P2b.2.5b: the list is in Trigger.h
+}
+
+//puncho start - P2b.2.5b: TRIGGER_TOUCH_SCHEMA's HAND row, hand-written at its place in the list (K8)
+/*
+================
+idTrigger_Touch::SaveClipModel
+================
+*/
+void idTrigger_Touch::SaveClipModel( idSaveGame* savefile ) const
+{
+	savefile->WriteClipModel( clipModel );
+}
+
+/*
+================
+idTrigger_Touch::RestoreClipModel
+================
+*/
+void idTrigger_Touch::RestoreClipModel( idRestoreGame* savefile )
+{
 	savefile->ReadClipModel( clipModel );
 }
+//puncho end
 
 /*
 ================
@@ -1457,6 +1445,8 @@ CLASS_DECLARATION( idTrigger_Multi, idTrigger_Flag )
 EVENT( EV_Touch, idTrigger_Flag::Event_Touch )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idTrigger_Flag, TRIGGER_FLAG_SCHEMA )	//puncho - P2b.2.5b: the FGD's rows and the row checks (Schema.h)
+
 idTrigger_Flag::idTrigger_Flag()
 {
 	team		= -1;
@@ -1466,10 +1456,9 @@ idTrigger_Flag::idTrigger_Flag()
 
 void idTrigger_Flag::Spawn()
 {
-	team = spawnArgs.GetInt( "team", "0" );
-	player = spawnArgs.GetBool( "player", "0" );
+	TRIGGER_FLAG_SCHEMA( SCHEMA_SPAWN, ( *this ) )	//puncho - P2b.2.5b: team and player, the keyed rows (Trigger.h)
 
-	idStr funcname = spawnArgs.GetString( "eventflag", "" );
+	idStr funcname = spawnArgs.GetString( "eventflag", "" );	// HAND: a local, the event's name
 	if( funcname.Length() )
 	{
 		eventFlag = idEventDef::FindEvent( funcname );// gameLocal.program.FindFunction( funcname );//, &idItemTeam::Type );
@@ -1590,6 +1579,8 @@ CLASS_DECLARATION( idTrigger_Multi, idTrigger_ChangeLevel )
 EVENT( EV_Touch, idTrigger_ChangeLevel::Event_TransitionTouch )
 EVENT( EV_Activate, idTrigger_ChangeLevel::Event_TransitionActivate )
 END_CLASS
+
+CLASS_SCHEMA_KEYS( idTrigger_ChangeLevel, TRIGGER_CHANGE_LEVEL_SCHEMA )	//puncho - P2b.2.5b: the FGD's rows and the row checks (Schema.h)
 
 idTrigger_ChangeLevel::idTrigger_ChangeLevel()
 {
