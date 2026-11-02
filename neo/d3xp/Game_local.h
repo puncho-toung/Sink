@@ -714,6 +714,8 @@ public:
 	void					RunSingleUserCmd( usercmd_t& cmd, idPlayer& player );
 	ID_INLINE void			RunEntityThink( idEntity& ent, idUserCmdMgr& userCmdMgr );	//puncho - P2b.2.2b-i: inline, so the walks keep it inline with the lift (Game_local.cpp alone calls it)
 	PASS_NOINLINE void		RunEntityThinkTimed( idEntity& ent, idUserCmdMgr& userCmdMgr );	//puncho - P2b.0.3: the timed twin
+	int						RunPhaseBlock();		//puncho - P2b.2.6: the phase block (ai_thinkPhases); returns its members
+	bool					PhaseMember( int entityNumber ) const;	//puncho - P2b.2.6: the walk's test after the block
 	virtual bool			Draw( int clientNum );
 	//puncho start - ai-harness
 	virtual const aiHudStats_t*	GetAIStats() const;
@@ -1165,6 +1167,12 @@ private:
 	// other moves: beside entities[] it shifted every later member by its size
 public:
 	idEntityHot				entityHot;
+	//puncho end
+	//puncho start - P2b.2.6: the phase block's members as packed spawn ids ( spawnIds[n] << GENTITYNUM_BITS ) | n, sorted
+	// by entity number, sleepers included (RunPhaseBlock); read only after the block of the same tic. After entityHot, so no
+	// member above moves; members are entities, so MAX_GENTITIES cannot overflow
+	int						aiPhaseOrder[MAX_GENTITIES];
+	int						aiPhaseCount;
 	//puncho end
 };
 

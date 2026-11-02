@@ -433,6 +433,7 @@ idAI::idAI()
 	focusAlignTime		= 0;
 
 	memset( &lastThinkStats, 0, sizeof( lastThinkStats ) );	//puncho - ai-harness
+	thinkBranch = AI_THINK_NONE;	//puncho - P2b.2.6
 }
 
 /*
@@ -1248,176 +1249,15 @@ void idAI::Think()
 		statsBefore = gameLocal.aiStats;
 		usThinkStart = Sys_Microseconds();
 	}
-	gameLocal.aiStats.thinks++;
-	if( minionRole == MINION_ROLE_FOLLOWER )
-	{
-		gameLocal.aiStats.roleFollowers++;	// ai-avoidance (WP-A7): for the overlay row
-	}
 	//puncho end
 
-	if( GetThinkFlags() & TH_THINK )
-	{
-		// clear out the enemy when he dies or is hidden
-		idActor* enemyEnt = enemy.GetEntity();
-		if( enemyEnt )
-		{
-			if( enemyEnt->health <= 0 )
-			{
-				EnemyDead();
-			}
-		}
-		else if( move.moveType != MOVETYPE_DEAD )
-		{
-			gameLocal.aiStats.noEnemy++;	//puncho - ai-combat (plans/ai-combat/00-PLAN.md §2.4): a live thinking monster with no enemy; nothing added on the enemy path
-		}
-
-		current_yaw += deltaViewAngles.yaw;
-		ideal_yaw = idMath::AngleNormalize180( ideal_yaw + deltaViewAngles.yaw );
-		deltaViewAngles.Zero();
-		viewAxis = idAngles( 0, current_yaw, 0 ).ToMat3();
-
-		if( num_cinematics )
-		{
-			if( !IsHidden() && torsoAnim.AnimDone( 0 ) )
-			{
-				PlayCinematic();
-			}
-			//puncho start - ai-harness: Minions::Move::Physics, so the Anim::Controllers reached through RunPhysics stays inside usMovePhysics (00-PLAN.md §2.1, D2)
-			{
-				PROFILE_STATIC_DESC( descPhysics, "Minions::Move::Physics", ::Optick::Category::Physics );
-				idAIProfileScope scopePhysics( gameLocal.aiStats.usMovePhysics, descPhysics );
-				RunPhysics();
-			}
-			//puncho end
-		}
-		else if( !allowHiddenMovement && IsHidden() )
-		{
-			// hidden monsters
-			UpdateAIScript();
-		}
-		else
-		{
-			// clear the ik before we do anything else so the skeleton doesn't get updated twice
-			walkIK.ClearJointMods();
-
-			switch( move.moveType )
-			{
-				case MOVETYPE_DEAD :
-					// dead monsters
-					UpdateAIScript();
-					DeadMove();
-					break;
-
-				case MOVETYPE_FLY :
-					// flying monsters
-					//puncho start - ai-harness: Minions::Decide::Perceive, braced here and not at the function top because
-					// Event_LocateEnemy also calls UpdateEnemyPosition from script, inside Decide::Script (00-PLAN.md §2.1)
-					{
-						PROFILE_STATIC_DESC( descPerceive, "Minions::Decide::Perceive", ::Optick::Category::AI );
-						idAIProfileScope scopePerceive( gameLocal.aiStats.usPerceive, descPerceive );
-						UpdateEnemyPosition();
-					}
-					//puncho end
-					UpdateAIScript();
-					FlyMove();
-					PlayChatter();
-					CheckBlink();
-					break;
-
-				case MOVETYPE_STATIC :
-					// static monsters
-					//puncho start - ai-harness: Minions::Decide::Perceive, braced here and not at the function top because
-					// Event_LocateEnemy also calls UpdateEnemyPosition from script, inside Decide::Script (00-PLAN.md §2.1)
-					{
-						PROFILE_STATIC_DESC( descPerceive, "Minions::Decide::Perceive", ::Optick::Category::AI );
-						idAIProfileScope scopePerceive( gameLocal.aiStats.usPerceive, descPerceive );
-						UpdateEnemyPosition();
-					}
-					//puncho end
-					UpdateAIScript();
-					StaticMove();
-					PlayChatter();
-					CheckBlink();
-					break;
-
-				case MOVETYPE_ANIM :
-					// animation based movement
-					//puncho start - ai-harness: Minions::Decide::Perceive, braced here and not at the function top because
-					// Event_LocateEnemy also calls UpdateEnemyPosition from script, inside Decide::Script (00-PLAN.md §2.1)
-					{
-						PROFILE_STATIC_DESC( descPerceive, "Minions::Decide::Perceive", ::Optick::Category::AI );
-						idAIProfileScope scopePerceive( gameLocal.aiStats.usPerceive, descPerceive );
-						UpdateEnemyPosition();
-					}
-					//puncho end
-					UpdateAIScript();
-					AnimMove();
-					PlayChatter();
-					CheckBlink();
-					break;
-
-				case MOVETYPE_SLIDE :
-					// velocity based movement
-					//puncho start - ai-harness: Minions::Decide::Perceive, braced here and not at the function top because
-					// Event_LocateEnemy also calls UpdateEnemyPosition from script, inside Decide::Script (00-PLAN.md §2.1)
-					{
-						PROFILE_STATIC_DESC( descPerceive, "Minions::Decide::Perceive", ::Optick::Category::AI );
-						idAIProfileScope scopePerceive( gameLocal.aiStats.usPerceive, descPerceive );
-						UpdateEnemyPosition();
-					}
-					//puncho end
-					UpdateAIScript();
-					SlideMove();
-					PlayChatter();
-					CheckBlink();
-					break;
-			}
-		}
-
-		// clear pain flag so that we recieve any damage between now and the next time we run the script
-		AI_PAIN = false;
-		AI_SPECIAL_DAMAGE = 0;
-		AI_PUSHED = false;
-	}
-	else if( GetThinkFlags() & TH_PHYSICS )
-	{
-		//puncho start - ai-harness: Minions::Move::Physics, so the Anim::Controllers reached through RunPhysics stays inside usMovePhysics (00-PLAN.md §2.1, D2)
-		{
-			PROFILE_STATIC_DESC( descPhysics, "Minions::Move::Physics", ::Optick::Category::Physics );
-			idAIProfileScope scopePhysics( gameLocal.aiStats.usMovePhysics, descPhysics );
-			RunPhysics();
-		}
-		//puncho end
-	}
-
-	if( af_push_moveables )
-	{
-		PushWithAF();
-	}
-
-	if( fl.hidden && allowHiddenMovement )
-	{
-		// UpdateAnimation won't call frame commands when hidden, so call them here when we allow hidden movement
-		animator.ServiceAnims( gameLocal.previousTime, gameLocal.time );
-	}
-	/*	this still draws in retail builds.. not sure why.. don't care at this point.
-		if ( !aas && developer.GetBool() && !fl.hidden && !num_cinematics ) {
-			gameRenderWorld->DrawText( "No AAS", physicsObj.GetAbsBounds().GetCenter(), 0.1f, colorWhite, gameLocal.GetLocalPlayer()->viewAngles.ToMat3(), 1, 1 );
-		}
-	*/
-
-	UpdateMuzzleFlash();
-	//puncho start - ai-harness: Anim::Update, braced because idAnimatedEntity::UpdateAnimation is shared (00-PLAN.md §2.1)
-	{
-		PROFILE_STATIC_DESC( descAnimUpdate, "Anim::Update", ::Optick::Category::Animation );
-		idAIProfileScope scopeAnimUpdate( gameLocal.aiStats.usAnimUpdate, descAnimUpdate );
-		UpdateAnimation();
-	}
+	//puncho start - P2b.2.6: the four phases in today's order, the pain flags cleared after the move as stock; under
+	// ai_thinkPhases the phase block runs them instead, each over every member before the next
+	ThinkSense( gameLocal.previousTime, gameLocal.time );
+	ThinkDecide( gameLocal.previousTime, gameLocal.time, false );
+	ThinkMove( gameLocal.previousTime, gameLocal.time, false );
+	ThinkPresent( gameLocal.previousTime, gameLocal.time );
 	//puncho end
-	UpdateParticles();
-	Present();
-	UpdateDamageEffects();
-	LinkCombat();
 
 	//puncho start - ai-harness: this AI's share of the tic by difference, and the worst AI of the tic by usThink;
 	// both only with the timers on, since the g_aiStats 3 list ranks by usThink
@@ -1439,6 +1279,263 @@ void idAI::Think()
 		}
 	}
 	//puncho end
+}
+
+//puncho start - P2b.2.6 (plans/map-graph/stages/S2b-2-entity-tables.md §8, K10): Think's four phases
+/*
+=====================
+idAI::ThinkSense
+
+Choose the branch for this tic, clear the enemy and view state, and perceive before the script runs.
+=====================
+*/
+void idAI::ThinkSense( int previousTime, int time )
+{
+	//puncho start - ai-harness: the think and follower census, inside Think's or the phase block's envelope
+	gameLocal.aiStats.thinks++;
+	if( minionRole == MINION_ROLE_FOLLOWER )
+	{
+		gameLocal.aiStats.roleFollowers++;	// ai-avoidance (WP-A7): for the overlay row
+	}
+	//puncho end
+
+	if( !( GetThinkFlags() & TH_THINK ) )
+	{
+		thinkBranch = ( GetThinkFlags() & TH_PHYSICS ) ? AI_THINK_PHYSICS : AI_THINK_NONE;
+		return;
+	}
+
+	// clear out the enemy when he dies or is hidden
+	idActor* enemyEnt = enemy.GetEntity();
+	if( enemyEnt )
+	{
+		if( enemyEnt->health <= 0 )
+		{
+			EnemyDead();
+		}
+	}
+	else if( move.moveType != MOVETYPE_DEAD )
+	{
+		gameLocal.aiStats.noEnemy++;	//puncho - ai-combat (plans/ai-combat/00-PLAN.md §2.4): a live thinking monster with no enemy; nothing added on the enemy path
+	}
+
+	current_yaw += deltaViewAngles.yaw;
+	ideal_yaw = idMath::AngleNormalize180( ideal_yaw + deltaViewAngles.yaw );
+	deltaViewAngles.Zero();
+	viewAxis = idAngles( 0, current_yaw, 0 ).ToMat3();
+
+	if( num_cinematics )
+	{
+		thinkBranch = AI_THINK_CINEMATIC;
+		return;
+	}
+	else if( !allowHiddenMovement && IsHidden() )
+	{
+		// hidden monsters
+		thinkBranch = AI_THINK_HIDDEN;
+		return;
+	}
+	else
+	{
+		// clear the ik before we do anything else so the skeleton doesn't get updated twice
+		walkIK.ClearJointMods();
+
+		switch( move.moveType )
+		{
+			case MOVETYPE_DEAD :
+				thinkBranch = AI_THINK_DEAD;
+				return;
+
+			case MOVETYPE_FLY :
+				thinkBranch = AI_THINK_FLY;
+				break;
+
+			case MOVETYPE_STATIC :
+				thinkBranch = AI_THINK_STATIC;
+				break;
+
+			case MOVETYPE_ANIM :
+				thinkBranch = AI_THINK_ANIM;
+				break;
+
+			case MOVETYPE_SLIDE :
+				thinkBranch = AI_THINK_SLIDE;
+				break;
+
+			default:
+				thinkBranch = AI_THINK_OTHER;
+				return;
+		}
+	}
+
+	//puncho start - ai-harness: Minions::Decide::Perceive, braced here and not at the function top because
+	// Event_LocateEnemy also calls UpdateEnemyPosition from script, inside Decide::Script (00-PLAN.md §2.1)
+	{
+		PROFILE_STATIC_DESC( descPerceive, "Minions::Decide::Perceive", ::Optick::Category::AI );
+		idAIProfileScope scopePerceive( gameLocal.aiStats.usPerceive, descPerceive );
+		UpdateEnemyPosition();
+	}
+	//puncho end
+}
+
+/*
+=====================
+idAI::ThinkDecide
+
+Run the chosen branch's script; the phase block clears this member's pain before the next member decides.
+=====================
+*/
+void idAI::ThinkDecide( int previousTime, int time, bool phased )
+{
+	switch( thinkBranch )
+	{
+		case AI_THINK_HIDDEN :
+		case AI_THINK_DEAD :
+		case AI_THINK_FLY :
+		case AI_THINK_STATIC :
+		case AI_THINK_ANIM :
+		case AI_THINK_SLIDE :
+			UpdateAIScript();
+			break;
+
+		default:
+			break;	// none, physics, cinematic, other: no script
+	}
+
+	//puncho start - P2b.2.6 (F19): in the phase block this member's pain flags are cleared right after its own script, so
+	// damage a later member's decide or any move deals waits for its next script; Think clears them after the move
+	if( phased && thinkBranch >= AI_THINK_CINEMATIC )
+	{
+		AI_PAIN = false;
+		AI_SPECIAL_DAMAGE = 0;
+		AI_PUSHED = false;
+	}
+	//puncho end
+}
+
+/*
+=====================
+idAI::ThinkMove
+
+Move the chosen branch, then push moveables; a phased monster killed after sense moves as the dead do.
+=====================
+*/
+void idAI::ThinkMove( int previousTime, int time, bool phased )
+{
+	int branch = thinkBranch;
+	//puncho - P2b.2.6: in the phase block a monster another member killed after its sense phase moves as the dead do
+	if( phased && branch > AI_THINK_DEAD && move.moveType == MOVETYPE_DEAD )
+	{
+		branch = AI_THINK_DEAD;
+	}
+	switch( branch )
+	{
+		case AI_THINK_PHYSICS :
+			//puncho start - ai-harness: Minions::Move::Physics, so the Anim::Controllers reached through RunPhysics stays inside usMovePhysics (00-PLAN.md §2.1, D2)
+			{
+				PROFILE_STATIC_DESC( descPhysics, "Minions::Move::Physics", ::Optick::Category::Physics );
+				idAIProfileScope scopePhysics( gameLocal.aiStats.usMovePhysics, descPhysics );
+				RunPhysics();
+			}
+			//puncho end
+			break;
+
+		case AI_THINK_CINEMATIC :
+			if( !IsHidden() && torsoAnim.AnimDone( 0 ) )
+			{
+				PlayCinematic();
+			}
+			//puncho start - ai-harness: Minions::Move::Physics, so the Anim::Controllers reached through RunPhysics stays inside usMovePhysics (00-PLAN.md §2.1, D2)
+			{
+				PROFILE_STATIC_DESC( descPhysics, "Minions::Move::Physics", ::Optick::Category::Physics );
+				idAIProfileScope scopePhysics( gameLocal.aiStats.usMovePhysics, descPhysics );
+				RunPhysics();
+			}
+			//puncho end
+			break;
+
+		case AI_THINK_DEAD :
+			// dead monsters
+			DeadMove();
+			break;
+
+		case AI_THINK_FLY :
+			// flying monsters
+			FlyMove();
+			PlayChatter();
+			CheckBlink();
+			break;
+
+		case AI_THINK_STATIC :
+			// static monsters
+			StaticMove();
+			PlayChatter();
+			CheckBlink();
+			break;
+
+		case AI_THINK_ANIM :
+			// animation based movement
+			AnimMove();
+			PlayChatter();
+			CheckBlink();
+			break;
+
+		case AI_THINK_SLIDE :
+			// velocity based movement
+			SlideMove();
+			PlayChatter();
+			CheckBlink();
+			break;
+
+		default:
+			break;	// none, hidden, other
+	}
+	if( !phased && thinkBranch >= AI_THINK_CINEMATIC )
+	{
+		// clear pain flag so that we recieve any damage between now and the next time we run the script
+		AI_PAIN = false;
+		AI_SPECIAL_DAMAGE = 0;
+		AI_PUSHED = false;
+	}
+
+	if( af_push_moveables )
+	{
+		PushWithAF();
+	}
+}
+
+/*
+=====================
+idAI::ThinkPresent
+
+Service hidden animation, update effects and presentation, and draw the health display.
+=====================
+*/
+void idAI::ThinkPresent( int previousTime, int time )
+{
+	if( fl.hidden && allowHiddenMovement )
+	{
+		// UpdateAnimation won't call frame commands when hidden, so call them here when we allow hidden movement
+		animator.ServiceAnims( previousTime, time );
+	}
+	/*	this still draws in retail builds.. not sure why.. don't care at this point.
+		if ( !aas && developer.GetBool() && !fl.hidden && !num_cinematics ) {
+			gameRenderWorld->DrawText( "No AAS", physicsObj.GetAbsBounds().GetCenter(), 0.1f, colorWhite, gameLocal.GetLocalPlayer()->viewAngles.ToMat3(), 1, 1 );
+		}
+	*/
+
+	UpdateMuzzleFlash();
+	//puncho start - ai-harness: Anim::Update, braced because idAnimatedEntity::UpdateAnimation is shared (00-PLAN.md §2.1)
+	{
+		PROFILE_STATIC_DESC( descAnimUpdate, "Anim::Update", ::Optick::Category::Animation );
+		idAIProfileScope scopeAnimUpdate( gameLocal.aiStats.usAnimUpdate, descAnimUpdate );
+		UpdateAnimation();
+	}
+	//puncho end
+	UpdateParticles();
+	Present();
+	UpdateDamageEffects();
+	LinkCombat();
 
 	if( ai_showHealth.GetBool() )
 	{
@@ -1446,6 +1543,7 @@ void idAI::Think()
 		gameRenderWorld->DrawText( va( "%d", ( int )health ), this->GetEyePosition() + aboveHead, 0.5f, colorWhite, gameLocal.GetLocalPlayer()->viewAngles.ToMat3() );
 	}
 }
+//puncho end
 
 /***********************************************************************
 

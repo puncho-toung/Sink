@@ -618,6 +618,11 @@ float idConsoleLocal::DrawFPS( float y )
 									t.attacksMelee, t.attacksMissile, t.attacksCharge, t.projectilesAlive, t.damageEvents, t.friendlyDamage, t.painEvents, t.deaths,
 									t.ragdollsActive, t.enemyChanges, t.enemyLost, t.noEnemy, t.canHitTraces, t.attackPosSearches, t.coverSearches, t.usCombatTraces * 0.001f );
 				//puncho end
+				//puncho start - P2b.2.6: the phase block of the last tic, 0 unless ai_thinkPhases ran it
+				ImGui::TextColored( colorLtGrey, "      phases: sense %.1f  decide %.1f  move %.1f  present %.1f    members %-3i late %i",
+									t.usPhaseSense * 0.001f, t.usPhaseDecide * 0.001f, t.usPhaseMove * 0.001f, t.usPhasePresent * 0.001f,
+									t.phasedMonsters, t.phaseLateJoins );
+				//puncho end
 				// the clip difference spans the whole think loop, the player's own traces included, ServiceEvents excluded
 				ImGui::TextColored( colorLtGrey, "      clip (think loop): trans %-4i cont %-3i contacts %-3i gathers %-4i cand %-5i trm %i",
 									t.clipTranslations, t.clipContents, t.clipContacts, t.clipGathers, t.clipGatherCandidates, t.clipTrmQueries );

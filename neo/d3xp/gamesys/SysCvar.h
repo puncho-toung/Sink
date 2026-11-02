@@ -108,6 +108,7 @@ extern idCVar	g_entityTable;
 extern idCVar	g_entityTableVerify;
 extern idCVar	g_entityPassWalks;	//puncho - P2b.2.2a
 extern idCVar	g_entityPassDormancy;	//puncho - P2b.2.2b-i
+extern idCVar	ai_thinkPhases;	//puncho - P2b.2.6
 //puncho end
 //puncho start - ai-combat
 extern idCVar	ai_benchSeed;

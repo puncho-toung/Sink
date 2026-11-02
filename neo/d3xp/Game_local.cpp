@@ -3103,6 +3103,172 @@ void idGameLocal::RunEntityThinkTimed( idEntity& ent, idUserCmdMgr& userCmdMgr )
 }
 //puncho end
 
+//puncho start - P2b.2.6 (plans/map-graph/stages/S2b-2-entity-tables.md §8, K10): the group-1 AI phase block
+// the phase order's sort: the low GENTITYNUM_BITS of a packed spawn id are the entity number
+class idSortPhaseOrder : public idSort_Quick< int, idSortPhaseOrder >
+{
+public:
+	int Compare( const int& a, const int& b ) const
+	{
+		return ( a & ( MAX_GENTITIES - 1 ) ) - ( b & ( MAX_GENTITIES - 1 ) );
+	}
+};
+
+/*
+================
+idGameLocal::RunPhaseBlock
+
+  ai_thinkPhases (plans/map-graph/stages/S2b-2-entity-tables.md §8 P2b.2.6, K10): the group-1 mirror walk calls this at
+  its first HOT_PHASED row, and every phased group-1 row from that slot on (the members) thinks here as one block, in
+  entity order: phase 0 the lifted CheckDormant, sampled once (a sleeper stays out for the tic, so a same-tic wake takes
+  effect next tic), then ThinkSense, ThinkDecide (a member's pain flags cleared right after its own decide), ThinkMove and
+  ThinkPresent, each over every awake member before the next. A member whose slot now holds another spawn id, or none,
+  runs no later phase; a replacement thinks whole when the walk meets it. Returns the members, sleepers included.
+================
+*/
+int idGameLocal::RunPhaseBlock()
+{
+	const bool timed = passTag == PASS_TAG_WALK;
+	const double start = timed ? Sys_GetClockTicks() : 0.0;
+
+	// the order. HOT_SKIP rows are MP-E1's and run nothing; no tier is read, since every phase runs every tic here
+	aiPhaseCount = 0;
+	for( int i = entityHot.activeCursor; i < entityHot.activeNum; i++ )
+	{
+		const int n = entityHot.activeOrder[ i ];
+		if( n >= 0 && ( entityHot.think[ n ].bits & ( HOT_PHASED | HOT_SKIP | HOT_TIMEGROUP2 ) ) == HOT_PHASED )
+		{
+			aiPhaseOrder[ aiPhaseCount++ ] = ( spawnIds[ n ] << GENTITYNUM_BITS ) | n;
+		}
+	}
+	idSortPhaseOrder().Sort( aiPhaseOrder, aiPhaseCount );
+
+	// phase 0: fl.isDormant, which only CheckDormant writes, is the sample the four phases read
+	int awake = 0;
+	for( int k = 0; k < aiPhaseCount; k++ )
+	{
+		const int n = aiPhaseOrder[ k ] & ( MAX_GENTITIES - 1 );
+		idEntity* ent = entities[ n ];
+		if( ent == NULL || ( ( spawnIds[ n ] << GENTITYNUM_BITS ) | n ) != aiPhaseOrder[ k ] )
+		{
+			continue;
+		}
+		if( ent->CheckDormant() )
+		{
+			entityHot.sleepersSkipped++;
+			continue;
+		}
+		awake++;
+	}
+	aiStats.phasedMonsters += awake;
+
+	if( ai_think.GetBool() )
+	{
+		const bool profile = ai_profile.GetInteger() != 0;
+		int* const usPhase[ 4 ] = { &aiStats.usPhaseSense, &aiStats.usPhaseDecide, &aiStats.usPhaseMove, &aiStats.usPhasePresent };
+		for( int phase = 0; phase < 4; phase++ )
+		{
+			for( int k = 0; k < aiPhaseCount; k++ )
+			{
+				const int n = aiPhaseOrder[ k ] & ( MAX_GENTITIES - 1 );
+				idEntity* ent = entities[ n ];
+				if( ent == NULL || ( ( spawnIds[ n ] << GENTITYNUM_BITS ) | n ) != aiPhaseOrder[ k ] || ent->fl.isDormant )
+				{
+					continue;
+				}
+				idAI* ai = static_cast< idAI* >( ent );		// the spawn id is the one the order took from a HOT_PHASED row
+
+				// the profile as Think's envelope: the copy before the clock, this AI's share by difference, summed
+				// over its four phases into lastThinkStats
+				aiTicStats_t statsBefore;		// written and read only under profile
+				uint64 usStart = 0;
+				if( profile )
+				{
+					if( phase == 0 )
+					{
+						memset( &ai->lastThinkStats, 0, sizeof( ai->lastThinkStats ) );
+					}
+					statsBefore = aiStats;
+					usStart = Sys_Microseconds();
+				}
+				switch( phase )
+				{
+					case 0:
+						ai->ThinkSense( previousTime, time );
+						break;
+					case 1:
+						ai->ThinkDecide( previousTime, time, true );
+						break;
+					case 2:
+						ai->ThinkMove( previousTime, time, true );
+						break;
+					default:
+						ai->ThinkPresent( previousTime, time );
+						break;
+				}
+				if( profile )
+				{
+					const int us = ( int )( Sys_Microseconds() - usStart );
+					aiStats.usThink += us;
+					*usPhase[ phase ] += us;
+					const int* after = ( const int* )&aiStats;
+					const int* before = ( const int* )&statsBefore;
+					int* sum = ( int* )&ai->lastThinkStats;
+					for( int i = 0; i < AI_TIC_STAT_INTS; i++ )
+					{
+						sum[i] += after[i] - before[i];
+					}
+					if( phase == 3 && ai->lastThinkStats.usThink > aiHudStats.worst.usThink )
+					{
+						aiHudStats.worst = ai->lastThinkStats;
+						idStr::Copynz( aiHudStats.worstName, ai->name.c_str(), sizeof( aiHudStats.worstName ) );
+					}
+				}
+			}
+		}
+	}
+
+	if( timed )
+	{
+		passStats.tThinkSum += Sys_GetClockTicks() - start;
+	}
+	return aiPhaseCount;
+}
+
+/*
+================
+idGameLocal::PhaseMember
+
+  after the block, whether the walk's row took part in it: aiPhaseOrder searched by entity number, then the spawn id, so
+  an entity that reused a member's slot during the block is no member
+================
+*/
+bool idGameLocal::PhaseMember( int entityNumber ) const
+{
+	const int id = ( spawnIds[ entityNumber ] << GENTITYNUM_BITS ) | entityNumber;
+	int lo = 0;
+	int hi = aiPhaseCount - 1;
+	while( lo <= hi )
+	{
+		const int mid = ( lo + hi ) >> 1;
+		const int n = aiPhaseOrder[ mid ] & ( MAX_GENTITIES - 1 );
+		if( n == entityNumber )
+		{
+			return aiPhaseOrder[ mid ] == id;
+		}
+		if( n < entityNumber )
+		{
+			lo = mid + 1;
+		}
+		else
+		{
+			hi = mid - 1;
+		}
+	}
+	return false;
+}
+//puncho end
+
 idCVar g_recordTrace( "g_recordTrace", "0", CVAR_BOOL, "" );
 
 // jmarshall
@@ -3419,8 +3585,8 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			GameVerify_BeginTic();
 			//puncho end
 
-			//puncho - P2b.2.1a, P2b.2.2a, P2b.2.2b-i: the hot table's switches for this tic, outside the timed passes (EntityPasses.cpp)
-			entityHot.LatchTic( g_entityTable.GetBool(), g_entityTableVerify.GetBool(), g_entityPassWalks.GetBool(), g_entityPassDormancy.GetBool() );
+			//puncho - P2b.2.1a, P2b.2.2a, P2b.2.2b-i, P2b.2.6: the hot table's switches for this tic, outside the timed passes (EntityPasses.cpp)
+			entityHot.LatchTic( g_entityTable.GetBool(), g_entityTableVerify.GetBool(), g_entityPassWalks.GetBool(), g_entityPassDormancy.GetBool(), ai_thinkPhases.GetBool() );
 
 			//puncho start - P2b.0.3: a timed tic brackets the passes from here to the events
 			PassProfileBeginTic();
@@ -3530,6 +3696,7 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 				}
 				else
 				{
+					bool phaseBlockRan = false;	//puncho - P2b.2.6
 					for( entityHot.activeCursor = 0; entityHot.activeCursor < entityHot.activeNum; entityHot.activeCursor++ )
 					{
 						const int n = entityHot.activeOrder[ entityHot.activeCursor ];
@@ -3537,6 +3704,24 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 						{
 							continue;
 						}
+						//puncho start - P2b.2.6: with ai_thinkPhases latched the first phased row runs the phase block for
+						// every phased row and the walk skips them after it; a phased row the block did not take (one that
+						// joined during it, or reused a member's slot) thinks whole; a HOT_SKIP row runs nothing (MP-E1's)
+						if( entityHot.phasesOn && ( entityHot.think[ n ].bits & ( HOT_PHASED | HOT_SKIP ) ) != 0 )
+						{
+							if( !phaseBlockRan )
+							{
+								num += RunPhaseBlock();
+								phaseBlockRan = true;
+								continue;
+							}
+							if( ( entityHot.think[ n ].bits & HOT_SKIP ) != 0 || PhaseMember( n ) )
+							{
+								continue;
+							}
+							aiStats.phaseLateJoins++;
+						}
+						//puncho end
 						RunEntityThink( *entities[ n ], cmdMgr );
 						num++;
 					}
@@ -3838,7 +4023,8 @@ static const char* const aiProfileCsvHeader =
 	"usThinkSum,usWalkTG2,nTG2,usWalkShared,nShared,usSleeperThink,nSleeperThink,usPassDormantAsleep,nPassDormantAsleep,usPassDormantAwake,nPassDormantAwake,usPresentDef,nPresentDef,usPresentFar,nPresentFar,"
 	"usPassPost,usPassPrune,"
 	"l2mThinkWalk,cycThinkWalk,insThinkWalk,l2mEvents,cycEvents,insEvents,l2mPVS,l2mSort,"
-	"nestedClockCalls\n";	// the clock pairs inside the walks' thinks that the summarizer nets the gross times by
+	"nestedClockCalls,"	// the clock pairs inside the walks' thinks that the summarizer nets the gross times by
+	"usPhaseSense,usPhaseDecide,usPhaseMove,usPhasePresent,phasedMonsters,phaseLateJoins\n";	// P2b.2.6: the phase block, after P2b.0.3's columns
 
 /*
 ================
@@ -4092,7 +4278,7 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 										"%d,%d,%d,%d,%d,"
 										"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
 										"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%lld,%lld,%lld,"	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): the shooter tokens
-										"%s\n",	//puncho - P2b.0.3: the pass columns
+										"%s,%d,%d,%d,%d,%d,%d\n",	//puncho - P2b.0.3: the pass columns; P2b.2.6: the phase block's
 										framenum, time, usTic, numEnts, t.thinks, t.moveTics,
 										t.usThink, t.usPerceive, t.usScript, t.usMove, t.usMovePath, t.usMoveAvoid, t.usMovePhysics, t.usPath, t.usAnimUpdate, t.usAnimCtl,
 										aiHudStats.worst.usThink, aiHudStats.worstName,
@@ -4108,7 +4294,7 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 										t.attacksMelee, t.attacksMissile, t.attacksCharge, t.projectilesAlive, t.damageEvents, t.friendlyDamage, t.painEvents, t.deaths, t.ragdollsActive,
 										t.enemyChanges, t.enemyLost, t.noEnemy, t.canHitTraces, t.attackPosSearches, t.coverSearches, t.usCombatTraces,
 										t.usShooterTokens, t.shooterCandidates, t.shooterHolders, t.shooterGrants, t.shooterYields, t.shooterExpired, t.shooterDenied, t.shooterTests, t.shooterSniperAsks, t.dormTests, t.dormAsleep, t.dormClosedOff, t.dormFar, t.dormUnseen, t.dormWakes, t.dormSleeps, t.dormDeferred, t.dormForced, t.dormViolations, t.awakeNear2k, t.awakeNear4k, t.awakeNear8k, t.awakeFar, t.dormCatchUps, ( long long )aasBytes, ( long long )aasEvictions, ( long long )aasSaturated,	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md)
-										pass );	//puncho - P2b.0.3
+										pass, t.usPhaseSense, t.usPhaseDecide, t.usPhaseMove, t.usPhasePresent, t.phasedMonsters, t.phaseLateJoins );	//puncho - P2b.0.3, P2b.2.6
 		if( aiProfileLen + len >= ( int )sizeof( aiProfileBuf ) )
 		{
 			FlushAIProfileLog();
@@ -4168,6 +4354,11 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 		Printf( "aistats:   shooters cand %.1f held %.1f grants %.2f yields %.2f expired %.2f denied %.1f tests %.1f sniper %.1f | tokens %.3f ms\n",
 				s.shooterCandidates * perTic, s.shooterHolders * perTic, s.shooterGrants * perTic, s.shooterYields * perTic, s.shooterExpired * perTic,
 				s.shooterDenied * perTic, s.shooterTests * perTic, s.shooterSniperAsks * perTic, s.usShooterTokens * toMs );
+		//puncho end
+		//puncho start - P2b.2.6: the phase block, the same per-tic averages; the phases in ms (0 unless ai_thinkPhases ran it)
+		Printf( "aistats:   phases sense %.3f decide %.3f move %.3f present %.3f ms | members %.1f lateJoins %.2f\n",
+				s.usPhaseSense * toMs, s.usPhaseDecide * toMs, s.usPhaseMove * toMs, s.usPhasePresent * toMs,
+				s.phasedMonsters * perTic, s.phaseLateJoins * perTic );
 		//puncho end
 	}
 

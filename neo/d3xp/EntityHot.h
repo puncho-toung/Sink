@@ -49,6 +49,8 @@ If you have questions concerning this license or the applicable additional terms
 			With g_entityTable and g_entityPassDormancy latched (dormancyOn), RunEntityThink runs a HOT_DORMANCY row's
 			CheckDormant itself, at the moment its Think would run it first: a sleeper's Think is not called (sleepersSkipped),
 			and an awake row's Think skips its own test, since dormancyCheckedFor names it (P2b.2.2b-i, K7).
+			With ai_thinkPhases latched as well (phasesOn), the group-1 mirror walk runs every HOT_PHASED row as one
+			block at the first one it meets (idGameLocal::RunPhaseBlock, P2b.2.6, K10).
 	spatial	the physics origin and absolute bounds as the spatial pass left them at the end of a tic, for passes outside
 			the think walk; valid until the next think walk, so a reader inside a walk reads physics. Kept only while a
 			consumer is registered: the registration refreshes every live row once, then each pass refreshes the rows
@@ -157,9 +159,10 @@ public:
 	bool					activeMaintained;					// tableOn || verifyOn: the mirror follows the list
 	bool					walksOn;							// tableOn && g_entityPassWalks: the walks go over the mirror (P2b.2.2a)
 	bool					dormancyOn;							// tableOn && g_entityPassDormancy: RunEntityThink tests a HOT_DORMANCY row's dormancy (P2b.2.2b-i)
+	bool					phasesOn;							// tableOn && g_entityPassWalks && ai_thinkPhases: the group-1 mirror walk runs the phase block (P2b.2.6)
 	// pads sizeof to a multiple of 64 (asserted below), not the address: gameLocal is 32-byte aligned, so entityHot, the
 	// last member of idGameLocal, and every array in it start 32 bytes into a cache line
-	byte					pad[43];
+	byte					pad[42];	//puncho - P2b.2.6: phasesOn takes one byte of the tail
 
 	// after the tail, so that adding it moved no member above
 	hotCell_t				cell[MAX_GENTITIES];
@@ -180,7 +183,7 @@ public:
 	void					SetCell( int entityNumber, uint32 cellId );
 	void					SetHome( int entityNumber, uint32 homeCellId, int cellOrdinal );
 
-	void					LatchTic( bool table, bool verify, bool walks, bool dormancy );
+	void					LatchTic( bool table, bool verify, bool walks, bool dormancy, bool phases );	//puncho - P2b.2.6
 	void					SpatialPass( int numEntities );
 	void					Verify();
 

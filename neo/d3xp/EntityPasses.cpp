@@ -86,6 +86,7 @@ void idEntityHot::Clear()
 	activeMaintained = false;
 	walksOn = false;
 	dormancyOn = false;
+	phasesOn = false;	//puncho - P2b.2.6
 	dormancyCheckedFor = -1;
 	spatialConsumers = 0;
 
@@ -217,10 +218,11 @@ edge and on the maintenance false -> true edge (verify set while the table is 0)
 off. g_entityTableVerify is the spatial rows' consumer in this stage: it registers on its 0 -> 1 edge,
 which refreshes every live row once, and leaves on its 1 -> 0 edge. g_entityPassWalks and g_entityPassDormancy count
 only with the table (walksOn, dormancyOn): the walks go over a mirror the latch has just made current, and the lift
-reads the class bits registration wrote
+reads the class bits registration wrote; ai_thinkPhases needs the mirror walks as well, since the phase block runs
+inside the group-1 mirror walk (P2b.2.6)
 ================
 */
-void idEntityHot::LatchTic( bool table, bool verify, bool walks, bool dormancy )
+void idEntityHot::LatchTic( bool table, bool verify, bool walks, bool dormancy, bool phases )	//puncho - P2b.2.6
 {
 	if( ActiveLatchNeedsRebuild( tableOn, activeMaintained, table, verify ) )
 	{
@@ -250,6 +252,7 @@ void idEntityHot::LatchTic( bool table, bool verify, bool walks, bool dormancy )
 	activeMaintained = table || verify;
 	walksOn = table && walks;
 	dormancyOn = table && dormancy;
+	phasesOn = table && walks && phases;	//puncho - P2b.2.6
 }
 
 /*

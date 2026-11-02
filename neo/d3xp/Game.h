@@ -180,10 +180,19 @@ struct aiTicStats_t
 	int		awakeFar;
 	int		dormCatchUps;
 	//puncho end
+	//puncho start - P2b.2.6 (plans/map-graph/stages/S2b-2-entity-tables.md §8): the phase block, appended after the
+	// dormancy counts so the CSV keeps its column order
+	int		usPhaseSense;			// the phase block's ThinkSense calls (ai_profile); under ai_thinkPhases usThink is the four phases' sum
+	int		usPhaseDecide;			// its ThinkDecide calls, each member's pain clear included (ai_profile)
+	int		usPhaseMove;			// its ThinkMove calls (ai_profile)
+	int		usPhasePresent;			// its ThinkPresent calls (ai_profile)
+	int		phasedMonsters;			// members phase 0 found awake: the monsters that ran the four phases this tic
+	int		phaseLateJoins;			// phased rows the walk thought whole after the block: joined during it, or a member's slot reused
+	//puncho end
 };
 //puncho start - ai-combat: the block is summed and differenced as an int array (idAI::Think, RunAIStats); the count keeps a
 // member of another size out, a float of the same size still needs the reader's eye (an X-macro list would close that)
-#define AI_TIC_STAT_INTS	93
+#define AI_TIC_STAT_INTS	99	//puncho - P2b.2.6
 compile_time_assert( sizeof( aiTicStats_t ) == AI_TIC_STAT_INTS * sizeof( int ) );
 //puncho end
 

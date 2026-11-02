@@ -246,7 +246,7 @@ static void Cmd_ListEntityTable_f( const idCmdArgs& args )
 	const int bssBytes = sizeof( hot.think ) + sizeof( hot.spatial ) + sizeof( hot.moved ) + sizeof( hot.activeOrder ) + sizeof( hot.activeIndex )
 						 + sizeof( hot.cell );	//puncho - P2b.2.1b
 
-	gameLocal.Printf( "entityTable: g_entityTable %d walks %d dormancy %d verify %d (latched), mirror %s, %d spatial consumers\n", hot.tableOn, hot.walksOn, hot.dormancyOn, hot.verifyOn,	//puncho - P2b.2.2a, P2b.2.2b-i
+	gameLocal.Printf( "entityTable: g_entityTable %d walks %d dormancy %d phases %d verify %d (latched), mirror %s, %d spatial consumers\n", hot.tableOn, hot.walksOn, hot.dormancyOn, hot.phasesOn, hot.verifyOn,	//puncho - P2b.2.2a, P2b.2.2b-i, P2b.2.6
 					  hot.activeMaintained ? "maintained" : "off", hot.spatialConsumers );
 	gameLocal.Printf( "rows: %d live, %d thinking; dormancy %d shared %d phased %d skip %d cinematic %d timeGroup2 %d\n", live, thinking,
 					  bits[0], bits[1], bits[2], bits[3], bits[4], bits[5] );

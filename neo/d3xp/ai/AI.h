@@ -58,6 +58,25 @@ typedef struct ballistics_s
 
 extern int Ballistics( const idVec3& start, const idVec3& end, float speed, float gravity, ballistics_t bal[2] );
 
+//puncho start - P2b.2.6: the branch idAI::Think takes, chosen by ThinkSense and held for the tic's other three phases.
+// The order matters: from AI_THINK_CINEMATIC on the branch has TH_THINK (its pain flags are cleared), and after
+// AI_THINK_DEAD it moves (under ai_thinkPhases a monster killed after its sense phase runs DeadMove instead)
+enum aiThinkBranch_t
+{
+	AI_THINK_NONE,			// neither TH_THINK nor TH_PHYSICS: PushWithAF and the present only
+	AI_THINK_PHYSICS,		// TH_PHYSICS alone: RunPhysics
+	AI_THINK_CINEMATIC,		// cinematics: PlayCinematic when the torso anim is done, RunPhysics
+	AI_THINK_HIDDEN,		// hidden without allowHiddenMovement: the script only
+	AI_THINK_DEAD,			// MOVETYPE_DEAD: the script, DeadMove
+	AI_THINK_FLY,			// MOVETYPE_FLY: the enemy's position, the script, FlyMove
+	AI_THINK_STATIC,		// MOVETYPE_STATIC: the enemy's position, the script, StaticMove
+	AI_THINK_ANIM,			// MOVETYPE_ANIM: the enemy's position, the script, AnimMove
+	AI_THINK_SLIDE,			// MOVETYPE_SLIDE: the enemy's position, the script, SlideMove
+	AI_THINK_OTHER			// any other moveType: nothing but the pain clear, as the stock switch has no case for it
+};
+extern idCVar ai_think;	// AI.cpp; the phase block tests it once per tic
+//puncho end
+
 // defined in script/ai_base.script.  please keep them up to date.
 typedef enum
 {
@@ -507,6 +526,7 @@ protected:
 	byte					flowStuckTics;		// tics running with a step asked for and under 0.5 units gained
 	bool					flowOnField;		// this tic's seek point came from the field: no plan, walls and separation bend it
 	short					aiSquad;			// index into gameLocal.aiSquads from the key 'squad', -1 none (WP-A7)
+	byte					thinkBranch;		// aiThinkBranch_t: ThinkSense's choice for this tic's other phases, never saved; in aiSquad's tail pad, so no member moves	//puncho - P2b.2.6
 	int						flowAreaNum;		// the area GetMovePos found this tic, for the wall repulsion
 	int						flowPromotedUntil;	// gameLocal.framenum until which a stuck follower runs the stock path and planner
 	//puncho end
@@ -674,9 +694,17 @@ protected:
 	void					SetAAS();
 	virtual	void			DormantBegin();	// called when entity becomes dormant
 	virtual	void			DormantEnd();		// called when entity wakes from being dormant
-	void					Think();
+	void					Think() final;	//puncho - P2b.2.6: final, so the four phases below are the hierarchy's only think body (F21)
 	void					Activate( idEntity* activator );
 public:
+	//puncho start - P2b.2.6: Think's four phases. Think runs them in this order at ai_thinkPhases 0; the phase block
+	// (idGameLocal::RunPhaseBlock) runs each over every awake member before the next. previousTime and time are the
+	// interval the phase covers (gameLocal's here, period 1); phased is true only in the block
+	void					ThinkSense( int previousTime, int time );
+	void					ThinkDecide( int previousTime, int time, bool phased );
+	void					ThinkMove( int previousTime, int time, bool phased );
+	void					ThinkPresent( int previousTime, int time );
+	//puncho end
 	int						ReactionTo( const idEntity* ent );
 protected:
 	bool					CheckForEnemy();
