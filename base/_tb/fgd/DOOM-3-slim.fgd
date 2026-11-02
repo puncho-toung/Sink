@@ -1866,6 +1866,11 @@
 		0 : "No"
 		1 : "Yes"
 	]
+	spawnClearMoveables(choices) : "If set to 1, the canBecomeSolid script event pushes damageable moveables out of the monster's bounds, as it always does barrels." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 	persist_lifetime(integer) : "Set to 0 to leave no persistent corpse when the monster dies." : -1
 	npc_name(string) : "A name that allows the character to enter a conversation state."
 	bone_orientation(string) : "Joint whose axis defines the orientation used for looking."
@@ -1882,6 +1887,8 @@
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
 		0 : "No"
@@ -6539,6 +6546,11 @@ Use it to place all kinds of models"
 		0 : "No"
 		1 : "Yes"
 	]
+	spawnClearMoveables(choices) : "If set to 1, the canBecomeSolid script event pushes damageable moveables out of the monster's bounds, as it always does barrels." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 	persist_lifetime(integer) : "Set to 0 to leave no persistent corpse when the monster dies." : -1
 	npc_name(string) : "A name that allows the character to enter a conversation state."
 	bone_orientation(string) : "Joint whose axis defines the orientation used for looking."
@@ -6555,6 +6567,8 @@ Use it to place all kinds of models"
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
 		0 : "No"

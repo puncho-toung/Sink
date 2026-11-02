@@ -261,8 +261,9 @@ typedef struct
 
 //puncho - P2b.2.5c: idPlayer's spawn rows (K2), Spawn only (Save and Restore stay hand-written): KEYONLY the keys
 // read by hand in Spawn or late in Init, SpawnToPoint, RestorePersistantInfo (health's "100", over idEntity's "0"),
-// UpdateSkinSetup, GivePowerUp, GivePDA, SelectWeapon, TogglePDA, UpdateDeathSkin, PlayHelltimeStopSound, Kill, Killed and
-// GetExpansionType; Spawn moves no member. A key a def documents with an editor_* line is NOEDIT (ACTOR_SCHEMA's rule)
+// UpdateSkinSetup, GivePowerUp, GivePDA, SelectWeapon, TogglePDA, UpdateDeathSkin, PlayHelltimeStopSound, Kill, Killed,
+// Event_GetPreviousWeapon and GetExpansionType; Spawn moves no member. A key a def documents with an editor_* line is
+// NOEDIT (ACTOR_SCHEMA's rule)
 #define PLAYER_SCHEMA( X, s ) \
 	X( s, mass,					FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"mass",					"100",		NOEDIT,	KEYONLY ) \
 	X( s, cursor,				STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"cursor",				"",			"GUI to use for the local player's cursor.",	KEYONLY ) \
@@ -282,6 +283,7 @@ typedef struct
 	X( s, deathSkinTime,		INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"deathSkinTime",		"0",		"Game time in milliseconds after which the dead player's combat contents are cleared.",	KEYONLY ) \
 	X( s, snd_helltime_stop,	STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"snd_helltime_stop",	"",			"Sound to play when helltime stops.",	KEYONLY ) \
 	X( s, respawn_delay,		FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"respawn_delay",		"0",		"Minimum delay in seconds before the player may respawn after death.",	KEYONLY ) \
+	X( s, def_weapon0,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"def_weapon0",			"",			"Entity def of the weapon in slot 0, which the getPreviousWeapon script event returns while the player has no previous weapon.",	KEYONLY ) \
 	X( s, player_expansion,		STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"player_expansion",		"d3",		"Expansion used by the player: d3, d3xp or d3le.",	KEYONLY )
 
 class idPlayer : public idActor

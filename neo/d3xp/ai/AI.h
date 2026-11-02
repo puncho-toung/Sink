@@ -337,7 +337,7 @@ private:
 	X( s, eyeFocusRate,							FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"eye_focus_rate",							"0.5",			NOEDIT,	OBJ ) \
 	X( s, headFocusRate,						FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"head_focus_rate",							"0.1",			NOEDIT,	OBJ ) \
 	X( s, useBoneAxis,							BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"useBoneAxis",								"0",			"Use the bone axis instead of the model axis.",	OBJ ) \
-	X( s, spawnClearMoveables,					BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"spawnClearMoveables",						"0",			NOEDIT,	OBJ ) \
+	X( s, spawnClearMoveables,					BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"spawnClearMoveables",						"0",			"If set to 1, the canBecomeSolid script event pushes damageable moveables out of the monster's bounds, as it always does barrels.",	OBJ ) \
 	X( s, persist_lifetime,						INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"persist_lifetime",							"-1",			"Set to 0 to leave no persistent corpse when the monster dies.",	KEYONLY ) \
 	X( s, talks,								BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"talks",									"0",			NOEDIT,	KEYONLY ) \
 	X( s, npc_name,								STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"npc_name",									NODEF,			"A name that allows the character to enter a conversation state.",	KEYONLY ) \
@@ -365,8 +365,8 @@ private:
 	X( s, harvest_on_death,						BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"harvest_on_death",							"0",			"Spawn a harvestable entity when the monster dies.",	KEYONLY ) \
 	X( s, def_harvest_type,						STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"def_harvest_type",							"",				"Entity definition to spawn for harvesting when the monster dies.",	KEYONLY ) \
 	X( s, cinematic_no_hide,					BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"cinematic_no_hide",						"0",			NOEDIT,	KEYONLY ) \
-	X( s, catchup_speed,						FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"catchup_speed",							"0",			NOEDIT,	KEYONLY ) \
-	X( s, catchup_maxNodes,						INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"catchup_maxNodes",							"64",			NOEDIT,	KEYONLY ) \
+	X( s, catchup_speed,						FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"catchup_speed",							"0",			"Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept.",	KEYONLY ) \
+	X( s, catchup_maxNodes,						INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"catchup_maxNodes",							"64",			"Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64.",	KEYONLY ) \
 	X( s, attack_accuracy,						FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"attack_accuracy",							"7",			NOEDIT,	KEYONLY ) \
 	X( s, attack_cone,							FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"attack_cone",								"70",			NOEDIT,	KEYONLY ) \
 	X( s, projectile_spread,					FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"projectile_spread",						"0",			NOEDIT,	KEYONLY ) \
