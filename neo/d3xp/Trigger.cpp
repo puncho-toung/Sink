@@ -1202,7 +1202,7 @@ void idTrigger_Fade::Event_Trigger( idEntity* activator )
 	player = gameLocal.GetLocalPlayer();
 	if( player )
 	{
-		fadeColor = spawnArgs.GetVec4( "fadeColor", "0, 0, 0, 1" );
+		fadeColor = spawnArgs.GetVec4( "fadeColor", "0 0 0 1" ); //puncho - P2b.7.0: GetVec4 parses whitespace; the comma stopped it at 0.
 		fadeTime = SEC2MS( spawnArgs.GetFloat( "fadeTime", "0.5" ) );
 		player->playerView.Fade( fadeColor, fadeTime );
 		PostEventMS( &EV_ActivateTargets, fadeTime, activator );

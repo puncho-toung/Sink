@@ -318,9 +318,9 @@ private:
 ===============================================================================
 */
 
-//puncho - P2b.2.5b: the keys idTrigger_Fade's trigger reads (K2); fadeColor is a 4-vector, listed as a string
+//puncho - P2b.2.5b: the keys idTrigger_Fade's trigger reads (K2); fadeColor is a 4-vector, listed as a string; P2b.7.0: fadeColor's DEFAULT is space-separated, as GetVec4 parses
 #define TRIGGER_FADE_SCHEMA( X, s ) \
-	X( s, fadeColor,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"fadeColor",	"0, 0, 0, 1",	"Color to fade to.",	KEYONLY ) \
+	X( s, fadeColor,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"fadeColor",	"0 0 0 1",	"Color to fade to.",	KEYONLY ) \
 	X( s, fadeTime,				FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"fadeTime",		"0.5",	"How long it takes to fade.",	KEYONLY )
 
 class idTrigger_Fade : public idTrigger

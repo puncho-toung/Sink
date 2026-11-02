@@ -9007,7 +9007,6 @@ trigger will toggle the activator on and off.  Activator will disable itself whe
 	height(string) : "amplitude of bob." : "32"
 	speed(string) : "seconds to complete a bob cycle." : "4"
 	phase(string) : "the 0.0 to 1.0 offset in the cycle to start at." : "0"
-	dmg(string) : "damage to inflict when blocked." : "2"
 	snd_open(string) : "sound to play when opening."
 	snd_close(string) : "sound to play when closing."
 	snd_opened(string) : "looping sound for it's opened state."
@@ -9164,7 +9163,6 @@ you func_remove it after it is shot if it's blocking an entrance."
 		1 : "Yes"
 	]
 	lip(string) : "lip remaining at end of move." : "8"
-	dmg(string) : "damage to inflict when blocked." : "2"
 	health(string) : "if set, the door must be shot open." : "0"
 	triggersize(string) : "sets the amount the trigger extends from the door." : "60"
 	snd_close(string) : "sound to play when closing." : "default_door_close"
@@ -9489,7 +9487,6 @@ Pendulum frequency is a physical constant based on the length of the beam and gr
 	spawnclass(string) readonly : "" : "idPendulum"
 	speed(string) : "the number of degrees each way the pendulum swings." : "30"
 	phase(string) : "the 0.0 to 1.0 offset in the cycle to start at." : "0"
-	dmg(string) : "damage to inflict when blocked." : "2"
 	freq(string) : "If set, overrides frequency basic on beam length and forces a specific frequency."
 	snd_open(string) : "sound to play when opening."
 	snd_close(string) : "sound to play when closing."
@@ -9541,7 +9538,6 @@ Pendulum frequency is a physical constant based on the length of the beam and gr
 	]
 	lip(string) : "protrusion above rest position." : "8"
 	speed(string) : "speed to move up and down at." : "200"
-	dmg(string) : "damage to inflict when blocked." : "2"
 	height(string) : "total height of movement, defaults to model height."
 	snd_open(string) : "sound to play when opening."
 	snd_close(string) : "sound to play when closing."
@@ -9652,7 +9648,6 @@ Pendulum frequency is a physical constant based on the length of the beam and gr
 		1 : "Yes"
 	]
 	speed(string) : "determines how fast it moves." : "100"
-	dmg(string) : "damage to inflict when blocked." : "2"
 	start_on(choices) : "set to 1 to rotate when spawned." : 1 =
 	[
 		0 : "No"

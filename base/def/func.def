@@ -110,13 +110,11 @@ entityDef func_rotating {
 	"editor_bool x_axis"		"set to 1 to rotate around x-axis."
 	"editor_bool y_axis"		"set to 1 to rotate around y-axis."
 	"editor_var speed"			"determines how fast it moves."
-	"editor_var dmg"			"damage to inflict when blocked."
 
 	"spawnclass"				"idRotater"
 	"x_axis"					"0"
 	"y_axis"					"0"
 	"speed"						"100"
-	"dmg"						"2"
 	"start_on"					"1"
 }
 
@@ -131,7 +129,6 @@ entityDef func_bobbing {
 	"editor_var height"			"amplitude of bob."
 	"editor_var speed"			"seconds to complete a bob cycle."
 	"editor_var phase"			"the 0.0 to 1.0 offset in the cycle to start at."
-	"editor_var dmg"			"damage to inflict when blocked."
 	"editor_snd snd_open"		"sound to play when opening."
 	"editor_snd snd_close"		"sound to play when closing."
 	"editor_snd snd_opened"		"looping sound for it's opened state."
@@ -143,7 +140,6 @@ entityDef func_bobbing {
 	"height"					"32"
 	"speed"						"4"
 	"phase"						"0"
-	"dmg"						"2"
 }
 
 entityDef func_pendulum {
@@ -156,7 +152,6 @@ entityDef func_pendulum {
 	"editor_var freq"			"If set, overrides frequency basic on beam length and forces a specific frequency."
 	"editor_var speed"			"the number of degrees each way the pendulum swings."
 	"editor_var phase"			"the 0.0 to 1.0 offset in the cycle to start at."
-	"editor_var dmg"			"damage to inflict when blocked."
 	"editor_snd snd_open"		"sound to play when opening."
 	"editor_snd snd_close"		"sound to play when closing."
 	"editor_snd snd_opened"		"looping sound for it's opened state."
@@ -165,7 +160,6 @@ entityDef func_pendulum {
 
 	"speed"						"30"
 	"phase"						"0"
-	"dmg"						"2"
 }
 
 entityDef func_plat {
@@ -179,7 +173,6 @@ entityDef func_plat {
 	"editor_var lip"			"protrusion above rest position."
 	"editor_var height"			"total height of movement, defaults to model height."
 	"editor_var speed"			"speed to move up and down at."
-	"editor_var dmg"			"damage to inflict when blocked."
 	"editor_snd snd_open"		"sound to play when opening."
 	"editor_snd snd_close"		"sound to play when closing."
 	"editor_snd snd_opened"		"looping sound for it's opened state."
@@ -189,7 +182,6 @@ entityDef func_plat {
 	"no_touch"					"0"
 	"lip"						"8"
 	"speed"						"200"
-	"dmg"						"2"
 }
 
 entityDef func_activator {
@@ -229,7 +221,6 @@ entityDef func_door {
 	"editor_bool wait"			"wait before returning (-1 = never return)."
 	"editor_bool toggle"		"wait at each position until triggered again."
 	"editor_var lip"			"lip remaining at end of move."
-	"editor_var dmg"			"damage to inflict when blocked."
 	"editor_var health"			"if set, the door must be shot open."
 	"editor_var triggersize"	"sets the amount the trigger extends from the door."
 	"editor_bool gui_noninteractive" "any gui attached will not be interactive"
@@ -250,7 +241,6 @@ entityDef func_door {
 	"speed"						"100"
 	"wait"						"3"
 	"lip"						"8"
-	"dmg"						"2"
 	"health"					"0"
 	"triggersize"				"60"
 	//"snd_open"					"sound/ed/doors/_door_rust_yellowlight/rust_door_open_test4.wav"
