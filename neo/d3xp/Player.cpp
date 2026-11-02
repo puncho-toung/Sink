@@ -8723,12 +8723,20 @@ void idPlayer::RunPhysics_RemoteClientCorrection()
 ========================
 idPlayer::GetPhysicsTimeStep
 
-Uses the time from the usercmd in case the server is running at a slower engineHz
-than the client.
+Single player uses the simulation clock unless g_stopTime holds it still.
+Multiplayer uses the usercmd delta so a slower server integrates a faster client's steps.
 ========================
 */
 int idPlayer::GetPhysicsTimeStep() const
 {
+	//puncho start - P2b.7.0: paused framework frames shift the usercmd clock's 8/9 ms phase in single player
+	// (common_frame.cpp:1101-1106,1161-1163,1267). Physics follows the simulation clock, not that timing phase.
+	// g_stopTime holds that clock still but lets the player move, so it keeps the usercmd step below.
+	if( !common->IsMultiplayer() && !g_stopTime.GetBool() )
+	{
+		return gameLocal.time - gameLocal.previousTime;
+	}
+	//puncho end
 	// if the ucDeltaMillisecond value looks wrong, use the game delta milliseconds
 	// This can happen if the user brings up the pause menu in SP
 	const int ucDeltaMilliseconds = usercmd.clientGameMilliseconds - oldCmd.clientGameMilliseconds;
