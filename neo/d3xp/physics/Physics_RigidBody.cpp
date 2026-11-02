@@ -501,6 +501,7 @@ idPhysics_RigidBody::idPhysics_RigidBody()
 	integrator = new( TAG_PHYSICS ) idODE_Euler( sizeof( rigidBodyIState_t ) / sizeof( float ), RigidBodyDerivatives, this );
 
 	dropToFloor = false;
+	testSolid = false;	//puncho - P2b.7.0: saved before DropToFloor sets it
 	noImpact = false;
 	noContact = false;
 

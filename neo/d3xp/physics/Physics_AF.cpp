@@ -3786,6 +3786,7 @@ idAFConstraint_ConeLimit::idAFConstraint_ConeLimit()
 {
 	type = CONSTRAINT_CONELIMIT;
 	name = "coneLimit";
+	epsilon = LCP_EPSILON;	//puncho - P2b.7.0: saved even before SetEpsilon; Add uses LIMIT_LCP_EPSILON
 	InitSize( 1 );
 	fl.allowPrimary = false;
 	fl.frameConstraint = true;
@@ -4058,6 +4059,7 @@ idAFConstraint_PyramidLimit::idAFConstraint_PyramidLimit()
 {
 	type = CONSTRAINT_PYRAMIDLIMIT;
 	name = "pyramidLimit";
+	epsilon = LCP_EPSILON;	//puncho - P2b.7.0: saved even before SetEpsilon; Add uses LIMIT_LCP_EPSILON
 	InitSize( 1 );
 	fl.allowPrimary = false;
 	fl.frameConstraint = true;
