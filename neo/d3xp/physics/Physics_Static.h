@@ -61,7 +61,8 @@ struct staticInterpolatePState_t
 //puncho start - P2b.2.5d: the wire sends origin, axis as an idCQuat, localOrigin as a delta on origin and localAxis as a
 // delta on axis's idCQuat. The pair writes staticPState_t and reads staticInterpolatePState_t, so two lists, each the one
 // direction of its type's struct function: WriteStaticPState and ReadStaticPState. idPhysics_StaticMulti sends each part
-// through them, as idPhysics_Static's WriteToSnapshot and ReadFromSnapshot do for current and next.
+// through them, as idPhysics_Static's WriteToSnapshot and ReadFromSnapshot do for current and next. The two lists are the
+// writer's and the reader's halves of one wire form, so they stay row for row identical.
 #define STATIC_PSTATE_WRITE_SCHEMA( X, s ) \
 	X( s, origin,			VEC3,	W,	RAW,	0,			SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
 	X( s, Axis,				HAND,	W,	FHAND,	StaticPState,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \

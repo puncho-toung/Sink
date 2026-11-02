@@ -283,7 +283,7 @@ typedef struct
 	X( s, deathSkinTime,		INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"deathSkinTime",		"0",		"Game time in milliseconds after which the dead player's combat contents are cleared.",	KEYONLY ) \
 	X( s, snd_helltime_stop,	STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"snd_helltime_stop",	"",			"Sound to play when helltime stops.",	KEYONLY ) \
 	X( s, respawn_delay,		FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"respawn_delay",		"0",		"Minimum delay in seconds before the player may respawn after death.",	KEYONLY ) \
-	X( s, def_weapon0,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"def_weapon0",			"",			"Entity def of the weapon in slot 0, which the getPreviousWeapon script event returns while the player has no previous weapon.",	KEYONLY ) \
+	X( s, def_weapon0,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"def_weapon0",			"",			"Entity def of the weapon in slot 0 (the def_weapon<N> family names the slots); getPreviousWeapon returns it while there is no previous weapon.",	KEYONLY ) \
 	X( s, player_expansion,		STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"player_expansion",		"d3",		"Expansion used by the player: d3, d3xp or d3le.",	KEYONLY )
 
 class idPlayer : public idActor

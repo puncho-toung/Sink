@@ -365,7 +365,7 @@ private:
 	X( s, harvest_on_death,						BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"harvest_on_death",							"0",			"Spawn a harvestable entity when the monster dies.",	KEYONLY ) \
 	X( s, def_harvest_type,						STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"def_harvest_type",							"",				"Entity definition to spawn for harvesting when the monster dies.",	KEYONLY ) \
 	X( s, cinematic_no_hide,					BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"cinematic_no_hide",						"0",			NOEDIT,	KEYONLY ) \
-	X( s, catchup_speed,						FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"catchup_speed",							"0",			"Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept.",	KEYONLY ) \
+	X( s, catchup_speed,						FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"catchup_speed",							"0",			"Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy.",	KEYONLY ) \
 	X( s, catchup_maxNodes,						INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"catchup_maxNodes",							"64",			"Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64.",	KEYONLY ) \
 	X( s, attack_accuracy,						FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"attack_accuracy",							"7",			NOEDIT,	KEYONLY ) \
 	X( s, attack_cone,							FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"attack_cone",								"70",			NOEDIT,	KEYONLY ) \

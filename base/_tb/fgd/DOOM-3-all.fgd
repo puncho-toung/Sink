@@ -2177,7 +2177,7 @@
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -6223,7 +6223,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -6314,7 +6314,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -6399,7 +6399,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -6483,7 +6483,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -6562,7 +6562,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -6641,7 +6641,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -6799,7 +6799,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -6903,7 +6903,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -6982,7 +6982,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -7086,7 +7086,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -7165,7 +7165,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -7269,7 +7269,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -7348,7 +7348,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -7452,7 +7452,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -7531,7 +7531,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -7635,7 +7635,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -7739,7 +7739,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -7818,7 +7818,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -7923,7 +7923,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -8006,7 +8006,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -8110,7 +8110,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -8238,7 +8238,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -8600,7 +8600,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -8712,7 +8712,7 @@ Do not use in game. For testing only."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -11359,7 +11359,7 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -11441,7 +11441,7 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -11523,7 +11523,7 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -11605,7 +11605,7 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -11684,7 +11684,7 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -11763,7 +11763,7 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -11846,7 +11846,7 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -11922,7 +11922,7 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -12001,7 +12001,7 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -12114,7 +12114,7 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -12349,7 +12349,7 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -12445,7 +12445,7 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -12533,7 +12533,7 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -12621,7 +12621,7 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -14713,7 +14713,7 @@ Use it to place all kinds of models"
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -21002,7 +21002,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -21091,7 +21091,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
@@ -21244,7 +21244,7 @@ Only add model, model_detonate or model_burn or health to override defaults"
 		1 : "Yes"
 	]
 	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
-	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept." : 0
+	catchup_speed(float) : "Speed in units per second at which a monster that slept on a path_corner route is moved along it when it wakes, with g_dormantCatchUp 1; 0 leaves it where it slept. The catch-up runs only after a sleep of at least g_dormantCatchUpMinMs, with no enemy." : 0
 	catchup_maxNodes(integer) : "Bound on the path nodes the wake catch-up (catchup_speed) walks, clamped to 1-64." : 64
 	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
 	[
