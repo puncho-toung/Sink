@@ -3199,6 +3199,43 @@ static void SpawnRead_MoveableItemRepeatSmoke( const idEntity* ent, idStr& value
 	value = va( "%d", static_cast<const idMoveableItem*>( ent )->RepeatSmoke() ? 1 : 0 );
 }
 
+// P2b.2.5b: the unsaved members batch b moves: idEntity's dormancy trio (Restore reads it again from spawnArgs), the
+// light styles (not saved) and the CTF flag trigger's team and player (the class has no Save)
+static void SpawnRead_EntityDormantRadius( const idEntity* ent, idStr& value )
+{
+	value = va( "%.9g", ent->dormantRadius );
+}
+
+static void SpawnRead_EntityDormantHysteresis( const idEntity* ent, idStr& value )
+{
+	value = va( "%.9g", ent->dormantHysteresis );
+}
+
+static void SpawnRead_EntityDormantEngagedScale( const idEntity* ent, idStr& value )
+{
+	value = va( "%.9g", ent->dormantEngagedScale );
+}
+
+static void SpawnRead_LightLightStyle( const idEntity* ent, idStr& value )
+{
+	value = va( "%d", static_cast<const idLight*>( ent )->LightStyle() );
+}
+
+static void SpawnRead_LightLightStyleFrameTime( const idEntity* ent, idStr& value )
+{
+	value = va( "%d", static_cast<const idLight*>( ent )->LightStyleFrameTime() );
+}
+
+static void SpawnRead_TriggerFlagTeam( const idEntity* ent, idStr& value )
+{
+	value = va( "%d", static_cast<const idTrigger_Flag*>( ent )->Team() );
+}
+
+static void SpawnRead_TriggerFlagPlayer( const idEntity* ent, idStr& value )
+{
+	value = va( "%d", static_cast<const idTrigger_Flag*>( ent )->Player() ? 1 : 0 );
+}
+
 typedef struct spawnReadProbe_s
 {
 	const idTypeInfo* 		type;		// the class whose Spawn writes the member; its subclasses are probed too
@@ -3224,6 +3261,13 @@ static const spawnReadProbe_t spawnReadProbe[] =
 	{ &idItemTeam::Type,	"team",					SpawnRead_ItemTeamTeam },
 	{ &idItemTeam::Type,	"nuggetName",			SpawnRead_ItemTeamNuggetName },
 	{ &idMoveableItem::Type,	"repeatSmoke",		SpawnRead_MoveableItemRepeatSmoke },
+	{ &idEntity::Type,		"dormantRadius",		SpawnRead_EntityDormantRadius },
+	{ &idEntity::Type,		"dormantHysteresis",	SpawnRead_EntityDormantHysteresis },
+	{ &idEntity::Type,		"dormantEngagedScale",	SpawnRead_EntityDormantEngagedScale },
+	{ &idLight::Type,		"lightStyle",			SpawnRead_LightLightStyle },
+	{ &idLight::Type,		"lightStyleFrameTime",	SpawnRead_LightLightStyleFrameTime },
+	{ &idTrigger_Flag::Type,	"team",				SpawnRead_TriggerFlagTeam },
+	{ &idTrigger_Flag::Type,	"player",			SpawnRead_TriggerFlagPlayer },
 };
 static const int NUM_SPAWN_READ_PROBES = ARRAY_COUNT( spawnReadProbe );
 

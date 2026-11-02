@@ -136,6 +136,16 @@ public:
 	{
 		return renderLight;
 	}
+	//puncho start - P2b.2.5b: testSpawnRead's rows
+	int				LightStyle() const
+	{
+		return lightStyle;
+	}
+	int				LightStyleFrameTime() const
+	{
+		return lightStyleFrameTime;
+	}
+	//puncho end
 
 	enum
 	{

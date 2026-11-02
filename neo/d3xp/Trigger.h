@@ -309,6 +309,16 @@ public:
 
 	idTrigger_Flag();
 	void				Spawn();
+	//puncho start - P2b.2.5b: testSpawnRead's rows
+	int					Team() const
+	{
+		return team;
+	}
+	bool				Player() const
+	{
+		return player;
+	}
+	//puncho end
 
 private:
 	int					team;
