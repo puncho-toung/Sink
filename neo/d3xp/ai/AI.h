@@ -295,20 +295,90 @@ private:
 	int					PVSAreas[ idEntity::MAX_PVS_AREAS ];
 };
 
-//puncho - P2b.1.2: idAI's map record section (Record.h, RECORD_SECTION_AI): an AI that died in play, as the pose of
-// the corpse it leaves. Written by idAI and idCorpse, applied and checked by the idCorpse the store builds for it
-// (Corpse.cpp); ARG 0, a variable field
-#define AI_RECORD_SCHEMA( X, s ) \
-	X( s, Corpse,		HAND,	R,	RAW,	0,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ )
-
-//puncho - P2b.2.3b: idAI's spawn keys, so far the distance dormancy's (P2.2.6), which idEntity::Spawn reads and clamps
-// for every class (Entity.cpp); listed on idAI, the class whose defs author them, for the FGD (CLASS_SCHEMA_KEYS in
-// AI_events.cpp beside idAI's CLASS_DECLARATION)
+//puncho - P2b.2.5c: idAI's one list (C6). First the map record section (Record.h, RECORD_SECTION_AI): an AI that died
+// in play, as the pose of the corpse it leaves. Written by idAI and idCorpse, applied and checked by the idCorpse the
+// store builds for it (Corpse.cpp); HAND R, ARG 0, a variable field. R rows append only, so RF_Corpse stays 0. Then the
+// dormancy keys (P2.2.6), read and clamped by idEntity::Spawn, and the spawn rows (K2), Spawn only (Save and Restore stay
+// hand-written): the keyed members Spawn reads through one SCHEMA_SPAWN, and KEYONLY the keys it reads by hand or late.
+// fly_bob_horz reads fly_bob_vert and fly_bob_vert reads fly_bob_horz, as the stock reads did. A key a def documents with
+// an editor_* line is NOEDIT (ACTOR_SCHEMA's rule). CLASS_SCHEMA_KEYS stays beside idAI's CLASS_DECLARATION in
+// AI_events.cpp
 #define AI_SCHEMA( X, s ) \
+	X( s, Corpse,		HAND,	R,	RAW,	0,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
 	X( s, dormant_radius,		FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"dormant_radius",		"0",	"Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test.",	KEYONLY ) \
 	X( s, dormant_hysteresis,	FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"dormant_hysteresis",	"1024",	"How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again.",	KEYONLY ) \
 	X( s, dormant_engagedScale,	FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"dormant_engagedScale",	"2",	"Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy.",	KEYONLY ) \
-	X( s, neverDormant,			BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"neverDormant",			"0",	"If set to 1, monsters do not sleep outside your PVS.",	KEYONLY )
+	X( s, neverDormant,			BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"neverDormant",			"0",	"If set to 1, monsters do not sleep outside your PVS.",	KEYONLY ) \
+	X( s, team,									INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"team",										"1",			NOEDIT,	OBJ ) \
+	X( s, rank,									INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"rank",										"0",			NOEDIT,	OBJ ) \
+	X( s, fly_offset,							INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"fly_offset",								"0",			NOEDIT,	OBJ ) \
+	X( s, fly_speed,							FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"fly_speed",								"100",			NOEDIT,	OBJ ) \
+	X( s, fly_bob_strength,						FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"fly_bob_strength",							"50",			NOEDIT,	OBJ ) \
+	X( s, fly_bob_horz,							FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"fly_bob_vert",								"2",			NOEDIT,	OBJ ) \
+	X( s, fly_bob_vert,							FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"fly_bob_horz",								"2.7",			NOEDIT,	OBJ ) \
+	X( s, fly_seek_scale,						FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"fly_seek_scale",							"4",			"Scale on the steering velocity toward the flying goal.",	OBJ ) \
+	X( s, fly_roll_scale,						FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"fly_roll_scale",							"90",			"Scale on sideways velocity when calculating flight roll.",	OBJ ) \
+	X( s, fly_roll_max,							FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"fly_roll_max",								"60",			"Maximum flight roll angle in degrees.",	OBJ ) \
+	X( s, fly_pitch_scale,						FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"fly_pitch_scale",							"45",			"Scale on vertical velocity when calculating flight pitch.",	OBJ ) \
+	X( s, fly_pitch_max,						FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"fly_pitch_max",							"30",			"Maximum flight pitch angle in degrees.",	OBJ ) \
+	X( s, melee_range,							FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"melee_range",								"64",			NOEDIT,	OBJ ) \
+	X( s, projectile_height_to_distance_ratio,	FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"projectile_height_to_distance_ratio",		"1",			NOEDIT,	OBJ ) \
+	X( s, turnRate,								FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"turn_rate",								"360",			NOEDIT,	OBJ ) \
+	X( s, disableGravity,						BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"animate_z",								"0",			NOEDIT,	OBJ ) \
+	X( s, af_push_moveables,					BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"af_push_moveables",						"0",			NOEDIT,	OBJ ) \
+	X( s, kickForce,							FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"kick_force",								"4096",			NOEDIT,	OBJ ) \
+	X( s, ignore_obstacles,						BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"ignore_obstacles",							"0",			NOEDIT,	OBJ ) \
+	X( s, blockedRadius,						FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"blockedRadius",							"-1",			NOEDIT,	OBJ ) \
+	X( s, blockedMoveTime,						INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"blockedMoveTime",							"750",			NOEDIT,	OBJ ) \
+	X( s, blockedAttackTime,					INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"blockedAttackTime",						"750",			NOEDIT,	OBJ ) \
+	X( s, num_cinematics,						INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"num_cinematics",							"0",			NOEDIT,	OBJ ) \
+	X( s, eyeVerticalOffset,					FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"eye_verticle_offset",						"5",			NOEDIT,	OBJ ) \
+	X( s, eyeHorizontalOffset,					FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"eye_horizontal_offset",					"-8",			NOEDIT,	OBJ ) \
+	X( s, eyeFocusRate,							FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"eye_focus_rate",							"0.5",			NOEDIT,	OBJ ) \
+	X( s, headFocusRate,						FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"head_focus_rate",							"0.1",			NOEDIT,	OBJ ) \
+	X( s, useBoneAxis,							BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"useBoneAxis",								"0",			"Use the bone axis instead of the model axis.",	OBJ ) \
+	X( s, spawnClearMoveables,					BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"spawnClearMoveables",						"0",			NOEDIT,	OBJ ) \
+	X( s, persist_lifetime,						INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"persist_lifetime",							"-1",			"Set to 0 to leave no persistent corpse when the monster dies.",	KEYONLY ) \
+	X( s, talks,								BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"talks",									"0",			NOEDIT,	KEYONLY ) \
+	X( s, npc_name,								STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"npc_name",									NODEF,			"A name that allows the character to enter a conversation state.",	KEYONLY ) \
+	X( s, noDamage,								BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"noDamage",									"0",			NOEDIT,	KEYONLY ) \
+	X( s, look_min,								VEC3,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"look_min",									"-80 -75 0",	NOEDIT,	KEYONLY ) \
+	X( s, look_max,								VEC3,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"look_max",									"80 75 0",		NOEDIT,	KEYONLY ) \
+	X( s, eye_turn_min,							VEC3,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"eye_turn_min",								"-10 -30 0",	NOEDIT,	KEYONLY ) \
+	X( s, eye_turn_max,							VEC3,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"eye_turn_max",								"10 30 0",		NOEDIT,	KEYONLY ) \
+	X( s, focus_align_time,						FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"focus_align_time",							"1",			NOEDIT,	KEYONLY ) \
+	X( s, bone_focus,							STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"bone_focus",								"",				NOEDIT,	KEYONLY ) \
+	X( s, bone_orientation,						STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"bone_orientation",							"",				"Joint whose axis defines the orientation used for looking.",	KEYONLY ) \
+	X( s, bone_flytilt,							STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"bone_flytilt",								"",				"Joint to tilt with the flying monster's pitch and roll.",	KEYONLY ) \
+	X( s, mass,									FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"mass",										"100",			NOEDIT,	KEYONLY ) \
+	X( s, big_monster,							BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"big_monster",								"0",			"Make the monster's bounding box nonsolid to other monsters.",	KEYONLY ) \
+	X( s, gravityDir,							VEC3,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"gravityDir",								"0 0 -1",		NOEDIT,	KEYONLY ) \
+	X( s, def_projectile,						STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"def_projectile",							"",				NOEDIT,	KEYONLY ) \
+	X( s, teleport,								BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"teleport",									"0",			NOEDIT,	KEYONLY ) \
+	X( s, trigger_anim,							BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"trigger_anim",								"0",			NOEDIT,	KEYONLY ) \
+	X( s, mtr_flashShader,						STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"mtr_flashShader",							"muzzleflash",	NOEDIT,	KEYONLY ) \
+	X( s, flashColor,							VEC3,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"flashColor",								"0 0 0",		NOEDIT,	KEYONLY ) \
+	X( s, flashRadius,							FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"flashRadius",								"0",			NOEDIT,	KEYONLY ) \
+	X( s, flashTime,							FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"flashTime",								"0.25",			NOEDIT,	KEYONLY ) \
+	X( s, use_aas,								STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"use_aas",									NODEF,			NOEDIT,	KEYONLY ) \
+	X( s, model_death,							STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"model_death",								"",				"Model to use when the monster dies.",	KEYONLY ) \
+	X( s, harvest_on_death,						BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"harvest_on_death",							"0",			"Spawn a harvestable entity when the monster dies.",	KEYONLY ) \
+	X( s, def_harvest_type,						STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"def_harvest_type",							"",				"Entity definition to spawn for harvesting when the monster dies.",	KEYONLY ) \
+	X( s, cinematic_no_hide,					BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"cinematic_no_hide",						"0",			NOEDIT,	KEYONLY ) \
+	X( s, catchup_speed,						FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"catchup_speed",							"0",			NOEDIT,	KEYONLY ) \
+	X( s, catchup_maxNodes,						INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"catchup_maxNodes",							"64",			NOEDIT,	KEYONLY ) \
+	X( s, attack_accuracy,						FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"attack_accuracy",							"7",			NOEDIT,	KEYONLY ) \
+	X( s, attack_cone,							FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"attack_cone",								"70",			NOEDIT,	KEYONLY ) \
+	X( s, projectile_spread,					FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"projectile_spread",						"0",			NOEDIT,	KEYONLY ) \
+	X( s, num_projectiles,						INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"num_projectiles",							"1",			NOEDIT,	KEYONLY ) \
+	X( s, forceMuzzle,							BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"forceMuzzle",								"0",			"Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds.",	KEYONLY ) \
+	X( s, snd_chatter_combat,					STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"snd_chatter_combat",						NODEF,			NOEDIT,	KEYONLY ) \
+	X( s, chatter_combat_min,					FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"chatter_combat_min",						"5",			NOEDIT,	KEYONLY ) \
+	X( s, chatter_combat_max,					FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"chatter_combat_max",						"10",			NOEDIT,	KEYONLY ) \
+	X( s, no_idle_chatter,						BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"no_idle_chatter",							"0",			NOEDIT,	KEYONLY ) \
+	X( s, snd_chatter,							STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"snd_chatter",								NODEF,			NOEDIT,	KEYONLY ) \
+	X( s, chatter_min,							FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"chatter_min",								"5",			NOEDIT,	KEYONLY ) \
+	X( s, chatter_max,							FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"chatter_max",								"10",			NOEDIT,	KEYONLY )
 
 class idAI : public idActor
 {
@@ -321,7 +391,7 @@ public:
 	//puncho start - P2b.1.2: the map record
 	enum
 	{
-		AI_RECORD_SCHEMA( SCHEMA_RECORD_INDEX, _ )
+		AI_SCHEMA( SCHEMA_RECORD_INDEX, _ )
 		AI_RECORD_FIELDS
 	};
 	compile_time_assert( AI_RECORD_FIELDS <= 64 );
@@ -881,6 +951,18 @@ protected:
 	void					Event_GetEmitter( const char* name );
 	void					Event_StopEmitter( const char* name );
 };
+
+//puncho - P2b.2.5c: idCombatNode's spawn rows (K2), Spawn only (Save and Restore stay hand-written): the keyed members
+// Spawn reads through one SCHEMA_SPAWN, and KEYONLY the locals height and fov and the late use_once (Event_MarkUsed);
+// every key is documented by its def's editor_* lines, so every row is NOEDIT (ACTOR_SCHEMA's rule)
+#define COMBAT_NODE_SCHEMA( X, s ) \
+	X( s, min_dist,		FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"min",			"0",		NOEDIT,	OBJ ) \
+	X( s, max_dist,		FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"max",			"0",		NOEDIT,	OBJ ) \
+	X( s, offset,		VEC3,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"offset",		"0 0 0",	NOEDIT,	OBJ ) \
+	X( s, disabled,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"start_off",	"0",		NOEDIT,	OBJ ) \
+	X( s, height,		FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"height",		"0",		NOEDIT,	KEYONLY ) \
+	X( s, fov,			FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"fov",			"60",		NOEDIT,	KEYONLY ) \
+	X( s, use_once,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"use_once",		"0",		NOEDIT,	KEYONLY )
 
 class idCombatNode : public idEntity
 {

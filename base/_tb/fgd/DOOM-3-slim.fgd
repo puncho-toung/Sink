@@ -1836,6 +1836,57 @@
 		0 : "No"
 		1 : "Yes"
 	]
+	finalBoss(choices) : "Restricts damage to the Soul Cube for the Cyberdemon and the helltime killer for the Helltime Hunter." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	def_head(string) : "Model to use for the separate head attached to head_joint."
+	head_joint(string) : "Joint to attach the separate head to."
+	skin_head_xray(string) : "Skin used for the separate head when viewed through x-ray."
+	lights_off(choices) : "Keep attached lights off when the actor is shown." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	velocityTime(integer) : "Milliseconds of animation motion used to initialize ragdoll velocity." : 0
+	gib(choices) : "Allow the actor to gib when killed below -20 health by damage that allows gibbing." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	snd_footstep(string) : "Fallback footstep sound when no sound is set for the surface type."
+	fly_seek_scale(float) : "Scale on the steering velocity toward the flying goal." : 4
+	fly_roll_scale(float) : "Scale on sideways velocity when calculating flight roll." : 90
+	fly_roll_max(float) : "Maximum flight roll angle in degrees." : 60
+	fly_pitch_scale(float) : "Scale on vertical velocity when calculating flight pitch." : 45
+	fly_pitch_max(float) : "Maximum flight pitch angle in degrees." : 30
+	useBoneAxis(choices) : "Use the bone axis instead of the model axis." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	persist_lifetime(integer) : "Set to 0 to leave no persistent corpse when the monster dies." : -1
+	npc_name(string) : "A name that allows the character to enter a conversation state."
+	bone_orientation(string) : "Joint whose axis defines the orientation used for looking."
+	bone_flytilt(string) : "Joint to tilt with the flying monster's pitch and roll."
+	big_monster(choices) : "Make the monster's bounding box nonsolid to other monsters." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	model_death(string) : "Model to use when the monster dies."
+	harvest_on_death(choices) : "Spawn a harvestable entity when the monster dies." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
+	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass base(monster_zsec_machinegun) model({ "path": "_tb/models/md5/monsters/zombies/zsec_machinegun/zsecmachinegun.obj" }) = character_soldier_machinegun
@@ -6458,6 +6509,57 @@ Use it to place all kinds of models"
 	dormant_radius(float) : "Distance from the nearest player past which the monster sleeps, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
 	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) an awake monster must be before it sleeps again." : 1024
 	dormant_engagedScale(float) : "Scale on the radius (the def's, or the world's at g_dormantDistanceFirst 1) and dormant_hysteresis while the monster has a living enemy." : 2
+	finalBoss(choices) : "Restricts damage to the Soul Cube for the Cyberdemon and the helltime killer for the Helltime Hunter." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	def_head(string) : "Model to use for the separate head attached to head_joint."
+	head_joint(string) : "Joint to attach the separate head to."
+	skin_head_xray(string) : "Skin used for the separate head when viewed through x-ray."
+	lights_off(choices) : "Keep attached lights off when the actor is shown." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	velocityTime(integer) : "Milliseconds of animation motion used to initialize ragdoll velocity." : 0
+	gib(choices) : "Allow the actor to gib when killed below -20 health by damage that allows gibbing." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	snd_footstep(string) : "Fallback footstep sound when no sound is set for the surface type."
+	fly_seek_scale(float) : "Scale on the steering velocity toward the flying goal." : 4
+	fly_roll_scale(float) : "Scale on sideways velocity when calculating flight roll." : 90
+	fly_roll_max(float) : "Maximum flight roll angle in degrees." : 60
+	fly_pitch_scale(float) : "Scale on vertical velocity when calculating flight pitch." : 45
+	fly_pitch_max(float) : "Maximum flight pitch angle in degrees." : 30
+	useBoneAxis(choices) : "Use the bone axis instead of the model axis." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	persist_lifetime(integer) : "Set to 0 to leave no persistent corpse when the monster dies." : -1
+	npc_name(string) : "A name that allows the character to enter a conversation state."
+	bone_orientation(string) : "Joint whose axis defines the orientation used for looking."
+	bone_flytilt(string) : "Joint to tilt with the flying monster's pitch and roll."
+	big_monster(choices) : "Make the monster's bounding box nonsolid to other monsters." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	model_death(string) : "Model to use when the monster dies."
+	harvest_on_death(choices) : "Spawn a harvestable entity when the monster dies." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
+	def_harvest_type(string) : "Entity definition to spawn for harvesting when the monster dies."
+	forceMuzzle(choices) : "Keep the projectile at the muzzle instead of adjusting it from inside the monster bounds." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 ]
 
 @PointClass base(monster_default) size(-24 -24 0, 24 24 68) model({ "path": "_tb/models/md5/monsters/archvile/archvile.obj" }) = monster_demon_archvile : "Target 1 or more monsters to act as minions.  Minions will remain hidden until they are spawned in by the archvile."

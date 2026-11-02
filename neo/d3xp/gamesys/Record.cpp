@@ -723,7 +723,7 @@ recordDump prints. A list's names come from its own rows (SCHEMA_RECORD_NAME), s
 static const char* const entityRecordNames[] = { ENTITY_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
 static const char* const moverBinaryRecordNames[] = { MOVER_BINARY_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
 static const char* const damagableRecordNames[] = { DAMAGABLE_RECORD_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
-static const char* const aiRecordNames[] = { AI_RECORD_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
+static const char* const aiRecordNames[] = { AI_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
 static const char* const elevatorRecordNames[] = { ELEVATOR_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
 verify_array_size( entityRecordNames, idEntity::ENTITY_RECORD_FIELDS );
 verify_array_size( moverBinaryRecordNames, idMover_Binary::MOVER_BINARY_RECORD_FIELDS );

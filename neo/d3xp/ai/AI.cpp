@@ -821,7 +821,7 @@ idAI::Spawn
 */
 void idAI::Spawn()
 {
-	if( worldStore.IsActive() && g_corpses.GetBool() && spawnArgs.GetInt( "persist_lifetime", "-1" ) != 0 )
+	if( worldStore.IsActive() && g_corpses.GetBool() && spawnArgs.GetInt( "persist_lifetime", "-1" ) != 0 )	// HAND: tested in place
 	{
 		spawnArgs.SetFloat( "burnaway", 0.0f );
 	}
@@ -840,32 +840,18 @@ void idAI::Spawn()
 		return;
 	}
 
-	spawnArgs.GetInt(	"team",					"1",		team );
-	spawnArgs.GetInt(	"rank",					"0",		rank );
+	//puncho - P2b.2.5c: AI_SCHEMA's keyed rows (AI.h), read where team was, after the g_monsters early return
+	AI_SCHEMA( SCHEMA_SPAWN, ( *this ) )
 	ReadSquadRole();	//puncho - ai-avoidance (WP-A6/A7): the role from the def and the ai_squad marker
-	spawnArgs.GetInt(	"fly_offset",			"0",		fly_offset );
-	spawnArgs.GetFloat( "fly_speed",			"100",		fly_speed );
-	spawnArgs.GetFloat( "fly_bob_strength",		"50",		fly_bob_strength );
-	spawnArgs.GetFloat( "fly_bob_vert",			"2",		fly_bob_horz );
-	spawnArgs.GetFloat( "fly_bob_horz",			"2.7",		fly_bob_vert );
-	spawnArgs.GetFloat( "fly_seek_scale",		"4",		fly_seek_scale );
-	spawnArgs.GetFloat( "fly_roll_scale",		"90",		fly_roll_scale );
-	spawnArgs.GetFloat( "fly_roll_max",			"60",		fly_roll_max );
-	spawnArgs.GetFloat( "fly_pitch_scale",		"45",		fly_pitch_scale );
-	spawnArgs.GetFloat( "fly_pitch_max",		"30",		fly_pitch_max );
 
-	spawnArgs.GetFloat( "melee_range",			"64",		melee_range );
-	spawnArgs.GetFloat( "projectile_height_to_distance_ratio",	"1", projectile_height_to_distance_ratio );
 	//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §B): the test mask of canHitEnemyFromAnim, boxes
 	// by default, non-zero the stock mesh test; the launch aims against meshes either way
 	//puncho - ai-combat (plans/ai-combat/07-REVIEW-c8.md m3): ReadCombatLevers is the one read; a GetBool here read "0.5" as false, the lever as true
 	ReadCombatLevers();	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §C): the ai_squad marker's fire_near_friends, when the marker sets it, wins over the def key; the accuracy scale likewise
 	//puncho end
 
-	spawnArgs.GetFloat( "turn_rate",			"360",		turnRate );
-
-	spawnArgs.GetBool( "talks",					"0",		talks );
-	if( spawnArgs.GetString( "npc_name", NULL ) != NULL )
+	spawnArgs.GetBool( "talks",					"0",		talks );	// HAND: a local
+	if( spawnArgs.GetString( "npc_name", NULL ) != NULL )	// HAND: tested in place
 	{
 		if( talks )
 		{
@@ -881,20 +867,11 @@ void idAI::Spawn()
 		talk_state = TALK_NEVER;
 	}
 
-	spawnArgs.GetBool( "animate_z",				"0",		disableGravity );
-	spawnArgs.GetBool( "af_push_moveables",		"0",		af_push_moveables );
-	spawnArgs.GetFloat( "kick_force",			"4096",		kickForce );
-	spawnArgs.GetBool( "ignore_obstacles",		"0",		ignore_obstacles );
-	spawnArgs.GetFloat( "blockedRadius",		"-1",		blockedRadius );
-	spawnArgs.GetInt( "blockedMoveTime",		"750",		blockedMoveTime );
-	spawnArgs.GetInt( "blockedAttackTime",		"750",		blockedAttackTime );
-
-	spawnArgs.GetInt(	"num_cinematics",		"0",		num_cinematics );
 	current_cinematic = 0;
 
 	LinkScriptVariables();
 
-	fl.takedamage		= !spawnArgs.GetBool( "noDamage" );
+	fl.takedamage		= !spawnArgs.GetBool( "noDamage" );	// HAND: fl bitfield
 	enemy				= NULL;
 	allowMove			= true;
 	allowHiddenMovement = false;
@@ -904,12 +881,12 @@ void idAI::Spawn()
 	// create combat collision hull for exact collision detection
 	SetCombatModel();
 
-	lookMin	= spawnArgs.GetAngles( "look_min", "-80 -75 0" );
-	lookMax	= spawnArgs.GetAngles( "look_max", "80 75 0" );
+	lookMin	= spawnArgs.GetAngles( "look_min", "-80 -75 0" );	// HAND: idAngles has no schema read
+	lookMax	= spawnArgs.GetAngles( "look_max", "80 75 0" );	// HAND: idAngles has no schema read
 
 	lookJoints.SetGranularity( 1 );
 	lookJointAngles.SetGranularity( 1 );
-	kv = spawnArgs.MatchPrefix( "look_joint", NULL );
+	kv = spawnArgs.MatchPrefix( "look_joint", NULL );	// HAND: prefix
 	while( kv )
 	{
 		jointName = kv->GetKey();
@@ -939,19 +916,15 @@ void idAI::Spawn()
 				lookJointAngles.Append( jointScale );
 			}
 		}
-		kv = spawnArgs.MatchPrefix( "look_joint", kv );
+		kv = spawnArgs.MatchPrefix( "look_joint", kv );	// HAND: prefix
 	}
 
 	// calculate joint positions on attack frames so we can do proper "can hit" tests
 	CalculateAttackOffsets();
 
-	eyeMin				= spawnArgs.GetAngles( "eye_turn_min", "-10 -30 0" );
-	eyeMax				= spawnArgs.GetAngles( "eye_turn_max", "10 30 0" );
-	eyeVerticalOffset	= spawnArgs.GetFloat( "eye_verticle_offset", "5" );
-	eyeHorizontalOffset = spawnArgs.GetFloat( "eye_horizontal_offset", "-8" );
-	eyeFocusRate		= spawnArgs.GetFloat( "eye_focus_rate", "0.5" );
-	headFocusRate		= spawnArgs.GetFloat( "head_focus_rate", "0.1" );
-	focusAlignTime		= SEC2MS( spawnArgs.GetFloat( "focus_align_time", "1" ) );
+	eyeMin				= spawnArgs.GetAngles( "eye_turn_min", "-10 -30 0" );	// HAND: idAngles has no schema read
+	eyeMax				= spawnArgs.GetAngles( "eye_turn_max", "10 30 0" );	// HAND: idAngles has no schema read
+	focusAlignTime		= SEC2MS( spawnArgs.GetFloat( "focus_align_time", "1" ) );	// HAND: derived: SEC2MS
 
 	flashJointWorld = animator.GetJointHandle( "flash" );
 
@@ -959,7 +932,7 @@ void idAI::Spawn()
 	{
 		idAnimator* headAnimator = head.GetEntity()->GetAnimator();
 
-		jointname = spawnArgs.GetString( "bone_focus" );
+		jointname = spawnArgs.GetString( "bone_focus" );	// HAND: a local
 		if( *jointname )
 		{
 			focusJoint = headAnimator->GetJointHandle( jointname );
@@ -971,7 +944,7 @@ void idAI::Spawn()
 	}
 	else
 	{
-		jointname = spawnArgs.GetString( "bone_focus" );
+		jointname = spawnArgs.GetString( "bone_focus" );	// HAND: a local
 		if( *jointname )
 		{
 			focusJoint = animator.GetJointHandle( jointname );
@@ -982,7 +955,7 @@ void idAI::Spawn()
 		}
 	}
 
-	jointname = spawnArgs.GetString( "bone_orientation" );
+	jointname = spawnArgs.GetString( "bone_orientation" );	// HAND: a local
 	if( *jointname )
 	{
 		orientationJoint = animator.GetJointHandle( jointname );
@@ -992,7 +965,7 @@ void idAI::Spawn()
 		}
 	}
 
-	jointname = spawnArgs.GetString( "bone_flytilt" );
+	jointname = spawnArgs.GetString( "bone_flytilt" );	// HAND: a local
 	if( *jointname )
 	{
 		flyTiltJoint = animator.GetJointHandle( jointname );
@@ -1006,9 +979,9 @@ void idAI::Spawn()
 
 	physicsObj.SetSelf( this );
 	physicsObj.SetClipModel( new( TAG_PHYSICS_CLIP_ENTITY ) idClipModel( GetPhysics()->GetClipModel() ), 1.0f );
-	physicsObj.SetMass( spawnArgs.GetFloat( "mass", "100" ) );
+	physicsObj.SetMass( spawnArgs.GetFloat( "mass", "100" ) );	// HAND: an argument
 
-	if( spawnArgs.GetBool( "big_monster" ) )
+	if( spawnArgs.GetBool( "big_monster" ) )	// HAND: tested in place
 	{
 		physicsObj.SetContents( 0 );
 		physicsObj.SetClipMask( MASK_MONSTERSOLID & ~CONTENTS_BODY );
@@ -1036,7 +1009,7 @@ void idAI::Spawn()
 	}
 	else
 	{
-		idVec3 gravity = spawnArgs.GetVector( "gravityDir", "0 0 -1" );
+		idVec3 gravity = spawnArgs.GetVector( "gravityDir", "0 0 -1" );	// HAND: a local
 		gravity *= g_gravity.GetFloat();
 		physicsObj.SetGravity( gravity );
 	}
@@ -1055,7 +1028,7 @@ void idAI::Spawn()
 	projectileDef	= NULL;
 	projectileClipModel	= NULL;
 	idStr projectileName;
-	if( spawnArgs.GetString( "def_projectile", "", projectileName ) && projectileName.Length() )
+	if( spawnArgs.GetString( "def_projectile", "", projectileName ) && projectileName.Length() )	// HAND: a local
 	{
 		projectileDef = gameLocal.FindEntityDefDict( projectileName );
 		CreateProjectile( vec3_origin, viewAxis[ 0 ] );
@@ -1069,10 +1042,9 @@ void idAI::Spawn()
 
 	particles.Clear();
 	restartParticles = true;
-	useBoneAxis = spawnArgs.GetBool( "useBoneAxis" );
 	SpawnParticles( "smokeParticleSystem" );
 
-	if( num_cinematics || spawnArgs.GetBool( "hide" ) || spawnArgs.GetBool( "teleport" ) || spawnArgs.GetBool( "trigger_anim" ) )
+	if( num_cinematics || spawnArgs.GetBool( "hide" ) || spawnArgs.GetBool( "teleport" ) || spawnArgs.GetBool( "trigger_anim" ) )	// HAND: tested in place
 	{
 		fl.takedamage = false;
 		physicsObj.SetContents( 0 );
@@ -1104,9 +1076,6 @@ void idAI::Spawn()
 
 	// init the move variables
 	StopMove( MOVE_STATUS_DONE );
-
-
-	spawnArgs.GetBool( "spawnClearMoveables", "0", spawnClearMoveables );
 }
 
 
@@ -6670,6 +6639,8 @@ EVENT( EV_CombatNode_MarkUsed,				idCombatNode::Event_MarkUsed )
 EVENT( EV_Activate,							idCombatNode::Event_Activate )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idCombatNode, COMBAT_NODE_SCHEMA )	//puncho - P2b.2.5c: the FGD's rows and the row checks (Schema.h)
+
 /*
 =====================
 idCombatNode::idCombatNode
@@ -6735,11 +6706,9 @@ void idCombatNode::Spawn()
 	float yaw;
 	float height;
 
-	min_dist = spawnArgs.GetFloat( "min" );
-	max_dist = spawnArgs.GetFloat( "max" );
-	height = spawnArgs.GetFloat( "height" );
-	fov = spawnArgs.GetFloat( "fov", "60" );
-	offset = spawnArgs.GetVector( "offset" );
+	COMBAT_NODE_SCHEMA( SCHEMA_SPAWN, ( *this ) )	//puncho - P2b.2.5c: the keyed rows (AI.h), read where min_dist was
+	height = spawnArgs.GetFloat( "height" );	// HAND: a local
+	fov = spawnArgs.GetFloat( "fov", "60" );	// HAND: a local
 
 	const idVec3& org = GetPhysics()->GetOrigin() + offset;
 	min_height = org.z - height * 0.5f;
@@ -6753,8 +6722,6 @@ void idCombatNode::Spawn()
 
 	idAngles rightang( 0.0f, yaw - fov * 0.5f + 90.0f, 0.0f );
 	cone_right = rightang.ToForward();
-
-	disabled = spawnArgs.GetBool( "start_off" );
 }
 
 /*
@@ -6946,7 +6913,7 @@ void idAI::Event_SettleCorpse()
 	Event_PersistCorpse();
 }
 
-//puncho start - P2b.1.2: idAI's map record section (AI_RECORD_SCHEMA): the store's corpse rule. An AI that died in play
+//puncho start - P2b.1.2: idAI's map record section (AI_SCHEMA): the store's corpse rule. An AI that died in play
 // never comes back as an AI with health <= 0: it records as the corpse it leaves, or as REMOVED when it leaves none
 // (corpses off, gibbed, persist_lifetime 0). A departure can precede the settle event, so the pose is taken from the AI
 // itself (idCorpse::WriteActorPose), at the origin the AI stands at.
@@ -6963,8 +6930,8 @@ void idAI::WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const
 	}
 	idActor::WriteRecord( rec, frame );
 	rec.BeginSection( RECORD_SECTION_AI, RECORD_VERSION_AI );
-	AI_RECORD_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
-	AI_RECORD_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
+	AI_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
+	AI_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
 	rec.EndSection();
 }
 

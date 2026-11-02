@@ -299,7 +299,7 @@ void idCorpse::WritePose( idFile* out ) const
 	out->Write( poseBytes.Ptr(), poseBytes.Num() );
 }
 
-//puncho start - P2b.1.2: the map record of a corpse (idEntity's section and AI_RECORD_SCHEMA's)
+//puncho start - P2b.1.2: the map record of a corpse (idEntity's section and AI_SCHEMA's)
 
 /*
 ================
@@ -399,8 +399,8 @@ void idCorpse::WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const
 	}
 	idAFEntity_Base::WriteRecord( rec, frame );
 	rec.BeginSection( RECORD_SECTION_AI, RECORD_VERSION_AI );
-	AI_RECORD_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
-	AI_RECORD_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
+	AI_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
+	AI_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
 	rec.EndSection();
 }
 
@@ -411,14 +411,14 @@ recordApply_t idCorpse::ApplyRecord( idRecordIn& rec, const recordFrame_t& frame
 	{
 		return result;
 	}
-	AI_RECORD_SCHEMA( SCHEMA_RECORD_READ, ( *this ) )
+	AI_SCHEMA( SCHEMA_RECORD_READ, ( *this ) )
 	rec.EndSection();
 	return rec.good ? RECORD_APPLIED : RECORD_INVALID;
 }
 
 bool idCorpse::CheckRecordSection( idRecordIn& rec )
 {
-	AI_RECORD_SCHEMA( SCHEMA_RECORD_CHECK, idCorpse )
+	AI_SCHEMA( SCHEMA_RECORD_CHECK, idCorpse )
 	return rec.good;
 }
 

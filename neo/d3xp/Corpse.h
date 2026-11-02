@@ -25,12 +25,12 @@ public:
 	{
 		return deathTime;
 	}
-	//puncho start - P2b.1.2: the map record. A corpse writes idEntity's section and the AI's (AI_RECORD_SCHEMA, whose
+	//puncho start - P2b.1.2: the map record. A corpse writes idEntity's section and the AI's (AI_SCHEMA's R rows, whose
 	// RF_ bits it numbers in its own scope), and is the class that applies and checks the AI's: the store builds a
 	// corpse for an entry holding Corpse
 	enum
 	{
-		AI_RECORD_SCHEMA( SCHEMA_RECORD_INDEX, _ )
+		AI_SCHEMA( SCHEMA_RECORD_INDEX, _ )
 		CORPSE_RECORD_FIELDS
 	};
 	compile_time_assert( ( int )CORPSE_RECORD_FIELDS == ( int )idAI::AI_RECORD_FIELDS );

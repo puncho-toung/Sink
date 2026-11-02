@@ -152,6 +152,8 @@ EVENT( EV_Player_ToggleBloom,			idPlayer::Event_ToggleBloom )
 EVENT( EV_Player_SetBloomParms,			idPlayer::Event_SetBloomParms )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idPlayer, PLAYER_SCHEMA )	//puncho - P2b.2.5c: the FGD's rows and the row checks (Schema.h)
+
 const int MAX_RESPAWN_TIME = 10000;
 const int RAGDOLL_DEATH_TIME = 3000;
 const int MAX_PDAS = 64;
@@ -2034,7 +2036,7 @@ void idPlayer::Spawn()
 	// set our collision model
 	physicsObj.SetSelf( this );
 	SetClipModel();
-	physicsObj.SetMass( spawnArgs.GetFloat( "mass", "100" ) );
+	physicsObj.SetMass( spawnArgs.GetFloat( "mass", "100" ) );	// HAND: an argument
 	physicsObj.SetContents( CONTENTS_BODY );
 	physicsObj.SetClipMask( MASK_PLAYERSOLID );
 	SetPhysics( &physicsObj );
@@ -2055,7 +2057,7 @@ void idPlayer::Spawn()
 		}
 
 		// load cursor
-		if( spawnArgs.GetString( "cursor", "", temp ) )
+		if( spawnArgs.GetString( "cursor", "", temp ) )	// HAND: a local
 		{
 			cursor = uiManager->FindGui( temp, true, common->IsMultiplayer(), common->IsMultiplayer() );
 		}
@@ -2169,7 +2171,7 @@ void idPlayer::Spawn()
 		GetPDA()->SetSecurity( idLocalization::GetString( "#str_00066" ) );
 	}
 
-	if( gameLocal.world->spawnArgs.GetBool( "no_Weapons" ) )
+	if( gameLocal.world->spawnArgs.GetBool( "no_Weapons" ) )	// HAND: worldspawn's key
 	{
 		hiddenWeapon = true;
 		if( weapon.GetEntity() )
@@ -2198,7 +2200,7 @@ void idPlayer::Spawn()
 
 	if( !common->IsMultiplayer() )
 	{
-		int startingHealth = gameLocal.world->spawnArgs.GetInt( "startingHealth", health );
+		int startingHealth = gameLocal.world->spawnArgs.GetInt( "startingHealth", health );	// HAND: worldspawn's key
 		if( health > startingHealth )
 		{
 			health = startingHealth;
@@ -2227,7 +2229,7 @@ void idPlayer::Spawn()
 
 	//Setup the weapon toggle lists
 	const idKeyValue* kv;
-	kv = spawnArgs.MatchPrefix( "weapontoggle", NULL );
+	kv = spawnArgs.MatchPrefix( "weapontoggle", NULL );	// HAND: prefix
 	while( kv )
 	{
 		WeaponToggle_t newToggle;
@@ -2253,7 +2255,7 @@ void idPlayer::Spawn()
 		newToggle.lastUsed = 0;
 		weaponToggles.Set( newToggle.name, newToggle );
 
-		kv = spawnArgs.MatchPrefix( "weapontoggle", kv );
+		kv = spawnArgs.MatchPrefix( "weapontoggle", kv );	// HAND: prefix
 	}
 
 	if( g_skill.GetInteger() >= 3 || cvarSystem->GetCVarBool( "fs_buildresources" ) )
