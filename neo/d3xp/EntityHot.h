@@ -54,6 +54,9 @@ If you have questions concerning this license or the applicable additional terms
 			(activeIndex), maintained only while g_entityTable is latched 1 or g_entityTableVerify is set: an append
 			tombstones the entity's old entry first, a full array compacts in place, and a sort, a prune or the latch's
 			edges rebuild it from the list. The rule is plans/map-graph/math-2b/S2b-2/core/ActiveMirror.cpp, frozen.
+			With g_entityTable and g_entityPassWalks latched (walksOn), RunFrame's think walks, RunTimeGroup2 and
+			RunSharedThink go over it instead of the list (P2b.2.2a): the same entities in the same order, each row's
+			bits read before its entity.
 	cell	the cell the entity is in and the cell it spawned from (C1's ids), its spawn ordinal there, and cellFlags.
 			Registration, unregistration and Clear write CELL_ID_NONE, CELL_ID_NONE, CELL_ORDINAL_NONE, 0, and no stage
 			2 code writes a row after: stage 4 calls SetHome at a map spawn and SetCell for the rows that move, stage
@@ -139,14 +142,17 @@ public:
 	int						spatialPasses;						// passes that ran (a consumer was registered)
 	int						spatialRows;						// rows those passes refreshed
 	int						spatialFullRows;					// rows of the last registration's full refresh
+	int						walkTG2Thinks;						// RunTimeGroup2's thinks over the mirror (P2b.2.2a)
+	int						walkSharedCalls;					// RunSharedThink's calls over the mirror: HOT_SHARED rows only
 
 	// the switches as LatchTic read them at the start of the tic; per map (Clear), never saved
 	bool					tableOn;
 	bool					verifyOn;
 	bool					activeMaintained;					// tableOn || verifyOn: the mirror follows the list
+	bool					walksOn;							// tableOn && g_entityPassWalks: the walks go over the mirror (P2b.2.2a)
 	// pads sizeof to a multiple of 64 (asserted below), not the address: gameLocal is 32-byte aligned, so entityHot, the
 	// last member of idGameLocal, and every array in it start 32 bytes into a cache line
-	byte					pad[1];
+	byte					pad[56];
 
 	// after the tail, so that adding it moved no member above
 	hotCell_t				cell[MAX_GENTITIES];
@@ -167,7 +173,7 @@ public:
 	void					SetCell( int entityNumber, uint32 cellId );
 	void					SetHome( int entityNumber, uint32 homeCellId, int cellOrdinal );
 
-	void					LatchTic( bool table, bool verify );
+	void					LatchTic( bool table, bool verify, bool walks );
 	void					SpatialPass( int numEntities );
 	void					Verify();
 

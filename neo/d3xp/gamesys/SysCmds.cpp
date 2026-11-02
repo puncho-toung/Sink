@@ -246,7 +246,7 @@ static void Cmd_ListEntityTable_f( const idCmdArgs& args )
 	const int bssBytes = sizeof( hot.think ) + sizeof( hot.spatial ) + sizeof( hot.moved ) + sizeof( hot.activeOrder ) + sizeof( hot.activeIndex )
 						 + sizeof( hot.cell );	//puncho - P2b.2.1b
 
-	gameLocal.Printf( "entityTable: g_entityTable %d verify %d (latched), mirror %s, %d spatial consumers\n", hot.tableOn, hot.verifyOn,
+	gameLocal.Printf( "entityTable: g_entityTable %d walks %d verify %d (latched), mirror %s, %d spatial consumers\n", hot.tableOn, hot.walksOn, hot.verifyOn,	//puncho - P2b.2.2a
 					  hot.activeMaintained ? "maintained" : "off", hot.spatialConsumers );
 	gameLocal.Printf( "rows: %d live, %d thinking; dormancy %d shared %d phased %d skip %d cinematic %d timeGroup2 %d\n", live, thinking,
 					  bits[0], bits[1], bits[2], bits[3], bits[4], bits[5] );
@@ -256,7 +256,8 @@ static void Cmd_ListEntityTable_f( const idCmdArgs& args )
 					  hot.spatialRows, hot.spatialPasses > 0 ? hot.spatialTicks / ticksPerUs / hot.spatialPasses : 0.0,
 					  hot.spatialRows > 0 ? hot.spatialTicks / ticksPerUs * 1000.0 / hot.spatialRows : 0.0, hot.spatialFullRows,
 					  hot.spatialFullRows > 0 ? hot.spatialFullTicks / ticksPerUs * 1000.0 / hot.spatialFullRows : 0.0 );
-	gameLocal.Printf( "counters: hotMismatch %d droppedWrites %d\n", hot.hotMismatch, hot.droppedWrites );
+	gameLocal.Printf( "counters: hotMismatch %d droppedWrites %d; walks: %d TG2 thinks, %d SharedThink calls\n", hot.hotMismatch, hot.droppedWrites,
+					  hot.walkTG2Thinks, hot.walkSharedCalls );	//puncho - P2b.2.2a
 	gameLocal.Printf( "memory: BSS %d bytes (%d a row of %d), entityHot %d bytes, sizeof( idEntity ) %d\n", bssBytes, bssBytes / MAX_GENTITIES,
 					  MAX_GENTITIES, ( int )sizeof( idEntityHot ), ( int )sizeof( idEntity ) );
 }

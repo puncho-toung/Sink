@@ -2971,6 +2971,26 @@ int idGameLocal::RunTimeGroup2( idUserCmdMgr& userCmdMgr )
 
 	SelectTimeGroup( true );
 
+	//puncho start - P2b.2.2a: over the active mirror, as RunFrame's think walk (K6); the row's TIME_GROUP2 bit first
+	if( entityHot.walksOn )
+	{
+		for( entityHot.activeCursor = 0; entityHot.activeCursor < entityHot.activeNum; entityHot.activeCursor++ )
+		{
+			const int n = entityHot.activeOrder[ entityHot.activeCursor ];
+			if( n < 0 || ( entityHot.think[ n ].bits & HOT_TIMEGROUP2 ) == 0 )
+			{
+				continue;
+			}
+			RunEntityThink( *entities[ n ], userCmdMgr );
+			num++;
+		}
+		entityHot.activeCursor = -1;
+		entityHot.walkTG2Thinks += num;
+		SelectTimeGroup( false );
+		return num;
+	}
+	//puncho end
+
 	for( ent = activeEntities.Next(); ent != NULL; ent = ent->activeNode.Next() )
 	{
 		if( ent->GetTimeGroup() != TIME_GROUP2 )
@@ -3064,6 +3084,25 @@ int idGameLocal::RunSharedThink()
 {
 	idEntity* ent;
 	int num = 0;	//puncho - P2b.0.3: g_passProfile's nShared, the calls made (a SharedThink that activates an entity appends it)
+	//puncho start - P2b.2.2a: over the active mirror (K6), calling only the rows whose class overrides SharedThink
+	// (HOT_SHARED): idClass's is empty, so a row skipped did nothing, and the count is the calls made
+	if( entityHot.walksOn )
+	{
+		for( entityHot.activeCursor = 0; entityHot.activeCursor < entityHot.activeNum; entityHot.activeCursor++ )
+		{
+			const int n = entityHot.activeOrder[ entityHot.activeCursor ];
+			if( n < 0 || ( entityHot.think[ n ].bits & HOT_SHARED ) == 0 )
+			{
+				continue;
+			}
+			entities[ n ]->SharedThink();
+			num++;
+		}
+		entityHot.activeCursor = -1;
+		entityHot.walkSharedCalls += num;
+		return num;
+	}
+	//puncho end
 	for( ent = activeEntities.Next(); ent != NULL; ent = ent->activeNode.Next() )
 	{
 		ent->SharedThink();
@@ -3349,8 +3388,8 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			GameVerify_BeginTic();
 			//puncho end
 
-			//puncho - P2b.2.1a: the hot table's switches for this tic, outside the timed passes (EntityPasses.cpp)
-			entityHot.LatchTic( g_entityTable.GetBool(), g_entityTableVerify.GetBool() );
+			//puncho - P2b.2.1a, P2b.2.2a: the hot table's switches for this tic, outside the timed passes (EntityPasses.cpp)
+			entityHot.LatchTic( g_entityTable.GetBool(), g_entityTableVerify.GetBool(), g_entityPassWalks.GetBool() );
 
 			//puncho start - P2b.0.3: a timed tic brackets the passes from here to the events
 			PassProfileBeginTic();
@@ -3405,7 +3444,76 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			//puncho end
 
 			// let entities think
-			if( g_timeentities.GetFloat() )
+			//puncho start - P2b.2.2a (plans/map-graph/stages/S2b-2-entity-tables.md K6): with g_entityTable and
+			// g_entityPassWalks latched, the three walks below go over the active mirror, in the list's order. The cursor is
+			// entityHot's, since an append inside a think can compact the mirror and move it; activeNum is read again every
+			// step, so an entity a think activates is visited as the list walk visits it; a tombstone is skipped; a row's
+			// bits are read before its entity
+			if( entityHot.walksOn )
+			{
+				num = 0;
+				if( g_timeentities.GetFloat() )
+				{
+					for( entityHot.activeCursor = 0; entityHot.activeCursor < entityHot.activeNum; entityHot.activeCursor++ )
+					{
+						const int n = entityHot.activeOrder[ entityHot.activeCursor ];
+						if( n < 0 )
+						{
+							continue;
+						}
+						ent = entities[ n ];
+						if( g_cinematic.GetBool() && inCinematic && ( entityHot.think[ n ].bits & HOT_CINEMATIC ) == 0 )
+						{
+							ent->GetPhysics()->UpdateTime( time );
+							continue;
+						}
+						timer_singlethink.Clear();
+						timer_singlethink.Start();
+						RunEntityThink( *ent, cmdMgr );
+						timer_singlethink.Stop();
+						ms = timer_singlethink.Milliseconds();
+						if( ms >= g_timeentities.GetFloat() )
+						{
+							Printf( "%d: entity '%s': %.1f ms\n", time, ent->name.c_str(), ms );
+						}
+						num++;
+					}
+				}
+				else if( inCinematic )
+				{
+					for( entityHot.activeCursor = 0; entityHot.activeCursor < entityHot.activeNum; entityHot.activeCursor++ )
+					{
+						const int n = entityHot.activeOrder[ entityHot.activeCursor ];
+						if( n < 0 )
+						{
+							continue;
+						}
+						if( g_cinematic.GetBool() && ( entityHot.think[ n ].bits & HOT_CINEMATIC ) == 0 )
+						{
+							entities[ n ]->GetPhysics()->UpdateTime( time );
+							continue;
+						}
+						RunEntityThink( *entities[ n ], cmdMgr );
+						num++;
+					}
+				}
+				else
+				{
+					for( entityHot.activeCursor = 0; entityHot.activeCursor < entityHot.activeNum; entityHot.activeCursor++ )
+					{
+						const int n = entityHot.activeOrder[ entityHot.activeCursor ];
+						if( n < 0 || ( entityHot.think[ n ].bits & HOT_TIMEGROUP2 ) != 0 )
+						{
+							continue;
+						}
+						RunEntityThink( *entities[ n ], cmdMgr );
+						num++;
+					}
+				}
+				entityHot.activeCursor = -1;
+			}
+			//puncho end
+			else if( g_timeentities.GetFloat() )	//puncho - P2b.2.2a: else the list walks, as stock
 			{
 				num = 0;
 				for( ent = activeEntities.Next(); ent != NULL; ent = ent->activeNode.Next() )

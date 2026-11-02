@@ -84,6 +84,7 @@ void idEntityHot::Clear()
 	tableOn = false;
 	verifyOn = false;
 	activeMaintained = false;
+	walksOn = false;
 	spatialConsumers = 0;
 
 	droppedWrites = 0;
@@ -96,6 +97,8 @@ void idEntityHot::Clear()
 	spatialTicks = 0.0;
 	spatialFullRows = 0;
 	spatialFullTicks = 0.0;
+	walkTG2Thinks = 0;
+	walkSharedCalls = 0;
 }
 
 /*
@@ -208,10 +211,11 @@ idEntityHot::LatchTic
 RunFrame, before SetupPlayerPVS: the switches for the tic. The mirror is rebuilt from the list on the table's 0 -> 1
 edge and on the maintenance false -> true edge (verify set while the table is 0), since nothing kept it while it was
 off. g_entityTableVerify is the spatial rows' consumer in this stage: it registers on its 0 -> 1 edge,
-which refreshes every live row once, and leaves on its 1 -> 0 edge
+which refreshes every live row once, and leaves on its 1 -> 0 edge. g_entityPassWalks counts only with the table
+(walksOn): the walks go over a mirror the latch has just made current
 ================
 */
-void idEntityHot::LatchTic( bool table, bool verify )
+void idEntityHot::LatchTic( bool table, bool verify, bool walks )
 {
 	if( ActiveLatchNeedsRebuild( tableOn, activeMaintained, table, verify ) )
 	{
@@ -239,6 +243,7 @@ void idEntityHot::LatchTic( bool table, bool verify )
 	tableOn = table;
 	verifyOn = verify;
 	activeMaintained = table || verify;
+	walksOn = table && walks;
 }
 
 /*
