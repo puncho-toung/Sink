@@ -378,6 +378,10 @@ public:
 		return move.moveCommand < NUM_NONMOVING_COMMANDS || !allowMove;
 	}
 	//puncho end
+	bool					SpawnClearMoveables() const	//puncho - P2b.2.5c: testSpawnRead's row
+	{
+		return spawnClearMoveables;
+	}
 
 	// Finds a path around dynamic obstacles.
 	static bool				FindPathAroundObstacles( const idPhysics* physics, const idAAS* aas, const idEntity* ignore, const idVec3& startPos, const idVec3& seekPos, obstaclePath_t& path );

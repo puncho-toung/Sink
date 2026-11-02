@@ -3236,6 +3236,12 @@ static void SpawnRead_TriggerFlagPlayer( const idEntity* ent, idStr& value )
 	value = va( "%d", static_cast<const idTrigger_Flag*>( ent )->Player() ? 1 : 0 );
 }
 
+// P2b.2.5c: the unsaved member batch c moves: idAI's spawnClearMoveables (Spawn's last read)
+static void SpawnRead_AISpawnClearMoveables( const idEntity* ent, idStr& value )
+{
+	value = va( "%d", static_cast<const idAI*>( ent )->SpawnClearMoveables() ? 1 : 0 );
+}
+
 typedef struct spawnReadProbe_s
 {
 	const idTypeInfo* 		type;		// the class whose Spawn writes the member; its subclasses are probed too
@@ -3268,6 +3274,7 @@ static const spawnReadProbe_t spawnReadProbe[] =
 	{ &idLight::Type,		"lightStyleFrameTime",	SpawnRead_LightLightStyleFrameTime },
 	{ &idTrigger_Flag::Type,	"team",				SpawnRead_TriggerFlagTeam },
 	{ &idTrigger_Flag::Type,	"player",			SpawnRead_TriggerFlagPlayer },
+	{ &idAI::Type,			"spawnClearMoveables",	SpawnRead_AISpawnClearMoveables },
 };
 static const int NUM_SPAWN_READ_PROBES = ARRAY_COUNT( spawnReadProbe );
 
