@@ -179,9 +179,9 @@ ID_INLINE bool idSchemaRecordChanged( const D& mapArgs, const char* key, const c
 // numbers the fields SF_<field> in an enum inside the class, NOCH rows included; only recordTest mixedlist expands it
 // yet, MD7's dirty mask will
 #define SCHEMA_INDEX( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )	SF_##n,
-//puncho start - P2b.2.3b: the spawn side (K1). SCHEMA_SPAWN is the one read per field, inside a Spawn, where the dict
-// is the bare name spawnArgs; SCHEMA_FGD a schemaKey_t row (Game.h) and SCHEMA_KEYCHECK the row's checks, both expanded
-// by CLASS_SCHEMA_KEYS (below)
+//puncho start - P2b.2.3b: the spawn side (K1). SCHEMA_SPAWN is the one read per field, inside a Spawn (or
+// idEntity::Restore's dormancy slice), where the dict is the bare name spawnArgs; SCHEMA_FGD a schemaKey_t row (Game.h)
+// and SCHEMA_KEYCHECK the row's checks, both expanded by CLASS_SCHEMA_KEYS (below)
 #define SCHEMA_SPAWN( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )	SCHEMA_SPAWN_##STORE( s, n, TYPE, KEY, DEFAULT )
 #define SCHEMA_FGD( s, n, TYPE, CH, ENC, ARG, BUILD, KEY, DEFAULT, EDITOR, STORE )		{ #n, KEY, DEFAULT, EDITOR, SCHEMA_FGDTYPE_##TYPE },
 // a non-keyable type has NOKEY; a DEFAULT needs a KEY; a KEYONLY row has a KEY and NOCH; a HOT row has a DEFAULT and,

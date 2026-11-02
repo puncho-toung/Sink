@@ -232,6 +232,8 @@ idLight::UpdateChangeableSpawnArgs
 void idLight::UpdateChangeableSpawnArgs( const idDict* source )
 {
 // jmarshall
+	//puncho - P2b.2.5b: these repeat LIGHT_SCHEMA's lightStyleFrameTime and lightStyle defaults (Light.h) and must stay
+	// equal to them
 	lightStyleFrameTime = spawnArgs.GetInt( "ls_frametime", "100" );
 	lightStyle = spawnArgs.GetInt( "style", -1 );
 

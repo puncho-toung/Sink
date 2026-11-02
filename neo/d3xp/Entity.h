@@ -196,10 +196,12 @@ inline void	ReadFromBitMsg( netBoolEvent_t& netEvent, const idBitMsg& msg )
 // P2b.1.2, P2b.2.5b: idEntity's one list (C6). First the map record section (Record.h, RECORD_SECTION_ENTITY): the pose,
 // the health, the visibility, a carry's motion and a created entry's bind master, every row HAND (Record<n>Changed,
 // WriteRecord<n>, ApplyRecord<n>, static CheckRecord<n>, Entity.cpp) with its byte count as ARG; R rows append only, so
-// RF_Pose through RF_Bind keep 0-4. Then the spawn rows (K2), Spawn only (Save is hand-written, with the bind and world
-// slices below): the keyed members Spawn reads through one SCHEMA_SPAWN, the dormancy slice among them, and KEYONLY the
-// keys it reads by hand (fl bitfields, the cinematic setter, locals) or reads late (Restore, InitDefaultPhysics,
-// Event_SpawnBind, Event_RestorePosition). No row has FGD text: these rows reach every class, and a text would print in
+// RF_Pose through RF_Bind keep 0-4. Then the spawn rows (K2), Spawn only (Save is hand-written, with the bind slice above
+// and the world slice below): the keyed members Spawn reads through one SCHEMA_SPAWN, the dormancy slice among them,
+// and KEYONLY the keys it reads by hand (fl bitfields, the cinematic setter, locals) or reads late (Restore,
+// InitDefaultPhysics, Event_SpawnBind, Event_RestorePosition). The rows after angle are the keys
+// idGameEdit::ParseSpawnArgsToRenderEntity and ParseSpawnArgsToRefSound read, KEYONLY with each read's default (gui2 and
+// gui3 are built by va and have no row). No row has FGD text: these rows reach every class, and a text would print in
 // every class that names no base, so the FGD keeps today's lines for these keys; the rows feed the drift, KEYCHECK and
 // listSchemaKeys
 #define ENTITY_SCHEMA( X, s ) \
@@ -230,7 +232,7 @@ inline void	ReadFromBitMsg( netBoolEvent_t& netEvent, const idBitMsg& msg )
 	X( s, minVisPixels,			FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"minVisPixels",		"0",	NOEDIT,	KEYONLY ) \
 	X( s, cullShadow,			BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"cullShadow",		"0",	NOEDIT,	KEYONLY ) \
 	X( s, lodScale,				FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"lodScale",			"1",	NOEDIT,	KEYONLY ) \
-	X( s, clipmodel,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"clipmodel",		NODEF,	NOEDIT,	KEYONLY ) \
+	X( s, clipmodel,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"clipmodel",		"",		NOEDIT,	KEYONLY ) \
 	X( s, noclipmodel,			BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"noclipmodel",		"0",	NOEDIT,	KEYONLY ) \
 	X( s, mins,					VEC3,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"mins",				NODEF,	NOEDIT,	KEYONLY ) \
 	X( s, maxs,					VEC3,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"maxs",				NODEF,	NOEDIT,	KEYONLY ) \
@@ -244,7 +246,37 @@ inline void	ReadFromBitMsg( netBoolEvent_t& netEvent, const idBitMsg& msg )
 	X( s, anim,					STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"anim",				NODEF,	NOEDIT,	KEYONLY ) \
 	X( s, origin,				VEC3,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"origin",			"0 0 0",	NOEDIT,	KEYONLY ) \
 	X( s, rotation,				STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"rotation",			"1 0 0 0 1 0 0 0 1",	NOEDIT,	KEYONLY ) \
-	X( s, angle,				FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"angle",			"0",	NOEDIT,	KEYONLY )
+	X( s, angle,				FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"angle",			"0",	NOEDIT,	KEYONLY ) \
+	X( s, skin,					STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"skin",				"",		NOEDIT,	KEYONLY ) \
+	X( s, shader,				STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"shader",			"",		NOEDIT,	KEYONLY ) \
+	X( s, angles,				VEC3,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"angles",			"0 0 0",	NOEDIT,	KEYONLY ) \
+	X( s, modelscale_vec,		VEC3,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"modelscale_vec",	"1 1 1",	NOEDIT,	KEYONLY ) \
+	X( s, modelscale,			FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"modelscale",		"1",	NOEDIT,	KEYONLY ) \
+	X( s, color,				VEC3,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"_color",			"1 1 1",	NOEDIT,	KEYONLY ) \
+	X( s, shaderParm3,			FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"shaderParm3",		"1",	NOEDIT,	KEYONLY ) \
+	X( s, shaderParm4,			FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"shaderParm4",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, shaderParm5,			FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"shaderParm5",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, shaderParm6,			FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"shaderParm6",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, shaderParm7,			FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"shaderParm7",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, shaderParm8,			FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"shaderParm8",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, shaderParm9,			FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"shaderParm9",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, shaderParm10,			FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"shaderParm10",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, shaderParm11,			FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"shaderParm11",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, noDynamicInteractions,	BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"noDynamicInteractions",	"0",	NOEDIT,	KEYONLY ) \
+	X( s, noshadows,			BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"noshadows",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, noselfshadows,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"noselfshadows",	"0",	NOEDIT,	KEYONLY ) \
+	X( s, gui,					STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"gui",				"",		NOEDIT,	KEYONLY ) \
+	X( s, s_mindistance,		FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"s_mindistance",	"0",	NOEDIT,	KEYONLY ) \
+	X( s, s_maxdistance,		FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"s_maxdistance",	"0",	NOEDIT,	KEYONLY ) \
+	X( s, s_volume,				FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"s_volume",			"0",	NOEDIT,	KEYONLY ) \
+	X( s, s_shakes,				FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"s_shakes",			"0",	NOEDIT,	KEYONLY ) \
+	X( s, s_diversity,			FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"s_diversity",		"-1",	NOEDIT,	KEYONLY ) \
+	X( s, s_waitfortrigger,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"s_waitfortrigger",	"0",	NOEDIT,	KEYONLY ) \
+	X( s, s_omni,				BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"s_omni",			"0",	NOEDIT,	KEYONLY ) \
+	X( s, s_looping,			BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"s_looping",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, s_occlusion,			BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"s_occlusion",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, s_unclamped,			BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"s_unclamped",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, s_soundClass,			INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"s_soundClass",		"0",	NOEDIT,	KEYONLY )
 //puncho end
 
 //puncho start - P2b.1.3: idEntity's world identity, saved after mpGUIState as one HAND entry (SaveWorldIdentity,

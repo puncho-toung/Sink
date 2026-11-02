@@ -7569,6 +7569,14 @@ trigger will toggle the activator on and off.  Activator will disable itself whe
 	snd_opened(string) : "looping sound for it's opened state."
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the mover stops, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) a moving mover must be before it stops again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius and dormant_hysteresis while the entity has a living enemy; a mover never has one, so it does not change the mover's radius." : 2
+	neverDormant(choices) : "If set to 1, the mover does not stop outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 	damage(float) : "Damage to inflict on entities that block the mover." : 0
 	solid(choices) : "Whether the mover is solid to other entities." : 1 =
 	[
@@ -8044,6 +8052,14 @@ Pendulum frequency is a physical constant based on the length of the beam and gr
 	snd_opened(string) : "looping sound for it's opened state."
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the mover stops, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) a moving mover must be before it stops again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius and dormant_hysteresis while the entity has a living enemy; a mover never has one, so it does not change the mover's radius." : 2
+	neverDormant(choices) : "If set to 1, the mover does not stop outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 	damage(float) : "Damage to inflict on entities that block the mover." : 0
 	solid(choices) : "Whether the mover is solid to other entities." : 1 =
 	[
@@ -8162,6 +8178,14 @@ Pendulum frequency is a physical constant based on the length of the beam and gr
 	solid(string) : "set to zero to make non-solid"
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the mover stops, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) a moving mover must be before it stops again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius and dormant_hysteresis while the entity has a living enemy; a mover never has one, so it does not change the mover's radius." : 2
+	neverDormant(choices) : "If set to 1, the mover does not stop outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 	damage(float) : "Damage to inflict on entities that block the mover." : 0
 	nopush(choices) : "Set to 1 to disable pushing objects that block the mover." : 0 =
 	[
@@ -8192,6 +8216,14 @@ Pendulum frequency is a physical constant based on the length of the beam and gr
 	]
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
+	dormant_radius(float) : "Distance from the nearest player past which the mover stops, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test." : 0
+	dormant_hysteresis(float) : "How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) a moving mover must be before it stops again." : 1024
+	dormant_engagedScale(float) : "Scale on the radius and dormant_hysteresis while the entity has a living enemy; a mover never has one, so it does not change the mover's radius." : 2
+	neverDormant(choices) : "If set to 1, the mover does not stop outside your PVS." : 0 =
+	[
+		0 : "No"
+		1 : "Yes"
+	]
 	damage(float) : "Damage to inflict on entities that block the mover." : 0
 	solid(choices) : "Whether the mover is solid to other entities." : 1 =
 	[
@@ -9578,6 +9610,7 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 	name(target_source) : "Entity name; other entities target this"
 	target(target_destination) : "Entity to trigger; target1..targetN also link"
 	clipmodel(string) : "Model to be used for collision detection."
+	skin(string) : "Skin while no player carries the flag."
 	dropToFloor(choices) : "Drop the item to the floor after it spawns." : 0 =
 	[
 		0 : "No"
@@ -9615,7 +9648,6 @@ PDA's contain vidoes, audio, e-mail, and security clearances."
 	skin_carried(string) : "Skin while a player carries the flag."
 	nugget_name(string) : "Entity def the carried flag drops as nuggets."
 	gravity(integer) : "Gravity on the flag along z." : -30
-	skin(string) : "Skin while no player carries the flag."
 	pickupDelay(integer) : "Milliseconds after a drop before the flag can be picked up again." : 500
 	clipshrink(choices) : "Shrink the clip model with an epsilon." : 0 =
 	[
@@ -23249,6 +23281,8 @@ Use keyval, keyval1, keyval2, etc.. for multiples."
 	no_Weapons(string) : "only fists and no melee attacks"
 	def_player(string) : "player def to use when spawning this world"
 	dormant_radius(float) : "World dormancy radius, read at map load: under g_dormantDistance 1 and g_dormantDistanceFirst 1 a dormancy entity whose own dormant_radius is 0 sleeps past it, times g_dormantRadiusScale. 0 turns it off, leaving the stock area test; unset, g_dormantWorldRadius (10240) decides."
+	maxVisDistScale(float) : "Scale on the maxVisDist of every entity and light in the map, applied as each spawns or is restored."
+	minVisPixelsScale(float) : "Scale on the minVisPixels of every entity and light in the map, applied as each spawns or is restored."
 ]
 
 @PointClass color(255 127 0) size(-16 -16 0, 16 16 64) model({ "path": "sprites/camera.png", "scale": 0.03125 }) = xbox_hellhole_cam : "No description"

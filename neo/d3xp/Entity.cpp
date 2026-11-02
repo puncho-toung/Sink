@@ -682,7 +682,8 @@ void idEntity::Spawn()
 		// make sure we're hidden, since a spawn function might not set it up right
 		PostEventMS( &EV_Hide, 0 );
 	}
-	SetCinematic( spawnArgs.GetBool( "cinematic", "0" ) );	//puncho - P2b.2.1a // HAND: an argument, the setter writes the think column
+	//puncho - P2b.2.1a
+	SetCinematic( spawnArgs.GetBool( "cinematic", "0" ) );	// HAND: an argument, the setter writes the think column
 
 	networkSync = spawnArgs.FindKey( "networkSync" );	// HAND: a pointer, applied only when present
 	if( networkSync )

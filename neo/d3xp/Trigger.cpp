@@ -186,27 +186,6 @@ idTrigger::Save
 */
 void idTrigger::Save( idSaveGame* savefile ) const
 {
-	TRIGGER_SCHEMA( SCHEMA_SAVE, ( *this ) )	//puncho - P2b.2.5b: the list is in Trigger.h
-}
-
-/*
-================
-idTrigger::Restore
-================
-*/
-void idTrigger::Restore( idRestoreGame* savefile )
-{
-	TRIGGER_SCHEMA( SCHEMA_RESTORE, ( *this ) )	//puncho - P2b.2.5b: the list is in Trigger.h
-}
-
-//puncho start - P2b.2.5b: TRIGGER_SCHEMA's HAND row, hand-written at its place in the list (K8): the function by name
-/*
-================
-idTrigger::SaveScriptFunction
-================
-*/
-void idTrigger::SaveScriptFunction( idSaveGame* savefile ) const
-{
 	if( scriptFunction )
 	{
 		savefile->WriteString( scriptFunction->Name() );
@@ -219,10 +198,10 @@ void idTrigger::SaveScriptFunction( idSaveGame* savefile ) const
 
 /*
 ================
-idTrigger::RestoreScriptFunction
+idTrigger::Restore
 ================
 */
-void idTrigger::RestoreScriptFunction( idRestoreGame* savefile )
+void idTrigger::Restore( idRestoreGame* savefile )
 {
 	idStr funcname;
 	savefile->ReadString( funcname );
@@ -239,7 +218,6 @@ void idTrigger::RestoreScriptFunction( idRestoreGame* savefile )
 		scriptFunction = NULL;
 	}
 }
-//puncho end
 
 /*
 ================
@@ -1139,7 +1117,7 @@ idTrigger_Hurt::Spawn
 */
 void idTrigger_Hurt::Spawn()
 {
-	TRIGGER_HURT_SCHEMA( SCHEMA_SPAWN, ( *this ) )	//puncho - P2b.2.5b: on and delay, the keyed rows (Trigger.h)
+	TRIGGER_HURT_SCHEMA( SCHEMA_SPAWN, ( *this ) )	//puncho - P2b.2.5b: the keyed rows (Trigger.h)
 	nextTime = gameLocal.time;
 	Enable();
 }
@@ -1293,7 +1271,7 @@ idTrigger_Touch::Save
 */
 void idTrigger_Touch::Save( idSaveGame* savefile )
 {
-	TRIGGER_TOUCH_SCHEMA( SCHEMA_SAVE, ( *this ) )	//puncho - P2b.2.5b: the list is in Trigger.h
+	savefile->WriteClipModel( clipModel );
 }
 
 /*
@@ -1303,30 +1281,8 @@ idTrigger_Touch::Restore
 */
 void idTrigger_Touch::Restore( idRestoreGame* savefile )
 {
-	TRIGGER_TOUCH_SCHEMA( SCHEMA_RESTORE, ( *this ) )	//puncho - P2b.2.5b: the list is in Trigger.h
-}
-
-//puncho start - P2b.2.5b: TRIGGER_TOUCH_SCHEMA's HAND row, hand-written at its place in the list (K8)
-/*
-================
-idTrigger_Touch::SaveClipModel
-================
-*/
-void idTrigger_Touch::SaveClipModel( idSaveGame* savefile ) const
-{
-	savefile->WriteClipModel( clipModel );
-}
-
-/*
-================
-idTrigger_Touch::RestoreClipModel
-================
-*/
-void idTrigger_Touch::RestoreClipModel( idRestoreGame* savefile )
-{
 	savefile->ReadClipModel( clipModel );
 }
-//puncho end
 
 /*
 ================
@@ -1456,7 +1412,7 @@ idTrigger_Flag::idTrigger_Flag()
 
 void idTrigger_Flag::Spawn()
 {
-	TRIGGER_FLAG_SCHEMA( SCHEMA_SPAWN, ( *this ) )	//puncho - P2b.2.5b: team and player, the keyed rows (Trigger.h)
+	TRIGGER_FLAG_SCHEMA( SCHEMA_SPAWN, ( *this ) )	//puncho - P2b.2.5b: the keyed rows (Trigger.h)
 
 	idStr funcname = spawnArgs.GetString( "eventflag", "" );	// HAND: a local, the event's name
 	if( funcname.Length() )

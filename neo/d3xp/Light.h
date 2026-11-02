@@ -81,7 +81,8 @@ ID_INLINE void iceLightStyleState_t::Reset()
 // health again over idEntity's read; style's getter took the int -1, the same value, and has no FGD line (the exporter
 // writes the light's style choices itself). The KEYONLY rows are the keys Spawn reads by hand (into locals, tested in
 // place) and the keys BecomeBroken and FadeIn read late, named for the key unless the key's member is a row already
-// (modelTargetKey)
+// (modelTargetKey); color drops the key's underscore. The rows after color are the keys
+// idGameEdit::ParseSpawnArgsToRenderLight reads that idEntity's list does not hold, KEYONLY with each read's default
 #define LIGHT_SCHEMA( X, s ) \
 	X( s, RenderLight,			HAND,		S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,			NODEF,	NOEDIT,	OBJ ) \
 	X( s, PrelightModel,		HAND,		S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,			NODEF,	NOEDIT,	OBJ ) \
@@ -115,7 +116,21 @@ ID_INLINE void iceLightStyleState_t::Reset()
 	X( s, def_damage,			STRING,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"def_damage",	NODEF,	"Radius damage def to apply when the light breaks.",	KEYONLY ) \
 	X( s, snd_broken,			STRING,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"snd_broken",	"",		"Sound shader to use when broken.",	KEYONLY ) \
 	X( s, mtr_broken,			STRING,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"mtr_broken",	"",		"Material to use when broken.",	KEYONLY ) \
-	X( s, _color,				VEC3,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"_color",		"1 1 1",	"Color the light fades in to.",	KEYONLY )
+	X( s, color,				VEC3,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"_color",		"1 1 1",	"Color the light fades in to.",	KEYONLY ) \
+	X( s, light_origin,			VEC3,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"light_origin",	"",		NOEDIT,	KEYONLY ) \
+	X( s, light_target,			VEC3,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"light_target",	"",		NOEDIT,	KEYONLY ) \
+	X( s, light_up,				VEC3,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"light_up",		"",		NOEDIT,	KEYONLY ) \
+	X( s, light_right,			VEC3,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"light_right",	"",		NOEDIT,	KEYONLY ) \
+	X( s, light_start,			VEC3,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"light_start",	"0 0 0",	NOEDIT,	KEYONLY ) \
+	X( s, light_end,			VEC3,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"light_end",	"",		NOEDIT,	KEYONLY ) \
+	X( s, light_center,			VEC3,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"light_center",	"0 0 0",	NOEDIT,	KEYONLY ) \
+	X( s, light_radius,			VEC3,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"light_radius",	"300 300 300",	NOEDIT,	KEYONLY ) \
+	X( s, light,				FLOAT,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"light",		"300",	NOEDIT,	KEYONLY ) \
+	X( s, light_rotation,		STRING,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"light_rotation",	"1 0 0 0 1 0 0 0 1",	NOEDIT,	KEYONLY ) \
+	X( s, light_angles,			VEC3,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"light_angles",	"0 0 0",	NOEDIT,	KEYONLY ) \
+	X( s, nospecular,			BOOL,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"nospecular",	"0",	NOEDIT,	KEYONLY ) \
+	X( s, parallel,				BOOL,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"parallel",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, texture,				STRING,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"texture",		"lights/squarelight1",	NOEDIT,	KEYONLY )
 //puncho end
 
 class idLight : public idEntity

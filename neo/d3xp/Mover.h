@@ -637,9 +637,15 @@ private:
 //puncho - P2b.2.5a: the periodic movers' spawn rows (K2), Spawn only: idMover_Periodic reads damage through one
 // SCHEMA_SPAWN; the KEYONLY rows are the keys each Spawn reads by hand (into locals or tested in place) and the keys the
 // rotater's and the riser's Event_Activate read late
+//puncho - P2b.2.5b: KEYONLY too, the dormancy keys idEntity::Spawn reads for every class, listed here because
+// idMover_Periodic::Think tests dormancy (CheckDormant)
 #define MOVER_PERIODIC_SCHEMA( X, s ) \
 	X( s, damage,		FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"damage",		"0",	"Damage to inflict on entities that block the mover.",	OBJ ) \
-	X( s, solid,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"solid",		"1",	"Whether the mover is solid to other entities.",	KEYONLY )
+	X( s, solid,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"solid",		"1",	"Whether the mover is solid to other entities.",	KEYONLY ) \
+	X( s, dormant_radius,	FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"dormant_radius",	"0",	"Distance from the nearest player past which the mover stops, with g_dormantDistance 1. Under g_dormantDistanceFirst 1 it holds in any area, and 0 takes the world radius (worldspawn dormant_radius, else g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off, leaving the stock area test). Under g_dormantDistanceFirst 0 it holds only in an area connected to a player, and 0 keeps the stock area test.",	KEYONLY ) \
+	X( s, dormant_hysteresis,	FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"dormant_hysteresis",	"1024",	"How far past the radius (the def's, or the world's at g_dormantDistanceFirst 1) a moving mover must be before it stops again.",	KEYONLY ) \
+	X( s, dormant_engagedScale,	FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"dormant_engagedScale",	"2",	"Scale on the radius and dormant_hysteresis while the entity has a living enemy; a mover never has one, so it does not change the mover's radius.",	KEYONLY ) \
+	X( s, neverDormant,	BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"neverDormant",	"0",	"If set to 1, the mover does not stop outside your PVS.",	KEYONLY )
 
 #define ROTATER_SCHEMA( X, s ) \
 	X( s, nopush,		BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"nopush",		"0",	"Set to 1 to disable pushing objects that block the mover.",	KEYONLY ) \

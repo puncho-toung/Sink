@@ -40,10 +40,9 @@ extern const idEventDef EV_Disable;
 ===============================================================================
 */
 
-//puncho - P2b.2.5b: idTrigger's list (K2): the script function saves by name, a HAND row (K8, Save<n> and Restore<n> in
-// Trigger.cpp); KEYONLY, the key Spawn looks the function up by
+//puncho - P2b.2.5b: idTrigger's list (K2) lists the keys only: KEYONLY, the key Spawn looks the script function up by;
+// Save is hand-written, saving the script function by name
 #define TRIGGER_SCHEMA( X, s ) \
-	X( s, ScriptFunction,		HAND,	S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,			NODEF,	NOEDIT,	OBJ ) \
 	X( s, call,					STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"call",			"",		"Script function to call when triggered.",	KEYONLY )
 
 class idTrigger : public idEntity
@@ -66,10 +65,6 @@ public:
 
 protected:
 	void				CallScript() const;
-	//puncho start - P2b.2.5b: TRIGGER_SCHEMA's HAND row (K8)
-	void				SaveScriptFunction( idSaveGame* savefile ) const;
-	void				RestoreScriptFunction( idRestoreGame* savefile );
-	//puncho end
 
 	void				Event_Enable();
 	void				Event_Disable();
@@ -86,14 +81,18 @@ protected:
 ===============================================================================
 */
 
-//puncho - P2b.2.5b: idTrigger_Multi's list (K2): Save and Restore expand the S rows, Spawn reads the keyed rows through
-// one SCHEMA_SPAWN (the random clamps stay after it); KEYONLY, the keys Spawn tests in place and the touch reads late
-#define TRIGGER_MULTI_SCHEMA( X, s ) \
+//puncho - P2b.2.5b: the wait rows idTrigger_Multi's and idTrigger_EntityName's lists open with, in their save order
+#define TRIGGER_WAIT_SCHEMA( X, s ) \
 	X( s, wait,					FLOAT,	S,		RAW,	0,	SCHEMA_STOCK,	"wait",			"0.5",	"Seconds between triggerings. Use '-1' to indicate one time only.",	OBJ ) \
 	X( s, random,				FLOAT,	S,		RAW,	0,	SCHEMA_STOCK,	"random",		"0",	"Wait variance. Trigger waits wait + or - random after firing targets before triggering again.",	OBJ ) \
 	X( s, delay,				FLOAT,	S,		RAW,	0,	SCHEMA_STOCK,	"delay",		"0",	"Seconds to wait before firing after triggered.",	OBJ ) \
 	X( s, random_delay,			FLOAT,	S,		RAW,	0,	SCHEMA_STOCK,	"random_delay",	"0",	"Delay variance. Trigger waits delay + or - random_delay before firing targets.",	OBJ ) \
-	X( s, nextTriggerTime,		INT,	S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,			NODEF,	NOEDIT,	OBJ ) \
+	X( s, nextTriggerTime,		INT,	S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,			NODEF,	NOEDIT,	OBJ )
+
+//puncho - P2b.2.5b: idTrigger_Multi's list (K2): Save and Restore expand the S rows, Spawn reads the keyed rows through
+// one SCHEMA_SPAWN (the random clamps stay after it); KEYONLY, the keys Spawn tests in place and the touch reads late
+#define TRIGGER_MULTI_SCHEMA( X, s ) \
+	TRIGGER_WAIT_SCHEMA( X, s ) \
 	X( s, requires,				STRING,	S,		RAW,	0,	SCHEMA_STOCK,	"requires",		"",		"Item required in players inventory to fire.",	OBJ ) \
 	X( s, removeItem,			INT,	S,		RAW,	0,	SCHEMA_STOCK,	"removeItem",	"0",	"If above item is removed from inventory when used.",	OBJ ) \
 	X( s, touchClient,			BOOL,	S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,			NODEF,	NOEDIT,	OBJ ) \
@@ -153,11 +152,7 @@ protected:
 //puncho - P2b.2.5b: idTrigger_EntityName's list (K2): Save and Restore expand the S rows, Spawn reads the keyed rows through
 // one SCHEMA_SPAWN (the random clamps and entityname's check stay after it); testPartialName reads only when present
 #define TRIGGER_ENTITYNAME_SCHEMA( X, s ) \
-	X( s, wait,					FLOAT,	S,		RAW,	0,	SCHEMA_STOCK,	"wait",			"0.5",	"Seconds between triggerings. Use '-1' to indicate one time only.",	OBJ ) \
-	X( s, random,				FLOAT,	S,		RAW,	0,	SCHEMA_STOCK,	"random",		"0",	"Wait variance. Trigger waits wait + or - random after firing targets before triggering again.",	OBJ ) \
-	X( s, delay,				FLOAT,	S,		RAW,	0,	SCHEMA_STOCK,	"delay",		"0",	"Seconds to wait before firing after triggered.",	OBJ ) \
-	X( s, random_delay,			FLOAT,	S,		RAW,	0,	SCHEMA_STOCK,	"random_delay",	"0",	"Delay variance. Trigger waits delay + or - random_delay before firing targets.",	OBJ ) \
-	X( s, nextTriggerTime,		INT,	S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,			NODEF,	NOEDIT,	OBJ ) \
+	TRIGGER_WAIT_SCHEMA( X, s ) \
 	X( s, triggerFirst,			BOOL,	S,		RAW,	0,	SCHEMA_STOCK,	"triggerFirst",	"0",	"Don't activate until triggered.",	OBJ ) \
 	X( s, entityName,			STRING,	S,		RAW,	0,	SCHEMA_STOCK,	"entityname",	"",		"Name of entity that may touch or activate the trigger.",	OBJ ) \
 	X( s, testPartialName,		BOOL,	S,		RAW,	0,	SCHEMA_STOCK,	"testPartialName",	NODEF,	"Entityname can exist in any part touching entity.",	OBJ ) \
@@ -347,10 +342,9 @@ private:
 ===============================================================================
 */
 
-//puncho - P2b.2.5b: idTrigger_Touch's list (K2): the clip model has no schema type, a HAND row (K8, Save<n> and Restore<n> in
-// Trigger.cpp); KEYONLY, the key Spawn tests in place
+//puncho - P2b.2.5b: idTrigger_Touch's list (K2) lists the keys only: KEYONLY, the key Spawn tests in place;
+// Save is hand-written for the clip model
 #define TRIGGER_TOUCH_SCHEMA( X, s ) \
-	X( s, ClipModel,			HAND,	S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,			NODEF,	NOEDIT,	OBJ ) \
 	X( s, start_on,				BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"start_on",		"0",	"Set to 1 to test for touching entities from the start.",	KEYONLY )
 
 class idTrigger_Touch : public idTrigger
@@ -376,10 +370,6 @@ public:
 private:
 	idClipModel* 		clipModel;
 
-	//puncho start - P2b.2.5b: TRIGGER_TOUCH_SCHEMA's HAND row (K8)
-	void				SaveClipModel( idSaveGame* savefile ) const;
-	void				RestoreClipModel( idRestoreGame* savefile );
-	//puncho end
 	void				Event_Trigger( idEntity* activator );
 };
 
