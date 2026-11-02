@@ -3027,6 +3027,22 @@ void idGameLocal::RunEntityThink( idEntity& ent, idUserCmdMgr& userCmdMgr )
 		// Players will always run exactly one think in singleplayer.
 		RunAllUserCmdsForPlayer( userCmdMgr, ent.entityNumber );
 	}
+	//puncho start - P2b.2.2b-i (S2b-2 K7): with the lift latched, a dormancy row's CheckDormant runs here, at the moment
+	// its Think would run it first: a sleeper's Think is not called, and an awake row's Think skips its own test
+	else if( entityHot.dormancyOn && ( entityHot.think[ ent.entityNumber ].bits & HOT_DORMANCY ) != 0 )
+	{
+		if( ent.CheckDormant() )
+		{
+			entityHot.sleepersSkipped++;
+		}
+		else
+		{
+			entityHot.dormancyCheckedFor = ent.entityNumber;
+			ent.Think();
+			entityHot.dormancyCheckedFor = -1;
+		}
+	}
+	//puncho end
 	else
 	{
 		// Non-player entities always run one think.
@@ -3050,6 +3066,20 @@ void idGameLocal::RunEntityThinkTimed( idEntity& ent, idUserCmdMgr& userCmdMgr )
 	if( ent.entityNumber < MAX_PLAYERS )
 	{
 		RunAllUserCmdsForPlayer( userCmdMgr, ent.entityNumber );
+	}
+	//puncho - P2b.2.2b-i: RunEntityThink's lifted test, inside the clock pair
+	else if( entityHot.dormancyOn && ( entityHot.think[ ent.entityNumber ].bits & HOT_DORMANCY ) != 0 )
+	{
+		if( ent.CheckDormant() )
+		{
+			entityHot.sleepersSkipped++;
+		}
+		else
+		{
+			entityHot.dormancyCheckedFor = ent.entityNumber;
+			ent.Think();
+			entityHot.dormancyCheckedFor = -1;
+		}
 	}
 	else
 	{
@@ -3388,8 +3418,8 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			GameVerify_BeginTic();
 			//puncho end
 
-			//puncho - P2b.2.1a, P2b.2.2a: the hot table's switches for this tic, outside the timed passes (EntityPasses.cpp)
-			entityHot.LatchTic( g_entityTable.GetBool(), g_entityTableVerify.GetBool(), g_entityPassWalks.GetBool() );
+			//puncho - P2b.2.1a, P2b.2.2a, P2b.2.2b-i: the hot table's switches for this tic, outside the timed passes (EntityPasses.cpp)
+			entityHot.LatchTic( g_entityTable.GetBool(), g_entityTableVerify.GetBool(), g_entityPassWalks.GetBool(), g_entityPassDormancy.GetBool() );
 
 			//puncho start - P2b.0.3: a timed tic brackets the passes from here to the events
 			PassProfileBeginTic();

@@ -712,7 +712,7 @@ public:
 	virtual void			RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& gameReturn );
 	void					RunAllUserCmdsForPlayer( idUserCmdMgr& cmdMgr, const int playerNumber );
 	void					RunSingleUserCmd( usercmd_t& cmd, idPlayer& player );
-	void					RunEntityThink( idEntity& ent, idUserCmdMgr& userCmdMgr );
+	ID_INLINE void			RunEntityThink( idEntity& ent, idUserCmdMgr& userCmdMgr );	//puncho - P2b.2.2b-i: inline, so the walks keep it inline with the lift (Game_local.cpp alone calls it)
 	PASS_NOINLINE void		RunEntityThinkTimed( idEntity& ent, idUserCmdMgr& userCmdMgr );	//puncho - P2b.0.3: the timed twin
 	virtual bool			Draw( int clientNum );
 	//puncho start - ai-harness

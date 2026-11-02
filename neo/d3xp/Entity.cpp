@@ -1638,6 +1638,14 @@ bool idEntity::CheckDormant()
 	}
 	//puncho end
 
+	//puncho start - P2b.2.2b-i: with the lift latched, a test from a row without HOT_DORMANCY is one RunEntityThink did
+	// not lift: its class opens its Think with CheckDormant but is missing from idEntityHot::ClassBits
+	if( gameLocal.entityHot.dormancyOn && ( gameLocal.entityHot.think[ entityNumber ].bits & HOT_DORMANCY ) == 0 )
+	{
+		gameLocal.entityHot.dormancyUnlifted++;
+	}
+	//puncho end
+
 	bool dormant;
 
 	const int sleepStart = dormantStart;

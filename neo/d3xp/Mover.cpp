@@ -5158,7 +5158,7 @@ idMover_Periodic::Think
 void idMover_Periodic::Think()
 {
 	// if we are completely closed off from the player, don't do anything at all
-	if( CheckDormant() )
+	if( gameLocal.entityHot.dormancyCheckedFor != entityNumber && CheckDormant() )	//puncho - P2b.2.2b-i: unless RunEntityThink's lifted test ran it
 	{
 		return;
 	}

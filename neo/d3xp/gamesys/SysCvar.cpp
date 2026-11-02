@@ -166,6 +166,7 @@ idCVar g_passProfileEvery(			"g_passProfileEvery",		"8",			CVAR_GAME | CVAR_INTE
 idCVar g_entityTable(				"g_entityTable",			"0",			CVAR_GAME | CVAR_BOOL, "1 = keep the hot table's active mirror in the active list's order; 0 = walk the active list as stock does" );
 idCVar g_entityTableVerify(			"g_entityTableVerify",		"0",			CVAR_GAME | CVAR_BOOL | CVAR_CHEAT, "compare every hot table row with its entity, and the active mirror with the list, at the end of each tic; prints the first 8 differences (listEntityTable's hotMismatch counts them all)" );
 idCVar g_entityPassWalks(			"g_entityPassWalks",		"1",			CVAR_GAME | CVAR_BOOL, "with g_entityTable 1, RunFrame's think walks, RunTimeGroup2 and RunSharedThink walk the hot table's active mirror, in the active list's order; 0 = they walk the active list (bisection)" );	//puncho - P2b.2.2a
+idCVar g_entityPassDormancy(		"g_entityPassDormancy",		"1",			CVAR_GAME | CVAR_BOOL, "with g_entityTable 1, RunEntityThink runs CheckDormant for the dormancy classes (idAI, idFuncSmoke, idPhantomObjects, idMover_Periodic) before their Think and does not call a sleeper's Think; 0 = each Think tests dormancy first, as stock (bisection)" );	//puncho - P2b.2.2b-i
 //puncho end
 //puncho start - ai-combat (plans/ai-combat/00-PLAN.md §2.7): host-side measurement; not archived, synced or cheat-flagged
 idCVar ai_benchSeed(				"ai_benchSeed",				"0",			CVAR_GAME | CVAR_INTEGER, "seed of the game's random number generator at map load in single player; 0 = stock (0); multiplayer keeps the server's seed" );

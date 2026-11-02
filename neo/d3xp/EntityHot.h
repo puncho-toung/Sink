@@ -46,6 +46,9 @@ If you have questions concerning this license or the applicable additional terms
 			(BOTH): idEntity's readers read the member, the table's passes read the column. The constructor and Restore
 			write the members alone; registration copies the constructor's values into the row, SyncAll the restored
 			ones.
+			With g_entityTable and g_entityPassDormancy latched (dormancyOn), RunEntityThink runs a HOT_DORMANCY row's
+			CheckDormant itself, at the moment its Think would run it first: a sleeper's Think is not called (sleepersSkipped),
+			and an awake row's Think skips its own test, since dormancyCheckedFor names it (P2b.2.2b-i, K7).
 	spatial	the physics origin and absolute bounds as the spatial pass left them at the end of a tic, for passes outside
 			the think walk; valid until the next think walk, so a reader inside a walk reads physics. Kept only while a
 			consumer is registered: the registration refreshes every live row once, then each pass refreshes the rows
@@ -133,6 +136,7 @@ public:
 	double					spatialFullTicks;					// the last registration's full refresh
 	int						activeNum;							// slots in use, tombstones included
 	int						activeCursor;						// a walk's slot (P2b.2.2a), -1 outside a walk
+	int						dormancyCheckedFor;					// the row whose CheckDormant RunEntityThink has just run, for its Think's guard (P2b.2.2b-i), -1 otherwise
 	int						spatialConsumers;
 	int						droppedWrites;
 	int						activeRebuilds;
@@ -144,15 +148,18 @@ public:
 	int						spatialFullRows;					// rows of the last registration's full refresh
 	int						walkTG2Thinks;						// RunTimeGroup2's thinks over the mirror (P2b.2.2a)
 	int						walkSharedCalls;					// RunSharedThink's calls over the mirror: HOT_SHARED rows only
+	int						sleepersSkipped;					// RunEntityThink's lifted tests that found the row dormant: its Think was not called (P2b.2.2b-i)
+	int						dormancyUnlifted;					// CheckDormant calls, lift latched, from a row without HOT_DORMANCY: a class ClassBits misses
 
 	// the switches as LatchTic read them at the start of the tic; per map (Clear), never saved
 	bool					tableOn;
 	bool					verifyOn;
 	bool					activeMaintained;					// tableOn || verifyOn: the mirror follows the list
 	bool					walksOn;							// tableOn && g_entityPassWalks: the walks go over the mirror (P2b.2.2a)
+	bool					dormancyOn;							// tableOn && g_entityPassDormancy: RunEntityThink tests a HOT_DORMANCY row's dormancy (P2b.2.2b-i)
 	// pads sizeof to a multiple of 64 (asserted below), not the address: gameLocal is 32-byte aligned, so entityHot, the
 	// last member of idGameLocal, and every array in it start 32 bytes into a cache line
-	byte					pad[56];
+	byte					pad[43];
 
 	// after the tail, so that adding it moved no member above
 	hotCell_t				cell[MAX_GENTITIES];
@@ -173,7 +180,7 @@ public:
 	void					SetCell( int entityNumber, uint32 cellId );
 	void					SetHome( int entityNumber, uint32 homeCellId, int cellOrdinal );
 
-	void					LatchTic( bool table, bool verify, bool walks );
+	void					LatchTic( bool table, bool verify, bool walks, bool dormancy );
 	void					SpatialPass( int numEntities );
 	void					Verify();
 
