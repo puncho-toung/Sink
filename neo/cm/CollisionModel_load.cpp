@@ -3791,20 +3791,27 @@ cm_model_t* idCollisionModelManagerLocal::LoadBinaryModelFromFile( idFile* file,
 			file->ReadBig( node->planeType );
 			file->ReadBig( node->planeDist );
 			int i = 0;
+			//puncho start - P2b.7.0: the writer walks head to tail. Preserve that order so a cached load encounters
+			// the same contacts and signed edge features as the text model which wrote it.
+			cm_polygonRef_t** polygonTail = &node->polygons;
 			while( file->ReadBig( i ) == sizeof( i ) && ( i >= 0 ) )
 			{
 				cm_polygonRef_t* pref = collisionModelManagerLocal.AllocPolygonReference( model, model->numPolygonRefs );
 				pref->p = polys[i];
-				pref->next = node->polygons;
-				node->polygons = pref;
+				pref->next = NULL;
+				*polygonTail = pref;
+				polygonTail = &pref->next;
 			}
+			cm_brushRef_t** brushTail = &node->brushes;
 			while( file->ReadBig( i ) == sizeof( i ) && ( i >= 0 ) )
 			{
 				cm_brushRef_t* bref = collisionModelManagerLocal.AllocBrushReference( model, model->numBrushRefs );
 				bref->b = brushes[i];
-				bref->next = node->brushes;
-				node->brushes = bref;
+				bref->next = NULL;
+				*brushTail = bref;
+				brushTail = &bref->next;
 			}
+			//puncho end
 			if( node->planeType != -1 )
 			{
 				node->children[0] = collisionModelManagerLocal.AllocNode( model, model->numNodes );
@@ -3820,7 +3827,7 @@ cm_model_t* idCollisionModelManagerLocal::LoadBinaryModelFromFile( idFile* file,
 	local::ReadNodeTree( file, model, model->node, polys, brushes );
 
 	//puncho start - OQ-B4: the writer stores the polygons in NumberPolygons' order, so the file index is the id. The tree
-	// cannot be walked again for them: ReadNodeTree puts each node's references in reverse order
+	// reference lists keep the written order (P2b.7.0); polygon IDs stay in file order.
 	AllocPolygonIds( model, polys.Num() );
 	for( int i = 0; i < polys.Num(); i++ )
 	{
