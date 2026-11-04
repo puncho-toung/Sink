@@ -2726,6 +2726,21 @@ void idMapFile::RemoveEntities( const char* classname )
 		{
 			delete entities[i];
 			entities.RemoveIndex( i );
+			if( i < entityLines.Num() )
+			{
+				entityLines.RemoveIndex( i );
+			}
+			for( int j = 0; j < patchEntities.Num(); j++ )
+			{
+				if( patchEntities[j].entity == i )
+				{
+					patchEntities[j].entity = -1;
+				}
+				else if( patchEntities[j].entity > i )
+				{
+					patchEntities[j].entity--;
+				}
+			}
 			i--;
 		}
 	}
