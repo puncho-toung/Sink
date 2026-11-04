@@ -82,7 +82,9 @@ class idAASBuild
 public:
 	idAASBuild();
 	~idAASBuild();
-	bool					Build( const idStr& fileName, const idAASSettings* settings );
+//puncho start - P2b.3.8
+	bool					Build( const idStr& fileName, const idAASSettings* settings, bool useSeeds = false );
+//puncho end - P2b.3.8
 	bool					BuildReachability( const idStr& fileName, const idAASSettings* settings );
 	void					Shutdown();
 
@@ -109,7 +111,9 @@ private:	// map loading
 	idBrushList				AddBrushesForMapPolygonMesh( const MapPolygonMesh* mapMesh, const idVec3& origin, const idMat3& axis, int entityNum, int primitiveNum, idBrushList brushList );
 	idBrushList				AddBrushesForMapEntity( const idMapEntity* mapEnt, int entityNum, idBrushList brushList );
 	idBrushList				AddBrushesForMapFile( const idMapFile* mapFile, idBrushList brushList );
-	bool					CheckForEntities( const idMapFile* mapFile, idStrList& entityClassNames ) const;
+//puncho start - P2b.3.8
+	bool					CheckForEntities( const idMapFile* mapFile, idStrList& entityClassNames, bool useSeeds ) const;
+//puncho end - P2b.3.8
 	void					ChangeMultipleBoundingBoxContents_r( idBrushBSPNode* node, int mask );
 
 private:	// gravitational subdivision

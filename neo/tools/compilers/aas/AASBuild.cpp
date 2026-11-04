@@ -731,7 +731,8 @@ idBrushList idAASBuild::AddBrushesForMapFile( const idMapFile* mapFile, idBrushL
 idAASBuild::CheckForEntities
 ============
 */
-bool idAASBuild::CheckForEntities( const idMapFile* mapFile, idStrList& entityClassNames ) const
+//puncho - P2b.3.8: explicit type selection enables generic flood seeds.
+bool idAASBuild::CheckForEntities( const idMapFile* mapFile, idStrList& entityClassNames, bool useSeeds ) const
 {
 	int		i;
 	idStr	classname;
@@ -745,7 +746,7 @@ bool idAASBuild::CheckForEntities( const idMapFile* mapFile, idStrList& entityCl
 			continue;
 		}
 
-		if( aasSettings->ValidEntity( classname ) )
+		if( ( useSeeds && classname == "aas_seed" ) || aasSettings->ValidEntity( classname ) )
 		{
 			entityClassNames.AddUnique( classname );
 		}
@@ -809,7 +810,8 @@ void idAASBuild::ChangeMultipleBoundingBoxContents_r( idBrushBSPNode* node, int 
 idAASBuild::Build
 ============
 */
-bool idAASBuild::Build( const idStr& fileName, const idAASSettings* settings )
+//puncho - P2b.3.8
+bool idAASBuild::Build( const idStr& fileName, const idAASSettings* settings, bool useSeeds )
 {
 	int i, bit, mask, startTime;
 	idMapFile* mapFile;
@@ -840,8 +842,18 @@ bool idAASBuild::Build( const idStr& fileName, const idAASSettings* settings )
 	}
 
 	// check if this map has any entities that use this AAS file
-	if( !CheckForEntities( mapFile, entityClassNames ) )
+	if( !CheckForEntities( mapFile, entityClassNames, useSeeds ) )
 	{
+//puncho start - P2b.3.8
+		if( useSeeds )
+		{
+			common->Warning( "aas %s: no using entities or seeds; 0 areas", settings->fileExtension.c_str() );
+			// The loader starts at node 1; an empty AAS file is not loadable.
+			name.SetFileExtension( aasSettings->fileExtension );
+			fileSystem->RemoveFile( name );
+			common->Printf( "aas %s: areas 0\n", settings->fileExtension.c_str() );
+		}
+//puncho end - P2b.3.8
 		delete mapFile;
 		common->Printf( "no entities in map that use %s\n", settings->fileExtension.c_str() );
 		return true;
@@ -966,7 +978,7 @@ bool idAASBuild::Build( const idStr& fileName, const idAASSettings* settings )
 
 	// write the file
 	name.SetFileExtension( aasSettings->fileExtension );
-	file->Write( name, mapFile->GetGeometryCRC() );
+	const bool written = file->Write( name, mapFile->GetGeometryCRC() );
 
 	// delete the map file
 	delete mapFile;
@@ -974,7 +986,7 @@ bool idAASBuild::Build( const idStr& fileName, const idAASSettings* settings )
 	common->Printf( "%6d seconds to create AAS\n", ( Sys_Milliseconds() - startTime ) / 1000 );
 	common->DmapPacifierInfo( "%6d seconds to create AAS\n", ( Sys_Milliseconds() - startTime ) / 1000 );
 
-	return true;
+	return written;
 }
 
 /*
@@ -1050,6 +1062,13 @@ int ParseOptions( const idCmdArgs& args, idAASSettings& settings )
 		str = args.Argv( i );
 		str.StripLeading( '-' );
 
+//puncho start - P2b.3.8
+		if( str.Icmp( "aasType" ) == 0 || str.Icmp( "aasTypes" ) == 0 )
+		{
+			++i;
+			continue;
+		}
+//puncho end - P2b.3.8
 		if( str.Icmp( "usePatches" ) == 0 )
 		{
 			settings.usePatches = true;
@@ -1102,6 +1121,10 @@ void RunAAS_f( const idCmdArgs& args )
 	{
 		common->Printf( "runAAS [options] <mapfile>\n"
 						"options:\n"
+//puncho start - P2b.3.8
+						"  -aasType <type>    = build only this AAS type and enable generic seeds.\n"
+						"  aasTypes <list>    = enable listed types (spaces or +) and generic seeds.\n"
+//puncho end - P2b.3.8
 						"  -usePatches        = use bezier patches for collision detection.\n"
 						"  -writeBrushMap     = write a brush map with the AAS geometry.\n"
 						"  -playerFlood       = use player spawn points as valid AAS positions.\n" );
@@ -1119,9 +1142,71 @@ void RunAAS_f( const idCmdArgs& args )
 		common->Error( "Unable to find entityDef for 'aas_types'" );
 	}
 
+//puncho start - P2b.3.8
+	idStr selectedType;
+	idStrList listedTypes;
+	bool hasList = false;
+	for( i = 1; i < args.Argc() - 1; ++i )
+	{
+		idStr option = args.Argv( i );
+		option.StripLeading( '-' );
+		if( option.Icmp( "aasType" ) && option.Icmp( "aasTypes" ) )
+		{
+			continue;
+		}
+		if( i + 1 >= args.Argc() - 1 )
+		{
+			common->Error( "runAAS: %s needs a type argument and a map", option.c_str() );
+		}
+		if( !option.Icmp( "aasType" ) )
+		{
+			selectedType = args.Argv( ++i );
+			if( selectedType.IsEmpty() )
+			{
+				common->Error( "runAAS: aasType needs a nonempty type" );
+			}
+		}
+		else
+		{
+			hasList = true;
+			idStr list = args.Argv( ++i );
+			list.Replace( "+", " " );
+			idLexer src( list, list.Length(), "aasTypes", LEXFL_ONLYSTRINGS );
+			idToken token;
+			while( src.ReadToken( &token ) )
+			{
+				listedTypes.AddUnique( token );
+			}
+		}
+	}
+	for( i = -1; i < listedTypes.Num(); ++i )
+	{
+		const idStr& type = i < 0 ? selectedType : listedTypes[i];
+		if( type.IsEmpty() )
+		{
+			continue;
+		}
+		const idKeyValue* known = dict->MatchPrefix( "type" );
+		for( ; known && known->GetValue() != type; known = dict->MatchPrefix( "type", known ) ) {}
+		if( !known || ( i < 0 && hasList && !listedTypes.Find( type ) ) )
+		{
+			common->Error( "runAAS: refused aas type %s", type.c_str() );
+		}
+	}
+	const bool useSeeds = hasList || !selectedType.IsEmpty();
+//puncho end - P2b.3.8
 	const idKeyValue* kv = dict->MatchPrefix( "type" );
 	while( kv != NULL )
 	{
+//puncho start - P2b.3.8
+		if( ( hasList && !listedTypes.Find( kv->GetValue() ) ) ||
+				( !selectedType.IsEmpty() && selectedType != kv->GetValue() ) )
+		{
+			common->Printf( "aas: type %s not listed, skipped\n", kv->GetValue().c_str() );
+			kv = dict->MatchPrefix( "type", kv );
+			continue;
+		}
+//puncho end - P2b.3.8
 		const idDict* settingsDict = FindEntityDefDict( kv->GetValue(), false );
 		if( !settingsDict )
 		{
@@ -1137,7 +1222,12 @@ void RunAAS_f( const idCmdArgs& args )
 			{
 				mapName = "maps/" + mapName;
 			}
-			aas.Build( mapName, &settings );
+//puncho start - P2b.3.8
+			if( !aas.Build( mapName, &settings, useSeeds ) && useSeeds )
+			{
+				common->Error( "aas %s failed: %s", kv->GetValue().c_str(), mapName.c_str() );
+			}
+//puncho end - P2b.3.8
 		}
 
 		kv = dict->MatchPrefix( "type", kv );

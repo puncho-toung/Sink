@@ -70,6 +70,10 @@ void idAASFileLocal::Optimize()
 	newFaces.Resize( faces.Num() );
 	newFaces.SetNum( 1 );
 	newFaceIndex.Resize( faceIndex.Num() );
+//puncho start - P2b.3.8
+	memset( &newEdges[0], 0, sizeof( newEdges[0] ) );
+	memset( &newFaces[0], 0, sizeof( newFaces[0] ) );
+//puncho end - P2b.3.8
 
 	for( i = 0; i < areas.Num(); i++ )
 	{
