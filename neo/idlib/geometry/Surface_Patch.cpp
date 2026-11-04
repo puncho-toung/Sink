@@ -494,6 +494,8 @@ void idSurface_Patch::SampleSinglePatchPoint( const idDrawVert ctrl[3][3], float
 	float	vCtrl[3][8];
 	int		vPoint;
 	int		axis;
+	idVec3	tempNormal;
+	idVec2	tempST;
 
 	// find the control points for the v coordinate
 	for( vPoint = 0; vPoint < 3; vPoint++ )
@@ -546,18 +548,16 @@ void idSurface_Patch::SampleSinglePatchPoint( const idDrawVert ctrl[3][3], float
 		}
 		else if( axis < 6 )
 		{
-			idVec3 tempNormal = out->GetNormal();
 			tempNormal[axis - 3] = qA * v * v + qB * v + qC;
-			out->SetNormal( tempNormal );
-			//out->normal[axis-3] = qA * v * v + qB * v + qC;
 		}
 		else
 		{
-			idVec2 tempST = out->GetTexCoord();
 			tempST[axis - 6] = qA * v * v + qB * v + qC;
-			out->SetTexCoord( tempST );
 		}
 	}
+	// Pack complete vectors; GetNormal would normalize partially written components.
+	out->SetNormal( tempNormal );
+	out->SetTexCoord( tempST );
 }
 
 /*
