@@ -5263,7 +5263,7 @@ static idCVar g_budgetDebris( "g_budgetDebris", "0", CVAR_GAME | CVAR_INTEGER, "
 static idCVar g_budgetFx( "g_budgetFx", "0", CVAR_GAME | CVAR_INTEGER, "maximum live transient effects; 0 disables" );
 static idCVar g_budgetItems( "g_budgetItems", "0", CVAR_GAME | CVAR_INTEGER, "refuse new optional dropped items at this cap; existing items persist" );
 static idCVar g_budgetGibs( "g_budgetGibs", "0", CVAR_GAME | CVAR_INTEGER, "maximum live transient gibs; 0 disables" );
-static idCVar g_entityReserve( "g_entityReserve", "64", CVAR_GAME | CVAR_INTEGER, "free entity slots reserved for essential spawns; 0 disables" );
+static idCVar g_entityReserve( "g_entityReserve", "0", CVAR_GAME | CVAR_INTEGER, "free entity slots reserved for essential spawns; 0 disables" );	//puncho - R0 U5: no reserve by default
 static idCVar g_budgetCorpses( "g_budgetCorpses", "0", CVAR_GAME | CVAR_INTEGER, "maximum live corpses, dead monsters and settled corpses, oldest death first, persist_nocap, essential and quest_item kept (in world mode the cap is g_recordCapCorpses); 0 off; a change mid-map leaves the bodies already down as they are: the class fills from new deaths" );	//puncho - P2b.1.10c
 //puncho - P2b.1.10a: listBudgets' and spawn_budget's names, indexed by entityBudget_t
 static const char* const budgetNames[] = { "debris", "fx", "item", "gib", "corpse" };

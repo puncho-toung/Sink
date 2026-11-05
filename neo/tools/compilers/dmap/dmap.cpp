@@ -290,7 +290,7 @@ void DmapHelp()
 		"noCM                   = don't create collision map\n"
 		"noAAS                  = don't create AAS files\n"
 //puncho start - P2b.3.8
-		"aasTypes \"<a> <b>\"       = build listed AAS types; a+b is also accepted\n"
+		"aasTypes \"<a> <b>\"     = build listed AAS types; a+b is also accepted\n"
 //puncho end - P2b.3.8
 		"noFlood                = skip area flooding = bad performance\n"
 		"blockSize <x> <y> <z>  = cut BSP along these dimensions or disable with 0 0 0\n"
@@ -378,7 +378,7 @@ void Dmap( const idCmdArgs& args )
 	if( args.Argc() > 1 && !idStr::Icmp( args.Argv( 1 ), "runAAS" ) )
 	{
 		idCmdArgs command;
-		for( int arg = 1; arg < args.Argc(); ++arg )
+		for( int arg = 1; arg < args.Argc(); arg++ )
 		{
 			command.AppendArg( args.Argv( arg ) );
 		}
@@ -529,7 +529,7 @@ void Dmap( const idCmdArgs& args )
 			{
 				common->Error( "usage: dmap aasTypes <type+type> mapfile" );
 			}
-			++i;
+			i++;
 		}
 //puncho end - P2b.3.8
 		else if( !idStr::Icmp( s, "noAAS" ) )

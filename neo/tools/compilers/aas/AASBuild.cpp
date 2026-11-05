@@ -746,7 +746,7 @@ bool idAASBuild::CheckForEntities( const idMapFile* mapFile, idStrList& entityCl
 			continue;
 		}
 
-		if( ( useSeeds && classname == "aas_seed" ) || aasSettings->ValidEntity( classname ) )
+		if( ( useSeeds && classname.Icmp( "aas_seed" ) == 0 ) || aasSettings->ValidEntity( classname ) )
 		{
 			entityClassNames.AddUnique( classname );
 		}
@@ -1065,7 +1065,7 @@ int ParseOptions( const idCmdArgs& args, idAASSettings& settings )
 //puncho start - P2b.3.8
 		if( str.Icmp( "aasType" ) == 0 || str.Icmp( "aasTypes" ) == 0 )
 		{
-			++i;
+			i++;
 			continue;
 		}
 //puncho end - P2b.3.8
@@ -1123,7 +1123,7 @@ void RunAAS_f( const idCmdArgs& args )
 						"options:\n"
 //puncho start - P2b.3.8
 						"  -aasType <type>    = build only this AAS type and enable generic seeds.\n"
-						"  aasTypes <list>    = enable listed types (spaces or +) and generic seeds.\n"
+						"  -aasTypes <list>   = enable listed types (spaces or +) and generic seeds.\n"
 //puncho end - P2b.3.8
 						"  -usePatches        = use bezier patches for collision detection.\n"
 						"  -writeBrushMap     = write a brush map with the AAS geometry.\n"
@@ -1146,7 +1146,7 @@ void RunAAS_f( const idCmdArgs& args )
 	idStr selectedType;
 	idStrList listedTypes;
 	bool hasList = false;
-	for( i = 1; i < args.Argc() - 1; ++i )
+	for( i = 1; i < args.Argc() - 1; i++ )
 	{
 		idStr option = args.Argv( i );
 		option.StripLeading( '-' );
@@ -1160,7 +1160,8 @@ void RunAAS_f( const idCmdArgs& args )
 		}
 		if( !option.Icmp( "aasType" ) )
 		{
-			selectedType = args.Argv( ++i );
+			i++;
+			selectedType = args.Argv( i );
 			if( selectedType.IsEmpty() )
 			{
 				common->Error( "runAAS: aasType needs a nonempty type" );
@@ -1169,7 +1170,8 @@ void RunAAS_f( const idCmdArgs& args )
 		else
 		{
 			hasList = true;
-			idStr list = args.Argv( ++i );
+			i++;
+			idStr list = args.Argv( i );
 			list.Replace( "+", " " );
 			idLexer src( list, list.Length(), "aasTypes", LEXFL_ONLYSTRINGS );
 			idToken token;
@@ -1179,16 +1181,20 @@ void RunAAS_f( const idCmdArgs& args )
 			}
 		}
 	}
-	for( i = -1; i < listedTypes.Num(); ++i )
+	// every named type must be an aas_types entry, and a -aasType must also be in the aasTypes list
+	for( i = -1; i < listedTypes.Num(); i++ )
 	{
-		const idStr& type = i < 0 ? selectedType : listedTypes[i];
+		const idStr& type = ( i < 0 ) ? selectedType : listedTypes[i];
 		if( type.IsEmpty() )
 		{
 			continue;
 		}
 		const idKeyValue* known = dict->MatchPrefix( "type" );
-		for( ; known && known->GetValue() != type; known = dict->MatchPrefix( "type", known ) ) {}
-		if( !known || ( i < 0 && hasList && !listedTypes.Find( type ) ) )
+		while( known != NULL && known->GetValue() != type )
+		{
+			known = dict->MatchPrefix( "type", known );
+		}
+		if( known == NULL || ( i < 0 && hasList && listedTypes.Find( type ) == NULL ) )
 		{
 			common->Error( "runAAS: refused aas type %s", type.c_str() );
 		}
