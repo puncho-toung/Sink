@@ -213,7 +213,9 @@ idRenderModel* R_EntityDefDynamicModel( idRenderEntityLocal* def )
 		// the view is relative to the render origin, so the origin is made relative in double first
 		const idVec3d& renderOrigin = tr.viewDef->renderOrigin;
 		const idVec3 origin = renderOrigin.IsZero() ? def->parms.origin : ( idVec3d( def->parms.origin ) - renderOrigin ).ToVec3();
-		R_TransformModelToClip( origin, tr.viewDef->worldSpace.modelViewMatrix, tr.viewDef->projectionMatrix, eye, clip );
+		//puncho - F-FRONTEND-ND: unjittered, as the hack also moves the surface cull; z is the same unless the view is
+		// oblique, whose z row reads the jitter ( R_ObliqueNearPlane )
+		R_TransformModelToClip( origin, tr.viewDef->worldSpace.modelViewMatrix, tr.viewDef->unjitteredProjectionMatrix, eye, clip );
 		R_TransformClipToDevice( clip, ndc );
 		// scaled by the distance from the far plane, in NDC: idRenderMatrix::ApplyModelDepthHack
 		// moves z toward the near plane by this much
@@ -437,7 +439,7 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 
 				// this doesn't say that the shadow can't effect anything, only that it can't
 				// effect anything in the view
-				if( idRenderMatrix::CullBoundsToMVP( viewDef->worldCullMVP, shadowBounds ) )
+				if( idRenderMatrix::CullBoundsToMVP( viewDef->worldCullUnjitteredMVP, shadowBounds ) )	//puncho - F-FRONTEND-ND
 				{
 					continue;
 				}
@@ -613,14 +615,20 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 	idRenderMatrix::Transpose( *( idRenderMatrix* )vEntity->modelViewMatrix, viewMat );
 	idRenderMatrix::Multiply( viewDef->projectionRenderMatrix, viewMat, vEntity->mvp );
 	idRenderMatrix::Multiply( viewDef->unjitteredProjectionRenderMatrix, viewMat, vEntity->unjitteredMVP );
+	//puncho start - F-FRONTEND-ND: the surface cull takes the unjittered matrix ( the jitter phase differs between
+	// processes ), with the same depth hacks as the draw ( they move only the z row )
+	idRenderMatrix cullMVP = vEntity->unjitteredMVP;
 	if( renderEntity->weaponDepthHack )
 	{
 		idRenderMatrix::ApplyDepthHack( vEntity->mvp );
+		idRenderMatrix::ApplyDepthHack( cullMVP );
 	}
 	if( renderEntity->modelDepthHack != 0.0f )
 	{
 		idRenderMatrix::ApplyModelDepthHack( vEntity->mvp, renderEntity->modelDepthHack );
+		idRenderMatrix::ApplyModelDepthHack( cullMVP, renderEntity->modelDepthHack );
 	}
+	//puncho end - F-FRONTEND-ND
 
 	// local light and view origins are used to determine if the view is definitely outside
 	// an extruded shadow volume, which means we can skip drawing the end caps.
@@ -757,7 +765,7 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 		// than the entire entity reference bounds
 		// If the entire model wasn't visible, there is no need to check the
 		// individual surfaces.
-		bool surfaceDirectlyVisible = modelIsVisible && !idRenderMatrix::CullBoundsToMVP( vEntity->mvp, tri->bounds );
+		bool surfaceDirectlyVisible = modelIsVisible && !idRenderMatrix::CullBoundsToMVP( cullMVP, tri->bounds );	//puncho - F-FRONTEND-ND
 
 		// RB: added check wether GPU skinning is available at all
 		const bool gpuSkinned = ( tri->staticModelWithJoints != NULL && r_useGPUSkinning.GetBool() );

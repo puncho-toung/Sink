@@ -232,13 +232,16 @@ void R_GlobalToNormalizedDeviceCoordinates( const idVec3& global, idVec3& ndc )
 					viewDef->worldSpace.modelViewMatrix[i + 3 * 4];
 	}
 
+	//puncho start - F-FRONTEND-ND: the callers decide visibility ( portal rects, the subview cull ), so the
+	// projection is the unjittered one; the jitter phase differs between processes
 	for( int i = 0; i < 4; i ++ )
 	{
-		clip[i] = 	viewDef->projectionMatrix[i + 0 * 4] * view[0] +
-					viewDef->projectionMatrix[i + 1 * 4] * view[1] +
-					viewDef->projectionMatrix[i + 2 * 4] * view[2] +
-					viewDef->projectionMatrix[i + 3 * 4] * view[3];
+		clip[i] = 	viewDef->unjitteredProjectionMatrix[i + 0 * 4] * view[0] +
+					viewDef->unjitteredProjectionMatrix[i + 1 * 4] * view[1] +
+					viewDef->unjitteredProjectionMatrix[i + 2 * 4] * view[2] +
+					viewDef->unjitteredProjectionMatrix[i + 3 * 4] * view[3];
 	}
+	//puncho end - F-FRONTEND-ND
 
 	const float invW = 1.0f / clip[3];
 	ndc[0] = clip[0] * invW;
@@ -575,9 +578,10 @@ void R_SetupProjectionMatrix( viewDef_t* viewDef, bool doJitter )
 	}
 
 	// SP Begin
-	if( viewDef->isObliqueProjection && doJitter )
+	//puncho - F-FRONTEND-ND: the unjittered matrix takes the oblique near plane too, since the frontend culls with it
+	if( viewDef->isObliqueProjection )
 	{
-		R_ObliqueProjection( viewDef );
+		R_ObliqueProjection( viewDef, projectionMatrix );
 	}
 	// SP End
 }
@@ -761,7 +765,7 @@ R_ObliqueProjection - adjust near plane of previously set projection matrix to p
 credits to motorsep: https://github.com/motorsep/StormEngine2/blob/743a0f9581a10837a91cb296ff5a1114535e8d4e/neo/renderer/tr_frontend_subview.cpp#L225
 =====================
 */
-void R_ObliqueProjection( viewDef_t* parms )
+void R_ObliqueProjection( viewDef_t* parms, float projectionMatrix[16] )
 {
 	float mvt[16]; // model view transpose
 	idPlane pB = parms->clipPlanes[0];
@@ -772,7 +776,7 @@ void R_ObliqueProjection( viewDef_t* parms )
 	R_GlobalPlaneToLocal( mvt, pB, cp );
 
 	// oblique projection adjustment code
-	R_ObliqueNearPlane( parms->projectionMatrix, idVec4( cp[0], cp[1], cp[2], cp[3] ) );
+	R_ObliqueNearPlane( projectionMatrix, idVec4( cp[0], cp[1], cp[2], cp[3] ) );
 }
 // SP end
 

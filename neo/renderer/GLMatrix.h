@@ -69,7 +69,7 @@ void R_MatrixFullInverse( const float in[16], float r[16] );
 // RB end
 
 // SP begin
-void R_ObliqueProjection( viewDef_t* viewDef );
+void R_ObliqueProjection( viewDef_t* viewDef, float projectionMatrix[16] );
 // SP end
 void R_ObliqueNearPlane( float projectionMatrix[16], const idVec4& clipPlane );	// camera-space plane, both depth conventions
 
