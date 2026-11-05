@@ -106,7 +106,13 @@ MapPolygonMesh* MapPolygonMesh::ConvertFromMeshGltf( const gltfMesh_Primitive* p
 
 		if( !sizeSet )
 		{
-			mesh->verts.AssureSize( attrAcc->count );
+			//puncho start - F-PIXEL-ORBS: an attribute the primitive lacks must not keep heap garbage, which the .bglb
+			// would freeze; glTF reads a missing COLOR_0 as white
+			idDrawVert blank;
+			blank.Clear();
+			blank.SetColor( 0xFFFFFFFF );
+			mesh->verts.AssureSize( attrAcc->count, blank );
+			//puncho end - F-PIXEL-ORBS
 			sizeSet = true;
 		}
 
