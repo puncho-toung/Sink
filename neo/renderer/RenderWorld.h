@@ -41,20 +41,26 @@ If you have questions concerning this license or the applicable additional terms
 */
 
 #define PROC_FILE_EXT				"proc"
-#define	PROC_FILE_ID				"mapProcFile004"
-// 004 ends every surface header with a vertexFormat token: 0 = 8 floats per vertex (xyz st normal),
-// 1 = 12 (xyz st normal rgba). 003 has no token and 8 floats per vertex; the readers accept both
+#define	PROC_FILE_ID				"mapProcFile005"
+// 005 writes node planes at full precision; 004 and 003 snapped a plane component within 0.001 of an
+// integer to it. 004 and 005 end every surface header with a vertexFormat token: 0 = 8 floats per vertex
+// (xyz st normal), 1 = 12 (xyz st normal rgba). 003 has no token and 8 floats per vertex; the readers accept all three
+#define	PROC_FILE_ID_004			"mapProcFile004"
 #define	PROC_FILE_ID_003			"mapProcFile003"
 #define	PROC_VERTEX_FORMAT_BASIC	0
 #define	PROC_VERTEX_FORMAT_COLOR	1
 #define	PROC_VERTEX_FLOATS_BASIC	8		// floats per vertex of PROC_VERTEX_FORMAT_BASIC
 #define	PROC_VERTEX_FLOATS_COLOR	12		// floats per vertex of PROC_VERTEX_FORMAT_COLOR
 
-// the format version a .proc's first token names: 4 (PROC_FILE_ID), 3 (PROC_FILE_ID_003), 0 for
-// any other token; every .proc reader checks the id with it
+// the format version a .proc's first token names: 5 (PROC_FILE_ID), 4 (PROC_FILE_ID_004), 3 (PROC_FILE_ID_003),
+// 0 for any other token; every .proc reader checks the id with it
 ID_INLINE int ProcFileVersion( const char* token )
 {
 	if( idStr::Icmp( token, PROC_FILE_ID ) == 0 )
+	{
+		return 5;
+	}
+	if( idStr::Icmp( token, PROC_FILE_ID_004 ) == 0 )
 	{
 		return 4;
 	}

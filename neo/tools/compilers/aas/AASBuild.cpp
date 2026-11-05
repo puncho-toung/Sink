@@ -155,7 +155,7 @@ bool idAASBuild::LoadProcBSP( const char* name, ID_TIME_T minFileTime )
 
 	if( !src->ReadToken( &token ) || ProcFileVersion( token ) == 0 )
 	{
-		common->Warning( "idAASBuild::LoadProcBSP: bad id '%s' instead of '%s' or '%s'", token.c_str(), PROC_FILE_ID, PROC_FILE_ID_003 );
+		common->Warning( "idAASBuild::LoadProcBSP: bad id '%s' instead of '%s', '%s' or '%s'", token.c_str(), PROC_FILE_ID, PROC_FILE_ID_004, PROC_FILE_ID_003 );
 		delete src;
 		return false;
 	}

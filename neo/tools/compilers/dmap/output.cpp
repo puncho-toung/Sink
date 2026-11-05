@@ -118,6 +118,13 @@ void Write1DMatrix( idFile* f, int x, float* m )
 	f->WriteFloatString( ") " );
 }
 
+//puncho - R0 S1: node planes at full precision. WriteFloat snaps a component within 0.001 of an integer
+// to it, which tilts a near-axial plane; nine significant digits bring back every float bit for bit
+static void WritePlane( idFile* f, const idPlane& plane )
+{
+	f->WriteFloatString( "( %.9g %.9g %.9g %.9g ) ", plane[0], plane[1], plane[2], plane[3] );
+}
+
 
 /*
 ==============
@@ -692,7 +699,7 @@ static void WriteNode_r( node_t* node, idFile* procFile )
 	plane = &dmapGlobals.mapPlanes[node->planenum];
 
 	procFile->WriteFloatString( "/* node %i */ ", node->nodeNumber );
-	Write1DMatrix( procFile, 4, plane->ToFloatPtr() );
+	WritePlane( procFile, *plane );
 	procFile->WriteFloatString( "%i %i\n", child[0], child[1] );
 
 	if( child[0] > 0 )

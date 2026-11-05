@@ -1066,7 +1066,7 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 
 		if( !src->ReadToken( &token ) || ProcFileVersion( token ) == 0 )
 		{
-			common->Printf( "idRenderWorldLocal::InitFromMap: bad id '%s' instead of '%s' or '%s'\n", token.c_str(), PROC_FILE_ID, PROC_FILE_ID_003 );
+			common->Printf( "idRenderWorldLocal::InitFromMap: bad id '%s' instead of '%s', '%s' or '%s'\n", token.c_str(), PROC_FILE_ID, PROC_FILE_ID_004, PROC_FILE_ID_003 );
 			delete src;
 			return false;
 		}
