@@ -992,6 +992,7 @@ void R_RenderView( viewDef_t* parms )
 
 	// the same products with the absolute view, for everything culled against absolute data
 	// ( bit-identical to worldSpace.mvp / unjitteredMVP at a zero render origin )
+	//puncho - F-FRONTEND-ND: culling takes worldCullUnjitteredMVP; worldCullMVP now serves the NVRHI debug draws only
 	idRenderMatrix worldCullViewRenderMatrix;
 	idRenderMatrix::Transpose( *( idRenderMatrix* )worldCullViewMatrix, worldCullViewRenderMatrix );
 	idRenderMatrix::Multiply( tr.viewDef->projectionRenderMatrix, worldCullViewRenderMatrix, tr.viewDef->worldCullMVP );
