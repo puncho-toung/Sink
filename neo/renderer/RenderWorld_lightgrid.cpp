@@ -1616,6 +1616,7 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 			}
 
 			filename.Format( "env/%s/area%i_lightgrid_amb.exr", baseName.c_str(), a );
+			R_BakeImageName( filename );
 
 			R_WriteEXR( filename.c_str(), irradianceAtlas.Ptr(), 3, atlasWidth, atlasHeight, "fs_basepath" );
 

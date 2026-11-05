@@ -1662,6 +1662,7 @@ RENDERWORLD_ENVPROBES
 
 void R_SampleCubeMapHDR( const idVec3& dir, int size, byte* buffers[6], float result[3], float& u, float& v );
 void R_SampleCubeMapHDR16F( const idVec3& dir, int size, halfFloat_t* buffers[6], float result[3], float& u, float& v );
+void R_BakeImageName( idStr& name );
 
 idVec2 NormalizedOctCoord( int x, int y, const int probeSideLength );
 

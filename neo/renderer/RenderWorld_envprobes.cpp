@@ -983,6 +983,14 @@ float LinearizeProbeDepth(float hwDepth, float zNear, int face, int pixel, int s
 	return zEye / cosTheta;		// world units from the probe center
 }
 
+//puncho - bake case (R0): an .exr bake is read back through R_LoadImage, which lower-cases the whole path, and a
+// case-sensitive filesystem folds only the file name ( OpenOSFile ), never a directory: the bake is written, listed and
+// deleted under the lower-cased name or a mixed-case map never finds it. A .bimage bake keeps its image's own name,
+// which idBinaryImage looks up unfolded
+void R_BakeImageName( idStr& name )
+{
+	name.ToLower();
+}
 
 void R_MakeAmbientMap( const char* baseName, byte* buffers[6], const char* suffix, int outSize, bool specular, bool useThreads, int probeIndex )
 {
@@ -1172,6 +1180,7 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 	idLib::Printf( "Deleting old probes...\n" );
 
 	fullname.Format( "env/%s", baseName.c_str() );
+	R_BakeImageName( fullname );
 
 	idFileList* files = fileSystem->ListFilesTree( fullname, "envprobe*.exr", true );
 	for( int i = 0; i < files->GetNumFiles(); i++ )
@@ -1440,6 +1449,7 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 		}
 		else												
 		{
+			R_BakeImageName( job->filename );
 			R_WriteEXR(job->filename, (byte*)job->outBuffer, 3, job->outWidth, job->outHeight, "fs_basepath");
 			globalImages->ImageFromFile(job->filename, TF_LINEAR, TR_CLAMP, TD_HDR_LIGHTPROBE, CF_2D_PACKED_MIPCHAIN);
 			Mem_Free(job->outBuffer);
