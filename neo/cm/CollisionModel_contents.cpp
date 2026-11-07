@@ -727,7 +727,7 @@ int idCollisionModelManagerLocal::Contents( const idVec3& start,
 {
 	trace_t results;
 
-	if( model < 0 || model > idCollisionModelManagerLocal::maxModels || model > MAX_SUBMODELS )
+	if( model < 0 || model >= MAX_CM_MODELS || model > idCollisionModelManagerLocal::maxModels )	//puncho - R1.3: bound the table while allowing the trace slot at maxModels
 	{
 		common->Printf( "idCollisionModelManagerLocal::Contents: invalid model handle\n" );
 		return 0;

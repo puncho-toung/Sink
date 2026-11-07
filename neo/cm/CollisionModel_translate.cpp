@@ -831,16 +831,18 @@ void idCollisionModelManagerLocal::Translation( trace_t* results, const idVec3& 
 
 	memset( results, 0, sizeof( *results ) );
 
-	if( model < 0 || model > MAX_SUBMODELS || model > idCollisionModelManagerLocal::maxModels )
+	//puncho start - R1.3: allow the trace slot at maxModels and reject a cleared table before indexing
+	if( model < 0 || model >= MAX_CM_MODELS || model > idCollisionModelManagerLocal::maxModels )
 	{
 		common->Printf( "idCollisionModelManagerLocal::Translation: invalid model handle\n" );
 		return;
 	}
-	if( !idCollisionModelManagerLocal::models[model] )
+	if( !idCollisionModelManagerLocal::models || !idCollisionModelManagerLocal::models[model] )
 	{
 		common->Printf( "idCollisionModelManagerLocal::Translation: invalid model\n" );
 		return;
 	}
+	//puncho end
 
 	// if case special position test
 	if( start[0] == end[0] && start[1] == end[1] && start[2] == end[2] )

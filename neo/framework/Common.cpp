@@ -1723,6 +1723,10 @@ void idCommonLocal::Stop( bool resetSession )
 
 	insideUpdateScreen = false;
 	insideExecuteMapChange = false;
+	//puncho start - R1.3: a save load that errors out of ExecuteMapChange skips the frame's reset of
+	// savegameFile, and the next map would restore that save again ("Unknown class ''")
+	mapSpawnData.savegameFile = NULL;
+	//puncho end
 
 	// drop all guis
 	ExitMenu();

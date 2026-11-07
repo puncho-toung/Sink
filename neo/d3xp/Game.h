@@ -223,6 +223,7 @@ struct mapGameStats_t
 	int recordMaps, recordEntries, recordCreated, recordBytes, recordDropped, corpseLive, corpseEvicted;
 	unsigned int recordCommitUs, recordApplyUs;
 	unsigned int dungeonTransitions, dungeonRefused, dungeonInhibited, dungeonPrefetches;
+	int cmModelsCap;	//puncho - R1.3: collisionModelManager->GetMaxModels(), the MAP row's cm denominator, 0 when cleared; appended, never saved or sent
 };
 
 // The last tic's record for the com_showFPS 3 window, the aistats: line and the CSV (§2.5). POD on

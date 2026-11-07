@@ -42,8 +42,18 @@ If you have questions concerning this license or the applicable additional terms
 #define CM_MAX_POLYGON_EDGES				64
 #define CIRCLE_APPROXIMATION_LENGTH			64.0f
 
-#define	MAX_SUBMODELS						2048
-#define	TRACE_MODEL_HANDLE					MAX_SUBMODELS
+//puncho start - R1.3: reserve the last slot so ordinary loads never overwrite the trace model
+// Use the whole bit width like entity numbers (d3xp/Game_local.h GENTITYNUM_BITS); world 0 is among ordinary handles [0, CM_MODEL_MAX_NORMAL).
+// The last slot is SetupTrmModel's reusable scratch model, which no load reaches.
+// cmHandle_t stays a plain int, never saved or sent: saves store model names.
+#define CM_MODEL_BITS						13
+#define MAX_CM_MODELS						( 1 << CM_MODEL_BITS )
+#define CM_MODEL_WORLD						0
+#define CM_MODEL_TRACE						( MAX_CM_MODELS - 1 )
+#define CM_MODEL_MAX_NORMAL					( MAX_CM_MODELS - 1 )
+compile_time_assert( CM_MODEL_TRACE == CM_MODEL_MAX_NORMAL );
+compile_time_assert( CM_MODEL_WORLD < CM_MODEL_MAX_NORMAL );
+//puncho end
 
 #define VERTEX_HASH_BOXSIZE					(1<<6)	// must be power of 2
 #define VERTEX_HASH_SIZE					(VERTEX_HASH_BOXSIZE*VERTEX_HASH_BOXSIZE)
@@ -333,6 +343,7 @@ class idCollisionModelManagerLocal : public idCollisionModelManager
 {
 public:
 	int GetNumModels() const { return numModels; }
+	int GetMaxModels() const { return maxModels; }	//puncho - R1.3: expose ordinary capacity, including the cleared state
 	int64			GetModelMemory() const;
 	int64			GetPolygonIdMemory() const;
 #if !defined( ID_RETAIL )
@@ -345,8 +356,9 @@ public:
 	void			FreeMap();
 
 	void			Preload( const char* mapName );
-	// get clip handle for model
-	cmHandle_t		LoadModel( const char* modelName, const bool precache );
+	//puncho start - R1.3: true sets outHandle, the world's 0 included; false leaves it unchanged
+	bool			LoadModel( const char* modelName, const bool precache, cmHandle_t& outHandle );
+	//puncho end
 	// sets up a trace model for collision with other trace models
 	cmHandle_t		SetupTrmModel( const idTraceModel& trm, const idMaterial* material );
 	// create trace model from a collision model, returns true if succesfull

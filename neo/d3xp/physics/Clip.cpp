@@ -333,8 +333,10 @@ bool idClipModel::LoadModel( const char* name )
 		FreeTraceModel( traceModelIndex );
 		traceModelIndex = -1;
 	}
-	collisionModelHandle = collisionModelManager->LoadModel( name, false );
-	if( collisionModelHandle )
+	//puncho start - R1.3: retain load status separately so the world's handle 0 is usable
+	collisionModelHandle = 0;
+	collisionModelLoaded = collisionModelManager->LoadModel( name, false, collisionModelHandle );
+	if( collisionModelLoaded )
 	{
 		collisionModelManager->GetModelBounds( collisionModelHandle, bounds );
 		collisionModelManager->GetModelContents( collisionModelHandle, contents );
@@ -345,6 +347,7 @@ bool idClipModel::LoadModel( const char* name )
 		bounds.Zero();
 		return false;
 	}
+	//puncho end
 }
 
 /*
@@ -355,6 +358,7 @@ idClipModel::LoadModel
 void idClipModel::LoadModel( const idTraceModel& trm, bool persistantThroughSave )
 {
 	collisionModelHandle = 0;
+	collisionModelLoaded = false;	//puncho - R1.3: a trace model does not name a loaded collision model
 	renderModelHandle = -1;
 	if( traceModelIndex != -1 )
 	{
@@ -372,6 +376,7 @@ idClipModel::LoadModel
 void idClipModel::LoadModel( const int renderModelHandle )
 {
 	collisionModelHandle = 0;
+	collisionModelLoaded = false;	//puncho - R1.3: a render model does not name a loaded collision model
 	this->renderModelHandle = renderModelHandle;
 	if( renderModelHandle != -1 )
 	{
@@ -407,6 +412,7 @@ void idClipModel::Init()
 	material = NULL;
 	contents = CONTENTS_BODY;
 	collisionModelHandle = 0;
+	collisionModelLoaded = false;	//puncho - R1.3: handle 0 alone does not mean the world was loaded
 	renderModelHandle = -1;
 	traceModelIndex = -1;
 	clipLinks = NULL;
@@ -487,6 +493,7 @@ idClipModel::idClipModel( const idClipModel* model )
 	material = model->material;
 	contents = model->contents;
 	collisionModelHandle = model->collisionModelHandle;
+	collisionModelLoaded = model->collisionModelLoaded;	//puncho - R1.3: preserve static load status; the trace LoadModel below clears it
 	traceModelIndex = -1;
 	if( model->traceModelIndex != -1 )
 	{
@@ -564,14 +571,18 @@ void idClipModel::Restore( idRestoreGame* savefile )
 	savefile->ReadMaterial( material );
 	savefile->ReadInt( contents );
 	savefile->ReadString( collisionModelName );
+	//puncho start - R1.3: resolve the saved name without treating the world's handle 0 as failure
+	bool named = false;
 	if( collisionModelName.Length() )
 	{
-		collisionModelHandle = collisionModelManager->LoadModel( collisionModelName, false );
+		collisionModelHandle = 0;
+		named = collisionModelManager->LoadModel( collisionModelName, false, collisionModelHandle );
 	}
 	else
 	{
 		collisionModelHandle = -1;
 	}
+	//puncho end
 	savefile->ReadInt( traceModelIndex );
 	if( traceModelIndex >= 0 )
 	{
@@ -579,6 +590,17 @@ void idClipModel::Restore( idRestoreGame* savefile )
 		traceModelCache[realIndex]->refCount++;
 	}
 	savefile->ReadRenderHandle( renderModelHandle, "idClipModel::renderModelHandle" );	//puncho - saves (P1-m10b)
+	//puncho start - R1.3: saved names must not turn trace or render clip models into static ones
+	// Save writes the world's name beside a trace or render model's handle 0.
+	// A static model that no longer loads refuses before any link; no byte of the save stream changes.
+	// gameLocal.Error, not savefile->Error: idRestoreGame::Error deletes its restore list, which double-deletes
+	// objects an entity owns (the player's weapon); MapShutdown deletes through the live entity table instead.
+	collisionModelLoaded = named && traceModelIndex == -1 && renderModelHandle == -1;
+	if( !named && collisionModelName.Length() && traceModelIndex == -1 && renderModelHandle == -1 )
+	{
+		gameLocal.Error( "idClipModel::Restore: collision model '%s' not loaded", collisionModelName.c_str() );
+	}
+	//puncho end
 	savefile->ReadBool( linked );
 	int savedTouchCount;
 	savefile->ReadInt( savedTouchCount );
@@ -617,7 +639,7 @@ idClipModel::Handle
 cmHandle_t idClipModel::Handle() const
 {
 	assert( renderModelHandle == -1 );
-	if( collisionModelHandle )
+	if( collisionModelLoaded )	//puncho - R1.3: a loaded model includes the world's handle 0
 	{
 		return collisionModelHandle;
 	}
@@ -794,10 +816,13 @@ void idClipModel::Link( idClip& clp, idEntity* ent, int newId, const idVec3& new
 idClipModel::CheckModel
 ============
 */
-cmHandle_t idClipModel::CheckModel( const char* name )
+//puncho start - R1.3: callers need load success, which includes the world's handle 0
+bool idClipModel::CheckModel( const char* name )
 {
-	return collisionModelManager->LoadModel( name, false );
+	cmHandle_t handle;
+	return collisionModelManager->LoadModel( name, false, handle );
 }
+//puncho end
 
 
 /*
@@ -901,7 +926,12 @@ void idClip::Init()
 	touchCount = 0;
 
 	// get world map bounds
-	h = collisionModelManager->LoadModel( "worldMap", false );
+	//puncho start - R1.3: refuse a missing world before using its bounds
+	if( !collisionModelManager->LoadModel( "worldMap", false, h ) )
+	{
+		gameLocal.Error( "idClip::Init: collision model worldMap not loaded" );
+	}
+	//puncho end
 	collisionModelManager->GetModelBounds( h, worldBounds );
 	sectorDepth = 12;
 	float extent = Max( worldBounds[1].x - worldBounds[0].x, worldBounds[1].y - worldBounds[0].y );

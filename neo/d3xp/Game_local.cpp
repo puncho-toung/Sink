@@ -2271,7 +2271,10 @@ void idGameLocal::CacheDictionaryMedia( const idDict* dict )
 				renderModelManager->FindModel( kv->GetValue() );
 
 				// precache .cm files only
-				collisionModelManager->LoadModel( kv->GetValue(), true );
+				//puncho start - R1.3: a precache miss is fine; status is deliberately unused because spawn loads the model again
+				cmHandle_t precached;
+				collisionModelManager->LoadModel( kv->GetValue(), true, precached );
+				//puncho end
 			}
 		}
 		kv = dict->MatchPrefix( "model", kv );
@@ -8489,6 +8492,7 @@ void idGameLocal::GetMapStats( mapGameStats_t& stats ) const
 	stats.recordCommitUs = worldStore.commitUs;
 	stats.recordApplyUs = worldStore.applyUs;
 	stats.cmModels = collisionModelManager->GetNumModels();
+	stats.cmModelsCap = collisionModelManager->GetMaxModels();	//puncho - R1.3: report the live ordinary capacity, including 0 when cleared
 	stats.skipStatics = skipReplicatedStatics;
 	stats.skipStaticsCap = net_maxSkipReplicatedStatics.GetInteger();
 	stats.pvsBytes = pvs.GetMapBytes();

@@ -1430,16 +1430,18 @@ void idCollisionModelManagerLocal::Rotation180( trace_t* results, const idVec3& 
 	cm_trmVertex_t* vert;
 	ALIGN16( static cm_traceWork_t tw );
 
-	if( model < 0 || model > MAX_SUBMODELS || model > idCollisionModelManagerLocal::maxModels )
+	//puncho start - R1.3: allow the trace slot at maxModels and reject a cleared table before indexing
+	if( model < 0 || model >= MAX_CM_MODELS || model > idCollisionModelManagerLocal::maxModels )
 	{
 		common->Printf( "idCollisionModelManagerLocal::Rotation180: invalid model handle\n" );
 		return;
 	}
-	if( !idCollisionModelManagerLocal::models[model] )
+	if( !idCollisionModelManagerLocal::models || !idCollisionModelManagerLocal::models[model] )
 	{
 		common->Printf( "idCollisionModelManagerLocal::Rotation180: invalid model\n" );
 		return;
 	}
+	//puncho end
 
 	idCollisionModelManagerLocal::NextCheckCount();
 

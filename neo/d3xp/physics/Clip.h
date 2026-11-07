@@ -108,7 +108,7 @@ public:
 	const idTraceModel* 	GetTraceModel() const;
 	void					GetMassProperties( const float density, float& mass, idVec3& centerOfMass, idMat3& inertiaTensor ) const;
 
-	static cmHandle_t		CheckModel( const char* name );
+	static bool				CheckModel( const char* name );	//puncho - R1.3: report load success independently of the world's handle 0
 	static void				ClearTraceModelCache();
 	static int				TraceModelCacheSize();
 
@@ -118,6 +118,9 @@ public:
 private:
 	bool					enabled;				// true if this clip model is used for clipping
 	short					group;					// ai-avoidance (WP-A3): collision group, 0 = none; in the padding after enabled
+	//puncho start - R1.3: collisionModelHandle names a loaded model, the world's 0 included; unsaved, in the padding before entity
+	bool					collisionModelLoaded;
+	//puncho end
 	idEntity* 				entity;					// entity using this clip model
 	int						id;						// id for entities that use multiple clip models
 	idEntity* 				owner;					// owner of the entity that owns this clip model

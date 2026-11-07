@@ -858,7 +858,10 @@ void idTarget_SetModel::Spawn()
 		renderModelManager->FindModel( model );
 
 		// precache .cm files only
-		collisionModelManager->LoadModel( model, true );
+		//puncho start - R1.3: a precache miss is fine; status is deliberately unused because spawn loads the model again
+		cmHandle_t precached;
+		collisionModelManager->LoadModel( model, true, precached );
+		//puncho end
 	}
 }
 
