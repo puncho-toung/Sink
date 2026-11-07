@@ -625,7 +625,7 @@ extern idGameEdit* 				gameEdit;
 ===============================================================================
 */
 
-const int GAME_API_VERSION		= 14; // P2b stage 2: GetSchemaKeys; stage 1: GetLevelKeep, RefusesMapWithPeers, FormatMapRows virtual, LoadPhase slot, skipStaticsCap, IsResident, IsSampleResident, bool SaveGame; stage 0: idCommon::LoadSpanAdd/LoadSpanName, idFileSystem::GetReadUs/GetThreadReadBytes
+const int GAME_API_VERSION		= 15; // R1: idCollisionModelManager::LoadModel bool + out handle, GetMaxModels; mapGameStats_t (idGame::GetMapStats) appends cmModelsCap, eventHighWater, eventCapacity, eventPassHighWater; P2b stage 2: GetSchemaKeys; stage 1: GetLevelKeep, RefusesMapWithPeers, FormatMapRows virtual, LoadPhase slot, skipStaticsCap, IsResident, IsSampleResident, bool SaveGame; stage 0: idCommon::LoadSpanAdd/LoadSpanName, idFileSystem::GetReadUs/GetThreadReadBytes
 
 typedef struct
 {

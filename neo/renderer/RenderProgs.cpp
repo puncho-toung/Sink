@@ -52,7 +52,14 @@ idRenderProgManager renderProgManager;
 
 idCVar r_renderParmVersions( "r_renderParmVersions", "32768", CVAR_RENDERER | CVAR_INTEGER | CVAR_INIT | CVAR_ARCHIVE | CVAR_NEW, "versions of each non-skinned volatile render-parm buffer; restart", 1 << RENDER_PARM_MIN_BITS, 1 << RENDER_PARM_MAX_BITS );
 
-static const idList<bindingLayoutType_t, TAG_RENDER> rpSkinnedLayoutTypes = { BINDING_LAYOUT_DEFAULT_SKINNED, BINDING_LAYOUT_GBUFFER_SKINNED, BINDING_LAYOUT_TEXTURE_SKINNED, BINDING_LAYOUT_DEBUG_SKINNED, BINDING_LAYOUT_CONSTANT_BUFFER_ONLY_SKINNED, BINDING_LAYOUT_AMBIENT_LIGHTING_IBL_SKINNED, BINDING_LAYOUT_DRAW_INTERACTION_SKINNED, BINDING_LAYOUT_DRAW_INTERACTION_SM_SKINNED, BINDING_LAYOUT_FOG_SKINNED, BINDING_LAYOUT_BLENDLIGHT_SKINNED, BINDING_LAYOUT_NORMAL_CUBE_SKINNED, BINDING_LAYOUT_OCTAHEDRON_CUBE_SKINNED };
+//puncho - R1 close: a plain table, so static initialisation allocates nothing
+static const bindingLayoutType_t rpSkinnedLayoutTypes[] =
+{
+	BINDING_LAYOUT_DEFAULT_SKINNED, BINDING_LAYOUT_GBUFFER_SKINNED, BINDING_LAYOUT_TEXTURE_SKINNED, BINDING_LAYOUT_DEBUG_SKINNED,
+	BINDING_LAYOUT_CONSTANT_BUFFER_ONLY_SKINNED, BINDING_LAYOUT_AMBIENT_LIGHTING_IBL_SKINNED, BINDING_LAYOUT_DRAW_INTERACTION_SKINNED,
+	BINDING_LAYOUT_DRAW_INTERACTION_SM_SKINNED, BINDING_LAYOUT_FOG_SKINNED, BINDING_LAYOUT_BLENDLIGHT_SKINNED,
+	BINDING_LAYOUT_NORMAL_CUBE_SKINNED, BINDING_LAYOUT_OCTAHEDRON_CUBE_SKINNED
+};
 //puncho end
 
 /*
@@ -773,13 +780,27 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 	int volatileCount = 0;
 	uint64 familyBytes = 0;	// aligned bytes of one version of every non-skinned volatile buffer
 	uint64 totalBytes = 0;
+	uint32 skinnedVersions = 0;	//puncho - R1 close: the skinned descs' actual maxVersions, for the bytes line
 	//puncho end
 	for( int i = 0; i < NUM_BINDING_LAYOUTS; i++ )
 	{
 		if( !renderProgManager.layoutTypeAttributes[i].pcEnabled )
 		{
 			nvrhi::BufferDesc constantBufferDesc;
-			const bool skinned = rpSkinnedLayoutTypes.Find( ( bindingLayoutType_t )i ) != NULL;	//puncho - R1.2: named layouts select the skinned capacity and accounting
+			//puncho start - R1 close: named layouts select the skinned capacity and accounting
+			bool skinned = false;
+			for( int j = 0; j < ( int )ARRAY_COUNT( rpSkinnedLayoutTypes ); j++ )
+			{
+				if( rpSkinnedLayoutTypes[ j ] == ( bindingLayoutType_t )i )
+				{
+					skinned = true;
+					break;
+				}
+			}
+			// the preflight's stride and versions, which the created desc must repeat
+			int layoutVersions = 0;
+			uint64 stride = 0;
+			//puncho end
 
 			// SRS - allocate static constant buffer for specific binding layouts, otherwise volatile
 			if( layoutTypeAttributes[i].cbStatic )
@@ -791,12 +812,12 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 			else
 			{
 				//puncho start - R1.2: preflight every version's dynamic offset before allocating versioned storage
-				const int layoutVersions = skinned ? ( 1 << RENDER_PARM_SKINNED_BITS ) : versions;
+				layoutVersions = skinned ? ( 1 << RENDER_PARM_SKINNED_BITS ) : versions;
 				if( alignment != 0 )
 				{
 					// nvrhi narrows each dynamic offset version * stride to uint32 (vulkan-resource-bindings.cpp:919-922);
 					// uint32 size and alignment below 2^32 and versions below 2^19 keep this uint64 arithmetic exact
-					const uint64 stride = ( ( uint64 )layoutTypeAttributes[i].rpBufSize + alignment - 1 ) & ~( alignment - 1 );
+					stride = ( ( uint64 )layoutTypeAttributes[i].rpBufSize + alignment - 1 ) & ~( alignment - 1 );
 					if( ( uint64 )( layoutVersions - 1 ) * stride >= UINT32_MAX )
 					{
 						common->FatalError( "render-parm dynamic offset exceeds uint32" );
@@ -815,11 +836,21 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 			if( constantBuffer[i] != NULL && !layoutTypeAttributes[i].cbStatic )
 			{
 				const nvrhi::BufferDesc& actual = constantBuffer[i]->getDesc();
+				//puncho start - R1 close: the preflight guarded the engine's stride and versions; nvrhi's desc must be the same
+				if( alignment != 0 && ( actual.byteSize != stride || actual.maxVersions != ( uint32 )layoutVersions ) )
+				{
+					common->FatalError( "render-parm buffer desc differs from preflight" );
+				}
+				//puncho end
 				volatileCount++;
 				totalBytes += actual.byteSize * actual.maxVersions;	// Vulkan's desc holds the aligned stride
 				if( !skinned )
 				{
 					familyBytes += actual.byteSize;
+				}
+				else
+				{
+					skinnedVersions = actual.maxVersions;	//puncho - R1 close
 				}
 			}
 			//puncho end
@@ -830,7 +861,7 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 	if( alignment != 0 )
 	{
 		common->Printf( "render-parm buffers: %d volatile, %d + %d versions, alignment %u B, %llu B/family-version, %llu B (%.1f MiB)\n",
-						volatileCount, versions, 1 << RENDER_PARM_SKINNED_BITS, ( unsigned int )alignment, ( unsigned long long )familyBytes,
+						volatileCount, versions, ( int )skinnedVersions, ( unsigned int )alignment, ( unsigned long long )familyBytes,
 						( unsigned long long )totalBytes, ( double )totalBytes / ( 1024.0 * 1024.0 ) );
 	}
 	//puncho end

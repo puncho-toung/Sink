@@ -99,7 +99,9 @@ void ReserveOptWorkingSet( uint64 bytes )
 	// a fixed base past the cap refuses every request instead of wrapping the subtraction
 	if( optWorkingSetLive > MAX_OPT_WORKING_SET || bytes > MAX_OPT_WORKING_SET - optWorkingSetLive )
 	{
-		common->Error( "OPT_WORKING_SET: %llu live, %llu requested, cap %llu bytes; material '%s', area %d; high-water %llu", ( unsigned long long )optWorkingSetLive, ( unsigned long long )bytes, ( unsigned long long )MAX_OPT_WORKING_SET, OptGroupMaterialName( optActiveGroup ), OptGroupArea( optActiveGroup ), ( unsigned long long )Max( optWorkingSetPeak, optWorkingSetLive ) );
+		common->Error( "OPT_WORKING_SET: %llu live, %llu requested, cap %llu bytes; material '%s', area %d; high-water %llu",
+					   ( unsigned long long )optWorkingSetLive, ( unsigned long long )bytes, ( unsigned long long )MAX_OPT_WORKING_SET,
+					   OptGroupMaterialName( optActiveGroup ), OptGroupArea( optActiveGroup ), ( unsigned long long )Max( optWorkingSetPeak, optWorkingSetLive ) );
 		return;
 	}
 	optWorkingSetLive += bytes;
@@ -119,7 +121,9 @@ void ReleaseOptWorkingSet( uint64 bytes )
 	}
 	if( bytes > optWorkingSetLive - optWorkingSetBase )
 	{
-		common->Error( "OPT_WORKING_SET accounting: %llu live, %llu released, fixed %llu bytes; material '%s', area %d", ( unsigned long long )optWorkingSetLive, ( unsigned long long )bytes, ( unsigned long long )optWorkingSetBase, OptGroupMaterialName( optActiveGroup ), OptGroupArea( optActiveGroup ) );
+		common->Error( "OPT_WORKING_SET accounting: %llu live, %llu released, fixed %llu bytes; material '%s', area %d",
+					   ( unsigned long long )optWorkingSetLive, ( unsigned long long )bytes, ( unsigned long long )optWorkingSetBase,
+					   OptGroupMaterialName( optActiveGroup ), OptGroupArea( optActiveGroup ) );
 		return;
 	}
 	optWorkingSetLive -= bytes;
@@ -196,7 +200,9 @@ static optEdge_t*	AllocEdge()
 
 	if( numOptEdges == MAX_OPT_EDGES )
 	{
-		common->Error( "MAX_OPT_EDGES: %d allocated, attempted %d (cap %d), material '%s', area %d; high-water %d verts %d edges", numOptEdges, numOptEdges + 1, MAX_OPT_EDGES, OptGroupMaterialName( optActiveGroup ), OptGroupArea( optActiveGroup ), Max( dmapMaxGroupVerts, numOptVerts ), Max( dmapMaxGroupEdges, numOptEdges ) );	//puncho - R1.4
+		common->Error( "MAX_OPT_EDGES: %d allocated, attempted %d (cap %d), material '%s', area %d; high-water %d verts %d edges",
+					   numOptEdges, numOptEdges + 1, MAX_OPT_EDGES, OptGroupMaterialName( optActiveGroup ), OptGroupArea( optActiveGroup ),
+					   Max( dmapMaxGroupVerts, numOptVerts ), Max( dmapMaxGroupEdges, numOptEdges ) );	//puncho - R1.4
 	}
 	e = &optEdges[ numOptEdges ];
 	numOptEdges++;
@@ -320,7 +326,9 @@ static optVertex_t* FindOptVertex( idDrawVert* v, optimizeGroup_t* opt )
 
 	if( numOptVerts >= MAX_OPT_VERTEXES )
 	{
-		common->Error( "MAX_OPT_VERTEXES: %d allocated, attempted %d (cap %d), material '%s', area %d; high-water %d verts %d edges", numOptVerts, numOptVerts + 1, MAX_OPT_VERTEXES, OptGroupMaterialName( opt ), OptGroupArea( opt ), Max( dmapMaxGroupVerts, numOptVerts ), Max( dmapMaxGroupEdges, numOptEdges ) );	//puncho - R1.4: a duplicate at capacity returned from the lookup above
+		common->Error( "MAX_OPT_VERTEXES: %d allocated, attempted %d (cap %d), material '%s', area %d; high-water %d verts %d edges",
+					   numOptVerts, numOptVerts + 1, MAX_OPT_VERTEXES, OptGroupMaterialName( opt ), OptGroupArea( opt ),
+					   Max( dmapMaxGroupVerts, numOptVerts ), Max( dmapMaxGroupEdges, numOptEdges ) );	//puncho - R1.4: a duplicate at capacity returned from the lookup above
 		return NULL;
 	}
 
@@ -2207,6 +2215,8 @@ OptimizeOptList
 */
 static	void OptimizeOptList( optimizeGroup_t* opt )
 {
+	optimizeGroup_t*	oldNext;
+
 	//puncho start - R1.4: include input triangles before T-junction allocations
 	if( optActiveGroup != NULL )
 	{
@@ -2215,8 +2225,6 @@ static	void OptimizeOptList( optimizeGroup_t* opt )
 	optActiveGroup = opt;
 	ReserveOptWorkingSet( OptCountBytes( ( uint64 )CountTriList( opt->triList ) + ( uint64 )CountTriList( opt->regeneratedTris ), sizeof( mapTri_t ) ) );
 	//puncho end
-
-	optimizeGroup_t*	oldNext;
 
 	// fix the t junctions among this single list
 	// so we can match edges
@@ -2252,7 +2260,9 @@ static	void OptimizeOptList( optimizeGroup_t* opt )
 	ReleaseOptWorkingSet( survivorBytes );
 	if( optWorkingSetLive != optWorkingSetBase )
 	{
-		common->Error( "OPT_WORKING_SET accounting: %llu live, %llu released, fixed %llu bytes; material '%s', area %d", ( unsigned long long )optWorkingSetLive, ( unsigned long long )survivorBytes, ( unsigned long long )optWorkingSetBase, OptGroupMaterialName( optActiveGroup ), OptGroupArea( optActiveGroup ) );
+		common->Error( "OPT_WORKING_SET accounting: %llu live, %llu released, fixed %llu bytes; material '%s', area %d",
+					   ( unsigned long long )optWorkingSetLive, ( unsigned long long )survivorBytes, ( unsigned long long )optWorkingSetBase,
+					   OptGroupMaterialName( optActiveGroup ), OptGroupArea( optActiveGroup ) );
 	}
 	dmapMaxGroupVerts = Max( dmapMaxGroupVerts, numOptVerts );
 	dmapMaxGroupEdges = Max( dmapMaxGroupEdges, numOptEdges );

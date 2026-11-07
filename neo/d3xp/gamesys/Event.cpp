@@ -958,21 +958,41 @@ void idEvent::Shutdown()
 }
 
 //puncho start - R1.1: map diagnostics preserve queued ownership and reclaim only quiescent detached slots
+/*
+================
+idEvent::NumAllocated
+================
+*/
 int idEvent::NumAllocated()
 {
 	return eventsAllocated;
 }
 
+/*
+================
+idEvent::HighWater
+================
+*/
 int idEvent::HighWater()
 {
 	return eventsHighWater;
 }
 
+/*
+================
+idEvent::PassHighWater
+================
+*/
 int idEvent::PassHighWater()
 {
 	return eventsPassHighWater;
 }
 
+/*
+================
+idEvent::Quiescent
+================
+*/
 bool idEvent::Quiescent()
 {
 	return eventFramesOpen == 0;
@@ -1056,12 +1076,12 @@ void idEvent::ListEvents()
 
 	const int slow = EventQueue.Num();
 	const int fast = FastEventQueue.Num();
-	const int free = FreeEvents.Num();
+	const int freeSlots = FreeEvents.Num();
 	const int detached = eventsAllocated - slow - fast;
-	gameLocal.Printf( "listEvents: slow %d fast %d free %d allocated %d detached %d high %d pass %d (MAX_EVENTS %d)\n", slow, fast, free, eventsAllocated, detached, eventsHighWater, eventsPassHighWater, MAX_EVENTS );
-	if( eventsAllocated + free != MAX_EVENTS || detached < 0 )
+	gameLocal.Printf( "listEvents: slow %d fast %d free %d allocated %d detached %d high %d pass %d (MAX_EVENTS %d)\n", slow, fast, freeSlots, eventsAllocated, detached, eventsHighWater, eventsPassHighWater, MAX_EVENTS );
+	if( eventsAllocated + freeSlots != MAX_EVENTS || detached < 0 )
 	{
-		gameLocal.Warning( "listEvents: census broken: allocated %d + free %d != MAX_EVENTS %d or detached %d < 0", eventsAllocated, free, MAX_EVENTS, detached );
+		gameLocal.Warning( "listEvents: census broken: allocated %d + free %d != MAX_EVENTS %d or detached %d < 0", eventsAllocated, freeSlots, MAX_EVENTS, detached );
 	}
 }
 //puncho end

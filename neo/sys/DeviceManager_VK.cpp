@@ -1374,15 +1374,16 @@ bool DeviceManager_VK::CreateDeviceAndSwapChain()
 		m_ValidationLayer = nvrhi::validation::createValidationLayer( m_NvrhiDevice );
 	}
 
+	//puncho - R1 close: one property query serves the push-constant limit and the volatile-buffer alignment
+	const auto deviceProperties = m_VulkanPhysicalDevice.getProperties();
+
 	// SRS - Determine maxPushConstantSize for Vulkan device
 	if( r_vkUsePushConstants.GetBool() )
 	{
-		auto deviceProperties = m_VulkanPhysicalDevice.getProperties();
 		m_DeviceParams.maxPushConstantSize = Min( deviceProperties.limits.maxPushConstantsSize, nvrhi::c_MaxPushConstantSize );
 	}
 
 	//puncho start - R1.2: match nvrhi's volatile-buffer alignment even when push constants are disabled
-	const auto deviceProperties = m_VulkanPhysicalDevice.getProperties();
 	const auto& limits = deviceProperties.limits;
 	m_DeviceParams.volatileConstantBufferAlignment = Max( ( uint32_t )limits.minUniformBufferOffsetAlignment, ( uint32_t )limits.nonCoherentAtomSize );
 	//puncho end
