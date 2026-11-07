@@ -1381,6 +1381,12 @@ bool DeviceManager_VK::CreateDeviceAndSwapChain()
 		m_DeviceParams.maxPushConstantSize = Min( deviceProperties.limits.maxPushConstantsSize, nvrhi::c_MaxPushConstantSize );
 	}
 
+	//puncho start - R1.2: match nvrhi's volatile-buffer alignment even when push constants are disabled
+	const auto deviceProperties = m_VulkanPhysicalDevice.getProperties();
+	const auto& limits = deviceProperties.limits;
+	m_DeviceParams.volatileConstantBufferAlignment = Max( ( uint32_t )limits.minUniformBufferOffsetAlignment, ( uint32_t )limits.nonCoherentAtomSize );
+	//puncho end
+
 	CHECK( createSwapChain() );
 
 	//m_BarrierCommandList = m_NvrhiDevice->createCommandList();		// SRS - no longer needed

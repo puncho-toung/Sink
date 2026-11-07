@@ -29,6 +29,8 @@ If you have questions concerning this license or the applicable additional terms
 #include "precompiled.h"
 #pragma hdrstop
 
+#include <float.h>	//puncho - R1.2: FLT_MAX bounds checked float conversion
+
 idCVar* idCVar::staticVars = NULL;
 
 extern idCVar net_allowCheats;
@@ -52,7 +54,7 @@ public:
 
 	const char** 			CopyValueStrings( const char** strings );
 	void					Update( const idCVar* cvar );
-	void					UpdateValue();
+	bool					UpdateValue( const char* newValue );	//puncho - R1.2: numeric refusal leaves the current value intact
 	void					UpdateCheat();
 	void					Set( const char* newValue, bool force, bool fromServer );
 	void					Reset();
@@ -100,7 +102,11 @@ idInternalCVar::idInternalCVar( const char* newName, const char* newValue, int n
 	valueMax = -1;
 	valueStrings = NULL;
 	valueCompletion = 0;
-	UpdateValue();
+	//puncho start - R1.2: refused defaults retain their text with initialized numeric caches
+	integerValue = 0;
+	floatValue = 0.0f;
+	UpdateValue( newValue );
+	//puncho end
 	UpdateCheat();
 	internalVar = this;
 }
@@ -124,7 +130,11 @@ idInternalCVar::idInternalCVar( const idCVar* cvar )
 	valueMax = cvar->GetMaxValue();
 	valueStrings = CopyValueStrings( cvar->GetValueStrings() );
 	valueCompletion = cvar->GetValueCompletion();
-	UpdateValue();
+	//puncho start - R1.2: refused defaults retain their text with initialized numeric caches
+	integerValue = 0;
+	floatValue = 0.0f;
+	UpdateValue( cvar->GetString() );
+	//puncho end
 	UpdateCheat();
 	internalVar = this;
 }
@@ -217,7 +227,7 @@ void idInternalCVar::Update( const idCVar* cvar )
 		Mem_Free( valueStrings );
 		valueStrings = CopyValueStrings( cvar->GetValueStrings() );
 		valueCompletion = cvar->GetValueCompletion();
-		UpdateValue();
+		UpdateValue( valueString );	//puncho - R1.2: re-convert existing text under the registered range with an alias-safe copy
 		cvarSystem->SetModifiedFlags( cvar->GetFlags() );
 	}
 
@@ -236,100 +246,184 @@ void idInternalCVar::Update( const idCVar* cvar )
 	}
 }
 
+//puncho start - R1.2: saturating numeric caches avoid overflow; publish text and caches only after conversion succeeds
+/*
+============
+CVar_IntegerPrefix
+============
+*/
+static int CVar_IntegerPrefix( const char* s )
+{
+	while( *s == ' ' || ( *s >= '\t' && *s <= '\r' ) )
+	{
+		s++;
+	}
+	const bool negative = ( *s == '-' );
+	if( *s == '+' || *s == '-' )
+	{
+		s++;
+	}
+	const uint64 limit = ( uint64 )INT_MAX + ( negative ? 1 : 0 );
+	uint64 n = 0;
+	while( *s >= '0' && *s <= '9' )
+	{
+		const uint64 digit = *s - '0';
+		n = ( n > ( limit - digit ) / 10 ) ? limit : n * 10 + digit;
+		s++;
+	}
+	return negative ? ( int )( -( int64 )n ) : ( int )n;
+}
+
+/*
+============
+CVar_FloatToInteger
+============
+*/
+static int CVar_FloatToInteger( float f )
+{
+	return ( double )f <= INT_MIN ? INT_MIN : ( ( double )f >= INT_MAX ? INT_MAX : ( int )f );
+}
+
 /*
 ============
 idInternalCVar::UpdateValue
 ============
 */
-void idInternalCVar::UpdateValue()
+bool idInternalCVar::UpdateValue( const char* newValue )
 {
+	idStr text = newValue;
+	int integer;
+	float floating;
 	bool clamped = false;
 
 	if( flags & CVAR_BOOL )
 	{
-		integerValue = ( atoi( value ) != 0 );
-		floatValue = integerValue;
-		if( idStr::Icmp( value, "0" ) != 0 && idStr::Icmp( value, "1" ) != 0 )
+		integer = ( CVar_IntegerPrefix( text ) != 0 );
+		floating = integer;
+		if( idStr::Icmp( text, "0" ) != 0 && idStr::Icmp( text, "1" ) != 0 )
 		{
-			valueString = idStr( ( bool )( integerValue != 0 ) );
-			value = valueString.c_str();
+			text = idStr( ( bool )( integer != 0 ) );
 		}
 	}
 	else if( flags & CVAR_INTEGER )
 	{
-		integerValue = ( int )atoi( value );
+		int64 wide = CVar_IntegerPrefix( text );
 		if( valueMin < valueMax )
 		{
-			if( integerValue < valueMin )
+			if( ( double )wide < valueMin )
 			{
-				integerValue = ( int )valueMin;
+				wide = CVar_FloatToInteger( valueMin );	// a bound beyond int32 saturates before any cast
 				clamped = true;
 			}
-			else if( integerValue > valueMax )
+			else if( ( double )wide > valueMax )
 			{
-				integerValue = ( int )valueMax;
+				wide = CVar_FloatToInteger( valueMax );
 				clamped = true;
 			}
 		}
-		if( clamped || !idStr::IsNumeric( value ) || idStr::FindChar( value, '.' ) )
+		integer = ( int )wide;
+		if( clamped || !idStr::IsNumeric( text ) || idStr::FindChar( text, '.' ) )
 		{
-			valueString = idStr( integerValue );
-			value = valueString.c_str();
+			text = idStr( integer );
 		}
-		floatValue = ( float )integerValue;
+		floating = ( float )integer;
 	}
 	else if( flags & CVAR_FLOAT )
 	{
-		floatValue = ( float )atof( value );
-		if( valueMin < valueMax )
+		double d = strtod( text, NULL );
+		if( !std::isfinite( d ) )
 		{
-			if( floatValue < valueMin )
+			common->Warning( "CVar '%s': non-finite or unrepresentable numeric value '%s'", nameString.c_str(), newValue );
+			return false;
+		}
+		const bool bounded = valueMin < valueMax;
+		if( bounded && ( !std::isfinite( valueMin ) || !std::isfinite( valueMax ) ) )
+		{
+			common->Warning( "CVar '%s': non-finite or unrepresentable numeric value '%s'", nameString.c_str(), newValue );
+			return false;
+		}
+		if( d < -FLT_MAX || d > FLT_MAX )
+		{
+			if( !bounded )
 			{
-				floatValue = valueMin;
+				common->Warning( "CVar '%s': non-finite or unrepresentable numeric value '%s'", nameString.c_str(), newValue );
+				return false;
+			}
+			if( d < valueMin )
+			{
+				d = valueMin;
+			}
+			else if( d > valueMax )
+			{
+				d = valueMax;
+			}
+			clamped = true;
+		}
+		float f = ( float )d;
+		if( bounded )
+		{
+			if( f < valueMin )
+			{
+				f = valueMin;
 				clamped = true;
 			}
-			else if( floatValue > valueMax )
+			else if( f > valueMax )
 			{
-				floatValue = valueMax;
+				f = valueMax;
 				clamped = true;
 			}
 		}
-		if( clamped || !idStr::IsNumeric( value ) )
+		if( clamped || !idStr::IsNumeric( text ) )
 		{
-			valueString = idStr( floatValue );
-			value = valueString.c_str();
+			text = idStr( f );
 		}
-		integerValue = ( int )floatValue;
+		floating = f;
+		integer = CVar_FloatToInteger( f );
 	}
 	else
 	{
 		if( valueStrings && valueStrings[0] )
 		{
-			integerValue = 0;
+			integer = 0;
 			for( int i = 0; valueStrings[i]; i++ )
 			{
-				if( valueString.Icmp( valueStrings[i] ) == 0 )
+				if( text.Icmp( valueStrings[i] ) == 0 )
 				{
-					integerValue = i;
+					integer = i;
 					break;
 				}
 			}
-			valueString = valueStrings[integerValue];
-			value = valueString.c_str();
-			floatValue = ( float )integerValue;
+			text = valueStrings[integer];
+			floating = ( float )integer;
 		}
-		else if( valueString.Length() < 32 )
+		else if( text.Length() < 32 )
 		{
-			floatValue = ( float )atof( value );
-			integerValue = ( int )floatValue;
+			double d = strtod( text, NULL );
+			if( std::isfinite( d ) && d >= -FLT_MAX && d <= FLT_MAX )
+			{
+				floating = ( float )d;
+				integer = CVar_FloatToInteger( floating );
+			}
+			else
+			{
+				floating = 0.0f;
+				integer = 0;
+			}
 		}
 		else
 		{
-			floatValue = 0.0f;
-			integerValue = 0;
+			floating = 0.0f;
+			integer = 0;
 		}
 	}
+
+	valueString = text;
+	value = valueString.c_str();
+	integerValue = integer;
+	floatValue = floating;
+	return true;
 }
+//puncho end
 
 /*
 ============
@@ -397,9 +491,12 @@ void idInternalCVar::Set( const char* newValue, bool force, bool fromServer )
 		return;
 	}
 
-	valueString = newValue;
-	value = valueString.c_str();
-	UpdateValue();
+	//puncho start - R1.2: refused numeric values leave text, caches and modified flags unchanged
+	if( !UpdateValue( newValue ) )
+	{
+		return;
+	}
+	//puncho end
 
 	SetModified();
 	cvarSystem->SetModifiedFlags( flags );
@@ -412,9 +509,7 @@ idInternalCVar::Reset
 */
 void idInternalCVar::Reset()
 {
-	valueString = resetString;
-	value = valueString.c_str();
-	UpdateValue();
+	UpdateValue( resetString );	//puncho - R1.2: a refused reset preserves the current value and caches
 }
 
 /*
