@@ -326,6 +326,10 @@ extern idCVar dmap_phaseTimes;
 extern int dmapOptimizeGroups;
 extern int dmapMaxGroupTris;
 //puncho end
+//puncho start - R1.4: componentwise compile maxima of per-group cursors
+extern int dmapMaxGroupVerts;
+extern int dmapMaxGroupEdges;
+//puncho end
 
 int FindFloatPlane( const idPlane& plane, bool* fixedDegeneracies = NULL );
 
@@ -452,6 +456,8 @@ void	FilterMeshesIntoTree( uEntity_t* e );
 
 // tritjunction.cpp
 
+extern const int tjunctionHashHeadBytes;	//puncho - R1.4
+
 struct hashVert_s*	GetHashVert( idVec3& v );
 void	HashTriangles( optimizeGroup_t* groupList );
 void	FreeTJunctionHash();
@@ -463,6 +469,23 @@ void	FixGlobalTjunctions( uEntity_t* e );
 //=============================================================================
 
 // optimize.cpp -- triangle mesh reoptimization
+
+//puncho start - R1.4: optimizer caps fill whole bit widths
+#define OPT_VERTEX_BITS			16
+#define MAX_OPT_VERTEXES		( 1 << OPT_VERTEX_BITS )
+#define OPT_EDGE_BITS			18
+#define MAX_OPT_EDGES			( 1 << OPT_EDGE_BITS )
+// one optimizer group's working set (Q1.4a): the fixed vertex/edge arrays, the T-junction bucket heads, the group's
+// input tris and everything allocated inside the group, in requested bytes
+#define OPT_WORKING_SET_BITS	25
+#define MAX_OPT_WORKING_SET		( 1ull << OPT_WORKING_SET_BITS )
+
+extern uint64	optWorkingSetLive;		// requested bytes; between groups the fixed arrays and hash heads only
+extern uint64	optWorkingSetPeak;		// highest live of any group this compile, 0 with no group
+void	ResetOptWorkingSet();				// before each compile (an Error can leave a group open in the engine's dmap)
+void	ReserveOptWorkingSet( uint64 bytes );	// inside a group, before the caller allocates; refuses past the cap
+void	ReleaseOptWorkingSet( uint64 bytes );	// inside a group, as the caller frees what it reserved
+//puncho end
 
 // the shadow volume optimizer call internal optimizer routines, normal triangles
 // will just be done by OptimizeEntity()

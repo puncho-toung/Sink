@@ -46,6 +46,7 @@ mapTri_t*	AllocTri()
 {
 	mapTri_t*	tri;
 
+	ReserveOptWorkingSet( sizeof( *tri ) );	//puncho - R1.4: counted only inside an optimizer group
 	tri = ( mapTri_t* )Mem_Alloc( sizeof( *tri ), TAG_TOOLS );
 	memset( tri, 0, sizeof( *tri ) );
 	return tri;
@@ -59,6 +60,7 @@ FreeTri
 void		FreeTri( mapTri_t* tri )
 {
 	Mem_Free( tri );
+	ReleaseOptWorkingSet( sizeof( mapTri_t ) );	//puncho - R1.4
 }
 
 
@@ -98,6 +100,7 @@ void FreeTriList( mapTri_t* a )
 	{
 		next = a->next;
 		Mem_Free( a );
+		ReleaseOptWorkingSet( sizeof( mapTri_t ) );	//puncho - R1.4
 	}
 }
 
@@ -154,6 +157,7 @@ mapTri_t*	CopyMapTri( const mapTri_t* tri )
 {
 	mapTri_t*		t;
 
+	ReserveOptWorkingSet( sizeof( *t ) );	//puncho - R1.4: counted only inside an optimizer group
 	t = ( mapTri_t* )Mem_Alloc( sizeof( *t ), TAG_TOOLS );
 	*t = *tri;
 
