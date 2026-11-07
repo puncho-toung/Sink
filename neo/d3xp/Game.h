@@ -224,6 +224,7 @@ struct mapGameStats_t
 	unsigned int recordCommitUs, recordApplyUs;
 	unsigned int dungeonTransitions, dungeonRefused, dungeonInhibited, dungeonPrefetches;
 	int cmModelsCap;	//puncho - R1.3: collisionModelManager->GetMaxModels(), the MAP row's cm denominator, 0 when cleared; appended, never saved or sent
+	int eventHighWater, eventCapacity, eventPassHighWater;	//puncho - R1.1: idEvent's H, MAX_EVENTS and P for the MAP alloc row; appended, never saved or sent
 };
 
 // The last tic's record for the com_showFPS 3 window, the aistats: line and the CSV (§2.5). POD on

@@ -5546,6 +5546,211 @@ static void Cmd_TransitionTest_f( const idCmdArgs& args )
 void MapGraphCheck_f( const idCmdArgs& args );
 void CorpseFixture_f( const idCmdArgs& args );
 
+//puncho start - R1.1: non-retail event census and incremental pool/pass refusal fixtures
+#if !defined( ID_RETAIL )
+static void Cmd_ListEvents_f( const idCmdArgs& args )
+{
+	idEvent::ListEvents();
+}
+
+static bool ParseEventDecimal( const char* s, int limit, int& out )
+{
+	if( *s == '\0' )
+	{
+		return false;
+	}
+	int n = 0;
+	for( ; *s != '\0'; s++ )
+	{
+		if( *s < '0' || *s > '9' )
+		{
+			return false;
+		}
+		const int d = *s - '0';
+		if( n > limit / 10 || ( n == limit / 10 && d > limit % 10 ) )
+		{
+			return false;
+		}
+		n = n * 10 + d;
+	}
+	out = n;
+	return true;
+}
+
+static bool EventCommandReady( const char* cmd )
+{
+	if( common->IsMultiplayer() || common->IsClient() )
+	{
+		gameLocal.Printf( "%s: authoritative single player only\n", cmd );
+		return false;
+	}
+	if( gameLocal.GameState() != GAMESTATE_ACTIVE || !idEvent::initialized )
+	{
+		gameLocal.Printf( "%s: no active map\n", cmd );
+		return false;
+	}
+	if( !idEvent::Quiescent() )
+	{
+		gameLocal.Printf( "%s: refused while an event frame is open\n", cmd );
+		return false;
+	}
+	return true;
+}
+
+static idEntity* SpawnEventTarget( const char* cmd, bool fast, const idEventDef* ev )
+{
+	idDict args;
+	args.Set( "classname", "eventTarget" );	// no such entityDef: spawn idTarget by type, as testSpawnChurn does
+	idEntity* ent = gameLocal.SpawnEntityType( idTarget::Type, &args );
+	if( ent == NULL )
+	{
+		gameLocal.Printf( "%s: target spawn failed\n", cmd );
+		return NULL;
+	}
+	if( fast )
+	{
+		ent->SetTimeGroup( TIME_GROUP2 );
+	}
+	if( !ent->RespondsTo( *ev ) )
+	{
+		gameLocal.Printf( "%s: target does not respond to '%s'\n", cmd, ev->GetName() );
+		delete ent;
+		return NULL;
+	}
+	// Retain the target for map teardown and save/load; a remove post would change admission.
+	return ent;
+}
+
+static void Cmd_EventStorm_f( const idCmdArgs& args )
+{
+	if( !EventCommandReady( "eventStorm" ) )
+	{
+		return;
+	}
+	if( args.Argc() < 2 )
+	{
+		gameLocal.Printf( "usage: eventStorm <count 0..65536> [delay ms] [fast]\n" );
+		return;
+	}
+	int n;
+	if( !ParseEventDecimal( args.Argv( 1 ), 65536, n ) )
+	{
+		gameLocal.Printf( "eventStorm: count '%s' is not a decimal from 0 to 65536\n", args.Argv( 1 ) );
+		return;
+	}
+	int arg = 2;
+	int ms = 0;
+	bool fast = false;
+	if( arg < args.Argc() && idStr::Icmp( args.Argv( arg ), "fast" ) != 0 )
+	{
+		if( !ParseEventDecimal( args.Argv( arg ), INT_MAX, ms ) )
+		{
+			gameLocal.Printf( "eventStorm: delay '%s' is not a decimal from 0 to 2147483647 ms\n", args.Argv( arg ) );
+			return;
+		}
+		arg++;
+	}
+	if( arg < args.Argc() && idStr::Icmp( args.Argv( arg ), "fast" ) == 0 )
+	{
+		fast = true;
+		arg++;
+	}
+	if( arg != args.Argc() )
+	{
+		gameLocal.Printf( "usage: eventStorm <count 0..65536> [delay ms] [fast]\n" );
+		return;
+	}
+	const int now = gameLocal.GetTimeGroupTime( fast ? TIME_GROUP2 : TIME_GROUP1 );
+	if( ( int64 )now + ms > INT_MAX )
+	{
+		gameLocal.Printf( "eventStorm: %s time %d + delay %d ms passes 2147483647\n", fast ? "fast" : "slow", now, ms );
+		return;
+	}
+	if( n == 0 )
+	{
+		gameLocal.Printf( "eventStorm: posted 0 of 0 to the %s queue, no target (allocated %d)\n", fast ? "fast" : "slow", idEvent::NumAllocated() );
+		return;
+	}
+	idEntity* target = SpawnEventTarget( "eventStorm", fast, &EV_Hide );
+	if( target == NULL )
+	{
+		return;
+	}
+	if( !target->RespondsTo( EV_Show ) )
+	{
+		gameLocal.Printf( "%s: target does not respond to '%s'\n", "eventStorm", EV_Show.GetName() );
+		delete target;
+		return;
+	}
+	const int before = idEvent::NumAllocated();
+	SetTimeState ts( target->GetTimeGroup() );
+	const uint64 start = Sys_Microseconds();
+	uint64 postedAt = start;	// the last admitted post: the refusal's error has unloaded the map before the catch runs
+	int posted = 0;
+	try
+	{
+		for( ; posted < n; posted++ )
+		{
+			target->PostEventMS( ( posted & 1 ) ? &EV_Show : &EV_Hide, ms );
+			postedAt = Sys_Microseconds();
+		}
+	}
+	catch( idException& )
+	{
+		// The partial count is the E - Q oracle; preserve the allocator's refusal and unwind.
+		gameLocal.Printf( "eventStorm: posted %d of %d to the %s queue at +%d ms in %llu us before the refusal (allocated %d before)\n", posted, n, fast ? "fast" : "slow", ms, ( unsigned long long )( postedAt - start ), before );
+		throw;
+	}
+	gameLocal.Printf( "eventStorm: posted %d of %d to the %s queue at +%d ms in %llu us (allocated %d before, %d after)\n", posted, n, fast ? "fast" : "slow", ms, ( unsigned long long )( postedAt - start ), before, idEvent::NumAllocated() );
+}
+
+static void Cmd_EventChain_f( const idCmdArgs& args )
+{
+	if( !EventCommandReady( "eventChain" ) )
+	{
+		return;
+	}
+	if( args.Argc() < 2 )
+	{
+		gameLocal.Printf( "usage: eventChain <count 0..65536> [fast]\n" );
+		return;
+	}
+	int n;
+	if( !ParseEventDecimal( args.Argv( 1 ), 65536, n ) )
+	{
+		gameLocal.Printf( "eventChain: count '%s' is not a decimal from 0 to 65536\n", args.Argv( 1 ) );
+		return;
+	}
+	int arg = 2;
+	bool fast = false;
+	if( arg < args.Argc() && idStr::Icmp( args.Argv( arg ), "fast" ) == 0 )
+	{
+		fast = true;
+		arg++;
+	}
+	if( arg != args.Argc() )
+	{
+		gameLocal.Printf( "usage: eventChain <count 0..65536> [fast]\n" );
+		return;
+	}
+	if( n == 0 )
+	{
+		gameLocal.Printf( "eventChain: posted no chain to the %s queue, no target (allocated %d)\n", fast ? "fast" : "slow", idEvent::NumAllocated() );
+		return;
+	}
+	idEntity* target = SpawnEventTarget( "eventChain", fast, &EV_StormChain );
+	if( target == NULL )
+	{
+		return;
+	}
+	const int before = idEvent::NumAllocated();
+	SetTimeState ts( target->GetTimeGroup() );
+	target->PostEventMS( &EV_StormChain, 0, n );
+	gameLocal.Printf( "eventChain: posted a chain of %d links to the %s queue (allocated %d before, %d after)\n", n, fast ? "fast" : "slow", before, idEvent::NumAllocated() );
+}
+#endif
+//puncho end
+
 void idGameLocal::InitConsoleCommands()
 {
 	cmdSystem->AddCommand( "corpseFixture", CorpseFixture_f, CMD_FL_GAME | CMD_FL_CHEAT, "bounded static corpse render fixture (mg test maps only)" );
@@ -5592,6 +5797,13 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "noclip",				Cmd_Noclip_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"disables collision detection for the player" );
 	cmdSystem->AddCommand( "where",					Cmd_GetViewpos_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"prints the current view position" );
 	cmdSystem->AddCommand( "listBudgets", Cmd_ListBudgets_f, CMD_FL_GAME, "list transient budget counters and entity high water; listBudgets order adds each class's join order" );
+	//puncho start - R1.1: expose the event census and refusal fixtures only in non-retail builds
+#if !defined( ID_RETAIL )
+	cmdSystem->AddCommand( "listEvents", Cmd_ListEvents_f, CMD_FL_GAME, "the event pool census: slow, fast, free, allocated, detached, high water and pass high water" );
+	cmdSystem->AddCommand( "eventStorm", Cmd_EventStorm_f, CMD_FL_GAME | CMD_FL_CHEAT, "eventStorm <count> [ms] [fast]: posts count hide/show events to a new target on one queue, a refusal at the pool's end" );
+	cmdSystem->AddCommand( "eventChain", Cmd_EventChain_f, CMD_FL_GAME | CMD_FL_CHEAT, "eventChain <count> [fast]: a new target's chain of count events, each posting the next at 0 ms" );
+#endif
+	//puncho end
 	cmdSystem->AddCommand( "checkPVSAreas", Cmd_CheckPVSAreas_f, CMD_FL_GAME, "list entities touching more than four PVS areas" );
 	cmdSystem->AddCommand( "listDormancy", Cmd_ListDormancy_f, CMD_FL_GAME, "list dormancy entities, their radius and wake state: every dormancy row under g_dormantDistanceFirst, else the authored ones" );
 	cmdSystem->AddCommand( "listMapStatics", Cmd_ListMapStatics_f, CMD_FL_GAME, "list static spawn-skip eligibility and retained entity numbers" );

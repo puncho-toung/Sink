@@ -101,6 +101,7 @@ constexpr const char* BRUSH_ORIGIN_KEY = "__brushOrigin";
 void gameError( const char* fmt, ... );
 
 #include "gamesys/Event.h"
+compile_time_assert( MAX_EVENTS >= MAX_GENTITIES / 2 );	//puncho - R1.1: the event pool's policy floor, half the entity space
 #include "gamesys/Class.h"
 #include "gamesys/SysCvar.h"
 #include "gamesys/SysCmds.h"

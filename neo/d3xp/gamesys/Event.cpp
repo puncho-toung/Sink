@@ -39,7 +39,7 @@ Event are used for scheduling tasks and for linking script commands.
 
 #include "../Game_local.h"
 
-#define MAX_EVENTSPERFRAME			4096
+#define MAX_EVENTSPERFRAME			MAX_EVENTS	//puncho - R1.1: a pass may dispatch the whole pool; the strict > refuses callback 16385
 //#define CREATE_EVENT_CODE
 
 /***********************************************************************
@@ -281,6 +281,22 @@ static idLinkList<idEvent> EventQueue;
 static idLinkList<idEvent> FastEventQueue;
 static idEvent EventPool[ MAX_EVENTS ];
 
+//puncho start - R1.1: diagnostic counts, never saved or sent; eventdef marks queued or detached ownership
+// Detached slots are taken but unpublished, being dispatched, or left by an error. The scope closes on an error's
+// unwind too, so the sweep and census can refuse while a frame that may hold a detached slot is open.
+static int eventsAllocated = 0;
+static int eventsHighWater = 0;
+static int eventsPassHighWater = 0;
+static int eventFramesOpen = 0;
+
+class idEventFrameScope
+{
+public:
+	idEventFrameScope()		{ eventFramesOpen++; }
+	~idEventFrameScope()		{ eventFramesOpen--; }
+};
+//puncho end
+
 bool idEvent::initialized = false;
 
 idDynamicBlockAlloc<byte, 16 * 1024, 256>	idEvent::eventDataAllocator;
@@ -295,6 +311,27 @@ idEvent::~idEvent()
 	Free();
 }
 
+//puncho start - R1.1: account ownership once for allocation and both restore queues
+/*
+================
+idEvent::Take
+================
+*/
+idEvent* idEvent::Take( const idEventDef* evdef )
+{
+	assert( evdef != NULL );
+	idEvent* ev = FreeEvents.Next();
+	ev->eventNode.Remove();
+	ev->eventdef = evdef;
+	eventsAllocated++;
+	if( eventsAllocated > eventsHighWater )
+	{
+		eventsHighWater = eventsAllocated;
+	}
+	return ev;
+}
+//puncho end
+
 /*
 ================
 idEvent::Alloc
@@ -302,6 +339,7 @@ idEvent::Alloc
 */
 idEvent* idEvent::Alloc( const idEventDef* evdef, int numargs, va_list args )
 {
+	idEventFrameScope frame;	//puncho - R1.1: an argument error can leave a detached owned slot
 	idEvent*		ev;
 	size_t		size;
 	const char*	format;
@@ -312,13 +350,10 @@ idEvent* idEvent::Alloc( const idEventDef* evdef, int numargs, va_list args )
 
 	if( FreeEvents.IsListEmpty() )
 	{
-		gameLocal.Error( "idEvent::Alloc : No more free events" );
+		gameLocal.Error( "idEvent::Alloc: event pool exhausted (MAX_EVENTS %d): %d queued, %d fast", MAX_EVENTS, EventQueue.Num(), FastEventQueue.Num() );	//puncho - R1.1: walk queue lengths only on refusal
 	}
 
-	ev = FreeEvents.Next();
-	ev->eventNode.Remove();
-
-	ev->eventdef = evdef;
+	ev = Take( evdef );	//puncho - R1.1: ownership starts only after the empty check
 
 	if( numargs != evdef->GetNumArgs() )
 	{
@@ -450,6 +485,13 @@ idEvent::Free
 */
 void idEvent::Free()
 {
+	//puncho start - R1.1: repeated Free and Clear's free slots have no ownership to release
+	if( eventdef != NULL )
+	{
+		assert( eventsAllocated > 0 );
+		eventsAllocated--;
+	}
+	//puncho end
 	if( data )
 	{
 		eventDataAllocator.Free( data );
@@ -590,6 +632,10 @@ void idEvent::ClearEventList()
 	{
 		EventPool[ i ].Free();
 	}
+	//puncho start - R1.1: zero the count only after every slot has released ownership
+	assert( eventsAllocated == 0 );
+	eventsAllocated = 0;
+	//puncho end
 }
 
 /*
@@ -599,6 +645,7 @@ idEvent::ServiceEvents
 */
 void idEvent::ServiceEvents()
 {
+	idEventFrameScope frame;	//puncho - R1.1: dispatch holds a detached slot until Free
 	idEvent*		event;
 	int			num;
 	// RB: 64 bit fixes, changed int to intptr_t
@@ -699,10 +746,16 @@ void idEvent::ServiceEvents()
 		// Don't allow ourselves to stay in here too long.  An abnormally high number
 		// of events being processed is evidence of an infinite loop of events.
 		num++;
+		//puncho start - R1.1: record completed callbacks before the watchdog or a later callback can unwind
+		if( num > eventsPassHighWater )
+		{
+			eventsPassHighWater = num;
+		}
 		if( num > MAX_EVENTSPERFRAME )
 		{
-			gameLocal.Error( "Event overflow.  Possible infinite loop in script." );
+			gameLocal.Error( "idEvent::ServiceEvents: %d events serviced in one pass (MAX_EVENTSPERFRAME %d): event loop?", num, MAX_EVENTSPERFRAME );
 		}
+		//puncho end
 	}
 }
 
@@ -713,6 +766,7 @@ idEvent::ServiceFastEvents
 */
 void idEvent::ServiceFastEvents()
 {
+	idEventFrameScope frame;	//puncho - R1.1: dispatch holds a detached slot until Free
 	idEvent*	event;
 	int			num;
 	// RB: 64 bit fixes, changed int to intptr_t
@@ -811,10 +865,16 @@ void idEvent::ServiceFastEvents()
 		// Don't allow ourselves to stay in here too long.  An abnormally high number
 		// of events being processed is evidence of an infinite loop of events.
 		num++;
+		//puncho start - R1.1: record completed callbacks before the watchdog or a later callback can unwind
+		if( num > eventsPassHighWater )
+		{
+			eventsPassHighWater = num;
+		}
 		if( num > MAX_EVENTSPERFRAME )
 		{
-			gameLocal.Error( "Event overflow.  Possible infinite loop in script." );
+			gameLocal.Error( "idEvent::ServiceFastEvents: %d events serviced in one pass (MAX_EVENTSPERFRAME %d): event loop?", num, MAX_EVENTSPERFRAME );
 		}
+		//puncho end
 	}
 }
 
@@ -842,10 +902,18 @@ void idEvent::Init()
 	{
 		gameLocal.Printf( "...already initialized\n" );
 		ClearEventList();
+		//puncho start - R1.1: process initialization starts both diagnostic peaks over
+		eventsHighWater = 0;
+		eventsPassHighWater = 0;
+		//puncho end
 		return;
 	}
 
 	ClearEventList();
+	//puncho start - R1.1: process initialization starts both diagnostic peaks over
+	eventsHighWater = 0;
+	eventsPassHighWater = 0;
+	//puncho end
 
 	eventDataAllocator.Init();
 
@@ -888,6 +956,115 @@ void idEvent::Shutdown()
 	// say it is now shutdown
 	initialized = false;
 }
+
+//puncho start - R1.1: map diagnostics preserve queued ownership and reclaim only quiescent detached slots
+int idEvent::NumAllocated()
+{
+	return eventsAllocated;
+}
+
+int idEvent::HighWater()
+{
+	return eventsHighWater;
+}
+
+int idEvent::PassHighWater()
+{
+	return eventsPassHighWater;
+}
+
+bool idEvent::Quiescent()
+{
+	return eventFramesOpen == 0;
+}
+
+/*
+================
+idEvent::CancelQueuedEvents
+
+Map teardown deletes the owner of every queued event (MapClear, then program.Restart's threads), so their events go
+first: a pool that a refusal left full cannot refuse a destructor's post again inside the drop's own teardown, and no
+destructor walks a full queue. Detached slots stay for the next map boundary's sweep.
+================
+*/
+void idEvent::CancelQueuedEvents()
+{
+	idEvent* event;
+
+	while( ( event = EventQueue.Next() ) != NULL )
+	{
+		event->Free();
+	}
+	while( ( event = FastEventQueue.Next() ) != NULL )
+	{
+		event->Free();
+	}
+}
+
+/*
+================
+idEvent::ResetMapStats
+================
+*/
+void idEvent::ResetMapStats()
+{
+	if( !initialized )
+	{
+		return;
+	}
+	if( eventFramesOpen != 0 )
+	{
+		gameLocal.Warning( "idEvent::ResetMapStats: an event frame is open, the map-boundary sweep is refused" );
+		return;
+	}
+
+	int reclaimed = 0;
+	for( int i = 0; i < MAX_EVENTS; i++ )
+	{
+		if( EventPool[ i ].eventdef != NULL && !EventPool[ i ].eventNode.InList() )
+		{
+			// Free never reads object, which may already have been deleted.
+			EventPool[ i ].Free();
+			reclaimed++;
+		}
+	}
+	eventsHighWater = eventsAllocated;
+	eventsPassHighWater = 0;
+	if( reclaimed )
+	{
+		gameLocal.Printf( "idEvent::ResetMapStats: %d detached events reclaimed\n", reclaimed );
+	}
+}
+
+/*
+================
+idEvent::ListEvents
+================
+*/
+void idEvent::ListEvents()
+{
+	if( !initialized )
+	{
+		gameLocal.Printf( "listEvents: event system not started\n" );
+		return;
+	}
+	if( eventFramesOpen != 0 )
+	{
+		gameLocal.Printf( "listEvents: refused, an event frame is open\n" );
+		return;
+	}
+
+	const int slow = EventQueue.Num();
+	const int fast = FastEventQueue.Num();
+	const int free = FreeEvents.Num();
+	const int detached = eventsAllocated - slow - fast;
+	gameLocal.Printf( "listEvents: slow %d fast %d free %d allocated %d detached %d high %d pass %d (MAX_EVENTS %d)\n", slow, fast, free, eventsAllocated, detached, eventsHighWater, eventsPassHighWater, MAX_EVENTS );
+	if( eventsAllocated + free != MAX_EVENTS || detached < 0 )
+	{
+		gameLocal.Warning( "listEvents: census broken: allocated %d + free %d != MAX_EVENTS %d or detached %d < 0", eventsAllocated, free, MAX_EVENTS, detached );
+	}
+}
+//puncho end
 
 /*
 ================
@@ -1013,6 +1190,7 @@ idEvent::Restore
 */
 void idEvent::Restore( idRestoreGame* savefile )
 {
+	idEventFrameScope frame;	//puncho - R1.1: payload errors can leave detached owned slots
 	char*    str;
 	int		num, argsize, i, j, size;
 	idStr	name;
@@ -1024,48 +1202,55 @@ void idEvent::Restore( idRestoreGame* savefile )
 	// RB end
 
 	savefile->ReadInt( num );
+	//puncho start - R1.1: refuse a count that cannot fit before taking any slot
+	if( num < 0 || num > MAX_EVENTS - eventsAllocated )
+	{
+		gameLocal.Error( "idEvent::Restore: invalid %s count %d (%d of MAX_EVENTS %d free)", "slow", num, MAX_EVENTS - eventsAllocated, MAX_EVENTS );
+	}
+	//puncho end
 
 	for( i = 0; i < num; i++ )
 	{
-		if( FreeEvents.IsListEmpty() )
-		{
-			gameLocal.Error( "idEvent::Restore : No more free events" );
-		}
-
-		event = FreeEvents.Next();
-		event->eventNode.Remove();
-		event->eventNode.AddToEnd( EventQueue );
-
-		savefile->ReadInt( event->time );
+		//puncho start - R1.1: validate metadata before ownership; gameLocal.Error avoids restore-list double deletion
+		int eventTime;
+		idClass* eventObject;
+		savefile->ReadInt( eventTime );
 
 		// read the event name
 		savefile->ReadString( name );
-		event->eventdef = idEventDef::FindEvent( name );
-		if( event->eventdef == NULL )
+		const idEventDef* evdef = idEventDef::FindEvent( name );
+		if( evdef == NULL )
 		{
-			savefile->Error( "idEvent::Restore: unknown event '%s'", name.c_str() );
+			gameLocal.Error( "idEvent::Restore: unknown event '%s'", name.c_str() );
 			return;
 		}
 
 		// read the classtype
 		savefile->ReadString( name );
-		event->typeinfo = idClass::GetClass( name );
-		if( event->typeinfo == NULL )
+		const idTypeInfo* eventType = idClass::GetClass( name );
+		if( eventType == NULL )
 		{
-			savefile->Error( "idEvent::Restore: unknown class '%s' on event '%s'", name.c_str(), event->eventdef->GetName() );
+			gameLocal.Error( "idEvent::Restore: unknown class '%s' on event '%s'", name.c_str(), evdef->GetName() );
 			return;
 		}
 
-		savefile->ReadObject( event->object );
+		savefile->ReadObject( eventObject );
 
 		// read the args
 		savefile->ReadInt( argsize );
-		if( argsize != ( int )event->eventdef->GetArgSize() )
+		if( argsize != ( int )evdef->GetArgSize() )
 		{
-			// RB: fixed wrong formatting
-			savefile->Error( "idEvent::Restore: arg size (%zd) doesn't match saved arg size(%zd) on event '%s'", event->eventdef->GetArgSize(), argsize, event->eventdef->GetName() );
-			// RB end
+			gameLocal.Error( "idEvent::Restore: arg size (%d) doesn't match saved arg size(%d) on event '%s'", ( int )evdef->GetArgSize(), argsize, evdef->GetName() );
 		}
+		if( FreeEvents.IsListEmpty() )
+		{
+			gameLocal.Error( "idEvent::Restore : No more free events" );
+		}
+		event = Take( evdef );
+		event->time = eventTime;
+		event->typeinfo = eventType;
+		event->object = eventObject;
+		//puncho end
 		if( argsize )
 		{
 			event->data = eventDataAllocator.Alloc( argsize );
@@ -1138,50 +1323,60 @@ void idEvent::Restore( idRestoreGame* savefile )
 		{
 			event->data = NULL;
 		}
+		event->eventNode.AddToEnd( EventQueue );	//puncho - R1.1: publish only after the payload is decoded
 	}
 
 	// Restore the Fast EventQueue
 	savefile->ReadInt( num );
+	//puncho start - R1.1: slow ownership already counts against the fast queue's admission
+	if( num < 0 || num > MAX_EVENTS - eventsAllocated )
+	{
+		gameLocal.Error( "idEvent::Restore: invalid %s count %d (%d of MAX_EVENTS %d free)", "fast", num, MAX_EVENTS - eventsAllocated, MAX_EVENTS );
+	}
+	//puncho end
 
 	for( i = 0; i < num; i++ )
 	{
-		if( FreeEvents.IsListEmpty() )
-		{
-			gameLocal.Error( "idEvent::Restore : No more free events" );
-		}
-
-		event = FreeEvents.Next();
-		event->eventNode.Remove();
-		event->eventNode.AddToEnd( FastEventQueue );
-
-		savefile->ReadInt( event->time );
+		//puncho start - R1.1: validate metadata before ownership; gameLocal.Error avoids restore-list double deletion
+		int eventTime;
+		idClass* eventObject;
+		savefile->ReadInt( eventTime );
 
 		// read the event name
 		savefile->ReadString( name );
-		event->eventdef = idEventDef::FindEvent( name );
-		if( event->eventdef == NULL )
+		const idEventDef* evdef = idEventDef::FindEvent( name );
+		if( evdef == NULL )
 		{
-			savefile->Error( "idEvent::Restore: unknown event '%s'", name.c_str() );
+			gameLocal.Error( "idEvent::Restore: unknown event '%s'", name.c_str() );
 			return;
 		}
 
 		// read the classtype
 		savefile->ReadString( name );
-		event->typeinfo = idClass::GetClass( name );
-		if( event->typeinfo == NULL )
+		const idTypeInfo* eventType = idClass::GetClass( name );
+		if( eventType == NULL )
 		{
-			savefile->Error( "idEvent::Restore: unknown class '%s' on event '%s'", name.c_str(), event->eventdef->GetName() );
+			gameLocal.Error( "idEvent::Restore: unknown class '%s' on event '%s'", name.c_str(), evdef->GetName() );
 			return;
 		}
 
-		savefile->ReadObject( event->object );
+		savefile->ReadObject( eventObject );
 
 		// read the args
 		savefile->ReadInt( argsize );
-		if( argsize != ( int )event->eventdef->GetArgSize() )
+		if( argsize != ( int )evdef->GetArgSize() )
 		{
-			savefile->Error( "idEvent::Restore: arg size (%d) doesn't match saved arg size(%d) on event '%s'", event->eventdef->GetArgSize(), argsize, event->eventdef->GetName() );
+			gameLocal.Error( "idEvent::Restore: arg size (%d) doesn't match saved arg size(%d) on event '%s'", ( int )evdef->GetArgSize(), argsize, evdef->GetName() );
 		}
+		if( FreeEvents.IsListEmpty() )
+		{
+			gameLocal.Error( "idEvent::Restore : No more free events" );
+		}
+		event = Take( evdef );
+		event->time = eventTime;
+		event->typeinfo = eventType;
+		event->object = eventObject;
+		//puncho end
 		if( argsize )
 		{
 			event->data = eventDataAllocator.Alloc( argsize );
@@ -1191,6 +1386,7 @@ void idEvent::Restore( idRestoreGame* savefile )
 		{
 			event->data = NULL;
 		}
+		event->eventNode.AddToEnd( FastEventQueue );	//puncho - R1.1: publish only after the payload is decoded
 	}
 }
 

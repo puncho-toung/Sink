@@ -230,7 +230,7 @@ void idCommonLocal::FormatMapRows( char rows[MAP_STAT_ROWS][MAP_STAT_ROW_CHARS],
 	idStr::snPrintf( rows[2], 256, "MAP world areas %d portals %d/20800 pvs %llu KB %d ms lightgrid %llu KB", r.areas, r.portals, ( unsigned long long )( g.pvsBytes / 1024 ), g.pvsMilliseconds, ( unsigned long long )( r.lightGridBytes / 1024 ) );
 	idStr::snPrintf( rows[3], 256, "MAP game entities %d/16384 active %d nonrep %d/256 cm %d/%d statics %d/%d", g.entities, g.activeEntities, g.nonReplicated, g.cmModels, g.cmModelsCap, g.skipStatics, cap );	//puncho - R1.3: display the ordinary collision capacity reported by the manager
 	idStr::snPrintf( rows[4], 256, "MAP clip/tic trans %u rot %u motion %u cont %u contacts %u gathers %u cand %u rmt %u us %u", g.clipTrans, g.clipRot, g.clipMotion, g.clipContents, g.clipContacts, g.clipGathers, g.clipCandidates, g.clipRmt, g.clipUs );
-	idStr::snPrintf( rows[5], 256, "MAP alloc game %u/tic main %u/frame ent_hw %i refused %lld aasCache %lld KB evictions %lld saturated %lld", g.allocGameTic, mapMainAllocations, g.entityHighWater, ( long long )g.entityRefused, ( long long )( g.aasCacheBytes / 1024 ), ( long long )g.aasCacheEvictions, ( long long )g.aasTravelSaturated );
+	idStr::snPrintf( rows[5], 256, "MAP alloc game %u/tic main %u/frame ent_hw %i refused %lld aasCache %lld KB evictions %lld saturated %lld ev_hw %d/%d ev_pass_hw %d", g.allocGameTic, mapMainAllocations, g.entityHighWater, ( long long )g.entityRefused, ( long long )( g.aasCacheBytes / 1024 ), ( long long )g.aasCacheEvictions, ( long long )g.aasTravelSaturated, g.eventHighWater, g.eventCapacity, g.eventPassHighWater );	//puncho - R1.1: display event ownership and completed-pass high waters
 	if( g.recordMaps > 0 )
 	{
 		const int used = idStr::Length( rows[3] );

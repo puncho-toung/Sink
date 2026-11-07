@@ -1100,6 +1100,7 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	// initialize all entities for this game
 	memset( entities, 0, sizeof( entities ) );
 	ResetEntityBudgets( false );
+	idEvent::ResetMapStats();	//puncho - R1.1: before spawning, reclaim detached slots and set H = A, P = 0
 	memset( spawnIds, -1, sizeof( spawnIds ) );
 	//puncho start - identity (P1-A2)
 	memset( slotGen, 0, sizeof( slotGen ) );
@@ -1961,6 +1962,7 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 
 	gamestate = GAMESTATE_ACTIVE;
 	ResetEntityBudgets( true );
+	idEvent::ResetMapStats();	//puncho - R1.1: the restored baseline excludes the load's transient H and P peaks
 
 	Printf( "--------------------------------------\n" );
 
@@ -2033,6 +2035,7 @@ void idGameLocal::MapShutdown()
 	Printf( "--------- Game Map Shutdown ----------\n" );
 
 	gamestate = GAMESTATE_SHUTDOWN;
+	idEvent::CancelQueuedEvents();	//puncho - R1.1: every queued event's owner dies below; a full pool must not refuse their destructors' posts
 
 	//puncho start - ai-harness: the CSV rows of the last second, then a clean census for the next map (the
 	// file stays open: the cvar did not change)
@@ -8493,6 +8496,11 @@ void idGameLocal::GetMapStats( mapGameStats_t& stats ) const
 	stats.recordApplyUs = worldStore.applyUs;
 	stats.cmModels = collisionModelManager->GetNumModels();
 	stats.cmModelsCap = collisionModelManager->GetMaxModels();	//puncho - R1.3: report the live ordinary capacity, including 0 when cleared
+	//puncho start - R1.1: event pool and completed-pass peaks for the MAP alloc row
+	stats.eventHighWater = idEvent::HighWater();
+	stats.eventCapacity = MAX_EVENTS;
+	stats.eventPassHighWater = idEvent::PassHighWater();
+	//puncho end
 	stats.skipStatics = skipReplicatedStatics;
 	stats.skipStaticsCap = net_maxSkipReplicatedStatics.GetInteger();
 	stats.pvsBytes = pvs.GetMapBytes();

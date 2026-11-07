@@ -51,7 +51,11 @@ Event are used for scheduling tasks and for linking script commands.
 #define	D_EVENT_ENTITY_NULL			'E'			// event can handle NULL entity pointers
 #define D_EVENT_TRACE				't'
 
-#define MAX_EVENTS					4096
+//puncho start - R1.1: a whole bit width like the entity space, with no reserved slot; queue heads live outside the pool
+// eventDefList and the script interpreter's per-event flags share this constant.
+#define EVENT_POOL_BITS				14
+#define MAX_EVENTS					( 1 << EVENT_POOL_BITS )
+//puncho end
 
 class idClass;
 class idTypeInfo;
@@ -107,6 +111,7 @@ private:
 
 	static idDynamicBlockAlloc<byte, 16 * 1024, 256> eventDataAllocator;
 
+	static idEvent*				Take( const idEventDef* evdef );	//puncho - R1.1: one ownership take; caller has refused an empty free list
 
 public:
 	static bool					initialized;
@@ -128,6 +133,15 @@ public:
 	static void					ServiceFastEvents();
 	static void					Init();
 	static void					Shutdown();
+	//puncho start - R1.1: owned-slot and completed-pass peaks, swept and reset at map boundaries
+	static int					NumAllocated();
+	static int					HighWater();
+	static int					PassHighWater();
+	static bool					Quiescent();
+	static void					CancelQueuedEvents();
+	static void					ResetMapStats();
+	static void					ListEvents();
+	//puncho end
 
 	// save games
 	static void					Save( idSaveGame* savefile );					// archives object for save game file
