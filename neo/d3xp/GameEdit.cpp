@@ -731,7 +731,7 @@ void idEditEntities::DisplayEntities()
 						// make point straight up if not specified
 						dir[2] = 1.0f;
 					}
-					globalLightOrigin = renderLight.origin + dir * 100000.0f;
+					globalLightOrigin = renderLight.origin + dir * PARALLEL_LIGHT_FAKE_DISTANCE;
 				}
 				else
 				{

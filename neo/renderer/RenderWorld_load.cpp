@@ -185,24 +185,56 @@ static int R_AreaNumForModelName( const char* name )
 	return areaNum;
 }
 
+// The chunk origin snap. A coarser snap lets neighbouring areas share an origin, so a seam
+// they share is drawn with one matrix and stays bit-identical; the cost is larger local
+// coordinates, whose float transform error grows with them (about 1e-7 of the largest local
+// coordinate: under 0.001 units at 8192, the same as any map within 8192 units of the
+// origin today). Must stay an integer: an integer origin comes off dmap's 1/32 vertex grid
+// exactly, so the subtraction is exact for a vertex on the grid; the vertices dmap leaves off
+// the grid ( discrete materials: decal fragments, blood decals, autosprites ) may round by half
+// an ulp of the local coordinate, inside the error figure above. A .bproc cache stores each
+// area's origin beside its vertices, so a cache written with another snap stays valid and keeps
+// its own origins until the .proc is parsed again.
+static const double AREA_CHUNK_SNAP = 8192.0;
+
+// sanity cap on the area number a model name may claim, so a name cannot make the chunk list allocate without bound
+static const int MAX_AREA_CHUNKS = 65536;
+
 /*
 ================
 idRenderWorldLocal::SetAreaChunk
 
-Areas the list grows past get origin 0 and cleared bounds until their own model
-arrives; AddWorldModelEntities reads only areas whose model it found.
+The last model named _area<N> wins and overwrites the entry: dmap writes the entity
+models before the world's area models (WriteOutputFile walks the entities from last to
+first), so when a mapper's entity is named like an area, the world area arrives later
+and must replace the entry. Such an impostor model is still moved by its own chunk
+origin, which is zero for a model whose local bounds center lies within half a snap of
+its entity origin. Stores nothing and returns when areaNum is negative, or MAX_AREA_CHUNKS
+or more; areas the list grows past get origin 0, cleared bounds and valid false
+until their own model arrives; AddWorldModelEntities errors on an area whose chunk is
+not valid.
 ================
 */
 void idRenderWorldLocal::SetAreaChunk( int areaNum, const idVec3& origin, const idBounds& absBounds )
 {
-	while( areaChunks.Num() <= areaNum )
+	if( areaNum < 0 || areaNum >= MAX_AREA_CHUNKS )
 	{
-		areaChunk_t& chunk = areaChunks.Alloc();
-		chunk.origin.Zero();
-		chunk.absBounds.Clear();
+		return;
 	}
-	areaChunks[areaNum].origin = origin;
-	areaChunks[areaNum].absBounds = absBounds;
+
+	if( areaNum >= areaChunks.Num() )
+	{
+		areaChunk_t freeChunk;
+		freeChunk.origin.Zero();
+		freeChunk.absBounds.Clear();
+		freeChunk.valid = false;
+		areaChunks.AssureSize( areaNum + 1, freeChunk );
+	}
+
+	areaChunk_t& chunk = areaChunks[areaNum];
+	chunk.origin = origin;
+	chunk.absBounds = absBounds;
+	chunk.valid = true;
 }
 
 /*
@@ -402,7 +434,13 @@ idRenderModel* idRenderWorldLocal::ParseModel( idLexer* src, const char* mapName
 	idVec3 chunkOrigin = vec3_origin;
 	idBounds absBounds;
 	absBounds.Clear();
-	const int areaNum = R_AreaNumForModelName( model->Name() );
+	int areaNum = R_AreaNumForModelName( model->Name() );
+	if( areaNum >= MAX_AREA_CHUNKS )
+	{
+		// past the cap the model cannot index the chunk list: non-area path, vertices stay put
+		common->Warning( "%s is not treated as a world area: its area number is past MAX_AREA_CHUNKS", model->Name() );
+		areaNum = -1;
+	}
 	if( areaNum >= 0 )
 	{
 		// the bounds FinishSurfaces would give the absolute vertices: R_BoundTriSurf as
@@ -417,14 +455,14 @@ idRenderModel* idRenderWorldLocal::ParseModel( idLexer* src, const char* mapName
 		}
 		R_BoundModelSurfaces( areaSurfaces.Ptr(), numAreaSurfaces, absBounds );
 
-		// snap the centre to 1024 in double: an integer origin comes off dmap's 1/32 grid
-		// exactly, and 1024 is a multiple of every light grid size
+		// snap the centre to AREA_CHUNK_SNAP in double: an integer origin comes off dmap's
+		// 1/32 grid exactly ( see AREA_CHUNK_SNAP for the vertices that are off it )
 		if( !absBounds.IsCleared() )
 		{
 			for( int i = 0; i < 3; i++ )
 			{
 				const double center = ( ( double )absBounds[0][i] + ( double )absBounds[1][i] ) * 0.5;
-				chunkOrigin[i] = ( float )( 1024.0 * floor( center / 1024.0 + 0.5 ) );
+				chunkOrigin[i] = ( float )( AREA_CHUNK_SNAP * floor( center / AREA_CHUNK_SNAP + 0.5 ) );
 			}
 		}
 
@@ -1238,7 +1276,7 @@ void idRenderWorldLocal::AddWorldModelEntities()
 			}
 		}
 
-		if( i >= areaChunks.Num() )
+		if( i >= areaChunks.Num() || !areaChunks[i].valid )
 		{
 			common->Error( "idRenderWorldLocal::InitFromMap: no chunk origin for area %i", i );
 		}

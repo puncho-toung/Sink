@@ -27,3 +27,8 @@ put the player's feet 0.25 above the floor, as an `info_player_start` would.
 `cr_origin` and `cr_far` are one description with an offset: the same brushes and entities in the same
 order. Diff a `cr_far` capture against the `cr_origin` capture of the same room-relative view (D27).
 Do not generate a `.lightgrid` for `o1_probe`.
+
+In `cr_subviews` the direct portal's oblique clip plane is 2 units before the camera plane (`R_PortalViewBySurface`'s
+fudge): the portal must not show `marker_before` (centred 1 unit before the clip plane) and must show `marker_beyond`
+and the remote room. `marker_beyond` is lit by `light_markers`, on the portal's side of the plates, and must appear
+as a lit plate, not a black rectangle.

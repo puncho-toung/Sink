@@ -2404,14 +2404,31 @@ static bool R_DepthIs( const float depth, const float expected )
 
 /*
 ===============
+R_NdcZAtDistance
+
+Clip-space z over w of the eye-space point ( 0, 0, -d, 1 ) under a row-major projection: rows 2
+and 3 of the matrix times the point. The x and y columns drop out because the point is on the
+view axis.
+===============
+*/
+static float R_NdcZAtDistance( const idRenderMatrix& m, const float d )
+{
+	return ( m[2][2] * ( -d ) + m[2][3] ) / ( m[3][2] * ( -d ) + m[3][3] );
+}
+
+/*
+===============
 R_TestDepthConvention
 
 Startup self-test of the reversed-Z conversion, compiled into every reversed build and gated by
 ID_REVERSED_Z alone ( r_reversedZ is ROM, but set / +set can still change it ). In eye space
 ( looking down -Z, MVP = the infinite reversed projection, zNear 3 ) it pushes boxes at d = 2n and
 d = 1e5 through the idRenderMatrix helpers on whichever path this build compiled ( SSE or generic ),
-checks that depth falls with distance and the near and behind-the-eye sentinels, and clips with the
-oblique portal projection. It prints exactly one line, which the verify sheet greps.
+including the extruded and the infinite-shadow depth bounds, checks that depth falls with distance
+and the near, behind-the-eye and shadow near-clip-centre inside sentinels, checks that
+R_SetupProjectionMatrix ( the projection of every 3D view, near plane r_znear ) and the weapon and
+model depth hacks keep ndc z = zNear / distance or its hacked form, and clips with the oblique
+portal projection. It prints exactly one line, which the verify sheet greps.
 ===============
 */
 static void R_TestDepthConvention()
@@ -2503,6 +2520,128 @@ static void R_TestDepthConvention()
 	if( failed == NULL && ( maxDepth != 1.0f || !R_DepthIs( minDepth, zNear / 10.0f ) ) )
 	{
 		failed = "DepthBoundsForBounds sentinel";
+	}
+
+	// DepthBoundsForExtrudedBounds: nearBox extruded straight away from the eye to the plane
+	// z = -1e5: the extruded corners land on that plane, so the volume spans d = 2n to d = 1e5 and
+	// the bounds are the two reference depths, max nearer than min
+	const idVec3 extrudeAway( 0.0f, 0.0f, -1.0f );
+	const idPlane extrudeClip( 0.0f, 0.0f, 1.0f, 1e5f );
+	idRenderMatrix::DepthBoundsForExtrudedBounds( minDepth, maxDepth, proj, nearBox, extrudeAway, extrudeClip );
+	if( failed == NULL && ( !R_DepthIs( maxDepth, depthNear ) || !R_DepthIs( minDepth, depthFar ) || maxDepth <= minDepth ) )
+	{
+		failed = "DepthBoundsForExtrudedBounds";
+	}
+	// the sentinel: crossingBox crosses the eye plane, so its unextruded corners report the
+	// behind-eye depth and clamp the max to the near plane exactly, as the DepthBoundsForBounds
+	// sentinel above; the extruded corners still land on z = -1e5, so the min is depthFar
+	idRenderMatrix::DepthBoundsForExtrudedBounds( minDepth, maxDepth, proj, crossingBox, extrudeAway, extrudeClip );
+	if( failed == NULL && ( maxDepth != 1.0f || !R_DepthIs( minDepth, depthFar ) ) )
+	{
+		failed = "DepthBoundsForExtrudedBounds sentinel";
+	}
+
+	// DepthBoundsForShadowBounds: the infinite shadow of nearBox cast away from a light on the view
+	// axis between the eye and the box: the volume starts at the box and runs to infinity inside the
+	// frustum, so the max is depthNear; the corners projected to infinity have clip z = 0 exactly;
+	// the strict clipper rejects them, but the silhouette edges clipped at z = 0 land exactly
+	// on them, so the min is 0 exactly, and the check compares it exactly
+	const idVec3 shadowLight( 0.0f, 0.0f, -1.0f );
+	idRenderMatrix::DepthBoundsForShadowBounds( minDepth, maxDepth, proj, nearBox, shadowLight );
+	if( failed == NULL && ( !R_DepthIs( maxDepth, depthNear ) || minDepth != 0.0f ) )
+	{
+		failed = "DepthBoundsForShadowBounds";
+	}
+	// the same light with farBox as the occluder: the shadow starts at d = 1e5, so the max is depthFar
+	idRenderMatrix::DepthBoundsForShadowBounds( minDepth, maxDepth, proj, farBox, shadowLight );
+	if( failed == NULL && !R_DepthIs( maxDepth, depthFar ) )
+	{
+		failed = "DepthBoundsForShadowBounds far";
+	}
+	// the sentinel: a box around the view axis between the eye and the near plane with the light
+	// behind the eye, so the line from the light to the near clip centre ( 0, 0, -zNear ) crosses
+	// the box and the inside test sets the max to the near plane exactly. The box must be wide:
+	// the light sits 1 unit behind the eye and the box front 3 units from the light, so at the
+	// near plane the shadow is 4 / 3 wider than the box, half-width 400 / 3 against the frustum's
+	// 3. The frustum then lies entirely inside the shadow volume and no face of it meets the
+	// frustum: the front face is nearer than the near plane, its far projection sits exactly on
+	// the far plane ( clip z = 0 ), and the silhouette quads cross the near plane at +/-400 / 3,
+	// outside the side planes. No clipped point survives at all, so the max of 1 can only come from
+	// the inside test. The min is deliberately not checked: with no clipped point the helper leaves
+	// it at its initial value ( 1 after the clamp ) although the frustum lies wholly inside the
+	// shadow and the true far bound is the far plane, 0. This is a limitation of the helper with a
+	// far plane exactly at infinity: its far cap lies exactly on the far clip plane, which the
+	// side test rejects, and nothing tests whether the frustum lies wholly inside the shadow; the
+	// helper has no caller. A half-width 1 box would not prove it: its shadow
+	// ( half-width 4 / 3 at the near plane, inside the frustum's 3 ) lets the silhouette quads
+	// cross the near plane inside the frustum, and those clipped points alone give the max of 1
+	const idBounds shadowSentinelBox( idVec3( -100.0f, -100.0f, -2.5f ), idVec3( 100.0f, 100.0f, -2.0f ) );
+	const idVec3 shadowBackLight( 0.0f, 0.0f, 1.0f );
+	idRenderMatrix::DepthBoundsForShadowBounds( minDepth, maxDepth, proj, shadowSentinelBox, shadowBackLight );
+	if( failed == NULL && maxDepth != 1.0f )
+	{
+		failed = "DepthBoundsForShadowBounds sentinel";
+	}
+
+	// R_SetupProjectionMatrix: the projection of every real 3D view, which nothing above touches.
+	// A zeroed viewDef_t tolerates memset ( the light editor zeroes one the same way before this
+	// same call ), so cramZNear, flipProjection, rdflags and isObliqueProjection are all off, and
+	// doJitter false takes the no-jitter branch ( the backend's pixel offset is never read ) and
+	// skips the oblique rewrite, which needs doJitter too. What is left is the plain infinite
+	// reversed projection of r_znear, written into a column-major float[16]: [ col * 4 + row ].
+	viewDef_t view;
+	memset( &view, 0, sizeof( view ) );
+	view.renderView.fov_x = 90.0f;
+	view.renderView.fov_y = 90.0f;
+	view.viewport.x1 = 0;
+	view.viewport.x2 = 639;
+	view.viewport.y1 = 0;
+	view.viewport.y2 = 479;
+	R_SetupProjectionMatrix( &view, false );
+
+	// not the local zNear: with cramZNear off the function clipped at the cvar itself
+	const float cvarZNear = r_znear.GetFloat();
+	const float* viewPM = view.unjitteredProjectionMatrix;
+	const float viewNearD = 2.0f * cvarZNear;
+	// the z and w rows at ( 0, 0, -d, 1 ): z = zNear, w = d, so ndc z = zNear / d at any distance;
+	// the four zero elements on the x and y columns keep x and y out of clip z and w, so the depth
+	// holds off the view axis too
+	const float viewNearZ = viewPM[2 * 4 + 2] * ( -viewNearD ) + viewPM[3 * 4 + 2];
+	const float viewNearW = viewPM[2 * 4 + 3] * ( -viewNearD ) + viewPM[3 * 4 + 3];
+	const float viewFarZ = viewPM[2 * 4 + 2] * ( -1e5f ) + viewPM[3 * 4 + 2];
+	const float viewFarW = viewPM[2 * 4 + 3] * ( -1e5f ) + viewPM[3 * 4 + 3];
+	if( failed == NULL && ( viewPM[2 * 4 + 2] != 0.0f || viewPM[3 * 4 + 2] != cvarZNear || viewPM[2 * 4 + 3] != -1.0f || viewPM[3 * 4 + 3] != 0.0f
+		|| viewPM[0 * 4 + 2] != 0.0f || viewPM[1 * 4 + 2] != 0.0f || viewPM[0 * 4 + 3] != 0.0f || viewPM[1 * 4 + 3] != 0.0f
+		|| !R_DepthIs( viewNearZ / viewNearW, cvarZNear / viewNearD ) || !R_DepthIs( viewFarZ / viewFarW, cvarZNear / 1e5f ) ) )
+	{
+		failed = "R_SetupProjectionMatrix";
+	}
+
+	// ApplyDepthHack: the weapon hack squeezes z 75% of the way toward the near plane, so every
+	// ndc z becomes 0.25 * ndc + 0.75: nearer than the plain one, never past 1, still ordered
+	idRenderMatrix hackProj = proj;
+	idRenderMatrix::ApplyDepthHack( hackProj );
+	const float plainNear = R_NdcZAtDistance( proj, 2.0f * zNear );
+	const float plainFar = R_NdcZAtDistance( proj, 1e5f );
+	const float hackNear = R_NdcZAtDistance( hackProj, 2.0f * zNear );
+	const float hackFar = R_NdcZAtDistance( hackProj, 1e5f );
+	if( failed == NULL && ( !R_DepthIs( hackNear, 0.25f * plainNear + 0.75f ) || !R_DepthIs( hackFar, 0.25f * plainFar + 0.75f )
+		|| !DEPTH_CONVENTION_NEARER( hackNear, plainNear ) || !DEPTH_CONVENTION_NEARER( hackFar, plainFar )
+		|| hackNear > 1.0f || hackFar > 1.0f || !DEPTH_CONVENTION_NEARER( hackNear, hackFar ) ) )
+	{
+		failed = "ApplyDepthHack";
+	}
+
+	// ApplyModelDepthHack: adding value to the z translation lifts ndc z by exactly value / d
+	idRenderMatrix modelProj = proj;
+	const float modelValue = 0.5f;
+	const float modelD = 100.0f;
+	idRenderMatrix::ApplyModelDepthHack( modelProj, modelValue );
+	const float modelPlain = R_NdcZAtDistance( proj, modelD );
+	const float modelHacked = R_NdcZAtDistance( modelProj, modelD );
+	if( failed == NULL && ( !R_DepthIs( modelHacked, modelPlain + modelValue / modelD ) || !DEPTH_CONVENTION_NEARER( modelHacked, modelPlain ) ) )
+	{
+		failed = "ApplyModelDepthHack";
 	}
 
 	// the oblique portal projection: a camera-space plane tilted 37 degrees, 12.5 units ahead on the

@@ -804,14 +804,28 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 					surfaceBounds = tri->bounds;
 				}
 
+				// F1 ( impl/BUILD-AND-G0.md 10 ): like the light test, this test is formed in the
+				// render-origin frame, the same frame the occluders are rasterised in, not from
+				// renderEntity->origin times worldCullUnjitteredMVP. The absolute product cancels two
+				// world-sized translations in float, and far from the map origin a surface box whose face
+				// lies on an occluder lands behind it and is culled. At r_cameraRelative 0 the origin is
+				// zero and both products are the same bits.
+				idVec3 relativeOrigin = renderEntity->origin;
+				if( !renderOrigin.IsZero() )
+				{
+					// only the translation moves, subtracted in double from the entity origin
+					relativeOrigin.x = float( double( renderEntity->origin.x ) - renderOrigin.x );
+					relativeOrigin.y = float( double( renderEntity->origin.y ) - renderOrigin.y );
+					relativeOrigin.z = float( double( renderEntity->origin.z ) - renderOrigin.z );
+				}
 				idRenderMatrix modelRenderMatrix;
-				idRenderMatrix::CreateFromOriginAxis( renderEntity->origin, renderEntity->axis, modelRenderMatrix );
+				idRenderMatrix::CreateFromOriginAxis( relativeOrigin, renderEntity->axis, modelRenderMatrix );
 
 				idRenderMatrix inverseBaseModelProject;
 				idRenderMatrix::OffsetScaleForBounds( modelRenderMatrix, surfaceBounds, inverseBaseModelProject );
 
 				idRenderMatrix invProjectMVPMatrix;
-				idRenderMatrix::Multiply( viewDef->worldCullUnjitteredMVP, inverseBaseModelProject, invProjectMVPMatrix );
+				idRenderMatrix::Multiply( viewDef->worldSpace.unjitteredMVP, inverseBaseModelProject, invProjectMVPMatrix );
 
 				vEntity->mocTests += 1;
 

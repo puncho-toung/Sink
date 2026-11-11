@@ -375,6 +375,193 @@ CONSOLE_COMMAND( dumpShadowMaps, "builds one frame and writes its shadow atlas d
 
 /*
 ==================
+R_VerifyReadHiZMips
+
+Copies one mip of the hierarchical Z buffer and the mip below it ( mip - 1 ) into two CPU
+arrays. The image is R32F, a colour format, so each mip goes straight into a staging texture -
+no depth-to-R32F blit as R_VerifyWriteDepthPFM needs - and the image keeps its initial state
+( idImage::AllocImage, NVRHI/Image_NVRHI.cpp ), so a fresh command list copies from it without
+explicit state tracking. One mip is mapped at a time and unmapped before the next is mapped.
+==================
+*/
+static bool R_VerifyReadHiZMips( nvrhi::ITexture* hiZ, const int mip, float* mipData, const int mipWidth, const int mipHeight,
+								 float* parentData, const int parentWidth, const int parentHeight )
+{
+	nvrhi::IDevice* device = deviceManager->GetDevice();
+
+	nvrhi::StagingTextureHandle stagingTexture = device->createStagingTexture( hiZ->getDesc(), nvrhi::CpuAccessMode::Read );
+
+	nvrhi::CommandListHandle commandList = device->createCommandList();
+	commandList->open();
+
+	commandList->copyTexture( stagingTexture, nvrhi::TextureSlice().setMipLevel( mip ), hiZ, nvrhi::TextureSlice().setMipLevel( mip ) );
+	commandList->copyTexture( stagingTexture, nvrhi::TextureSlice().setMipLevel( mip - 1 ), hiZ, nvrhi::TextureSlice().setMipLevel( mip - 1 ) );
+
+	commandList->close();
+	device->executeCommandList( commandList );
+
+	size_t rowPitch = 0;
+	const byte* data = ( const byte* )device->mapStagingTexture( stagingTexture, nvrhi::TextureSlice().setMipLevel( mip ), nvrhi::CpuAccessMode::Read, &rowPitch );
+	if( data == NULL )
+	{
+		return false;
+	}
+	for( int y = 0; y < mipHeight; y++ )
+	{
+		memcpy( mipData + y * mipWidth, data + y * rowPitch, mipWidth * sizeof( float ) );
+	}
+	device->unmapStagingTexture( stagingTexture );
+
+	data = ( const byte* )device->mapStagingTexture( stagingTexture, nvrhi::TextureSlice().setMipLevel( mip - 1 ), nvrhi::CpuAccessMode::Read, &rowPitch );
+	if( data == NULL )
+	{
+		return false;
+	}
+	for( int y = 0; y < parentHeight; y++ )
+	{
+		memcpy( parentData + y * parentWidth, data + y * rowPitch, parentWidth * sizeof( float ) );
+	}
+	device->unmapStagingTexture( stagingTexture );
+
+	return true;
+}
+
+/*
+==================
+dumpHiZ
+
+V3.8: builds and draws one frame, then writes one mip of the hierarchical Z buffer as a grey PFM
+and checks the mip reduction on the CPU. The Hi-Z pass ( RenderBackend.cpp ) clears the image to
+the far plane and the mipmapgen compute shader reduces mips 1 through MAX_HIERARCHICAL_ZBUFFERS
+to the FARTHEST depth of the four below it ( MODE_MIN under reversed-Z, MODE_MAX otherwise ); the
+image has a full mip chain and the mips past those keep the clear value. A texel of the dumped mip
+whose four children do not all exist in the mip below - only possible once a mip has shrunk to 1
+in that direction - is reduced from texels outside the mip below and is skipped. The pass runs
+only for a 3D view ( R_UseHiZ() && is3D in RenderBackend.cpp ), so the image holds the last 3D
+view the backend drew: when the frame this command builds has no 3D view ( main menu, loading
+screen ) the image keeps its older contents and the check then describes that older frame. The
+tail of the line reads "<k> of <c> texels differ from the farthest of their 2x2": "0 of" is the
+pass.
+==================
+*/
+CONSOLE_COMMAND( dumpHiZ, "builds one frame and writes one Hi-Z mip as a PFM, checking the reduction: dumpHiZ <mip 1-5> <path>", NULL )
+{
+	if( args.Argc() != 3 )
+	{
+		common->Printf( "usage: dumpHiZ <mip 1-%i> <path relative to fs_basepath/<game>>\n", MAX_HIERARCHICAL_ZBUFFERS - 1 );
+		return;
+	}
+
+	const int mip = atoi( args.Argv( 1 ) );
+	if( mip < 1 || mip > MAX_HIERARCHICAL_ZBUFFERS - 1 )
+	{
+		common->Printf( "usage: dumpHiZ <mip 1-%i> <path relative to fs_basepath/<game>>\n", MAX_HIERARCHICAL_ZBUFFERS - 1 );
+		return;
+	}
+
+	if( tr.primaryWorld == NULL )
+	{
+		common->Printf( "dumpHiZ: no map loaded\n" );
+		return;
+	}
+
+	if( !R_UseHiZ() )
+	{
+		common->Printf( "dumpHiZ: the hierarchical depth buffer is not in use ( r_useHierarchicalDepthBuffer 0, or disabled for this GPU )\n" );
+		return;
+	}
+
+	R_VerifyBuildFrame();
+	R_VerifyDrawFrame();
+
+	nvrhi::ITexture* hiZ = globalImages->hierarchicalZbufferImage->GetTextureHandle();
+
+	nvrhi::TextureDesc desc = hiZ->getDesc();
+	const int mipWidth = Max( 1, ( int )desc.width >> mip );
+	const int mipHeight = Max( 1, ( int )desc.height >> mip );
+	const int parentWidth = Max( 1, ( int )desc.width >> ( mip - 1 ) );
+	const int parentHeight = Max( 1, ( int )desc.height >> ( mip - 1 ) );
+
+	idTempArray<float> mipData( mipWidth * mipHeight );
+	idTempArray<float> parentData( parentWidth * parentHeight );
+
+	const bool readOK = R_VerifyReadHiZMips( hiZ, mip, mipData.Ptr(), mipWidth, mipHeight,
+											 parentData.Ptr(), parentWidth, parentHeight );
+
+	bool written = false;
+	float minValue = 0.0f;
+	float maxValue = 0.0f;
+	int farTexels = 0;
+	int differ = 0;
+	int checked = 0;
+
+	if( readOK )
+	{
+		minValue = maxValue = mipData[0];
+		for( int i = 0; i < mipWidth * mipHeight; i++ )
+		{
+			const float v = mipData[i];
+			minValue = Min( minValue, v );
+			maxValue = Max( maxValue, v );
+			if( v == DEPTH_CONVENTION_CLEAR )
+			{
+				farTexels++;
+			}
+		}
+
+		for( int y = 0; y < mipHeight; y++ )
+		{
+			for( int x = 0; x < mipWidth; x++ )
+			{
+				// a texel whose four children do not all exist in the mip below ( only
+				// happens once a mip has shrunk to 1 in that direction ) is reduced from
+				// texels outside the mip below, so it is skipped
+				if( 2 * x + 1 >= parentWidth || 2 * y + 1 >= parentHeight )
+				{
+					continue;
+				}
+				const float* p = parentData.Ptr() + 2 * y * parentWidth + 2 * x;
+#if ID_REVERSED_Z
+				const float farthest = Min( Min( p[0], p[1] ), Min( p[parentWidth], p[parentWidth + 1] ) );
+#else
+				const float farthest = Max( Max( p[0], p[1] ), Max( p[parentWidth], p[parentWidth + 1] ) );
+#endif
+				checked++;
+				if( mipData[y * mipWidth + x] != farthest )
+				{
+					differ++;
+				}
+			}
+		}
+
+		idFile* f = fileSystem->OpenFileWrite( args.Argv( 2 ), "fs_basepath" );
+		if( f != NULL )
+		{
+			// a negative scale marks little-endian floats
+			f->Printf( "Pf\n%i %i\n-1.0\n", mipWidth, mipHeight );
+			for( int y = mipHeight - 1; y >= 0; y-- )
+			{
+				f->Write( mipData.Ptr() + y * mipWidth, mipWidth * ( int )sizeof( float ) );
+			}
+			fileSystem->CloseFile( f );
+			written = true;
+		}
+	}
+
+	R_VerifyEndFrame();
+
+	if( !written )
+	{
+		common->Printf( "dumpHiZ: read-back or write of %s failed\n", args.Argv( 2 ) );
+		return;
+	}
+
+	common->Printf( "dumpHiZ: wrote %s (mip %i, %i x %i, min %f max %f, %i texels at the far value, %i of %i texels differ from the farthest of their 2x2)\n",
+					args.Argv( 2 ), mip, mipWidth, mipHeight, minValue, maxValue, farTexels, differ, checked );
+}
+
+/*
+==================
 dumpProbeDepth
 
 V3.9 / V4.3 / GC13: renders one cube face of an environment probe the way bakeEnvironmentProbes

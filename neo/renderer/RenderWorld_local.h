@@ -134,8 +134,11 @@ typedef struct portalArea_s
 // does not exist yet then, and FreeDefs, which the retain path runs, must not lose it
 struct areaChunk_t
 {
-	idVec3			origin;			// multiple of 1024, the parms.origin of the area's world entity
+	// snapped to AREA_CHUNK_SNAP when the .proc is parsed ( a .bproc cache keeps the origin
+	// it was written with ); the parms.origin of the area's world entity
+	idVec3			origin;
 	idBounds		absBounds;		// FinishSurfaces bounds of the absolute vertices, source of globalBounds
+	bool			valid;			// true once SetAreaChunk stored this area; entries the list grew past are false
 };
 
 

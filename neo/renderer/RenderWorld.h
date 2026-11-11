@@ -243,6 +243,13 @@ typedef struct renderLight_s
 	float					minVisPixels;
 } renderLight_t;
 
+// parallel (sun) lights are faked as a point this far along their direction.
+// 1e9 keeps the direction error under 0.03 degrees anywhere in the world:
+// the MIN_WORLD_COORD..MAX_WORLD_COORD diagonal is ~454k units, atan( 454k / 1e9 ) ~= 0.026.
+// Never larger (and never INFINITUM): the shaders take the vector to this point
+// ( interactionSM.vs.hlsl:144 and :213 ) and normalize it, which forms dot( L, L ) in fp32,
+// so |L| must stay below sqrt( FLT_MAX ) ~= 1.8e19.
+const float PARALLEL_LIGHT_FAKE_DISTANCE = 1.0e9f;
 
 // RB begin
 typedef struct
