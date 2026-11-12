@@ -992,6 +992,9 @@ ReloadModels and RegenerateWorld call this
 */
 void R_FreeDerivedData()
 {
+	// ---- TRACK S: this free reaches no notify call ----
+	R_ShadowCacheInvalidateAll();
+	// ---- END TRACK S ----
 	for( int j = 0; j < tr.worlds.Num(); j++ )
 	{
 		idRenderWorldLocal* rw = tr.worlds[j];
@@ -1052,6 +1055,9 @@ void R_CheckForEntityDefsUsingModel( idRenderModel* model )
 			{
 				//assert( 0 );
 				// this should never happen but Radiant messes it up all the time so just free the derived data
+				// ---- TRACK S: this free reaches no notify call ----
+				R_ShadowCacheInvalidateAll();
+				// ---- END TRACK S ----
 				R_FreeEntityDefDerivedData( def, false, false );
 			}
 		}

@@ -76,6 +76,11 @@ typedef struct mtrParsingData_s
 
 idCVar r_forceSoundOpAmplitude( "r_forceSoundOpAmplitude", "0", CVAR_FLOAT, "Don't call into the sound system for amplitudes" );
 
+// ---- TRACK S: counts the materials whose parsed data was thrown away ( a decl reload, a purge ): the
+// shadow cache compares it, because a static shadow map may hold what the old material cast ----
+int c_materialFrees = 0;
+// ---- END TRACK S ----
+
 /*
 =============
 idMaterial::CommonInit
@@ -175,6 +180,7 @@ void idMaterial::FreeData()
 
 	if( stages )
 	{
+		c_materialFrees++;		// TRACK S: see the definition
 		// delete any idCinematic textures
 		for( i = 0; i < numStages; i++ )
 		{

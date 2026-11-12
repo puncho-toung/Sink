@@ -437,7 +437,10 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 
 				// this doesn't say that the shadow can't effect anything, only that it can't
 				// effect anything in the view
-				if( idRenderMatrix::CullBoundsToMVP( viewDef->worldCullMVP, shadowBounds ) )
+
+				// track S ( S2c ): see R_AddSingleLight: a cacheable caster of a light that draws its static
+				// maps is kept even when its shadow misses the view
+				if( !( vLight->shadowFullGather && R_ShadowCacheEntityCacheable( entityDef ) ) && idRenderMatrix::CullBoundsToMVP( viewDef->worldCullMVP, shadowBounds ) )
 				{
 					continue;
 				}

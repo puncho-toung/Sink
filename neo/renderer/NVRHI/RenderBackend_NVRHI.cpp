@@ -3098,6 +3098,9 @@ void idRenderBackend::ClearCaches()
 		ssaoPass = nullptr;
 	}
 
+	// ---- TRACK S: release the shadow cache's copy pipeline ----
+	ShadowCacheClearCaches();
+	// ---- END TRACK S ----
 	// ---- TRACK F: release the light-list buffers ----
 	// ---- END TRACK F ----
 	// ---- TRACK V: delete the volumetric fog pass ----
@@ -3235,6 +3238,12 @@ idRenderBackend::idRenderBackend
 idRenderBackend::idRenderBackend()
 {
 	shadowAtlasFailedHighWater = 0;
+	// ---- TRACK S: shadow cache ----
+	shadowCacheTargetSerial = 0;
+	memset( shadowCacheBuilt, 0, sizeof( shadowCacheBuilt ) );
+	shadowCacheMisses = 0;
+	memset( shadowCacheMissed, 0, sizeof( shadowCacheMissed ) );
+	// ---- END TRACK S ----
 	hiZGenPass = nullptr;
 	ssaoPass = nullptr;
 	volumetricFogPass = nullptr;
@@ -3334,5 +3343,8 @@ idImage* idRenderBackend::GetImageAt( int index )
 void idRenderBackend::ResetPipelineCache()
 {
 	pipelineCache.Clear();
+	// ---- TRACK S: the shadow cache's copy pipeline holds the old shaders too ----
+	ShadowCacheClearCaches();
+	// ---- END TRACK S ----
 }
 

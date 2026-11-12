@@ -347,6 +347,10 @@ static void R_AddSingleLight( viewLight_t* vLight )
 
 	const bool lightCastsShadows = light->LightCastsShadows();
 
+	// track S ( S2c ): a light that draws its static shadow maps this frame keeps every cacheable caster of
+	// its volume in its chain, whatever the camera sees; R_AddSingleModel reads the flag
+	vLight->shadowFullGather = lightCastsShadows && R_ShadowCacheFullGather( viewDef, light );
+
 	if( r_useLightScissors.GetInteger() != 0 )
 	{
 		// Calculate the matrix that projects the zero-to-one cube to exactly cover the
@@ -857,7 +861,10 @@ static void R_AddSingleLight( viewLight_t* vLight )
 
 			// this doesn't say that the shadow can't effect anything, only that it can't
 			// effect anything in the view, so we shouldn't set up a view entity
-			if( idRenderMatrix::CullBoundsToMVP( viewDef->worldCullMVP, shadowBounds ) )
+
+			// track S ( S2c ): a cacheable caster of a light that draws its static maps is kept even when its
+			// shadow misses the view: the static map must hold it when the camera turns
+			if( !( vLight->shadowFullGather && R_ShadowCacheEntityCacheable( edef ) ) && idRenderMatrix::CullBoundsToMVP( viewDef->worldCullMVP, shadowBounds ) )
 			{
 				continue;
 			}

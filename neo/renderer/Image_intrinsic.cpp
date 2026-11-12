@@ -674,6 +674,21 @@ static void R_CreateShadowMapImage_Atlas( idImage* image, nvrhi::ICommandList* c
 	image->GenerateImage( NULL, r_shadowMapAtlasSize.GetInteger(), r_shadowMapAtlasSize.GetInteger(), TF_LINEAR, TR_CLAMP_TO_ZERO_ALPHA, TD_DEPTH, commandList, true );
 }
 
+// track S ( S2b ): the shadow cache. Like the shadow atlas, but NOT reloaded by Framebuffer::ReloadImages:
+// their size does not follow the window, and a reload throws their contents away
+static void R_CreateShadowCacheImage_Atlas( idImage* image, nvrhi::ICommandList* commandList )
+{
+	// r_shadowCacheSize is read here, when the image is created ( D77 ). Only the two sizes the plan names:
+	// the frontend hands out tiles in Z order and needs a power of two
+	const int size = ( r_shadowCacheSize.GetInteger() >= 8192 ) ? 8192 : 4096;
+	image->GenerateImage( NULL, size, size, TF_LINEAR, TR_CLAMP_TO_ZERO_ALPHA, TD_DEPTH, commandList, true );
+}
+
+static void R_CreateShadowCacheImage_Cascade( idImage* image, nvrhi::ICommandList* commandList )
+{
+	image->GenerateImage( NULL, shadowMapResolutions[0], shadowMapResolutions[0], TF_LINEAR, TR_CLAMP_TO_ZERO_ALPHA, TD_DEPTH, commandList, true );
+}
+
 static void R_CreateShadowMapImage_Res0( idImage* image, nvrhi::ICommandList* commandList )
 {
 	int size = shadowMapResolutions[0];
@@ -1076,6 +1091,11 @@ void idImageManager::CreateIntrinsicImages()
 	// RB begin
 	shadowAtlasImage = ImageFromFunction( "_shadowMapAtlas", R_CreateShadowMapImage_Atlas );
 	// ---- TRACK S: create the shadow cache images ( ImageFromFunction, D45 ) ----
+	shadowCacheAtlasImage = ImageFromFunction( "_shadowCacheAtlas", R_CreateShadowCacheImage_Atlas );
+	for( int i = 0; i < 5; i++ )
+	{
+		shadowCacheCascadeImage[i] = ImageFromFunction( va( "_shadowCacheCascade%i", i ), R_CreateShadowCacheImage_Cascade );
+	}
 	// ---- END TRACK S ----
 	shadowImage[0] = ImageFromFunction( va( "_shadowMapArray0_%i", shadowMapResolutions[0] ), R_CreateShadowMapImage_Res0 );
 	shadowImage[1] = ImageFromFunction( va( "_shadowMapArray1_%i", shadowMapResolutions[1] ), R_CreateShadowMapImage_Res1 );

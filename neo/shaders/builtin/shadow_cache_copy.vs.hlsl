@@ -1,5 +1,5 @@
 // shadow_cache_copy.vs.hlsl - vertex stage of the shadow-cache tile copy ( D36 ): X0 landed this as a
-// stub; track S replaces the bodies later. Full-screen triangle from SV_VertexID, no vertex buffer;
+// stub and S2b kept it as the final body. Full-screen triangle from SV_VertexID, no vertex buffer;
 // the copy draws over the tile ( viewport and scissor = the tile ) into the atlas bound as the depth
 // target, depth test ALWAYS, depth write on.
 

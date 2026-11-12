@@ -431,6 +431,10 @@ struct viewLight_t
 	bool		isPrimarySun;		// copied from idRenderLightLocal::isPrimarySun ( D73 )
 	// ---- END X0 ----
 	// ---- TRACK S: shadow cache fields ( S2, S3 ) ----
+	const byte* 	shadowCasterBits;		// S2: one byte ( SCB_* ) per surface of globalShadows, in chain order; NULL = every surface reaches every side
+	int				numShadowCasterBits;	// the length of that chain when the decide pass walked it
+	bool			shadowFullGather;		// S2c: set by R_AddSingleLight: the chain holds every cacheable caster of the light's volume, whatever the camera sees
+	byte			shadowActiveSides;		// S2c: one bit per side that an ACTIVE caster of a cached light reaches; the backend draws no active pass into the others
 	// ---- END TRACK S ----
 };
 
@@ -630,14 +634,17 @@ struct lightGatherArea_t
 };
 
 // D36: the cvars the shadow atlas pass reads, as the frontend's decide pass saw them. X0 only zeroes it
-// ( valid = false ) in R_RenderView; the decide pass of track S fills it and the atlas pass then obeys it.
+// ( valid = false ) in R_RenderView; the decide pass of track S fills it. The atlas pass takes the cascade
+// count, the single-side setting and the face angle from it, and reads the two on/off cvars itself, as
+// every other backend reader does.
 struct shadowSkipSet_t
 {
 	int			shadowMapSplits;		// r_shadowMapSplits
 	int			shadowMapSingleSide;	// r_shadowMapSingleSide ( -1 = all six faces of a point light )
-	float		shadowMapSplitFar;		// r_shadowMapSplitFar
-	bool		skipShadows;			// r_skipShadows
-	bool		useShadowAtlas;			// r_useShadowAtlas
+	float		shadowMapFrustumFOV;	// r_shadowMapFrustumFOV: the faces the caster bits were culled against ( S2a )
+	float		shadowMapSplitFar;		// r_shadowMapSplitFar; nothing reads it yet: the cascade cache's epoch test will ( S3a )
+	bool		skipShadows;			// r_skipShadows; read only by the decide pass's own test ( the backend reads the cvar )
+	bool		useShadowAtlas;			// r_useShadowAtlas; read only by the decide pass's own test ( the backend reads the cvar )
 	bool		valid;					// false until the decide pass of track S fills the rest
 };
 
@@ -767,7 +774,7 @@ struct viewDef_t
 	int							numShadowRows;
 	struct shadowCacheOp_t* 	shadowOps;			// D36: the decide pass's ops for this view ( S defines the struct ); frame memory allocated by the decide pass ( frontend, track S )
 	int							numShadowOps;
-	shadowSkipSet_t				shadowSkipSet;		// D36: what the decide pass saw; the atlas pass obeys it
+	shadowSkipSet_t				shadowSkipSet;		// D36: what the decide pass saw; the atlas pass takes the cascade count, the single-side setting and the face angle from it, and reads the two on/off cvars itself
 	bool						listsBuilt;			// set by R_BuildLightLists; the only thing F's backend tests
 	// ---- END X0 ----
 };

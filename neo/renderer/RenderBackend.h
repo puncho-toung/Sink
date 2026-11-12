@@ -202,7 +202,7 @@ private:
 	// ---- END X0 ----
 
 	void				SetupShadowMapMatrices( viewLight_t* vLight, int side, idRenderMatrix& lightProjectionRenderMatrix, idRenderMatrix& lightViewRenderMatrix );
-	void				ShadowMapPassFast( const drawSurf_t* drawSurfs, viewLight_t* vLight, int side, bool atlas );
+	void				ShadowMapPassFast( const drawSurf_t* drawSurfs, viewLight_t* vLight, int side, bool atlas, const byte* casterBits = NULL, int casterMask = 0, int casterWant = 0, const struct shadowCacheOp_t* cacheOp = NULL, Framebuffer* cacheTarget = NULL );
 	void				ShadowMapPassPerforated( const drawSurf_t** drawSurfs, int numDrawSurfs, viewLight_t* vLight, int side, const idRenderMatrix& lightProjectionRenderMatrix, const idRenderMatrix& lightViewRenderMatrix );
 	void				ShadowMapsForLightNoAtlas( const viewLight_t* vLight, Framebuffer* previousFramebuffer );
 
@@ -412,6 +412,26 @@ private:
 	bool							viewHistoryCut;			// H10: this main view's camera cut, decided once at the start of its draw
 	// ---- END X0 ----
 	// ---- TRACK S: shadow cache members ----
+	nvrhi::ShaderHandle				shadowCacheCopyVS;
+	nvrhi::ShaderHandle				shadowCacheCopyPS;
+	nvrhi::BindingLayoutHandle		shadowCacheCopyLayout;
+	nvrhi::GraphicsPipelineHandle	shadowCacheCopyPipeline[2];		// by the kind of target: 0 the per-frame atlas, 1 a cache image; the two kinds differ only in the framebuffer they were made for
+	nvrhi::FramebufferInfo			shadowCacheCopyPipelineInfo[2];	// what each pipeline was made for
+	int								shadowCacheTargetSerial;		// in the names of the cache's framebuffers, so a stale one is never found again
+	// S3a: the serial of the static map last drawn at each place of the cache images ( R_ShadowCacheSlot ),
+	// 0 = none; only the backend writes it ( D74 )
+	unsigned int					shadowCacheBuilt[4096 + 5];
+public:
+	// S3a: the frontend reads these two ( R_ShadowCachePublish takes the miss count and the ring of missed
+	// serials ); the rest of the cache stays the backend's
+	unsigned int					shadowCacheMisses;				// S3a: copies that found no map, or another one, where the frontend expected one; R_ShadowCachePublish hands the count to the frontend
+	unsigned int					shadowCacheMissed[128];			// S3a: the serials of the last 128 missed copies: miss n is at index n & 127 ( a point light that misses takes six ); the frontend's copy is checked against this width by a static_assert in ShadowCache.cpp
+private:
+
+	void				ShadowCacheCopyDraw( nvrhi::IFramebuffer* target, int targetKind, nvrhi::ITexture* source, const struct shadowCacheCopyConstants_t& constants );
+	Framebuffer*		ShadowCacheTarget( int which, bool* recreated );		// which: -1 the cache atlas, 0..4 a cascade map
+	void				ShadowCacheDrawStaticMaps();
+	void				ShadowCacheClearCaches();
 	// ---- END TRACK S ----
 	// ---- TRACK F: light lists ----
 	void							R_BuildShadowRows( const viewDef_t* viewDef );

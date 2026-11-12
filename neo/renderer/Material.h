@@ -1087,4 +1087,8 @@ private:
 
 typedef idList<const idMaterial*, TAG_MATERIAL> idMatList;
 
+// ---- TRACK S: the materials whose parsed data was thrown away ( Material.cpp ); the shadow cache compares it ----
+extern int c_materialFrees;
+// ---- END TRACK S ----
+
 #endif /* !__MATERIAL_H__ */

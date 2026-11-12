@@ -2884,6 +2884,31 @@ void idRenderBackend::SetupShadowMapMatrices( viewLight_t* vLight, int side, idR
 	{
 		assert( side >= 0 && side < 6 );
 
+		// ---- TRACK S ( S1 ): the primary sun's cascade on the map-anchored grid ----
+		// the frontend's decide pass placed this cascade's window ( r_shadowCache >= 1, main view );
+		// without a record this is today's crop below
+		const shadowCacheCascade_t* cascade = R_ShadowCacheCascade( viewDef, vLight, side );
+		if( cascade != NULL )
+		{
+			R_ShadowCacheParallelMatrices( *viewDef->shadowCacheView, *cascade, lightViewRenderMatrix, lightProjectionRenderMatrix );
+
+			vLight->shadowV[side] = lightViewRenderMatrix;
+			vLight->shadowP[side] = lightProjectionRenderMatrix;
+
+#if defined( USE_NVRHI )
+			ALIGNTYPE16 const idRenderMatrix matClipToUvzw(
+				1.0f,  0.0f, 0.0f,  0.0f,
+				0.0f, -1.0f, 0.0f,  0.0f,
+				0.0f,  0.0f, 2.0f, -1.0f,
+				0.0f,  0.0f, 0.0f,  1.0f
+			);
+
+			idRenderMatrix::Multiply( matClipToUvzw, lightProjectionRenderMatrix, vLight->shadowP[side] );
+#endif
+			return;
+		}
+		// ---- END TRACK S ----
+
 		// original light direction is from surface to light origin
 		idVec3 lightDir = -vLight->lightCenter;
 		if( lightDir.Normalize() == 0.0f )
@@ -3126,7 +3151,8 @@ void idRenderBackend::SetupShadowMapMatrices( viewLight_t* vLight, int side, idR
 
 		// set up 90 degree projection matrix
 		const float zNear = 4;
-		const float	fov = r_shadowMapFrustumFOV.GetFloat();
+		// TRACK S ( S2a ): with a snapshot the faces are the ones the frontend culled the casters against
+		const float	fov = viewDef->shadowSkipSet.valid ? viewDef->shadowSkipSet.shadowMapFrustumFOV : r_shadowMapFrustumFOV.GetFloat();
 
 		float ymax = zNear * tan( fov * idMath::PI / 360.0f );
 		float ymin = -ymax;
@@ -3436,7 +3462,7 @@ void idRenderBackend::ShadowMapPassPerforated( const drawSurf_t** drawSurfs, int
 idRenderBackend::ShadowMapPassFast
 =====================
 */
-void idRenderBackend::ShadowMapPassFast( const drawSurf_t* drawSurfs, viewLight_t* vLight, int side, bool atlas )
+void idRenderBackend::ShadowMapPassFast( const drawSurf_t* drawSurfs, viewLight_t* vLight, int side, bool atlas, const byte* casterBits, int casterMask, int casterWant, const shadowCacheOp_t* cacheOp, Framebuffer* cacheTarget )
 {
 	if( r_skipShadows.GetBool() )
 	{
@@ -3498,7 +3524,19 @@ void idRenderBackend::ShadowMapPassFast( const drawSurf_t* drawSurfs, viewLight_
 
 	int slice = Max( 0, side );
 
-	if( atlas )
+	if( cacheOp != NULL )
+	{
+		// TRACK S ( S2c ): the static casters of a cached unit, into the unit's region of its cache image
+		if( cacheTarget == NULL )
+		{
+			renderLog.CloseBlock();
+			return;
+		}
+		cacheTarget->Bind();
+
+		GL_ViewportAndScissor( cacheOp->x, cacheOp->y, cacheOp->size, cacheOp->size );
+	}
+	else if( atlas )
 	{
 		globalFramebuffers.shadowAtlasFBO->Bind();
 
@@ -3531,8 +3569,23 @@ void idRenderBackend::ShadowMapPassFast( const drawSurf_t* drawSurfs, viewLight_
 	const drawSurf_t** perforatedSurfaces = ( const drawSurf_t** )_alloca( numDrawSurfs * sizeof( drawSurf_t* ) );
 	int numPerforatedSurfaces = 0;
 
+	int casterIndex = -1;
 	for( const drawSurf_t* drawSurf = drawSurfs; drawSurf != NULL; drawSurf = drawSurf->nextOnLight )
 	{
+		casterIndex++;
+
+		// TRACK S ( S2a ): the frontend's bits for this caster ( the per-side cull, later static or active )
+		if( casterBits != NULL )
+		{
+			// the chain must be the one the decide pass walked; a surface past its end is drawn into every
+			// side, as an active caster ( SCB_SIDE_MASK has no static bit )
+			assert( casterIndex < vLight->numShadowCasterBits );
+			const int bits = ( casterIndex < vLight->numShadowCasterBits ) ? casterBits[casterIndex] : SCB_SIDE_MASK;
+			if( ( bits & casterMask ) != casterWant )
+			{
+				continue;
+			}
+		}
 
 		if( drawSurf->numIndexes == 0 )
 		{
@@ -3646,10 +3699,29 @@ public:
 
 void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 {
+	// ---- TRACK S ( S2a ): the frontend's snapshot ( D36 ). With a valid one the pass takes from it what must
+	// match the frontend's own data: the cascade count, the single-side setting, the caster bits. Whether shadows
+	// and the atlas are on is read from the cvars here, as every other backend reader of them does ( the
+	// interaction program select, the matrix upload, the non-atlas path ): a toggle between the frontend and the
+	// backend of one frame must not make the backend disagree with itself
+	const shadowSkipSet_t& skipSet = viewDef->shadowSkipSet;
+	const bool snapshot = skipSet.valid;
+	const int numCascades = ( snapshot ? skipSet.shadowMapSplits : r_shadowMapSplits.GetInteger() ) + 1;
+	const int singleSide = snapshot ? skipSet.shadowMapSingleSide : r_shadowMapSingleSide.GetInteger();
+	// ---- END TRACK S ----
+
 	if( r_skipShadows.GetBool() || !r_useShadowAtlas.GetBool() || viewDef->viewLights == NULL )
 	{
 		return;
 	}
+
+	// ---- TRACK S ( S2c ): the static maps of this view's cached units, in their own main block, opened and
+	// closed before the atlas block opens ( D70 ) ----
+	if( snapshot && viewDef->numShadowOps > 0 )
+	{
+		ShadowCacheDrawStaticMaps();
+	}
+	// ---- END TRACK S ----
 
 	//OPTICK_EVENT( "Render_ShadowAtlas" );
 
@@ -3722,13 +3794,13 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 		if( vLight->parallel )
 		{
 			side = 0;
-			sideStop = r_shadowMapSplits.GetInteger() + 1;
+			sideStop = numCascades;
 		}
 		else if( vLight->pointLight )
 		{
-			if( r_shadowMapSingleSide.GetInteger() != -1 )
+			if( singleSide != -1 )
 			{
-				side = r_shadowMapSingleSide.GetInteger();
+				side = singleSide;
 				sideStop = side + 1;
 			}
 			else
@@ -3779,7 +3851,37 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 	// Sort the rects from largest to smallest (it makes allocating them in the image better)
 	idSortrects sortrectsBySize;
 	sortrectsBySize.inputSizes = &inputSizes;
-	sizeRemap.SortWithTemplate( sortrectsBySize );
+	if( snapshot )
+	{
+		// TRACK S ( S2a ): a stable order, size class first and then the order of the view's lights. Largest
+		// first is what the quad tree needs; a stable order gives a light the same tile from frame to frame
+		// while the view's lights and their order hold ( S3b's allocator keeps tiles across changes )
+		int numSorted = 0;
+		for( int size = shadowMapResolutions[0]; size >= shadowMapResolutions[MAX_SHADOWMAP_RESOLUTIONS - 1]; size >>= 1 )
+		{
+			for( int i = 0; i < inputSizes.Num(); i++ )
+			{
+				if( inputSizes[i].x == size )
+				{
+					sizeRemap[numSorted++] = i;
+				}
+			}
+		}
+		if( numSorted != inputSizes.Num() )
+		{
+			// a size outside the table's powers of two: cannot happen with shadowMapResolutions as it is
+			assert( false );
+			for( int i = 0; i < inputSizes.Num(); i++ )
+			{
+				sizeRemap[i] = i;
+			}
+			sizeRemap.SortWithTemplate( sortrectsBySize );
+		}
+	}
+	else
+	{
+		sizeRemap.SortWithTemplate( sortrectsBySize );
+	}
 
 	tileMap.Clear();
 
@@ -3881,13 +3983,13 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 		if( vLight->parallel )
 		{
 			side = 0;
-			sideStop = r_shadowMapSplits.GetInteger() + 1;
+			sideStop = numCascades;
 		}
 		else if( vLight->pointLight )
 		{
-			if( r_shadowMapSingleSide.GetInteger() != -1 )
+			if( singleSide != -1 )
 			{
-				side = r_shadowMapSingleSide.GetInteger();
+				side = singleSide;
 				sideStop = side + 1;
 			}
 			else
@@ -3927,7 +4029,69 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 				continue;
 			}
 
-			ShadowMapPassFast( vLight->globalShadows, vLight, side, true );
+			const shadowCacheOp_t* cacheOp = ( snapshot && vLight->shadowOp != 0 ) ? &viewDef->shadowOps[vLight->shadowOp - 1 + slice] : NULL;
+
+			idImage* cacheImage = NULL;
+			if( cacheOp != NULL )
+			{
+				cacheImage = ( cacheOp->target < 0 ) ? globalImages->shadowCacheAtlasImage : globalImages->shadowCacheCascadeImage[cacheOp->target];
+				if( cacheImage->GetTextureHandle().Get() == NULL )
+				{
+					// no cache image to copy from ( it failed to create ): the static pass skipped the unit too,
+					// so every caster that reaches the side is drawn into the tile, as before the cache
+					cacheOp = NULL;
+				}
+				else if( cacheOp->serial == 0 || shadowCacheBuilt[R_ShadowCacheSlot( *cacheOp )] != cacheOp->serial )
+				{
+					// S3a: the map the frontend expects is not in the cache ( the frame that built it was never
+					// executed, or the cache images were lost; serial 0 is the empty stamp, which a build only
+					// gets after the 2^32 wrap ). Every caster of the chain that reaches the side
+					// is drawn into the tile, as for a light without a cache, and the frontend is told ( D74 )
+					shadowCacheMissed[shadowCacheMisses & 127] = cacheOp->serial;
+					shadowCacheMisses++;
+					cacheOp = NULL;
+				}
+			}
+
+			if( cacheOp != NULL )
+			{
+				// TRACK S ( S2c ): a cached unit: the copy of its static map into the tile, then its active
+				// casters on top. Shading reads shadowV and shadowP whether or not a caster is drawn:
+				// ShadowMapPassFast sets them when it runs, so they are set here only when it does not
+				const int bit = 1 << slice;
+				const bool activeCasters = ( vLight->shadowActiveSides & bit ) != 0;
+				if( !activeCasters )
+				{
+					idRenderMatrix lightProjectionRenderMatrix;
+					idRenderMatrix lightViewRenderMatrix;
+					SetupShadowMapMatrices( vLight, side, lightProjectionRenderMatrix, lightViewRenderMatrix );
+				}
+
+				shadowCacheCopyConstants_t constants;
+				memset( &constants, 0, sizeof( constants ) );
+				constants.tileOrigin[0] = vLight->imageAtlasOffset[slice].x;
+				constants.tileOrigin[1] = vLight->imageAtlasOffset[slice].y;
+				constants.sourceOrigin[0] = cacheOp->x;
+				constants.sourceOrigin[1] = cacheOp->y;
+				constants.res = cacheOp->size;
+				constants.tileRes = vLight->imageSize.x;
+				ShadowCacheCopyDraw( globalFramebuffers.shadowAtlasFBO->GetApiObject(), 0, cacheImage->GetTextureHandle().Get(), constants );
+				ResetGraphicsStateCache();
+
+				if( activeCasters )
+				{
+					ShadowMapPassFast( vLight->globalShadows, vLight, side, true, vLight->shadowCasterBits, bit | SCB_STATIC, bit );
+				}
+			}
+			else if( snapshot && vLight->shadowCasterBits != NULL )
+			{
+				// TRACK S ( S2a ): only the casters whose bounds reach this side
+				ShadowMapPassFast( vLight->globalShadows, vLight, side, true, vLight->shadowCasterBits, 1 << slice, 1 << slice );
+			}
+			else
+			{
+				ShadowMapPassFast( vLight->globalShadows, vLight, side, true );
+			}
 		}
 
 		if( !imageFitsIntoAtlas )

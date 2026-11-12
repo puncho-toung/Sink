@@ -600,6 +600,8 @@ public:
 	// RB begin
 	idImage*			shadowAtlasImage;			// 8192 * 8192 for clustered forward shading
 	// ---- TRACK S: the shadow cache images ( D45 ) ----
+	idImage*			shadowCacheAtlasImage;			// r_shadowCacheSize ^ 2, D32: the static maps of local lights ( S2b )
+	idImage*			shadowCacheCascadeImage[5];		// one static map per sun cascade, shadowMapResolutions[0] ^ 2, D32
 	// ---- END TRACK S ----
 	idImage*			shadowImage[5];
 	idImage*			jitterImage1;				// shadow jitter
