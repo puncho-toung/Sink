@@ -32,7 +32,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "global_inc.hlsl"
 #include "renderParmSet11.inc.hlsl"
 #include "BRDF.inc.hlsl"
-#include "mathlight.inc.hlsl"
+#include "emitter.inc.hlsl"
 
 
 // *INDENT-OFF*
@@ -120,15 +120,18 @@ void main( PS_IN fragment, out PS_OUT result )
 	float4 bumpMap =		t_Normal.Sample( s_Material, bumpUV );
     float3 lightFalloffRGB;
     float3 lightProjRGB;
-    // math output is LINEAR; the legacy light textures are sRGB-authored
+    // emitter output is LINEAR; the legacy light textures are sRGB-authored
     // Carry which branch ran so the sRGB decode stays branch-local: legacy
     // decodes the PRODUCT (bit-identical to stock on this fork's exact EOTF),
-    // math is never decoded. mlMathOn is uniform per draw , the branch is free.
-    bool mlMathOn = MLEvaluate(
+    // an emitter is never decoded. emOn is uniform per draw, the branch is free.
+    //puncho start - the emitter path, else the light's textures
+    bool emEarlyOut;
+    bool emOn = EMEvaluate(
         fragment.texcoord2, fragment.texcoord3,
         pc.rpUser0, pc.rpUser1, pc.rpUser2,
-        lightFalloffRGB, lightProjRGB);
-    if (!mlMathOn)
+        lightFalloffRGB, lightProjRGB, emEarlyOut);
+    //puncho end
+    if (!emOn)
     {
     // legacy path - raw sRGB samples, decoded as a product at the combine
         lightFalloffRGB = idtex2Dproj(s_Lighting, t_LightFalloff, fragment.texcoord2).xyz;
@@ -447,6 +450,15 @@ void main( PS_IN fragment, out PS_OUT result )
 	float vogelPhi = BlueNoise( fragment.position.xy, 1.0 );
 	//float vogelPhi = InterleavedGradientNoiseAnim( fragment.position.xy, pc.rpJitterTexOffset.w );
 
+	//puncho start - every sample that takes screen derivatives is behind us, so a pixel the emitter
+	// cannot reach leaves before the taps and the BRDF
+	if( emEarlyOut )
+	{
+		result.color = float4( 0.0, 0.0, 0.0, 1.0 );
+		return;
+	}
+	//puncho end
+
 	float shadowTexelSize = pc.rpScreenCorrectionFactor.z * pc.rpJitterTexScale.x;
 	for( float si = 0.0; si < numSamples && !beyondCascades; si += 1.0 )
 	{
@@ -563,6 +575,9 @@ void main( PS_IN fragment, out PS_OUT result )
 	float3 specularColor = specMapSRGB.rgb; // RB: should be linear but it looks too flat
 #endif
 
+	//puncho start - the block below takes screen derivatives ( fwidth in AxisAlignedNDFFiltering ), which
+	// the emitter early-out above leaves undefined: move it above the early-out before enabling it
+	//puncho end
 #if 0
 	// specular AA - https://yusuketokuyoshi.com/papers/2021/Tokuyoshi2021SAA.pdf
 
@@ -579,8 +594,8 @@ void main( PS_IN fragment, out PS_OUT result )
 	//lambert /= PI;
 
 	// pc.rpDiffuseModifier contains light color multiplier
-    float3 lightColor = mlMathOn ? (lightProjRGB * lightFalloffRGB)
-                                 : sRGBToLinearRGB(lightProjRGB * lightFalloffRGB);
+    float3 lightColor = emOn ? (lightProjRGB * lightFalloffRGB)
+                             : sRGBToLinearRGB(lightProjRGB * lightFalloffRGB);
 
 	float vdotN = clamp( dot3( viewVector, localNormal ), 0.0, 1.0 );
 	float vdotH = clamp( dot3( viewVector, halfAngleVector ), 0.0, 1.0 );

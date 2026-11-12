@@ -143,9 +143,9 @@ struct performanceCounters_t
 	int		c_shadowViewEntities;
 	int		c_viewLights;
 	//puncho start - c_viewLights is the lights the backend will draw (with interactions, or fog / blend), set in
-	// R_OptimizeViewLightsList once the interactions exist; c_mathViewLights is the math lights among them. Both
+	// R_OptimizeViewLightsList once the interactions exist; c_emitterViewLights is the emitters among them. Both
 	// reset per view, so the last view of the frame wins
-	int		c_mathViewLights;
+	int		c_emitterViewLights;
 	//puncho end
 	int		c_numViews;			// number of total views rendered
 	int		c_deformedSurfaces;	// idMD5Mesh::GenerateSurface
@@ -210,7 +210,7 @@ struct backEndCounters_t
 	//puncho start - lights that entered the interaction path this frame (a non-empty interaction list),
 	// split by shading path. Fog and blend lights and lights with no interactions are skipped before
 	// classification and appear in neither. Accumulates over every 3D view in the frame, like c_drawElements.
-	int		c_mathLights;
+	int		c_emitterLights;
 	int		c_textureLights;
 	//puncho end
 
@@ -237,7 +237,7 @@ struct backEndCounters_t
 	uint64	gpuInteractionsMicroSec;
 	//puncho start - the two halves of gpuInteractionsMicroSec above
 	uint64	gpuInteractionsTexMicroSec;
-	uint64	gpuInteractionsMathMicroSec;
+	uint64	gpuInteractionsEmitterMicroSec;
 	//puncho end
 	uint64	gpuShaderPassMicroSec;
 	uint64	gpuFogAllLightsMicroSec;

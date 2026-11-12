@@ -310,6 +310,107 @@ static float R_ComputeSpotLightProjectionMatrix( idRenderLightLocal* light, idRe
 	return 1.0f / ( zNear + zFar );
 }
 
+//puncho start
+/*
+========================
+R_ComputeSpotProjectionFromVectors
+
+The body of R_ComputeSpotLightProjectionMatrix with the five vectors passed in, so that an emitter
+can build a frustum that is not described by its parms. The original stays as it is, so texture
+spots keep every bit of their projection. The ( zNear + zFar ) factor is not returned: an emitter
+takes its shading frame from a box, never from this matrix.
+========================
+*/
+static void R_ComputeSpotProjectionFromVectors( const idVec3& target, const idVec3& right, const idVec3& up, const idVec3& start, const idVec3& end, idRenderMatrix& localProject )
+{
+	const float targetDistSqr = target.LengthSqr();
+	const float invTargetDist = idMath::InvSqrt( targetDistSqr );
+	const float targetDist = invTargetDist * targetDistSqr;
+
+	const idVec3 normalizedTarget = target * invTargetDist;
+	const idVec3 normalizedRight = right * ( 0.5f * targetDist / right.LengthSqr() );
+	const idVec3 normalizedUp = up * ( -0.5f * targetDist / up.LengthSqr() );
+
+	localProject[0][0] = normalizedRight[0];
+	localProject[0][1] = normalizedRight[1];
+	localProject[0][2] = normalizedRight[2];
+	localProject[0][3] = 0.0f;
+
+	localProject[1][0] = normalizedUp[0];
+	localProject[1][1] = normalizedUp[1];
+	localProject[1][2] = normalizedUp[2];
+	localProject[1][3] = 0.0f;
+
+	localProject[3][0] = normalizedTarget[0];
+	localProject[3][1] = normalizedTarget[1];
+	localProject[3][2] = normalizedTarget[2];
+	localProject[3][3] = 0.0f;
+
+	// the engine puts the far plane at zNear + zFar, not at zFar
+	const float zNear = Max( start * normalizedTarget, SPOT_LIGHT_MIN_Z_NEAR );
+	const float zFar = Max( end * normalizedTarget, SPOT_LIGHT_MIN_Z_FAR );
+	const float zScale = ( zNear + zFar ) / zFar;
+
+	localProject[2][0] = normalizedTarget[0] * zScale;
+	localProject[2][1] = normalizedTarget[1] * zScale;
+	localProject[2][2] = normalizedTarget[2] * zScale;
+	localProject[2][3] = - zNear * zScale;
+
+	// now offset to the 0.0 - 1.0 texture range instead of -1.0 to 1.0 clip space range
+	idVec4 projectedTarget;
+	localProject.TransformPoint( target, projectedTarget );
+
+	const float ofs0 = 0.5f - projectedTarget[0] / projectedTarget[3];
+	localProject[0][0] += ofs0 * localProject[3][0];
+	localProject[0][1] += ofs0 * localProject[3][1];
+	localProject[0][2] += ofs0 * localProject[3][2];
+	localProject[0][3] += ofs0 * localProject[3][3];
+
+	const float ofs1 = 0.5f - projectedTarget[1] / projectedTarget[3];
+	localProject[1][0] += ofs1 * localProject[3][0];
+	localProject[1][1] += ofs1 * localProject[3][1];
+	localProject[1][2] += ofs1 * localProject[3][2];
+	localProject[1][3] += ofs1 * localProject[3][3];
+}
+
+/*
+========================
+R_EmitterSpotShadowProject
+
+An emitter spot's shadow projection, apex on the bulb ( G0 section 7 ). The engine ends a spot at
+8 + its far distance, so a far distance of range - 8 ends it at the range; this is also the texture
+spot an emitter converts to, so both shadow alike.
+
+EC-02: the bulb's frame is the culling apex's frame moved by pullBack along axis[0], which
+CreateFromOriginAxis puts in its first column: bulb = apex * T( pullBack, 0, 0 ). So
+inverse( bulb ) = T( -pullBack, 0, 0 ) * inverse( apex ): the apex's inverse with pullBack times its
+last row taken from its first row, and no second general inverse. A pullBack of 0 with the bulb's own
+general inverse gives what the derive built before EC-02; le_selfTest compares the two.
+========================
+*/
+void R_EmitterSpotShadowProject( const emitterData_t& em, float range, float pullBack, const idRenderMatrix& inverseApexMatrix, idRenderMatrix& shadowProject )
+{
+	const float shadowFar = Max( range - 8.0f, 16.0f );
+
+	idRenderMatrix localProject;
+	R_ComputeSpotProjectionFromVectors(
+		idVec3( shadowFar, 0.0f, 0.0f ),
+		idVec3( 0.0f, -shadowFar * em.tanHalfH, 0.0f ),
+		idVec3( 0.0f, 0.0f, shadowFar * em.tanHalfV ),
+		vec3_zero,
+		idVec3( shadowFar, 0.0f, 0.0f ),
+		localProject );
+
+	idRenderMatrix inverseBulbMatrix = inverseApexMatrix;
+	inverseBulbMatrix[0][0] -= pullBack * inverseApexMatrix[3][0];
+	inverseBulbMatrix[0][1] -= pullBack * inverseApexMatrix[3][1];
+	inverseBulbMatrix[0][2] -= pullBack * inverseApexMatrix[3][2];
+	inverseBulbMatrix[0][3] -= pullBack * inverseApexMatrix[3][3];
+
+	idRenderMatrix::Multiply( localProject, inverseBulbMatrix, shadowProject );
+}
+//puncho end
+
 /*
 ========================
 R_ComputeParallelLightProjectionMatrix
@@ -391,6 +492,107 @@ void R_DeriveLightData( idRenderLightLocal* light )
 			light->falloffImage = defaultShader->LightFalloffImage();
 		}
 	}
+
+	//puncho start - an emitter's volume follows from the lamp, every time the light derives, so a
+	// radius set by a script or a snapshot moves the shading and the culling together. Both shapes
+	// shade from a box round the bulb, so the pixel shader decodes one light-local position. A spot
+	// culls with a frustum whose apex sits behind the bulb, which puts the near plane on the bulb, and
+	// shadows with one whose apex is the bulb. A sun is a parallel light and takes the path below.
+	if( light->parms.emitter.enabled && light->parms.emitter.shape != EM_SUN )
+	{
+		const emitterData_t& em = light->parms.emitter;
+		const bool isSpot = ( em.shape == EM_SPOT );
+		// a script's setRadius 0 must not divide by zero below: the range and each radius are at
+		// least 1, as the game's parse already makes them ( G0 section 7, RV-C-EI-05 )
+		const float range = Max( EM_Range( light->parms.lightRadius ), 1.0f );
+
+		// an omni's light_center moves its bulb; a spot's beam starts at its origin
+		idVec3 bulb = light->parms.origin;
+		if( !isSpot )
+		{
+			bulb = light->parms.origin + light->parms.axis * light->parms.lightCenter;
+		}
+
+		// a spot's frame is a cube of the range, so the length of the decoded position is the
+		// distance from the bulb in units of the range
+		const idVec3& radius = light->parms.lightRadius;
+		const idVec3 boxRadius = isSpot ? idVec3( range, range, range ) : idVec3( Max( radius.x, 1.0f ), Max( radius.y, 1.0f ), Max( radius.z, 1.0f ) );
+
+		idRenderMatrix boxProject;
+		boxProject.Zero();
+		boxProject[0][0] = 0.5f / boxRadius[0];
+		boxProject[1][1] = 0.5f / boxRadius[1];
+		boxProject[2][2] = 0.5f / boxRadius[2];
+		boxProject[0][3] = 0.5f;
+		boxProject[1][3] = 0.5f;
+		boxProject[2][3] = 0.5f;
+		boxProject[3][3] = 1.0f;
+
+		// old style light projection with Z and W flipped; a box has no ( zNear + zFar ) divide
+		for( int i = 0; i < 4; i++ )
+		{
+			light->lightProject[0][i] = boxProject[0][i];
+			light->lightProject[1][i] = boxProject[1][i];
+			light->lightProject[2][i] = boxProject[3][i];
+			light->lightProject[3][i] = boxProject[2][i];
+		}
+
+		float lightTransform[16];
+		R_AxisToModelMatrix( light->parms.axis, bulb, lightTransform );
+		for( int i = 0; i < 4; i++ )
+		{
+			idPlane temp = light->lightProject[i];
+			R_LocalPlaneToGlobal( lightTransform, temp, light->lightProject[i] );
+		}
+
+		light->globalLightOrigin = bulb;
+
+		// culling volume: the omni's box, or the spot frustum from an apex pulled back by b along the
+		// beam; with zNear = b the near plane lies on the bulb and the far plane at the range
+		idRenderMatrix cullProject = boxProject;
+		idVec3 cullApex = bulb;
+		float pullBack = 0.0f;
+		if( isSpot )
+		{
+			pullBack = Max( 8.0f, range / 512.0f );
+			cullApex = light->parms.origin - light->parms.axis[0] * pullBack;
+			R_ComputeSpotProjectionFromVectors(
+				idVec3( range + pullBack, 0.0f, 0.0f ),
+				idVec3( 0.0f, -range * em.tanHalfH, 0.0f ),
+				idVec3( 0.0f, 0.0f, range * em.tanHalfV ),
+				idVec3( pullBack, 0.0f, 0.0f ),
+				idVec3( range, 0.0f, 0.0f ),
+				cullProject );
+		}
+
+		idRenderMatrix cullMatrix;
+		idRenderMatrix::CreateFromOriginAxis( cullApex, light->parms.axis, cullMatrix );
+
+		idRenderMatrix inverseCullMatrix;
+		if( !idRenderMatrix::Inverse( cullMatrix, inverseCullMatrix ) )
+		{
+			idLib::Warning( "emitter lightMatrix invert failed" );
+		}
+
+		idRenderMatrix::Multiply( cullProject, inverseCullMatrix, light->baseLightProject );
+
+		// shadow projection: the shadow map must see from the bulb, which the culling apex is not. Its
+		// inverse frame comes from the apex's, so a spot runs two general inverses, as a texture spot
+		// does ( G0 section 7, EC-02 )
+		if( isSpot )
+		{
+			R_EmitterSpotShadowProject( em, range, pullBack, inverseCullMatrix, light->emitterShadowProject );
+		}
+
+		if( !idRenderMatrix::Inverse( light->baseLightProject, light->inverseBaseLightProject ) )
+		{
+			idLib::Warning( "baseLightProject invert failed" );
+		}
+
+		idRenderMatrix::ProjectedBounds( light->globalLightBounds, light->inverseBaseLightProject, bounds_zeroOneCube, false );
+		return;
+	}
+	//puncho end
 
 	// ------------------------------------
 	// compute the light projection matrix

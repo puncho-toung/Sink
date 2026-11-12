@@ -312,7 +312,7 @@ float idConsoleLocal::DrawFPS( float y )
 	const uint64 rendererGPUPostProcessingTime = commonLocal.GetRendererGpuToneMapPassMicroseconds() + commonLocal.GetRendererGpuPostProcessingMicroseconds() + commonLocal.GetRendererGpuCrtPostProcessingMicroseconds();
 	//puncho start - the two halves of rendererGPUInteractionsTime above
 	const uint64 rendererGPUInteractionsTexTime = commonLocal.GetRendererGpuInteractionsTexMicroseconds();
-	const uint64 rendererGPUInteractionsMathTime = commonLocal.GetRendererGpuInteractionsMathMicroseconds();
+	const uint64 rendererGPUInteractionsEmitterTime = commonLocal.GetRendererGpuInteractionsEmitterMicroseconds();
 	//puncho end
 
 	// SRS - Calculate max fps and max frame time based on glConfig.displayFrequency if vsync enabled and lower than engine Hz, otherwise use com_engineHz_latched
@@ -348,7 +348,7 @@ float idConsoleLocal::DrawFPS( float y )
 	{
 		// start smaller
 		int32 statsWindowWidth = com_showFPS.GetInteger() >= 5 ? 850 : 320;
-		int32 statsWindowHeight = 370 + ( com_showFPS.GetInteger() >= 5 ? 120 : 0 );		//puncho: +40 for the Int(tex)/Int(math) rows
+		int32 statsWindowHeight = 370 + ( com_showFPS.GetInteger() >= 5 ? 120 : 0 );		//puncho: +40 for the Int(tex)/Int(emit) rows
 
 		//puncho start - ai-harness (plans/ai-harness/00-PLAN.md §2.5): the host's AI census of the last tic, read in
 		// place with no copy and no lock because the game thread is idle or has just finished when this draws (on the
@@ -552,31 +552,32 @@ float idConsoleLocal::DrawFPS( float y )
 								commonLocal.stats_frontend.c_entityUpdates, commonLocal.stats_frontend.c_entityReferences,
 								commonLocal.stats_frontend.c_lightUpdates, commonLocal.stats_frontend.c_lightReferences );
 
-			//puncho start - math:/tex: are lights that entered the interaction path (backend, summed over every
-			// 3D view in the frame); view: and mathInView: are the frontend's last view, counted once the
+			//puncho start - emit:/tex: are lights that entered the interaction path (backend, summed over every
+			// 3D view in the frame); view: and emitInView: are the frontend's last view, counted once the
 			// interactions exist (R_OptimizeViewLightsList), so a light that passed the portal, frustum and
 			// occlusion tests but holds no visible surface is not in view. Under com_smp 1 the frontend counts
-			// are one frame ahead of the backend ones, so with one 3D view and a still camera math + tex <= view,
+			// are one frame ahead of the backend ones, so with one 3D view and a still camera emit + tex <= view,
 			// the gap being fog and blend lights. A light behind a wall still counts while its volume reaches
 			// past the wall or holds the camera (the occlusion test is skipped then; r_showLights 1 highlights
 			// those): its interactions with the surfaces on this side are drawn, shadowed to nothing when the
-			// light casts shadows. r_showMathLights repaints every math light with a debug field, so the line
-			// says so in orange.
-			static const int mlDebugNameCount = 4;
-			static const char* mlDebugNames[mlDebugNameCount] =
+			// light casts shadows. r_showEmitters repaints every emitter with a debug field, so the line says
+			// so in orange.
+			static const int emDebugNameCount = 5;
+			static const char* emDebugNames[emDebugNameCount] =
 			{
 				"",
 				"  [DEBUG: falloff t]",
 				"  [DEBUG: spot mask]",
 				"  [DEBUG: pattern]",
+				"  [DEBUG: unlit in volume]",
 			};
-			const int mlDebug = idMath::ClampInt( 0, mlDebugNameCount - 1, r_showMathLights.GetInteger() );
-			ImGui::TextColored( mlDebug > 0 ? colorOrange : colorLtGrey, "LIGHTS: view:%-3i  math:%-3i  tex:%-3i  mathInView:%i%s",
+			const int emDebug = idMath::ClampInt( 0, emDebugNameCount - 1, r_showEmitters.GetInteger() );
+			ImGui::TextColored( emDebug > 0 ? colorOrange : colorLtGrey, "LIGHTS: view:%-3i  emit:%-3i  tex:%-3i  emitInView:%i%s",
 								commonLocal.stats_frontend.c_viewLights,
-								commonLocal.stats_backend.c_mathLights,
+								commonLocal.stats_backend.c_emitterLights,
 								commonLocal.stats_backend.c_textureLights,
-								commonLocal.stats_frontend.c_mathViewLights,
-								mlDebugNames[mlDebug] );
+								commonLocal.stats_frontend.c_emitterViewLights,
+								emDebugNames[emDebug] );
 			//puncho end
 
 			//puncho start - ai-harness: six rows, last tic, ms with one decimal (00-PLAN.md §2.5). Derived here, never
@@ -669,7 +670,7 @@ float idConsoleLocal::DrawFPS( float y )
 		//puncho start - with the other GPU-only rows, after the __APPLE__/USE_MoltenVK branch; labels are
 		// padded to the 14-character column set by "Interactions: "
 		ImGui::TextColored( rendererGPUInteractionsTexTime > maxTime ? colorRed : colorWhite,  "                    Int(tex):     %5llu us", rendererGPUInteractionsTexTime );
-		ImGui::TextColored( rendererGPUInteractionsMathTime > maxTime ? colorRed : colorWhite, "                    Int(math):    %5llu us", rendererGPUInteractionsMathTime );
+		ImGui::TextColored( rendererGPUInteractionsEmitterTime > maxTime ? colorRed : colorWhite, "                    Int(emit):    %5llu us", rendererGPUInteractionsEmitterTime );
 		//puncho end
 		ImGui::TextColored( frameBusyTime > maxTime || rendererGPUTime > maxTime ? colorRed : colorWhite, "Total:   %5lld us   Total:        %5lld us", frameBusyTime, rendererGPUTime );
 		ImGui::TextColored( colorWhite,														"Idle:    %5lld us   Idle:         %5lld us", frameIdleTime, rendererGPUIdleTime );

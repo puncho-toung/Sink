@@ -62,10 +62,10 @@ void idRenderSystemLocal::PrintPerformanceCounters()
 						backEnd.pc.c_shadowIndexes / 3
 					  );
 		//puncho start - headless equivalent of the HUD's LIGHTS line, for piped logs
-		common->Printf( "lights: math:%i tex:%i (mathInView:%i)\n",
-						backEnd.pc.c_mathLights,
+		common->Printf( "lights: emit:%i tex:%i (emitInView:%i)\n",
+						backEnd.pc.c_emitterLights,
 						backEnd.pc.c_textureLights,
-						pc.c_mathViewLights
+						pc.c_emitterViewLights
 					  );
 		//puncho end
 	}
@@ -93,8 +93,8 @@ void idRenderSystemLocal::PrintPerformanceCounters()
 		common->Printf( "callback:%i createInteractions:%i createShadowVolumes:%i\n",
 						pc.c_entityDefCallbacks, pc.c_createInteractions, pc.c_createShadowVolumes );
 		//puncho start
-		common->Printf( "viewEntities:%i  shadowEntities:%i  viewLights:%i  mathInView:%i\n", pc.c_visibleViewEntities,
-						pc.c_shadowViewEntities, pc.c_viewLights, pc.c_mathViewLights );
+		common->Printf( "viewEntities:%i  shadowEntities:%i  viewLights:%i  emitInView:%i\n", pc.c_visibleViewEntities,
+						pc.c_shadowViewEntities, pc.c_viewLights, pc.c_emitterViewLights );
 		//puncho end
 	}
 	//puncho start - instruments (P2 review): r_showDistanceCull 1 prints the open-space cull counters, 2 also draws
@@ -710,8 +710,8 @@ void idRenderSystemLocal::SwapCommandBuffers_FinishRendering(
 	//puncho start
 	// frame-level light counts; attached on the main thread because frontend-thread tags are dropped (plan 2.5)
 	PROFILE_EVENT_TAG( "viewLights", this->pc.c_viewLights );
-	PROFILE_EVENT_TAG( "mathViewLights", this->pc.c_mathViewLights );
-	PROFILE_EVENT_TAG( "mathLightsDrawn", backEnd.pc.c_mathLights );
+	PROFILE_EVENT_TAG( "emitterViewLights", this->pc.c_emitterViewLights );
+	PROFILE_EVENT_TAG( "emittersDrawn", backEnd.pc.c_emitterLights );
 	PROFILE_EVENT_TAG( "textureLightsDrawn", backEnd.pc.c_textureLights );
 	//puncho end
 

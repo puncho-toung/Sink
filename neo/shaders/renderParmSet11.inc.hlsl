@@ -81,9 +81,9 @@ struct renderParmSet11_t
 	float4 rpShadowMatrices[6 * 4];
 	float4 rpShadowAtlasOffsets[6];
 	
-    float4 rpUser0; // (enabled, type, falloff, pattern)
-    float4 rpUser1; // (falloffExp, innerRadius, shapeExp, penumbra)
-    float4 rpUser2; // (patternStrength, patternScale, patternPhase, energyClamp)
+    float4 rpUser0; // texture light: 0; emitter: (mode 8+, ids, spot cotH cotV | omni/sun ry rz)
+    float4 rpUser1; // emitter: (k, inner, squareness, penumbra)
+    float4 rpUser2; // emitter: (patternStrength, patternScale, patternPhase, energyClamp)
 
 	float4 rpShadowCascadeFar; // .x = view-space far of the last sun cascade ( viewDef_t::shadowCascadeFar ), lit beyond it; .yzw = 0
 };

@@ -30,7 +30,9 @@ If you have questions concerning this license or the applicable additional terms
 #ifndef __RENDERWORLD_H__
 #define __RENDERWORLD_H__
 
-#include "MathLight.h"
+//puncho start - emitter lights
+#include "Emitter.h"
+//puncho end
 
 /*
 ===============================================================================
@@ -238,7 +240,9 @@ typedef struct renderLight_s
 	const idMaterial* 		shader;				// NULL = either lights/defaultPointLight or lights/defaultProjectedLight
 	float					shaderParms[MAX_ENTITY_SHADER_PARMS];		// can be used in any way by shader
 	idSoundEmitter* 		referenceSound;		// for shader sound tables, allowing effects to vary with sounds
-	mathLightData_t         mathLight;
+	//puncho start - emitter block
+	emitterData_t			emitter;
+	//puncho end
 	float					maxVisDist;
 	float					minVisPixels;
 } renderLight_t;

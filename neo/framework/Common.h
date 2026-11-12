@@ -148,7 +148,7 @@ public:
 #endif
 
 //puncho start
-// Per-light profiling helpers (plan: claudespace/plans/optick-mathlight-profiling-plan.md, D8).
+// Per-light profiling helpers (plan: claudespace/plans/optick-*-profiling-plan.md, D8).
 // idlib/precompiled.h includes this header before libs/optick/optick.h, so the helper below
 // needs the include itself (optick.h has #pragma once).
 #include "../libs/optick/optick.h"

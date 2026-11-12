@@ -31,7 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "global_inc.hlsl"
 #include "renderParmSet10.inc.hlsl"
 #include "BRDF.inc.hlsl"
-#include "mathlight.inc.hlsl"
+#include "emitter.inc.hlsl"
 
 
 // *INDENT-OFF*
@@ -81,15 +81,19 @@ void main( PS_IN fragment, out PS_OUT result )
 	float4 bumpMap =		t_Normal.Sample( s_Material, bumpUV );
     float3 lightFalloffRGB;
     float3 lightProjRGB;
-    if (!MLEvaluate(
+    //puncho start - the emitter path, else the light's textures
+    bool emEarlyOut;
+    bool emOn = EMEvaluate(
         fragment.texcoord2, fragment.texcoord3,
         pc.rpUser0, pc.rpUser1, pc.rpUser2,
-        lightFalloffRGB, lightProjRGB))
+        lightFalloffRGB, lightProjRGB, emEarlyOut);
+    if (!emOn)
     {
     // legacy path
         lightFalloffRGB = idtex2Dproj(s_Lighting, t_LightFalloff, fragment.texcoord2).xyz;
         lightProjRGB = idtex2Dproj(s_Lighting, t_LightProjection, fragment.texcoord3).xyz;
     }
+    //puncho end
 	float4 YCoCG =			t_BaseColor.Sample( s_Material, baseUV );
 	float4 specMapSRGB =	t_Specular.Sample( s_Material, specUV );
 	float4 specMap =		sRGBAToLinearRGBA( specMapSRGB );
@@ -176,7 +180,10 @@ void main( PS_IN fragment, out PS_OUT result )
 	//lambert /= PI;
 
 	// pc.rpDiffuseModifier contains light color multiplier
-    float3 lightColor = sRGBToLinearRGB(lightProjRGB * lightFalloffRGB);
+    //puncho start - emitter output is linear; a light texture is sRGB-authored and decoded
+    float3 lightColor = emOn ? (lightProjRGB * lightFalloffRGB)
+                             : sRGBToLinearRGB(lightProjRGB * lightFalloffRGB);
+    //puncho end
 
 	float vdotN = clamp( dot3( viewVector, localNormal ), 0.0, 1.0 );
 	float vdotH = clamp( dot3( viewVector, halfAngleVector ), 0.0, 1.0 );

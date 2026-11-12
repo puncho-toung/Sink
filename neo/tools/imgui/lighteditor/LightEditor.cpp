@@ -38,7 +38,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/Material.h"
 #include "renderer/Image.h"
 
-#include "../../renderer/MathLight.h"
+#include "../../renderer/Emitter.h"
 
 // plan 3.7: easy mode tunables (tool-only: not networked, not saved in savegames)
 idCVar le_traceDist( "le_traceDist", "8192", CVAR_TOOL | CVAR_FLOAT, "light editor: aim trace length in units", 64.0f, 131072.0f );
@@ -61,50 +61,38 @@ static const int easyKeys[ LightEditor::NUM_EASY_KEYS ] = { K_Q, K_E, K_R, K_T, 
 
 static void AutoCaptureBase( const LightInfo& light, LightAutoBase& base );
 
-// D45: the math-light type is never chosen on its own; it is the light's type (point, spot, sun),
-// or a spot that renders with point falloff stops re-aiming like a spot
-static int MathTypeFor( ELightType type )
+// an emitter's shape is the light's type, never chosen on its own
+static int ShapeForLightType( ELightType type )
 {
 	if( type == LIGHT_SPOT )
 	{
-		return ML_SPOT;
+		return EM_SPOT;
 	}
-	return ( type == LIGHT_SUN ) ? ML_SUN : ML_POINT;
+	return ( type == LIGHT_SUN ) ? EM_SUN : EM_OMNI;
 }
 
-// S2 / D15 / V-B17: the soft linear math block a light without one gets, at its first selection (Init)
-// or when the Math tab is picked for it (D62). Every field is set, as the struct may hold a parser's
-// zeros or an older block: Defaults() plus the linear curve and the soft inner edge
-static void SeedMathLight( mathLightData_t& seed, ELightType type )
+static ELightType LightTypeForShape( int shape )
 {
-	seed.enabled = true;
-	seed.type = MathTypeFor( type );
-	seed.style = -1;
-	seed.falloff = MLF_LINEAR;
-	seed.falloffExp = 2.0f;
-	seed.innerRadius = 0.10f;
-	seed.shapeExp = 2.0f;
-	seed.penumbra = 0.15f;
-	seed.pattern = MLP_NONE;
-	seed.patternStrength = 0.0f;
-	seed.patternScale = 1.0f;
-	seed.patternPhase = 0.0f;
-	seed.energyClamp = true;
+	if( shape == EM_SPOT )
+	{
+		return LIGHT_SPOT;
+	}
+	return ( shape == EM_SUN ) ? LIGHT_SUN : LIGHT_POINT;
 }
 
-// adds the math_* keys of from to to
-static void CopyMathKeys( const idDict& from, idDict& to )
+// adds the keys of from that start with prefix to to
+static void CopyPrefixKeys( const idDict& from, idDict& to, const char* prefix )
 {
-	for( const idKeyValue* kv = from.MatchPrefix( "math_" ); kv != NULL; kv = from.MatchPrefix( "math_", kv ) )
+	for( const idKeyValue* kv = from.MatchPrefix( prefix ); kv != NULL; kv = from.MatchPrefix( prefix, kv ) )
 	{
 		to.Set( kv->GetKey(), kv->GetValue() );
 	}
 }
 
-// applies the math_* entries of d to to, as idGameEdit::EntityChangeSpawnArgs applies them ("" deletes)
-static void ApplyMathKeys( idDict& to, const idDict& d )
+// applies the prefix keys of d to to, as idGameEdit::EntityChangeSpawnArgs applies them ("" deletes)
+static void ApplyPrefixKeys( idDict& to, const idDict& d, const char* prefix )
 {
-	for( const idKeyValue* kv = d.MatchPrefix( "math_" ); kv != NULL; kv = d.MatchPrefix( "math_", kv ) )
+	for( const idKeyValue* kv = d.MatchPrefix( prefix ); kv != NULL; kv = d.MatchPrefix( prefix, kv ) )
 	{
 		if( kv->GetValue().IsEmpty() )
 		{
@@ -117,33 +105,636 @@ static void ApplyMathKeys( idDict& to, const idDict& d )
 	}
 }
 
-// Cancel means no change. D51 leaves the math keys on a light whose block is off, so the original's
-// ToDict cannot undo a seed or a tab switch: this rewrites the math part of d (that ToDict output,
-// bound for a light whose math keys are current) so the light ends with exactly originalMath's keys
-static void RestoreMathKeys( const idDict& originalMath, const idDict& current, idDict& d )
+// Cancel means no change. The emit keys stay on a light switched to Texture, so the original's
+// ToDict cannot undo a switch: this rewrites the prefix part of d (that ToDict output, bound for a
+// light whose keys are current) so the light ends with exactly original's keys
+static void RestorePrefixKeys( const idDict& original, const idDict& current, idDict& d, const char* prefix )
 {
 	idDict touched;
-	CopyMathKeys( d, touched );
-	CopyMathKeys( current, touched );
+	CopyPrefixKeys( d, touched, prefix );
+	CopyPrefixKeys( current, touched, prefix );
 	for( int i = 0; i < touched.GetNumKeyVals(); i++ )
 	{
 		const idKeyValue* kv = touched.GetKeyVal( i );
-		d.Set( kv->GetKey(), originalMath.GetString( kv->GetKey(), "" ) );
+		d.Set( kv->GetKey(), original.GetString( kv->GetKey(), "" ) );
 	}
 
-	// a key the original had that neither ToDict nor the light has now (math_style set to None)
-	for( int i = 0; i < originalMath.GetNumKeyVals(); i++ )
+	// a key the original had that neither ToDict nor the light has now
+	for( int i = 0; i < original.GetNumKeyVals(); i++ )
 	{
-		const idKeyValue* kv = originalMath.GetKeyVal( i );
+		const idKeyValue* kv = original.GetKeyVal( i );
 		d.Set( kv->GetKey(), kv->GetValue() );
 	}
 }
 
-// D45: the one way the light's type changes, so the math-light type follows it
+// RV-C-ET-01: an easy-mode checkpoint is a LightInfo, and its ToDict cannot undo the keys it does not write
+// (the emitter "1" an Emitter tab wrote). So a checkpoint also keeps the emit keys the light has once 'undo'
+// is applied to it: the live keys with undo's ToDict on top (a gesture between the snapshot and now changes
+// only keys that ToDict writes)
+static void CheckpointKeys( const idDict& live, const LightInfo& undo, idDict& emitKeys )
+{
+	LightInfo copy = undo;
+	idDict d;
+	copy.ToDict( &d );
+
+	emitKeys.Clear();
+	CopyPrefixKeys( live, emitKeys, "emit" );
+	ApplyPrefixKeys( emitKeys, d, "emit" );
+}
+
+// the dict that undoes a checkpoint on a light whose keys are 'live' now: undo's ToDict, its emit keys set
+// back to the checkpoint's, as Cancel sets them back to the selection's
+static void CheckpointUndoDict( const LightInfo& undo, const idDict& live, const idDict& emitKeys, idDict& d )
+{
+	LightInfo copy = undo;
+	copy.ToDict( &d );
+	RestorePrefixKeys( emitKeys, live, d, "emit" );
+}
+
+// the intensity auto range reads: the brightest channel of _color
+static float LightIntensity( const LightInfo& light )
+{
+	return Max3( light.color.x, light.color.y, light.color.z );
+}
+
+// both full angles clamped to 1..120 degrees, with the half-angle tangents kept in step
+static void SetEmitterCone( emitterData_t& e, float coneH, float coneV )
+{
+	e.coneH = idMath::ClampFloat( 1.0f, 120.0f, coneH );
+	e.coneV = idMath::ClampFloat( 1.0f, 120.0f, coneV );
+	e.tanHalfH = idMath::Tan( DEG2RAD( e.coneH * 0.5f ) );
+	e.tanHalfV = idMath::Tan( DEG2RAD( e.coneV * 0.5f ) );
+}
+
+static void SetEmitterConeFromTan( emitterData_t& e, float tanHalfH, float tanHalfV )
+{
+	SetEmitterCone( e, RAD2DEG( 2.0f * idMath::ATan( tanHalfH ) ), RAD2DEG( 2.0f * idMath::ATan( tanHalfV ) ) );
+}
+
+static const float EMITTER_MIN_RANGE = 24.0f;
+
+// a spot's range is written R R R; an omni or sun box is scaled as a whole so that its largest
+// component is the range, and no component goes below 1
+static void SetEmitterRange( LightInfo& light, float range )
+{
+	range = Max( range, EMITTER_MIN_RANGE );
+	if( light.lightType == LIGHT_SPOT )
+	{
+		light.lightRadius.Set( range, range, range );
+		light.equalRadius = true;
+		return;
+	}
+
+	const float largest = EM_Range( light.lightRadius );
+	if( largest < 1.0f )
+	{
+		light.lightRadius.Set( range, range, range );
+	}
+	else
+	{
+		light.lightRadius *= range / largest;
+	}
+	for( int i = 0; i < 3; i++ )
+	{
+		light.lightRadius[ i ] = Max( light.lightRadius[ i ], 1.0f );
+	}
+}
+
+static void ClampEmitterStart( LightInfo& light )
+{
+	light.emitter.start = idMath::ClampFloat( 0.0f, Max( EM_Range( light.lightRadius ) - 1.0f, 0.0f ), light.emitter.start );
+}
+
+// G0 5, "auto range in force", as the editor holds it: an emitter omni or spot whose autoRange is on
+// and whose curve has a reach factor. The last condition, a range in step, is tested when the light
+// is read and when a kept block comes back (EmitterAutoRangeOnRead); a light that fails it is held with
+// autoRange off, so it is not tested again on every edit, and a falloff edit applies the flag as it
+// stands (G0 5)
+static bool EmitterAutoRangeInForce( const LightInfo& light )
+{
+	if( !light.emitter.enabled || light.lightType == LIGHT_SUN || !light.autoRange )
+	{
+		return false;
+	}
+	return EM_ReachFactor( light.emitter.falloff, LightIntensity( light ) ) > 0.0f;
+}
+
+// G0 5, "a hand-set range wins": the auto range flag as read from the keys ('stored'), turned off when
+// the light is an emitter omni or spot whose curve has a reach factor and whose range is out of step
+// with it. ToDict then writes emit_auto_range "0". A curve without a reach keeps the stored flag
+static void EmitterAutoRangeOnRead( LightInfo& light, bool stored )
+{
+	light.autoRange = stored;
+	if( !stored || !light.emitter.enabled || light.lightType == LIGHT_SUN )
+	{
+		return;
+	}
+
+	const float intensity = LightIntensity( light );
+	if( EM_ReachFactor( light.emitter.falloff, intensity ) > 0.0f && !EM_RangeInStep( light.emitter, intensity, EM_Range( light.lightRadius ) ) )
+	{
+		light.autoRange = false;
+	}
+}
+
+// an intensity, size, start or falloff edit: under auto range the range follows the reach. A sun
+// is not attenuated and keeps its box
+static void EmitterReachChanged( LightInfo& light )
+{
+	if( !light.emitter.enabled || light.lightType == LIGHT_SUN )
+	{
+		return;
+	}
+
+	light.emitter.size = Max( light.emitter.size, 1.0f );
+	if( EmitterAutoRangeInForce( light ) )
+	{
+		SetEmitterRange( light, EM_AutoRange( light.emitter, LightIntensity( light ) ) );
+	}
+	ClampEmitterStart( light );
+}
+
+// the Falloff control: a reach edit like any other. A curve that gains a reach factor (from linear or
+// smooth) applies the flag as it stands: on, the range becomes the auto range; off, the range is kept.
+// No in-step test here (G0 5, corrected 01:00, F-C-01 / DP-T5-01): a round trip through linear changes
+// nothing, and a range set by hand under linear turned the flag off when it was set
+static void EmitterSetFalloff( LightInfo& light, int falloff )
+{
+	light.emitter.falloff = falloff;
+	EmitterReachChanged( light );
+}
+
+// the range was set (a radius or range drag, Q, the wheel, the gizmo, the aim under auto range):
+// the limits apply, and under auto range the size follows so the reach stays the one asked for
+static void EmitterRangeSet( LightInfo& light )
+{
+	if( !light.emitter.enabled || light.lightType == LIGHT_SUN )
+	{
+		return;
+	}
+
+	SetEmitterRange( light, EM_Range( light.lightRadius ) );
+	ClampEmitterStart( light );
+	if( EmitterAutoRangeInForce( light ) )
+	{
+		light.emitter.size = EM_AutoSize( light.emitter, LightIntensity( light ), EM_Range( light.lightRadius ) );
+	}
+}
+
+// a range edit by the mapper (a range or radius field, Q, E's wheel, the gizmo; not the aim, which never
+// sets the range of a curve without a reach), 'rangeBefore' being the range the edit started from:
+// EmitterRangeSet, and on an emitter omni or spot whose curve has no reach factor (linear, smooth) a
+// changed range turns auto range off, because the mapper took it in hand (G0 5, F-C-01)
+static void EmitterRangeEdited( LightInfo& light, float rangeBefore )
+{
+	EmitterRangeSet( light );
+	if( !light.emitter.enabled || light.lightType == LIGHT_SUN )
+	{
+		return;
+	}
+	if( EM_ReachFactor( light.emitter.falloff, LightIntensity( light ) ) == 0.0f && EM_Range( light.lightRadius ) != rangeBefore )
+	{
+		light.autoRange = false;
+	}
+}
+
+// Range, Radius and Size drag at 1 % of their value per pixel, so a long throw is as quick to set as a
+// short one; never slower than a quarter unit
+static float DragSpeedFor( float value )
+{
+	return Max( idMath::Fabs( value ) * 0.01f, 0.25f );
+}
+
+// the panel shows a colour as an intensity, the largest channel of _color, and the colour divided by
+// it. 'hue' is that colour; at intensity 0 (black) it keeps what it held, so the colour shown stays
+static float PanelColorSplit( const idVec3& color, idVec3& hue )
+{
+	const float intensity = Max3( color.x, color.y, color.z );
+	if( intensity <= 0.0f )
+	{
+		return 0.0f;
+	}
+	hue = color / intensity;
+	return intensity;
+}
+
+// either control writes _color = hue * intensity. A changed intensity is a reach edit: under auto
+// range an emitter's range follows it. A texture light only gets the colour
+static void PanelSetColor( LightInfo& light, const idVec3& hue, float intensity )
+{
+	const float before = LightIntensity( light );
+	light.color = hue * Max( intensity, 0.0f );
+	if( LightIntensity( light ) != before )
+	{
+		EmitterReachChanged( light );
+	}
+}
+
+// an emitter omni's lamp is at origin + axis * light_center (the bulb), so its gizmo is drawn there;
+// every other light's at its origin
+static idVec3 LightGizmoOrigin( const LightInfo& light )
+{
+	if( light.emitter.enabled && light.lightType == LIGHT_POINT && light.hasCenter )
+	{
+		return light.origin + light.angles.ToMat3() * light.lightCenter;
+	}
+	return light.origin;
+}
+
+// the origin a gizmo at 'gizmoOrigin' gives, with the light's angles already updated: the gizmo turns
+// an emitter omni about its bulb
+static idVec3 LightOriginFromGizmo( const LightInfo& light, const idVec3& gizmoOrigin )
+{
+	if( light.emitter.enabled && light.lightType == LIGHT_POINT && light.hasCenter )
+	{
+		return gizmoOrigin - light.angles.ToMat3() * light.lightCenter;
+	}
+	return gizmoOrigin;
+}
+
+// G0 9 (RV-C-ET-08): FromDict ticks Equilateral for any light with equal radii; on an emitter omni the
+// mapper's untick lasts the session ('unticked'), so the panel shows three radii again after a re-read.
+// equalRadius only picks the panel's rows and how ToDict writes equal radii, so the keys do not change
+static void EquilateralForSession( LightInfo& light, bool unticked )
+{
+	if( unticked && light.emitter.enabled && light.lightType == LIGHT_POINT )
+	{
+		light.equalRadius = false;
+	}
+}
+
+// the block a light gets when it first becomes an emitter: every field set, pads cleared
+static void SeedEmitter( emitterData_t& e, ELightType type )
+{
+	memset( &e, 0, sizeof( e ) );
+	e.enabled = true;
+	e.shape = ShapeForLightType( type );
+	e.falloff = EMF_INVSQUARE_CLAMPED;
+	e.pattern = EMP_NONE;
+	e.effect = EME_NONE;
+	e.size = 96.0f;
+	e.start = 0.0f;
+	SetEmitterCone( e, 60.0f, 60.0f );
+	e.penumbra = 0.2f;
+	e.squareness = 2.0f;
+	e.patternStrength = 0.0f;
+	e.patternScale = 1.0f;
+	e.patternPhase = 0.0f;
+	e.effectSpeed = 1.0f;
+	e.effectAmount = 1.0f;
+	e.effectPhase = 0.0f;
+	e.energyClamp = true;
+}
+
+// what the type radio gives an emitter, 'before' being the light before the switch (G0 9, shape
+// switch). The rotation is the lamp's and stays, except that a light with none becoming a spot points
+// down. With auto range in force the range is the auto range; otherwise an omni and a spot keep it (a
+// spot's range is the omni's largest radius and the reverse), a linear or smooth curve and a hand-set
+// range included. Coming from a sun, whose radius is a box: the auto range when the flag is on and the
+// curve has a reach, else 300. A sun keeps today's sun box
+static void ApplyEmitterShapeDefaults( LightInfo& light, const LightInfo& before )
+{
+	if( !light.emitter.enabled )
+	{
+		return;
+	}
+
+	light.emitter.shape = ShapeForLightType( light.lightType );
+	light.angles = before.angles;
+	if( light.lightType == LIGHT_SUN )
+	{
+		return;
+	}
+
+	if( light.lightType == LIGHT_SPOT && before.angles.pitch == 0.0f && before.angles.yaw == 0.0f && before.angles.roll == 0.0f )
+	{
+		light.angles.Set( 90.0f, 0.0f, 0.0f );
+	}
+
+	// autoRange and the curve came over with the block, so in force here is in force before the switch
+	const float intensity = LightIntensity( light );
+	const bool hasReach = ( EM_ReachFactor( light.emitter.falloff, intensity ) > 0.0f );
+	if( before.lightType == LIGHT_SUN )
+	{
+		SetEmitterRange( light, ( light.autoRange && hasReach ) ? EM_AutoRange( light.emitter, intensity ) : 300.0f );
+	}
+	else if( EmitterAutoRangeInForce( light ) )
+	{
+		SetEmitterRange( light, EM_AutoRange( light.emitter, intensity ) );
+	}
+	else
+	{
+		SetEmitterRange( light, EM_Range( before.lightRadius ) );
+	}
+	ClampEmitterStart( light );
+}
+
+// a texture spot's frustum read as an emitter: the beam is the target, the left axis minus the right
+// vector made perpendicular to it, both turned by the light's rotation; the cone from the frustum's
+// slopes, the range out to the far plane
+static void TextureSpotToEmitter( LightInfo& light )
+{
+	const float targetLength = light.lightTarget.Length();
+	if( targetLength < 1e-3f )
+	{
+		// no beam to read: the rotation stays and the seed's cone does
+		SetEmitterRange( light, 256.0f );
+	}
+	else
+	{
+		const idVec3 n = light.lightTarget / targetLength;
+		const idVec3 start = light.explicitStartEnd ? light.lightStart : vec3_zero;
+		const idVec3 end = light.explicitStartEnd ? light.lightEnd : light.lightTarget;
+		const float zNear = Max( start * n, 8.0f );
+		const float zFar = Max( end * n, 16.0f );
+
+		idVec3 left = n * ( light.lightRight * n ) - light.lightRight;
+		if( left.LengthSqr() < 1e-6f )
+		{
+			idVec3 unusedUp;
+			n.OrthogonalBasis( left, unusedUp );
+		}
+		left.Normalize();
+
+		const idMat3 beamFrame( n, left, n.Cross( left ) );
+		light.angles = ( beamFrame * light.angles.ToMat3() ).ToAngles();
+
+		SetEmitterCone( light.emitter, RAD2DEG( 2.0f * idMath::ATan( light.lightRight.Length() / targetLength ) ),
+						RAD2DEG( 2.0f * idMath::ATan( light.lightUp.Length() / targetLength ) ) );
+		SetEmitterRange( light, zNear + zFar );
+
+		// an explicit light_start was a lit gap in front of the lamp: the emitter starts at the near
+		// plane. Without one the start is what the block had (0 for a new block), so a spot switched
+		// to Texture and back keeps it; the caller clamps it to the range
+		if( light.explicitStartEnd )
+		{
+			light.emitter.start = zNear;
+		}
+	}
+
+	// never read on an emitter, and deleted by ToDict
+	light.lightTarget.Zero();
+	light.lightRight.Zero();
+	light.lightUp.Zero();
+	light.lightStart.Zero();
+	light.lightEnd.Zero();
+	light.explicitStartEnd = false;
+}
+
+// the Emitter tab: the emit keys the light kept come back (emitter forced on), a light without them
+// gets the seed; a spot's frustum becomes its direction, cone and range
+static void SwitchToEmitter( LightInfo& light, const idDict& spawnArgs )
+{
+	idDict block;
+	CopyPrefixKeys( spawnArgs, block, "emit" );
+	block.Delete( "emitter" );
+
+	bool keptAutoRange = false;
+	if( block.GetNumKeyVals() > 0 )
+	{
+		block.Set( "emitter", "1" );
+		// every kept key, as FromDict reads them ( DP-EC-01 )
+		EM_ParseAllFromDict( &block, &light.emitter );
+		keptAutoRange = block.GetBool( "emit_auto_range", "1" );
+		light.autoRange = keptAutoRange;
+	}
+	else
+	{
+		SeedEmitter( light.emitter, light.lightType );
+		light.autoRange = true;
+	}
+
+	// the light's first emitter block (no emit_effect yet) plays the flicker its style key gave it as a
+	// texture light; style stays on the light, so the Texture tab plays it again
+	if( spawnArgs.FindKey( "emit_effect" ) == NULL )
+	{
+		light.emitter.effect = ( light.lightStyle >= 1 && light.lightStyle <= EME_STYLE_LAST ) ? light.lightStyle : EME_NONE;
+	}
+
+	light.emitter.shape = ShapeForLightType( light.lightType );
+	light.hasEmitterBlock = true;
+
+	if( light.lightType == LIGHT_SPOT )
+	{
+		TextureSpotToEmitter( light );
+	}
+
+	// a kept block is read as FromDict reads one (G0 5, "a hand-set range wins"): against the range the
+	// light has now, so a range set while it was a texture light is kept and the size does not move.
+	// A seeded block has no stored flag; the size fits the range it finds
+	if( block.GetNumKeyVals() > 0 )
+	{
+		EmitterAutoRangeOnRead( light, keptAutoRange );
+	}
+	EmitterRangeSet( light );
+}
+
+// the Texture tab: a spot gets the pyramid round its cone back, in the rotation it has. The engine puts
+// its near plane at 8 and its far plane at 8 + T, so it ends at the range and the Emitter tab reads the
+// same range back. ToDict then writes emitter "0" and leaves the emit_* keys on the light
+static void SwitchToTexture( LightInfo& light )
+{
+	if( light.lightType == LIGHT_SPOT )
+	{
+		const float targetLength = Max( EM_Range( light.lightRadius ) - 8.0f, 16.0f );
+		light.lightTarget.Set( targetLength, 0.0f, 0.0f );
+		light.lightRight.Set( 0.0f, -targetLength * light.emitter.tanHalfH, 0.0f );
+		light.lightUp.Set( 0.0f, 0.0f, targetLength * light.emitter.tanHalfV );
+		light.explicitStartEnd = false;
+
+		// as FromDict holds an implicit start and end
+		light.lightStart = light.lightTarget * 0.25f;
+		light.lightEnd = light.lightTarget;
+	}
+
+	light.emitter.enabled = false;
+	light.hasEmitterBlock = true;
+}
+
+static bool EffectItemsGetter( void* /*data*/, int idx, const char** outText )
+{
+	static const char* waveNames[] = { "Strobe", "Pulse", "Flicker" };
+
+	if( idx == EME_NONE )
+	{
+		*outText = "<No Effect>";
+		return true;
+	}
+	if( idx > EME_NONE && idx <= EME_STYLE_LAST )
+	{
+		*outText = predef_lightstylesinfo[ idx ];
+		return true;
+	}
+	if( idx >= EME_STROBE && idx < EME_NUM_EFFECTS )
+	{
+		*outText = waveNames[ idx - EME_STROBE ];
+		return true;
+	}
+
+	*outText = "<Invalid Index!>";
+	return false;
+}
+
+// the Emitter tab's controls; returns true when they changed the light
+static bool DrawEmitterControls( LightInfo& light )
+{
+	emitterData_t& em = light.emitter;
+	bool changed = false;
+
+	static const char* shapeNames[] = { "omni", "spot", "sun" };
+	ImGui::TextDisabled( "shape: %s (follows the light type above)", shapeNames[ idMath::ClampInt( 0, 2, em.shape ) ] );
+
+	// a sun is not attenuated: it has no curve and no reach. Range, Auto range, Size and Start sit
+	// together in the Light Volume section (DrawEmitterExtentRows); the curve's shape stays here
+	if( light.lightType != LIGHT_SUN )
+	{
+		static const char* falloffOptions[] =
+		{
+			"Inverse Square (unbounded)",
+			"Linear",
+			"Smooth",
+			"Exponential",
+			"Inverse Square (clamped) - PBR safe"
+		};
+		int falloffIdx = idMath::ClampInt( 0, IM_ARRAYSIZE( falloffOptions ) - 1, em.falloff );
+		if( ImGui::Combo( "Falloff", &falloffIdx, falloffOptions, IM_ARRAYSIZE( falloffOptions ) ) )
+		{
+			EmitterSetFalloff( light, falloffIdx );
+			changed = true;
+		}
+	}
+
+	if( light.lightType == LIGHT_SPOT )
+	{
+		ImGui::Spacing();
+		float cone[2] = { em.coneH, em.coneV };
+		if( ImGui::DragFloat2( "Cone (h, v)", cone, 0.25f, 1.0f, 120.0f, "%.1f" ) )
+		{
+			SetEmitterCone( em, cone[0], cone[1] );
+			changed = true;
+		}
+		// AlwaysClamp: a CTRL+click typed value stays within G0 2's clamps, as the engine parses them (RV-C-ET-12)
+		changed |= ImGui::SliderFloat( "Penumbra", &em.penumbra, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp );
+		changed |= ImGui::SliderFloat( "Squareness (2=ellipse, 32=rect)", &em.squareness, 1.5f, 32.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp );
+	}
+
+	ImGui::Spacing();
+	static const char* patternOptions[] =
+	{
+		"None",
+		"Subsurface (warm halo)",
+		"Ice (cool noise)",
+		"Caustic (sharp noise)",
+		"Banded (sine rings)",
+		"Granular (stippled)"
+	};
+	int patternIdx = idMath::ClampInt( 0, IM_ARRAYSIZE( patternOptions ) - 1, em.pattern );
+	if( ImGui::Combo( "Pattern", &patternIdx, patternOptions, IM_ARRAYSIZE( patternOptions ) ) )
+	{
+		em.pattern = patternIdx;
+		changed = true;
+	}
+	if( em.pattern != EMP_NONE )
+	{
+		changed |= ImGui::SliderFloat( "Pattern Strength", &em.patternStrength, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp );
+		// in world units (G0 5, "Pattern position"): the scale does not follow the range or the box
+		changed |= ImGui::DragFloat( "Pattern Scale", &em.patternScale, 0.01f, 0.01f, 64.0f, "%.3f", ImGuiSliderFlags_Logarithmic );
+		ImGui::SetItemTooltip( "1 is the reference size, fixed in the world: an ice cell is about 32 units across,\na caustic cell 43, a granular cell 8, a banded ring repeats every 80. 2 halves them." );
+		changed |= ImGui::SliderFloat( "Pattern Phase", &em.patternPhase, 0.0f, 100.0f, "%.2f" );
+	}
+
+	ImGui::Spacing();
+	changed |= ImGui::Checkbox( "Energy clamp (PBR safe)", &em.energyClamp );
+	if( !em.energyClamp )
+	{
+		ImGui::SameLine();
+		ImGui::TextDisabled( "(may blow out specular)" );
+	}
+
+	ImGui::Spacing();
+	int effectIdx = idMath::ClampInt( 0, EME_NUM_EFFECTS - 1, em.effect );
+	if( ImGui::Combo( "Effect", &effectIdx, EffectItemsGetter, NULL, EME_NUM_EFFECTS ) )
+	{
+		em.effect = effectIdx;
+		changed = true;
+	}
+	if( em.effect != EME_NONE )
+	{
+		changed |= ImGui::SliderFloat( "Effect Speed", &em.effectSpeed, 0.0f, 100.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp );
+		changed |= ImGui::SliderFloat( "Effect Amount", &em.effectAmount, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp );
+		changed |= ImGui::DragFloat( "Effect Phase", &em.effectPhase, 0.01f, 0.0f, 0.0f, "%.3f" );
+	}
+
+	return changed;
+}
+
+/*
+G0 9, "Range and reach in the panel": an emitter omni's or spot's extent, in this order: Range, Auto
+range, Size, Start, and one line that says what follows what. Range is the largest radius; on an omni an
+edit scales the box as a whole. A range edit only sets 'rangeEdited' (the caller runs EmitterRangeEdited
+after the volume rows, as for a radius drag); a reach edit runs EmitterReachChanged here. Returns true
+when a reach edit or the Auto range box changed the light. Never called for a sun or a texture light.
+*/
+static bool DrawEmitterExtentRows( LightInfo& light, bool& rangeEdited )
+{
+	emitterData_t& em = light.emitter;
+	bool reachEdited = false;
+	bool changed = false;
+
+	// the label changes, the id after ### does not, so the drag is not dropped while auto range flips
+	const bool inForce = EmitterAutoRangeInForce( light );
+	float range = EM_Range( light.lightRadius );
+	if( ImGui::DragFloat( inForce ? "Range (auto)###emRange" : "Range###emRange", &range, DragSpeedFor( range ), EMITTER_MIN_RANGE, 131072.0f, "%.1f" ) )
+	{
+		SetEmitterRange( light, range );
+		rangeEdited = true;
+	}
+
+	// linear and smooth reach zero at the range: they have no size and no reach to follow
+	const bool curveHasSize = ( em.falloff != EMF_LINEAR && em.falloff != EMF_SMOOTH );
+	ImGui::BeginDisabled( !curveHasSize );
+	if( ImGui::Checkbox( "Auto range", &light.autoRange ) )
+	{
+		// ticking sets the range to the auto range and keeps the size; unticking changes only the flag
+		changed = true;
+		reachEdited = light.autoRange;
+	}
+	reachEdited |= ImGui::DragFloat( "Size", &em.size, DragSpeedFor( em.size ), 1.0f, 65536.0f, "%.1f" );
+	ImGui::EndDisabled();
+	if( !curveHasSize )
+	{
+		ImGui::SameLine();
+		ImGui::TextDisabled( "(unused by this curve)" );
+	}
+
+	reachEdited |= ImGui::DragFloat( "Start", &em.start, 1.0f, 0.0f, Max( range - 1.0f, 0.0f ), "%.1f" );
+
+	if( !curveHasSize )
+	{
+		ImGui::TextDisabled( "This curve ends at the range: Range and Start set it." );
+	}
+	else if( inForce )
+	{
+		ImGui::TextDisabled( "Auto range: Range follows Intensity, Size, Start and Falloff; editing Range sets Size." );
+	}
+	else
+	{
+		ImGui::TextDisabled( "Auto range off: Range, Size and Start are each kept as set." );
+	}
+
+	if( reachEdited )
+	{
+		EmitterReachChanged( light );
+		changed = true;
+	}
+	return changed;
+}
+
+// the one way the light's type changes, so the emitter's shape follows it
 void LightInfo::SetLightType( ELightType type )
 {
 	lightType = type;
-	mathLight.type = MathTypeFor( type );
+	emitter.shape = ShapeForLightType( type );
 }
 
 void LightInfo::Defaults()
@@ -169,71 +760,69 @@ void LightInfo::Defaults()
 	angles.Zero();
 	scale.Set( 1, 1, 1 );
 
-	memset(&mathLight, 0, sizeof(mathLight));
-	mathLight.style = -1;	// D62: zero would be style 0 ("Normal")
-	mathLight.falloff = MLF_INVSQUARE_CLAMPED;  // PBR-safe default
-	mathLight.falloffExp = 2.0f;
-	mathLight.shapeExp = 2.0f;
-	mathLight.penumbra = 0.15f;
-	mathLight.patternScale = 1.0f;
-	mathLight.energyClamp = true;
+	memset( &emitter, 0, sizeof( emitter ) );
+	autoRange = true;
+	hasEmitterBlock = false;
 
 	SetLightType( LIGHT_POINT );
 }
 
 
+// a type switch keeps the colour, light_origin and the emitter block with its editor flags
+void LightInfo::RestoreKept( const LightInfo& kept )
+{
+	color = kept.color;
+	hasLightOrigin = kept.hasLightOrigin;
+	emitter = kept.emitter;
+	autoRange = kept.autoRange;
+	hasEmitterBlock = kept.hasEmitterBlock;
+
+	// G0 9 (DP-E3-05): an emitter's shape switch keeps its shadow and specular switches; a texture
+	// light's type switch resets them, as it always has
+	if( kept.emitter.enabled )
+	{
+		castShadows = kept.castShadows;
+		skipSpecular = kept.skipSpecular;
+	}
+}
+
 void LightInfo::DefaultPoint()
 {
-	idVec3 oldColor = color;
-	bool oldHasLightOrigin = hasLightOrigin;
-	// R4-2: the math-light settings survive a type switch like the colour; SetLightType below
-	// gives them the new type (a light without math stays without)
-	mathLightData_t oldMathLight = mathLight;
+	const LightInfo kept = *this;
 	Defaults();
-	color = oldColor;
-	hasLightOrigin = oldHasLightOrigin;
-	mathLight = oldMathLight;
+	RestoreKept( kept );
 
 	SetLightType( LIGHT_POINT );
 	lightRadius[0] = lightRadius[1] = lightRadius[2] = 300;
 	equalRadius = true;
+	ApplyEmitterShapeDefaults( *this, kept );
 }
 
 void LightInfo::DefaultProjected()
 {
-	idVec3 oldColor = color;
-	bool oldHasLightOrigin = hasLightOrigin;
-	// R4-2: the math-light settings survive a type switch like the colour; SetLightType below
-	// gives them the new type (a light without math stays without)
-	mathLightData_t oldMathLight = mathLight;
+	const LightInfo kept = *this;
 	Defaults();
-	color = oldColor;
-	hasLightOrigin = oldHasLightOrigin;
-	mathLight = oldMathLight;
+	RestoreKept( kept );
 
 	SetLightType( LIGHT_SPOT );
 	lightTarget[2] = -256;
 	lightUp[1] = -128;
 	lightRight[0] = -128;
+	ApplyEmitterShapeDefaults( *this, kept );
 }
 
 void LightInfo::DefaultSun()
 {
-	idVec3 oldColor = color;
-	bool oldHasLightOrigin = hasLightOrigin;
-	// R4-2: the math-light settings survive a type switch like the colour; SetLightType below
-	// gives them the new type (a light without math stays without)
-	mathLightData_t oldMathLight = mathLight;
+	const LightInfo kept = *this;
 	Defaults();
-	color = oldColor;
-	hasLightOrigin = oldHasLightOrigin;
-	mathLight = oldMathLight;
+	RestoreKept( kept );
 
 	SetLightType( LIGHT_SUN );
 	lightCenter.Set( 4, 4, 32 );
 	lightRadius[0] = lightRadius[1] = 2048;
 	lightRadius[2] = 1024;
 	equalRadius = false;
+	ApplyEmitterShapeDefaults( *this, kept );
 }
 
 void LightInfo::FromDict( const idDict* e )
@@ -322,13 +911,53 @@ void LightInfo::FromDict( const idDict* e )
 	// RB: Quake 1 light styles
 	lightStyle = e->GetInt( "style", -1 );
 
-	// MATH LIGHT — seed type from the editor's lightType so the helper
-	// can fall back to it when "math_type" is absent in the dict
-	mathLight.type = MathTypeFor( lightType );
-	ML_ParseFromDict(e, &mathLight);
+	// the emitter block. Every key is read, the ones the shape, pattern or effect does not use too: ToDict
+	// writes them all back ( DP-EC-01 )
+	EM_ParseAllFromDict( e, &emitter );
+	autoRange = e->GetBool( "emit_auto_range", "1" );
+	hasEmitterBlock = ( e->MatchPrefix( "emit" ) != NULL );
 
-	// D45: a "math_type" key that disagrees with the light's geometry never wins
-	mathLight.type = MathTypeFor( lightType );
+	if( emitter.enabled )
+	{
+		// the shape is the light's type; radius and centre are read again because the frustum branch
+		// above skips them while stale spot vectors are present, which an emitter never reads
+		lightType = LightTypeForShape( emitter.shape );
+		lightTarget.Zero();
+		lightRight.Zero();
+		lightUp.Zero();
+		lightStart.Zero();
+		lightEnd.Zero();
+		explicitStartEnd = false;
+
+		if( !e->GetVector( "light_radius", "", lightRadius ) )
+		{
+			lightRadius.Set( 300.0f, 300.0f, 300.0f );
+		}
+		for( int i = 0; i < 3; i++ )
+		{
+			lightRadius[ i ] = Max( lightRadius[ i ], 1.0f );
+		}
+
+		if( lightType == LIGHT_SPOT )
+		{
+			const float range = EM_Range( lightRadius );
+			lightRadius.Set( range, range, range );
+			lightCenter.Zero();
+			hasCenter = false;
+		}
+		else
+		{
+			hasCenter = e->GetVector( "light_center", "", lightCenter );
+			if( !hasCenter )
+			{
+				lightCenter.Zero();
+			}
+		}
+		equalRadius = ( lightRadius.x == lightRadius.y && lightRadius.x == lightRadius.z );
+
+		// G0 5: a range out of step with the auto range was set by hand, and wins
+		EmitterAutoRangeOnRead( *this, autoRange );
+	}
 
 	// get the rotation matrix in either full form, or single angle form
 	idMat3 axis;
@@ -413,7 +1042,47 @@ void LightInfo::ToDict( idDict* e )
 	// NOTE: e->SetVector() uses precision of 2, not enough for color
 	e->Set( "_color", color.ToString( 4 ) );
 
-	if( lightType == LIGHT_POINT || lightType == LIGHT_SUN )
+	if( emitter.enabled )
+	{
+		// an emitter's volume is its range: an omni or sun keeps its box, a spot writes R R R; the
+		// frustum vectors are never read on an emitter
+		if( lightType == LIGHT_SPOT )
+		{
+			const float range = EM_Range( lightRadius );
+			e->SetVector( "light_radius", idVec3( range, range, range ) );
+			e->Set( "light_center", DELETE_VAL );
+		}
+		else
+		{
+			if( !equalRadius )
+			{
+				e->SetVector( "light_radius", lightRadius );
+			}
+			else
+			{
+				idVec3 tmp( lightRadius[0] ); // x, y and z have the same value
+				e->SetVector( "light_radius", tmp );
+			}
+
+			if( hasCenter )
+			{
+				e->SetVector( "light_center", lightCenter );
+			}
+			else
+			{
+				e->Set( "light_center", DELETE_VAL );
+			}
+		}
+
+		e->Set( "parallel", ( lightType == LIGHT_SUN ) ? "1" : DELETE_VAL );
+
+		e->Set( "light_target", DELETE_VAL );
+		e->Set( "light_up", DELETE_VAL );
+		e->Set( "light_right", DELETE_VAL );
+		e->Set( "light_start", DELETE_VAL );
+		e->Set( "light_end", DELETE_VAL );
+	}
+	else if( lightType == LIGHT_POINT || lightType == LIGHT_SUN )
 	{
 		if( !equalRadius )
 		{
@@ -502,12 +1171,18 @@ void LightInfo::ToDict( idDict* e )
 			e->Set( "angles", DELETE_VAL );
 		}
 	}
-	// MATH LIGHT — write all math_* keys; D51: a disabled block writes only math_enabled "0" and the
-	// other math keys stay on the light, so the Math tab brings them back
-	// D45: math_type is written from the light's type, so a mismatched map converges on its next commit
-	mathLightData_t math = mathLight;
-	math.type = MathTypeFor( lightType );
-	ML_WriteToDict( e, math, /*deleteWhenDisabled=*/ false );
+	// only an emitter, or a light that carries an emitter block, writes emit keys: a disabled block
+	// writes emitter "0" and leaves its emit_* keys on the light, so the Emitter tab brings them back.
+	if( emitter.enabled || hasEmitterBlock )
+	{
+		emitterData_t block = emitter;
+		block.shape = ShapeForLightType( lightType );
+		EM_WriteToDict( e, block, /*deleteWhenDisabled=*/ false );
+		if( emitter.enabled )
+		{
+			e->Set( "emit_auto_range", autoRange ? "1" : "0" );
+		}
+	}
 }
 
 LightInfo::LightInfo()
@@ -542,7 +1217,9 @@ void LightEditor::Init( const idDict* dict, idEntity* light )
 	modalY = 0;
 	modalWheel = 0;
 	checkpointUndo.Defaults();
+	checkpointEmit.Clear();
 	modalBase.Defaults();
+	modalEntry.Defaults();
 	lastAimHit = false;
 
 	// MA-8: the selected light picked again (a panel pick held past SelectEntity's 300 ms debounce,
@@ -570,7 +1247,7 @@ void LightEditor::Init( const idDict* dict, idEntity* light )
 	{
 		original.FromDict( dict );
 		cur.FromDict( dict );
-		CopyMathKeys( *dict, originalMath );
+		CopyPrefixKeys( *dict, originalEmit, "emit" );
 
 		gameEdit->EntityGetOrigin( light, entityPos );
 
@@ -640,16 +1317,6 @@ void LightEditor::Init( const idDict* dict, idEntity* light )
 
 	// plan 3.3: AUTO keeps the endpoint dimensions the light has when it is entered
 	AutoCaptureBase( cur, autoBase );
-
-	// S2 / D15 / V-B17: a light without math keys becomes a soft linear math light, on cur only, so the
-	// map changes only on commit
-	if( dict != NULL && dict->FindKey( "math_enabled" ) == NULL )
-	{
-		SeedMathLight( cur.mathLight, cur.lightType );
-
-		// the preview shows it at once
-		TempApplyChanges();
-	}
 }
 
 void LightEditor::Reset()
@@ -660,7 +1327,7 @@ void LightEditor::Reset()
 	entityPos.z = idMath::INFINITUM;
 
 	original.Defaults();
-	originalMath.Clear();
+	originalEmit.Clear();
 	cur.Defaults();
 
 	lightEntity = NULL;
@@ -681,6 +1348,9 @@ void LightEditor::Reset()
 
 	shortcutSaveMapEnabled = true;
 	shortcutDuplicateLightEnabled = true;
+
+	// a light selected black shows white until it is given a colour
+	panelHue.Set( 1.0f, 1.0f, 1.0f );
 }
 
 namespace
@@ -1058,10 +1728,10 @@ bool LightEditor::SaveChanges( bool flushNow, bool onlyThisLight )
 
 	original = cur;
 
-	// Cancel now goes back to this commit: the light's math keys once d is on it
-	originalMath.Clear();
-	CopyMathKeys( *gameEdit->EntityGetSpawnArgs( lightEntity ), originalMath );
-	ApplyMathKeys( originalMath, d );
+	// Cancel now goes back to this commit: the light's emit keys once d is on it
+	originalEmit.Clear();
+	CopyPrefixKeys( *gameEdit->EntityGetSpawnArgs( lightEntity ), originalEmit, "emit" );
+	ApplyPrefixKeys( originalEmit, d, "emit" );
 
 	if( flushNow )
 	{
@@ -1112,7 +1782,7 @@ void LightEditor::CancelChanges()
 	{
 		idDict d;
 		original.ToDict( &d );
-		RestoreMathKeys( originalMath, *gameEdit->EntityGetSpawnArgs( lightEntity ), d );
+		RestorePrefixKeys( originalEmit, *gameEdit->EntityGetSpawnArgs( lightEntity ), d, "emit" );
 
 		gameEdit->EntityChangeSpawnArgs( lightEntity, &d );
 		gameEdit->EntityUpdateChangeableSpawnArgs( lightEntity, NULL );
@@ -1127,10 +1797,10 @@ void LightEditor::DuplicateLight()
 		// written by the panel's save)
 		SaveChanges( false, false );
 
-		// spawn the new light; D51: it keeps the math block a Texture tab left on the source (ToDict then
-		// sets math_enabled, and DeleteEmptyKeys drops a cleared math_style)
+		// spawn the new light; it keeps the emit block a Texture tab left on the source (ToDict does not
+		// write a kept block's values; DeleteEmptyKeys drops the keys ToDict clears)
 		idDict d;
-		CopyMathKeys( *gameEdit->EntityGetSpawnArgs( lightEntity ), d );
+		CopyPrefixKeys( *gameEdit->EntityGetSpawnArgs( lightEntity ), d, "emit" );
 		cur.ToDict( &d );
 		d.DeleteEmptyKeys();
 
@@ -2077,6 +2747,9 @@ void LightEditor::Draw()
 
 		ImGui::Spacing();
 
+		bool rangeEdited = false;
+		const float panelRangeBefore = EM_Range( cur.lightRadius );
+
 		if( lightSelectionRadioBtn == LIGHT_POINT || lightSelectionRadioBtn == LIGHT_SUN )
 		{
 			if( lightSelectionRadioBtn == LIGHT_POINT && lightSelectionRadioBtn != cur.lightType )
@@ -2090,24 +2763,56 @@ void LightEditor::Draw()
 				changes = true;
 			}
 
-			ImGui::PushItemWidth( -1.0f ); // align end of Drag* with right window border
-
-			changes |= ImGui::Checkbox( "Equilateral Radius", &cur.equalRadius );
-			ImGui::Text( "Radius:" );
-			ImGui::Indent();
-			if( cur.equalRadius )
+			if( cur.emitter.enabled && lightSelectionRadioBtn == LIGHT_POINT )
 			{
-				if( ImGui::DragFloat( "##radEquil", &cur.lightRadius.x, 1.0f, 0.0f, 10000.0f, "%.1f" ) )
+				// G0 9: an emitter omni shows one Range field; its three radii are behind Equilateral,
+				// and ticking it makes the box a sphere of the range. Once unticked it stays so for the
+				// session, so a re-read light with equal radii can still be given unequal ones
+				EquilateralForSession( cur, equilateralUnticked );
+				if( ImGui::Checkbox( "Equilateral", &cur.equalRadius ) )
 				{
-					cur.lightRadius.z = cur.lightRadius.y = cur.lightRadius.x;
+					equilateralUnticked = !cur.equalRadius;
+					if( cur.equalRadius )
+					{
+						const float range = EM_Range( cur.lightRadius );
+						cur.lightRadius.Set( range, range, range );
+						rangeEdited = true;
+					}
 					changes = true;
 				}
+				if( !cur.equalRadius )
+				{
+					ImGui::PushItemWidth( -1.0f );
+					ImGui::Text( "Radii:" );
+					ImGui::Indent();
+					rangeEdited |= ImGui::DragVec3( "##radXYZ", cur.lightRadius, DragSpeedFor( EM_Range( cur.lightRadius ) ) );
+					ImGui::Unindent();
+					ImGui::PopItemWidth();
+				}
+				changes |= DrawEmitterExtentRows( cur, rangeEdited );
 			}
-			else
+
+			ImGui::PushItemWidth( -1.0f ); // align end of Drag* with right window border
+
+			if( !cur.emitter.enabled || lightSelectionRadioBtn != LIGHT_POINT )
 			{
-				changes |= ImGui::DragVec3( "##radXYZ", cur.lightRadius );
+				changes |= ImGui::Checkbox( "Equilateral Radius", &cur.equalRadius );
+				ImGui::Text( "Radius:" );
+				ImGui::Indent();
+				if( cur.equalRadius )
+				{
+					if( ImGui::DragFloat( "##radEquil", &cur.lightRadius.x, DragSpeedFor( cur.lightRadius.x ), 0.0f, 10000.0f, "%.1f" ) )
+					{
+						cur.lightRadius.z = cur.lightRadius.y = cur.lightRadius.x;
+						rangeEdited = true;
+					}
+				}
+				else
+				{
+					rangeEdited |= ImGui::DragVec3( "##radXYZ", cur.lightRadius, DragSpeedFor( EM_Range( cur.lightRadius ) ) );
+				}
+				ImGui::Unindent();
 			}
-			ImGui::Unindent();
 
 			ImGui::Spacing();
 
@@ -2115,12 +2820,30 @@ void LightEditor::Draw()
 
 			//ImGui::Spacing();
 
-			changes |= ImGui::Checkbox( "Center", &cur.hasCenter );
+			// on an emitter omni light_center is where the bulb sits relative to the origin (the lamp),
+			// either way along each axis; elsewhere it is today's light centre
+			const bool bulbOffset = ( cur.emitter.enabled && lightSelectionRadioBtn == LIGHT_POINT );
+			changes |= ImGui::Checkbox( bulbOffset ? "Bulb offset" : "Center", &cur.hasCenter );
 			if( cur.hasCenter )
 			{
 				ImGui::Indent();
-				changes |= ImGui::DragVec3( "##centerXYZ", cur.lightCenter, 1.0f, 0.0f, 10000.0f, "%.1f" );
+				if( bulbOffset )
+				{
+					changes |= ImGui::DragVec3( "##bulbXYZ", cur.lightCenter, 1.0f, 0.0f, 0.0f, "%.1f" );
+				}
+				else
+				{
+					changes |= ImGui::DragVec3( "##centerXYZ", cur.lightCenter, 1.0f, 0.0f, 10000.0f, "%.1f" );
+				}
 				ImGui::Unindent();
+			}
+
+			// a texture point light with a centre had its lit box on the origin; as an emitter the box is
+			// centred on the bulb, so the light lights a different place than it did
+			if( bulbOffset && cur.hasCenter && !original.emitter.enabled && original.lightType == LIGHT_POINT && original.hasCenter
+					&& original.lightCenter != vec3_zero )
+			{
+				ImGui::TextDisabled( "As an emitter the lit box is centred on the bulb: it moved by the offset." );
 			}
 			ImGui::PopItemWidth(); // back to default alignment on right side
 		}
@@ -2132,23 +2855,38 @@ void LightEditor::Draw()
 				changes = true;
 			}
 
-			changes |= ImGui::DragVec3( "Target", cur.lightTarget, 1.0f, 0.0f, 0.0f, "%.1f" );
-			changes |= ImGui::DragVec3( "Right", cur.lightRight, 1.0f, 0.0f, 0.0f, "%.1f" );
-			changes |= ImGui::DragVec3( "Up", cur.lightUp, 1.0f, 0.0f, 0.0f, "%.1f" );
-
-			ImGui::Spacing();
-
-			changes |= ImGui::Checkbox( "Explicit start/end points", &cur.explicitStartEnd );
-
-			ImGui::Spacing();
-			if( cur.explicitStartEnd )
+			if( cur.emitter.enabled )
 			{
-				changes |= ImGui::DragVec3( "Start", cur.lightStart, 1.0f, 0.0f, 0.0f, "%.1f" );
-				changes |= ImGui::DragVec3( "End", cur.lightEnd, 1.0f, 0.0f, 0.0f, "%.1f" );
+				// an emitter spot has no frustum: its direction is the rotation, its cone is on the Emitter tab
+				changes |= DrawEmitterExtentRows( cur, rangeEdited );
+			}
+			else
+			{
+				changes |= ImGui::DragVec3( "Target", cur.lightTarget, 1.0f, 0.0f, 0.0f, "%.1f" );
+				changes |= ImGui::DragVec3( "Right", cur.lightRight, 1.0f, 0.0f, 0.0f, "%.1f" );
+				changes |= ImGui::DragVec3( "Up", cur.lightUp, 1.0f, 0.0f, 0.0f, "%.1f" );
+
+				ImGui::Spacing();
+
+				changes |= ImGui::Checkbox( "Explicit start/end points", &cur.explicitStartEnd );
+
+				ImGui::Spacing();
+				if( cur.explicitStartEnd )
+				{
+					changes |= ImGui::DragVec3( "Start", cur.lightStart, 1.0f, 0.0f, 0.0f, "%.1f" );
+					changes |= ImGui::DragVec3( "End", cur.lightEnd, 1.0f, 0.0f, 0.0f, "%.1f" );
+				}
 			}
 		}
 
-		// D45: the one type choice; the math-light type follows it
+		// a radius or range drag sets an emitter's range; on a texture light this is only the change
+		if( rangeEdited )
+		{
+			EmitterRangeEdited( cur, panelRangeBefore );
+			changes = true;
+		}
+
+		// the one type choice; the emitter's shape follows it
 		cur.SetLightType( ELightType( lightSelectionRadioBtn ) );
 
 		ImGui::Unindent();
@@ -2246,153 +2984,57 @@ void LightEditor::Draw()
 
 		ImGui::SeparatorText( "Color" );
 
-		changes |= ImGui::ColorEdit3( "Color", vecToArr( cur.color ) );
+		// the colour and its intensity (the largest channel of _color, as T and auto range read it), so a
+		// light brighter than white can be set and recoloured here without being clipped to 1
+		float intensity = PanelColorSplit( cur.color, panelHue );
+		idVec3 hue = panelHue;
+		if( ImGui::ColorEdit3( "Color", vecToArr( hue ) ) )
+		{
+			panelHue = hue;
+			PanelSetColor( cur, hue, intensity );
+			changes = true;
+		}
+		// AlwaysClamp: a typed intensity stays 0 to 8 (G0 9, RV-C-ET-12)
+		if( ImGui::DragFloat( "Intensity", &intensity, 0.01f, 0.0f, 8.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp ) )
+		{
+			// a reach edit: under auto range an emitter's range follows it
+			PanelSetColor( cur, panelHue, intensity );
+			changes = true;
+		}
 
 		ImGui::Spacing();
 
-		// D62: a math light and a texture light are two tabs, and the tab is the switch (D51). The shown
-		// tab follows cur.mathLight.enabled: a new light, Cancel or an undo asks for its tab with SetSelected,
-		// which ImGui applies a frame later, so nothing flips while a tab is asked for; a tab that opens
-		// unasked is the user's click. A new ImGui context (resize) opens on the first tab, so ask on appearing
-		const bool tabRequest = ( tabShowsMath != cur.mathLight.enabled ) || ImGui::IsWindowAppearing();
+		// an emitter and a texture light are two tabs, and the tab is the switch. The shown tab follows
+		// cur.emitter.enabled: a new light, Cancel or an undo asks for its tab with SetSelected, which
+		// ImGui applies a frame later, so nothing flips while a tab is asked for; a tab that opens unasked
+		// is the user's click. A new ImGui context (resize) opens on the first tab, so ask on appearing
+		const bool tabRequest = ( tabShowsEmitter != cur.emitter.enabled ) || ImGui::IsWindowAppearing();
 		if( ImGui::BeginTabBar( "LightKind" ) )
 		{
-			if( ImGui::BeginTabItem( "Math", NULL, ( tabRequest && cur.mathLight.enabled ) ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None ) )
+			if( ImGui::BeginTabItem( "Emitter", NULL, ( tabRequest && cur.emitter.enabled ) ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None ) )
 			{
-				if( !tabRequest && !cur.mathLight.enabled && lightEntity != NULL )
+				if( !tabRequest && !cur.emitter.enabled && lightEntity != NULL )
 				{
-					// D51: the math keys the Texture tab left on the light come back (math_enabled forced on);
-					// a light that never had a math block gets Init's seed
-					idDict block;
-					CopyMathKeys( *gameEdit->EntityGetSpawnArgs( lightEntity ), block );
-					block.Delete( "math_enabled" );
-
-					if( block.GetNumKeyVals() > 0 )
-					{
-						block.Set( "math_enabled", "1" );
-						ML_ParseFromDict( &block, &cur.mathLight );
-						cur.mathLight.type = MathTypeFor( cur.lightType );
-					}
-					else
-					{
-						SeedMathLight( cur.mathLight, cur.lightType );
-					}
+					// the emit keys a Texture tab left on the light come back; a light without them is seeded
+					SwitchToEmitter( cur, *gameEdit->EntityGetSpawnArgs( lightEntity ) );
 					changes = true;
 				}
-				tabShowsMath = true;
+				tabShowsEmitter = true;
 
-				// D45: no separate math type; it is the light type chosen at the top
-				static const char* typeOptions[] = { "point", "spot", "sun" };
-				ImGui::TextDisabled( "type: %s (follows the light type above)", typeOptions[ idMath::ClampInt( 0, 2, cur.mathLight.type ) ] );
-
-				// D54 / D62: math_style plays the same table as the Texture tab's style, as brightness
-				int mathStyleIndex = cur.mathLight.style + 1;
-				if( ImGui::Combo( "Style", &mathStyleIndex, StyleItemsGetter, this, Min( styleNames.Num(), ML_NUM_STYLES ) + 1 ) )
-				{
-					changes = true;
-
-					// -1 because 0 is "<No Lightstyle>"
-					cur.mathLight.style = ( mathStyleIndex > 0 ) ? mathStyleIndex - 1 : -1;
-				}
-
-				if (ImGui::Button("Seed from legacy light"))
-				{
-					// map LightInfo::lightType (ELightType: POINT/SPOT/SUN) ? mathType
-					cur.mathLight.type = MathTypeFor( cur.lightType );
-					cur.mathLight.falloff = MLF_INVSQUARE_CLAMPED;
-					cur.mathLight.falloffExp = 2.0f;
-					cur.mathLight.innerRadius = 0.0f;
-					cur.mathLight.shapeExp = (cur.lightType == LIGHT_SPOT) ? 2.5f : 2.0f;
-					cur.mathLight.penumbra = 0.20f;
-					cur.mathLight.pattern = MLP_NONE;
-					cur.mathLight.patternStrength = 0.0f;
-					cur.mathLight.energyClamp = true;
-					changes = true;
-				}
-
-				static const char* falloffOptions[] = {
-					"Inverse Square (unbounded)",
-					"Linear",
-					"Smooth",
-					"Exponential",
-					"Inverse Square (clamped) - PBR safe"
-				};
-				int falloffIdx = cur.mathLight.falloff;
-				if (ImGui::Combo("Falloff Curve", &falloffIdx, falloffOptions, IM_ARRAYSIZE(falloffOptions)))
-				{
-					cur.mathLight.falloff = falloffIdx;
-					changes = true;
-				}
-
-				const bool falloffExpUsed = (cur.mathLight.falloff != MLF_LINEAR &&
-					cur.mathLight.falloff != MLF_SMOOTH);
-				ImGui::BeginDisabled(!falloffExpUsed);
-				changes |= ImGui::SliderFloat("Falloff Exponent",
-					&cur.mathLight.falloffExp, 0.1f, 16.0f, "%.2f");
-				ImGui::EndDisabled();
-				if (!falloffExpUsed)
-				{
-					ImGui::SameLine();
-					ImGui::TextDisabled("(unused by this curve)");
-				}
-				changes |= ImGui::SliderFloat("Inner Radius (soft start)",
-					&cur.mathLight.innerRadius, 0.0f, 1.0f, "%.3f");
-
-
-				if (cur.mathLight.type == ML_SPOT)
-				{
-					changes |= ImGui::SliderFloat("Shape (2=ellipse, 16=rect)",
-						&cur.mathLight.shapeExp, 1.5f, 32.0f, "%.2f");
-					changes |= ImGui::SliderFloat("Penumbra",
-						&cur.mathLight.penumbra, 0.0f, 1.0f, "%.3f");
-				}
-
-				ImGui::Spacing();
-				static const char* patternOptions[] = {
-					"None",
-					"Subsurface (warm halo)",
-					"Ice (cool noise)",
-					"Caustic (sharp noise)",
-					"Banded (sine rings)",
-					"Granular (stippled)"
-				};
-				int patternIdx = cur.mathLight.pattern;
-				if (ImGui::Combo("Pattern", &patternIdx, patternOptions, IM_ARRAYSIZE(patternOptions)))
-				{
-					cur.mathLight.pattern = patternIdx;
-					changes = true;
-				}
-
-				if (cur.mathLight.pattern != MLP_NONE)
-				{
-					changes |= ImGui::SliderFloat("Pattern Strength",
-						&cur.mathLight.patternStrength, 0.0f, 1.0f, "%.3f");
-					changes |= ImGui::SliderFloat("Pattern Scale",
-						&cur.mathLight.patternScale, 0.1f, 64.0f, "%.2f");
-					changes |= ImGui::SliderFloat("Pattern Phase",
-						&cur.mathLight.patternPhase, 0.0f, 100.0f, "%.2f");
-				}
-
-				ImGui::Spacing();
-				changes |= ImGui::Checkbox("Energy clamp (PBR safe)", &cur.mathLight.energyClamp);
-				if (!cur.mathLight.energyClamp)
-				{
-					ImGui::SameLine();
-					ImGui::TextDisabled("(may blow out specular)");
-				}
+				changes |= DrawEmitterControls( cur );
 
 				ImGui::EndTabItem();
 			}
 
-			if( ImGui::BeginTabItem( "Texture", NULL, ( tabRequest && !cur.mathLight.enabled ) ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None ) )
+			if( ImGui::BeginTabItem( "Texture", NULL, ( tabRequest && !cur.emitter.enabled ) ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None ) )
 			{
-				if( !tabRequest && cur.mathLight.enabled )
+				if( !tabRequest && cur.emitter.enabled )
 				{
-					// D51: ToDict writes math_enabled "0" and leaves the other math keys on the light
-					cur.mathLight.enabled = false;
+					// ToDict writes emitter "0" and leaves the emit_* keys on the light
+					SwitchToTexture( cur );
 					changes = true;
 				}
-				tabShowsMath = false;
+				tabShowsEmitter = false;
 
 				if( ImGui::Combo( "Texture", &currentTextureIndex, TextureItemsGetter, this, textureNames.Num() + 1 ) )
 				{
@@ -2571,14 +3213,16 @@ void LightEditor::Draw()
 				scaleMatrix[1][1] = 16;
 				scaleMatrix[2][2] = 16;
 
-				idMat4 objectMatrix( scaleMatrix * rotateMatrix,  cur.origin );
+				// an emitter omni's gizmo sits on its bulb, which may be off the origin
+				const idVec3 gizmoOrigin = LightGizmoOrigin( cur );
+				idMat4 objectMatrix( scaleMatrix * rotateMatrix,  gizmoOrigin );
 				ImGuizmo::DrawCubes( cameraView, cameraProjection, objectMatrix.Transpose().ToFloatPtr(), 1 );
 
 				scaleMatrix[0][0] = 1;
 				scaleMatrix[1][1] = 1;
 				scaleMatrix[2][2] = 1;
 
-				idMat4 gizmoMatrix( scaleMatrix * rotateMatrix,  cur.origin );
+				idMat4 gizmoMatrix( scaleMatrix * rotateMatrix,  gizmoOrigin );
 				idMat4 manipMatrix = gizmoMatrix.Transpose();
 
 				const float* snap = NULL;
@@ -2605,8 +3249,6 @@ void LightEditor::Draw()
 					//if( mCurrentGizmoOperation == ImGuizmo::TRANSLATE )
 					{
 						gizmoMatrix = manipMatrix.Transpose();
-						cur.origin = gizmoMatrix.GetTranslation();
-
 						changes = true;
 					}
 
@@ -2617,6 +3259,9 @@ void LightEditor::Draw()
 
 						changes = true;
 					}
+
+					// with the new angles: an emitter omni turns about its bulb
+					cur.origin = LightOriginFromGizmo( cur, gizmoMatrix.GetTranslation() );
 
 					if( mCurrentGizmoOperation == ImGuizmo::SCALE )
 					{
@@ -2630,7 +3275,15 @@ void LightEditor::Draw()
 
 						if( matrixScale[0] != 1.0f || matrixScale[1] != 1.0f || matrixScale[2] != 1.0f )
 						{
-							if( cur.lightType == LIGHT_SPOT )
+							if( cur.lightType == LIGHT_SPOT && cur.emitter.enabled )
+							{
+								// local x is the beam: it scales the range; y and z scale the two cone tangents
+								SetEmitterConeFromTan( cur.emitter, curNotMoving.emitter.tanHalfH * matrixScale[1], curNotMoving.emitter.tanHalfV * matrixScale[2] );
+								cur.emitter.size = curNotMoving.emitter.size;
+								SetEmitterRange( cur, EM_Range( curNotMoving.lightRadius ) * matrixScale[0] );
+								EmitterRangeEdited( cur, EM_Range( curNotMoving.lightRadius ) );
+							}
+							else if( cur.lightType == LIGHT_SPOT )
 							{
 								cur.lightRight = curNotMoving.lightRight * matrixScale[0];
 								cur.lightUp = curNotMoving.lightUp * matrixScale[1];
@@ -2646,6 +3299,9 @@ void LightEditor::Draw()
 								{
 									cur.equalRadius = false;
 								}
+
+								// an emitter's radius is its range
+								EmitterRangeEdited( cur, EM_Range( curNotMoving.lightRadius ) );
 							}
 
 							changes = true;
@@ -2703,11 +3359,16 @@ static idVec3 AutoFallbackVector( const LightAutoBase& base, const idVec3& first
 // plan 3.3 autoBase, at every E1 entry
 static void AutoCaptureBase( const LightInfo& light, LightAutoBase& base )
 {
+	// the stored-to-world frame is taken once for this entry, by RunFrame on its first emitter-spot
+	// AUTO frame (this function has no entity); until then, and in le_selfTest, it is the identity
+	base.storedFrame.Identity();
+	base.haveStoredFrame = false;
 	base.farHalfWidth = 0.0f;
 	base.farHalfHeight = 0.0f;
 	base.handedness = -1.0f;
 	base.zNear = 8.0f;
 	base.centerLength = Max( light.lightCenter.Length(), 1.0f );
+	base.emitterStart = light.emitter.start;
 	base.haveFallback = false;
 	base.fallback.Zero();
 
@@ -2810,6 +3471,55 @@ static bool AutoAimLight( LightInfo& light, LightAutoBase& base, const idVec3& a
 }
 
 /*
+AUTO for an emitter spot: the beam (axis[0]) through the aim point, computed in the world and stored in
+the dict's space through the frame taken at entry (base.storedFrame). Under auto range the range is
+max( 24, distance / 0.6 ) every frame, both ways (G0 9, choice 2), so it follows the aim and never
+ratchets; otherwise the range, size and start stay. Returns false when the frame is skipped (aim
+closer than 16).
+*/
+static bool AutoAimEmitterSpot( LightInfo& light, LightAutoBase& base, const idVec3& aimPoint )
+{
+	const LightStoredFrame& frame = base.storedFrame;
+	const idVec3 d = aimPoint - frame.ToWorldPoint( light.origin );
+	const float distance = d.Length();
+	if( distance < 16.0f )
+	{
+		return false;
+	}
+
+	idMat3 worldAxis;
+	worldAxis[0] = d / distance;
+	worldAxis[1] = worldUp.Cross( worldAxis[0] );
+	if( worldAxis[1].Length() < 0.01f )
+	{
+		// straight up or down: the previous frame's left, else the light's own
+		const idMat3 current = light.angles.ToMat3() * frame.axis;
+		worldAxis[1] = AutoFallbackVector( base, current[1], worldAxis[0] );
+	}
+	worldAxis[1].Normalize();
+	worldAxis[2] = worldAxis[0].Cross( worldAxis[1] );
+
+	// a world vector here, where a texture spot keeps a light-local one; AutoCaptureBase clears it
+	base.fallback = worldAxis[1];
+	base.haveFallback = true;
+
+	// at pitch 90 ToAngles folds roll into yaw; the rotation is kept, the three numbers may change
+	light.angles = frame.ToStoredAxis( worldAxis ).ToAngles();
+
+	// G0 9: under auto range the aimed surface sits at 0.6 of the range, nearer or further, and the
+	// size follows as for any range edit. Otherwise the aim turns the lamp and nothing else. The start
+	// is clamped from its value at entry each frame (EmitterRangeSet clamps it to range - 1), so a near
+	// aim does not eat it for the rest of the aim (DP-E4-01)
+	if( EmitterAutoRangeInForce( light ) )
+	{
+		light.emitter.start = base.emitterStart;
+		SetEmitterRange( light, distance / 0.6f );
+		EmitterRangeSet( light );
+	}
+	return true;
+}
+
+/*
 R4-3: a held point light that is still a sphere shows no orientation, so at modal entry its frame is
 turned to the aim: axis[2] on the aim point, axis[0] horizontal (the viewer's left, the old point
 AUTO's fallback when aiming straight up or down), right-handed. R and E are then screen-relative. A
@@ -2842,9 +3552,67 @@ static bool ModalAlignSphere( LightInfo& light, LightAutoBase& base, const idVec
 	base.fallback = axis[0];
 	base.haveFallback = true;
 
-	// U-4: stored as angles; axis[0] is horizontal, so ToAngles never takes its gimbal branch
+	// U-4: stored as angles; axis[0] is horizontal, so ToAngles never takes its gimbal branch. An emitter
+	// omni with a bulb offset turns about its bulb, as the gizmo turns it (G0 9, RV-C-ET-02): the lamp
+	// and its lit volume stay where they are
+	const idVec3 bulb = LightGizmoOrigin( light );
 	light.angles = axis.ToAngles();
+	light.origin = LightOriginFromGizmo( light, bulb );
 	return true;
+}
+
+/*
+R on an emitter spot is screen-relative from its first frame: at entry the roll follows AUTO's world-up
+rule, axis[1] = normalize( worldUp x axis[0] ) in the world, through the stored-to-world frame. A beam
+within 0.01 of vertical has no level roll and keeps its own, as AUTO keeps the previous one; a roll
+already level is left alone, so a light AUTO has just aimed is not touched. The beam does not move.
+Returns true when it set the angles.
+*/
+static bool ModalLevelSpotRoll( LightInfo& light, const LightStoredFrame& frame )
+{
+	if( !light.emitter.enabled || light.lightType != LIGHT_SPOT )
+	{
+		return false;
+	}
+
+	idMat3 worldAxis = light.angles.ToMat3() * frame.axis;
+	idVec3 left = worldUp.Cross( worldAxis[0] );
+	if( left.Length() < 0.01f )
+	{
+		return false;
+	}
+	left.Normalize();
+	if( left * worldAxis[1] > 1.0f - 1e-5f )
+	{
+		return false;
+	}
+
+	worldAxis[1] = left;
+	worldAxis[2] = worldAxis[0].Cross( left );
+	light.angles = frame.ToStoredAxis( worldAxis ).ToAngles();
+	return true;
+}
+
+/*
+A gesture's entry (EnterModal). 'entry' takes the light as the gesture found it; then a held sphere
+turns its frame to the last aim (R4-3) and, when 'spotFrame' is given (R on an emitter spot), the roll
+is levelled (F-E-09). Cancel restores 'entry', so the authored roll and frame come back (G0 9, DP-E3-02);
+the gesture itself runs from the prepared light. Returns true when it changed the light.
+*/
+static bool ModalPrepareEntry( LightInfo& light, LightInfo& entry, LightAutoBase& base, bool aimHit, const idVec3& aimPoint, const LightStoredFrame* spotFrame )
+{
+	entry = light;
+
+	bool changed = false;
+	if( aimHit && ModalAlignSphere( light, base, aimPoint ) )
+	{
+		changed = true;
+	}
+	if( spotFrame != NULL && ModalLevelSpotRoll( light, *spotFrame ) )
+	{
+		changed = true;
+	}
+	return changed;
 }
 
 // centre of a spot frustum's bounds in world orientation, relative to the light origin: the near
@@ -2872,6 +3640,17 @@ static void ModalScale( LightInfo& light, const LightInfo& base, float mouseX, f
 {
 	// EB-10: bounded, so no inf (exp overflows near 22000 counts) can reach cur or the dict
 	float s = idMath::ClampFloat( MODAL_SCALE_MIN, MODAL_SCALE_MAX, idMath::Exp( mouseX * scaleSens ) );
+
+	if( base.emitter.enabled && base.lightType != LIGHT_SUN )
+	{
+		// the lamp scales as a whole: range, size and start together; the cone and the bulb stay
+		light.origin = base.origin;
+		light.lightRadius = base.lightRadius * s;
+		light.emitter.size = Max( base.emitter.size * s, 1.0f );
+		light.emitter.start = base.emitter.start * s;
+		EmitterRangeEdited( light, EM_Range( base.lightRadius ) );
+		return;
+	}
 
 	if( base.lightType != LIGHT_SPOT )
 	{
@@ -2929,6 +3708,17 @@ static void ModalStretch( LightInfo& light, const LightInfo& base, float mouseX,
 	const float sy = idMath::ClampFloat( MODAL_SCALE_MIN, MODAL_SCALE_MAX, idMath::Exp( -mouseY * scaleSens ) );
 	float sz = idMath::ClampFloat( MODAL_SCALE_MIN, MODAL_SCALE_MAX, idMath::Exp( wheel * wheelSens ) );
 
+	if( base.emitter.enabled && base.lightType == LIGHT_SPOT )
+	{
+		// mouse x widens cone h, mouse y cone v, the wheel moves the range; the bulb stays
+		SetEmitterConeFromTan( light.emitter, base.emitter.tanHalfH * sx, base.emitter.tanHalfV * sy );
+		light.emitter.size = base.emitter.size;
+		light.origin = base.origin;
+		SetEmitterRange( light, EM_Range( base.lightRadius ) * sz );
+		EmitterRangeEdited( light, EM_Range( base.lightRadius ) );
+		return;
+	}
+
 	if( base.lightType == LIGHT_SPOT )
 	{
 		const float targetLength = base.lightTarget.Length();
@@ -2961,9 +3751,21 @@ static void ModalStretch( LightInfo& light, const LightInfo& base, float mouseX,
 	light.lightRadius.Set( base.lightRadius.x * sx, base.lightRadius.y * sy, base.lightRadius.z * sz );
 	light.equalRadius = ( light.lightRadius.x == light.lightRadius.y && light.lightRadius.y == light.lightRadius.z );
 
-	// D11 / Q5: the near (-Z) face stays put, so the origin travels half the stretch along the aim
-	const idMat3 axis = base.angles.ToMat3();
-	light.origin = base.origin + axis[2] * ( base.lightRadius.z * sz - base.lightRadius.z );
+	if( base.emitter.enabled && base.lightType == LIGHT_POINT )
+	{
+		// an emitter's origin is the lamp: the radii scale about the bulb, which stays in its fixture
+		light.origin = base.origin;
+	}
+	else
+	{
+		// D11 / Q5: the near (-Z) face stays put, so the origin travels half the stretch along the aim
+		const idMat3 axis = base.angles.ToMat3();
+		light.origin = base.origin + axis[2] * ( base.lightRadius.z * sz - base.lightRadius.z );
+	}
+
+	// an emitter's radius is its range
+	light.emitter.size = base.emitter.size;
+	EmitterRangeEdited( light, EM_Range( base.lightRadius ) );
 }
 
 // S10 R / D12: roll about the aim, pitch about the viewer's right, yaw about the frame's up, by
@@ -2976,13 +3778,19 @@ static void ModalRotate( LightInfo& light, const LightInfo& base, float mouseX, 
 	const float pitchAngle = mouseY * rotSens;
 	const float yawAngle = -wheel * rotWheelSens;
 
-	if( base.lightType != LIGHT_SPOT )
+	if( base.lightType != LIGHT_SPOT || base.emitter.enabled )
 	{
-		// right-handed frame: axis[0] = viewer's left, axis[1] = up, axis[2] = aim
+		// right-handed frames. A point light aims along axis[2], with axis[0] the viewer's left and
+		// axis[1] up; an emitter spot's beam is axis[0], with axis[1] left and axis[2] up
+		const bool beamIsX = ( base.lightType == LIGHT_SPOT );
+		const int aim = beamIsX ? 0 : 2;
+		const int left = beamIsX ? 1 : 0;
+		const int up = beamIsX ? 2 : 1;
+
 		const idMat3 axis = base.angles.ToMat3();
-		const idRotation roll( vec3_origin, axis[2], rollAngle );
-		const idRotation pitch( vec3_origin, -axis[0], pitchAngle );
-		const idRotation yaw( vec3_origin, axis[1], yawAngle );
+		const idRotation roll( vec3_origin, axis[aim], rollAngle );
+		const idRotation pitch( vec3_origin, -axis[left], pitchAngle );
+		const idRotation yaw( vec3_origin, axis[up], yawAngle );
 
 		idMat3 rotated;
 		for( int i = 0; i < 3; i++ )
@@ -3070,7 +3878,7 @@ public:
 	idVec3			lightEnd;
 	idVec3			lightCenter;
 	idVec3			color;
-	mathLightData_t	mathLight;
+	emitterData_t	emitter;
 	int				flags;
 
 	void			Capture( const LightInfo& light )
@@ -3086,8 +3894,8 @@ public:
 		lightEnd = light.lightEnd;
 		lightCenter = light.lightCenter;
 		color = light.color;
-		memcpy( &mathLight, &light.mathLight, sizeof( mathLight ) );
-		flags = ( light.equalRadius ? 1 : 0 ) | ( light.explicitStartEnd ? 2 : 0 ) | ( light.hasCenter ? 4 : 0 );
+		memcpy( &emitter, &light.emitter, sizeof( emitter ) );
+		flags = ( light.equalRadius ? 1 : 0 ) | ( light.explicitStartEnd ? 2 : 0 ) | ( light.hasCenter ? 4 : 0 ) | ( light.autoRange ? 8 : 0 );
 	}
 };
 
@@ -3163,6 +3971,77 @@ bool LightEditor::KeyEvent( int keyNum, bool down )
 }
 
 /*
+the frame between the light's spawn dict pose and the world, read as idLight::UpdateChangeableSpawnArgs
+derives the entity frame from the same dict; nowOrigin and nowAxis are the entity's physics pose.
+A light without light_origin gets the identity: its entity frame comes from "angles", the key the
+editor writes the light's own rotation to, so E would follow every edit (RV-G4-04). Unbound it is the
+identity anyway; bound, the light is aimed in its stored space, which is right while the bind master
+is at its spawn pose. Pure, so le_selfTest can call it with no entity
+*/
+static void LightStoredFrameFromDict( const idDict& args, const idVec3& nowOrigin, const idMat3& nowAxis, LightStoredFrame& frame )
+{
+	frame.Identity();
+
+	if( args.FindKey( "light_origin" ) == NULL )
+	{
+		return;
+	}
+
+	idVec3 entOrigin;
+	idMat3 entAxis;
+	args.GetVector( "origin", "0 0 0", entOrigin );
+	if( args.GetString( "model" )[0] != '\0' )
+	{
+		// only entities with a model have origin brushes (BRUSH_ORIGIN_KEY of the game)
+		entOrigin += args.GetVector( "__brushOrigin", "0 0 0" );
+	}
+
+	if( !args.GetMatrix( "rotation", "1 0 0 0 1 0 0 0 1", entAxis ) )
+	{
+		idAngles entAngles;
+
+		entAxis.Identity();
+		if( args.GetAngles( "angles", "0 0 0", entAngles ) )
+		{
+			if( entAngles.pitch != 0.0f || entAngles.yaw != 0.0f || entAngles.roll != 0.0f )
+			{
+				entAxis = entAngles.ToMat3();
+			}
+		}
+		else
+		{
+			const float angle = args.GetFloat( "angle" );
+			if( angle != 0.0f )
+			{
+				entAxis = idAngles( 0.0f, angle, 0.0f ).ToMat3();
+			}
+		}
+	}
+
+	frame.storedOrigin = entOrigin;
+	frame.worldOrigin = nowOrigin;
+	frame.axis = entAxis.Transpose() * nowAxis;
+}
+
+// the same for a live light entity: its spawn args and its physics pose now
+static void LightStoredFrameOf( idEntity* light, LightStoredFrame& frame )
+{
+	frame.Identity();
+
+	const idDict* args = gameEdit->EntityGetSpawnArgs( light );
+	if( args == NULL )
+	{
+		return;
+	}
+
+	idVec3 nowOrigin;
+	idMat3 nowAxis;
+	gameEdit->EntityGetOrigin( light, nowOrigin );
+	gameEdit->EntityGetAxis( light, nowAxis );
+	LightStoredFrameFromDict( *args, nowOrigin, nowAxis, frame );
+}
+
+/*
 plan 3.9: once per frame from the top of idCommonLocal::Draw's map-spawned branch, before the scene is
 drawn. Consumes the presses in order, runs the state machine and applies the preview through the
 panel's own TempApplyChanges when cur changed. No ImGui frame or draw call.
@@ -3233,10 +4112,25 @@ void LightEditor::RunFrame()
 			// feeds the reticle
 			if( lastAimHit && cur.lightType != LIGHT_POINT )
 			{
-				// PlayerGetRenderView dereferences the local player unchecked
-				renderView_t view;
-				const bool haveView = ( cur.lightType == LIGHT_SUN && gameEdit->PlayerIsValid() && gameEdit->PlayerGetRenderView( view ) );
-				AutoAimLight( cur, autoBase, lastAim, haveView ? &view.viewaxis[0] : NULL );
+				if( cur.emitter.enabled && cur.lightType == LIGHT_SPOT )
+				{
+					// the aim is a world point; a light_origin light on a moved entity stores its pose in the
+					// dict's space. The frame is taken once per AUTO entry, before AUTO writes anything, and
+					// kept: read back every frame it would follow the rotation AUTO writes (RV-G4-04)
+					if( !autoBase.haveStoredFrame )
+					{
+						LightStoredFrameOf( lightEntity, autoBase.storedFrame );
+						autoBase.haveStoredFrame = true;
+					}
+					AutoAimEmitterSpot( cur, autoBase, lastAim );
+				}
+				else
+				{
+					// PlayerGetRenderView dereferences the local player unchecked
+					renderView_t view;
+					const bool haveView = ( cur.lightType == LIGHT_SUN && gameEdit->PlayerIsValid() && gameEdit->PlayerGetRenderView( view ) );
+					AutoAimLight( cur, autoBase, lastAim, haveView ? &view.viewaxis[0] : NULL );
+				}
 			}
 		}
 		else if( easyState == EASY_MODAL )
@@ -3258,6 +4152,8 @@ void LightEditor::RunFrame()
 					break;
 				case K_T:
 					ModalColor( cur, modalBase, mouseX, mouseY, le_hueSens.GetFloat(), le_intSens.GetFloat(), le_maxIntensity.GetFloat() );
+					// under auto range an emitter's range follows its intensity
+					EmitterReachChanged( cur );
 					break;
 				default:
 					break;
@@ -3315,12 +4211,13 @@ bool LightEditor::HandlePress( int key )
 	{
 		if( easyState == EASY_MODAL )
 		{
-			checkpointUndo = modalBase;
+			TakeCheckpoint( modalEntry );
 			easyState = EASY_CHECKPOINT;
 		}
 		if( easyState != EASY_NONE && SaveChanges( true, true ) )
 		{
 			checkpointUndo.Defaults();
+			checkpointEmit.Clear();
 			AutoCaptureBase( cur, autoBase );
 			easyState = EASY_AUTO;
 		}
@@ -3359,7 +4256,7 @@ bool LightEditor::HandlePress( int key )
 			if( key == K_MOUSE1 )
 			{
 				// S5: freeze; nothing is applied, cur stays
-				checkpointUndo = cur;
+				TakeCheckpoint( cur );
 				easyState = EASY_CHECKPOINT;
 			}
 			else if( key == K_MOUSE2 )
@@ -3381,14 +4278,15 @@ bool LightEditor::HandlePress( int key )
 				// D49: LMB releases the checkpoint (Enter saves): cur kept, and its shape gives AUTO
 				// its new endpoint dimensions
 				checkpointUndo.Defaults();
+				checkpointEmit.Clear();
 				AutoCaptureBase( cur, autoBase );
 				easyState = EASY_AUTO;
 			}
 			else if( key == K_MOUSE2 )
 			{
 				// D7: undo the checkpoint; AUTO resumes from the state the checkpoint was made from
-				cur = checkpointUndo;
-				applyPending = true;
+				UndoCheckpoint();
+				checkpointEmit.Clear();
 				easyState = EASY_AUTO;
 			}
 			// S8: Q, E, R and T do nothing here
@@ -3397,13 +4295,14 @@ bool LightEditor::HandlePress( int key )
 		case EASY_MODAL:
 			if( key == K_MOUSE1 )
 			{
-				checkpointUndo = modalBase;
+				TakeCheckpoint( modalEntry );
 				easyState = EASY_CHECKPOINT;
 			}
 			else if( key == K_MOUSE2 || key == modalKey )
 			{
-				// U-2: the same key again, or RMB, cancels exactly (D17)
-				cur = modalBase;
+				// U-2: the same key again, or RMB, cancels exactly (D17), to the light as the gesture found
+				// it: before ModalAlignSphere or ModalLevelSpotRoll touched it (G0 9, DP-E3-02)
+				cur = modalEntry;
 				applyPending = true;
 				easyState = EASY_AUTO;
 			}
@@ -3418,6 +4317,33 @@ bool LightEditor::HandlePress( int key )
 	return true;
 }
 
+// E2's entry (LMB in AUTO or in a gesture, Enter in a gesture): the light to come back to, with the emit
+// keys it has then (RV-C-ET-01), because F may open the panel and its tabs while the checkpoint stands
+void LightEditor::TakeCheckpoint( const LightInfo& undo )
+{
+	checkpointUndo = undo;
+	checkpointEmit.Clear();
+	if( lightEntity != NULL )
+	{
+		CheckpointKeys( *gameEdit->EntityGetSpawnArgs( lightEntity ), undo, checkpointEmit );
+	}
+}
+
+// RMB on a checkpoint: the light as it was, its kind included. Applied here as Cancel applies, since
+// TempApplyChanges writes only what ToDict writes and would leave an emitter "1"
+void LightEditor::UndoCheckpoint()
+{
+	cur = checkpointUndo;
+	applyPending = false;
+	if( lightEntity != NULL )
+	{
+		idDict d;
+		CheckpointUndoDict( cur, *gameEdit->EntityGetSpawnArgs( lightEntity ), checkpointEmit, d );
+		gameEdit->EntityChangeSpawnArgs( lightEntity, &d );
+		gameEdit->EntityUpdateChangeableSpawnArgs( lightEntity, NULL );
+	}
+}
+
 // S6: F in both directions, and RMB out of easy mode (NONE, or AUTO after its deselect)
 void LightEditor::SwitchMode()
 {
@@ -3425,7 +4351,7 @@ void LightEditor::SwitchMode()
 	{
 		if( easyState == EASY_MODAL )
 		{
-			cur = modalBase;
+			cur = modalEntry;
 			applyPending = true;
 			easyState = EASY_AUTO;
 		}
@@ -3463,9 +4389,24 @@ void LightEditor::SwitchMode()
 // U-2: Q, E, R or T pressed in AUTO
 void LightEditor::EnterModal( int key )
 {
-	// R4-3: a held sphere turns its frame to last frame's aim first, so cancel returns to the
-	// aligned sphere, which looks identical
-	if( lastAimHit && ModalAlignSphere( cur, autoBase, lastAim ) )
+	// an emitter spot's R works in the light's frame, so its roll is levelled first (in the world, through
+	// the frame AUTO took for this entry, else the light's own now)
+	LightStoredFrame frame;
+	const LightStoredFrame* spotFrame = NULL;
+	if( key == K_R && cur.emitter.enabled && cur.lightType == LIGHT_SPOT && lightEntity != NULL )
+	{
+		if( autoBase.haveStoredFrame )
+		{
+			frame = autoBase.storedFrame;
+		}
+		else
+		{
+			LightStoredFrameOf( lightEntity, frame );
+		}
+		spotFrame = &frame;
+	}
+
+	if( ModalPrepareEntry( cur, modalEntry, autoBase, lastAimHit, lastAim, spotFrame ) )
 	{
 		applyPending = true;
 	}
@@ -3501,6 +4442,7 @@ bool LightEditor::Deselect( bool commit )
 	Reset();
 	entityName.Clear();
 	easyState = EASY_NONE;
+	checkpointEmit.Clear();
 	return true;
 }
 
@@ -3527,6 +4469,9 @@ void LightEditor::Open()
 
 	committed.Clear();
 	lastWarning.Clear();
+
+	// G0 9: a new session; Equilateral shows ticked again for an emitter omni with equal radii
+	equilateralUnticked = false;
 
 	// required: the off path never cleared releaseMouse
 	SetReleaseToolMouse( false );
@@ -3556,6 +4501,7 @@ void LightEditor::Close()
 	lastWarning.Clear();
 
 	easyState = EASY_NONE;
+	checkpointEmit.Clear();
 	easyMode = true;
 	isShown = false;
 	editorOpen = false;
@@ -3589,7 +4535,9 @@ void LightEditor::EntityRemoved( idEntity* ent )
 
 	// the checkpoint and the modal snapshot belonged to the removed light
 	checkpointUndo.Defaults();
+	checkpointEmit.Clear();
 	modalBase.Defaults();
+	modalEntry.Defaults();
 	modalKey = 0;
 	modalX = 0;
 	modalY = 0;
@@ -3655,14 +4603,23 @@ void LightEditor::DrawEasyOverlay()
 	if( lightEntity != NULL )
 	{
 		static const char* falloffNames[] = { "inverse square", "linear", "smooth", "exponential", "inverse square clamped" };
-		const int falloff = idMath::ClampInt( 0, IM_ARRAYSIZE( falloffNames ) - 1, cur.mathLight.falloff );
-		if( cur.mathLight.enabled )
+		const int falloff = idMath::ClampInt( 0, IM_ARRAYSIZE( falloffNames ) - 1, cur.emitter.falloff );
+		const char* autoText = cur.autoRange ? ", auto range" : "";
+		if( cur.emitter.enabled && cur.lightType == LIGHT_SPOT )
 		{
-			ImGui::Text( "math: %s, inner %.2f", falloffNames[ falloff ], cur.mathLight.innerRadius );
+			ImGui::Text( "emitter spot: range %.0f, cone %.0f x %.0f, %s, size %.0f%s", EM_Range( cur.lightRadius ), cur.emitter.coneH, cur.emitter.coneV, falloffNames[ falloff ], cur.emitter.size, autoText );
+		}
+		else if( cur.emitter.enabled && cur.lightType == LIGHT_POINT )
+		{
+			ImGui::Text( "emitter omni: range %.0f, %s, size %.0f%s", EM_Range( cur.lightRadius ), falloffNames[ falloff ], cur.emitter.size, autoText );
+		}
+		else if( cur.emitter.enabled )
+		{
+			ImGui::TextUnformatted( "emitter sun" );
 		}
 		else
 		{
-			ImGui::TextUnformatted( "math: off" );
+			ImGui::TextUnformatted( "texture light" );
 		}
 	}
 
@@ -3727,6 +4684,9 @@ void LightEditor::DrawEasyOverlay()
 }
 
 // ########### le_selfTest (D22, D38) #############
+
+//puncho - dev guard (RV2-EA-06, RV2-ET-05): test scaffolding stays out of retail builds, as cm_selfTest's
+#if !defined( ID_RETAIL )
 
 namespace
 {
@@ -4401,203 +5361,1188 @@ static void SelfTestColor( LightSelfTest& test )
 	test.Check( colorTwice.color == coloredWalked.color, "T: no per-frame integration" );
 }
 
-// D45: one light type; the math-light type follows it
-static void SelfTestLightType( LightSelfTest& test )
+// a ToDict dict merged onto a light as idGameEdit::EntityChangeSpawnArgs merges it ("" deletes the key)
+static void SelfTestMerge( idDict& light, const idDict& d )
 {
-	// a spot whose map says math_type "point" (the writer's spelling; an unknown value would only
-	// fall back to the light's type and prove nothing)
-	idDict spotDict;
-	spotDict.Set( "classname", "light" );
-	spotDict.Set( "light_target", "0 0 -256" );
-	spotDict.Set( "light_up", "0 -128 0" );
-	spotDict.Set( "light_right", "-128 0 0" );
-	spotDict.Set( "math_enabled", "1" );
-	spotDict.Set( "math_type", "point" );
-
-	LightInfo parsed;
-	parsed.FromDict( &spotDict );
-	idDict written;
-	parsed.ToDict( &written );
-	test.Check( parsed.lightType == LIGHT_SPOT && parsed.mathLight.type == ML_SPOT && idStr::Icmp( written.GetString( "math_type" ), "spot" ) == 0,
-				"light type: a spot whose map says math_type point parses and writes as a spot" );
-
-	// the panel's type choice: Default* on a change, then SetLightType
-	LightInfo toPoint = parsed;
-	toPoint.DefaultPoint();
-	toPoint.SetLightType( LIGHT_POINT );
-	LightInfo toSun = parsed;
-	toSun.DefaultSun();
-	toSun.SetLightType( LIGHT_SUN );
-	test.Check( toPoint.mathLight.type == ML_POINT && toSun.mathLight.type == ML_SUN, "light type: choosing point (or sun) at the top sets the math type with it" );
-
-	// R4-2: the math settings survive the switch
-	LightInfo mathSpot;
-	mathSpot.DefaultProjected();
-	mathSpot.mathLight.enabled = true;
-	mathSpot.mathLight.falloff = MLF_LINEAR;
-	mathSpot.mathLight.innerRadius = 0.3f;
-	LightInfo mathSwitched = mathSpot;
-	mathSwitched.DefaultPoint();
-	mathSwitched.SetLightType( LIGHT_POINT );
-	test.Check( mathSwitched.mathLight.enabled && mathSwitched.mathLight.falloff == MLF_LINEAR && mathSwitched.mathLight.innerRadius == 0.3f && mathSwitched.mathLight.type == ML_POINT,
-				"light type: a linear spot with inner radius 0.3 switched to point keeps falloff and inner radius" );
-
-	// ToDict alone: the type in memory never reaches the map against the light's type
-	LightInfo mismatched;
-	mismatched.DefaultPoint();
-	mismatched.mathLight.enabled = true;
-	mismatched.mathLight.type = ML_SPOT;
-	idDict mismatchedDict;
-	mismatched.ToDict( &mismatchedDict );
-	test.Check( idStr::Icmp( mismatchedDict.GetString( "math_type" ), "point" ) == 0, "light type: ToDict writes math_type point for a point light whose math type says spot" );
-}
-
-// D51 / D54 / D62: the math_style key, the disabled block that keeps its keys, and the brightness
-static void SelfTestMathStyle( LightSelfTest& test )
-{
-	idDict plain;
-	plain.Set( "classname", "light" );
-	plain.Set( "math_enabled", "1" );
-	LightInfo plainLight;
-	plainLight.FromDict( &plain );
-	idDict plainWritten;
-	plainLight.ToDict( &plainWritten );
-	test.Check( plainLight.mathLight.style == -1 && plainWritten.FindKey( "math_style" ) != NULL && plainWritten.GetString( "math_style" )[ 0 ] == '\0', "math_style: absent reads as -1, and ToDict writes no value (\"\" removes the key)" );
-
-	idDict strobe = plain;
-	strobe.Set( "math_style", "4" );
-	strobe.Set( "math_falloff", "linear" );
-	LightInfo strobeLight;
-	strobeLight.FromDict( &strobe );
-	idDict strobeWritten;
-	strobeLight.ToDict( &strobeWritten );
-	test.Check( strobeLight.mathLight.style == 4 && idStr::Cmp( strobeWritten.GetString( "math_style" ), "4" ) == 0, "math_style: 4 reads as 4 and writes \"4\"" );
-
-	idDict pastTable = plain;
-	pastTable.Set( "math_style", "12" );
-	idDict gated = strobe;
-	gated.Set( "math_enabled", "0" );
-	LightInfo pastTableLight;
-	pastTableLight.FromDict( &pastTable );
-	LightInfo gatedLight;
-	gatedLight.FromDict( &gated );
-	test.Check( pastTableLight.mathLight.style == -1 && gatedLight.mathLight.style == -1 && !gatedLight.mathLight.enabled,
-				"math_style: an index past the table, or a disabled block, reads as no style" );
-
-	// the Texture tab: ToDict's dict merged onto the light as idGameEdit::EntityChangeSpawnArgs merges it
-	LightInfo textureTab = strobeLight;
-	textureTab.mathLight.enabled = false;
-	idDict textureWritten;
-	textureTab.ToDict( &textureWritten );
-	int otherMathKeys = 0;
-	for( const idKeyValue* kv = textureWritten.MatchPrefix( "math_" ); kv != NULL; kv = textureWritten.MatchPrefix( "math_", kv ) )
+	for( int i = 0; i < d.GetNumKeyVals(); i++ )
 	{
-		if( kv->GetKey().Cmp( "math_enabled" ) != 0 )
-		{
-			otherMathKeys++;
-		}
-	}
-	idDict merged = strobe;
-	for( int i = 0; i < textureWritten.GetNumKeyVals(); i++ )
-	{
-		const idKeyValue* kv = textureWritten.GetKeyVal( i );
+		const idKeyValue* kv = d.GetKeyVal( i );
 		if( kv->GetValue().IsEmpty() )
 		{
-			merged.Delete( kv->GetKey() );
+			light.Delete( kv->GetKey() );
 		}
 		else
 		{
-			merged.Set( kv->GetKey(), kv->GetValue() );
+			light.Set( kv->GetKey(), kv->GetValue() );
 		}
 	}
-	test.Check( otherMathKeys == 0 && idStr::Cmp( merged.GetString( "math_enabled" ), "0" ) == 0 && idStr::Cmp( merged.GetString( "math_style" ), "4" ) == 0
-				&& idStr::Cmp( merged.GetString( "math_falloff" ), "linear" ) == 0, "D51: a disabled block writes only math_enabled 0; math_style and the other math keys stay on the light" );
-
-	idDict deleted;
-	ML_WriteToDict( &deleted, textureTab.mathLight, true );
-	test.Check( deleted.FindKey( "math_style" ) != NULL && deleted.GetString( "math_style" )[ 0 ] == '\0' && deleted.GetString( "math_falloff" )[ 0 ] == '\0',
-				"D51: deleteWhenDisabled true still removes every math key, math_style with them" );
-
-	// idLight::SharedThink: the math light's colour is its base times this
-	const idVec3 base( 0.5f, 1.0f, 2.0f );
-	const idVec3 atA = base * ML_StyleMultiplier( "a", 1234, 100 );
-	const idVec3 atM = base * ML_StyleMultiplier( "m", 1234, 100 );
-	const idVec3 atZ = base * ML_StyleMultiplier( "z", 1234, 100 );
-	test.Check( atA.Compare( vec3_zero, 1e-6f ), "math_style: 'a' darkens the colour to 0" );
-	test.Check( atM.Compare( base, 1e-5f ), "math_style: 'm' keeps the base colour (x1)" );
-	test.Check( atZ.Compare( base * ( 25.0f / 12.0f ), 1e-5f ), "math_style: 'z' brightens the colour to x25/12 (about 2)" );
-
-	// the a-z steps play one per ls_frametime and interpolate, wrapping at the end of the string
-	const char* fastStrobe = predef_lightstyles[ 4 ];
-	test.Check( SelfTestNear( ML_StyleMultiplier( fastStrobe, 0, 100 ), 1.0f, 1e-6f ) && SelfTestNear( ML_StyleMultiplier( fastStrobe, 100, 100 ), 0.0f, 1e-6f )
-				&& SelfTestNear( ML_StyleMultiplier( fastStrobe, 50, 100 ), 0.5f, 1e-6f ) && SelfTestNear( ML_StyleMultiplier( "ma", 150, 100 ), 0.5f, 1e-6f ),
-				"math_style: Fast Strobe steps m, a at ls_frametime 100 and interpolates; the string wraps" );
-	test.Check( SelfTestNear( ML_StyleMultiplier( fastStrobe, 250, 0 ), 1.0f, 1e-6f ) && SelfTestNear( ML_StyleMultiplier( "", 250, 100 ), 1.0f, 1e-6f ),
-				"math_style: ls_frametime 0 and an empty string are safe" );
 }
 
-// Cancel means no change, though D51 leaves math keys on a light whose block is off (CancelChanges on
-// a dict standing in for the light's spawnArgs)
-static void SelfTestCancelMath( LightSelfTest& test )
+static bool SelfTestDeletes( const idDict& written, const char* key )
 {
-	// a legacy light, seeded on selection (Init's TempApplyChanges), switched to Texture, cancelled
-	idDict legacy;
-	legacy.Set( "classname", "light" );
-	legacy.Set( "light_radius", "300 300 300" );
-	idDict legacyMath;
-	CopyMathKeys( legacy, legacyMath );
-	LightInfo legacyOriginal;
-	legacyOriginal.FromDict( &legacy );
-	LightInfo seeded = legacyOriginal;
-	SeedMathLight( seeded.mathLight, seeded.lightType );
-
-	idDict light = legacy;
-	idDict seededDict;
-	seeded.ToDict( &seededDict );
-	ApplyMathKeys( light, seededDict );
-	seeded.mathLight.enabled = false;
-	idDict textureDict;
-	seeded.ToDict( &textureDict );
-	ApplyMathKeys( light, textureDict );
-	const bool keptAfterSwitch = ( light.FindKey( "math_falloff" ) != NULL && idStr::Cmp( light.GetString( "math_enabled" ), "0" ) == 0 );
-
-	idDict cancelDict;
-	legacyOriginal.ToDict( &cancelDict );
-	RestoreMathKeys( legacyMath, light, cancelDict );
-	ApplyMathKeys( light, cancelDict );
-	test.Check( keptAfterSwitch && light.MatchPrefix( "math_" ) == NULL, "Cancel: a seeded legacy light switched to Texture is left with no math_* key" );
-
-	// a math light with three keys, edited (all keys written), switched to Texture, cancelled
-	idDict mathDict = legacy;
-	mathDict.Set( "math_enabled", "1" );
-	mathDict.Set( "math_falloff", "linear" );
-	mathDict.Set( "math_style", "4" );
-	idDict mathKeys;
-	CopyMathKeys( mathDict, mathKeys );
-	LightInfo mathOriginal;
-	mathOriginal.FromDict( &mathDict );
-
-	idDict live = mathDict;
-	idDict editedDict;
-	mathOriginal.ToDict( &editedDict );
-	ApplyMathKeys( live, editedDict );
-	LightInfo switched = mathOriginal;
-	switched.mathLight.enabled = false;
-	idDict switchedDict;
-	switched.ToDict( &switchedDict );
-	ApplyMathKeys( live, switchedDict );
-	const bool offAfterSwitch = ( idStr::Cmp( live.GetString( "math_enabled" ), "0" ) == 0 );
-
-	idDict restoreDict;
-	mathOriginal.ToDict( &restoreDict );
-	RestoreMathKeys( mathKeys, live, restoreDict );
-	ApplyMathKeys( live, restoreDict );
-	idDict liveMath;
-	CopyMathKeys( live, liveMath );
-	test.Check( offAfterSwitch && liveMath.GetNumKeyVals() == 3 && idStr::Cmp( live.GetString( "math_enabled" ), "1" ) == 0
-				&& idStr::Cmp( live.GetString( "math_falloff" ), "linear" ) == 0 && idStr::Cmp( live.GetString( "math_style" ), "4" ) == 0,
-				"Cancel: a math light switched to Texture gets math_enabled 1 and exactly its own math keys back" );
+	return written.FindKey( key ) != NULL && written.GetString( key )[ 0 ] == '\0';
 }
+
+// parse, write, merge and parse again: the second parse gives the first; rotations compared as matrices
+static bool SelfTestRoundTrip( const idDict& spawnArgs, LightInfo& first, LightInfo& second, idDict& written )
+{
+	first.FromDict( &spawnArgs );
+	written.Clear();
+	first.ToDict( &written );
+	idDict merged = spawnArgs;
+	SelfTestMerge( merged, written );
+	second.FromDict( &merged );
+
+	return memcmp( &first.emitter, &second.emitter, sizeof( first.emitter ) ) == 0 && first.lightType == second.lightType
+		   && first.autoRange == second.autoRange && first.lightRadius.Compare( second.lightRadius, 1e-2f )
+		   && first.angles.ToMat3().Compare( second.angles.ToMat3(), 1e-4f );
+}
+
+// the emitter keys of each shape, a texture light and the Texture tab
+static void SelfTestEmitterKeys( LightSelfTest& test )
+{
+	LightInfo first;
+	LightInfo second;
+	idDict written;
+
+	idDict omni;
+	omni.Set( "classname", "light" );
+	omni.Set( "emitter", "1" );
+	omni.Set( "emit_shape", "omni" );
+	omni.Set( "light_radius", "288 144 288" );
+	omni.Set( "light_center", "0 0 16" );
+	omni.Set( "emit_falloff", "exponential" );
+	omni.Set( "emit_size", "64" );
+	omni.Set( "emit_start", "8" );
+	omni.Set( "emit_effect", "candle_a" );
+	omni.Set( "emit_auto_range", "0" );
+	omni.Set( "angles", "0 45 0" );
+	const bool omniSame = SelfTestRoundTrip( omni, first, second, written );
+	test.Check( omniSame && first.lightType == LIGHT_POINT && first.emitter.enabled && first.emitter.effect == 3 && !first.autoRange
+				&& second.hasCenter && second.lightCenter.Compare( idVec3( 0.0f, 0.0f, 16.0f ), 1e-3f )
+				&& SelfTestDeletes( written, "parallel" ) && SelfTestDeletes( written, "light_target" ),
+				"emitter omni: parse, write, parse again; parallel and the frustum deleted" );
+
+	idDict spot;
+	spot.Set( "classname", "light" );
+	spot.Set( "emitter", "1" );
+	spot.Set( "emit_shape", "spot" );
+	spot.Set( "light_radius", "400 100 50" );
+	spot.Set( "emit_cone", "40 20" );
+	spot.Set( "angles", "90 0 0" );
+	spot.Set( "light_target", "0 0 -256" );
+	spot.Set( "light_right", "-128 0 0" );
+	spot.Set( "light_up", "0 -128 0" );
+	const bool spotSame = SelfTestRoundTrip( spot, first, second, written );
+	test.Check( spotSame && first.lightType == LIGHT_SPOT && first.lightRadius.Compare( idVec3( 400.0f, 400.0f, 400.0f ), 1e-3f )
+				&& written.GetVector( "light_radius" ).Compare( idVec3( 400.0f, 400.0f, 400.0f ), 1e-3f ) && SelfTestNear( first.emitter.coneV, 20.0f, 1e-3f )
+				&& SelfTestDeletes( written, "light_target" ) && SelfTestDeletes( written, "light_right" ) && SelfTestDeletes( written, "light_up" )
+				&& SelfTestDeletes( written, "parallel" ) && SelfTestDeletes( written, "light_center" ),
+				"emitter spot: stale frustum keys ignored and deleted, light_radius written R R R, the cone kept" );
+	test.Check( first.angles.ToMat3()[ 0 ].Compare( idVec3( 0.0f, 0.0f, -1.0f ), 1e-4f ), "emitter spot: angles \"90 0 0\" points axis[0] straight down" );
+
+	idDict sun;
+	sun.Set( "classname", "light" );
+	sun.Set( "emitter", "1" );
+	sun.Set( "emit_shape", "sun" );
+	sun.Set( "parallel", "1" );
+	sun.Set( "light_radius", "2048 2048 1024" );
+	sun.Set( "light_center", "4 4 32" );
+	sun.Set( "emit_effect", "pulse" );
+	const bool sunSame = SelfTestRoundTrip( sun, first, second, written );
+	test.Check( sunSame && first.lightType == LIGHT_SUN && idStr::Cmp( written.GetString( "parallel" ), "1" ) == 0
+				&& written.GetVector( "light_center" ).Compare( idVec3( 4.0f, 4.0f, 32.0f ), 1e-3f ) && first.emitter.effect == EME_PULSE,
+				"emitter sun: parallel 1, its box and light_center written as a sun writes them today" );
+
+	idDict texture;
+	texture.Set( "classname", "light" );
+	texture.Set( "light_radius", "300 300 300" );
+	texture.Set( "texture", "lights/squarelight1" );
+	LightInfo textureLight;
+	textureLight.FromDict( &texture );
+	idDict textureWritten;
+	textureLight.ToDict( &textureWritten );
+	test.Check( !textureLight.emitter.enabled && textureWritten.MatchPrefix( "emit" ) == NULL,
+				"texture light: no emitter key is written for a light that has none" );
+
+	// the Texture tab on an emitter: emitter "0", every emit_* key left in place
+	LightInfo switched;
+	switched.FromDict( &omni );
+	SwitchToTexture( switched );
+	idDict switchedWritten;
+	switched.ToDict( &switchedWritten );
+	test.Check( idStr::Cmp( switchedWritten.GetString( "emitter" ), "0" ) == 0 && switchedWritten.MatchPrefix( "emit_" ) == NULL,
+				"Texture tab: an emitter writes emitter 0 and leaves its emit_* keys on the light" );
+
+	// RV-C-ET-14: a phase that rounds to zero is written "0", never "-0"
+	emitterData_t tinyPhase;
+	EM_ParseAllFromDict( &omni, &tinyPhase );
+	tinyPhase.effectPhase = -0.00001f;
+	tinyPhase.patternPhase = -0.00004f;
+	idDict tinyDict;
+	EM_WriteToDict( &tinyDict, tinyPhase, false );
+	test.Check( idStr::Cmp( tinyDict.GetString( "emit_effect_phase" ), "0" ) == 0 && idStr::Cmp( tinyDict.GetString( "emit_pattern_phase" ), "0" ) == 0,
+				"RV-C-ET-14: EM_WriteToDict writes a phase of -0.00001 \"0\", never \"-0\"" );
+}
+
+// a spot emitter at a known pose; auto range off, so the gestures alone are measured
+static LightInfo SelfTestEmitterSpot()
+{
+	LightInfo spot;
+	spot.DefaultProjected();
+	SeedEmitter( spot.emitter, LIGHT_SPOT );
+	spot.hasEmitterBlock = true;
+	spot.autoRange = false;
+	spot.origin.Set( 100.0f, 200.0f, 50.0f );
+	spot.angles.Set( 0.0f, 30.0f, 0.0f );
+	spot.emitter.start = 16.0f;
+	SetEmitterRange( spot, 512.0f );
+	return spot;
+}
+
+// AUTO, Q, E, R and auto range on emitters (the cvar defaults as sensitivities)
+static void SelfTestEmitterGestures( LightSelfTest& test )
+{
+	const float scaleSens = 0.004f;
+	const float wheelSens = 0.10f;
+	const float rotSens = 0.25f;
+	const float rotWheelSens = 5.0f;
+
+	// ---- AUTO (AutoCaptureBase leaves the identity frame in the base, as for an unbound light): the beam through the aim.
+	// Auto range is off on this spot, so since choice 2 (G0 9) no aim changes its range: before it, a far
+	// aim set the range to farDistance / 0.6 here, and this check expected that
+	const LightInfo spot = SelfTestEmitterSpot();
+	LightAutoBase base;
+	AutoCaptureBase( spot, base );
+	LightInfo aimed = spot;
+	const idVec3 farAim = spot.origin + idVec3( 900.0f, 300.0f, -200.0f );
+	const float farDistance = ( farAim - spot.origin ).Length();
+	const bool farMoved = AutoAimEmitterSpot( aimed, base, farAim );
+	test.Check( farMoved && aimed.angles.ToMat3()[ 0 ].Compare( ( farAim - spot.origin ) / farDistance, 1e-4f )
+				&& SelfTestNear( EM_Range( aimed.lightRadius ), 512.0f, 1e-3f ),
+				"emitter AUTO: axis[0] runs through the aim; auto range off, a far aim keeps the range" );
+
+	AutoAimEmitterSpot( aimed, base, spot.origin + idVec3( 100.0f, 0.0f, -50.0f ) );
+	test.Check( SelfTestNear( EM_Range( aimed.lightRadius ), 512.0f, 1e-3f ) && SelfTestNear( aimed.emitter.size, spot.emitter.size, 1e-4f )
+				&& SelfTestNear( aimed.emitter.start, spot.emitter.start, 1e-4f ),
+				"emitter AUTO: auto range off, a near aim keeps the range, the size and the start" );
+
+	LightInfo down = spot;
+	down.angles.Zero();
+	LightAutoBase downBase;
+	AutoCaptureBase( down, downBase );
+	AutoAimEmitterSpot( down, downBase, down.origin + idVec3( 0.0f, 0.0f, -300.0f ) );
+	const idMat3 downAxis = down.angles.ToMat3();
+	test.Check( downAxis[ 0 ].Compare( idVec3( 0.0f, 0.0f, -1.0f ), 1e-4f ) && SelfTestFinite( downAxis[ 1 ] ) && SelfTestFinite( downAxis[ 2 ] )
+				&& downAxis[ 0 ].Cross( downAxis[ 1 ] ) * downAxis[ 2 ] > 0.999f,
+				"emitter AUTO: aimed straight down, the frame stays finite and right-handed" );
+
+	// an entity turned 90 degrees and moved since its dict pose: aimed in the world, stored in the dict's space
+	LightStoredFrame turned;
+	turned.storedOrigin.Zero();
+	turned.worldOrigin.Set( 1000.0f, 0.0f, 0.0f );
+	turned.axis = idAngles( 0.0f, 90.0f, 0.0f ).ToMat3();
+	LightInfo bound = spot;
+	bound.origin.Set( 100.0f, 0.0f, 0.0f );
+	LightAutoBase boundBase;
+	AutoCaptureBase( bound, boundBase );
+	boundBase.storedFrame = turned;		// what RunFrame takes once for the entry
+	boundBase.haveStoredFrame = true;
+	const idVec3 boundBulb = turned.ToWorldPoint( bound.origin );
+	const idVec3 boundAim = boundBulb + idVec3( 0.0f, 400.0f, -300.0f );
+	AutoAimEmitterSpot( bound, boundBase, boundAim );
+	test.Check( boundBulb.Compare( idVec3( 1000.0f, 100.0f, 0.0f ), 1e-2f ) && ( bound.angles.ToMat3() * turned.axis )[ 0 ].Compare( idVec3( 0.0f, 0.8f, -0.6f ), 1e-4f ),
+				"emitter AUTO: a moved entity's light is aimed in the world and stored in its dict's space" );
+
+	// RV-G4-04: the frame is the entry's, so a second frame at the same aim stores the same rotation
+	const idMat3 boundFirst = bound.angles.ToMat3();
+	AutoAimEmitterSpot( bound, boundBase, boundAim );
+	test.Check( bound.angles.ToMat3().Compare( boundFirst, 1e-4f ), "emitter AUTO: two frames at the same aim store the same rotation (no feedback)" );
+
+	// RV-G4-04: a light without light_origin is aimed in its stored space whatever its physics pose;
+	// a light_origin light gets E^T * P (here E is the identity, P the turned and moved pose)
+	idDict plainArgs;
+	plainArgs.Set( "origin", "100 0 0" );
+	plainArgs.Set( "angles", "0 30 0" );
+	LightStoredFrame plainFrame;
+	LightStoredFrameFromDict( plainArgs, turned.worldOrigin, turned.axis, plainFrame );
+	idDict fixtureArgs;
+	fixtureArgs.Set( "origin", "0 0 0" );
+	fixtureArgs.Set( "light_origin", "100 0 0" );
+	LightStoredFrame fixtureFrame;
+	LightStoredFrameFromDict( fixtureArgs, turned.worldOrigin, turned.axis, fixtureFrame );
+	test.Check( plainFrame.axis.Compare( mat3_identity, 1e-6f ) && plainFrame.ToWorldPoint( idVec3( 100.0f, 0.0f, 0.0f ) ).Compare( idVec3( 100.0f, 0.0f, 0.0f ), 1e-4f )
+				&& fixtureFrame.axis.Compare( turned.axis, 1e-6f ) && fixtureFrame.worldOrigin.Compare( turned.worldOrigin, 1e-4f ),
+				"stored frame: identity without light_origin (bound or not); E-transpose * P with light_origin" );
+
+	// ---- Q
+	const float s = idMath::Exp( 250.0f * scaleSens );
+	LightInfo scaled = spot;
+	ModalScale( scaled, spot, 250.0f, scaleSens );
+	test.Check( SelfTestNear( EM_Range( scaled.lightRadius ), 512.0f * s, 1e-1f ) && SelfTestNear( scaled.emitter.size, spot.emitter.size * s, 1e-2f )
+				&& SelfTestNear( scaled.emitter.start, 16.0f * s, 1e-2f ) && SelfTestNear( scaled.emitter.coneH, spot.emitter.coneH, 1e-4f )
+				&& scaled.origin == spot.origin && scaled.angles == spot.angles,
+				"emitter Q: range, size and start times s; the cone, the bulb and the rotation stay" );
+
+	// ---- E
+	LightInfo widened = spot;
+	ModalStretch( widened, spot, 250.0f, 0.0f, 0.0f, scaleSens, wheelSens );
+	test.Check( SelfTestNear( widened.emitter.tanHalfH, spot.emitter.tanHalfH * idMath::Exp( 1.0f ), 1e-3f ) && SelfTestNear( widened.emitter.coneV, spot.emitter.coneV, 1e-3f )
+				&& SelfTestNear( EM_Range( widened.lightRadius ), 512.0f, 1e-3f ),
+				"emitter E: mouse x widens cone h only" );
+
+	LightInfo longer = spot;
+	ModalStretch( longer, spot, 0.0f, 0.0f, 5.0f, scaleSens, wheelSens );
+	test.Check( SelfTestNear( EM_Range( longer.lightRadius ), 512.0f * idMath::Exp( 0.5f ), 1e-1f )
+				&& SelfTestNear( longer.emitter.coneH, spot.emitter.coneH, 1e-3f ) && SelfTestNear( longer.emitter.coneV, spot.emitter.coneV, 1e-3f ),
+				"emitter E: the wheel changes the range only" );
+
+	// ---- R
+	const idMat3 spotAxis = spot.angles.ToMat3();
+	LightInfo rolled = spot;
+	ModalRotate( rolled, spot, 360.0f, 0.0f, 0.0f, rotSens, rotWheelSens );
+	const idMat3 rolledAxis = rolled.angles.ToMat3();
+	test.Check( rolledAxis[ 0 ].Compare( spotAxis[ 0 ], 1e-4f ) && idMath::Fabs( rolledAxis[ 1 ] * spotAxis[ 1 ] ) < 1e-3f,
+				"emitter R: mouse x rolls 90 degrees about the beam; axis[0] stays" );
+
+	LightInfo pitched = spot;
+	ModalRotate( pitched, spot, 0.0f, -40.0f, 0.0f, rotSens, rotWheelSens );
+	test.Check( pitched.angles.ToMat3()[ 0 ].z > spotAxis[ 0 ].z, "emitter R: mouse up raises the beam" );
+
+	// ---- auto range
+	LightInfo omni;
+	omni.DefaultPoint();
+	SeedEmitter( omni.emitter, LIGHT_POINT );
+	omni.autoRange = true;
+	omni.color.Set( 1.0f, 1.0f, 1.0f );
+	EmitterReachChanged( omni );
+	test.Check( omni.lightRadius.Compare( idVec3( 288.0f, 288.0f, 288.0f ), 1e-2f ), "auto range: intensity 1, size 96, start 0 gives 288" );
+
+	LightInfo shaped = omni;
+	shaped.lightRadius.Set( 300.0f, 150.0f, 300.0f );
+	shaped.equalRadius = false;
+	EmitterReachChanged( shaped );
+	test.Check( shaped.lightRadius.Compare( idVec3( 288.0f, 144.0f, 288.0f ), 1e-2f ), "auto range: an omni with unequal radii is scaled as a whole" );
+
+	LightInfo ranged = omni;
+	SetEmitterRange( ranged, 576.0f );
+	EmitterRangeSet( ranged );
+	test.Check( SelfTestNear( ranged.emitter.size, 192.0f, 1e-2f ), "auto range: setting the range to 576 sets the size to 192" );
+
+	LightInfo linear = omni;
+	linear.emitter.falloff = EMF_LINEAR;
+	linear.lightRadius.Set( 500.0f, 500.0f, 500.0f );
+	EmitterReachChanged( linear );
+	test.Check( linear.lightRadius.Compare( idVec3( 500.0f, 500.0f, 500.0f ), 1e-3f ), "auto range: a linear curve has no reach, the range stays" );
+
+	LightInfo newSpot = omni;
+	newSpot.DefaultProjected();
+	test.Check( newSpot.emitter.enabled && newSpot.lightType == LIGHT_SPOT && newSpot.emitter.shape == EM_SPOT
+				&& newSpot.angles.ToMat3()[ 0 ].Compare( idVec3( 0.0f, 0.0f, -1.0f ), 1e-4f ) && newSpot.lightRadius.Compare( idVec3( 288.0f, 288.0f, 288.0f ), 1e-2f ),
+				"new emitter spot from the type radio: pitch 90, range from auto range" );
+}
+
+// the kind switch both ways, compared as rotations, and Cancel after it
+static void SelfTestKindSwitch( LightSelfTest& test )
+{
+	LightInfo texture;
+	texture.DefaultProjected();
+	texture.angles.Set( 0.0f, 30.0f, 20.0f );
+	const idVec3 beam = texture.angles.ToMat3() * ( texture.lightTarget / texture.lightTarget.Length() );
+
+	const idDict noKeys;
+	LightInfo asEmitter = texture;
+	SwitchToEmitter( asEmitter, noKeys );
+	const float expectedCone = RAD2DEG( 2.0f * idMath::ATan( 0.5f ) );
+	test.Check( asEmitter.emitter.enabled && asEmitter.angles.ToMat3()[ 0 ].Compare( beam, 1e-4f ) && SelfTestNear( asEmitter.emitter.coneH, expectedCone, 1e-2f )
+				&& SelfTestNear( asEmitter.emitter.coneV, expectedCone, 1e-2f ) && SelfTestNear( EM_Range( asEmitter.lightRadius ), 264.0f, 1e-2f )
+				&& asEmitter.origin == texture.origin,
+				"kind switch: texture spot to emitter keeps the beam; cone 2 atan( |right| / |target| ); range zNear + zFar" );
+
+	LightInfo back = asEmitter;
+	SwitchToTexture( back );
+	// RV-C-ET-13: read back from the keys the panel writes, so the rotation is tested where it can be lost
+	idDict backDict;
+	back.ToDict( &backDict );
+	backDict.DeleteEmptyKeys();		// ToDict's "" means delete, as on a light
+	LightInfo backRead;
+	backRead.FromDict( &backDict );
+	const float backCone = RAD2DEG( 2.0f * idMath::ATan( backRead.lightRight.Length() / backRead.lightTarget.Length() ) );
+	// 1e-3: the keys hold angles and vectors with two decimals
+	test.Check( !backRead.emitter.enabled && backRead.lightType == LIGHT_SPOT && backRead.angles.ToMat3().Compare( asEmitter.angles.ToMat3(), 1e-3f )
+				&& ( backRead.angles.ToMat3() * ( backRead.lightTarget / backRead.lightTarget.Length() ) ).Compare( beam, 1e-3f ) && SelfTestNear( backCone, asEmitter.emitter.coneH, 1e-2f ),
+				"kind switch: emitter spot to texture keeps the rotation, the beam and the cone, as written and read back" );
+
+	idDict keptKeys;
+	asEmitter.ToDict( &keptKeys );
+	LightInfo again = back;
+	SwitchToEmitter( again, keptKeys );
+	const idMat3 a = asEmitter.angles.ToMat3();
+	const idMat3 b = again.angles.ToMat3();
+	test.Check( b.Compare( a, 1e-4f ) && again.emitter.falloff == asEmitter.emitter.falloff,
+				"kind switch: emitter to texture to emitter gives the same rotation and keeps the kept block" );
+	test.Check( SelfTestNear( again.emitter.coneH, asEmitter.emitter.coneH, 1e-2f ) && SelfTestNear( again.emitter.coneV, asEmitter.emitter.coneV, 1e-2f )
+				&& SelfTestNear( EM_Range( again.lightRadius ), EM_Range( asEmitter.lightRadius ), 1e-2f ),
+				"kind switch: the round trip gives both cone angles and the range back unchanged" );
+
+	// Cancel after the Emitter tab: the light ends with exactly the emit keys it had (none)
+	idDict live;
+	live.Set( "classname", "light" );
+	live.Set( "light_radius", "300 300 300" );
+	idDict originalEmit;
+	CopyPrefixKeys( live, originalEmit, "emit" );
+	LightInfo original;
+	original.FromDict( &live );
+	LightInfo edited = original;
+	SwitchToEmitter( edited, live );
+	idDict editedDict;
+	edited.ToDict( &editedDict );
+	SelfTestMerge( live, editedDict );
+	const bool becameEmitter = ( idStr::Cmp( live.GetString( "emitter" ), "1" ) == 0 );
+	idDict cancelDict;
+	original.ToDict( &cancelDict );
+	RestorePrefixKeys( originalEmit, live, cancelDict, "emit" );
+	SelfTestMerge( live, cancelDict );
+	test.Check( becameEmitter && live.MatchPrefix( "emit" ) == NULL, "Cancel: a texture light switched to Emitter is left with no emit key" );
+}
+
+// fix batch B (impl/B-FIXES.md): intensity, E on an omni, the bulb gizmo, the shape switch, drag speed,
+// R's roll, the effect seeded from style and the start of a texture spot
+static void SelfTestFixBatchB( LightSelfTest& test )
+{
+	const float scaleSens = 0.004f;
+	const float wheelSens = 0.10f;
+	const idDict noKeys;
+
+	// ---- F-E-04 intensity beside the colour
+	LightInfo tinted;
+	tinted.DefaultPoint();
+	tinted.color.Set( 2.0f, 1.0f, 0.5f );
+	idVec3 hue( 1.0f, 1.0f, 1.0f );
+	const float tintedIntensity = PanelColorSplit( tinted.color, hue );
+	const bool splitOk = SelfTestNear( tintedIntensity, 2.0f, 1e-6f ) && hue.Compare( idVec3( 1.0f, 0.5f, 0.25f ), 1e-6f );
+	PanelSetColor( tinted, hue, 0.0f );
+	const float blackIntensity = PanelColorSplit( tinted.color, hue );
+	const bool blackOk = tinted.color == vec3_zero && blackIntensity == 0.0f && hue.Compare( idVec3( 1.0f, 0.5f, 0.25f ), 1e-6f );
+	PanelSetColor( tinted, hue, 3.0f );
+	test.Check( splitOk && blackOk && tinted.color.Compare( idVec3( 3.0f, 1.5f, 0.75f ), 1e-5f ),
+				"intensity: the largest channel, the colour over it; intensity 0 keeps the colour shown; _color = colour * intensity" );
+
+	LightInfo textureA;
+	textureA.DefaultPoint();
+	textureA.color.Set( 2.0f, 1.0f, 0.5f );
+	LightInfo textureB;
+	textureB.DefaultPoint();
+	PanelSetColor( textureB, idVec3( 1.0f, 0.5f, 0.25f ), 2.0f );
+	idDict keysA;
+	idDict keysB;
+	textureA.ToDict( &keysA );
+	textureB.ToDict( &keysB );
+	test.Check( idStr::Cmp( keysA.GetString( "_color" ), keysB.GetString( "_color" ) ) == 0 && keysA.GetVector( "light_radius" ) == keysB.GetVector( "light_radius" ),
+				"intensity: a texture light set through colour and intensity writes the keys of the same colour" );
+
+	LightInfo reach;
+	reach.DefaultPoint();
+	SeedEmitter( reach.emitter, LIGHT_POINT );
+	reach.autoRange = true;
+	reach.color.Set( 1.0f, 1.0f, 1.0f );
+	EmitterReachChanged( reach );
+	PanelSetColor( reach, idVec3( 1.0f, 1.0f, 1.0f ), 4.0f );
+	test.Check( SelfTestNear( EM_Range( reach.lightRadius ), EM_AutoRange( reach.emitter, 4.0f ), 1e-2f ) && EM_Range( reach.lightRadius ) > 288.0f,
+				"intensity: an edit on an auto-range emitter is a reach edit" );
+
+	// ---- F-E-05 E on an emitter omni keeps the lamp
+	LightInfo bulbOmni;
+	bulbOmni.DefaultPoint();
+	SeedEmitter( bulbOmni.emitter, LIGHT_POINT );
+	bulbOmni.hasEmitterBlock = true;
+	bulbOmni.autoRange = false;
+	bulbOmni.origin.Set( 10.0f, 20.0f, 30.0f );
+	bulbOmni.angles.Set( 30.0f, 45.0f, 0.0f );
+	bulbOmni.hasCenter = true;
+	bulbOmni.lightCenter.Set( 0.0f, 0.0f, 16.0f );
+	bulbOmni.lightRadius.Set( 200.0f, 200.0f, 200.0f );
+	const idVec3 bulb = bulbOmni.origin + bulbOmni.angles.ToMat3() * bulbOmni.lightCenter;
+	LightInfo stretched = bulbOmni;
+	ModalStretch( stretched, bulbOmni, 0.0f, 0.0f, 5.0f, scaleSens, wheelSens );
+	test.Check( stretched.origin == bulbOmni.origin && SelfTestNear( stretched.lightRadius.z, 200.0f * idMath::Exp( 0.5f ), 1e-2f )
+				&& SelfTestNear( stretched.lightRadius.x, 200.0f, 1e-3f ) && LightGizmoOrigin( stretched ).Compare( bulb, 1e-3f ),
+				"emitter E: an omni's radii scale about the bulb; the origin stays" );
+
+	LightInfo texturePoint;
+	texturePoint.DefaultPoint();
+	texturePoint.origin = bulbOmni.origin;
+	texturePoint.angles = bulbOmni.angles;
+	LightInfo textureStretched = texturePoint;
+	ModalStretch( textureStretched, texturePoint, 0.0f, 0.0f, 5.0f, scaleSens, wheelSens );
+	const float sz = idMath::Exp( 0.5f );
+	test.Check( textureStretched.origin.Compare( texturePoint.origin + texturePoint.angles.ToMat3()[ 2 ] * ( 300.0f * sz - 300.0f ), 1e-2f ),
+				"E: a texture point light keeps its near face, as before" );
+
+	// ---- F-E-06 the gizmo of an emitter omni sits on the bulb and turns about it
+	LightInfo turnedOmni = bulbOmni;
+	turnedOmni.angles.Set( 0.0f, 90.0f, 60.0f );
+	const idVec3 turnedOrigin = LightOriginFromGizmo( turnedOmni, bulb );
+	turnedOmni.origin = turnedOrigin;
+	test.Check( LightGizmoOrigin( bulbOmni ).Compare( bulb, 1e-4f ) && LightOriginFromGizmo( bulbOmni, bulb ).Compare( bulbOmni.origin, 1e-3f )
+				&& LightGizmoOrigin( turnedOmni ).Compare( bulb, 1e-3f ) && LightGizmoOrigin( texturePoint ) == texturePoint.origin
+				&& LightOriginFromGizmo( texturePoint, bulb ) == bulb,
+				"bulb gizmo: an emitter omni's gizmo is at origin + axis * light_center and turns about it; other lights' at the origin" );
+
+	// ---- F-E-07 the type radio on an emitter keeps the rotation, and the range with auto range off
+	LightInfo shapeOmni = bulbOmni;
+	shapeOmni.hasCenter = false;
+	shapeOmni.lightCenter.Zero();
+	shapeOmni.angles.Set( 10.0f, 45.0f, 5.0f );
+	shapeOmni.lightRadius.Set( 400.0f, 200.0f, 300.0f );
+	shapeOmni.equalRadius = false;
+	LightInfo shapeSpot = shapeOmni;
+	shapeSpot.DefaultProjected();
+	test.Check( shapeSpot.emitter.shape == EM_SPOT && shapeSpot.angles.ToMat3().Compare( shapeOmni.angles.ToMat3(), 1e-5f )
+				&& shapeSpot.lightRadius.Compare( idVec3( 400.0f, 400.0f, 400.0f ), 1e-3f ),
+				"shape switch: omni to spot keeps the rotation; auto range off, the range is the largest radius" );
+
+	LightInfo shapeBack = shapeSpot;
+	shapeBack.DefaultPoint();
+	test.Check( shapeBack.emitter.shape == EM_OMNI && shapeBack.angles.ToMat3().Compare( shapeOmni.angles.ToMat3(), 1e-5f )
+				&& shapeBack.lightRadius.Compare( idVec3( 400.0f, 400.0f, 400.0f ), 1e-3f ),
+				"shape switch: spot to omni keeps the rotation; auto range off, the radii are the range" );
+
+	LightInfo shapeAuto = shapeOmni;
+	shapeAuto.autoRange = true;
+	shapeAuto.color.Set( 1.0f, 1.0f, 1.0f );
+	shapeAuto.DefaultProjected();
+	test.Check( shapeAuto.angles.ToMat3().Compare( shapeOmni.angles.ToMat3(), 1e-5f ) && shapeAuto.lightRadius.Compare( idVec3( 288.0f, 288.0f, 288.0f ), 1e-2f ),
+				"shape switch: auto range on, the spot's range is the auto range; the rotation stays" );
+
+	LightInfo shapeSun = shapeOmni;
+	shapeSun.DefaultSun();
+	LightInfo textureSpot;
+	textureSpot.DefaultPoint();
+	textureSpot.angles.Set( 10.0f, 45.0f, 5.0f );
+	textureSpot.DefaultProjected();
+	test.Check( shapeSun.emitter.shape == EM_SUN && shapeSun.angles.ToMat3().Compare( shapeOmni.angles.ToMat3(), 1e-5f )
+				&& shapeSun.lightRadius.Compare( idVec3( 2048.0f, 2048.0f, 1024.0f ), 1e-3f ) && textureSpot.angles == ang_zero,
+				"shape switch: to sun keeps the rotation and gets the sun box; a texture light resets as before" );
+
+	// ---- F-E-08 drag speed
+	test.Check( DragSpeedFor( 10.0f ) == 0.25f && SelfTestNear( DragSpeedFor( 1000.0f ), 10.0f, 1e-5f ) && SelfTestNear( DragSpeedFor( -2000.0f ), 20.0f, 1e-5f ),
+				"drag speed: 1 % of the value per pixel, at least 0.25" );
+
+	// ---- F-E-09 R's roll levelled at entry, the beam kept
+	LightInfo tilted = SelfTestEmitterSpot();
+	tilted.angles.Set( -30.0f, 40.0f, 25.0f );
+	const idMat3 tiltedBefore = tilted.angles.ToMat3();
+	LightStoredFrame identityFrame;
+	identityFrame.Identity();
+	const bool levelled = ModalLevelSpotRoll( tilted, identityFrame );
+	const idMat3 tiltedAfter = tilted.angles.ToMat3();
+	idVec3 levelLeft = worldUp.Cross( tiltedAfter[ 0 ] );
+	levelLeft.Normalize();
+	const bool levelledAgain = ModalLevelSpotRoll( tilted, identityFrame );
+	test.Check( levelled && !levelledAgain && tiltedAfter[ 0 ].Compare( tiltedBefore[ 0 ], 1e-4f ) && tiltedAfter[ 1 ].Compare( levelLeft, 1e-4f )
+				&& tiltedAfter[ 0 ].Cross( tiltedAfter[ 1 ] ) * tiltedAfter[ 2 ] > 0.999f,
+				"emitter R entry: the roll is levelled (axis[1] = worldUp x axis[0]), the beam kept; a level roll is left alone" );
+
+	LightInfo vertical = SelfTestEmitterSpot();
+	vertical.angles.Set( 90.0f, 0.0f, 0.0f );
+	const idAngles verticalAngles = vertical.angles;
+	LightStoredFrame turnedFrame;
+	turnedFrame.Identity();
+	turnedFrame.axis = idAngles( 0.0f, 90.0f, 0.0f ).ToMat3();
+	LightInfo turnedTilted = SelfTestEmitterSpot();
+	turnedTilted.angles.Set( -30.0f, 40.0f, 25.0f );
+	const idVec3 turnedBeam = ( turnedTilted.angles.ToMat3() * turnedFrame.axis )[ 0 ];
+	ModalLevelSpotRoll( turnedTilted, turnedFrame );
+	const idMat3 turnedWorld = turnedTilted.angles.ToMat3() * turnedFrame.axis;
+	test.Check( !ModalLevelSpotRoll( vertical, identityFrame ) && vertical.angles == verticalAngles
+				&& turnedWorld[ 0 ].Compare( turnedBeam, 1e-4f ) && idMath::Fabs( turnedWorld[ 1 ].z ) < 1e-4f,
+				"emitter R entry: a vertical beam keeps its roll; a moved entity's roll is levelled in the world" );
+
+	// ---- F-E-10 the first emitter block plays the light's style
+	LightInfo styled;
+	styled.DefaultPoint();
+	styled.lightStyle = 3;
+	SwitchToEmitter( styled, noKeys );
+	idDict styledKeys;
+	styled.ToDict( &styledKeys );
+	LightInfo unstyled;
+	unstyled.DefaultPoint();
+	unstyled.lightStyle = 0;
+	SwitchToEmitter( unstyled, noKeys );
+	idDict partialKeys;
+	partialKeys.Set( "emit_size", "64" );
+	LightInfo partial;
+	partial.DefaultPoint();
+	partial.lightStyle = 10;
+	SwitchToEmitter( partial, partialKeys );
+	test.Check( styled.emitter.effect == 3 && idStr::Cmp( styledKeys.GetString( "emit_effect" ), "candle_a" ) == 0 && styledKeys.GetInt( "style", "-1" ) == 3
+				&& unstyled.emitter.effect == EME_NONE && partial.emitter.effect == 10,
+				"first emitter block: style 1..11 seeds emit_effect with its name, style 0 seeds none; style stays" );
+
+	idDict effectKeys;
+	effectKeys.Set( "emit_effect", "pulse" );
+	LightInfo effected;
+	effected.DefaultPoint();
+	effected.lightStyle = 3;
+	SwitchToEmitter( effected, effectKeys );
+	test.Check( effected.emitter.effect == EME_PULSE, "first emitter block: a light that has emit_effect keeps it" );
+
+	// ---- F-E-11 a texture spot's explicit light_start becomes the emitter's start
+	LightInfo startSpot;
+	startSpot.DefaultProjected();
+	startSpot.explicitStartEnd = true;
+	startSpot.lightStart.Set( 0.0f, 0.0f, -32.0f );
+	startSpot.lightEnd = startSpot.lightTarget;
+	SwitchToEmitter( startSpot, noKeys );
+	LightInfo nearSpot;
+	nearSpot.DefaultProjected();
+	nearSpot.explicitStartEnd = true;
+	nearSpot.lightStart.Set( 0.0f, 0.0f, -2.0f );
+	nearSpot.lightEnd = nearSpot.lightTarget;
+	SwitchToEmitter( nearSpot, noKeys );
+	test.Check( SelfTestNear( startSpot.emitter.start, 32.0f, 1e-3f ) && SelfTestNear( EM_Range( startSpot.lightRadius ), 288.0f, 1e-2f )
+				&& SelfTestNear( nearSpot.emitter.start, 8.0f, 1e-3f ),
+				"kind switch: a texture spot with light_start starts at its near plane, max( start . n, 8 )" );
+
+	LightInfo implicitSpot;
+	implicitSpot.DefaultProjected();
+	SwitchToEmitter( implicitSpot, noKeys );
+	test.Check( implicitSpot.emitter.start == 0.0f, "kind switch: a texture spot without light_start starts at 0" );
+}
+
+// batch C (impl/C-CHOICES.md, engine part 1): the aim under auto range, a hand-set range, the panel's
+// in-force test, the entry of a gesture and the shape switch's shadow switches
+static void SelfTestChoicesC( LightSelfTest& test )
+{
+	// ---- C-E-01 the aim sets the range both ways under auto range, through a re-captured base
+	LightInfo autoSpot = SelfTestEmitterSpot();
+	autoSpot.autoRange = true;
+	EmitterReachChanged( autoSpot );
+	const bool autoSpotInStep = SelfTestNear( EM_Range( autoSpot.lightRadius ), 16.0f + 96.0f * 3.0f, 1e-2f );
+
+	LightAutoBase autoBase;
+	AutoCaptureBase( autoSpot, autoBase );
+	const idVec3 farAim = autoSpot.origin + idVec3( 900.0f, 300.0f, -200.0f );
+	const float farDistance = ( farAim - autoSpot.origin ).Length();
+	AutoAimEmitterSpot( autoSpot, autoBase, farAim );
+	const float farRange = EM_Range( autoSpot.lightRadius );
+	const bool farOk = SelfTestNear( farRange, farDistance / 0.6f, 1e-1f ) && SelfTestNear( autoSpot.emitter.size, ( farRange - 16.0f ) / 3.0f, 1e-2f );
+
+	// a checkpoint, Enter or a re-pick captures the base again
+	AutoCaptureBase( autoSpot, autoBase );
+	const idVec3 nearAim = autoSpot.origin + idVec3( 100.0f, 0.0f, -50.0f );
+	const float nearDistance = ( nearAim - autoSpot.origin ).Length();
+	AutoAimEmitterSpot( autoSpot, autoBase, nearAim );
+	const float nearRange = EM_Range( autoSpot.lightRadius );
+	test.Check( autoSpotInStep && farOk && SelfTestNear( nearRange, nearDistance / 0.6f, 1e-2f )
+				&& SelfTestNear( autoSpot.emitter.size, ( nearRange - 16.0f ) / 3.0f, 1e-2f )
+				&& EM_RangeInStep( autoSpot.emitter, 1.0f, nearRange ) && autoSpot.autoRange,
+				"C-E-01: under auto range a far aim then a near aim, base captured between, ends at the near aim's range and size" );
+
+	// ---- C-E-02 EM_RangeInStep: max( 1, 5 % ) about the auto range, false without a reach
+	emitterData_t stepBlock;
+	SeedEmitter( stepBlock, LIGHT_POINT );
+	emitterData_t tinyBlock = stepBlock;
+	tinyBlock.size = 2.0f;
+	emitterData_t linearBlock = stepBlock;
+	linearBlock.falloff = EMF_LINEAR;
+	test.Check( EM_RangeInStep( stepBlock, 1.0f, 288.0f ) && EM_RangeInStep( stepBlock, 1.0f, 302.0f ) && !EM_RangeInStep( stepBlock, 1.0f, 303.0f )
+				&& EM_RangeInStep( tinyBlock, 1.0f, 25.0f ) && !EM_RangeInStep( tinyBlock, 1.0f, 25.5f ) && !EM_RangeInStep( linearBlock, 1.0f, 288.0f ),
+				"C-E-02: EM_RangeInStep holds within max( 1, 5 % ) of the auto range, never for a curve without reach" );
+
+	// a hand-set range wins: no emit_auto_range, range 500 where the auto range is 288
+	idDict handSet;
+	handSet.Set( "classname", "light" );
+	handSet.Set( "emitter", "1" );
+	handSet.Set( "emit_shape", "omni" );
+	handSet.Set( "light_radius", "500 500 500" );
+	handSet.Set( "_color", "1 1 1" );
+	LightInfo handLight;
+	handLight.FromDict( &handSet );
+	const bool readOff = !handLight.autoRange;
+	PanelSetColor( handLight, idVec3( 1.0f, 1.0f, 1.0f ), 2.0f );
+	idDict handWritten;
+	handLight.ToDict( &handWritten );
+	test.Check( readOff && SelfTestNear( EM_Range( handLight.lightRadius ), 500.0f, 1e-3f ) && SelfTestNear( handLight.emitter.size, 96.0f, 1e-4f )
+				&& idStr::Cmp( handWritten.GetString( "emit_auto_range" ), "0" ) == 0,
+				"C-E-02: a range of 500 against an auto range of 288 reads with auto range off; an intensity edit keeps 500; emit_auto_range \"0\" is written" );
+
+	idDict inStepKeys = handSet;
+	inStepKeys.Set( "light_radius", "288 288 288" );
+	LightInfo inStepLight;
+	inStepLight.FromDict( &inStepKeys );
+	test.Check( inStepLight.autoRange && EmitterAutoRangeInForce( inStepLight ), "C-E-02: the same light at its auto range reads in force" );
+
+	// a dim lamp written under auto range reads back in force, at the editor's precision and at two decimals
+	LightInfo dim;
+	dim.DefaultPoint();
+	SeedEmitter( dim.emitter, LIGHT_POINT );
+	dim.hasEmitterBlock = true;
+	dim.autoRange = true;
+	PanelSetColor( dim, idVec3( 1.0f, 0.8f, 0.6f ), 0.234f );
+	idDict dimKeys;
+	dim.ToDict( &dimKeys );
+	LightInfo dimRead;
+	dimRead.FromDict( &dimKeys );
+	idDict dimTwo = dimKeys;
+	dimTwo.Set( "_color", "0.23 0.19 0.14" );
+	LightInfo dimTwoRead;
+	dimTwoRead.FromDict( &dimTwo );
+	test.Check( dimRead.autoRange && dimTwoRead.autoRange && idStr::Cmp( dimKeys.GetString( "emit_auto_range" ), "1" ) == 0,
+				"C-E-02: a dim lamp (intensity 0.234, size 96) written under auto range reads back in force, _color at 4 and at 2 decimals" );
+
+	// a falloff edit that gives the curve a reach applies the flag as it stands (G0 5, corrected 01:00,
+	// F-C-01): with the flag on the range becomes the auto range, in step or not; no in-step test here
+	LightInfo linearIn;
+	linearIn.DefaultPoint();
+	SeedEmitter( linearIn.emitter, LIGHT_POINT );
+	linearIn.hasEmitterBlock = true;
+	linearIn.emitter.falloff = EMF_LINEAR;
+	linearIn.autoRange = true;
+	SetEmitterRange( linearIn, 288.0f );
+	LightInfo linearOut = linearIn;
+	SetEmitterRange( linearOut, 500.0f );
+	EmitterSetFalloff( linearIn, EMF_INVSQUARE_CLAMPED );
+	EmitterSetFalloff( linearOut, EMF_INVSQUARE_CLAMPED );
+	test.Check( linearIn.autoRange && SelfTestNear( EM_Range( linearIn.lightRadius ), 288.0f, 1e-2f )
+				&& linearOut.autoRange && SelfTestNear( EM_Range( linearOut.lightRadius ), 288.0f, 1e-2f ) && SelfTestNear( linearOut.emitter.size, 96.0f, 1e-4f ),
+				"F-C-01: linear to inverse square with the flag on: the range becomes the auto range, in step before or not; auto range stays on" );
+
+	// a range the mapper sets under linear turns the flag off; the curve's later reach keeps that range
+	LightInfo linearHand = linearIn;
+	EmitterSetFalloff( linearHand, EMF_LINEAR );
+	const bool handStillOn = linearHand.autoRange;
+	SetEmitterRange( linearHand, 500.0f );
+	EmitterRangeEdited( linearHand, 288.0f );
+	const bool handOff = !linearHand.autoRange;
+	EmitterSetFalloff( linearHand, EMF_INVSQUARE_CLAMPED );
+	idDict handKeys;
+	linearHand.ToDict( &handKeys );
+	test.Check( handStillOn && handOff && !linearHand.autoRange && SelfTestNear( EM_Range( linearHand.lightRadius ), 500.0f, 1e-3f )
+				&& SelfTestNear( linearHand.emitter.size, 96.0f, 1e-4f ) && idStr::Cmp( handKeys.GetString( "emit_auto_range" ), "0" ) == 0,
+				"F-C-01: a range set under linear turns auto range off; inverse square clamped then keeps 500 with auto range off" );
+
+	// a round trip through every curve changes nothing
+	LightInfo roundTrip;
+	roundTrip.DefaultPoint();
+	SeedEmitter( roundTrip.emitter, LIGHT_POINT );
+	roundTrip.hasEmitterBlock = true;
+	roundTrip.autoRange = true;
+	EmitterReachChanged( roundTrip );
+	const float roundStart = EM_Range( roundTrip.lightRadius );
+	EmitterSetFalloff( roundTrip, EMF_EXPONENTIAL );
+	const bool expMoved = !SelfTestNear( EM_Range( roundTrip.lightRadius ), roundStart, 1.0f );
+	EmitterSetFalloff( roundTrip, EMF_LINEAR );
+	EmitterSetFalloff( roundTrip, EMF_SMOOTH );
+	EmitterSetFalloff( roundTrip, EMF_INVSQUARE_CLAMPED );
+	test.Check( SelfTestNear( roundStart, 288.0f, 1e-2f ) && expMoved && roundTrip.autoRange && SelfTestNear( EM_Range( roundTrip.lightRadius ), roundStart, 1e-2f )
+				&& SelfTestNear( roundTrip.emitter.size, 96.0f, 1e-4f ),
+				"F-C-01: inverse square clamped, exponential, linear, smooth, inverse square clamped ends at the starting range with auto range on" );
+
+	// ticking Auto range sets the range to the auto range and keeps the size (the box's own path)
+	LightInfo ticked = linearHand;
+	ticked.autoRange = true;
+	EmitterReachChanged( ticked );
+	test.Check( SelfTestNear( EM_Range( ticked.lightRadius ), 288.0f, 1e-2f ) && SelfTestNear( ticked.emitter.size, 96.0f, 1e-4f ),
+				"C-E-02: ticking Auto range sets the range to the auto range; the size is kept" );
+
+	// the shape switch: a linear light keeps its range though its flag is on; from a sun, the flag decides
+	LightInfo linearOmni;
+	linearOmni.DefaultPoint();
+	SeedEmitter( linearOmni.emitter, LIGHT_POINT );
+	linearOmni.hasEmitterBlock = true;
+	linearOmni.emitter.falloff = EMF_LINEAR;
+	linearOmni.autoRange = true;
+	SetEmitterRange( linearOmni, 800.0f );
+	LightInfo linearSpot = linearOmni;
+	linearSpot.DefaultProjected();
+	LightInfo sunAuto = inStepLight;
+	sunAuto.DefaultSun();
+	LightInfo sunOff = sunAuto;
+	sunOff.autoRange = false;
+	sunAuto.DefaultPoint();
+	sunOff.DefaultPoint();
+	test.Check( SelfTestNear( EM_Range( linearSpot.lightRadius ), 800.0f, 1e-3f ) && SelfTestNear( EM_Range( sunAuto.lightRadius ), 288.0f, 1e-2f )
+				&& SelfTestNear( EM_Range( sunOff.lightRadius ), 300.0f, 1e-3f ),
+				"C-E-02: shape switch: a linear light keeps its range; from a sun, the auto range with the flag on, else 300" );
+
+	// ---- C-E-03 the panel's "Range (auto)" label and its line follow EmitterAutoRangeInForce
+	LightInfo sunLight = inStepLight;
+	sunLight.DefaultSun();
+	test.Check( EmitterAutoRangeInForce( inStepLight ) && !EmitterAutoRangeInForce( handLight ) && !EmitterAutoRangeInForce( linearOmni )
+				&& !EmitterAutoRangeInForce( sunLight ),
+				"C-E-03: in force for an omni at its auto range; not for a hand-set range, a linear curve or a sun" );
+
+	// ---- C-E-05 a gesture's entry keeps the authored roll for Cancel; the gesture runs on the levelled one
+	LightInfo tilted = SelfTestEmitterSpot();
+	tilted.angles.Set( -30.0f, 40.0f, 25.0f );
+	const idMat3 authored = tilted.angles.ToMat3();
+	LightStoredFrame identityFrame;
+	identityFrame.Identity();
+	LightAutoBase entryBase;
+	AutoCaptureBase( tilted, entryBase );
+	LightInfo entry;
+	const bool prepared = ModalPrepareEntry( tilted, entry, entryBase, false, vec3_zero, &identityFrame );
+	const bool levelledNow = !tilted.angles.ToMat3().Compare( authored, 1e-3f );
+	// RV-C-ET-13: the gesture runs from the levelled light and moves it; the entry Cancel restores (HandlePress
+	// sets cur = modalEntry, which needs an editor and a light, so it is not run here) keeps the authored roll
+	LightInfo gestured = tilted;
+	ModalRotate( gestured, tilted, 40.0f, 0.0f, 0.0f, 0.25f, 5.0f );
+	const idMat3 gesturedAxis = gestured.angles.ToMat3();
+	test.Check( prepared && levelledNow && !gesturedAxis.Compare( tilted.angles.ToMat3(), 1e-3f ) && !gesturedAxis.Compare( authored, 1e-3f )
+				&& entry.angles.ToMat3().Compare( authored, 1e-5f ),
+				"C-E-05: R entry levels the roll for the gesture, which turns the levelled light; the entry Cancel restores keeps the authored roll" );
+
+	// ---- C-E-06 a shape switch keeps an emitter's noshadows and nospecular; a texture light resets as before
+	LightInfo quiet = inStepLight;
+	quiet.castShadows = false;
+	quiet.skipSpecular = true;
+	quiet.DefaultProjected();
+	LightInfo quietSun = quiet;
+	quietSun.DefaultSun();
+	LightInfo quietTexture;
+	quietTexture.DefaultPoint();
+	quietTexture.castShadows = false;
+	quietTexture.skipSpecular = true;
+	quietTexture.DefaultProjected();
+	idDict quietKeys;
+	quiet.ToDict( &quietKeys );
+	test.Check( !quiet.castShadows && quiet.skipSpecular && !quietSun.castShadows && quietSun.skipSpecular
+				&& quietTexture.castShadows && !quietTexture.skipSpecular
+				&& idStr::Cmp( quietKeys.GetString( "noshadows" ), "1" ) == 0 && idStr::Cmp( quietKeys.GetString( "nospecular" ), "1" ) == 0,
+				"C-E-06: an emitter's shape switch keeps noshadows and nospecular; a texture light's resets them as before" );
+}
+
+//puncho start - batch C, engine part 2 (impl/C-CHOICES.md, C-E-10 to C-E-12, F-E4-01)
+// F-E4-01: within one aim the start clamps to the range and comes back
+static void SelfTestAimStart( LightSelfTest& test )
+{
+	// ---- F-E4-01: within one aim under auto range a near aim clamps the start and a far aim gives it back
+	LightInfo aimSpot = SelfTestEmitterSpot();
+	aimSpot.emitter.start = 100.0f;
+	aimSpot.autoRange = true;
+	EmitterReachChanged( aimSpot );
+	LightAutoBase aimBase;
+	AutoCaptureBase( aimSpot, aimBase );
+	const idVec3 aimDir( 0.6f, 0.0f, -0.8f );
+	AutoAimEmitterSpot( aimSpot, aimBase, aimSpot.origin + aimDir * 40.0f );
+	const float nearStart = aimSpot.emitter.start;
+	const float nearAimRange = EM_Range( aimSpot.lightRadius );
+	AutoAimEmitterSpot( aimSpot, aimBase, aimSpot.origin + aimDir * 600.0f );
+	test.Check( SelfTestNear( nearAimRange, 40.0f / 0.6f, 1e-2f ) && SelfTestNear( nearStart, nearAimRange - 1.0f, 1e-3f ) && aimSpot.emitter.start == 100.0f
+				&& SelfTestNear( EM_Range( aimSpot.lightRadius ), 1000.0f, 1e-1f ) && SelfTestNear( aimSpot.emitter.size, 300.0f, 1e-1f ),
+				"F-E4-01: under auto range a near aim clamps the start to range - 1; a far aim in the same entry gives the entry start back" );
+}
+
+// batch D (impl/D-REVIEW-FIXES.md), the editor's findings: the checkpoint undo across a kind switch, the
+// bulb at a gesture's entry, the session's Equilateral
+static void SelfTestReviewFixesD( LightSelfTest& test )
+{
+	const idDict noKeys;
+
+	// ---- RV-C-ET-01, a texture light: (1) LMB in AUTO takes a checkpoint, (2) F opens the panel, (3) the
+	// Emitter tab writes the emitter to the light, (4) F back and RMB: the light is the texture light again
+	idDict live;
+	live.Set( "classname", "light" );
+	live.Set( "name", "et01_texture" );
+	live.Set( "origin", "0 0 0" );
+	live.Set( "light_radius", "300 300 300" );
+	live.Set( "texture", "lights/squarelight1" );
+	LightInfo cur;
+	cur.FromDict( &live );
+	const LightInfo undo = cur;
+	idDict checkpointEmit;
+	CheckpointKeys( live, undo, checkpointEmit );
+	SwitchToEmitter( cur, live );
+	idDict tabDict;
+	cur.ToDict( &tabDict );
+	SelfTestMerge( live, tabDict );
+	const bool tabMadeEmitter = ( idStr::Cmp( live.GetString( "emitter" ), "1" ) == 0 );
+	// what the undo wrote before the fix: the snapshot's ToDict alone, which has no emitter key
+	idDict unfixed = live;
+	idDict snapshotDict;
+	LightInfo snapshot = undo;
+	snapshot.ToDict( &snapshotDict );
+	SelfTestMerge( unfixed, snapshotDict );
+	idDict undoDict;
+	CheckpointUndoDict( undo, live, checkpointEmit, undoDict );
+	SelfTestMerge( live, undoDict );
+	LightInfo back;
+	back.FromDict( &live );
+	test.Check( tabMadeEmitter && idStr::Cmp( unfixed.GetString( "emitter" ), "1" ) == 0 && live.MatchPrefix( "emit" ) == NULL && !back.emitter.enabled
+				&& idStr::Cmp( live.GetString( "texture" ), "lights/squarelight1" ) == 0,
+				"RV-C-ET-01: a checkpoint, the Emitter tab on a texture light, RMB: the light is a texture light again with no emit key (the snapshot alone left emitter 1)" );
+
+	// ---- RV-C-ET-02: a gesture's entry turns a held emitter omni about its bulb
+	LightInfo bulbOmni;
+	bulbOmni.DefaultPoint();
+	SwitchToEmitter( bulbOmni, noKeys );
+	bulbOmni.origin.Set( 100.0f, 0.0f, 0.0f );
+	bulbOmni.hasCenter = true;
+	bulbOmni.lightCenter.Set( 16.0f, 0.0f, 32.0f );
+	const idVec3 bulbBefore = LightGizmoOrigin( bulbOmni );
+	LightAutoBase bulbBase;
+	AutoCaptureBase( bulbOmni, bulbBase );
+	LightInfo bulbAligned = bulbOmni;
+	const bool bulbTurned = ModalAlignSphere( bulbAligned, bulbBase, idVec3( 300.0f, 120.0f, 80.0f ) );
+	LightInfo plainPoint;
+	plainPoint.DefaultPoint();
+	plainPoint.origin.Set( 100.0f, 0.0f, 0.0f );
+	plainPoint.hasCenter = true;
+	plainPoint.lightCenter.Set( 16.0f, 0.0f, 32.0f );
+	const bool plainTurned = ModalAlignSphere( plainPoint, bulbBase, idVec3( 300.0f, 120.0f, 80.0f ) );
+	test.Check( bulbOmni.emitter.enabled && bulbTurned && LightGizmoOrigin( bulbAligned ).Compare( bulbBefore, 1e-3f ) && !bulbAligned.origin.Compare( bulbOmni.origin, 1e-1f )
+				&& plainTurned && plainPoint.origin.Compare( idVec3( 100.0f, 0.0f, 0.0f ), 1e-6f ),
+				"RV-C-ET-02: entering a gesture turns an emitter omni with a bulb offset about its bulb; a texture point light keeps its origin" );
+
+	// ---- RV-C-ET-08: Equilateral once unticked stays so for a re-read emitter omni; the keys do not change
+	idDict equalKeys;
+	bulbOmni.ToDict( &equalKeys );
+	equalKeys.DeleteEmptyKeys();
+	LightInfo reread;
+	reread.FromDict( &equalKeys );
+	const bool tickedOnRead = reread.equalRadius;
+	EquilateralForSession( reread, false );
+	const bool tickedWithoutUntick = reread.equalRadius;
+	EquilateralForSession( reread, true );
+	idDict untickedKeys;
+	reread.ToDict( &untickedKeys );
+	LightInfo textureRead;
+	textureRead.DefaultPoint();
+	EquilateralForSession( textureRead, true );
+	test.Check( tickedOnRead && tickedWithoutUntick && !reread.equalRadius && idStr::Cmp( untickedKeys.GetString( "light_radius" ), equalKeys.GetString( "light_radius" ) ) == 0
+				&& textureRead.equalRadius,
+				"RV-C-ET-08: after an untick a re-read emitter omni with equal radii shows three radii and writes the same light_radius; a texture light is not touched" );
+}
+
+// batch E ( impl/E-EMITTER-COSTS.md ): EC-01, the keys an emitter reads at spawn, and EC-02, a spot's
+// shadow projection from the culling apex's inverse frame. EC-03 draws nothing headless and is not here
+static void SelfTestEmitterCosts( LightSelfTest& test )
+{
+	// ---- EC-01, EM_ParseFromDict: a key the shape, pattern or effect does not use holds its default
+	idDict coneKeys;
+	coneKeys.Set( "emitter", "1" );
+	coneKeys.Set( "emit_shape", "omni" );
+	coneKeys.Set( "emit_cone", "30" );
+	coneKeys.Set( "emit_penumbra", "0.9" );
+	coneKeys.Set( "emit_square", "8" );
+	emitterData_t omniCone;
+	EM_ParseFromDict( &coneKeys, &omniCone );
+	coneKeys.Set( "emit_shape", "spot" );
+	emitterData_t spotCone;
+	EM_ParseFromDict( &coneKeys, &spotCone );
+	test.Check( omniCone.coneH == 60.0f && omniCone.coneV == 60.0f && omniCone.penumbra == 0.2f && omniCone.squareness == 2.0f
+				&& spotCone.coneH == 30.0f && spotCone.coneV == 30.0f && spotCone.penumbra == 0.9f && spotCone.squareness == 8.0f,
+				"EC-01: an omni reads no emit_cone, emit_penumbra, emit_square (defaults); the same keys on a spot are read" );
+
+	// the default tangents are a constant: the bits the parse computes for emit_cone "60"
+	idDict sixty;
+	sixty.Set( "emitter", "1" );
+	sixty.Set( "emit_shape", "spot" );
+	sixty.Set( "emit_cone", "60" );
+	emitterData_t spotSixty;
+	EM_ParseFromDict( &sixty, &spotSixty );
+	test.Check( memcmp( &omniCone.tanHalfH, &spotSixty.tanHalfH, sizeof( float ) ) == 0 && memcmp( &omniCone.tanHalfV, &spotSixty.tanHalfV, sizeof( float ) ) == 0,
+				"EC-01: the default half-cone tangent constant has the bits the parse computes for emit_cone \"60\"" );
+
+	idDict patternKeys;
+	patternKeys.Set( "emitter", "1" );
+	patternKeys.Set( "emit_pattern", "none" );
+	patternKeys.Set( "emit_pattern_strength", "0.6" );
+	patternKeys.Set( "emit_pattern_scale", "3" );
+	patternKeys.Set( "emit_pattern_phase", "0.25" );
+	patternKeys.Set( "emit_effect", "none" );
+	patternKeys.Set( "emit_effect_speed", "4" );
+	patternKeys.Set( "emit_effect_amount", "0.5" );
+	patternKeys.Set( "emit_effect_phase", "0.75" );
+	emitterData_t plain;
+	EM_ParseFromDict( &patternKeys, &plain );
+	patternKeys.Set( "emit_pattern", "ice" );
+	patternKeys.Set( "emit_effect", "pulse" );
+	emitterData_t patterned;
+	EM_ParseFromDict( &patternKeys, &patterned );
+	test.Check( plain.patternStrength == 0.0f && plain.patternScale == 1.0f && plain.patternPhase == 0.0f
+				&& plain.effectSpeed == 1.0f && plain.effectAmount == 1.0f && plain.effectPhase == 0.0f
+				&& patterned.pattern == EMP_ICE && patterned.patternStrength == 0.6f && patterned.patternScale == 3.0f && patterned.patternPhase == 0.25f
+				&& patterned.effect == EME_PULSE && patterned.effectSpeed == 4.0f && patterned.effectAmount == 0.5f && patterned.effectPhase == 0.75f,
+				"EC-01: pattern none and effect none read none of their three keys (defaults); ice and pulse read them" );
+
+	idDict sunKeys;
+	sunKeys.Set( "emitter", "1" );
+	sunKeys.Set( "emit_shape", "sun" );
+	sunKeys.Set( "emit_falloff", "linear" );
+	sunKeys.Set( "emit_size", "40" );
+	sunKeys.Set( "emit_start", "12" );
+	emitterData_t sun;
+	EM_ParseFromDict( &sunKeys, &sun );
+	test.Check( sun.shape == EM_SUN && sun.falloff == EMF_INVSQUARE_CLAMPED && sun.size == 96.0f && sun.start == 0.0f,
+				"EC-01: a sun reads no emit_falloff, emit_size, emit_start (defaults)" );
+
+	idDict parallelKeys;
+	parallelKeys.Set( "emitter", "1" );
+	parallelKeys.Set( "parallel", "1" );
+	emitterData_t inferred;
+	EM_ParseFromDict( &parallelKeys, &inferred );
+	parallelKeys.Set( "emit_shape", "omni" );
+	emitterData_t named;
+	EM_ParseFromDict( &parallelKeys, &named );
+	test.Check( inferred.shape == EM_SUN && named.shape == EM_OMNI,
+				"EC-01: emit_shape absent with parallel \"1\" is a sun; emit_shape \"omni\" with parallel \"1\" is an omni" );
+
+	// ---- EC-01, ParseSpawnArgsToRenderLight: an emitter reads none of the five vectors, nor texture or
+	// light, light_radius once and light_center only on an omni or a sun
+	idDict stale;
+	stale.Set( "classname", "light" );
+	stale.Set( "origin", "10 20 30" );
+	stale.Set( "emitter", "1" );
+	stale.Set( "emit_shape", "omni" );
+	stale.Set( "light_radius", "200 100 50" );
+	stale.Set( "light_center", "4 5 6" );
+	stale.Set( "light_target", "0 0 -256" );
+	stale.Set( "light_up", "0 128 0" );
+	stale.Set( "light_right", "128 0 0" );
+	stale.Set( "light_start", "0 0 -8" );
+	stale.Set( "light_end", "0 0 -300" );
+	stale.Set( "texture", "lights/squarelight1" );
+	renderLight_t omniLight;
+	gameEdit->ParseSpawnArgsToRenderLight( &stale, &omniLight );
+	stale.Set( "emit_shape", "spot" );
+	renderLight_t spotLight;
+	gameEdit->ParseSpawnArgsToRenderLight( &stale, &spotLight );
+	const bool vectorsZero = omniLight.target == vec3_zero && omniLight.up == vec3_zero && omniLight.right == vec3_zero
+							 && omniLight.start == vec3_zero && omniLight.end == vec3_zero && spotLight.target == vec3_zero && spotLight.end == vec3_zero;
+	test.Check( vectorsZero && omniLight.pointLight && !omniLight.parallel && omniLight.lightRadius == idVec3( 200.0f, 100.0f, 50.0f )
+				&& omniLight.lightCenter == idVec3( 4.0f, 5.0f, 6.0f ) && !spotLight.pointLight && spotLight.lightRadius == idVec3( 200.0f, 200.0f, 200.0f )
+				&& spotLight.lightCenter == vec3_zero && omniLight.shader == spotLight.shader && omniLight.shader != NULL
+				&& omniLight.shader == declManager->FindMaterial( "lights/defaultPointLight", false ),
+				"EC-01: an emitter with stale light_target, light_up, light_right spawns with the five vectors zero; a spot has ( R, R, R ) and no centre, an omni keeps light_center" );
+
+	// G0 section 4: a sun spawns as a parallel point light, whether emit_shape names it or parallel "1"
+	// stands for an absent shape ( DP-G1E-04: no other check asserted it )
+	idDict spawnSunKeys;
+	spawnSunKeys.Set( "classname", "light" );
+	spawnSunKeys.Set( "emitter", "1" );
+	spawnSunKeys.Set( "emit_shape", "sun" );
+	spawnSunKeys.Set( "light_radius", "512 512 1024" );
+	spawnSunKeys.Set( "light_center", "0 0 2000" );
+	renderLight_t namedSun;
+	gameEdit->ParseSpawnArgsToRenderLight( &spawnSunKeys, &namedSun );
+	spawnSunKeys.Delete( "emit_shape" );
+	spawnSunKeys.Set( "parallel", "1" );
+	renderLight_t inferredSun;
+	gameEdit->ParseSpawnArgsToRenderLight( &spawnSunKeys, &inferredSun );
+	test.Check( namedSun.emitter.enabled && namedSun.emitter.shape == EM_SUN && namedSun.parallel && namedSun.pointLight
+				&& inferredSun.emitter.enabled && inferredSun.emitter.shape == EM_SUN && inferredSun.parallel && inferredSun.pointLight
+				&& namedSun.lightRadius == idVec3( 512.0f, 512.0f, 1024.0f ) && namedSun.lightCenter == idVec3( 0.0f, 0.0f, 2000.0f )
+				&& inferredSun.lightRadius == namedSun.lightRadius && inferredSun.lightCenter == namedSun.lightCenter,
+				"G0 section 4: an emitter sun ( emit_shape \"sun\", or no shape and parallel \"1\" ) spawns with parallel and pointLight both set, light_radius its box and light_center its direction" );
+
+	idDict lightKey;
+	lightKey.Set( "classname", "light" );
+	lightKey.Set( "emitter", "1" );
+	lightKey.Set( "light", "200" );
+	renderLight_t lightKeyLight;
+	gameEdit->ParseSpawnArgsToRenderLight( &lightKey, &lightKeyLight );
+	lightKey.Delete( "emitter" );
+	renderLight_t texturePoint;
+	gameEdit->ParseSpawnArgsToRenderLight( &lightKey, &texturePoint );
+	test.Check( lightKeyLight.lightRadius == idVec3( 300.0f, 300.0f, 300.0f ) && texturePoint.lightRadius == idVec3( 200.0f, 200.0f, 200.0f ) && !texturePoint.emitter.enabled,
+				"EC-01: an emitter with no light_radius and light \"200\" gets 300 300 300; the same light as a texture light still reads light \"200\"" );
+
+	// a texture spot still reads its frustum
+	stale.Delete( "emitter" );
+	renderLight_t textureSpot;
+	gameEdit->ParseSpawnArgsToRenderLight( &stale, &textureSpot );
+	test.Check( !textureSpot.emitter.enabled && !textureSpot.pointLight && textureSpot.target == idVec3( 0.0f, 0.0f, -256.0f ) && textureSpot.up == idVec3( 0.0f, 128.0f, 0.0f )
+				&& textureSpot.right == idVec3( 128.0f, 0.0f, 0.0f ) && textureSpot.start == idVec3( 0.0f, 0.0f, -8.0f ) && textureSpot.end == idVec3( 0.0f, 0.0f, -300.0f ),
+				"EC-01: a texture spot reads its five vectors as before" );
+
+	// DP-EC-01: the editor writes every emit_* key back from the block it parsed ( G0 section 2, "Writers" ), so it
+	// reads them all ( EM_ParseAllFromDict ): editing a light leaves a key its shape, pattern or effect does not
+	// use exactly as it was, so switching back brings the authored value
+	static const char* const keptOmniKeys[][ 2 ] =
+	{
+		{ "emit_cone", "30" }, { "emit_penumbra", "0.9" }, { "emit_square", "8" },
+		{ "emit_pattern_strength", "0.6" }, { "emit_pattern_scale", "3" }, { "emit_pattern_phase", "0.25" },
+		{ "emit_effect_speed", "4" }, { "emit_effect_amount", "0.5" }, { "emit_effect_phase", "0.75" },
+	};
+	static const char* const keptSunKeys[][ 2 ] =
+	{
+		{ "emit_falloff", "linear" }, { "emit_size", "40" }, { "emit_start", "12" },
+	};
+	const int numKeptOmni = sizeof( keptOmniKeys ) / sizeof( keptOmniKeys[ 0 ] );
+	const int numKeptSun = sizeof( keptSunKeys ) / sizeof( keptSunKeys[ 0 ] );
+	idDict keptOmni;
+	keptOmni.Set( "classname", "light" );
+	keptOmni.Set( "origin", "0 0 0" );
+	keptOmni.Set( "emitter", "1" );
+	keptOmni.Set( "emit_shape", "omni" );
+	keptOmni.Set( "light_radius", "300 300 300" );
+	keptOmni.Set( "emit_pattern", "none" );
+	keptOmni.Set( "emit_effect", "none" );
+	for( int i = 0; i < numKeptOmni; i++ )
+	{
+		keptOmni.Set( keptOmniKeys[ i ][ 0 ], keptOmniKeys[ i ][ 1 ] );
+	}
+	idDict keptSun;
+	keptSun.Set( "classname", "light" );
+	keptSun.Set( "origin", "0 0 0" );
+	keptSun.Set( "emitter", "1" );
+	keptSun.Set( "emit_shape", "sun" );
+	keptSun.Set( "parallel", "1" );
+	keptSun.Set( "light_radius", "2048 2048 1024" );
+	keptSun.Set( "light_center", "4 4 32" );
+	for( int i = 0; i < numKeptSun; i++ )
+	{
+		keptSun.Set( keptSunKeys[ i ][ 0 ], keptSunKeys[ i ][ 1 ] );
+	}
+
+	// the edit: a colour change, then the editor's write
+	LightInfo keptOmniLight;
+	keptOmniLight.FromDict( &keptOmni );
+	keptOmniLight.color.Set( 0.5f, 0.25f, 1.0f );
+	idDict keptOmniWritten;
+	keptOmniLight.ToDict( &keptOmniWritten );
+	LightInfo keptSunLight;
+	keptSunLight.FromDict( &keptSun );
+	keptSunLight.color.Set( 0.5f, 0.25f, 1.0f );
+	idDict keptSunWritten;
+	keptSunLight.ToDict( &keptSunWritten );
+
+	bool keptAll = true;
+	for( int i = 0; i < numKeptOmni; i++ )
+	{
+		const char* written = keptOmniWritten.GetString( keptOmniKeys[ i ][ 0 ], keptOmniKeys[ i ][ 1 ] );
+		if( idStr::Cmp( written, keptOmniKeys[ i ][ 1 ] ) != 0 )
+		{
+			common->Printf( "le_selfTest DP-EC-01 omni: %s written \"%s\", was \"%s\"\n", keptOmniKeys[ i ][ 0 ], written, keptOmniKeys[ i ][ 1 ] );
+			keptAll = false;
+		}
+	}
+	for( int i = 0; i < numKeptSun; i++ )
+	{
+		const char* written = keptSunWritten.GetString( keptSunKeys[ i ][ 0 ], keptSunKeys[ i ][ 1 ] );
+		if( idStr::Cmp( written, keptSunKeys[ i ][ 1 ] ) != 0 )
+		{
+			common->Printf( "le_selfTest DP-EC-01 sun: %s written \"%s\", was \"%s\"\n", keptSunKeys[ i ][ 0 ], written, keptSunKeys[ i ][ 1 ] );
+			keptAll = false;
+		}
+	}
+	test.Check( keptAll, "DP-EC-01: editing an omni leaves its cone keys and a none pattern's and a none effect's three keys as they were; editing a sun leaves its falloff, size and start" );
+
+	// the two entries agree in every field the light uses ( G0 section 3, "Two entries" ): an omni, a spot with a
+	// pattern and an effect, a sun; the dicts carry every key, so the full read has something to differ on
+	idDict both;
+	both.Set( "emitter", "1" );
+	both.Set( "emit_falloff", "exponential" );
+	both.Set( "emit_size", "40" );
+	both.Set( "emit_start", "12" );
+	both.Set( "emit_clamp", "0" );
+	both.Set( "emit_cone", "50 30" );
+	both.Set( "emit_penumbra", "0.4" );
+	both.Set( "emit_square", "6" );
+	both.Set( "emit_pattern_strength", "0.6" );
+	both.Set( "emit_pattern_scale", "3" );
+	both.Set( "emit_pattern_phase", "0.25" );
+	both.Set( "emit_effect_speed", "4" );
+	both.Set( "emit_effect_amount", "0.5" );
+	both.Set( "emit_effect_phase", "0.75" );
+	bool entriesAgree = true;
+	for( int c = 0; c < 3; c++ )
+	{
+		both.Set( "emit_shape", ( c == 0 ) ? "omni" : ( c == 1 ) ? "spot" : "sun" );
+		both.Set( "emit_pattern", ( c == 1 ) ? "caustic" : "none" );
+		both.Set( "emit_effect", ( c == 1 ) ? "pulse" : "none" );
+		emitterData_t game;
+		emitterData_t all;
+		EM_ParseFromDict( &both, &game );
+		EM_ParseAllFromDict( &both, &all );
+		bool same = game.enabled == all.enabled && game.shape == all.shape && game.pattern == all.pattern && game.effect == all.effect
+					&& game.energyClamp == all.energyClamp;
+		if( game.shape != EM_SUN )
+		{
+			same = same && game.falloff == all.falloff && game.size == all.size && game.start == all.start;
+		}
+		if( game.shape == EM_SPOT )
+		{
+			same = same && game.coneH == all.coneH && game.coneV == all.coneV && game.tanHalfH == all.tanHalfH && game.tanHalfV == all.tanHalfV
+				   && game.penumbra == all.penumbra && game.squareness == all.squareness;
+		}
+		if( game.pattern != EMP_NONE )
+		{
+			same = same && game.patternStrength == all.patternStrength && game.patternScale == all.patternScale && game.patternPhase == all.patternPhase;
+		}
+		if( game.effect != EME_NONE )
+		{
+			same = same && game.effectSpeed == all.effectSpeed && game.effectAmount == all.effectAmount && game.effectPhase == all.effectPhase;
+		}
+		entriesAgree = entriesAgree && same && ( c != 1 || ( game.pattern == EMP_CAUSTIC && game.effect == EME_PULSE && game.coneH == 50.0f ) );
+	}
+	test.Check( entriesAgree, "DP-EC-01: EM_ParseFromDict and EM_ParseAllFromDict give the same block in every field an omni, a spot with a pattern and an effect, and a sun use" );
+
+	// ---- EC-02: the shadow projection from the apex's inverse against one built with a general inverse of
+	// the bulb's frame ( what the derive did before ), relative to the largest element
+	struct ec02Spot_t
+	{
+		idVec3		origin;
+		idAngles	angles;
+		float		range;
+	};
+	const ec02Spot_t spots[] =
+	{
+		{ idVec3( 0.0f, 0.0f, 0.0f ), idAngles( 0.0f, 0.0f, 0.0f ), 256.0f },
+		{ idVec3( 120.0f, -64.0f, 32.0f ), idAngles( 90.0f, 0.0f, 0.0f ), 512.0f },
+		{ idVec3( 300.0f, 200.0f, -100.0f ), idAngles( 33.0f, 127.0f, -41.0f ), 300.0f },
+		{ idVec3( 100000.0f, 0.0f, 0.0f ), idAngles( 0.0f, 0.0f, 0.0f ), 256.0f },
+		{ idVec3( 100000.0f, -70000.0f, 2000.0f ), idAngles( 17.0f, 211.0f, 63.0f ), 1024.0f },
+	};
+	idDict ec02Keys;
+	ec02Keys.Set( "emitter", "1" );
+	ec02Keys.Set( "emit_shape", "spot" );
+	ec02Keys.Set( "emit_cone", "50 30" );
+	emitterData_t ec02Spot;
+	EM_ParseFromDict( &ec02Keys, &ec02Spot );
+	float worstRelative = 0.0f;
+	const int numSpots = sizeof( spots ) / sizeof( spots[ 0 ] );
+	for( int s = 0; s < numSpots; s++ )
+	{
+		const idMat3 axis = spots[ s ].angles.ToMat3();
+		const float pullBack = Max( 8.0f, spots[ s ].range / 512.0f );
+
+		idRenderMatrix apexMatrix;
+		idRenderMatrix::CreateFromOriginAxis( spots[ s ].origin - axis[0] * pullBack, axis, apexMatrix );
+		idRenderMatrix inverseApex;
+		idRenderMatrix::Inverse( apexMatrix, inverseApex );
+		idRenderMatrix got;
+		R_EmitterSpotShadowProject( ec02Spot, spots[ s ].range, pullBack, inverseApex, got );
+
+		idRenderMatrix bulbMatrix;
+		idRenderMatrix::CreateFromOriginAxis( spots[ s ].origin, axis, bulbMatrix );
+		idRenderMatrix inverseBulb;
+		idRenderMatrix::Inverse( bulbMatrix, inverseBulb );
+		idRenderMatrix want;
+		R_EmitterSpotShadowProject( ec02Spot, spots[ s ].range, 0.0f, inverseBulb, want );
+
+		float largest = 0.0f;
+		float difference = 0.0f;
+		for( int i = 0; i < 4; i++ )
+		{
+			for( int j = 0; j < 4; j++ )
+			{
+				largest = Max( largest, idMath::Fabs( want[ i ][ j ] ) );
+				difference = Max( difference, idMath::Fabs( got[ i ][ j ] - want[ i ][ j ] ) );
+			}
+		}
+		const float relative = ( largest > 0.0f ) ? difference / largest : difference;
+		common->Printf( "le_selfTest EC-02 spot %d: origin %s, largest element %g, largest difference %g, relative %g\n", s,
+						spots[ s ].origin.ToString( 0 ), largest, difference, relative );
+		worstRelative = Max( worstRelative, relative );
+	}
+	common->Printf( "le_selfTest EC-02: largest shadow-projection difference relative to the largest element: %g\n", worstRelative );
+	test.Check( worstRelative < 1e-5f, "EC-02: a spot's shadow projection from the apex's inverse matches a general inverse of the bulb's frame" );
+}
+//puncho end
 
 // the opening mode follows le_startEasy; runs Open and Close on the tool, so only while it is closed
 static void SelfTestOpenMode( LightSelfTest& test )
@@ -4625,8 +6570,11 @@ static void SelfTestOpenMode( LightSelfTest& test )
 	test.Check( opensHidden && opensEasy && !editor.IsOpen(), "Open: le_startEasy 0 shows nothing until a pick, 1 opens easy mode" );
 }
 
+#endif // !ID_RETAIL
+
 } //namespace ImGuiTools
 
+#if !defined( ID_RETAIL )
 CONSOLE_COMMAND( le_selfTest, "checks the easy-mode light geometry contracts and the map splice", NULL )
 {
 	ImGuiTools::LightSelfTest test;
@@ -4634,10 +6582,18 @@ CONSOLE_COMMAND( le_selfTest, "checks the easy-mode light geometry contracts and
 	ImGuiTools::SelfTestSplice( test );
 	ImGuiTools::SelfTestGeometry( test );
 	ImGuiTools::SelfTestColor( test );
-	ImGuiTools::SelfTestLightType( test );
-	ImGuiTools::SelfTestMathStyle( test );
-	ImGuiTools::SelfTestCancelMath( test );
+	ImGuiTools::SelfTestEmitterKeys( test );
+	ImGuiTools::SelfTestEmitterGestures( test );
+	ImGuiTools::SelfTestKindSwitch( test );
+	ImGuiTools::SelfTestFixBatchB( test );
+	ImGuiTools::SelfTestChoicesC( test );
+	//puncho start
+	ImGuiTools::SelfTestAimStart( test );
+	ImGuiTools::SelfTestReviewFixesD( test );
+	ImGuiTools::SelfTestEmitterCosts( test );
+	//puncho end
 	ImGuiTools::SelfTestOpenMode( test );
 
 	common->Printf( "le_selfTest: %d checks, %d passed, %d failed\n", test.run, test.run - test.failed, test.failed );
 }
+#endif // !ID_RETAIL

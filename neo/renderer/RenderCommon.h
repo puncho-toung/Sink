@@ -41,8 +41,6 @@ If you have questions concerning this license or the applicable additional terms
 #include "Font.h"
 #include "Framebuffer.h"
 
-#include "MathLight.h"
-
 // maximum texture units
 const int MAX_PROG_TEXTURE_PARMS	= 16;
 
@@ -218,6 +216,11 @@ public:
 	idInteraction* 			lastInteraction;
 
 	struct doublePortal_s* 	foggedPortals;
+
+	//puncho start - last, behind every field R_AddSingleLight reads for every light ( RV2-EP-02 ): only
+	// an emitter spot reads it
+	idRenderMatrix			emitterShadowProject;	// an emitter spot's shadow projection, apex on the bulb; valid for an emitter spot only, zero until one derives
+	//puncho end
 };
 
 
@@ -336,6 +339,22 @@ struct shadowOnlyEntity_t
 	idRenderEntityLocal*		edef;
 };
 
+//puncho start
+// An emitter's part of a view light ( G0 section 7, "The view light keeps its size" ). Allocated in
+// frame memory by R_AddSingleLight for an emitter only, so a texture light pays nothing for it;
+// filled there once per view, so the backend binds it without recomputing anything per stage.
+struct viewEmitter_t
+{
+	idRenderMatrix			shadowProject;				// a spot's shadow projection, apex on the bulb, relative like
+														// baseLightProject; zero for an omni or a sun
+	idVec4					parms[3];					// RENDERPARM_USER0..2 of the interaction shaders, G0 section 8,
+														// r_showEmitters and r_emitterEarlyOut included
+	int						shape;						// emitterShape_t
+	int						falloff;					// emitterFalloff_t, for the profile tags and the render log
+	int						pattern;					// emitterPattern_t, likewise
+};
+//puncho end
+
 // viewLights are allocated on the frame temporary stack memory
 // a viewLight contains everything that the back end needs out of an idRenderLightLocal,
 // which the front end may be modifying simultaniously if running in SMP mode.
@@ -353,8 +372,8 @@ struct viewLight_t
 	// seen through any portals
 	idScreenRect			scissorRect;
 
-	// R_AddSingleLight() determined that the light isn't actually needed
-	bool					removeFromList;
+	//puncho start - removeFromList moved beside pointLight and parallel, into their padding, so that
+	// this pointer takes the eight bytes it left and viewLight_t keeps the size it had before emitters
 	int						lightRefsWalked;
 	int						cullShadowSkips;
 	int					gatherMismatch;
@@ -365,6 +384,11 @@ struct viewLight_t
 	int					mocVerts;
 	int					mocTests;
 	int					mocCulled;
+
+	// NULL unless the light is an emitter; frame memory like the view light. The backend reads an
+	// emitter only through it ( G0 section 7, "The view light keeps its size" )
+	viewEmitter_t* 			emitter;
+	//puncho end
 
 	// R_AddSingleLight builds this list of entities that need to be added
 	// to the viewEntities list because they potentially cast shadows into
@@ -392,6 +416,10 @@ struct viewLight_t
 	idRenderMatrix			baseLightProject;			// relative xyz1 to projected light strq
 	bool					pointLight;					// otherwise a projection light (should probably invert the sense of this, because points are way more common)
 	bool					parallel;					// lightCenter gives the direction to the light at infinity
+	//puncho start - moved here from after scissorRect, into the padding after parallel
+	// R_AddSingleLight() determined that the light isn't actually needed
+	bool					removeFromList;
+	//puncho end
 	idVec3					lightCenter;				// offset the lighting direction for shading and
 	int						shadowLOD;					// level of detail for shadowmap selection
 	float					shadowFadeOut;				// blending from last shadow LOD to invisible
@@ -415,10 +443,14 @@ struct viewLight_t
 	{
 		return ( imageSize.x != -1 ) && ( imageSize.y != -1 );
 	}
-
-	mathLightData_t   mathLight;
-
 };
+
+//puncho start - 1232 bytes, ten 128-byte units of the frame allocator as before the emitter work ( 1280 );
+// every view light of every view pays for any growth ( review finding RV-C-EP-01 )
+#if defined( _WIN64 )
+	static_assert( sizeof( viewLight_t ) == 1232, "viewLight_t must keep its size: put an emitter's data in viewEmitter_t" );
+#endif
+//puncho end
 
 // a viewEntity is created whenever a idRenderEntityLocal is considered for inclusion
 // in the current view, but it may still turn out to be culled.
@@ -1267,9 +1299,9 @@ extern idCVar r_useShadowDepthBounds;		// use depth bounds test on individual sh
 extern idCVar r_useShadowAtlas;				// temporary for perf testing: pack shadow maps into big atlas
 // RB end
 //puncho start
-extern idCVar r_mathLightsEnabled;			// globally enable analytic (math) light falloff
-extern idCVar r_showMathLights;				// math light debug view: 0 off, 1 falloff t, 2 spot mask, 3 pattern
-extern idCVar r_profileLights;				// per-light Optick events: 0 off, 1 math lights, 2 all lights
+extern idCVar r_profileLights;				// per-light Optick events: 0 off, 1 emitters, 2 all lights
+extern idCVar r_showEmitters;				// emitter debug view: 0 off, 1 falloff t, 2 spot mask, 3 pattern, 4 unlit inside the volume
+extern idCVar r_emitterEarlyOut;			// emitter pixels the light cannot reach skip the shadow taps
 //puncho end
 
 extern idCVar r_skipStaticInteractions;		// skip interactions created at level load
@@ -1617,6 +1649,11 @@ void R_FreeEntityDefFadedDecals( idRenderEntityLocal* def, int time );
 
 // RB: for dmap
 void R_DeriveLightData( idRenderLightLocal* light );
+//puncho start - EC-02: a spot's shadow projection from the culling apex's inverse frame; in
+// RenderWorld_defs.cpp, called by R_DeriveLightData and by le_selfTest ( RV2-EL-01: a renderer
+// function, so declared here and not in the public Emitter.h )
+void R_EmitterSpotShadowProject( const emitterData_t& em, float range, float pullBack, const idRenderMatrix& inverseApexMatrix, idRenderMatrix& shadowProject );
+//puncho end
 
 // Called by the editor and dmap to operate on light volumes
 void R_RenderLightFrustum( const renderLight_t& renderLight, idPlane lightFrustum[6] );
@@ -1706,23 +1743,24 @@ ID_INLINE bool R_CullModelBoundsToLight( const idRenderLightLocal* light, const 
 //puncho start
 /*
 ====================
-R_LightUsesMathPath
+R_LightUsesEmitterPath
 
-The single authority on whether a light shades through MLEvaluate this frame or through the falloff
-and projection textures. The rpUser0 upload in RenderInteractions, the interaction phase split, the
+The single authority on whether a light shades through EMEvaluate or through its falloff and
+projection textures. The rpUser0 upload in RenderInteractions, the interaction phase split, the
 per-light debug marker, the per-light Optick scopes and every light counter route through here, so no
-tool can report a light into a bucket the shader did not use. R_AddSingleLight runs before the
-viewLight_t copy exists and passes renderLight_t::mathLight directly.
+tool can report a light into a bucket the shader did not use. There is no global switch.
+R_AddSingleLight runs before the view light exists and passes renderLight_t::emitter directly; the
+view light form tests the pointer R_AddSingleLight sets for an emitter only.
 ====================
 */
-ID_INLINE bool R_LightUsesMathPath( const mathLightData_t& mathLight )
+ID_INLINE bool R_LightUsesEmitterPath( const emitterData_t& emitter )
 {
-	return mathLight.enabled && r_mathLightsEnabled.GetBool();
+	return emitter.enabled;
 }
 
-ID_INLINE bool R_LightUsesMathPath( const viewLight_t* vLight )
+ID_INLINE bool R_LightUsesEmitterPath( const viewLight_t* vLight )
 {
-	return R_LightUsesMathPath( vLight->mathLight );
+	return vLight->emitter != NULL;
 }
 //puncho end
 

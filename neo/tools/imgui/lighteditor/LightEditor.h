@@ -40,7 +40,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "../imgui/BFGimgui.h"
 #include "../imgui/ImGuizmo.h"
 
-#include "../../renderer/MathLight.h"
+#include "../../renderer/Emitter.h"
 
 struct viewDef_t;
 
@@ -81,11 +81,14 @@ public:
 	bool		hasCenter;
 	int			lightStyle;		// RBDOOM specific, saved to map as "style"
 
-	mathLightData_t     mathLight;
+	emitterData_t	emitter;			// the emitter and emit_* keys; disabled on a texture light
+	bool		autoRange;			// emit_auto_range, read by the editors only
+	bool		hasEmitterBlock;	// the light carries emit keys, kept while it is a texture light
 
 	LightInfo();
 
-	void		SetLightType( ELightType type );	// D45: also sets mathLight.type
+	void		SetLightType( ELightType type );	// also sets emitter.shape
+	void		RestoreKept( const LightInfo& kept );	// what a type switch keeps
 	void		Defaults();
 	void		DefaultPoint();
 	void		DefaultProjected();
@@ -111,6 +114,37 @@ public:
 	idDict		dict;			// ToDict's dict of the last commit ("" = delete the key)
 };
 
+/*
+The frame between the pose the editor stores (the spawn dict's) and the world. idLight keeps the
+render light at the dict's pose relative to the entity frame E the same dict gives, and moves it with
+the entity's physics P: world axis = stored axis * E^T * P. For an unbound light P is E and this is
+the identity.
+*/
+class LightStoredFrame
+{
+public:
+	idVec3		storedOrigin;	// E's origin
+	idVec3		worldOrigin;	// P's origin
+	idMat3		axis;			// E^T * P
+
+	void		Identity()
+	{
+		storedOrigin.Zero();
+		worldOrigin.Zero();
+		axis.Identity();
+	}
+
+	idVec3		ToWorldPoint( const idVec3& stored ) const
+	{
+		return worldOrigin + axis * ( stored - storedOrigin );
+	}
+
+	idMat3		ToStoredAxis( const idMat3& worldAxis ) const
+	{
+		return worldAxis * axis.Transpose();
+	}
+};
+
 // plan 3.3: what AUTO keeps from the moment it was (re)entered ("autoBase")
 class LightAutoBase
 {
@@ -120,6 +154,9 @@ public:
 	float		handedness;			// spot h0 = sign( ( right0 x up0 ) . target0 ), 0 counts as -1
 	float		zNear;				// spot zNear0, used with explicit start/end
 	float		centerLength;		// sun: max( |lightCenter0|, 1 )
+	float		emitterStart;		// emitter spot: emit_start at entry; an aim under auto range clamps this, never the last frame's (DP-E4-01)
+	bool		haveStoredFrame;	// storedFrame was taken for this entry (on its first emitter-spot AUTO frame)
+	LightStoredFrame	storedFrame;	// emitter spot: stored pose to world, fixed for the whole entry
 	bool		haveFallback;		// 'fallback' holds the previous frame's horizontal vector
 	idVec3		fallback;			// spot: the previous r (light-local)
 };
@@ -146,7 +183,7 @@ private:
 	idVec3				entityPos;
 
 	LightInfo			original;
-	idDict				originalMath;	// the light's math_* keys at selection or its last commit; Cancel puts back exactly these
+	idDict				originalEmit;	// the light's emitter and emit_* keys at selection or its last commit; Cancel puts back exactly these
 	LightInfo			cur; // current status of the light
 	LightInfo			curNotMoving;
 
@@ -161,8 +198,16 @@ private:
 	idList<idStr>		styleNames;
 	int					currentStyleIndex;
 
-	// D62: the LightKind tab the panel last showed (true = Math); it mirrors ImGui's tab bar, not the light
-	bool				tabShowsMath;
+	// the LightKind tab the panel last showed (true = Emitter); it mirrors ImGui's tab bar, not the light
+	bool				tabShowsEmitter;
+
+	// the colour the panel shows beside the intensity (_color over its largest channel); kept while the
+	// intensity is 0, so a light turned black shows the colour it was given
+	idVec3				panelHue;
+
+	// G0 9: the mapper unticked Equilateral on an emitter omni; it stays unticked until ticked again or the
+	// editor closes, whatever a re-read of a light with equal radii says (RV-C-ET-08). Cleared by Open
+	bool				equilateralUnticked;
 
 	ImGuizmo::OPERATION mCurrentGizmoOperation = ImGuizmo::TRANSLATE;
 	ImGuizmo::MODE		mCurrentGizmoMode = ImGuizmo::WORLD;
@@ -206,7 +251,9 @@ private:
 	int					modalWheel;				// wheel clicks since modal entry, up positive
 	int					lastRunFrame;			// idLib::frameNumber of the last RunFrame
 	LightInfo			checkpointUndo;			// E2: what RMB restores
+	idDict				checkpointEmit;			// E2: the emitter and emit_* keys the light has with checkpointUndo applied (RV-C-ET-01)
 	LightInfo			modalBase;				// E3: modal results are functions of this and the counts (D17)
+	LightInfo			modalEntry;				// E3: the light as the gesture found it, before entry aligned or levelled it; Cancel restores it (DP-E3-02)
 	LightAutoBase		autoBase;				// captured at every E1 entry
 	idVec3				lastAim;				// the aim point P of the last AUTO frame, for the reticle
 	bool				lastAimHit;
@@ -215,6 +262,8 @@ private:
 	int					hintUntilFrame;			// ... shown until this frame
 
 	bool				HandlePress( int key );
+	void				TakeCheckpoint( const LightInfo& undo );
+	void				UndoCheckpoint();
 	void				SwitchMode();
 	void				EnterModal( int key );
 	void				DrawEasyOverlay();
@@ -272,7 +321,8 @@ private:
 		lastAimHit = false;
 		applyPending = false;
 		hintUntilFrame = 0;
-		tabShowsMath = true;	// a new tab bar opens on its first tab
+		tabShowsEmitter = true;	// a new tab bar opens on its first tab
+		equilateralUnticked = false;
 
 		Reset();
 	}

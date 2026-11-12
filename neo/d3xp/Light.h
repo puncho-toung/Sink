@@ -169,7 +169,7 @@ private:
 	int				lightStyleFrameTime;
 	idVec3			lightStyleBase;
 // jmarshall end
-	idVec3			mathStyleBase;				// D62: the colour math_style multiplies, set where the light's colour is
+	idVec3			effectBaseColor;			// D62: the colour emit_effect multiplies, set where the light's colour is
 	int				triggercount;
 	idEntity* 		lightParent;
 	idVec4			fadeFrom;
@@ -177,6 +177,10 @@ private:
 	int				fadeStart;
 	int				fadeEnd;
 	bool			soundWasPlaying;
+	//puncho start - set when an emitter breaks: it is off for good ( G0 section 4 ). Saved from
+	// BUILD_NUMBER_SAVE_VERSION_EMITTERS; tested with renderLight.emitter.enabled by EmitterIsBroken
+	bool			emitterBroken;
+	//puncho end
 
 	// RB: pointing to static model because this light entity was split into 2 entities by convertMapToValve220
 	idEntityPtr<idStaticEntity> modelTarget;
@@ -184,6 +188,13 @@ private:
 private:
 	void			PresentLightDefChange();
 	void			PresentModelDefChange();
+	//puncho start - a broken emitter: nothing relights it. A light that is no longer an emitter ( an editor
+	// switched it to Texture ) behaves as a texture light again
+	bool			EmitterIsBroken() const
+	{
+		return emitterBroken && renderLight.emitter.enabled;
+	}
+	//puncho end
 
 	void			Event_SetShader( const char* shadername );
 	void			Event_GetLightParm( int parmnum );

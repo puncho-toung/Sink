@@ -669,37 +669,53 @@ static void ParseSpawnArgsToRenderLight( const idDict* args, renderLight_t* rend
 		args->GetVector( "origin", "", renderLight->origin );
 	}
 
-	gotTarget = args->GetVector( "light_target", "", renderLight->target );
-	gotUp = args->GetVector( "light_up", "", renderLight->up );
-	gotRight = args->GetVector( "light_right", "", renderLight->right );
-	args->GetVector( "light_start", "0 0 0", renderLight->start );
-	if( !args->GetVector( "light_end", "", renderLight->end ) )
+	//puncho start - G3D: the emitter part of this parse mirrors the game's, idGameEdit::ParseSpawnArgsToRenderLight
+	// ( d3xp/Light.cpp ); change both together. The block itself is the game's own EM_ParseFromDict
+	// ( renderer/Emitter.cpp, compiled into rbdmap ). An emitter reads none of the five frustum vectors,
+	// so stale ones neither reject it nor shape it
+	EM_ParseFromDict( args, &renderLight->emitter );
+	const bool isEmitter = renderLight->emitter.enabled;
+
+	gotTarget = gotUp = gotRight = false;
+	if( !isEmitter )
 	{
-		renderLight->end = renderLight->target;
+		gotTarget = args->GetVector( "light_target", "", renderLight->target );
+		gotUp = args->GetVector( "light_up", "", renderLight->up );
+		gotRight = args->GetVector( "light_right", "", renderLight->right );
+		args->GetVector( "light_start", "0 0 0", renderLight->start );
+		if( !args->GetVector( "light_end", "", renderLight->end ) )
+		{
+			renderLight->end = renderLight->target;
+		}
 	}
 
-	// we should have all of the target/right/up or none of them
+	// we should have all of the target/right/up or none of them; an emitter has none
 	if( ( gotTarget || gotUp || gotRight ) != ( gotTarget && gotUp && gotRight ) )
 	{
 		idLib::Printf( "Light at (%f,%f,%f) has bad target info\n",
 					   renderLight->origin[0], renderLight->origin[1], renderLight->origin[2] );
 		return;
 	}
+	//puncho end
 
 	if( !gotTarget )
 	{
 		renderLight->pointLight = true;
 
-		// allow an optional relative center of light and shadow offset
-		args->GetVector( "light_center", "0 0 0", renderLight->lightCenter );
-
-		// create a point light
-		if( !args->GetVector( "light_radius", "300 300 300", renderLight->lightRadius ) )
+		//puncho - an emitter reads light_radius and light_center in its branch below, as the game's parse does
+		if( !isEmitter )
 		{
-			float radius;
+			// allow an optional relative center of light and shadow offset
+			args->GetVector( "light_center", "0 0 0", renderLight->lightCenter );
 
-			args->GetFloat( "light", "300", radius );
-			renderLight->lightRadius[0] = renderLight->lightRadius[1] = renderLight->lightRadius[2] = radius;
+			// create a point light
+			if( !args->GetVector( "light_radius", "300 300 300", renderLight->lightRadius ) )
+			{
+				float radius;
+
+				args->GetFloat( "light", "300", radius );
+				renderLight->lightRadius[0] = renderLight->lightRadius[1] = renderLight->lightRadius[2] = radius;
+			}
 		}
 	}
 
@@ -765,12 +781,46 @@ static void ParseSpawnArgsToRenderLight( const idDict* args, renderLight_t* rend
 	args->GetFloat( "shaderParm7", "0", renderLight->shaderParms[ SHADERPARM_MODE ] );
 	args->GetBool( "noshadows", "0", renderLight->noShadows );
 	args->GetBool( "nospecular", "0", renderLight->noSpecular );
-	args->GetBool( "parallel", "0", renderLight->parallel );
+	//puncho start - G3D: as the game's parse, an emitter reads neither parallel nor texture; its shape
+	// sets the one and its material is fixed below
+	if( !isEmitter )
+	{
+		args->GetBool( "parallel", "0", renderLight->parallel );
 
-	args->GetString( "texture", "lights/squarelight1", &texture );
+		args->GetString( "texture", "lights/squarelight1", &texture );
 
-	// allow this to be NULL
-	renderLight->shader = declManager->FindMaterial( texture, false );
+		// allow this to be NULL
+		renderLight->shader = declManager->FindMaterial( texture, false );
+	}
+	else
+	{
+		renderLight->shader = declManager->FindMaterial( "lights/defaultPointLight", false );
+
+		// R_DeriveLightData ( renderlight.cpp ) builds a spot's cone from the range and the block
+		idVec3 radius;
+		args->GetVector( "light_radius", "300 300 300", radius );
+		radius.x = Max( radius.x, 1.0f );
+		radius.y = Max( radius.y, 1.0f );
+		radius.z = Max( radius.z, 1.0f );
+
+		if( renderLight->emitter.shape == EM_SPOT )
+		{
+			const float range = EM_Range( radius );
+			renderLight->pointLight = false;
+			renderLight->parallel = false;
+			renderLight->lightRadius.Set( range, range, range );
+			renderLight->lightCenter.Zero();
+		}
+		else
+		{
+			// omni: a point box, light_center moves the bulb; sun: a parallel box, light_center points at the sun
+			renderLight->pointLight = true;
+			renderLight->parallel = ( renderLight->emitter.shape == EM_SUN );
+			renderLight->lightRadius = radius;
+			args->GetVector( "light_center", "0 0 0", renderLight->lightCenter );
+		}
+	}
+	//puncho end
 }
 #endif
 

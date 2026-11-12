@@ -69,6 +69,7 @@ set(MC_FRAMEWORK_SOURCES
 set(MC_RENDERER_INCLUDES 
 	../../renderer/BinaryImage.h
 	../../renderer/Color/ColorSpace.h
+	../../renderer/Emitter.h
 	../../renderer/Image.h
 	../../renderer/Material.h
 	#../../renderer/VertexCache.h
@@ -85,6 +86,8 @@ set(MC_RENDERER_SOURCES
 	../../renderer/Color/ColorSpace.cpp
 	../../renderer/DXT/DXTEncoder.cpp
 	../../renderer/DXT/DXTEncoder_SSE2.cpp
+	# the emitter block's parse, shared with the game ( map.cpp's light parse calls EM_ParseFromDict )
+	../../renderer/Emitter.cpp
 	../../renderer/GLMatrix.cpp
 	../../renderer/ImageManager.cpp
 	../../renderer/Image_files.cpp

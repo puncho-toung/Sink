@@ -1034,19 +1034,33 @@ void idSaveGame::WriteRenderLight( const renderLight_t& renderLight )
 		WriteInt( 0 );
 	}
 
-	const mathLightData_t& m = renderLight.mathLight;
-	WriteBool(m.enabled);
-	WriteInt(m.type);
-	WriteInt(m.falloff);
-	WriteInt(m.pattern);
-	WriteFloat(m.falloffExp);
-	WriteFloat(m.innerRadius);
-	WriteFloat(m.shapeExp);
-	WriteFloat(m.penumbra);
-	WriteFloat(m.patternStrength);
-	WriteFloat(m.patternScale);
-	WriteFloat(m.patternPhase);
-	WriteBool(m.energyClamp);
+	//puncho start - emitter block, field by field, and only when it is enabled ( G0 section 7 ): every
+	// other render light costs one bool. The two pads are not written
+	const emitterData_t& e = renderLight.emitter;
+	WriteBool( e.enabled );
+	if( e.enabled )
+	{
+		WriteInt( e.shape );
+		WriteInt( e.falloff );
+		WriteInt( e.pattern );
+		WriteInt( e.effect );
+		WriteFloat( e.size );
+		WriteFloat( e.start );
+		WriteFloat( e.coneH );
+		WriteFloat( e.coneV );
+		WriteFloat( e.tanHalfH );
+		WriteFloat( e.tanHalfV );
+		WriteFloat( e.penumbra );
+		WriteFloat( e.squareness );
+		WriteFloat( e.patternStrength );
+		WriteFloat( e.patternScale );
+		WriteFloat( e.patternPhase );
+		WriteFloat( e.effectSpeed );
+		WriteFloat( e.effectAmount );
+		WriteFloat( e.effectPhase );
+		WriteBool( e.energyClamp );
+	}
+	//puncho end
 }
 
 // RB begin
@@ -2230,26 +2244,60 @@ void idRestoreGame::ReadRenderLight( renderLight_t& renderLight )
 	ReadInt( index );
 	renderLight.referenceSound = gameSoundWorld->EmitterForIndex( index );
 
-	if (GetBuildNumber() >= BUILD_NUMBER_SAVE_VERSION_MATH_LIGHTS)
+	//puncho start - saves from BUILD_NUMBER_SAVE_VERSION_MATH_LIGHTS ( 1404 ) to 1431 hold the math light
+	// block here, as WriteRenderLight wrote it before BUILD_NUMBER_SAVE_VERSION_NO_MATH_LIGHTS: one bool,
+	// three ints, seven floats, one bool. It is read and dropped, so such a light comes back as a
+	// texture light, or as an emitter when the emitter block below says so
+	if( GetBuildNumber() >= BUILD_NUMBER_SAVE_VERSION_MATH_LIGHTS && GetBuildNumber() < BUILD_NUMBER_SAVE_VERSION_NO_MATH_LIGHTS )
 	{
-		mathLightData_t& m = renderLight.mathLight;
-		ReadBool(m.enabled);
-		ReadInt(m.type);
-		ReadInt(m.falloff);
-		ReadInt(m.pattern);
-		ReadFloat(m.falloffExp);
-		ReadFloat(m.innerRadius);
-		ReadFloat(m.shapeExp);
-		ReadFloat(m.penumbra);
-		ReadFloat(m.patternStrength);
-		ReadFloat(m.patternScale);
-		ReadFloat(m.patternPhase);
-		ReadBool(m.energyClamp);
+		bool	dropBool;
+		int		dropInt;
+		float	dropFloat;
+
+		ReadBool( dropBool );		// enabled
+		ReadInt( dropInt );			// type
+		ReadInt( dropInt );			// falloff
+		ReadInt( dropInt );			// pattern
+		for( i = 0; i < 7; i++ )
+		{
+			ReadFloat( dropFloat );	// falloffExp, innerRadius, shapeExp, penumbra, patternStrength, patternScale, patternPhase
+		}
+		ReadBool( dropBool );		// energyClamp
 	}
-	else
+	//puncho end
+
+	//puncho start - emitter block, the mirror of WriteRenderLight: the flag, then the rest only when it is
+	// set. A disabled block, and a save from before emitters, read as the cleared block the parse makes;
+	// the two pads are not in the stream and stay 0
+	emitterData_t& e = renderLight.emitter;
+	memset( &e, 0, sizeof( e ) );
+	if( GetBuildNumber() >= BUILD_NUMBER_SAVE_VERSION_EMITTERS )
 	{
-		memset(&renderLight.mathLight, 0, sizeof(renderLight.mathLight));
+		ReadBool( e.enabled );
+		if( e.enabled )
+		{
+			ReadInt( e.shape );
+			ReadInt( e.falloff );
+			ReadInt( e.pattern );
+			ReadInt( e.effect );
+			ReadFloat( e.size );
+			ReadFloat( e.start );
+			ReadFloat( e.coneH );
+			ReadFloat( e.coneV );
+			ReadFloat( e.tanHalfH );
+			ReadFloat( e.tanHalfV );
+			ReadFloat( e.penumbra );
+			ReadFloat( e.squareness );
+			ReadFloat( e.patternStrength );
+			ReadFloat( e.patternScale );
+			ReadFloat( e.patternPhase );
+			ReadFloat( e.effectSpeed );
+			ReadFloat( e.effectAmount );
+			ReadFloat( e.effectPhase );
+			ReadBool( e.energyClamp );
+		}
 	}
+	//puncho end
 }
 
 // RB begin

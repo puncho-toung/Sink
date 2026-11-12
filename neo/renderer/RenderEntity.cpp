@@ -116,6 +116,9 @@ idRenderLightLocal::idRenderLightLocal()
 
 	baseLightProject.Zero();
 	inverseBaseLightProject.Zero();
+	//puncho start - written by the derive of an emitter spot only
+	emitterShadowProject.Zero();
+	//puncho end
 }
 
 void idRenderLightLocal::FreeRenderLight()

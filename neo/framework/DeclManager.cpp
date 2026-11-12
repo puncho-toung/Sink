@@ -1216,7 +1216,7 @@ void idDeclManagerLocal::Init()
 	// RB begin
 	cmdSystem->AddCommand( "exportEntitiesToBlender", ExportEntityDefsToBlender_f, CMD_FL_SYSTEM, "exports all entity and model defs to _bl/entities.json" );
 	cmdSystem->AddCommand( "exportMaterialsToBlender", ExportMaterialsToBlender_f, CMD_FL_SYSTEM, "exports all materials to _bl/entities.json" );
-	cmdSystem->AddCommand( "exportFGD", ExportEntityDefsToTrenchBroom_f, CMD_FL_SYSTEM, "exports all entity and model defs to _tb/fgd/DOOM-3-*.fgd; the light class also declares the engine's light_* and math_* keys" );
+	cmdSystem->AddCommand( "exportFGD", ExportEntityDefsToTrenchBroom_f, CMD_FL_SYSTEM, "exports all entity and model defs to _tb/fgd/DOOM-3-*.fgd; the light class also declares the engine's light_* and emit_* keys" );
 	cmdSystem->AddCommand( "exportModelsToTrenchBroom", ExportModelsToTrenchBroom_f, CMD_FL_SYSTEM, "exports all generated models like blwo, base .. to _tb/*.obj" );
 	cmdSystem->AddCommand( "exportImagesToTrenchBroom", ExportImagesToTrenchBroom_f, CMD_FL_SYSTEM, "exports all generated bimages to _tb/*.png" );
 
@@ -2727,7 +2727,7 @@ static const int FGD_NUM_LINK_KEYS = sizeof( FGD_LINK_KEYS ) / sizeof( FGD_LINK_
 // TrenchBroom has no boolean property type, so booleans become a No/Yes combo box
 static const char* const FGD_BOOL_CHOICES	= " =\n\t[\n\t\t0 : \"No\"\n\t\t1 : \"Yes\"\n\t]\n";
 
-// the names ML_ParseFromDict accepts, captioned as in the light editor; an unknown name falls back to
+// the names EM_ParseFromDict accepts, captioned as in the light editor; an unknown name falls back to
 // invsquare_clamped and none
 static const char* const FGD_FALLOFF_CHOICES	= " =\n\t[\n"
 		"\t\t\"invsquare\" : \"Inverse square (unbounded)\"\n"
@@ -2746,6 +2746,33 @@ static const char* const FGD_PATTERN_CHOICES	= " =\n\t[\n"
 		"\t\t\"granular\" : \"Granular (stippled)\"\n"
 		"\t]\n";
 
+//puncho start - emit_shape and emit_effect, the names EM_ParseFromDict accepts
+static const char* const FGD_EMIT_SHAPE_CHOICES	= " =\n\t[\n"
+		"\t\t\"omni\" : \"Omni\"\n"
+		"\t\t\"spot\" : \"Spot\"\n"
+		"\t\t\"sun\" : \"Sun\"\n"
+		"\t]\n";
+
+// captioned as predef_lightstylesinfo captions the styles
+static const char* const FGD_EMIT_EFFECT_CHOICES	= " =\n\t[\n"
+		"\t\t\"none\" : \"None\"\n"
+		"\t\t\"flicker_a\" : \"Flicker A\"\n"
+		"\t\t\"slow_strong_pulse\" : \"Slow Strong Pulse\"\n"
+		"\t\t\"candle_a\" : \"Candle A\"\n"
+		"\t\t\"fast_strobe\" : \"Fast Strobe\"\n"
+		"\t\t\"gentle_pulse\" : \"Gentle Pulse\"\n"
+		"\t\t\"flicker_b\" : \"Flicker B\"\n"
+		"\t\t\"candle_b\" : \"Candle B\"\n"
+		"\t\t\"candle_c\" : \"Candle C\"\n"
+		"\t\t\"slow_strobe\" : \"Slow Strobe\"\n"
+		"\t\t\"fluorescent\" : \"Fluorescent Flicker\"\n"
+		"\t\t\"slow_pulse\" : \"Slow Pulse (no black)\"\n"
+		"\t\t\"strobe\" : \"Strobe\"\n"
+		"\t\t\"pulse\" : \"Pulse\"\n"
+		"\t\t\"flicker\" : \"Flicker\"\n"
+		"\t]\n";
+//puncho end
+
 struct fgdLightKey_t
 {
 	const char*		key;
@@ -2755,12 +2782,11 @@ struct fgdLightKey_t
 	const char*		choices;		// the " = [ ... ]" block of a choices key, else NULL
 };
 
-// The light keys idGameEdit::ParseSpawnArgsToRenderLight and ML_ParseFromDict read, none of which the
-// light entityDef declares. math_type is left out on purpose: the engine derives the math-light type
-// from the light's geometry, the key is informational only.
+// The light keys idGameEdit::ParseSpawnArgsToRenderLight and EM_ParseFromDict read, none of which the
+// light entityDef declares, and emit_auto_range, which only the editors read.
 static const fgdLightKey_t FGD_LIGHT_KEYS[] =
 {
-	{ "light_radius",			"string",	"300 300 300",			"Point light half extents x y z; without it the single light value is used",			NULL },
+	{ "light_radius",			"string",	"300 300 300",			"Point light half extents x y z; without it the single light value is used. For an emitter its reach, each at least 1: an omni's or a sun's box, a spot's range three times",	NULL },
 	{ "light_center",			"string",	"0 0 0",				"Light and shadow centre offset inside the volume; for a parallel light the direction to the light",	NULL },
 	{ "light_target",			"string",	NULL,					"Spot frustum target in light space; with light_right and light_up it makes a spot light",	NULL },
 	{ "light_right",			"string",	NULL,					"Spot frustum right vector in light space; needs light_target and light_up",			NULL },
@@ -2772,18 +2798,26 @@ static const fgdLightKey_t FGD_LIGHT_KEYS[] =
 	{ "parallel",				"choices",	"0",					"Sun light: parallel rays from the light_center direction",								FGD_BOOL_CHOICES },
 	{ "noshadows",				"choices",	"0",					"The light casts no shadows",															FGD_BOOL_CHOICES },
 	{ "nospecular",				"choices",	"0",					"The light adds no specular highlights, diffuse only",									FGD_BOOL_CHOICES },
-	{ "math_enabled",			"choices",	"0",					"Shade with the math_* falloff curve instead of the light texture falloff",				FGD_BOOL_CHOICES },
-	{ "math_falloff",			"choices",	"invsquare_clamped",	"Math light falloff curve over the light volume",										FGD_FALLOFF_CHOICES },
-	{ "math_falloff_exp",		"float",	"2.0",					"Falloff exponent, 0.1 to 16; unused by linear and smooth",								NULL },
-	{ "math_inner_radius",		"float",	"0.0",					"Fraction of the falloff distance, 0 to 1, at full strength before the curve starts",	NULL },
-	{ "math_shape_exp",			"float",	"2.0",					"Spot only: beam shape exponent 1.5 to 32; 2 is an ellipse, 16 nearly a rectangle",		NULL },
-	{ "math_penumbra",			"float",	"0.15",					"Spot only: soft edge width of the beam, 0 to 1",										NULL },
-	{ "math_pattern",			"choices",	"none",					"Math light pattern that modulates the falloff",										FGD_PATTERN_CHOICES },
-	{ "math_pattern_strength",	"float",	"0.0",					"Pattern strength, 0 to 1",																NULL },
-	{ "math_pattern_scale",		"float",	"1.0",					"Pattern scale; larger is finer",														NULL },
-	{ "math_pattern_phase",		"float",	"0.0",					"Pattern phase; shifts the pattern",														NULL },
-	{ "math_energy_clamp",		"choices",	"1",					"Clamp the falloff to 0..1 like a light texture; off lets it reach 64 near the source",	FGD_BOOL_CHOICES },
-	{ "math_style",				"integer",	"-1",					"Math light brightness style, repeating like style: -1 None, 0 Normal, 1 Flicker A, 2 Slow Strong Pulse, 3 Candle A, 4 Fast Strobe, 5 Gentle Pulse, 6 Flicker B, 7 Candle B, 8 Candle C, 9 Slow Strobe, 10 Fluorescent Flicker, 11 Slow Pulse (no black)",	NULL }
+	//puncho start - the emitter block ( G0 section 2 ); EM_ParseAllFromDict reads each of these keys
+	{ "emitter",				"choices",	"0",					"Shade from the lamp with a falloff curve instead of the light textures; texture, style and the spot vectors are then ignored",	FGD_BOOL_CHOICES },
+	{ "emit_shape",				"choices",	NULL,					"Emitter shape; without it a sun when parallel is 1, else an omni. A spot points along its rotation",	FGD_EMIT_SHAPE_CHOICES },
+	{ "emit_auto_range",		"choices",	"1",					"Editors only: the range follows intensity, size, start and falloff",					FGD_BOOL_CHOICES },
+	{ "emit_falloff",			"choices",	"invsquare_clamped",	"Emitter falloff curve from the bulb out to the range; a sun has none",					FGD_FALLOFF_CHOICES },
+	{ "emit_size",				"float",	"96",					"World units, at least 1: the distance over which the curve falls",						NULL },
+	{ "emit_start",				"float",	"0",					"World units, at least 0: full strength up to this distance from the bulb; at most the range minus 1",	NULL },
+	{ "emit_clamp",				"choices",	"1",					"Clamp the falloff to 0..1 like a light texture; off lets it reach 64 near the bulb",	FGD_BOOL_CHOICES },
+	{ "emit_cone",				"string",	"60",					"Spot only: full cone angle in degrees, 1 to 120; two numbers h v for an elliptical beam",	NULL },
+	{ "emit_penumbra",			"float",	"0.2",					"Spot only: soft edge width of the beam, 0 to 1",										NULL },
+	{ "emit_square",			"float",	"2",					"Spot only: beam shape exponent 1.5 to 32; 2 is an ellipse, 16 nearly a rectangle",		NULL },
+	{ "emit_pattern",			"choices",	"none",					"Pattern that modulates the falloff",													FGD_PATTERN_CHOICES },
+	{ "emit_pattern_strength",	"float",	"0",					"Pattern strength, 0 to 1",																NULL },
+	{ "emit_pattern_scale",		"float",	"1",					"Pattern scale in world units round the bulb; larger is finer, 1 the size a light of radius 256 shows",	NULL },
+	{ "emit_pattern_phase",		"float",	"0",					"Pattern phase; shifts the pattern",														NULL },
+	{ "emit_effect",			"choices",	"none",					"Brightness effect: a predefined light style or a waveform",							FGD_EMIT_EFFECT_CHOICES },
+	{ "emit_effect_speed",		"float",	"1",					"Effect speed, 0 to 100",																NULL },
+	{ "emit_effect_amount",		"float",	"1",					"Effect amount, 0 to 1; 0 is a steady light",											NULL },
+	{ "emit_effect_phase",		"float",	"0",					"Effect phase, used modulo 1",															NULL }
+	//puncho end
 };
 
 static const int FGD_NUM_LIGHT_KEYS = sizeof( FGD_LIGHT_KEYS ) / sizeof( FGD_LIGHT_KEYS[ 0 ] );

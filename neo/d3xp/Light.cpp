@@ -98,37 +98,53 @@ void idGameEdit::ParseSpawnArgsToRenderLight( const idDict* args, renderLight_t*
 		args->GetVector( "origin", "", renderLight->origin );
 	}
 
-	gotTarget = args->GetVector( "light_target", "", renderLight->target );
-	gotUp = args->GetVector( "light_up", "", renderLight->up );
-	gotRight = args->GetVector( "light_right", "", renderLight->right );
-	args->GetVector( "light_start", "0 0 0", renderLight->start );
-	if( !args->GetVector( "light_end", "", renderLight->end ) )
+	//puncho start - the emitter block is parsed here, once, before the frustum vectors ( G0 section 4 ): an
+	// emitter reads none of the five ( EC-01: each GetVector runs a sscanf, absent key or not ), so a stale
+	// partial set neither rejects it nor costs it anything, and they stay zero. Its material is fixed
+	// below. A light without the key pays one lookup and then reads what it always read, in that order
+	EM_ParseFromDict( args, &renderLight->emitter );
+	const bool isEmitter = renderLight->emitter.enabled;
+
+	gotTarget = gotUp = gotRight = false;
+	if( !isEmitter )
 	{
-		renderLight->end = renderLight->target;
+		gotTarget = args->GetVector( "light_target", "", renderLight->target );
+		gotUp = args->GetVector( "light_up", "", renderLight->up );
+		gotRight = args->GetVector( "light_right", "", renderLight->right );
+		args->GetVector( "light_start", "0 0 0", renderLight->start );
+		if( !args->GetVector( "light_end", "", renderLight->end ) )
+		{
+			renderLight->end = renderLight->target;
+		}
 	}
 
-	// we should have all of the target/right/up or none of them
+	// we should have all of the target/right/up or none of them; an emitter has none
 	if( ( gotTarget || gotUp || gotRight ) != ( gotTarget && gotUp && gotRight ) )
 	{
 		gameLocal.Printf( "Light at (%f,%f,%f) has bad target info\n",
 						  renderLight->origin[0], renderLight->origin[1], renderLight->origin[2] );
 		return;
 	}
+	//puncho end
 
 	if( !gotTarget )
 	{
 		renderLight->pointLight = true;
 
-		// allow an optional relative center of light and shadow offset
-		args->GetVector( "light_center", "0 0 0", renderLight->lightCenter );
-
-		// create a point light
-		if( !args->GetVector( "light_radius", "300 300 300", renderLight->lightRadius ) )
+		//puncho - an emitter reads light_radius once and light_center only where it uses it, in its branch below, and never "light" ( EC-01 )
+		if( !isEmitter )
 		{
-			float radius;
+			// allow an optional relative center of light and shadow offset
+			args->GetVector( "light_center", "0 0 0", renderLight->lightCenter );
 
-			args->GetFloat( "light", "300", radius );
-			renderLight->lightRadius[0] = renderLight->lightRadius[1] = renderLight->lightRadius[2] = radius;
+			// create a point light
+			if( !args->GetVector( "light_radius", "300 300 300", renderLight->lightRadius ) )
+			{
+				float radius;
+
+				args->GetFloat( "light", "300", radius );
+				renderLight->lightRadius[0] = renderLight->lightRadius[1] = renderLight->lightRadius[2] = radius;
+			}
 		}
 	}
 
@@ -194,32 +210,56 @@ void idGameEdit::ParseSpawnArgsToRenderLight( const idDict* args, renderLight_t*
 	args->GetFloat( "shaderParm7", "0", renderLight->shaderParms[ SHADERPARM_MODE ] );
 	args->GetBool( "noshadows", "0", renderLight->noShadows );
 	args->GetBool( "nospecular", "0", renderLight->noSpecular );
-	args->GetBool( "parallel", "0", renderLight->parallel );
-
-	args->GetString( "texture", "lights/squarelight1", &texture );
-
-	// allow this to be NULL
-	renderLight->shader = declManager->FindMaterial( texture, false );
-
-	
-	
-	// MATH LIGHT extension
-	if (renderLight->parallel) { renderLight->mathLight.type = ML_SUN; }
-	else if (!renderLight->pointLight) { renderLight->mathLight.type = ML_SPOT; }
-	else { renderLight->mathLight.type = ML_POINT; }
-
-	ML_ParseFromDict(args, &renderLight->mathLight);
-
-	// D45: the math type follows the light's geometry; a map's math_type never disagrees (projected
-	// first, as the light editor's FromDict decides it)
-	if( !renderLight->pointLight )
+	//puncho start - an emitter reads neither parallel ( the emitter branch sets it from the shape, and the
+	// emitter parse reads the key when it needs it ) nor texture, whose material is fixed below: a light
+	// that kept its texture key would otherwise load that material and its images for nothing ( G0
+	// section 4, EC-01, DP-EC-03 )
+	if( !isEmitter )
 	{
-		renderLight->mathLight.type = ML_SPOT;
+		args->GetBool( "parallel", "0", renderLight->parallel );
+
+		args->GetString( "texture", "lights/squarelight1", &texture );
+
+		// allow this to be NULL
+		renderLight->shader = declManager->FindMaterial( texture, false );
 	}
-	else
+	//puncho end
+
+	//puncho start - emitter lights ignore texture, style and the five frustum vectors
+	if( isEmitter )
 	{
-		renderLight->mathLight.type = renderLight->parallel ? ML_SUN : ML_POINT;
+		// one colour stage, no condition, no texture matrix; chosen here and not in the renderer, so
+		// the redundant-update test compares the same shader on every update
+		renderLight->shader = declManager->FindMaterial( "lights/defaultPointLight", false );
+
+		// target, right, up, start and end were never read ( EC-01 ), so they are still the memset's
+		// zero; light_radius and light_center are read here and only here ( a spot reads no centre )
+		idVec3 radius;
+		args->GetVector( "light_radius", "300 300 300", radius );
+		radius.x = Max( radius.x, 1.0f );
+		radius.y = Max( radius.y, 1.0f );
+		radius.z = Max( radius.z, 1.0f );
+
+		if( renderLight->emitter.shape == EM_SPOT )
+		{
+			// the renderer builds the cone from the range and the emitter block, every time it derives
+			const float range = EM_Range( radius );
+			renderLight->pointLight = false;
+			renderLight->parallel = false;
+			renderLight->lightRadius.Set( range, range, range );
+			renderLight->lightCenter.Zero();
+		}
+		else
+		{
+			// omni: a point box, light_center moves the bulb; sun: a parallel box, light_center is
+			// the direction toward the sun, as a texture sun has
+			renderLight->pointLight = true;
+			renderLight->parallel = ( renderLight->emitter.shape == EM_SUN );
+			renderLight->lightRadius = radius;
+			args->GetVector( "light_center", "0 0 0", renderLight->lightCenter );
+		}
 	}
+	//puncho end
 }
 
 /*
@@ -249,12 +289,25 @@ void idLight::UpdateChangeableSpawnArgs( const idDict* source )
 		StartSoundShader( refSound.shader, SND_CHANNEL_ANY, 0, false, NULL );
 	}
 
+	//puncho start - the fixture's flare reads the light's material (Spawn sets it); a kind switch in an
+	// editor changes that material, so it follows here. A texture light that stays one keeps today's
+	// behaviour: its reference shader is the spawn material
+	const bool wasEmitter = renderLight.emitter.enabled;
+	//puncho end
+
 	gameEdit->ParseSpawnArgsToRenderLight( source ? source : &spawnArgs, &renderLight );
 
-	// D62: an edited radius and colour are what style and math_style scale from now on (a radius base
+	//puncho start
+	if( wasEmitter || renderLight.emitter.enabled )
+	{
+		renderEntity.referenceShader = renderLight.shader;
+	}
+	//puncho end
+
+	// D62: an edited radius and colour are what style and emit_effect scale from now on (a radius base
 	// left at the spawn radius made SharedThink undo a styled light's radius edit)
 	lightStyleBase = renderLight.lightRadius;
-	mathStyleBase.Set( renderLight.shaderParms[ SHADERPARM_RED ], renderLight.shaderParms[ SHADERPARM_GREEN ], renderLight.shaderParms[ SHADERPARM_BLUE ] );
+	effectBaseColor.Set( renderLight.shaderParms[ SHADERPARM_RED ], renderLight.shaderParms[ SHADERPARM_GREEN ], renderLight.shaderParms[ SHADERPARM_BLUE ] );
 
 	// RB: allow the ingame light editor to move the light
 	// D36 / RV-3: the entity pose comes from the same dict, exactly as idEntity::Spawn derives it,
@@ -349,12 +402,15 @@ idLight::idLight():
 	fadeStart			= 0;
 	fadeEnd				= 0;
 	soundWasPlaying		= false;
+	//puncho start
+	emitterBroken		= false;
+	//puncho end
 
 // RB begin
 	lightStyle			= -1;
 	lightStyleFrameTime = 100;
 	lightStyleBase.Set( 300, 300, 300 );
-	mathStyleBase.Set( 1, 1, 1 );
+	effectBaseColor.Set( 1, 1, 1 );
 
 	lightStyleState.Reset();
 
@@ -410,6 +466,10 @@ void idLight::Save( idSaveGame* savefile ) const
 
 	// RB: TODO light styles
 	modelTarget.Save( savefile );
+
+	//puncho start - BUILD_NUMBER_SAVE_VERSION_EMITTERS
+	savefile->WriteBool( emitterBroken );
+	//puncho end
 }
 
 /*
@@ -429,9 +489,10 @@ void idLight::Restore( idRestoreGame* savefile )
 	renderLight.maxVisDist = Max( 0.0f, spawnArgs.GetFloat( "maxVisDist", "0" ) * distanceScale );
 	renderLight.minVisPixels = Max( 0.0f, spawnArgs.GetFloat( "minVisPixels", "0" ) * pixelScale );
 
-	// light styles are not saved (light_styles restarts empty, lightStyle -1), so math_style restarts
-	// off with them instead of reading the constructor's zero as style 0
-	renderLight.mathLight.style = -1;
+	//puncho start - emit_effect plays from the saved emitter block and needs no light_styles; its frame
+	// time is spawn data, so it comes back from the restored spawnArgs instead of the constructor's 100
+	lightStyleFrameTime = spawnArgs.GetInt( "ls_frametime", "100" );
+	//puncho end
 
 	savefile->ReadBool( hadPrelightModel );
 
@@ -458,6 +519,14 @@ void idLight::Restore( idRestoreGame* savefile )
 	{
 		modelTarget.Restore( savefile );
 	}
+
+	//puncho start - a save from before emitters holds no broken emitter
+	emitterBroken = false;
+	if( savefile->GetBuildNumber() >= BUILD_NUMBER_SAVE_VERSION_EMITTERS )
+	{
+		savefile->ReadBool( emitterBroken );
+	}
+	//puncho end
 
 	lightDefHandle = -1;
 
@@ -487,7 +556,7 @@ void idLight::Spawn()
 
 	// set the base color from the shader parms
 	baseColor.Set( renderLight.shaderParms[ SHADERPARM_RED ], renderLight.shaderParms[ SHADERPARM_GREEN ], renderLight.shaderParms[ SHADERPARM_BLUE ] );
-	mathStyleBase = baseColor;
+	effectBaseColor = baseColor;
 	previousBaseColor.Set( renderLight.shaderParms[ SHADERPARM_RED ], renderLight.shaderParms[ SHADERPARM_GREEN ], renderLight.shaderParms[ SHADERPARM_BLUE ] );
 	nextBaseColor.Set( renderLight.shaderParms[ SHADERPARM_RED ], renderLight.shaderParms[ SHADERPARM_GREEN ], renderLight.shaderParms[ SHADERPARM_BLUE ] );
 
@@ -535,6 +604,11 @@ void idLight::Spawn()
 	lightStyleFrameTime = spawnArgs.GetInt( "ls_frametime", "100" );
 	lightStyle = spawnArgs.GetInt( "style", -1 );
 
+	//puncho start - an emitter builds this table too, although nothing reads it for an emitter today:
+	// emit_effect plays predef_lightstyles directly, and "style" is not applied to an emitter. It is kept
+	// on purpose, because effects in the light's volume may be attached to it later. Revisit it when
+	// refraction and heat haze in an emitter's volume are built
+	//puncho end
 	int numStyles = spawnArgs.GetInt( "num_styles", "0" );
 	if( numStyles > 0 )
 	{
@@ -547,7 +621,6 @@ void idLight::Spawn()
 	else
 	{
 		// RB: it's not defined in entityDef light so use predefined Quake 1 table
-		static_assert( sizeof( predef_lightstyles ) / sizeof( predef_lightstyles[ 0 ] ) == ML_NUM_STYLES, "math_style indexes the predefined light style table" );
 		for( int i = 0; i < 12; i++ )
 		{
 			idStr style = spawnArgs.GetString( va( "light_style%d", i ), predef_lightstyles[ i ] );
@@ -651,8 +724,8 @@ void idLight::SetLightLevel()
 	renderLight.shaderParms[ SHADERPARM_GREEN ]	= color[ 1 ];
 	renderLight.shaderParms[ SHADERPARM_BLUE ]	= color[ 2 ];
 
-	// D62: On, Off, levels and fades change the colour math_style multiplies
-	mathStyleBase = color;
+	// D62: On, Off, levels and fades change the colour emit_effect multiplies
+	effectBaseColor = color;
 
 	if( modelTarget )
 	{
@@ -740,6 +813,24 @@ idLight::SetShader
 */
 void idLight::SetShader( const char* shadername )
 {
+	//puncho start - an emitter keeps lights/defaultPointLight: the renderer relies on its one colour
+	// stage, and a texture is never sampled
+	if( renderLight.emitter.enabled )
+	{
+		// a script that darkens lights by swapping materials stops working on a converted light; say
+		// so once a session under developer, for the first light it happens to, so a busy script does not
+		// flood the console
+		static bool warnedEmitterSetShader = false;
+		if( !warnedEmitterSetShader && developer.GetBool() )
+		{
+			warnedEmitterSetShader = true;
+			gameLocal.DWarning( "light '%s': setShader( \"%s\" ) does nothing on an emitter, whose material is fixed (further cases not reported)",
+								name.c_str(), shadername != NULL ? shadername : "" );
+		}
+		return;
+	}
+	//puncho end
+
 	// allow this to be NULL
 	renderLight.shader = declManager->FindMaterial( shadername, false );
 	PresentLightDefChange();
@@ -825,6 +916,14 @@ idLight::On
 */
 void idLight::On()
 {
+	//puncho start - a broken emitter stays off: this covers the "On" event, Show, the trigger toggle, an
+	// actor's light and a client's snapshot
+	if( EmitterIsBroken() )
+	{
+		return;
+	}
+	//puncho end
+
 	currentLevel = levels;
 
 	// offset the start time of the shader to sync it to the game time
@@ -890,6 +989,13 @@ void idLight::FadeIn( float time )
 {
 	idVec3 color;
 	idVec4 color4;
+
+	//puncho start - a broken emitter stays off: fadeInLight and target_lightfadein would raise its level
+	if( EmitterIsBroken() )
+	{
+		return;
+	}
+	//puncho end
 
 	currentLevel = levels;
 	spawnArgs.GetVector( "_color", "1 1 1", color );
@@ -968,11 +1074,24 @@ void idLight::BecomeBroken( idEntity* activator )
 		}
 	}
 
-	parm = spawnArgs.GetString( "mtr_broken" );
-	if( parm != NULL && *parm != '\0' )
+	//puncho start - an emitter ignores mtr_broken, so it goes dark by being switched off, for good ( G0
+	// section 4 ): the flag stops every path that would relight it. Not Off(): Off() stops whatever sound
+	// is playing, which here is the broken sound started just above
+	if( renderLight.emitter.enabled )
 	{
-		SetShader( parm );
+		emitterBroken = true;
+		currentLevel = 0;
+		SetLightLevel();
 	}
+	else
+	{
+		parm = spawnArgs.GetString( "mtr_broken" );
+		if( parm != NULL && *parm != '\0' )
+		{
+			SetShader( parm );
+		}
+	}
+	//puncho end
 
 	UpdateVisuals();
 }
@@ -984,6 +1103,18 @@ idLight::PresentLightDefChange
 */
 void idLight::PresentLightDefChange()
 {
+	//puncho start - every change of the render light passes here, so a broken emitter is held dark here
+	// against the paths that write its colour without its level: setLightParm, setLightParms, an editor's
+	// re-parse of _color. On and FadeIn return before they raise the level; SetColor and the fades scale
+	// by the level, which stays 0
+	if( EmitterIsBroken() )
+	{
+		renderLight.shaderParms[ SHADERPARM_RED ]	= 0.0f;
+		renderLight.shaderParms[ SHADERPARM_GREEN ]	= 0.0f;
+		renderLight.shaderParms[ SHADERPARM_BLUE ]	= 0.0f;
+	}
+	//puncho end
+
 	// let the renderer apply it to the world
 	if( ( lightDefHandle != -1 ) )
 	{
@@ -1127,24 +1258,26 @@ void idLight::SharedThink()
 	int otime;
 	int lastch, nextch;
 
-	// D62: math_style plays a light_styles string as a brightness multiplier on the math light's
-	// colour, never on its radius; ML_ParseFromDict leaves it -1 unless the math block is enabled.
-	// A light with both styles gets both.
-	const int mathStyle = renderLight.mathLight.style;
-	const bool mathStyled = ( mathStyle >= 0 && mathStyle < light_styles.Num() );
-	if( mathStyled )
+	//puncho start - D62: emit_effect plays a style or a waveform as a brightness multiplier on the light's
+	// colour, never on its radius
+	const bool emitterEffect = ( renderLight.emitter.enabled && renderLight.emitter.effect != EME_NONE );
+	if( emitterEffect )
 	{
-		const float brightness = ML_StyleMultiplier( light_styles[ mathStyle ].c_str(), gameLocal.time, lightStyleFrameTime );
-		renderLight.shaderParms[ SHADERPARM_RED ]	= mathStyleBase.x * brightness;
-		renderLight.shaderParms[ SHADERPARM_GREEN ]	= mathStyleBase.y * brightness;
-		renderLight.shaderParms[ SHADERPARM_BLUE ]	= mathStyleBase.z * brightness;
+		const float brightness = EM_EffectMultiplier( renderLight.emitter, gameLocal.time, lightStyleFrameTime );
+		renderLight.shaderParms[ SHADERPARM_RED ]	= effectBaseColor.x * brightness;
+		renderLight.shaderParms[ SHADERPARM_GREEN ]	= effectBaseColor.y * brightness;
+		renderLight.shaderParms[ SHADERPARM_BLUE ]	= effectBaseColor.z * brightness;
 	}
 
-	// no radius style (or an index past the table): a math-styled light still keeps thinking and is
+	// "style" animates light_radius, which on an emitter is its range
+	const bool radiusStyled = ( !renderLight.emitter.enabled && lightStyle >= 0 && lightStyle < light_styles.Num() );
+	//puncho end
+
+	// no radius style (or an index past the table): a light with an effect still keeps thinking and is
 	// presented, as the radius style does below
-	if( lightStyle < 0 || lightStyle >= light_styles.Num() )
+	if( !radiusStyled )
 	{
-		if( mathStyled )
+		if( emitterEffect )
 		{
 			if( !common->IsClient() )
 			{

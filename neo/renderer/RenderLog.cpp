@@ -61,7 +61,7 @@ const char* renderLogMainBlockLabels[] =
 	ASSERT_ENUM_STRING( MRB_DRAW_GUI,                       19 ),
 	ASSERT_ENUM_STRING( MRB_CRT_POSTPROCESS,                20 ),
 	ASSERT_ENUM_STRING( MRB_DRAW_INTERACTIONS_TEX,          21 ),	//puncho start
-	ASSERT_ENUM_STRING( MRB_DRAW_INTERACTIONS_MATH,         22 ),	//puncho end
+	ASSERT_ENUM_STRING( MRB_DRAW_INTERACTIONS_EMITTER,      22 ),	//puncho end
 	ASSERT_ENUM_STRING( MRB_TOTAL,							23 )
 };
 
@@ -265,8 +265,8 @@ void idRenderLog::FetchGPUTimers( backEndCounters_t& pc )
 					pc.gpuInteractionsTexMicroSec = time;
 					break;
 
-				case MRB_DRAW_INTERACTIONS_MATH:
-					pc.gpuInteractionsMathMicroSec = time;
+				case MRB_DRAW_INTERACTIONS_EMITTER:
+					pc.gpuInteractionsEmitterMicroSec = time;
 					break;
 				//puncho end
 

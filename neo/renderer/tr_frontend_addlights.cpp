@@ -136,6 +136,18 @@ static void R_TranslateViewLight( viewLight_t* vLight, const idVec3d& origin )
 		project[r][3] = float( double( project[r][3] ) + ( double( project[r][0] ) * o[0] + double( project[r][1] ) * o[1] + double( project[r][2] ) * o[2] ) );
 	}
 
+	//puncho start - an emitter spot's shadow projection is read in place of baseLightProject by
+	// SetupShadowMapMatrices, so it moves the same way; no other light has one
+	if( vLight->emitter != NULL && vLight->emitter->shape == EM_SPOT )
+	{
+		idRenderMatrix& shadowProject = vLight->emitter->shadowProject;
+		for( int r = 0; r < 4; r++ )
+		{
+			shadowProject[r][3] = float( double( shadowProject[r][3] ) + ( double( shadowProject[r][0] ) * o[0] + double( shadowProject[r][1] ) * o[1] + double( shadowProject[r][2] ) * o[2] ) );
+		}
+	}
+	//puncho end
+
 	idRenderMatrix& inverseProject = vLight->inverseBaseLightProject;
 	for( int r = 0; r < 3; r++ )
 	{
@@ -225,9 +237,9 @@ static void R_AddSingleLight( viewLight_t* vLight )
 	}
 
 	//puncho start
-	PROFILE_STATIC_DESC( descMathLight, "R_AddSingleLight_MathLight", Optick::Category::Rendering );
+	PROFILE_STATIC_DESC( descEmitter, "R_AddSingleLight_Emitter", Optick::Category::Rendering );
 	PROFILE_STATIC_DESC( descLight, "R_AddSingleLight_Light", Optick::Category::Rendering );
-	SCOPED_PROFILE_EVENT_DESC( R_LightUsesMathPath( light->parms.mathLight ) ? descMathLight : descLight );
+	SCOPED_PROFILE_EVENT_DESC( R_LightUsesEmitterPath( light->parms.emitter ) ? descEmitter : descLight );
 	PROFILE_EVENT_TAG( "lightShader", lightShader->GetName() );
 	PROFILE_EVENT_TAG( "lightIndex", light->index );
 	//puncho end
@@ -319,6 +331,69 @@ static void R_AddSingleLight( viewLight_t* vLight )
 	vLight->lightCenter = light->parms.lightCenter;
 	// RB end
 
+	//puncho start - an emitter's part of the view light, for an emitter only: every other light keeps the
+	// NULL of R_SetLightDefViewLight's cleared allocation and pays nothing more. Taken before the
+	// translation below, which moves a spot's shadow projection with baseLightProject.
+	// R_FrameAlloc is safe in this parallel job, as for the shader registers above: it claims its block
+	// with one interlocked add on frameMemoryAllocated and clears only that block, so two jobs never
+	// share a byte; the block lives until the frame's backend is done, as the view light does
+	if( R_LightUsesEmitterPath( light->parms.emitter ) )
+	{
+		const emitterData_t& em = light->parms.emitter;
+		viewEmitter_t* vEmitter = ( viewEmitter_t* )R_FrameAlloc( sizeof( *vEmitter ), FRAME_ALLOC_VIEW_LIGHT );
+
+		// G0 section 5 and 8, packed once per view: they depend on the light and two debug cvars, not
+		// on the surface or the stage. The range and radii are at least 1, as the derive takes them
+		const float range = Max( EM_Range( light->parms.lightRadius ), 1.0f );
+
+		// the curve is authored in world units; EMFalloffCurve takes it as fractions of the range
+		const float start = idMath::ClampFloat( 0.0f, range - 1.0f, em.start );
+		const float inner = start / range;
+		const float k = ( range - start ) / Max( em.size, 1.0f );
+
+		// a spot's two slots carry its beam; an omni or a sun has none, so they carry the box's
+		// proportions, which turn the shader's position into world units for the pattern. A spot's
+		// radii are equal ( R, R, R ), so its pattern needs no proportions
+		const idVec3& radius = light->parms.lightRadius;
+		const float radiusX = ( em.shape == EM_SPOT ) ? range : Max( radius.x, 1.0f );
+		float cotH;
+		float cotV;
+		if( em.shape == EM_SPOT )
+		{
+			cotH = 1.0f / Max( em.tanHalfH, 1e-4f );
+			cotV = 1.0f / Max( em.tanHalfV, 1e-4f );
+		}
+		else
+		{
+			cotH = Max( radius.y, 1.0f ) / radiusX;
+			cotV = Max( radius.z, 1.0f ) / radiusX;
+		}
+
+		// the pattern is in world units: emit_pattern_scale 1 is what a light of radius 256 showed
+		const float patternScale = em.patternScale * radiusX * ( 1.0f / 256.0f );
+
+		// 8 and above selects the emitter path; 16 more allows the early-out
+		const int showEmitters = idMath::ClampInt( 0, 4, r_showEmitters.GetInteger() );
+		const float emMode = ( float )( 8 + showEmitters + ( r_emitterEarlyOut.GetBool() ? 16 : 0 ) );
+		const float emIds = ( float )( em.shape + 8 * em.falloff + 64 * em.pattern );
+
+		vEmitter->parms[0].Set( emMode, emIds, cotH, cotV );
+		vEmitter->parms[1].Set( k, inner, em.squareness, em.penumbra );
+		vEmitter->parms[2].Set( em.patternStrength, patternScale, em.patternPhase, em.energyClamp ? 1.0f : 0.0f );
+		vEmitter->shape = em.shape;
+		vEmitter->falloff = em.falloff;
+		vEmitter->pattern = em.pattern;
+
+		// the derive stores it for a spot only; an omni's or a sun's stays zero, and no reader asks
+		if( em.shape == EM_SPOT )
+		{
+			vEmitter->shadowProject = light->emitterShadowProject;
+		}
+
+		vLight->emitter = vEmitter;
+	}
+	//puncho end
+
 	// from here on vLight-> is relative to the view's render origin and light-> stays absolute;
 	// the culls below pair light-> only with absolute data ( the worldCull matrices, vieworg )
 	R_TranslateViewLight( vLight, viewDef->renderOrigin );
@@ -333,11 +408,6 @@ static void R_AddSingleLight( viewLight_t* vLight )
 	vLight->fogPlane[1] = fogPlane[1] * planeScale;
 	vLight->fogPlane[2] = fogPlane[2] * planeScale;
 	vLight->fogPlane[3] = fogPlane[3] * planeScale;
-
-	//puncho start
-	//thread safety
-	memcpy(&vLight->mathLight, &light->parms.mathLight, sizeof(mathLightData_t));
-	//puncho end
 
 	vLight->falloffImage = light->falloffImage;
 	vLight->lightShader = light->lightShader;
@@ -402,53 +472,67 @@ static void R_AddSingleLight( viewLight_t* vLight )
 			vLight->mocIndexes += 36;
 			vLight->mocVerts += 8;
 
-			idRenderMatrix invProjectMVPMatrix;
-
-			// draw light volume 1 percentage bigger to avoid flickering
-			// right before entering the volume with the camera
-			const float mocLightScale = ( r_mocFixes.GetInteger() & 4 ) ? 1.0f : 0.99f;
-			// F1 ( impl/BUILD-AND-G0.md 10 ): this test is formed in the render-origin frame, the relative
-			// inverse ( vLight->, translated by R_TranslateViewLight ) times the relative unjittered MVP, not
-			// light-> times worldCullUnjitteredMVP like the culls above. The absolute product cancels two
-			// world-sized translations in float, and at 120000 units a light volume whose face lies on an
-			// occluder ( a spot light ending on the floor ) lands behind it and is culled; the old build does
-			// the same. At r_cameraRelative 0 the origin is zero and both products are the same bits.
-			idRenderMatrix scaledInverseBaseLightProject = vLight->inverseBaseLightProject;
-			scaledInverseBaseLightProject[0][0] *= mocLightScale;
-			scaledInverseBaseLightProject[0][1] *= mocLightScale;
-			scaledInverseBaseLightProject[0][2] *= mocLightScale;
-
-			scaledInverseBaseLightProject[1][0] *= mocLightScale;
-			scaledInverseBaseLightProject[1][1] *= mocLightScale;
-			scaledInverseBaseLightProject[1][2] *= mocLightScale;
-
-			scaledInverseBaseLightProject[2][0] *= mocLightScale;
-			scaledInverseBaseLightProject[2][1] *= mocLightScale;
-			scaledInverseBaseLightProject[2][2] *= mocLightScale;
-
-			idRenderMatrix::Multiply( viewDef->worldSpace.unjitteredMVP, scaledInverseBaseLightProject, invProjectMVPMatrix );
-
+			//puncho start - emitter occlusion (RV-C-EI-01): below, an emitter spot always takes R_SpotLightMocArgs,
+			// whatever r_mocFixes says ( G0 section 7, "Occlusion test" ): its culling inverse is projective, so
+			// a corner's clip w is its depth times its weight ( 1/8 near, 1 / ( R + 8 ) far ), and only the
+			// divide there turns it into a depth. Texture lights take the path they always took.
+			// EC-03 ( G0 section 7, "The corner work runs once" ): the branch's condition is computed once, here,
+			// and a light that takes R_SpotLightMocArgs skips the corner block, whose triVerts and wmin only the
+			// other two branches read. The counters count what they counted
+			const bool spotMocArgs = !( vLight->pointLight || vLight->parallel ) &&
+									 ( ( r_mocFixes.GetInteger() & 1 ) || ( vLight->emitter != NULL && vLight->emitter->shape == EM_SPOT ) );
+			float wmin = idMath::INFINITUM;
 			vLight->mocTests += 1;
 
-			float wmin = idMath::INFINITUM;
-
-			// NOTE: zeroToOne cube is only for lights and models need the unit cube
-			idVec4* verts = tr.maskedZeroOneCubeVerts;
-			for( int i = 0; i < 8; i++ )
+			if( !spotMocArgs )
 			{
-				// transform to clip space
-				invProjectMVPMatrix.TransformPoint( verts[i], triVerts[i] );
+				//puncho end
+				idRenderMatrix invProjectMVPMatrix;
 
-				float w = triVerts[i].w;
-				if( i == 0 )
+				// draw light volume 1 percentage bigger to avoid flickering
+				// right before entering the volume with the camera
+				const float mocLightScale = ( r_mocFixes.GetInteger() & 4 ) ? 1.0f : 0.99f;
+				// F1 ( impl/BUILD-AND-G0.md 10 ): this test is formed in the render-origin frame, the relative
+				// inverse ( vLight->, translated by R_TranslateViewLight ) times the relative unjittered MVP, not
+				// light-> times worldCullUnjitteredMVP like the culls above. The absolute product cancels two
+				// world-sized translations in float, and at 120000 units a light volume whose face lies on an
+				// occluder ( a spot light ending on the floor ) lands behind it and is culled; the old build does
+				// the same. At r_cameraRelative 0 the origin is zero and both products are the same bits.
+				idRenderMatrix scaledInverseBaseLightProject = vLight->inverseBaseLightProject;
+				scaledInverseBaseLightProject[0][0] *= mocLightScale;
+				scaledInverseBaseLightProject[0][1] *= mocLightScale;
+				scaledInverseBaseLightProject[0][2] *= mocLightScale;
+
+				scaledInverseBaseLightProject[1][0] *= mocLightScale;
+				scaledInverseBaseLightProject[1][1] *= mocLightScale;
+				scaledInverseBaseLightProject[1][2] *= mocLightScale;
+
+				scaledInverseBaseLightProject[2][0] *= mocLightScale;
+				scaledInverseBaseLightProject[2][1] *= mocLightScale;
+				scaledInverseBaseLightProject[2][2] *= mocLightScale;
+
+				idRenderMatrix::Multiply( viewDef->worldSpace.unjitteredMVP, scaledInverseBaseLightProject, invProjectMVPMatrix );
+
+				// NOTE: zeroToOne cube is only for lights and models need the unit cube
+				idVec4* verts = tr.maskedZeroOneCubeVerts;
+				for( int i = 0; i < 8; i++ )
 				{
-					wmin = w;
+					// transform to clip space
+					invProjectMVPMatrix.TransformPoint( verts[i], triVerts[i] );
+
+					float w = triVerts[i].w;
+					if( i == 0 )
+					{
+						wmin = w;
+					}
+					else if( w < wmin )
+					{
+						wmin = w;
+					}
 				}
-				else if( w < wmin )
-				{
-					wmin = w;
-				}
+				//puncho start
 			}
+			//puncho end
 
 			if( vLight->pointLight || vLight->parallel )
 			{
@@ -471,7 +555,7 @@ static void R_AddSingleLight( viewLight_t* vLight )
 				maskVisible = true;
 #endif
 			}
-			else if( r_mocFixes.GetInteger() & 1 )
+			else if( spotMocArgs )	//puncho - emitter occlusion (RV-C-EI-01, EC-03): was r_mocFixes & 1 alone
 			{
 				float rect[4], depth;
 				const float zNear = r_znear.GetFloat() * ( viewDef->renderView.cramZNear ? 0.25f : 1.0f );
@@ -1008,7 +1092,7 @@ void R_AddLights()
 		ptr = &vLight->next;
 
 		// serial work
-		//puncho start - c_viewLights and c_mathViewLights are counted in R_OptimizeViewLightsList: a light
+		//puncho start - c_viewLights and c_emitterViewLights are counted in R_OptimizeViewLightsList: a light
 		// that passed the portal, frustum and occlusion tests above can still hold no visible surface, and
 		// the backend skips such a light entirely
 		//puncho end
@@ -1037,7 +1121,7 @@ void R_OptimizeViewLightsList()
 	int numViewLights = 0;
 	//puncho start - reset per view, so the last view of the frame wins
 	tr.pc.c_viewLights = 0;
-	tr.pc.c_mathViewLights = 0;
+	tr.pc.c_emitterViewLights = 0;
 	//puncho end
 	for( viewLight_t* vLight = tr.viewDef->viewLights; vLight != NULL; vLight = vLight->next )
 	{
@@ -1062,9 +1146,9 @@ void R_OptimizeViewLightsList()
 		// light whose volume passed the portal, frustum and occlusion tests there but holds no visible
 		// surface is left out. The HUD comment in Console.cpp says why a light behind a wall can still count
 		tr.pc.c_viewLights++;
-		if( R_LightUsesMathPath( vLight ) )
+		if( R_LightUsesEmitterPath( vLight ) )
 		{
-			tr.pc.c_mathViewLights++;
+			tr.pc.c_emitterViewLights++;
 		}
 		//puncho end
 	}

@@ -30,7 +30,6 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "global_inc.hlsl"
 #include "renderParmSet10.inc.hlsl"
-#include "mathlight.inc.hlsl"
 #include "BRDF.inc.hlsl"
 
 
@@ -81,15 +80,11 @@ void main( PS_IN fragment, out PS_OUT result )
 	float4 bumpMap =		t_Normal.Sample( s_Material, bumpUV );
     float3 lightFalloffRGB;
     float3 lightProjRGB;
-    if (!MLEvaluate(
-        fragment.texcoord2, fragment.texcoord3,
-        pc.rpUser0, pc.rpUser1, pc.rpUser2,
-        lightFalloffRGB, lightProjRGB))
-    {
-    // legacy path
-        lightFalloffRGB = idtex2Dproj(s_Lighting, t_LightFalloff, fragment.texcoord2).xyz;
-        lightProjRGB = idtex2Dproj(s_Lighting, t_LightProjection, fragment.texcoord3).xyz;
-    }
+    //puncho start - the light's textures only: this program is bound only for an ambient light
+    // material, and an emitter's material is lights/defaultPointLight
+    lightFalloffRGB = idtex2Dproj(s_Lighting, t_LightFalloff, fragment.texcoord2).xyz;
+    lightProjRGB = idtex2Dproj(s_Lighting, t_LightProjection, fragment.texcoord3).xyz;
+    //puncho end
 
 	float4 YCoCG =			t_BaseColor.Sample( s_Material, baseUV );
 	float4 specMapSRGB =	t_Specular.Sample( s_Material, specUV );

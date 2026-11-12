@@ -60,10 +60,10 @@ enum renderLogMainBlock_t
 	MRB_POSTPROCESS,
 	MRB_DRAW_GUI,
 	MRB_CRT_POSTPROCESS,
-	//puncho start - MathLight profiling: one main block per interaction phase. Placed immediately
+	//puncho start - light profiling: one main block per interaction phase. Placed immediately
 	// before MRB_TOTAL so that only MRB_TOTAL's ordinal moves in the ASSERT_ENUM_STRING table.
 	MRB_DRAW_INTERACTIONS_TEX,
-	MRB_DRAW_INTERACTIONS_MATH,
+	MRB_DRAW_INTERACTIONS_EMITTER,
 	//puncho end
 	MRB_TOTAL,
 

@@ -63,9 +63,9 @@ struct renderParmSet10_t
 
 	float4 rpPSXDistortions;
 	
-    float4 rpUser0; // (enabled, type, falloff, pattern)
-    float4 rpUser1; // (falloffExp, innerRadius, shapeExp, penumbra)
-    float4 rpUser2; // (patternStrength, patternScale, patternPhase, energyClamp)
+    float4 rpUser0; // texture light: 0; emitter: (mode 8+, ids, spot cotH cotV | omni/sun ry rz)
+    float4 rpUser1; // emitter: (k, inner, squareness, penumbra)
+    float4 rpUser2; // emitter: (patternStrength, patternScale, patternPhase, energyClamp)
 };
 
 #if USE_PUSH_CONSTANTS
