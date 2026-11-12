@@ -105,6 +105,8 @@ struct drawSurf_t
 	drawSurf_t** 			linkChain;			// defer linking to lights to a serial section to avoid a mutex
 	idScreenRect			scissorRect;		// for scissor clipping, local inside renderView viewport
 	const struct portalArea_s*	area;			// RB: if != NULL then the area provides valid lightgrid
+	// ---- TRACK F: light-list fields ----
+	// ---- END TRACK F ----
 };
 
 // areas have references to hold all the lights and entities in them
@@ -188,8 +190,10 @@ public:
 
 	bool					lightHasMoved;			// the light has changed its position since it was
 	// first added, so the prelight model is not valid
+	bool					isPrimarySun;			// X0: this parallel light is the map's sun ( D42, D73 )
 	idRenderWorldLocal* 	world;
 	int						index;					// in world lightdefs
+	int						uniqueId;				// X0: world-monotonic id assigned at the new in RenderWorld.cpp; 0 = never assigned ( D44 )
 
 	int						areaNum;				// if not -1, we may be able to cull all the light's
 	// interactions if !viewDef->connectedAreas[areaNum]
@@ -319,6 +323,7 @@ public:
 	// but the entity may still be off screen
 	viewEntity_t* 			viewEntity;				// in frame temporary memory
 	int						cullCountView;			// tr.viewCount of the view that last counted its distance cull
+	int						uniqueId;				// X0: world-monotonic id assigned at the new in RenderWorld.cpp; 0 = never assigned ( D44 )
 
 	idRenderModelDecal* 	decals;					// decals that have been projected on this model
 	idRenderModelOverlay* 	overlays;				// blood overlays on animated models
@@ -418,7 +423,33 @@ struct viewLight_t
 
 	mathLightData_t   mathLight;
 
+	// ---- X0: viewLight_t fields (renderer upgrade seams) ----
+	int			numListedSurfs;		// F: surfaces that list this light ( C3 ); 0 until F1
+	int			recordNumber;		// F: index of this light's record, -1 = none
+	int			shadowOp;			// S: the decide pass's order for this light's shadow units ( D36 ); 0 = none
+	bool		fogRelevant;		// F/V: set by R_NumberRecordLights only while r_volumetricFog is on
+	bool		isPrimarySun;		// copied from idRenderLightLocal::isPrimarySun ( D73 )
+	// ---- END X0 ----
+	// ---- TRACK S: shadow cache fields ( S2, S3 ) ----
+	// ---- END TRACK S ----
 };
+
+/*
+====================
+R_ViewLightHasShadowMap
+
+True if this view light has a shadow map to sample. The body now lives in
+ShadowCache.h ( track S's file, included at the end of this header ) so track S can change it
+without touching RenderCommon.h ( C3 ).
+====================
+*/
+bool R_ViewLightHasShadowMap( const viewLight_t* vLight );
+
+ID_INLINE bool R_ViewLightIsLit( const viewLight_t* vLight )
+{
+	return vLight->localInteractions != NULL || vLight->globalInteractions != NULL || vLight->translucentInteractions != NULL
+		   || vLight->numListedSurfs > 0 || vLight->fogRelevant;
+}
 
 // a viewEntity is created whenever a idRenderEntityLocal is considered for inclusion
 // in the current view, but it may still turn out to be culled.
@@ -598,6 +629,18 @@ struct lightGatherArea_t
 	idVec3 origin;
 };
 
+// D36: the cvars the shadow atlas pass reads, as the frontend's decide pass saw them. X0 only zeroes it
+// ( valid = false ) in R_RenderView; the decide pass of track S fills it and the atlas pass then obeys it.
+struct shadowSkipSet_t
+{
+	int			shadowMapSplits;		// r_shadowMapSplits
+	int			shadowMapSingleSide;	// r_shadowMapSingleSide ( -1 = all six faces of a point light )
+	float		shadowMapSplitFar;		// r_shadowMapSplitFar
+	bool		skipShadows;			// r_skipShadows
+	bool		useShadowAtlas;			// r_useShadowAtlas
+	bool		valid;					// false until the decide pass of track S fills the rest
+};
+
 struct viewDef_t
 {
 	lightGatherArea_t* lightGatherAreas;
@@ -713,6 +756,20 @@ struct viewDef_t
 	Framebuffer*		targetRender;				// SP: The framebuffer to render to
 
 	int					taaFrameCount;				// RB: so we have the same frame index in frontend and backend
+
+	// ---- X0: viewDef_t fields (renderer upgrade seams) ----
+	struct shadowCacheView_t* 	shadowCacheView;	// S, frame memory
+	struct lightListView_t* 	lightListView;		// F, frame memory
+	struct froxelView_t* 		froxelView;			// V, frame memory
+	struct recordLight_t* 		recordLights;		// C1 table, frame memory; NULL when the view builds no tables
+	int							numRecordLights;
+	struct shadowRow_t* 		shadowRows;			// C2 table, filled by the backend in R_BuildShadowRows from the backend's own memory; the frontend allocates nothing here and the backend never calls R_FrameAlloc
+	int							numShadowRows;
+	struct shadowCacheOp_t* 	shadowOps;			// D36: the decide pass's ops for this view ( S defines the struct ); frame memory allocated by the decide pass ( frontend, track S )
+	int							numShadowOps;
+	shadowSkipSet_t				shadowSkipSet;		// D36: what the decide pass saw; the atlas pass obeys it
+	bool						listsBuilt;			// set by R_BuildLightLists; the only thing F's backend tests
+	// ---- END X0 ----
 };
 
 /*
@@ -966,6 +1023,15 @@ enum bindingLayoutType_t
 	BINDING_LAYOUT_TONEMAP,
 	BINDING_LAYOUT_HISTOGRAM,
 	BINDING_LAYOUT_EXPOSURE,
+
+	// X0: the forward light-list pass ( track F ) and the froxel-fog twins ( track V )
+	BINDING_LAYOUT_FORWARD,
+	BINDING_LAYOUT_FORWARD_SKINNED,
+	BINDING_LAYOUT_TEXTURE_FOG,
+	BINDING_LAYOUT_TEXTURE_SKINNED_FOG,
+	BINDING_LAYOUT_TEXGEN_FOG,
+	BINDING_LAYOUT_INTERACTION_SM_FOG,
+	BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG,
 
 	NUM_BINDING_LAYOUTS
 };
@@ -1968,6 +2034,8 @@ void RB_SetVertexColorParms( stageVertexColor_t svc );
 
 #include "ResolutionScale.h"
 #include "RenderLog.h"
+#include "ShadowCache.h"
+#include "LightLists.h"
 #include "GLMatrix.h"
 
 #include "BufferObject.h"

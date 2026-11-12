@@ -429,6 +429,44 @@ public:
 	{
 		return stats_backend.gpuCrtPostProcessingMicroSec;
 	}
+
+	// ---- X0: gpu timing getters (renderer upgrade seams) ----
+	uint64		GetRendererGpuShadowCacheMicroseconds() const
+	{
+		return stats_backend.gpuShadowCacheMicroSec;
+	}
+
+	uint64		GetRendererGpuForwardPassMicroseconds() const
+	{
+		return stats_backend.gpuForwardPassMicroSec;
+	}
+
+	uint64		GetRendererGpuForwardTranslucentMicroseconds() const
+	{
+		return stats_backend.gpuForwardTranslucentMicroSec;
+	}
+
+	uint64		GetRendererGpuVolumetricsMicroseconds() const
+	{
+		return stats_backend.gpuVolumetricsMicroSec;
+	}
+
+	uint64		GetRendererGpuVolumetricsApplyMicroseconds() const
+	{
+		return stats_backend.gpuVolumetricsApplyMicroSec;
+	}
+
+	uint64		GetRendererGpuInteractionsTranslucentMicroseconds() const
+	{
+		return stats_backend.gpuInteractionsTranslucentMicroSec;
+	}
+	// ---- END X0 ----
+	// ---- TRACK S: counter getters ----
+	// ---- END TRACK S ----
+	// ---- TRACK F: counter getters ----
+	// ---- END TRACK F ----
+	// ---- TRACK V: counter getters ----
+	// ---- END TRACK V ----
 	// RB end
 
 	// SRS start

@@ -360,6 +360,7 @@ typedef enum
 	MF_LOD_PERSISTENT			= BIT( 11 ), // motorsep 11-24-2014; material flag for persistent LOD iteration
 	MF_ORIGIN					= BIT( 12 ), // Admer: for origin brushes
 	MF_UNLIT					= BIT( 13 ), // RB: receive no lighting
+	MF_FORWARD					= BIT( 14 ), // X0: surfaces of this material are lit through the forward light lists ( track F )
 } materialFlags_t;
 
 // contents flags, NOTE: make sure to keep the defines in doom_defs.script up to date with these!

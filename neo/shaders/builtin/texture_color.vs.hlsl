@@ -29,6 +29,10 @@ If you have questions concerning this license or the applicable additional terms
 #include "global_inc.hlsl"
 #include "renderParmSet4.inc.hlsl"
 
+#if defined( USE_FROXEL_FOG ) && USE_FROXEL_FOG
+	// X0 stub ( D33, D83 ): the froxel fog permutation. Track V ( V5 ) fogs this stage here; nothing is sampled yet.
+#endif
+
 // *INDENT-OFF*
 #if USE_GPU_SKINNING
 StructuredBuffer<float4> matrices : register(t11);

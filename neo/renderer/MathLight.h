@@ -33,6 +33,7 @@ If you have questions concerning this license or the applicable additional terms
 #define __MATHLIGHT_H__
 
 #include "../idlib/Dict.h"
+#include "../idlib/math/Vector.h"
 /*
 ================================================================================
 
@@ -104,5 +105,11 @@ static_assert(sizeof(mathLightData_t) <= 64,
 void ML_ParseFromDict(const idDict* args, mathLightData_t* m);
 void ML_WriteToDict(idDict* args, const mathLightData_t& m, bool deleteWhenDisabled);
 float ML_StyleMultiplier(const char* style, int timeMs, int frameTimeMs);
+
+// X0: the one encode of a math light's three render-parm lanes (flags / shape / pattern).
+// mlMode is passed in because it is not a function of m: the caller derives it from
+// R_LightUsesMathPath and r_showMathLights, which this file may not read (it is also
+// compiled into the map compiler).
+void R_MathLightToParms(const mathLightData_t& m, const float mlMode, idVec4 out[3]);
 
 #endif 

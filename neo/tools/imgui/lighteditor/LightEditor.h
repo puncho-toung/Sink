@@ -80,6 +80,8 @@ public:
 	bool		skipSpecular;
 	bool		hasCenter;
 	int			lightStyle;		// RBDOOM specific, saved to map as "style"
+	bool		primarySun;		// spawnarg "primarySun": this sun is the map's primary sun ( D42, D73 )
+	int			forwardMode;	// spawnarg "forward": 0 = auto, 1 = forward list, 2 = legacy
 
 	mathLightData_t     mathLight;
 

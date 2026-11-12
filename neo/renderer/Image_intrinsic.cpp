@@ -1075,6 +1075,8 @@ void idImageManager::CreateIntrinsicImages()
 
 	// RB begin
 	shadowAtlasImage = ImageFromFunction( "_shadowMapAtlas", R_CreateShadowMapImage_Atlas );
+	// ---- TRACK S: create the shadow cache images ( ImageFromFunction, D45 ) ----
+	// ---- END TRACK S ----
 	shadowImage[0] = ImageFromFunction( va( "_shadowMapArray0_%i", shadowMapResolutions[0] ), R_CreateShadowMapImage_Res0 );
 	shadowImage[1] = ImageFromFunction( va( "_shadowMapArray1_%i", shadowMapResolutions[1] ), R_CreateShadowMapImage_Res1 );
 	shadowImage[2] = ImageFromFunction( va( "_shadowMapArray2_%i", shadowMapResolutions[2] ), R_CreateShadowMapImage_Res2 );

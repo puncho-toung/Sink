@@ -34,6 +34,12 @@ If you have questions concerning this license or the applicable additional terms
 Texture2D t_Texture : register( t0 VK_DESCRIPTOR_SET( 1 ) );
 SamplerState samp0 : register( s0 VK_DESCRIPTOR_SET( 2 ) );
 
+#if defined( USE_FROXEL_FOG ) && USE_FROXEL_FOG
+	// X0 stub ( D33, D83 ): the froxel fog permutation. Track V ( V5 ) fogs this stage here; nothing is sampled yet.
+#define FROXEL_FOG_SET 3
+#include "froxel_fog.inc.hlsl"
+#endif
+
 struct PS_IN {
 	float4 position : SV_Position;
 	float4 texcoord0 : TEXCOORD0_centroid;

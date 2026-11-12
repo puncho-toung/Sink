@@ -206,6 +206,8 @@ idRenderWorldLocal::idRenderWorldLocal()
 	doublePortals = NULL;
 	numInterAreaPortals = 0;
 
+	nextUniqueId = 1;			// X0 ( D44 ): 0 means "never assigned", so the ids start at 1
+
 	interactionTable = NULL;
 	interactionIndex = NULL;
 	interactionIndexLights = NULL;
@@ -555,6 +557,10 @@ void idRenderWorldLocal::UpdateEntityDef( qhandle_t entityHandle, const renderEn
 			}
 		}
 
+		// X0 ( H5, D67 ): the shadow cache hears of the frees an update or a free of one def makes; it filters the changes
+		// that matter itself. R_FreeDerivedData and R_CheckForEntityDefsUsingModel free without a call: those are epochs ( track S )
+		R_ShadowCacheNotifyEntity( def, re, SC_UPDATE );
+
 		// save any decals if the model is the same, allowing marks to move with entities
 		if( def->parms.hModel == re->hModel )
 		{
@@ -573,6 +579,7 @@ void idRenderWorldLocal::UpdateEntityDef( qhandle_t entityHandle, const renderEn
 
 		def->world = this;
 		def->index = entityHandle;
+		def->uniqueId = nextUniqueId++;
 	}
 
 	def->parms = *re;
@@ -622,6 +629,7 @@ void idRenderWorldLocal::FreeEntityDef( qhandle_t entityHandle )
 		return;
 	}
 
+	R_ShadowCacheNotifyEntity( def, NULL, SC_FREE );
 	R_FreeEntityDefDerivedData( def, false, false );
 
 	// if we are playing a demo, these will have been freed
@@ -681,6 +689,52 @@ qhandle_t idRenderWorldLocal::AddLightDef( const renderLight_t* rlight )
 }
 
 /*
+====================
+R_PickPrimarySun
+
+X0 ( D42, D73 ): the world's one sun, the flag the view lights copy. A parallel
+light with the primarySun spawnarg wins, lowest index if several; with none set,
+the parallel light with the largest globalLightBounds volume wins, which is the
+map's sun in the stock maps. Per world, never per view: it runs on the add, the
+reshape and the free of a parallel light, not in R_RenderView.
+====================
+*/
+void R_PickPrimarySun( idRenderWorldLocal* world )
+{
+	int		chosen = -1;
+	float	bestVolume = 0.0f;
+
+	for( int i = 0; i < world->lightDefs.Num(); i++ )
+	{
+		const idRenderLightLocal* light = world->lightDefs[i];
+		if( light == NULL || !light->parms.parallel )
+		{
+			continue;
+		}
+		if( light->parms.primarySun )
+		{
+			chosen = i;		// the scan is in index order, so this is the lowest one
+			break;
+		}
+		// GetVolume returns 0 for a cleared bounds, so it loses to any real one
+		const float volume = light->globalLightBounds.GetVolume();
+		if( chosen == -1 || volume > bestVolume )
+		{
+			bestVolume = volume;
+			chosen = i;
+		}
+	}
+
+	for( int i = 0; i < world->lightDefs.Num(); i++ )
+	{
+		if( world->lightDefs[i] != NULL )
+		{
+			world->lightDefs[i]->isPrimarySun = ( i == chosen );
+		}
+	}
+}
+
+/*
 =================
 UpdateLightDef
 
@@ -710,9 +764,16 @@ void idRenderWorldLocal::UpdateLightDef( qhandle_t lightHandle, const renderLigh
 	}
 
 	bool justUpdate = false;
+	bool created = false;
+	// X0 ( D73 ): the two flags that steer the primary-sun pick, captured before the parms overwrite them
+	bool wasParallel = false;
+	bool wasPrimarySun = false;
 	idRenderLightLocal* light = lightDefs[lightHandle];
 	if( light )
 	{
+		wasParallel = light->parms.parallel;
+		wasPrimarySun = light->parms.primarySun;
+
 		// if the shape of the light stays the same, we don't need to dump
 		// any of our derived data, because shader parms are calculated every frame
 		if( rlight->axis == light->parms.axis && rlight->end == light->parms.end &&
@@ -729,6 +790,7 @@ void idRenderWorldLocal::UpdateLightDef( qhandle_t lightHandle, const renderLigh
 		{
 			// if we are updating shadows, the prelight model is no longer valid
 			light->lightHasMoved = true;
+			R_ShadowCacheNotifyLight( light, rlight, SC_UPDATE );
 			R_FreeLightDefDerivedData( light );
 		}
 	}
@@ -740,6 +802,8 @@ void idRenderWorldLocal::UpdateLightDef( qhandle_t lightHandle, const renderLigh
 
 		light->world = this;
 		light->index = lightHandle;
+		light->uniqueId = nextUniqueId++;
+		created = true;
 	}
 
 	light->parms = *rlight;
@@ -755,6 +819,16 @@ void idRenderWorldLocal::UpdateLightDef( qhandle_t lightHandle, const renderLigh
 	if( !justUpdate )
 	{
 		R_CreateLightRefs( light );
+	}
+
+	// X0 ( D73 ): re-pick the world's sun when a parallel light is added, reshaped, or has
+	// parallel or primarySun changed; a colour-only update of a sun must not walk the light
+	// list every frame. globalLightBounds is valid again here: R_CreateLightRefs derived it,
+	// and a justUpdate left the shape, and with it the bounds, alone
+	if( ( light->parms.parallel || wasParallel ) &&
+			( created || !justUpdate || light->parms.parallel != wasParallel || light->parms.primarySun != wasPrimarySun ) )
+	{
+		R_PickPrimarySun( this );
 	}
 }
 
@@ -783,10 +857,19 @@ void idRenderWorldLocal::FreeLightDef( qhandle_t lightHandle )
 		return;
 	}
 
+	// X0 ( D73 ): captured before the delete; the re-pick below must not touch the freed light
+	const bool wasParallel = light->parms.parallel;
+
+	R_ShadowCacheNotifyLight( light, NULL, SC_FREE );
 	R_FreeLightDefDerivedData( light );
 
 	delete light;
 	lightDefs[lightHandle] = NULL;
+
+	if( wasParallel )
+	{
+		R_PickPrimarySun( this );
+	}
 }
 
 /*

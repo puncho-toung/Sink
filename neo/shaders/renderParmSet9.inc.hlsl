@@ -82,6 +82,13 @@ struct renderParmSet9_t
     float4 rpTexGen0Q; 
 	
     float4 rpSHIrradiance[9];
+
+	float4 rpSurfLights;		// F: x = first record, y = count, z = path, w = feature mask
+	float4 rpZBinParms;			// F: tile size, tiles X, words per tile, bin count
+	float4 rpZBinScale;			// F: scale, near, far, 0
+	float4 rpRecordCounts;		// F: records, rows, sun present, vanished count
+	float4 rpShadowBias;		// S: sun bias scale, regular bias scale, splits, 0
+	float4 rpShadowFilter;		// S: sample count, texel step ( jitter scale / atlas size ), noise scale, frame index
 };
 
 #if USE_PUSH_CONSTANTS

@@ -219,3 +219,21 @@ float ML_StyleMultiplier(const char* style, int timeMs, int frameTimeMs)
 
     return (lastCh * (1.0f - backLerp) + nextCh * backLerp) * (1.0f / 12.0f);
 }
+
+/*
+================
+R_MathLightToParms
+
+The one encode of a math light's three render-parm lanes, exactly the values RenderInteractions
+built inline before X0: out[0] = flags (mlMode, type, falloff, pattern), out[1] = shape,
+out[2] = pattern. mlMode is passed in because it is not a function of m: the caller reads
+R_LightUsesMathPath and r_showMathLights, which this file may not (it is also compiled into the
+map compiler).
+================
+*/
+void R_MathLightToParms(const mathLightData_t& m, const float mlMode, idVec4 out[3])
+{
+    out[0] = idVec4(mlMode, (float)m.type, (float)m.falloff, (float)m.pattern);
+    out[1] = idVec4(m.falloffExp, m.innerRadius, m.shapeExp, m.penumbra);
+    out[2] = idVec4(m.patternStrength, m.patternScale, m.patternPhase, m.energyClamp ? 1.0f : 0.0f);
+}

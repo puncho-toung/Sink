@@ -599,6 +599,8 @@ public:
 	idImage* 			fogEnterImage;				// adjust fogImage alpha based on terminator plane
 	// RB begin
 	idImage*			shadowAtlasImage;			// 8192 * 8192 for clustered forward shading
+	// ---- TRACK S: the shadow cache images ( D45 ) ----
+	// ---- END TRACK S ----
 	idImage*			shadowImage[5];
 	idImage*			jitterImage1;				// shadow jitter
 	idImage*			jitterImage4;

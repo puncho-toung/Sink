@@ -935,6 +935,19 @@ void R_RenderView( viewDef_t* parms )
 
 	tr.viewDef = parms;
 
+	// X0 ( S35 ): subviews and GUI worlds are copies of their parent's viewDef, so what the tracks hang on a view is cleared per view
+	parms->shadowCacheView = NULL;
+	parms->lightListView = NULL;
+	parms->froxelView = NULL;
+	parms->recordLights = NULL;
+	parms->numRecordLights = 0;
+	parms->shadowRows = NULL;
+	parms->numShadowRows = 0;
+	parms->shadowOps = NULL;
+	parms->numShadowOps = 0;
+	memset( &parms->shadowSkipSet, 0, sizeof( parms->shadowSkipSet ) );	// valid = false too ( D36 )
+	parms->listsBuilt = false;
+
 	// Parse once before entity jobs; every worker reads the same immutable thresholds.
 	if( sscanf( r_modelLodPixels.GetString(), "%f %f %f", &parms->modelLodPixels[0], &parms->modelLodPixels[1], &parms->modelLodPixels[2] ) != 3 )
 	{
@@ -1044,11 +1057,15 @@ void R_RenderView( viewDef_t* parms )
 	R_AddLights();
 	tr.pc.usAddLights += Sys_Microseconds() - addLightsStart;
 
+	R_NumberRecordLights();		// F1: numbers the lights that get a record; no-op until then
+
 	// adds ambient surfaces and create any necessary interaction surfaces to add to the light lists
 	R_AddModels();
 
 	// build up the GUIs on world surfaces
 	R_AddInGameGuis( tr.viewDef->drawSurfs, tr.viewDef->numDrawSurfs );
+
+	R_BuildLightLists();		// F1: fills the listed-surface counts the optimize below reads; no-op until then
 
 	// any viewLight that didn't have visible surfaces can have it's shadows removed
 	R_OptimizeViewLightsList();
@@ -1082,6 +1099,8 @@ void R_RenderView( viewDef_t* parms )
 
 	// RB: find closest environment probes so we can interpolate between them in the ambient shaders
 	R_FindClosestEnvironmentProbes();
+
+	R_ShadowCacheDecide();		// S: decides this view's shadow ops and skip set; no-op until then
 
 	// add the rendering commands for this viewDef
 	R_AddDrawViewCmd( parms, false );

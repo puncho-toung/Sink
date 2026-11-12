@@ -306,14 +306,33 @@ float idConsoleLocal::DrawFPS( float y )
 	const uint64 rendererGPU_SSRTime = commonLocal.GetRendererGpuSSRMicroseconds();
 	const uint64 rendererGPUAmbientPassTime = commonLocal.GetRendererGpuAmbientPassMicroseconds();
 	const uint64 rendererGPUShadowAtlasTime = commonLocal.GetRendererGpuShadowAtlasPassMicroseconds();
-	const uint64 rendererGPUInteractionsTime = commonLocal.GetRendererGpuInteractionsMicroseconds();
-	const uint64 rendererGPUShaderPassesTime = commonLocal.GetRendererGpuShaderPassMicroseconds() + commonLocal.GetRendererGpuFogAllLightsMicroseconds() + commonLocal.GetRendererGpuShaderPassPostMicroseconds() + commonLocal.GetRendererGpuDrawGuiMicroseconds();
+	const uint64 rendererGPUInteractionsTime = commonLocal.GetRendererGpuInteractionsMicroseconds() + commonLocal.GetRendererGpuInteractionsTranslucentMicroseconds();	// X0 - the row shows both interaction phases
+	// X0 - volumetrics apply, the translucent interactions and the forward translucent pass draw inside
+	// the MRB_DRAW_SHADER_PASSES pair after X0, so their time is already inside gpuShaderPassMicroSec;
+	// subtract it so it is not counted twice ( each shows on its own row ). Subtract only when the shader
+	// pass block is non-zero: with r_skipShaderPasses 1 the blocks are not nested in it. Clamped at 0
+	// because the sum is unsigned
+	const uint64 shaderPassNestedTime = commonLocal.GetRendererGpuShaderPassMicroseconds() > 0 ? commonLocal.GetRendererGpuVolumetricsApplyMicroseconds() + commonLocal.GetRendererGpuInteractionsTranslucentMicroseconds() + commonLocal.GetRendererGpuForwardTranslucentMicroseconds() : 0;
+	const uint64 shaderPassTotalTime = commonLocal.GetRendererGpuShaderPassMicroseconds() + commonLocal.GetRendererGpuFogAllLightsMicroseconds() + commonLocal.GetRendererGpuShaderPassPostMicroseconds() + commonLocal.GetRendererGpuDrawGuiMicroseconds();
+	const uint64 rendererGPUShaderPassesTime = shaderPassTotalTime > shaderPassNestedTime ? shaderPassTotalTime - shaderPassNestedTime : 0;
 	const uint64 rendererGPU_TAATime = commonLocal.GetRendererGpuMotionVectorsMicroseconds() + commonLocal.GetRendererGpuTAAMicroseconds();
 	const uint64 rendererGPUPostProcessingTime = commonLocal.GetRendererGpuToneMapPassMicroseconds() + commonLocal.GetRendererGpuPostProcessingMicroseconds() + commonLocal.GetRendererGpuCrtPostProcessingMicroseconds();
 	//puncho start - the two halves of rendererGPUInteractionsTime above
 	const uint64 rendererGPUInteractionsTexTime = commonLocal.GetRendererGpuInteractionsTexMicroseconds();
 	const uint64 rendererGPUInteractionsMathTime = commonLocal.GetRendererGpuInteractionsMathMicroseconds();
 	//puncho end
+	// ---- X0: the new GPU buckets (renderer upgrade seams) ----
+	const uint64 rendererGPUShadowCacheTime = commonLocal.GetRendererGpuShadowCacheMicroseconds();
+	const uint64 rendererGPUForwardTime = commonLocal.GetRendererGpuForwardPassMicroseconds() + commonLocal.GetRendererGpuForwardTranslucentMicroseconds();
+	const uint64 rendererGPUVolumetricsTime = commonLocal.GetRendererGpuVolumetricsMicroseconds();
+	const uint64 rendererGPUFogApplyTime = commonLocal.GetRendererGpuVolumetricsApplyMicroseconds();
+	// ---- END X0 ----
+	// ---- TRACK S: HUD values ----
+	// ---- END TRACK S ----
+	// ---- TRACK F: HUD values ----
+	// ---- END TRACK F ----
+	// ---- TRACK V: HUD values ----
+	// ---- END TRACK V ----
 
 	// SRS - Calculate max fps and max frame time based on glConfig.displayFrequency if vsync enabled and lower than engine Hz, otherwise use com_engineHz_latched
 	const int maxFPS = ( r_swapInterval.GetInteger() > 0 && glConfig.displayFrequency > 0 ? std::min( glConfig.displayFrequency, int( com_engineHz_latched ) ) : com_engineHz_latched );
@@ -348,7 +367,14 @@ float idConsoleLocal::DrawFPS( float y )
 	{
 		// start smaller
 		int32 statsWindowWidth = com_showFPS.GetInteger() >= 5 ? 850 : 320;
-		int32 statsWindowHeight = 370 + ( com_showFPS.GetInteger() >= 5 ? 120 : 0 );		//puncho: +40 for the Int(tex)/Int(math) rows
+		int32 statsWindowHeight = 370 + 80 + ( com_showFPS.GetInteger() >= 5 ? 120 : 0 );		//puncho: +40 for the Int(tex)/Int(math) rows; X0: +80 for the four new GPU rows
+		// Each track adds its own row count to statsWindowHeight here.
+		// ---- TRACK S: extra stats rows ----
+		// ---- END TRACK S ----
+		// ---- TRACK F: extra stats rows ----
+		// ---- END TRACK F ----
+		// ---- TRACK V: extra stats rows ----
+		// ---- END TRACK V ----
 
 		//puncho start - ai-harness (plans/ai-harness/00-PLAN.md §2.5): the host's AI census of the last tic, read in
 		// place with no copy and no lock because the game thread is idle or has just finished when this draws (on the
@@ -671,6 +697,18 @@ float idConsoleLocal::DrawFPS( float y )
 		ImGui::TextColored( rendererGPUInteractionsTexTime > maxTime ? colorRed : colorWhite,  "                    Int(tex):     %5llu us", rendererGPUInteractionsTexTime );
 		ImGui::TextColored( rendererGPUInteractionsMathTime > maxTime ? colorRed : colorWhite, "                    Int(math):    %5llu us", rendererGPUInteractionsMathTime );
 		//puncho end
+		// ---- X0: the new GPU rows, same 14-character label column and colour rule (renderer upgrade seams) ----
+		ImGui::TextColored( rendererGPUShadowCacheTime > maxTime ? colorRed : colorWhite,		"                    Shadow cache: %5llu us", rendererGPUShadowCacheTime );
+		ImGui::TextColored( rendererGPUForwardTime > maxTime ? colorRed : colorWhite,			"                    Forward:      %5llu us", rendererGPUForwardTime );
+		ImGui::TextColored( rendererGPUVolumetricsTime > maxTime ? colorRed : colorWhite,		"                    Volumetrics:  %5llu us", rendererGPUVolumetricsTime );
+		ImGui::TextColored( rendererGPUFogApplyTime > maxTime ? colorRed : colorWhite,			"                    Fog apply:    %5llu us", rendererGPUFogApplyTime );
+		// ---- END X0 ----
+		// ---- TRACK S: HUD rows ----
+		// ---- END TRACK S ----
+		// ---- TRACK F: HUD rows ----
+		// ---- END TRACK F ----
+		// ---- TRACK V: HUD rows ----
+		// ---- END TRACK V ----
 		ImGui::TextColored( frameBusyTime > maxTime || rendererGPUTime > maxTime ? colorRed : colorWhite, "Total:   %5lld us   Total:        %5lld us", frameBusyTime, rendererGPUTime );
 		ImGui::TextColored( colorWhite,														"Idle:    %5lld us   Idle:         %5lld us", frameIdleTime, rendererGPUIdleTime );
 		// SRS - Show CPU and GPU overall usage statistics

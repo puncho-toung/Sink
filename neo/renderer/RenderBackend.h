@@ -40,6 +40,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "Passes/SsaoPass.h"
 #include "Passes/TonemapPass.h"
 #include "Passes/TemporalAntiAliasingPass.h"
+#include "Passes/VolumetricFogPass.h"
 
 #include "PipelineCache.h"
 
@@ -57,6 +58,14 @@ enum stencilFace_t
 	STENCIL_FACE_FRONT,
 	STENCIL_FACE_BACK,
 	STENCIL_FACE_NUM
+};
+
+// which surfaces of an interaction chain RenderInteractions draws, by material sort ( X0, D83 )
+enum interactionSort_t
+{
+	INTERACTION_SORT_ALL,			// every surface of the chain
+	INTERACTION_SORT_BELOW_FAR,		// sort < SS_FAR: lit decals, which lie on opaque surfaces
+	INTERACTION_SORT_FAR_AND_ABOVE	// sort >= SS_FAR: free-standing translucents ( glass ), drawn after the fog apply
 };
 
 struct gfxImpParms_t
@@ -174,21 +183,28 @@ private:
 			idVec4 matrix[2], float color[4] );
 
 	void				DrawInteractions( const viewDef_t* _viewDef );
+	void				DrawTranslucentInteractions( const viewDef_t* _viewDef );
 	//puncho start
 	void				DrawInteractionsPass( const viewDef_t* _viewDef, bool mathPass, Framebuffer* previousFramebuffer, bool useLightDepthBounds );
 	//puncho end
 	void				DrawSingleInteraction( drawInteraction_t* din, bool useFastPath, bool useIBL, bool setInteractionShader );
 	int					DrawShaderPasses( const drawSurf_t* const* const drawSurfs, const int numDrawSurfs,
-										  const float guiStereoScreenOffset, const int stereoEye );
+										  const float guiStereoScreenOffset, const int stereoEye, const bool stopAtFar );
 
-	void				RenderInteractions( const drawSurf_t* surfList, const viewLight_t* vLight, int depthFunc, bool performStencilTest, bool useLightDepthBounds );
+	void				RenderInteractions( const drawSurf_t* surfList, const viewLight_t* vLight, int depthFunc, bool performStencilTest, bool useLightDepthBounds, const interactionSort_t sortFilter );
 
 	// RB
 	void				AmbientPass( const drawSurf_t* const* drawSurfs, int numDrawSurfs, bool fillGbuffer );
 
+	// ---- X0: renderer upgrade seams ----
+	void				ForwardPass( const drawSurf_t* const* drawSurfs, int numDrawSurfs, bool translucent );
+	void				ResetGraphicsStateCache();
+	// ---- END X0 ----
+
 	void				SetupShadowMapMatrices( viewLight_t* vLight, int side, idRenderMatrix& lightProjectionRenderMatrix, idRenderMatrix& lightViewRenderMatrix );
 	void				ShadowMapPassFast( const drawSurf_t* drawSurfs, viewLight_t* vLight, int side, bool atlas );
 	void				ShadowMapPassPerforated( const drawSurf_t** drawSurfs, int numDrawSurfs, viewLight_t* vLight, int side, const idRenderMatrix& lightProjectionRenderMatrix, const idRenderMatrix& lightViewRenderMatrix );
+	void				ShadowMapsForLightNoAtlas( const viewLight_t* vLight, Framebuffer* previousFramebuffer );
 
 	void				ShadowAtlasPass( const viewDef_t* _viewDef );
 
@@ -387,6 +403,28 @@ private:
 	nvrhi::CommandListHandle		commandList;
 	CommonRenderPasses				commonPasses;
 	SsaoPass*						ssaoPass;
+	// ---- X0: renderer upgrade seams ----
+	VolumetricFogPass*				volumetricFogPass;		// created by track V; X0 only nulls and guards it
+	nvrhi::BufferHandle				froxelFogParms;			// volatile, sizeof( froxelFogParms_t ); zeroed at the start of every 3D view
+	nvrhi::TextureHandle			froxelDummyVolume;		// the 1x1x1 "no fog" volume; owned here for the backend's lifetime
+	nvrhi::TextureHandle			froxelVolume;			// the volume the fog set binds: the dummy until track V swaps in its own at a pass boundary
+	// ResetGraphicsStateCache() after the swap, because a binding set is re-patched only when GetCurrentBindingLayout runs again
+	bool							viewHistoryCut;			// H10: this main view's camera cut, decided once at the start of its draw
+	// ---- END X0 ----
+	// ---- TRACK S: shadow cache members ----
+	// ---- END TRACK S ----
+	// ---- TRACK F: light lists ----
+	void							R_BuildShadowRows( const viewDef_t* viewDef );
+	void							DBG_LightLists();		// track F's debug overlay, called from DBG_RenderDebugTools
+	nvrhi::BufferHandle				recordLightsBuffer;		// declared by X0, created by F1 ( D69 )
+	nvrhi::BufferHandle				shadowRowsBuffer;
+	nvrhi::BufferHandle				lightPoolBuffer;
+	nvrhi::BufferHandle				zBinsBuffer;
+	nvrhi::BufferHandle				tileBitsBuffer;
+	nvrhi::BufferHandle				vanishedPrevBuffer;
+	// ---- END TRACK F ----
+	// ---- TRACK V: volumetric fog members ----
+	// ---- END TRACK V ----
 	MipMapGenPass*					hiZGenPass;
 	TonemapPass*					toneMapPass;
 	TemporalAntiAliasingPass*		taaPass;

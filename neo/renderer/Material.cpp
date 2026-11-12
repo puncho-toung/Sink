@@ -2807,6 +2807,12 @@ void idMaterial::ParseMaterial( idLexer& src )
 			SetMaterialFlag( MF_UNLIT );
 			continue;
 		}
+		// forward
+		else if( !token.Icmp( "forward" ) )
+		{
+			SetMaterialFlag( MF_FORWARD );
+			continue;
+		}
 		// lightFallofImage <imageprogram>
 		// specifies the image to use for the third axis of projected
 		// light volumes

@@ -2590,8 +2590,18 @@ void idRenderBackend::DBG_RenderDebugTools( drawSurf_t** drawSurfs, int numDrawS
 	DBG_ShowDebugPolygons();
 	DBG_ShowTrace( drawSurfs, numDrawSurfs );
 
+	// ---- X0: one debug-tools call per track, each into the track's own file ----
+	R_ShadowCacheDebugTools( commandList, viewDef );
+	DBG_LightLists();
+
+	if( volumetricFogPass != NULL )
+	{
+		volumetricFogPass->DebugTools( commandList, viewDef );
+	}
+	// ---- END X0 ----
+
 	renderLog.CloseBlock();
-	renderLog.CloseMainBlock();
+	renderLog.CloseMainBlock( MRB_DRAW_DEBUG_TOOLS );
 }
 
 /*

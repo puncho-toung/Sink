@@ -195,6 +195,8 @@ void idGameEdit::ParseSpawnArgsToRenderLight( const idDict* args, renderLight_t*
 	args->GetBool( "noshadows", "0", renderLight->noShadows );
 	args->GetBool( "nospecular", "0", renderLight->noSpecular );
 	args->GetBool( "parallel", "0", renderLight->parallel );
+	args->GetBool( "primarySun", "0", renderLight->primarySun );
+	renderLight->forwardMode = ( byte )idMath::ClampInt( 0, 2, args->GetInt( "forward", "0" ) );
 
 	args->GetString( "texture", "lights/squarelight1", &texture );
 
@@ -428,6 +430,9 @@ void idLight::Restore( idRestoreGame* savefile )
 	const float pixelScale = gameLocal.world != NULL ? gameLocal.world->spawnArgs.GetFloat( "minVisPixelsScale", "1" ) : 1.0f;
 	renderLight.maxVisDist = Max( 0.0f, spawnArgs.GetFloat( "maxVisDist", "0" ) * distanceScale );
 	renderLight.minVisPixels = Max( 0.0f, spawnArgs.GetFloat( "minVisPixels", "0" ) * pixelScale );
+	// the save stream holds neither of these two keys; the entity's saved dict does (no format change)
+	renderLight.primarySun = spawnArgs.GetBool( "primarySun", "0" );
+	renderLight.forwardMode = ( byte )idMath::ClampInt( 0, 2, spawnArgs.GetInt( "forward", "0" ) );
 
 	// light styles are not saved (light_styles restarts empty, lightStyle -1), so math_style restarts
 	// off with them instead of reading the constructor's zero as style 0

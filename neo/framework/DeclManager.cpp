@@ -2770,6 +2770,8 @@ static const fgdLightKey_t FGD_LIGHT_KEYS[] =
 	{ "light_origin",			"string",	NULL,					"Shine from this world point instead of the entity origin, for a light with a fixture model",	NULL },
 	{ "light_angles",			"string",	NULL,					"Pitch yaw roll of such a light; rotation and light_rotation override it",				NULL },
 	{ "parallel",				"choices",	"0",					"Sun light: parallel rays from the light_center direction",								FGD_BOOL_CHOICES },
+	{ "primarySun",				"choices",	"0",					"Marks this parallel light as the map's sun for cascaded shadows and the forward light list",	FGD_BOOL_CHOICES },
+	{ "forward",				"integer",	"0",					"Lighting path: 0 = automatic, 1 = force the forward light list, 2 = force the legacy interaction path",	NULL },
 	{ "noshadows",				"choices",	"0",					"The light casts no shadows",															FGD_BOOL_CHOICES },
 	{ "nospecular",				"choices",	"0",					"The light adds no specular highlights, diffuse only",									FGD_BOOL_CHOICES },
 	{ "math_enabled",			"choices",	"0",					"Shade with the math_* falloff curve instead of the light texture falloff",				FGD_BOOL_CHOICES },

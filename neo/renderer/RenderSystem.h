@@ -193,6 +193,15 @@ struct performanceCounters_t
 	int		c_viewEntsUnder4px;
 	int		c_viewEntsUnder16px;
 	int		c_viewEntsBeyond8k;
+	// ---- TRACK S: shadow cache counters ----
+	// ---- END TRACK S ----
+	// ---- TRACK F: light lists ----
+	// N15: each track says per counter whether it counts the main view only or sums over the frame's views
+	int		c_listedLights;
+	int		c_surfLightNoRecord;
+	// ---- END TRACK F ----
+	// ---- TRACK V: volumetric fog counters ----
+	// ---- END TRACK V ----
 	uint64	usFindView;
 	uint64	usAddLights;
 	uint64	mocMicroSec;
@@ -249,6 +258,20 @@ struct backEndCounters_t
 	uint64	gpuPostProcessingMicroSec;
 	uint64	gpuDrawGuiMicroSec;
 	uint64	gpuCrtPostProcessingMicroSec;
+	// ---- X0: gpu timing counters (renderer upgrade seams) ----
+	uint64	gpuShadowCacheMicroSec;
+	uint64	gpuForwardPassMicroSec;
+	uint64	gpuForwardTranslucentMicroSec;
+	uint64	gpuVolumetricsMicroSec;
+	uint64	gpuVolumetricsApplyMicroSec;
+	uint64	gpuInteractionsTranslucentMicroSec;
+	// ---- END X0 ----
+	// ---- TRACK S: shadow cache counters ----
+	// ---- END TRACK S ----
+	// ---- TRACK F: light list counters ----
+	// ---- END TRACK F ----
+	// ---- TRACK V: volumetric fog counters ----
+	// ---- END TRACK V ----
 	uint64	gpuMicroSec;
 };
 // RB end

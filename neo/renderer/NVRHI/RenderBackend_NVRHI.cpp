@@ -34,6 +34,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "../RenderCommon.h"
 #include "../RenderBackend.h"
+#include "../Passes/VolumetricFogPass_cb.h"		// X0: froxelFogParms_t for the parms buffer
 #include "../../framework/Common_local.h"
 #include "imgui.h"
 #include "../ImmediateMode.h"
@@ -200,6 +201,21 @@ void idRenderBackend::Init()
 	commonPasses.Init( deviceManager->GetDevice() );
 	hiZGenPass = nullptr;
 	ssaoPass = nullptr;
+	volumetricFogPass = nullptr;
+
+	// X0: the froxel fog parms - a volatile constant buffer, zeroed at the start of every 3D view ( D66 ).
+	// Created here ( not in ClearCaches ): it does not depend on the render size, and the device and
+	// commonPasses already exist at this point in Init. One write per 3D view per frame plus the fog view's
+	// second write, so 256 versions is ample for the 3-frame ring.
+	const int MAX_FROXEL_FOG_PARMS_VERSIONS = 256;
+
+	nvrhi::BufferDesc fogParmsDesc;
+	fogParmsDesc.byteSize = sizeof( froxelFogParms_t );
+	fogParmsDesc.debugName = "FroxelFogParms";
+	fogParmsDesc.isConstantBuffer = true;
+	fogParmsDesc.isVolatile = true;
+	fogParmsDesc.maxVersions = MAX_FROXEL_FOG_PARMS_VERSIONS;
+	froxelFogParms = deviceManager->GetDevice()->createBuffer( fogParmsDesc );
 
 	// Maximum resolution of one tile within tiled shadow map. Resolution must be power of two and
 	// square, since quad-tree for managing tiles will not work correctly otherwise. Furthermore
@@ -282,6 +298,11 @@ void idRenderBackend::Shutdown()
 	{
 		currentBindingSets[i].Reset();
 	}
+
+	// X0: release the fog resources created in Init / GL_StartFrame ( ClearCaches leaves them alone )
+	froxelFogParms.Reset();
+	froxelDummyVolume.Reset();
+	froxelVolume.Reset();
 
 	// Unload shaders, delete binding layouts, and unmap memory
 	renderProgManager.Shutdown();
@@ -1991,6 +2012,655 @@ void idRenderBackend::GetCurrentBindingLayout( int type )
 			desc[1].bindings[0].resourceHandle = commonPasses.m_LinearClampSampler;
 		}
 	}
+	else if( type == BINDING_LAYOUT_FORWARD )
+	{
+		// X0: each of the seven seam layouts has a branch of its own although five repeat an existing branch
+		// plus the fog set. The plan asks for it ( D35, S82a ): the shared branches serve layouts with one set
+		// fewer, and a track must be able to change its own layout's sets without touching another's.
+		// ---- TRACK F: the forward layouts' binding sets ( five sets, the fog set last ) ----
+		// X0: the forward light-list pass and the froxel-fog twins - one branch per new layout type ( D35 ).
+		// Each set supplies exactly what its bindingLayouts[...] object in RenderProgs.cpp declares, item for
+		// item in order; NVRHI compares a set with its layout positionally, so a mismatch is a draw-time fatal.
+		if( desc[0].bindings.empty() )
+		{
+			desc[0].bindings =
+			{
+				uniformsBindingSetItem
+			};
+		}
+		else
+		{
+			desc[0].bindings[0] = uniformsBindingSetItem;
+		}
+
+		if( desc[1].bindings.empty() )
+		{
+			desc[1].bindings =
+			{
+				nvrhi::BindingSetItem::Texture_SRV( 0, ( nvrhi::ITexture* )GetImageAt( 0 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 1, ( nvrhi::ITexture* )GetImageAt( 1 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 2, ( nvrhi::ITexture* )GetImageAt( 2 )->GetTextureID() )
+			};
+		}
+		else
+		{
+			desc[1].bindings[0].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 0 )->GetTextureID();
+			desc[1].bindings[1].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 1 )->GetTextureID();
+			desc[1].bindings[2].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 2 )->GetTextureID();
+		}
+
+		// the IBL images in their order, then the shadow atlas and jitter units, then the five light-list
+		// tables ( track F )
+		if( desc[2].bindings.empty() )
+		{
+			desc[2].bindings =
+			{
+				nvrhi::BindingSetItem::Texture_SRV( 3, ( nvrhi::ITexture* )GetImageAt( 3 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 4, ( nvrhi::ITexture* )GetImageAt( 4 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 7, ( nvrhi::ITexture* )GetImageAt( 7 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 8, ( nvrhi::ITexture* )GetImageAt( 8 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 9, ( nvrhi::ITexture* )GetImageAt( 9 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 10, ( nvrhi::ITexture* )GetImageAt( 10 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 12, ( nvrhi::ITexture* )GetImageAt( 12 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 13, ( nvrhi::ITexture* )GetImageAt( 13 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 14, ( nvrhi::ITexture* )GetImageAt( 14 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 5, ( nvrhi::ITexture* )GetImageAt( 5 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 6, ( nvrhi::ITexture* )GetImageAt( 6 )->GetTextureID() ),
+				nvrhi::BindingSetItem::StructuredBuffer_SRV( 16, recordLightsBuffer ),
+				nvrhi::BindingSetItem::StructuredBuffer_SRV( 17, shadowRowsBuffer ),
+				nvrhi::BindingSetItem::StructuredBuffer_SRV( 18, lightPoolBuffer ),
+				nvrhi::BindingSetItem::StructuredBuffer_SRV( 19, zBinsBuffer ),
+				nvrhi::BindingSetItem::StructuredBuffer_SRV( 20, tileBitsBuffer ),
+				// ---- TRACK F: the three default light images ( D39 ) ----
+				nvrhi::BindingSetItem::Texture_SRV( 21, ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 22, ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 23, ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID() )
+				// ---- END TRACK F ----
+			};
+		}
+		else
+		{
+			auto& bindings = desc[2].bindings;
+			bindings[0].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 3 )->GetTextureID();
+			bindings[1].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 4 )->GetTextureID();
+			bindings[2].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 7 )->GetTextureID();
+			bindings[3].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 8 )->GetTextureID();
+			bindings[4].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 9 )->GetTextureID();
+			bindings[5].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 10 )->GetTextureID();
+			bindings[6].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 12 )->GetTextureID();
+			bindings[7].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 13 )->GetTextureID();
+			bindings[8].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 14 )->GetTextureID();
+			bindings[9].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 5 )->GetTextureID();
+			bindings[10].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 6 )->GetTextureID();
+			bindings[11].resourceHandle = recordLightsBuffer;
+			bindings[12].resourceHandle = shadowRowsBuffer;
+			bindings[13].resourceHandle = lightPoolBuffer;
+			bindings[14].resourceHandle = zBinsBuffer;
+			bindings[15].resourceHandle = tileBitsBuffer;
+			// ---- TRACK F: the three default light images ( D39 ) ----
+			bindings[16].resourceHandle = ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID();
+			bindings[17].resourceHandle = ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID();
+			bindings[18].resourceHandle = ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID();
+			// ---- END TRACK F ----
+		}
+
+		if( R_UsePixelatedLook() )
+		{
+			if( desc[3].bindings.empty() )
+			{
+				desc[3].bindings =
+				{
+					nvrhi::BindingSetItem::Sampler( 0, commonPasses.m_PointWrapSampler ),					// material wrap
+					nvrhi::BindingSetItem::Sampler( 1, commonPasses.m_LinearClampSampler ),					// brdf lut, ssao
+					nvrhi::BindingSetItem::Sampler( 2, commonPasses.m_LinearClampCompareSampler ),			// shadow compare
+					nvrhi::BindingSetItem::Sampler( 3, commonPasses.m_LinearBorderSampler ),					// light images
+					nvrhi::BindingSetItem::Sampler( 4, commonPasses.m_PointWrapSampler )						// blue noise
+				};
+			}
+			else
+			{
+				desc[3].bindings[0].resourceHandle = commonPasses.m_PointWrapSampler;
+				desc[3].bindings[1].resourceHandle = commonPasses.m_LinearClampSampler;
+				desc[3].bindings[2].resourceHandle = commonPasses.m_LinearClampCompareSampler;
+				desc[3].bindings[3].resourceHandle = commonPasses.m_LinearBorderSampler;
+				desc[3].bindings[4].resourceHandle = commonPasses.m_PointWrapSampler;
+			}
+		}
+		else
+		{
+			if( desc[3].bindings.empty() )
+			{
+				desc[3].bindings =
+				{
+					nvrhi::BindingSetItem::Sampler( 0, commonPasses.m_AnisotropicWrapSampler ),
+					nvrhi::BindingSetItem::Sampler( 1, commonPasses.m_LinearClampSampler ),
+					nvrhi::BindingSetItem::Sampler( 2, commonPasses.m_LinearClampCompareSampler ),
+					nvrhi::BindingSetItem::Sampler( 3, commonPasses.m_LinearBorderSampler ),
+					nvrhi::BindingSetItem::Sampler( 4, commonPasses.m_PointWrapSampler )						// blue noise
+				};
+			}
+			else
+			{
+				desc[3].bindings[0].resourceHandle = commonPasses.m_AnisotropicWrapSampler;
+				desc[3].bindings[1].resourceHandle = commonPasses.m_LinearClampSampler;
+				desc[3].bindings[2].resourceHandle = commonPasses.m_LinearClampCompareSampler;
+				desc[3].bindings[3].resourceHandle = commonPasses.m_LinearBorderSampler;
+				desc[3].bindings[4].resourceHandle = commonPasses.m_PointWrapSampler;
+			}
+		}
+
+		// fog: 4 - written whole on every call: track V swaps froxelVolume between the dummy and the real
+		// volume, so the set must pick up the current one whenever it is rebuilt
+		desc[4].bindings =
+		{
+			nvrhi::BindingSetItem::ConstantBuffer( 1, froxelFogParms ),
+			nvrhi::BindingSetItem::Texture_SRV( 15, froxelVolume ),
+			nvrhi::BindingSetItem::Sampler( 5, commonPasses.m_LinearClampSampler )
+		};
+	}
+	else if( type == BINDING_LAYOUT_FORWARD_SKINNED )
+	{
+		if( desc[0].bindings.empty() )
+		{
+			desc[0].bindings =
+			{
+				uniformsBindingSetItem,
+				nvrhi::BindingSetItem::StructuredBuffer_SRV( 11, currentJointBuffer, nvrhi::Format::UNKNOWN, nvrhi::BufferRange( currentJointOffset, sizeof( idVec4 ) * numBoneMatrices ) )
+			};
+		}
+		else
+		{
+			auto& bindings = desc[0].bindings;
+			bindings[0] = uniformsBindingSetItem;
+			bindings[1].resourceHandle = currentJointBuffer;
+			bindings[1].range = nvrhi::BufferRange{ currentJointOffset, sizeof( idVec4 )* numBoneMatrices };
+		}
+
+		if( desc[1].bindings.empty() )
+		{
+			desc[1].bindings =
+			{
+				nvrhi::BindingSetItem::Texture_SRV( 0, ( nvrhi::ITexture* )GetImageAt( 0 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 1, ( nvrhi::ITexture* )GetImageAt( 1 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 2, ( nvrhi::ITexture* )GetImageAt( 2 )->GetTextureID() )
+			};
+		}
+		else
+		{
+			desc[1].bindings[0].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 0 )->GetTextureID();
+			desc[1].bindings[1].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 1 )->GetTextureID();
+			desc[1].bindings[2].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 2 )->GetTextureID();
+		}
+
+		if( desc[2].bindings.empty() )
+		{
+			desc[2].bindings =
+			{
+				nvrhi::BindingSetItem::Texture_SRV( 3, ( nvrhi::ITexture* )GetImageAt( 3 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 4, ( nvrhi::ITexture* )GetImageAt( 4 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 7, ( nvrhi::ITexture* )GetImageAt( 7 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 8, ( nvrhi::ITexture* )GetImageAt( 8 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 9, ( nvrhi::ITexture* )GetImageAt( 9 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 10, ( nvrhi::ITexture* )GetImageAt( 10 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 12, ( nvrhi::ITexture* )GetImageAt( 12 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 13, ( nvrhi::ITexture* )GetImageAt( 13 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 14, ( nvrhi::ITexture* )GetImageAt( 14 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 5, ( nvrhi::ITexture* )GetImageAt( 5 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 6, ( nvrhi::ITexture* )GetImageAt( 6 )->GetTextureID() ),
+				nvrhi::BindingSetItem::StructuredBuffer_SRV( 16, recordLightsBuffer ),
+				nvrhi::BindingSetItem::StructuredBuffer_SRV( 17, shadowRowsBuffer ),
+				nvrhi::BindingSetItem::StructuredBuffer_SRV( 18, lightPoolBuffer ),
+				nvrhi::BindingSetItem::StructuredBuffer_SRV( 19, zBinsBuffer ),
+				nvrhi::BindingSetItem::StructuredBuffer_SRV( 20, tileBitsBuffer ),
+				// ---- TRACK F: the three default light images ( D39 ) ----
+				nvrhi::BindingSetItem::Texture_SRV( 21, ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 22, ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 23, ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID() )
+				// ---- END TRACK F ----
+			};
+		}
+		else
+		{
+			auto& bindings = desc[2].bindings;
+			bindings[0].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 3 )->GetTextureID();
+			bindings[1].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 4 )->GetTextureID();
+			bindings[2].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 7 )->GetTextureID();
+			bindings[3].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 8 )->GetTextureID();
+			bindings[4].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 9 )->GetTextureID();
+			bindings[5].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 10 )->GetTextureID();
+			bindings[6].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 12 )->GetTextureID();
+			bindings[7].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 13 )->GetTextureID();
+			bindings[8].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 14 )->GetTextureID();
+			bindings[9].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 5 )->GetTextureID();
+			bindings[10].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 6 )->GetTextureID();
+			bindings[11].resourceHandle = recordLightsBuffer;
+			bindings[12].resourceHandle = shadowRowsBuffer;
+			bindings[13].resourceHandle = lightPoolBuffer;
+			bindings[14].resourceHandle = zBinsBuffer;
+			bindings[15].resourceHandle = tileBitsBuffer;
+			// ---- TRACK F: the three default light images ( D39 ) ----
+			bindings[16].resourceHandle = ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID();
+			bindings[17].resourceHandle = ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID();
+			bindings[18].resourceHandle = ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID();
+			// ---- END TRACK F ----
+		}
+
+		if( R_UsePixelatedLook() )
+		{
+			if( desc[3].bindings.empty() )
+			{
+				desc[3].bindings =
+				{
+					nvrhi::BindingSetItem::Sampler( 0, commonPasses.m_PointWrapSampler ),
+					nvrhi::BindingSetItem::Sampler( 1, commonPasses.m_LinearClampSampler ),
+					nvrhi::BindingSetItem::Sampler( 2, commonPasses.m_LinearClampCompareSampler ),
+					nvrhi::BindingSetItem::Sampler( 3, commonPasses.m_LinearBorderSampler ),
+					nvrhi::BindingSetItem::Sampler( 4, commonPasses.m_PointWrapSampler )						// blue noise
+				};
+			}
+			else
+			{
+				desc[3].bindings[0].resourceHandle = commonPasses.m_PointWrapSampler;
+				desc[3].bindings[1].resourceHandle = commonPasses.m_LinearClampSampler;
+				desc[3].bindings[2].resourceHandle = commonPasses.m_LinearClampCompareSampler;
+				desc[3].bindings[3].resourceHandle = commonPasses.m_LinearBorderSampler;
+				desc[3].bindings[4].resourceHandle = commonPasses.m_PointWrapSampler;
+			}
+		}
+		else
+		{
+			if( desc[3].bindings.empty() )
+			{
+				desc[3].bindings =
+				{
+					nvrhi::BindingSetItem::Sampler( 0, commonPasses.m_AnisotropicWrapSampler ),
+					nvrhi::BindingSetItem::Sampler( 1, commonPasses.m_LinearClampSampler ),
+					nvrhi::BindingSetItem::Sampler( 2, commonPasses.m_LinearClampCompareSampler ),
+					nvrhi::BindingSetItem::Sampler( 3, commonPasses.m_LinearBorderSampler ),
+					nvrhi::BindingSetItem::Sampler( 4, commonPasses.m_PointWrapSampler )						// blue noise
+				};
+			}
+			else
+			{
+				desc[3].bindings[0].resourceHandle = commonPasses.m_AnisotropicWrapSampler;
+				desc[3].bindings[1].resourceHandle = commonPasses.m_LinearClampSampler;
+				desc[3].bindings[2].resourceHandle = commonPasses.m_LinearClampCompareSampler;
+				desc[3].bindings[3].resourceHandle = commonPasses.m_LinearBorderSampler;
+				desc[3].bindings[4].resourceHandle = commonPasses.m_PointWrapSampler;
+			}
+		}
+
+		// fog: 4 - written whole on every call ( see BINDING_LAYOUT_FORWARD )
+		desc[4].bindings =
+		{
+			nvrhi::BindingSetItem::ConstantBuffer( 1, froxelFogParms ),
+			nvrhi::BindingSetItem::Texture_SRV( 15, froxelVolume ),
+			nvrhi::BindingSetItem::Sampler( 5, commonPasses.m_LinearClampSampler )
+		};
+		// ---- END TRACK F ----
+	}
+	else if( type == BINDING_LAYOUT_TEXTURE_FOG )
+	{
+		if( desc[0].bindings.empty() )
+		{
+			desc[0].bindings =
+			{
+				uniformsBindingSetItem
+			};
+		}
+		else
+		{
+			desc[0].bindings[0] = uniformsBindingSetItem;
+		}
+
+		if( desc[1].bindings.empty() )
+		{
+			desc[1].bindings =
+			{
+				nvrhi::BindingSetItem::Texture_SRV( 0, ( nvrhi::ITexture* )GetImageAt( 0 )->GetTextureID() )
+			};
+		}
+		else
+		{
+			desc[1].bindings[0].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 0 )->GetTextureID();
+		}
+
+		if( desc[2].bindings.empty() )
+		{
+			desc[2].bindings =
+			{
+				nvrhi::BindingSetItem::Sampler( 0, ( nvrhi::ISampler* )GetImageAt( 0 )->GetSampler( samplerCache ) )
+			};
+		}
+		else
+		{
+			desc[2].bindings[0].resourceHandle = ( nvrhi::ISampler* )GetImageAt( 0 )->GetSampler( samplerCache );
+		}
+
+		// fog: 3 - written whole on every call ( see BINDING_LAYOUT_FORWARD )
+		desc[3].bindings =
+		{
+			nvrhi::BindingSetItem::ConstantBuffer( 1, froxelFogParms ),
+			nvrhi::BindingSetItem::Texture_SRV( 15, froxelVolume ),
+			nvrhi::BindingSetItem::Sampler( 5, commonPasses.m_LinearClampSampler )
+		};
+	}
+	else if( type == BINDING_LAYOUT_TEXTURE_SKINNED_FOG )
+	{
+		if( desc[0].bindings.empty() )
+		{
+			desc[0].bindings =
+			{
+				uniformsBindingSetItem,
+				nvrhi::BindingSetItem::StructuredBuffer_SRV( 11, currentJointBuffer, nvrhi::Format::UNKNOWN, nvrhi::BufferRange( currentJointOffset, sizeof( idVec4 ) * numBoneMatrices ) )
+			};
+		}
+		else
+		{
+			auto& bindings = desc[0].bindings;
+			bindings[0] = uniformsBindingSetItem;
+			bindings[1].resourceHandle = currentJointBuffer;
+			bindings[1].range = nvrhi::BufferRange{ currentJointOffset, sizeof( idVec4 )* numBoneMatrices };
+		}
+
+		if( desc[1].bindings.empty() )
+		{
+			desc[1].bindings =
+			{
+				nvrhi::BindingSetItem::Texture_SRV( 0, ( nvrhi::ITexture* )GetImageAt( 0 )->GetTextureID() )
+			};
+		}
+		else
+		{
+			desc[1].bindings[0].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 0 )->GetTextureID();
+		}
+
+		if( desc[2].bindings.empty() )
+		{
+			desc[2].bindings =
+			{
+				nvrhi::BindingSetItem::Sampler( 0, ( nvrhi::ISampler* )GetImageAt( 0 )->GetSampler( samplerCache ) )
+			};
+		}
+		else
+		{
+			desc[2].bindings[0].resourceHandle = ( nvrhi::ISampler* )GetImageAt( 0 )->GetSampler( samplerCache );
+		}
+
+		// fog: 3 - written whole on every call ( see BINDING_LAYOUT_FORWARD )
+		desc[3].bindings =
+		{
+			nvrhi::BindingSetItem::ConstantBuffer( 1, froxelFogParms ),
+			nvrhi::BindingSetItem::Texture_SRV( 15, froxelVolume ),
+			nvrhi::BindingSetItem::Sampler( 5, commonPasses.m_LinearClampSampler )
+		};
+	}
+	else if( type == BINDING_LAYOUT_TEXGEN_FOG )
+	{
+		if( desc[0].bindings.empty() )
+		{
+			desc[0].bindings =
+			{
+				uniformsBindingSetItem
+			};
+		}
+		else
+		{
+			desc[0].bindings[0] = uniformsBindingSetItem;
+		}
+
+		if( desc[1].bindings.empty() )
+		{
+			desc[1].bindings =
+			{
+				nvrhi::BindingSetItem::Texture_SRV( 0, ( nvrhi::ITexture* )GetImageAt( 0 )->GetTextureID() )
+			};
+		}
+		else
+		{
+			desc[1].bindings[0].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 0 )->GetTextureID();
+		}
+
+		if( desc[2].bindings.empty() )
+		{
+			desc[2].bindings =
+			{
+				nvrhi::BindingSetItem::Sampler( 0, ( nvrhi::ISampler* )GetImageAt( 0 )->GetSampler( samplerCache ) )
+			};
+		}
+		else
+		{
+			desc[2].bindings[0].resourceHandle = ( nvrhi::ISampler* )GetImageAt( 0 )->GetSampler( samplerCache );
+		}
+
+		// fog: 3 - written whole on every call ( see BINDING_LAYOUT_FORWARD )
+		desc[3].bindings =
+		{
+			nvrhi::BindingSetItem::ConstantBuffer( 1, froxelFogParms ),
+			nvrhi::BindingSetItem::Texture_SRV( 15, froxelVolume ),
+			nvrhi::BindingSetItem::Sampler( 5, commonPasses.m_LinearClampSampler )
+		};
+	}
+	else if( type == BINDING_LAYOUT_INTERACTION_SM_FOG )
+	{
+		// renderparms: 0
+		if( desc[0].bindings.empty() )
+		{
+			desc[0].bindings =
+			{
+				uniformsBindingSetItem
+			};
+		}
+		else
+		{
+			desc[0].bindings[0] = uniformsBindingSetItem;
+		}
+
+		// materials: 1
+		if( desc[1].bindings.empty() )
+		{
+			desc[1].bindings =
+			{
+				nvrhi::BindingSetItem::Texture_SRV( 0, ( nvrhi::ITexture* )GetImageAt( 0 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 1, ( nvrhi::ITexture* )GetImageAt( 1 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 2, ( nvrhi::ITexture* )GetImageAt( 2 )->GetTextureID() )
+			};
+		}
+		else
+		{
+			auto& bindings = desc[1].bindings;
+			bindings[0].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 0 )->GetTextureID();
+			bindings[1].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 1 )->GetTextureID();
+			bindings[2].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 2 )->GetTextureID();
+		}
+
+		// light projection: 2
+		if( desc[2].bindings.empty() )
+		{
+			auto& bindings = desc[2].bindings;
+			bindings =
+			{
+				nvrhi::BindingSetItem::Texture_SRV( 3, ( nvrhi::ITexture* )GetImageAt( 3 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 4, ( nvrhi::ITexture* )GetImageAt( 4 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 5, ( nvrhi::ITexture* )GetImageAt( 5 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 6, ( nvrhi::ITexture* )GetImageAt( 6 )->GetTextureID() )
+			};
+		}
+		else
+		{
+			auto& bindings = desc[2].bindings;
+			bindings[0].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 3 )->GetTextureID();
+			bindings[1].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 4 )->GetTextureID();
+			bindings[2].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 5 )->GetTextureID();
+			bindings[3].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 6 )->GetTextureID();
+		}
+
+		// samplers: 3
+		if( R_UsePixelatedLook() )
+		{
+			if( desc[3].bindings.empty() )
+			{
+				auto& bindings = desc[3].bindings;
+				bindings =
+				{
+					nvrhi::BindingSetItem::Sampler( 0, commonPasses.m_PointWrapSampler ),
+					nvrhi::BindingSetItem::Sampler( 1, commonPasses.m_LinearBorderSampler ),
+					nvrhi::BindingSetItem::Sampler( 2, commonPasses.m_LinearClampCompareSampler ),
+					nvrhi::BindingSetItem::Sampler( 3, commonPasses.m_PointWrapSampler )  // blue noise
+				};
+			}
+			else
+			{
+				auto& bindings = desc[3].bindings;
+				bindings[0].resourceHandle = commonPasses.m_PointWrapSampler;
+				bindings[1].resourceHandle = commonPasses.m_LinearBorderSampler;
+				bindings[2].resourceHandle = commonPasses.m_LinearClampCompareSampler;
+				bindings[3].resourceHandle = commonPasses.m_PointWrapSampler;
+			}
+		}
+		else
+		{
+			if( desc[3].bindings.empty() )
+			{
+				auto& bindings = desc[3].bindings;
+				bindings =
+				{
+					nvrhi::BindingSetItem::Sampler( 0, commonPasses.m_AnisotropicWrapSampler ),
+					nvrhi::BindingSetItem::Sampler( 1, commonPasses.m_LinearBorderSampler ),
+					nvrhi::BindingSetItem::Sampler( 2, commonPasses.m_LinearClampCompareSampler ),
+					nvrhi::BindingSetItem::Sampler( 3, commonPasses.m_PointWrapSampler )  // blue noise
+				};
+			}
+			else
+			{
+				auto& bindings = desc[3].bindings;
+				bindings[0].resourceHandle = commonPasses.m_AnisotropicWrapSampler;
+				bindings[1].resourceHandle = commonPasses.m_LinearBorderSampler;
+				bindings[2].resourceHandle = commonPasses.m_LinearClampCompareSampler;
+				bindings[3].resourceHandle = commonPasses.m_PointWrapSampler;
+			}
+		}
+
+		// fog: 4 - written whole on every call ( see BINDING_LAYOUT_FORWARD )
+		desc[4].bindings =
+		{
+			nvrhi::BindingSetItem::ConstantBuffer( 1, froxelFogParms ),
+			nvrhi::BindingSetItem::Texture_SRV( 15, froxelVolume ),
+			nvrhi::BindingSetItem::Sampler( 5, commonPasses.m_LinearClampSampler )
+		};
+	}
+	else if( type == BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG )
+	{
+		// renderparms: 0
+		if( desc[0].bindings.empty() )
+		{
+			desc[0].bindings =
+			{
+				uniformsBindingSetItem,
+				nvrhi::BindingSetItem::StructuredBuffer_SRV( 11, currentJointBuffer, nvrhi::Format::UNKNOWN, nvrhi::BufferRange( currentJointOffset, sizeof( idVec4 ) * numBoneMatrices ) )
+			};
+		}
+		else
+		{
+			auto& bindings = desc[0].bindings;
+			bindings[0] = uniformsBindingSetItem;
+			bindings[1].resourceHandle = currentJointBuffer;
+			bindings[1].range = nvrhi::BufferRange{ currentJointOffset, sizeof( idVec4 )* numBoneMatrices };
+		}
+
+		// materials: 1
+		if( desc[1].bindings.empty() )
+		{
+			desc[1].bindings =
+			{
+				nvrhi::BindingSetItem::Texture_SRV( 0, ( nvrhi::ITexture* )GetImageAt( 0 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 1, ( nvrhi::ITexture* )GetImageAt( 1 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 2, ( nvrhi::ITexture* )GetImageAt( 2 )->GetTextureID() )
+			};
+		}
+		else
+		{
+			auto& bindings = desc[1].bindings;
+			bindings[0].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 0 )->GetTextureID();
+			bindings[1].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 1 )->GetTextureID();
+			bindings[2].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 2 )->GetTextureID();
+		}
+
+		// light projection: 2
+		if( desc[2].bindings.empty() )
+		{
+			auto& bindings = desc[2].bindings;
+			bindings =
+			{
+				nvrhi::BindingSetItem::Texture_SRV( 3, ( nvrhi::ITexture* )GetImageAt( 3 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 4, ( nvrhi::ITexture* )GetImageAt( 4 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 5, ( nvrhi::ITexture* )GetImageAt( 5 )->GetTextureID() ),
+				nvrhi::BindingSetItem::Texture_SRV( 6, ( nvrhi::ITexture* )GetImageAt( 6 )->GetTextureID() )
+			};
+		}
+		else
+		{
+			auto& bindings = desc[2].bindings;
+			bindings[0].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 3 )->GetTextureID();
+			bindings[1].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 4 )->GetTextureID();
+			bindings[2].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 5 )->GetTextureID();
+			bindings[3].resourceHandle = ( nvrhi::ITexture* )GetImageAt( 6 )->GetTextureID();
+		}
+
+		// samplers: 3
+		if( R_UsePixelatedLook() )
+		{
+			if( desc[3].bindings.empty() )
+			{
+				auto& bindings = desc[3].bindings;
+				bindings =
+				{
+					nvrhi::BindingSetItem::Sampler( 0, commonPasses.m_PointWrapSampler ),
+					nvrhi::BindingSetItem::Sampler( 1, commonPasses.m_LinearBorderSampler ),
+					nvrhi::BindingSetItem::Sampler( 2, commonPasses.m_LinearClampCompareSampler ),
+					nvrhi::BindingSetItem::Sampler( 3, commonPasses.m_PointWrapSampler )  // blue noise
+				};
+			}
+			else
+			{
+				auto& bindings = desc[3].bindings;
+				bindings[0].resourceHandle = commonPasses.m_PointWrapSampler;
+				bindings[1].resourceHandle = commonPasses.m_LinearBorderSampler;
+				bindings[2].resourceHandle = commonPasses.m_LinearClampCompareSampler;
+				bindings[3].resourceHandle = commonPasses.m_PointWrapSampler;
+			}
+		}
+		else
+		{
+			if( desc[3].bindings.empty() )
+			{
+				auto& bindings = desc[3].bindings;
+				bindings =
+				{
+					nvrhi::BindingSetItem::Sampler( 0, commonPasses.m_AnisotropicWrapSampler ),
+					nvrhi::BindingSetItem::Sampler( 1, commonPasses.m_LinearBorderSampler ),
+					nvrhi::BindingSetItem::Sampler( 2, commonPasses.m_LinearClampCompareSampler ),
+					nvrhi::BindingSetItem::Sampler( 3, commonPasses.m_PointWrapSampler )  // blue noise
+				};
+			}
+			else
+			{
+				auto& bindings = desc[3].bindings;
+				bindings[0].resourceHandle = commonPasses.m_AnisotropicWrapSampler;
+				bindings[1].resourceHandle = commonPasses.m_LinearBorderSampler;
+				bindings[2].resourceHandle = commonPasses.m_LinearClampCompareSampler;
+				bindings[3].resourceHandle = commonPasses.m_PointWrapSampler;
+			}
+		}
+
+		// fog: 4 - written whole on every call ( see BINDING_LAYOUT_FORWARD )
+		desc[4].bindings =
+		{
+			nvrhi::BindingSetItem::ConstantBuffer( 1, froxelFogParms ),
+			nvrhi::BindingSetItem::Texture_SRV( 15, froxelVolume ),
+			nvrhi::BindingSetItem::Sampler( 5, commonPasses.m_LinearClampSampler )
+		};
+	}
 	else
 	{
 		common->FatalError( "Invalid binding set %d\n", renderProgManager.BindingLayoutType() );
@@ -2048,6 +2718,11 @@ void idRenderBackend::GL_StartFrame()
 			globalImages->ambientOcclusionImage[0]->GetTextureHandle() );
 	}
 
+	// ---- TRACK F: create the light-list buffers once per render size ( D69 ) ----
+	// ---- END TRACK F ----
+	// ---- TRACK V: create the volumetric fog pass ----
+	// ---- END TRACK V ----
+
 	if( ( globalImages->hierarchicalZbufferImage->GetTextureID() != textureId || !hiZGenPass ) && R_UseHiZ() )
 	{
 		if( hiZGenPass )
@@ -2078,6 +2753,35 @@ void idRenderBackend::GL_StartFrame()
 		taaParams.useCatmullRomFilter = true;
 		taaPass = new TemporalAntiAliasingPass();
 		taaPass->Init( deviceManager->GetDevice(), &commonPasses, NULL, taaParams );
+	}
+
+	// X0: the 1x1x1 dummy froxel volume - bound where no fog volume exists ( D35 ). Created and filled once
+	// here, on the frame command list this function has just opened. keepInitialState with
+	// initialState = ShaderResource gives it a known entry state on both APIs ( nvrhi rule 3 ); the
+	// writeTexture moves it to CopyDest and the list close moves it back. The row pitch is the texel's real
+	// 8 bytes - a pitch of 0 would upload nothing ( nvrhi rule 12 ).
+	if( !froxelDummyVolume )
+	{
+		nvrhi::TextureDesc volumeDesc;
+		volumeDesc.dimension = nvrhi::TextureDimension::Texture3D;
+		volumeDesc.width = 1;
+		volumeDesc.height = 1;
+		volumeDesc.depth = 1;
+		volumeDesc.mipLevels = 1;
+		volumeDesc.format = nvrhi::Format::RGBA16_FLOAT;
+		volumeDesc.initialState = nvrhi::ResourceStates::ShaderResource;
+		volumeDesc.keepInitialState = true;
+		volumeDesc.debugName = "FroxelVolume";
+		froxelDummyVolume = deviceManager->GetDevice()->createTexture( volumeDesc );
+
+		// ( 0, 0, 0, 1 ) as four half floats: no in-scatter, full transmittance
+		const uint16 fogOffTexel[4] = { 0x0000, 0x0000, 0x0000, 0x3C00 };
+		commandList->writeTexture( froxelDummyVolume, 0, 0, fogOffTexel, 8 );
+	}
+
+	if( !froxelVolume )
+	{
+		froxelVolume = froxelDummyVolume;
 	}
 }
 
@@ -2394,6 +3098,11 @@ void idRenderBackend::ClearCaches()
 		ssaoPass = nullptr;
 	}
 
+	// ---- TRACK F: release the light-list buffers ----
+	// ---- END TRACK F ----
+	// ---- TRACK V: delete the volumetric fog pass ----
+	// ---- END TRACK V ----
+
 	if( toneMapPass )
 	{
 		delete toneMapPass;
@@ -2413,6 +3122,21 @@ void idRenderBackend::ClearCaches()
 	currentVertexOffset = -1;
 	currentBindingLayout = nullptr;
 	currentPipeline = nullptr;
+}
+
+/*
+=============
+idRenderBackend::ResetGraphicsStateCache
+
+Forget which pipeline and binding layout the command list has. An NVRHI pass, a blit, or a main-block
+open or close ( a timer query ends the Vulkan render pass ) leaves the command list in a state the
+engine's cache does not describe; after this call the next engine draw sets its full graphics state again.
+=============
+*/
+void idRenderBackend::ResetGraphicsStateCache()
+{
+	currentPipeline = nullptr;
+	prevBindingLayoutType = -1;
 }
 
 /*
@@ -2513,6 +3237,8 @@ idRenderBackend::idRenderBackend()
 	shadowAtlasFailedHighWater = 0;
 	hiZGenPass = nullptr;
 	ssaoPass = nullptr;
+	volumetricFogPass = nullptr;
+	viewHistoryCut = false;
 
 	memset( &glConfig, 0, sizeof( glConfig ) );
 

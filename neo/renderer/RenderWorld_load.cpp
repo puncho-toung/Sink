@@ -1256,6 +1256,7 @@ void idRenderWorldLocal::AddWorldModelEntities()
 
 		def->index = index;
 		def->world = this;
+		def->uniqueId = nextUniqueId++;	// X0 ( D44 ): the area models are entity defs too
 
 		def->parms.hModel = renderModelManager->FindModel( va( "_area%i", i ) );
 		if( def->parms.hModel->IsDefaultModel() || !def->parms.hModel->IsStaticWorldModel() )

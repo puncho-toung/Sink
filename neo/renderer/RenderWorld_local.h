@@ -286,6 +286,8 @@ public:
 	idList<idRenderLightLocal*, TAG_LIGHT>			lightDefs;
 	idList<RenderEnvprobeLocal*, TAG_ENVPROBE>		envprobeDefs; // RB
 
+	int						nextUniqueId;			// X0 ( D44 ): source of the defs' uniqueId; 1 in the constructor, never reset by InitFromMap
+
 	// lazy once-per-map cache of <mapbase>.shprobes
 	idList<shProbeEntry_t>	shProbeEntries;
 	idStr					shProbesLoadedForMap;
@@ -479,5 +481,8 @@ ID_INLINE idInteraction* idRenderWorldLocal::GetInteraction( int light, int enti
 void R_ListRenderLightDefs_f( const idCmdArgs& args );
 void R_CheckOpenAreas_f( const idCmdArgs& args );
 void R_ListRenderEntityDefs_f( const idCmdArgs& args );
+
+// X0 ( D42, D73 ): flags the one parallel light of the world that is its sun; per world, never per view
+void R_PickPrimarySun( idRenderWorldLocal* world );
 
 #endif /* !__RENDERWORLDLOCAL_H__ */

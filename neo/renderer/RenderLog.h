@@ -65,6 +65,14 @@ enum renderLogMainBlock_t
 	MRB_DRAW_INTERACTIONS_TEX,
 	MRB_DRAW_INTERACTIONS_MATH,
 	//puncho end
+	// ---- X0: timed blocks (renderer upgrade seams) ----
+	MRB_SHADOW_CACHE,
+	MRB_FORWARD_PASS,
+	MRB_FORWARD_TRANSLUCENT,
+	MRB_VOLUMETRICS,
+	MRB_VOLUMETRICS_APPLY,
+	MRB_DRAW_INTERACTIONS_TRANSLUCENT,
+	// ---- END X0 ----
 	MRB_TOTAL,
 
 	MRB_TOTAL_QUERIES = MRB_TOTAL * 2,
@@ -89,6 +97,13 @@ private:
 
 	uint64							frameCounter;
 	uint32							frameParity;
+
+	// ---- X0: main-block verification (renderer upgrade seams) ----
+	uint32							mainBlocksOpen;		// a bit per block open right now
+	uint32							mainBlocksUsed;		// a bit per block opened since the frame began
+	uint32							mainBlocksWarned;	// a bit per block already warned about, never cleared
+	compile_time_assert( MRB_TOTAL <= 32 );
+	// ---- END X0 ----
 
 	idStaticList<nvrhi::TimerQueryHandle, MRB_TOTAL* NUM_FRAME_DATA> timerQueries;
 	idStaticList<bool, MRB_TOTAL* NUM_FRAME_DATA> timerUsed;
