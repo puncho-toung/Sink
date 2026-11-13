@@ -280,6 +280,10 @@ struct backEndCounters_t
 	int		c_lightListRecords;			// F1: records of the last view that had some
 	int		c_lightListRows;			// F1: its shadow rows
 	int		c_lightListUploadBytes;		// F1: bytes of tables it wrote to the six buffers
+	int		c_lightDiffValid;			// F2: 1 while the difference view runs and has a read-out
+	float	c_lightDiffMean;			// F2: mean over the view's pixels of | forward - legacy |, the three channels averaged ( linear HDR units ), two frames old
+	float	c_lightDiffMax;				// F2: the largest channel difference of any pixel
+	float	c_lightDiffLegacyMean;		// F2: the legacy picture's mean, for scale
 	// ---- END TRACK F ----
 	// ---- TRACK V: volumetric fog counters ----
 	// ---- END TRACK V ----

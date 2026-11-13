@@ -31,14 +31,18 @@ If you have questions concerning this license or the applicable additional terms
 // forward.ps.hlsl - pixel stage of the lit forward pass ( D33 ). X0 landed this as a stub: a copy of
 // ambient_lighting_IBL.ps.hlsl in which every place that differs from ambient_lightgrid_IBL.ps.hlsl is
 // written as #if USE_LIGHTGRID ( the light-grid code ) #else ( the IBL code ) #endif, so USE_LIGHTGRID=0
-// compiles to the IBL shader and USE_LIGHTGRID=1 to the light-grid one. There is no light loop yet -
-// track F owns this file from here and writes it; USE_WAVE_OPS and USE_TRANSLUCENT are reserved for F
-// and are not tested by the stub.
+// compiles to the IBL shader and USE_LIGHTGRID=1 to the light-grid one.
+// Track F ( F2 ): after the ambient term the surface's listed lights are added by the light loop of
+// lightloop.inc.hlsl, from the tables of the FORWARD image set. LL_EvaluateRecord gives for one record what the
+// legacy interaction shaders add for that light: the body of interaction.ps.hlsl for a light without a placed
+// shadow map, the body of interactionSM.ps.hlsl for a light with one ( D48 ). USE_TRANSLUCENT is F4's and is not
+// tested here.
 
 #include "global_inc.hlsl"
 #include "renderParmSet9.inc.hlsl"
 
 #include "BRDF.inc.hlsl"
+#include "mathlight.inc.hlsl"
 
 
 // *INDENT-OFF*
@@ -64,6 +68,24 @@ TextureCube t_DepthCubeMap3		: register( t14 VK_DESCRIPTOR_SET( 2 ) );	// inter-
 SamplerState s_Material			: register( s0 VK_DESCRIPTOR_SET( 3 ) ); // (Wrap) Anisotropic sampler: normal sampler & specular sampler
 SamplerState s_LinearClamp		: register( s1 VK_DESCRIPTOR_SET( 3 ) ); // (Clamp) Linear sampler: brdf lut sampler & ssao sampler
 //SamplerState s_Light			: register( s2 VK_DESCRIPTOR_SET( 3 )); // (Clamp) Anisotropic sampler: irradiance, radiance 1, 2 and 3.
+
+// ---- track F ( F2 ): the tail of the FORWARD image set and its three more samplers ( C4; the order is the layout's ) ----
+#include "lightlists.inc.hlsl"
+
+Texture2D						t_ShadowAtlas		: register( t5 VK_DESCRIPTOR_SET( 2 ) );
+Texture2D						t_Jitter			: register( t6 VK_DESCRIPTOR_SET( 2 ) );
+StructuredBuffer<recordLight_t>	t_LightRecords		: register( t16 VK_DESCRIPTOR_SET( 2 ) );
+StructuredBuffer<shadowRow_t>	t_ShadowRows		: register( t17 VK_DESCRIPTOR_SET( 2 ) );
+StructuredBuffer<uint>			t_LightPool			: register( t18 VK_DESCRIPTOR_SET( 2 ) );
+StructuredBuffer<uint4>			t_LightBins			: register( t19 VK_DESCRIPTOR_SET( 2 ) );
+StructuredBuffer<uint>			t_LightTileBits		: register( t20 VK_DESCRIPTOR_SET( 2 ) );
+Texture2D						t_DefaultProjection	: register( t21 VK_DESCRIPTOR_SET( 2 ) );
+Texture2D						t_PointFalloff		: register( t22 VK_DESCRIPTOR_SET( 2 ) );
+Texture2D						t_ProjectedFalloff	: register( t23 VK_DESCRIPTOR_SET( 2 ) );
+
+SamplerComparisonState			s_Shadow			: register( s2 VK_DESCRIPTOR_SET( 3 ) );	// the shadow atlas, compared
+SamplerState					s_LightBorder		: register( s3 VK_DESCRIPTOR_SET( 3 ) );	// the light images, black beyond their edge
+SamplerState					s_PointWrap			: register( s4 VK_DESCRIPTOR_SET( 3 ) );	// the blue noise
 
 float3 ParallaxCorrectAndOcclude(float3 worldPos, float3 reflDir, float3 probeCentre,
 								  float probeFarDist, float roughness, out float occlusion, out float hitDist)
@@ -181,6 +203,8 @@ struct PS_IN
 	float4 texcoord5	: TEXCOORD5_centroid;
 	float4 texcoord6	: TEXCOORD6_centroid;
 	float4 texcoord7	: TEXCOORD7_centroid;
+	float4 texcoord8	: TEXCOORD8_centroid;
+	float4 texcoord9	: TEXCOORD9_centroid;
 	float4 color		: COLOR0;
 };
 
@@ -228,6 +252,275 @@ float3 shEvaluateDiffuseL2RGB(float3 c[9], float3 n)
 }
 #endif
 
+// ---- track F ( F2 ): the light loop ----
+// the view's lanes as the loop names them. The integers arrive as float values ( all far below 2^24, so uint( x )
+// is exact ), not as bits: see R_LightListViewParms
+#define ll_tileSize			uint( pc.rpZBinParms.x )
+#define ll_tilesX			uint( pc.rpZBinParms.y )
+#define ll_wordsPerTile		uint( pc.rpZBinParms.z )
+#define ll_numBins			uint( pc.rpZBinParms.w )
+#define ll_binScale			pc.rpZBinScale.x
+
+// F2 compiles the loop without wave intrinsics in every permutation: the scalarized fetch and its run-time
+// capability check are F3's ( D51 )
+#undef USE_WAVE_OPS
+#define USE_WAVE_OPS 0
+
+// what a light needs of the pixel, set up once in main and not once per light
+struct LL_SURFACE
+{
+	float3	position;				// the relative frame, as the records
+	float3	dPdx;					// its screen derivatives, for the mip of the light images
+	float3	dPdy;
+	float3	tangent;				// the vertex frame in the relative frame, interpolated and not normalised: the frame the legacy vertex stages multiply by
+	float3	bitangent;
+	float3	normal;
+	float3	positionTS;				// frame . position, formed per vertex and interpolated ( forward.vs.hlsl's texcoord9 )
+	float3	viewTS;					// the view vector in that frame, normalised
+	float3	nPlain;					// the bump normal after the contrast of interaction.ps.hlsl
+	float3	nShadowed;				// and after the contrast of interactionSM.ps.hlsl
+	float	vdotNPlain;
+	float	vdotNShadowed;
+	float3	energyPlain;			// each body's energy compensation ( it depends on the body's vdotN )
+	float3	energyShadowed;
+	float3	diffuseColor;			// the interaction shaders' material
+	float3	diffuseNoSpecular;		// its diffuse colour under a light with nospecular ( see LL_EvaluateRecord )
+	float3	specularColor;
+	float	rr;						// roughness^2
+	float	rrrr;
+	float3	diffuseStage;			// the surface's stage colours: the legacy modifiers without the light's colour
+	float3	specularStage;
+	float3	vertexColor;
+	float	vogelPhi;				// the rotation of the shadow filter's disk at this pixel
+};
+
+// interactionSM.ps.hlsl's VogelDiskSample, unchanged: the same taps to the bit
+float2 LL_VogelDiskSample( float sampleIndex, float samplesCount, float phi )
+{
+	float goldenAngle = 2.4f;
+
+	float r = sqrt( sampleIndex + 0.5f ) / sqrt( samplesCount );
+	float theta = sampleIndex * goldenAngle + phi;
+
+	float sine = sin( theta );
+	float cosine = cos( theta );
+
+	return float2( r * cosine, r * sine );
+}
+
+// One record's light at this pixel: what the legacy pass adds for the pair ( surface, light ). Two bodies ( D48 ):
+// a light whose shadow map has a place in the atlas takes interactionSM.ps.hlsl's ( contrast up to 1.0, the horizon
+// bend, a math light's output undecoded, the shadow ), every other light interaction.ps.hlsl's ( contrast up to 1.2,
+// no bend, everything decoded ). The two vectors are the legacy vertex stages' interpolants: the view vector comes
+// interpolated from the forward vertex stage, and the light vector is frame . origin - frame . position, whose two
+// halves interpolate exactly as the legacy product does. Outside the light's volume the result is exactly zero, so
+// the two loops add the same terms.
+float3 LL_EvaluateRecord( uint r, LL_SURFACE s )
+{
+	const recordLight_t L = t_LightRecords[ r ];
+
+	// the light's texgens at the pixel: projection S, T, Q and the falloff ( the legacy vertex stages' texcoord3 and texcoord2 )
+	const float4 P = float4( s.position, 1.0 );
+	const float projS = dot( P, L.lightProject[0] );
+	const float projT = dot( P, L.lightProject[1] );
+	const float projQ = dot( P, L.lightProject[2] );
+	const float fallS = dot( P, L.lightProject[3] );
+	// A math light's pattern takes a screen derivative ( fwidth in MLPattern ), which is defined only where every
+	// pixel of the draw reaches the call. So the call stands IN FRONT of the volume's return: on the list path a
+	// draw's pixels all walk the same records. ( On the Z-bin path the whole function sits under a test per pixel;
+	// the footprint form that ends that is F3's, D61. )
+	float3 lightFalloffRGB;
+	float3 lightProjRGB;
+	bool mlMathOn = false;
+	if( ( L.flags & RLF_MATH ) != 0 )
+	{
+		mlMathOn = MLEvaluate( float4( fallS, 0.5, 0.0, 1.0 ), float4( projS, projT, 0.0, projQ ), L.mathLight[0], L.mathLight[1], L.mathLight[2], lightFalloffRGB, lightProjRGB );
+	}
+	if( projQ <= 0.0 || projS < 0.0 || projS > projQ || projT < 0.0 || projT > projQ || fallS < 0.0 || fallS > 1.0 )
+	{
+		return float3( 0.0, 0.0, 0.0 );
+	}
+
+	// the light vector in the vertex frame: interaction.vs.hlsl's frame . ( origin - position ), interpolated. The
+	// frame is linear in the pixel and the origin is one for the draw, so frame . origin interpolates as the product
+	// does; frame . position was formed per vertex. Normalised per pixel, as the legacy pixel stage does
+	const float3 toLight = L.originInvRadiusSq.xyz - s.position;		// the direction itself, for the shadow face
+	const float3 lightOrigin = L.originInvRadiusSq.xyz;
+	const float3 lightVector = normalize( float3( dot( s.tangent, lightOrigin ), dot( s.bitangent, lightOrigin ), dot( s.normal, lightOrigin ) ) - s.positionTS );
+
+	// the shadow rows: one for a projected light, six for a point light. A row without a place leaves the light
+	// unshadowed there; a light none of whose maps has a place is on the plain body, as the legacy pass binds the
+	// plain program then
+	float shadow = 1.0;
+	bool shadowBody = false;
+	if( L.shadowRow >= 0 )
+	{
+		uint row = uint( L.shadowRow );
+		if( ( L.flags & RLF_POINT ) != 0 )
+		{
+			// interactionSM.ps.hlsl: the face whose axis the direction to the light is largest along, the first on a tie
+			float best = -toLight.x;
+			uint face = 0;
+			if( toLight.x > best )
+			{
+				best = toLight.x;
+				face = 1;
+			}
+			if( -toLight.y > best )
+			{
+				best = -toLight.y;
+				face = 2;
+			}
+			if( toLight.y > best )
+			{
+				best = toLight.y;
+				face = 3;
+			}
+			if( -toLight.z > best )
+			{
+				best = -toLight.z;
+				face = 4;
+			}
+			if( toLight.z > best )
+			{
+				best = toLight.z;
+				face = 5;
+			}
+			row += face;
+		}
+		const shadowRow_t R = t_ShadowRows[ row ];
+		// The body follows the LIGHT, as the legacy pass binds its program per light: -2 marks a row whose own face
+		// or cascade was not drawn while the light's maps have places. The shadow-map body then, unshadowed
+		shadowBody = ( R.atlasRect.z >= 0.0 || R.atlasRect.z < -1.5 );
+		if( R.atlasRect.z >= 0.0 )
+		{
+			float4 shadowTexcoord;
+			shadowTexcoord.x = dot( P, R.worldToShadow[0] );
+			shadowTexcoord.y = dot( P, R.worldToShadow[1] );
+			shadowTexcoord.z = dot( P, R.worldToShadow[2] );
+			shadowTexcoord.w = dot( P, R.worldToShadow[3] );
+			shadowTexcoord.xyz /= shadowTexcoord.w;
+			const float receiver = shadowTexcoord.z * pc.rpShadowBias.y;
+			const float2 shadowTexcoordAtlas = shadowTexcoord.xy * R.atlasRect.z + R.atlasRect.xy;
+			const float numSamples = pc.rpShadowFilter.x;
+			const float stepSize = 1.0 / numSamples;
+			shadow = 0.0;
+			for( float si = 0.0; si < numSamples; si += 1.0 )
+			{
+				const float2 jitter = LL_VogelDiskSample( si, numSamples, s.vogelPhi );
+				shadow += t_ShadowAtlas.SampleCmpLevelZero( s_Shadow, shadowTexcoordAtlas + jitter * pc.rpShadowFilter.y, receiver );
+			}
+			shadow *= stepSize;
+			shadow = saturate( max( shadow, R.atlasRect.w ) );		// the fade of a light on its last shadow LOD
+		}
+	}
+
+	// the body's normal; the shadow-map body bends it towards the vertex normal near the horizon, for ldotN only
+	const float3 n = shadowBody ? s.nShadowed : s.nPlain;
+	const float vdotN = shadowBody ? s.vdotNShadowed : s.vdotNPlain;
+	float ldotN;
+	if( shadowBody )
+	{
+		const float horizonBlendStrength = 2.5;
+		const float horizonBlendOffset = 0.15;
+		const float NbL = dot( n, lightVector );
+		const float NgL = lightVector.z;
+		float3 N_lit = n;
+		if( ( NbL < horizonBlendOffset ) && ( NgL > 0.0 ) )
+		{
+			const float blend = saturate( ( horizonBlendOffset - NbL ) * horizonBlendStrength / max( NgL, 0.001 ) );
+			N_lit = normalize( lerp( n, float3( 0.0, 0.0, 1.0 ), blend ) );
+		}
+		ldotN = saturate( dot( N_lit, lightVector ) );
+	}
+	else
+	{
+		ldotN = saturate( dot( n, lightVector ) );
+	}
+	const float3 halfAngleVector = normalize( lightVector + s.viewTS );
+	const float hdotN = clamp( dot( halfAngleVector, n ), 0.0, 1.0 );
+	const float vdotH = clamp( dot( s.viewTS, halfAngleVector ), 0.0, 1.0 );
+
+	// the light's colour at the pixel: a math light's curve ( taken at the head of the function ), or the default
+	// projection and falloff images of the light's kind through the black-bordered sampler. The images' mip is chosen
+	// from the texgens' own derivatives ( the loop may not take implicit ones )
+	if( !mlMathOn )
+	{
+		const float invQ = 1.0 / projQ;
+		const float2 projUV = float2( projS, projT ) * invQ;
+		const float dQdx = dot( s.dPdx, L.lightProject[2].xyz );
+		const float dQdy = dot( s.dPdy, L.lightProject[2].xyz );
+		const float2 projDx = ( float2( dot( s.dPdx, L.lightProject[0].xyz ), dot( s.dPdx, L.lightProject[1].xyz ) ) - projUV * dQdx ) * invQ;
+		const float2 projDy = ( float2( dot( s.dPdy, L.lightProject[0].xyz ), dot( s.dPdy, L.lightProject[1].xyz ) ) - projUV * dQdy ) * invQ;
+		const float2 fallUV = float2( fallS, 0.5 );
+		const float2 fallDx = float2( dot( s.dPdx, L.lightProject[3].xyz ), 0.0 );
+		const float2 fallDy = float2( dot( s.dPdy, L.lightProject[3].xyz ), 0.0 );
+		lightProjRGB = t_DefaultProjection.SampleGrad( s_LightBorder, projUV, projDx, projDy ).xyz;
+		if( ( L.flags & RLF_POINT ) != 0 )
+		{
+			lightFalloffRGB = t_PointFalloff.SampleGrad( s_LightBorder, fallUV, fallDx, fallDy ).xyz;
+		}
+		else
+		{
+			lightFalloffRGB = t_ProjectedFalloff.SampleGrad( s_LightBorder, fallUV, fallDx, fallDy ).xyz;
+		}
+	}
+	// interactionSM.ps.hlsl leaves a math light's output as it is; interaction.ps.hlsl decodes it like the images
+	const float3 lightColor = ( mlMathOn && shadowBody ) ? ( lightProjRGB * lightFalloffRGB ) : sRGBToLinearRGB( lightProjRGB * lightFalloffRGB );
+
+	// the modifiers of the legacy draw: the light stage's colour ( the record's ) times the surface stage's
+	const float3 diffuseModifier = L.color.rgb * s.diffuseStage;
+	const float3 specularModifier = ( ( L.flags & RLF_NOSPECULAR ) != 0 ) ? float3( 0.0, 0.0, 0.0 ) : L.color.rgb * s.specularStage;
+
+	const float D_denom = ( hdotN * hdotN ) * ( s.rrrr - 1.0 ) + 1.0;
+	const float D = shadowBody ? s.rrrr / ( PI * D_denom * D_denom ) : s.rrrr / ( 3.14159f * D_denom * D_denom );
+	const float Vis = Visibility_SmithGGXHammon( vdotN, ldotN, s.rr );
+	const float3 F = Fresnel_Schlick( s.specularColor, vdotH );
+#if KENNY_PBR
+	float3 specularLight = D * Vis * F * ldotN * PI * specularModifier;
+#else
+	float3 specularLight = D * Vis * F * ldotN * specularModifier;
+#endif
+	specularLight *= shadowBody ? s.energyShadowed : s.energyPlain;
+	// A light with nospecular: the legacy pass skips the surface's specular stage for it, draws the interaction with
+	// the black image as its specular map and so, that image's usage not being a PBR one, with the program that is
+	// NOT PBR, whose diffuse colour is the base colour with no metal share taken out. Kept, so that the two passes
+	// light alike ( on a material that is not PBR the two colours are the same )
+	const float3 diffuseColor = ( ( L.flags & RLF_NOSPECULAR ) != 0 ) ? s.diffuseNoSpecular : s.diffuseColor;
+	const float3 diffuseLight = diffuseColor * ldotN * diffuseModifier;
+
+	return ( diffuseLight + specularLight ) * lightColor * s.vertexColor * shadow;
+}
+
+#include "lightloop.inc.hlsl"
+
+// r_showLightLists 2 and 3, through the spare lane rpZBinScale.w ( 1 is the heatmap pass's, over every pixel ):
+// 2 = the surface's path ( green the list, blue the Z-bins, magenta the all-ones mask of a full pool ), 3 = the
+// lights this pixel loops on that path ( the run's length on the list path ). A surface the forward pass does not
+// draw keeps its picture
+float3 LL_Heat( float n )			// the heatmap pass's ramp: none black, then blue, cyan, green, yellow, red at 1, 4, 8, 16, 32, white beyond
+{
+	if( n <= 0.0 )
+	{
+		return float3( 0.0, 0.0, 0.0 );
+	}
+	return ( n <= 4.0 ) ? lerp( float3( 0.0, 0.0, 1.0 ), float3( 0.0, 1.0, 1.0 ), ( n - 1.0 ) / 3.0 )
+		   : ( n <= 8.0 ) ? lerp( float3( 0.0, 1.0, 1.0 ), float3( 0.0, 1.0, 0.0 ), ( n - 4.0 ) / 4.0 )
+		   : ( n <= 16.0 ) ? lerp( float3( 0.0, 1.0, 0.0 ), float3( 1.0, 1.0, 0.0 ), ( n - 8.0 ) / 8.0 )
+		   : ( n <= 32.0 ) ? lerp( float3( 1.0, 1.0, 0.0 ), float3( 1.0, 0.0, 0.0 ), ( n - 16.0 ) / 16.0 )
+		   : float3( 1.0, 1.0, 1.0 );
+}
+
+float3 LL_DebugView( uint show, uint path, uint first, uint count, uint2 pixel, float viewZ )
+{
+	if( show == 2 )
+	{
+		return ( path == 0 ) ? float3( 0.0, 1.0, 0.0 ) : ( ( path == 1 ) ? float3( 0.0, 0.4, 1.0 ) : float3( 1.0, 0.0, 1.0 ) );
+	}
+	return LL_Heat( float( LL_CountLights( path, first, count, pixel, viewZ ) ) );
+}
+// ---- end track F ----
+
 void main( PS_IN fragment, out PS_OUT result )
 {
 	float2 baseUV = fragment.texcoord1.xy;
@@ -257,6 +550,7 @@ void main( PS_IN fragment, out PS_OUT result )
 #endif
 	localNormal.z = sqrt( abs( dot( localNormal.xy, localNormal.xy ) - 0.25 ) );
 	localNormal = normalize( localNormal );
+	const float3 llLocalNormal = localNormal;				// track F: the decoded normal, before the ambient term's contrast below changes it
 
 	// globalPosition, rpGlobalEyePos and the probe parms (rpWobbleSky*, rpTexGen0*) are relative
 	// to the render origin (eye-centred world axes)
@@ -656,4 +950,69 @@ void main( PS_IN fragment, out PS_OUT result )
 	//result.color.rgb = localNormal.xyz * 0.5 + 0.5;
 	//result.color.rgb = float3( ao );
 	result.color.w = fragment.color.a;
+
+	// ---- track F ( F2 ): the surface's listed lights, after the ambient term. rpSurfLights says which ----
+	const uint llFirst = uint( pc.rpSurfLights.x );				// the first pool word, the run length, the path
+	const uint llCount = uint( pc.rpSurfLights.y );
+	const uint llPath = uint( pc.rpSurfLights.z );
+	const uint2 llPixel = uint2( max( fragment.position.xy - pc.rpForwardView.xy, float2( 0.0, 0.0 ) ) );	// the tiles count from the view's corner
+	const float llViewZ = fragment.texcoord7.w;					// the linear view depth from the vertex stage ( D54 )
+	LL_SURFACE llSurface;
+	llSurface.position = fragment.texcoord7.xyz;
+	llSurface.dPdx = ddx( fragment.texcoord7.xyz );
+	llSurface.dPdy = ddy( fragment.texcoord7.xyz );
+	// the vertex frame: texcoord4, 5 and 6 hold its x, y and z components ( tangent, bitangent, normal in .x, .y, .z )
+	llSurface.tangent = float3( fragment.texcoord4.x, fragment.texcoord5.x, fragment.texcoord6.x );
+	llSurface.bitangent = float3( fragment.texcoord4.y, fragment.texcoord5.y, fragment.texcoord6.y );
+	llSurface.normal = float3( fragment.texcoord4.z, fragment.texcoord5.z, fragment.texcoord6.z );
+	// the view vector: normalised per vertex and taken into the frame there ( texcoord8 ), normalised again per
+	// pixel, as the legacy interaction stages do; and the position in the frame ( texcoord9 )
+	llSurface.positionTS = fragment.texcoord9.xyz;
+	llSurface.viewTS = normalize( fragment.texcoord8.xyz );
+	// the two bodies' contrast: 0.8 head-on to 1.2 ( interaction.ps.hlsl ) or to 1.0 ( interactionSM.ps.hlsl ) at
+	// grazing, against the vertex normal
+	const float llGrazing = 1.0 - saturate( llSurface.viewTS.z );
+	float3 llNormal = llLocalNormal;
+	llNormal.xy *= lerp( 0.8, 1.2, llGrazing );
+	llSurface.nPlain = normalize( llNormal );
+	llNormal = llLocalNormal;
+	llNormal.xy *= lerp( 0.8, 1.0, llGrazing );
+	llSurface.nShadowed = normalize( llNormal );
+	llSurface.vdotNPlain = clamp( dot( llSurface.viewTS, llSurface.nPlain ), 0.0, 1.0 );
+	llSurface.vdotNShadowed = clamp( dot( llSurface.viewTS, llSurface.nShadowed ), 0.0, 1.0 );
+	// the interaction shaders' material ( their roughness is not the ambient term's under USE_PBR )
+#if USE_PBR
+	const float llRoughness = max( 0.045, specMapSRGB.r );
+	const float llMetallic = specMapSRGB.g;
+	llSurface.diffuseColor = diffuseMap * ( 1.0 - llMetallic );
+	llSurface.diffuseNoSpecular = diffuseMap;
+	llSurface.specularColor = lerp( _float3( 0.04 ), diffuseMap, llMetallic );
+#else
+	float llRoughness;
+	llSurface.diffuseColor = diffuseMap;
+	llSurface.diffuseNoSpecular = diffuseMap;
+	PBRFromSpecmap( specMapSRGB.rgb, llSurface.specularColor, llRoughness );
+#endif
+	llSurface.rr = llRoughness * llRoughness;
+	llSurface.rrrr = llSurface.rr * llSurface.rr;
+	llSurface.energyPlain = 1.0 + llSurface.specularColor * ( 1.0 / max( EnvBRDFEnergyApprox( llRoughness, llSurface.vdotNPlain ), 1e-3 ) - 1.0 );
+	llSurface.energyShadowed = 1.0 + llSurface.specularColor * ( 1.0 / max( EnvBRDFEnergyApprox( llRoughness, llSurface.vdotNShadowed ), 1e-3 ) - 1.0 );
+	// the ambient pass's modifiers hold the surface's stage colours times r_lightScale, which a record's colour holds too
+	llSurface.diffuseStage = pc.rpDiffuseModifier.xyz * pc.rpForwardView.z;
+	llSurface.specularStage = pc.rpSpecularModifier.xyz * pc.rpForwardView.z;
+	llSurface.vertexColor = fragment.color.rgb;
+	// interactionSM.ps.hlsl's BlueNoise: the shadow disk's rotation, from the pixel alone. Its frac( x ) is written
+	// x - floor( x ) here: main has a local variable named frac
+	const float llNoise = t_Jitter.Sample( s_PointWrap, fragment.position.xy * pc.rpShadowFilter.z ).r + c_goldenRatioConjugate * pc.rpShadowFilter.w;
+	llSurface.vogelPhi = llNoise - floor( llNoise );
+	if( pc.rpForwardView.w == 0.0 )								// 1: the twin mode, the legacy pass lights these pairs
+	{
+		result.color.rgb += LL_AccumulateLights( llPath, llFirst, llCount, llPixel, llViewZ, llSurface );
+	}
+	const uint llShow = uint( pc.rpZBinScale.w );
+	if( llShow >= 2 )											// uniform: off, the views cost one branch per pixel
+	{
+		result.color.rgb = LL_DebugView( llShow, llPath, llFirst, llCount, llPixel, llViewZ );
+	}
+	// ---- end track F ----
 }

@@ -701,7 +701,7 @@ no model job has run ) and R_BuildLightLists after R_AddModels. Until the forwar
 */
 
 idCVar r_useForwardLists( "r_useForwardLists", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "build the light records, Z-bins and tile bits of the hybrid forward pass in the main view ( needs r_useShadowAtlas )" );
-idCVar r_forwardLightKinds( "r_forwardLightKinds", "3", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "light kinds that may be listed: 1 = math lights, 2 = default-texture lights, 4 = the primary sun" );
+idCVar r_forwardLightKinds( "r_forwardLightKinds", "3", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "light kinds that may be listed: 1 = math lights, 2 = default-texture lights, 4 = the primary sun ( not listed yet: the bit is ignored )" );
 idCVar r_zbinTileSize( "r_zbinTileSize", "16", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "pixels per Z-bin tile side", 8, 64 );
 idCVar r_zbinCount( "r_zbinCount", "8192", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "Z-bins per view", 1, LL_MAX_BINS );
 idCVar r_zbinFar( "r_zbinFar", "16384", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "view distance the Z-bins cover; beyond it, the last bin" );
@@ -713,9 +713,13 @@ idCVar r_showLightLists( "r_showLightLists", "0", CVAR_RENDERER | CVAR_INTEGER |
 idCVar r_lightListLog( "r_lightListLog", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "print one line per listing view: records by class, surfaces by path and by reason, pool, overflow, hash" );
 idCVar r_lightListStrict( "r_lightListStrict", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "a full table of the light lists ( record cap, pool ) or an unknown forward tag is a FatalError instead of a warning ( developer machines )" );
 idCVar r_lightListCapture( "r_lightListCapture", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "copy the next listing view's builder input for lightListBench and lightListDump, then clear" );
+idCVar r_forwardMaterials( "r_forwardMaterials", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "1 = every material the forward pass can draw ( one bump, one diffuse and at most one specular stage, no texture matrix, no vertex colour ) lists its lights, with or without the forward keyword" );
+idCVar r_showLightDiff( "r_showLightDiff", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "1 = twin mode: a listed pair also keeps its lit surface, so the legacy pass lights it and the forward pass adds no light ( the legacy image, with the lists built beside it ); 2 = the difference view: the lit passes are drawn twice, forward and legacy, the screen shows their difference times r_lightDiffScale and the HUD its mean and maximum", 0, 2 );
 
 static bool lightListSaidNoAtlas = false;		// the console says once that the lists need the shadow atlas
 static int lightListWarned = 0;					// R_LightListLoud: the kinds of warning this map has had
+
+const lightListSurface_t lightListTwinMark = { NULL, 0, 0, LLH_TWIN, 0, 0 };	// see LightLists.h
 
 static void R_LightListCapture( const lightListView_t* llv );
 
@@ -763,12 +767,16 @@ static uint32 R_LightListRecordFlags( const viewLight_t* vLight, int* unknownMod
 		// with the point light's falloff is not a default light. The falloff is the one the light is drawn with
 		// ( viewLight_t::falloffImage ): a light shader without a falloff image of its own, which is the usual
 		// case, takes the default shader's
+		// The forward layout binds ONE projection image, the default point light's ( and the two falloff images ). So
+		// the projection must be that image too: a projected light stays a default light only while the two default
+		// shaders share their projection image, which is this game's data, not the code
 		const idMaterial* defaultShader = vLight->pointLight ? tr.defaultPointLight : tr.defaultProjectedLight;
-		defaults = shader->GetStage( 0 )->texture.image == defaultShader->GetStage( 0 )->texture.image && vLight->falloffImage == defaultShader->LightFalloffImage();
+		defaults = shader->GetStage( 0 )->texture.image == defaultShader->GetStage( 0 )->texture.image && vLight->falloffImage == defaultShader->LightFalloffImage()
+				   && shader->GetStage( 0 )->texture.image == tr.defaultPointLight->GetStage( 0 )->texture.image;
 	}
 	flags |= ( math ? RLF_MATH : 0 ) | ( defaults ? RLF_DEFAULT_TEXTURES : 0 );
 
-	const int kinds = r_forwardLightKinds.GetInteger();
+	const int kinds = r_forwardLightKinds.GetInteger() & 3;						// bit 4, the primary sun, is F4's: the forward shader has no cascades yet
 	bool listable = oneStage && ( ( math && ( kinds & 1 ) != 0 ) || ( defaults && ( kinds & 2 ) != 0 ) );
 	switch( vLight->lightDef->parms.forwardMode )
 	{
@@ -802,7 +810,7 @@ forms per stage. A fog light's record is read the fog pass's way instead ( D81 )
 fog distance in w. shadowRow stays -1 until R_BuildLightLists gives the light its rows.
 ====================
 */
-static void R_LightListFlattenRecord( const viewLight_t* vLight, uint32 flags, int importanceRank, recordLight_t& rec )
+static void R_LightListFlattenRecord( const viewLight_t* vLight, uint32 flags, int importanceRank, float viewLightScale, recordLight_t& rec )
 {
 	memset( &rec, 0, sizeof( rec ) );
 	const idRenderLightLocal* light = vLight->lightDef;
@@ -839,7 +847,7 @@ static void R_LightListFlattenRecord( const viewLight_t* vLight, uint32 flags, i
 		}
 		else
 		{
-			const float lightScale = r_lightScale.GetFloat() * vLight->cullFade;
+			const float lightScale = viewLightScale * vLight->cullFade;
 			rec.color.Set( lightScale * regs[ reg[0] ], lightScale * regs[ reg[1] ], lightScale * regs[ reg[2] ], 0.0f );
 		}
 	}
@@ -1060,6 +1068,12 @@ void R_NumberRecordLights()
 	llv->flagsOfInput = ( uint32* )R_FrameAlloc( Max( numLights, 1 ) * sizeof( uint32 ), FRAME_ALLOC_UNKNOWN );
 	llv->lists = wantLists;
 	llv->showMode = r_showLightLists.GetInteger();
+	llv->allMaterials = r_forwardMaterials.GetBool();							// read here, once: the model jobs read the view, not the cvars
+	llv->twin = r_showLightDiff.GetInteger() != 0;
+	llv->diff = r_showLightDiff.GetInteger() == 2;
+	llv->log = r_lightListLog.GetBool();
+	llv->lightScale = r_lightScale.GetFloat();									// the flatten below multiplies the colours by it
+	llv->viewFrame = tr.frameCount;
 
 	// viewLight_t -> the builder's flat input
 	int n = 0;
@@ -1139,7 +1153,7 @@ void R_NumberRecordLights()
 		const int input = t.lightOfRecord[r];
 		if( input >= 0 )
 		{
-			R_LightListFlattenRecord( llv->lightOfInput[input], llv->flagsOfInput[input], t.importanceRank[r], records[r] );
+			R_LightListFlattenRecord( llv->lightOfInput[input], llv->flagsOfInput[input], t.importanceRank[r], llv->lightScale, records[r] );
 		}
 	}
 	const bool fogEligible = viewDef->isMainView && ( viewDef->renderView.rdflags & ( RDF_IRRADIANCE | RDF_NOAMBIENT | RDF_NOFOG ) ) == 0;
@@ -1155,9 +1169,106 @@ void R_NumberRecordLights()
 
 /*
 ====================
+R_LightListTakePair
+
+H3, in R_AddSingleModel's contacted-light loop, where the lit drawSurf_t of ( surface, light ) would be made, on a
+model job. LL_PAIR_LISTED: the pair is listed on the base surface and the caller makes no lit surface ( it still
+makes the shadow surface ). LL_PAIR_LEGACY: the caller's code runs as it always did. LL_PAIR_TWIN ( the difference
+view ): listed, and the caller makes the lit surface too and marks it. baseDrawSurf is NULL when the surface was
+not linked to the view ( a deform made other surfaces ). maxLights is the entity's contacted-light count, which
+bounds the run. The job reads the view's tables, final since the first hook, and writes only its own surface.
+
+The forward pass draws a surface once, with one bump, one diffuse and one specular image and no texture matrix or
+vertex colour: the materials the engine keeps fast-path images for ( idMaterial::SetFastPathImages; the property,
+not the cvar r_skipInteractionFastPath ). Every other material keeps the legacy pass, whatever its keyword says.
+====================
+*/
+int R_LightListTakePair( const viewDef_t* viewDef, const viewLight_t* vLight, const idMaterial* shader, drawSurf_t* baseDrawSurf, int maxLights )
+{
+	const lightListView_t* llv = viewDef->lightListView;
+	if( llv == NULL || !llv->lists || baseDrawSurf == NULL )
+	{
+		return LL_PAIR_LEGACY;
+	}
+	const int record = vLight->recordNumber;
+	if( record < 0 || record >= llv->tables.firstFogOnly || ( record == 0 && !llv->tables.sunListed ) )
+	{
+		return LL_PAIR_LEGACY;													// no record, a fog-only record, or a sun that is not listed
+	}
+	if( !( llv->allMaterials || shader->TestMaterialFlag( MF_FORWARD ) ) || shader->GetFastPathBumpImage() == NULL || shader->Coverage() == MC_TRANSLUCENT )
+	{
+		return LL_PAIR_LEGACY;													// the forward pass does not draw it ( F4 lifts the coverage test )
+	}
+	lightListSurface_t* s = baseDrawSurf->lightList;
+	if( s == NULL )
+	{
+		// the surface's list and its run in one block ( frame memory comes in whole cache lines, cleared ). The run
+		// can hold every light of the entity that can be listed: no more than touch it, no more than have a
+		// listable record
+		const int maxRun = Min( maxLights, llv->tables.firstFogOnly );
+		s = ( lightListSurface_t* )R_FrameAlloc( sizeof( lightListSurface_t ) + maxRun * sizeof( uint16 ), FRAME_ALLOC_DRAW_SURFACE );
+		s->run = ( uint16* )( s + 1 );
+		s->count = 0;
+		baseDrawSurf->lightList = s;
+	}
+	s->run[ s->count++ ] = ( uint16 )record;
+	return llv->twin ? LL_PAIR_TWIN : LL_PAIR_LISTED;
+}
+
+/*
+====================
+R_LightListFinishSurface
+
+H3, after the contacted-light loop of one surface, on the model job: the run becomes an ascending set, and the path
+is chosen here, because the tables are final and the samples cost a few hundred nanoseconds that the serial pack
+should not pay. The shape is the surface's bounds through the model-view matrix: a chunk ( one bounds axis under a
+unit ) as its rectangle, anything else as a box. Nothing about the chunk grid is stored or read.
+====================
+*/
+void R_LightListFinishSurface( const viewDef_t* viewDef, drawSurf_t* baseDrawSurf )
+{
+	if( baseDrawSurf->lightList == NULL )
+	{
+		return;
+	}
+	lightListSurface_t& s = *baseDrawSurf->lightList;
+	const lightListView_t* llv = viewDef->lightListView;
+	uint32 mask[LL_MAX_WORDS];
+	s.count = ( int16 )R_LightListFinishRun( llv->tables, s.run, s.count, mask );
+
+	const idBounds& b = baseDrawSurf->frontEndGeo->bounds;
+	const float* m = baseDrawSurf->space->modelViewMatrix;
+	const idVec3 size = b[1] - b[0];
+	lightListShape_t shape;
+	shape.origin.x = m[0] * b[0].x + m[4] * b[0].y + m[8] * b[0].z + m[12];
+	shape.origin.y = m[1] * b[0].x + m[5] * b[0].y + m[9] * b[0].z + m[13];
+	shape.origin.z = -( m[2] * b[0].x + m[6] * b[0].y + m[10] * b[0].z + m[14] );		// view space: +z forward
+	shape.numEdges = 0;
+	bool thin = false;
+	for( int a = 0; a < 3; a++ )
+	{
+		if( size[a] < 1.0f && !thin )
+		{
+			thin = true;														// the chunk's plane: the bounds say it, nothing was stored
+			continue;
+		}
+		shape.edges[shape.numEdges].x = m[a * 4 + 0] * size[a];
+		shape.edges[shape.numEdges].y = m[a * 4 + 1] * size[a];
+		shape.edges[shape.numEdges].z = -m[a * 4 + 2] * size[a];
+		shape.numEdges++;
+	}
+
+	int how = 0;
+	s.path = ( byte )R_LightListChoosePath( llv->tables, llv->tileBits, shape, s.run, s.count, mask, baseDrawSurf->material->GetForwardTag(), &how );
+	s.how = ( byte )how;
+}
+
+/*
+====================
 R_LightListLoud
 
-A full table or an unknown tag: one console warning of each kind per map, not per frame, and the counters every
+A full table, an unknown tag, or more forward draws than the render parms' ring is sure to hold
+( LL_FORWARD_DRAWS_LOUD ): one console warning of each kind per map, not per frame, and the counters every
 frame in the log line. The session keeps one render world for every map, so the kinds a map has had are cleared
 where the engine drops its view history ( R_NumberRecordLights ). With r_lightListStrict it stops the author's
 machine instead, in any view that has one of them.
@@ -1166,7 +1277,8 @@ machine instead, in any view that has one of them.
 static void R_LightListLoud( const lightListView_t* llv )
 {
 	const lightListStats_t& st = llv->stats;
-	const int now = ( st.capped > 0 ? 1 : 0 ) | ( st.zbinAllSurfs > 0 ? 2 : 0 ) | ( ( st.unknownTags + llv->unknownLightModes ) > 0 ? 4 : 0 );
+	const int now = ( st.capped > 0 ? 1 : 0 ) | ( st.zbinAllSurfs > 0 ? 2 : 0 ) | ( ( st.unknownTags + llv->unknownLightModes ) > 0 ? 4 : 0 )
+					| ( ( st.listSurfs + st.zbinSurfs ) > LL_FORWARD_DRAWS_LOUD ? 8 : 0 );
 	const int fresh = r_lightListStrict.GetBool() ? now : ( now & ~lightListWarned );
 	if( fresh == 0 )
 	{
@@ -1185,6 +1297,10 @@ static void R_LightListLoud( const lightListView_t* llv )
 	if( fresh & 4 )
 	{
 		msg += va( "%d surfaces and %d lights carry a forward tag the engine does not know, read as 0. ", st.unknownTags, llv->unknownLightModes );
+	}
+	if( fresh & 8 )
+	{
+		msg += va( "%d surfaces list lights: past %d forward draws a view the forward layouts' ring of render parms can run out on Vulkan ( at about twice that NVRHI's \"maxVersions\" error stops the engine ). ", st.listSurfs + st.zbinSurfs, LL_FORWARD_DRAWS_LOUD );
 	}
 	if( r_lightListStrict.GetBool() )
 	{
@@ -1223,9 +1339,8 @@ static void R_LightListPrintRecords( const viewDef_t* viewDef, const lightListVi
 ====================
 R_BuildLightLists
 
-The second hook: after R_AddModels, before R_OptimizeViewLightsList. Serial. The shadow row bases, the pool,
-listsBuilt, the warnings, the log line. Until F2 lists ( surface, light ) pairs the pool holds only its reserved
-words and no light counts a listed surface.
+The second hook: after R_AddModels, before R_OptimizeViewLightsList. Serial, in draw order: the shadow row bases,
+the pool, the listed counts ( so a listed light keeps its shadows, D9 ), listsBuilt, the warnings, the log line.
 ====================
 */
 void R_BuildLightLists()
@@ -1264,17 +1379,40 @@ void R_BuildLightLists()
 	}
 	viewDef->numShadowRows = numRows;
 
-	llv->pool = ( uint32* )R_FrameAlloc( LL_POOL_FIRST * sizeof( uint32 ), FRAME_ALLOC_UNKNOWN );
-	// per record, the surfaces that list it: all zero until F2 lists pairs
+	// the view surfaces the model jobs listed on, in draw order
+	lightListSurface_t** surfs = ( lightListSurface_t** )R_FrameAlloc( Max( viewDef->numDrawSurfs, 1 ) * sizeof( lightListSurface_t* ), FRAME_ALLOC_UNKNOWN );
+	int numSurfs = 0;
+	int poolWords = LL_POOL_FIRST;
+	for( int i = 0; i < viewDef->numDrawSurfs; i++ )
+	{
+		lightListSurface_t* s = viewDef->drawSurfs[i]->lightList;
+		if( s != NULL && s->run != NULL )
+		{
+			surfs[numSurfs++] = s;
+			poolWords += Max( ( int )s->count, t.wordsPerTile );				// whichever of the run and the mask it ends up with
+		}
+	}
+	// the pool is sized by what this view can use, not at its cap: R_FrameAlloc clears what it hands out
+	llv->pool = ( uint32* )R_FrameAlloc( Min( poolWords, LL_MAX_POOL ) * sizeof( uint32 ), FRAME_ALLOC_UNKNOWN );
+	// per record, the surfaces that list it
 	int* listed = ( int* )R_ClearedFrameAlloc( LL_MAX_RECORDS * sizeof( int ), FRAME_ALLOC_UNKNOWN );
 	memset( &llv->stats, 0, sizeof( llv->stats ) );
-	R_LightListPack( t, NULL, 0, llv->pool, listed, llv->stats );
+	R_LightListPack( t, surfs, numSurfs, llv->pool, listed, llv->stats );
+	for( int i = 0; i < llv->numLights; i++ )
+	{
+		viewLight_t* vLight = llv->lightOfInput[i];
+		if( vLight->recordNumber >= 0 && listed[ vLight->recordNumber ] > 0 )
+		{
+			vLight->numListedSurfs = listed[ vLight->recordNumber ];			// D9: R_ViewLightIsLit counts it, so the light keeps its shadow maps
+			tr.pc.c_listedLights++;
+		}
+	}
 	viewDef->listsBuilt = llv->lists;
 	R_LightListLoud( llv );
 	if( r_lightListLog.GetBool() )
 	{
 		const lightListStats_t& st = llv->stats;
-		llv->stats.hash = R_LightListHash( t, llv->tileBits, llv->pool, st.poolUsed, NULL, 0 );
+		llv->stats.hash = R_LightListHash( t, llv->tileBits, llv->pool, st.poolUsed, surfs, numSurfs );
 		common->Printf( "lightlists: frame %d records %d ( narrow %d wide %d fog %d ) capped %d | surfaces list %d zbin %d zbinAll %d | by forced %d tag %d short %d "
 						"sampled %d unsampled %d unknownTags %d | pairs %d pool %d overflow %d | rows %d vanished %d | hash %08x\n",
 						tr.frameCount, st.records, st.narrow, st.wide, st.fogOnly, st.capped, st.listSurfs, st.zbinSurfs, st.zbinAllSurfs,
@@ -1289,22 +1427,39 @@ void R_BuildLightLists()
 
 /*
 ====================
+R_LightListDrawParms
 R_LightListViewParms
 
-The view's two lanes for the backend ( C18 ), as bits the shader reads back with asuint: the tile size, the tiles
-per row, the words per tile and the bin count; the bins per unit, near, far, and r_showLightLists in the spare lane.
+The backend's lanes ( C18 ). Per draw, rpSurfLights: the first pool word, the run length, the path and the feature
+mask. Per view: the tile size, the tiles per row, the words per tile and the bin count; the bins per unit, near,
+far, and r_showLightLists in the spare lane.
+
+The integers travel as FLOAT VALUES, which the shader converts back with uint( x ): every one of them is far below
+2^24, so the conversion is exact. They cannot travel as bits read back with asuint, as C18 has it: the bits of a
+small integer are a denormal float, the backend's thread runs with denormals read as zero ( found by running it ),
+and idRenderProgManager::SetUniformValue stores a lane only when it compares unequal to what it holds, so a lane of
+such bits was never stored.
 ====================
 */
+void R_LightListDrawParms( const lightListSurface_t& s, float out[4] )
+{
+	out[0] = ( float )s.first;
+	out[1] = ( float )s.count;
+	out[2] = ( float )s.path;
+	out[3] = ( float )s.featureMask;
+}
+
 void R_LightListViewParms( const lightListView_t* llv, float zbinParms[4], float zbinScale[4] )
 {
 	const lightListTables_t& t = llv->tables;
-	const uint32 v[4] = { ( uint32 )t.parms.tileSize, ( uint32 )t.tilesX, ( uint32 )t.wordsPerTile, ( uint32 )t.parms.numBins };
-	memcpy( zbinParms, v, sizeof( v ) );
-	const uint32 show = ( uint32 )llv->showMode;
+	zbinParms[0] = ( float )t.parms.tileSize;
+	zbinParms[1] = ( float )t.tilesX;
+	zbinParms[2] = ( float )t.wordsPerTile;
+	zbinParms[3] = ( float )t.parms.numBins;
 	zbinScale[0] = t.binScale;
 	zbinScale[1] = t.parms.zNear;
 	zbinScale[2] = t.parms.binFar;
-	memcpy( &zbinScale[3], &show, sizeof( show ) );
+	zbinScale[3] = ( float )llv->showMode;
 }
 
 /*
@@ -1410,9 +1565,51 @@ static void R_ListLightRecords_f( const idCmdArgs& /* args */ )
 	lightListPrintArmed = true;
 }
 
+/*
+====================
+R_ListLightTags_f
+
+"listLightTags": every forward tag in use in the loaded level, materials and lights, so a designer sees what the
+numbers mean before typing a new one. One line per tag user.
+====================
+*/
+static void R_ListLightTags_f( const idCmdArgs& /* args */ )
+{
+	static const char* materialTags[LLT_NUM] = { "the rule decides", "always the list", "always the Z-bins" };
+	int count = 0;
+	for( int i = 0; i < declManager->GetNumDecls( DECL_MATERIAL ); i++ )
+	{
+		const idMaterial* m = static_cast<const idMaterial*>( declManager->DeclByIndex( DECL_MATERIAL, i, false ) );
+		if( m == NULL || !m->TestMaterialFlag( MF_FORWARD ) || m->GetForwardTag() == LLT_AUTO )
+		{
+			continue;
+		}
+		const int tag = m->GetForwardTag();
+		common->Printf( "material %-48s forward %d ( %s )\n", m->GetName(), tag, ( tag < LLT_NUM ) ? materialTags[tag] : "UNKNOWN, read as 0" );
+		count++;
+	}
+	if( tr.primaryWorld != NULL )
+	{
+		for( int i = 0; i < tr.primaryWorld->lightDefs.Num(); i++ )
+		{
+			const idRenderLightLocal* def = tr.primaryWorld->lightDefs[i];
+			if( def == NULL || def->parms.forwardMode == LIGHT_FORWARD_AUTO )
+			{
+				continue;
+			}
+			const int mode = def->parms.forwardMode;
+			common->Printf( "light %5d %-40s forward %d ( %s )\n", i, def->parms.shader ? def->parms.shader->GetName() : "<no shader>", mode,
+							mode == LIGHT_FORWARD_LIST ? "always listed" : ( mode == LIGHT_FORWARD_LEGACY ? "never listed" : "UNKNOWN, read as 0" ) );
+			count++;
+		}
+	}
+	common->Printf( "%d forward tags in use\n", count );
+}
+
 void R_LightListInitCommands()
 {
 	cmdSystem->AddCommand( "lightListBench", R_LightListBench_f, CMD_FL_RENDERER, "times the light-list builder on the captured view" );
 	cmdSystem->AddCommand( "lightListDump", R_LightListDump_f, CMD_FL_RENDERER, "writes the captured light-list input to a file" );
 	cmdSystem->AddCommand( "listLightRecords", R_ListLightRecords_f, CMD_FL_RENDERER, "prints the light records of the next main view that builds them" );
+	cmdSystem->AddCommand( "listLightTags", R_ListLightTags_f, CMD_FL_RENDERER, "lists the forward tags of materials and lights in the loaded level" );
 }

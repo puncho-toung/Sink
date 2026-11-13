@@ -89,6 +89,7 @@ struct renderParmSet9_t
 	float4 rpRecordCounts;		// F: records, rows, sun present, vanished count
 	float4 rpShadowBias;		// S: sun bias scale, regular bias scale, splits, 0
 	float4 rpShadowFilter;		// S: sample count, texel step ( jitter scale / atlas size ), noise scale, frame index
+	float4 rpForwardView;		// F: x, y = the view's top-left pixel in the target, z = 1 / r_lightScale, w = 1: the light loop adds nothing
 };
 
 #if USE_PUSH_CONSTANTS

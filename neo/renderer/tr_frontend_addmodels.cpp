@@ -891,6 +891,7 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 		//--------------------------
 		const float* shaderRegisters = NULL;
 		drawSurf_t* baseDrawSurf = NULL;
+		bool baseLinked = false;									// track F: only a surface linked to the view can hold a run
 		if( surfaceDirectlyVisible && shader->IsDrawn() )
 		{
 			//puncho - static arena (P2b.1.8): a stale static handle (its segment reset since) fails CacheIsCurrent, which
@@ -968,6 +969,7 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 				baseDrawSurf->indexCache = tri->indexCache;
 
 				baseDrawSurf->linkChain = NULL;		// link to the view
+				baseLinked = true;
 				baseDrawSurf->nextOnLight = vEntity->drawSurfs;
 				vEntity->drawSurfs = baseDrawSurf;
 			}
@@ -1118,10 +1120,20 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 						shaderRegisters = scratchSurf.shaderRegisters;
 					}
 
-					if( shaderRegisters != NULL )
+					// ---- TRACK F: the pair is listed on the base surface instead of getting a lit surface ( C5, C13 ) ----
+					// The tests above ( the spectrum, the static interaction's empty triangle list, the entity's interaction
+					// state ) all ran, so every exclusion the job applies is in the run. The shadow surface below is made
+					// either way: a listed pair keeps its caster ( D9 )
+					const int pairListed = ( shaderRegisters != NULL ) ? R_LightListTakePair( viewDef, vLight, shader, baseLinked ? baseDrawSurf : NULL, numContactedLights ) : LL_PAIR_LEGACY;
+					// ---- END TRACK F ----
+					if( shaderRegisters != NULL && pairListed != LL_PAIR_LISTED )
 					{
 						// create a drawSurf for this interaction
 						drawSurf_t* lightDrawSurf = ( drawSurf_t* )R_FrameAlloc( sizeof( *lightDrawSurf ), FRAME_ALLOC_DRAW_SURFACE );
+						if( pairListed == LL_PAIR_TWIN )
+						{
+							lightDrawSurf->lightList = ( lightListSurface_t* )&lightListTwinMark;	// track F: the difference view's copy of a listed pair ( D49 ); read only
+						}
 
 						if( surfInter != NULL )
 						{
@@ -1313,6 +1325,10 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 				}
 			}
 			// RB end
+		}
+		if( baseLinked )
+		{
+			R_LightListFinishSurface( viewDef, baseDrawSurf );		// track F: the run becomes an ascending set and the path is chosen, here on the job
 		}
 	}
 }

@@ -81,6 +81,8 @@ struct viewEntity_t;
 struct viewLight_t;
 struct viewEnvprobe_t;
 
+#include "LightLists.h"		// track F: lightListSurface_t, for drawSurf_t below ( the include near the end of this file stays; its guard makes it a no-op )
+
 // drawSurf_t structures command the back end to render surfaces
 // a given srfTriangles_t may be used with multiple viewEntity_t,
 // as when viewed in a subview or multiple viewport render, or
@@ -106,8 +108,12 @@ struct drawSurf_t
 	idScreenRect			scissorRect;		// for scissor clipping, local inside renderView viewport
 	const struct portalArea_s*	area;			// RB: if != NULL then the area provides valid lightgrid
 	// ---- TRACK F: light-list fields ----
+	lightListSurface_t*		lightList;			// F2: on a view surface that lists lights, its run of record lights and its path, in frame memory; NULL = nothing listed. On a lit surface NULL, or &lightListTwinMark in the difference view
 	// ---- END TRACK F ----
 };
+// track F: R_FrameAlloc hands out whole cache lines of 128 bytes and clears them. The light list is a pointer because
+// the struct itself ( 24 bytes ) took every surface, lit and shadow surfaces too, to two lines, with the lists off as well
+compile_time_assert( sizeof( drawSurf_t ) <= 128 );
 
 // areas have references to hold all the lights and entities in them
 struct areaReference_t

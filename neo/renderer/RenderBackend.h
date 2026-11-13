@@ -453,6 +453,27 @@ private:
 	nvrhi::GraphicsPipelineHandle	lightListHeatmapPipeline;
 	nvrhi::FramebufferHandle		lightListHeatmapTarget;						// the colour attachment of the view's framebuffer alone
 	nvrhi::ITexture*				lightListHeatmapColor;						// the texture that target was made for; valid while the target exists
+	void							LightDiffPass( const drawSurf_t* const* drawSurfs, int numDrawSurfs );	// F2: the difference view ( r_showLightDiff 2 ), after DrawInteractions
+	bool							lightDiffPassA;								// F2: true while LightDiffPass draws the forward picture: the loop lights and the legacy pass leaves the twins out
+	bool							lightDiffHasReadout;						// F2: a reduced picture of the present size has been read
+	nvrhi::TextureHandle			lightDiffImageA;							// the forward picture of the view's lit passes
+	nvrhi::TextureHandle			lightDiffImageB;							// the legacy picture
+	nvrhi::TextureHandle			lightDiffReduced;							// per block of 16 x 16 pixels: the sum and the maximum of their difference
+	nvrhi::FramebufferHandle		lightDiffReducedTarget;
+	nvrhi::FramebufferHandle		lightDiffShowTarget;						// the colour attachment of the view's framebuffer alone
+	nvrhi::ITexture*				lightDiffShowColor;							// the texture that target was made for; valid while the target exists
+	nvrhi::StagingTextureHandle		lightDiffStaging[3];						// a ring: a reduced picture is read two frames after it was drawn ( D79 )
+	int								lightDiffStagingFrame[3];					// lightDiffFrame when the slot was written; -1 = never
+	int								lightDiffFrame;								// counts the passes
+	int								lightDiffViewFrame;							// lightListView_t::viewFrame of the last pass; a gap empties the ring
+	float							lightDiffMean;								// the last read-out: the mean and the maximum of the difference, the legacy picture's mean
+	float							lightDiffMax;
+	float							lightDiffLegacyMean;
+	nvrhi::ShaderHandle				lightDiffVS;
+	nvrhi::ShaderHandle				lightDiffPS;
+	nvrhi::BindingLayoutHandle		lightDiffLayout;
+	nvrhi::GraphicsPipelineHandle	lightDiffShowPipeline;
+	nvrhi::GraphicsPipelineHandle	lightDiffReducePipeline;
 	// ---- END TRACK F ----
 	// ---- TRACK V: volumetric fog members ----
 	// ---- END TRACK V ----

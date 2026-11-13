@@ -610,6 +610,26 @@ void idRenderBackend::DrawElementsWithCounters( const drawSurf_t* surf, bool sha
 	}
 }
 
+/*
+====================
+R_ForwardDefaultLightImage
+
+Track F ( F2 ): the three light images of the forward layouts ( t21 to t23, D39 ). A light that is listed without being
+a math light carries the default textures of its own kind, so the forward shader needs only these: 0 = the projection
+image the two default light shaders share, 1 = the default point light's falloff, 2 = the default projected light's.
+====================
+*/
+static nvrhi::ITexture* R_ForwardDefaultLightImage( int which )
+{
+	const idMaterial* shader = ( which == 2 ) ? tr.defaultProjectedLight : tr.defaultPointLight;
+	idImage* image = ( which == 0 ) ? shader->GetStage( 0 )->texture.image : shader->LightFalloffImage();
+	if( image == NULL || !image->IsLoaded() )
+	{
+		image = globalImages->whiteImage;
+	}
+	return ( nvrhi::ITexture* )image->GetTextureID();
+}
+
 void idRenderBackend::GetCurrentBindingLayout( int type )
 {
 	constexpr auto numBoneMatrices = 480;
@@ -2072,9 +2092,9 @@ void idRenderBackend::GetCurrentBindingLayout( int type )
 				nvrhi::BindingSetItem::StructuredBuffer_SRV( 19, zBinsBuffer ),
 				nvrhi::BindingSetItem::StructuredBuffer_SRV( 20, tileBitsBuffer ),
 				// ---- TRACK F: the three default light images ( D39 ) ----
-				nvrhi::BindingSetItem::Texture_SRV( 21, ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID() ),
-				nvrhi::BindingSetItem::Texture_SRV( 22, ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID() ),
-				nvrhi::BindingSetItem::Texture_SRV( 23, ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID() )
+				nvrhi::BindingSetItem::Texture_SRV( 21, R_ForwardDefaultLightImage( 0 ) ),
+				nvrhi::BindingSetItem::Texture_SRV( 22, R_ForwardDefaultLightImage( 1 ) ),
+				nvrhi::BindingSetItem::Texture_SRV( 23, R_ForwardDefaultLightImage( 2 ) )
 				// ---- END TRACK F ----
 			};
 		}
@@ -2098,9 +2118,9 @@ void idRenderBackend::GetCurrentBindingLayout( int type )
 			bindings[14].resourceHandle = zBinsBuffer;
 			bindings[15].resourceHandle = tileBitsBuffer;
 			// ---- TRACK F: the three default light images ( D39 ) ----
-			bindings[16].resourceHandle = ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID();
-			bindings[17].resourceHandle = ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID();
-			bindings[18].resourceHandle = ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID();
+			bindings[16].resourceHandle = R_ForwardDefaultLightImage( 0 );
+			bindings[17].resourceHandle = R_ForwardDefaultLightImage( 1 );
+			bindings[18].resourceHandle = R_ForwardDefaultLightImage( 2 );
 			// ---- END TRACK F ----
 		}
 
@@ -2213,9 +2233,9 @@ void idRenderBackend::GetCurrentBindingLayout( int type )
 				nvrhi::BindingSetItem::StructuredBuffer_SRV( 19, zBinsBuffer ),
 				nvrhi::BindingSetItem::StructuredBuffer_SRV( 20, tileBitsBuffer ),
 				// ---- TRACK F: the three default light images ( D39 ) ----
-				nvrhi::BindingSetItem::Texture_SRV( 21, ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID() ),
-				nvrhi::BindingSetItem::Texture_SRV( 22, ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID() ),
-				nvrhi::BindingSetItem::Texture_SRV( 23, ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID() )
+				nvrhi::BindingSetItem::Texture_SRV( 21, R_ForwardDefaultLightImage( 0 ) ),
+				nvrhi::BindingSetItem::Texture_SRV( 22, R_ForwardDefaultLightImage( 1 ) ),
+				nvrhi::BindingSetItem::Texture_SRV( 23, R_ForwardDefaultLightImage( 2 ) )
 				// ---- END TRACK F ----
 			};
 		}
@@ -2239,9 +2259,9 @@ void idRenderBackend::GetCurrentBindingLayout( int type )
 			bindings[14].resourceHandle = zBinsBuffer;
 			bindings[15].resourceHandle = tileBitsBuffer;
 			// ---- TRACK F: the three default light images ( D39 ) ----
-			bindings[16].resourceHandle = ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID();
-			bindings[17].resourceHandle = ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID();
-			bindings[18].resourceHandle = ( nvrhi::ITexture* )globalImages->whiteImage->GetTextureID();
+			bindings[16].resourceHandle = R_ForwardDefaultLightImage( 0 );
+			bindings[17].resourceHandle = R_ForwardDefaultLightImage( 1 );
+			bindings[18].resourceHandle = R_ForwardDefaultLightImage( 2 );
 			// ---- END TRACK F ----
 		}
 
@@ -3246,6 +3266,22 @@ idRenderBackend::idRenderBackend()
 	shadowCacheMisses = 0;
 	memset( shadowCacheMissed, 0, sizeof( shadowCacheMissed ) );
 	// ---- END TRACK S ----
+	// ---- TRACK F: light lists ( the handles construct themselves empty ) ----
+	lightListTileBitsWords = 0;
+	lightListHeatmapColor = NULL;
+	lightDiffPassA = false;
+	lightDiffHasReadout = false;
+	lightDiffShowColor = NULL;
+	lightDiffFrame = 0;
+	lightDiffViewFrame = -1;
+	lightDiffMean = 0.0f;
+	lightDiffMax = 0.0f;
+	lightDiffLegacyMean = 0.0f;
+	for( int i = 0; i < 3; i++ )
+	{
+		lightDiffStagingFrame[i] = -1;
+	}
+	// ---- END TRACK F ----
 	hiZGenPass = nullptr;
 	ssaoPass = nullptr;
 	volumetricFogPass = nullptr;
@@ -3352,6 +3388,10 @@ void idRenderBackend::ResetPipelineCache()
 	lightListHeatmapVS = nullptr;
 	lightListHeatmapPS = nullptr;
 	lightListHeatmapPipeline = nullptr;
+	lightDiffVS = nullptr;
+	lightDiffPS = nullptr;
+	lightDiffShowPipeline = nullptr;
+	lightDiffReducePipeline = nullptr;
 	// ---- END TRACK F ----
 }
 

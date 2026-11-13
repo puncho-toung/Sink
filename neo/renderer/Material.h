@@ -774,6 +774,13 @@ public:
 		return ( materialFlags & flag ) != 0;
 	}
 
+	// track F: the forward tag, the optional number after the "forward" keyword: 0 = the rule decides, 1 = always the
+	// list, 2 = always the Z-bins ( lightListTag_t in LightLists.h ). The material stores it; only the light lists read it
+	int					GetForwardTag() const
+	{
+		return forwardTag;
+	}
+
 	// get content flags
 	const int			GetContentFlags() const
 	{
@@ -1028,6 +1035,7 @@ private:
 	int					contentFlags;		// content flags
 	int					surfaceFlags;		// surface flags
 	mutable int			materialFlags;		// material flags
+	byte				forwardTag;			// track F: see GetForwardTag; 0 when the keyword has no number
 
 	decalInfo_t			decalInfo;
 

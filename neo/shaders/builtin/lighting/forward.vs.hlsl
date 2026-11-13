@@ -29,8 +29,8 @@ If you have questions concerning this license or the applicable additional terms
 
 // forward.vs.hlsl - vertex stage of the lit forward pass ( D33 ). X0 landed this as a stub: a copy of
 // ambient_lighting_IBL.vs.hlsl with the dead toLight block dropped, so it is the ambient .vs with the
-// light-grid variant's one difference already merged away. There is no light loop yet - track F owns this
-// file from here; USE_WAVE_OPS and USE_TRANSLUCENT are reserved for F and are not tested by the stub.
+// light-grid variant's one difference already merged away. Track F ( F2 ) added the linear view depth in
+// texcoord7.w for the pixel stage's Z-bins ( D54 ). USE_WAVE_OPS and USE_TRANSLUCENT are not tested here.
 
 #include "global_inc.hlsl"
 #include "renderParmSet9.inc.hlsl"
@@ -61,6 +61,8 @@ struct VS_OUT
 	float4 texcoord5	: TEXCOORD5_centroid;
 	float4 texcoord6	: TEXCOORD6_centroid;
 	float4 texcoord7	: TEXCOORD7_centroid;
+	float4 texcoord8	: TEXCOORD8_centroid;
+	float4 texcoord9	: TEXCOORD9_centroid;
 	float4 color		: COLOR0;
 };
 // *INDENT-ON*
@@ -200,6 +202,22 @@ void main( VS_IN vertex, out VS_OUT result )
 	worldPosition.z = dot4( modelPosition, pc.rpModelMatrixZ );
 	worldPosition.w = dot4( modelPosition, pc.rpModelMatrixW );
 	result.texcoord7 = worldPosition;
+	// track F ( D54 ): the linear view depth, clip w, for the light loop's Z-bins. The pixel stage reads
+	// texcoord7.xyz as the position and nothing read .w ( it was 1 )
+	result.texcoord7.w = result.position.w;
+
+	// track F ( F2 ): what the light loop needs to form, per pixel and for any light, the two vectors the legacy
+	// interaction vertex stages hand to the rasterizer. Both are products of the vertex frame, and a product must
+	// be formed per vertex to interpolate as theirs do ( on a curved mesh the frame turns across a triangle ).
+	// texcoord8: the view vector in the vertex frame, interaction.vs.hlsl's texcoord6. texcoord9: the position in
+	// the vertex frame; the light vector is then frame . light origin - texcoord9, which is that file's texcoord0
+	// ( frame . ( origin - position ) ). The frame and the position are the relative-frame ones of texcoord4 to 7;
+	// a rotation leaves the products what they are in model space
+	const float3 frameT = float3( result.texcoord4.x, result.texcoord5.x, result.texcoord6.x );
+	const float3 frameB = float3( result.texcoord4.y, result.texcoord5.y, result.texcoord6.y );
+	const float3 frameN = float3( result.texcoord4.z, result.texcoord5.z, result.texcoord6.z );
+	result.texcoord8 = float4( dot( frameT, result.texcoord3.xyz ), dot( frameB, result.texcoord3.xyz ), dot( frameN, result.texcoord3.xyz ), 1.0f );
+	result.texcoord9 = float4( dot( frameT, worldPosition.xyz ), dot( frameB, worldPosition.xyz ), dot( frameN, worldPosition.xyz ), 1.0f );
 
 #if USE_GPU_SKINNING
 	// for joint transformation of the tangent space, we use color and

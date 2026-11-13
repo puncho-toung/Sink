@@ -832,11 +832,7 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 	{
 		// X0: a seam layout has no program yet, so it gets no RenderParams buffer ( 8192 versions of
 		// host-visible memory on Vulkan ). A track deletes its lines here with its first builtins[] row.
-		// ---- TRACK F: remove with the first forward builtin ----
-		if( i == BINDING_LAYOUT_FORWARD || i == BINDING_LAYOUT_FORWARD_SKINNED )
-		{
-			continue;
-		}
+		// ---- TRACK F: the forward layouts have builtins since F2 and take their RenderParams buffer ----
 		// ---- END TRACK F ----
 		// ---- TRACK V: remove with the first fog-twin builtin ----
 		if( i == BINDING_LAYOUT_TEXTURE_FOG || i == BINDING_LAYOUT_TEXTURE_SKINNED_FOG || i == BINDING_LAYOUT_TEXGEN_FOG
@@ -1053,6 +1049,16 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 		// r_showDepth ( DBG_ShowDepth ): reuses the retro post-process layout, whose t3 is a depth texture
 		{ BUILTIN_DEBUG_DEPTH, "builtin/debug/depth", "", { { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_POST_PROCESS_FINAL2 ) } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_POST_PROCESS_FINAL2 },
 		// ---- TRACK F: builtins[] rows ( keep the enum order ) ----
+		// the forward program ( F2 ). No USE_PUSH_CONSTANTS key: the forward layouts always take the constant buffer
+		// ( D51 ). USE_WAVE_OPS 0 and USE_TRANSLUCENT 0: the other halves of those axes are F3's and F4's
+		{ BUILTIN_FORWARD, "builtin/lighting/forward", "", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
+		{ BUILTIN_FORWARD_SKINNED, "builtin/lighting/forward", "_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
+		{ BUILTIN_FORWARD_PBR, "builtin/lighting/forward", "_PBR", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
+		{ BUILTIN_FORWARD_PBR_SKINNED, "builtin/lighting/forward", "_PBR_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
+		{ BUILTIN_FORWARD_LIGHTGRID, "builtin/lighting/forward", "_lightgrid", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "1" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
+		{ BUILTIN_FORWARD_LIGHTGRID_SKINNED, "builtin/lighting/forward", "_lightgrid_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "1" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
+		{ BUILTIN_FORWARD_LIGHTGRID_PBR, "builtin/lighting/forward", "_lightgrid_PBR", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "1" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
+		{ BUILTIN_FORWARD_LIGHTGRID_PBR_SKINNED, "builtin/lighting/forward", "_lightgrid_PBR_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "1" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
 		// ---- END TRACK F ----
 		// ---- TRACK V: builtins[] rows ( keep the enum order ) ----
 		// ---- END TRACK V ----
@@ -1139,6 +1145,12 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 
 		renderProgs[builtinShaders[BUILTIN_AMBIENT_LIGHTGRID_IBL_SKINNED]].usesJoints = true;
 		renderProgs[builtinShaders[BUILTIN_AMBIENT_LIGHTGRID_IBL_PBR_SKINNED]].usesJoints = true;
+
+		// track F ( F2 )
+		renderProgs[builtinShaders[BUILTIN_FORWARD_SKINNED]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_FORWARD_PBR_SKINNED]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_FORWARD_LIGHTGRID_SKINNED]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_FORWARD_LIGHTGRID_PBR_SKINNED]].usesJoints = true;
 
 		renderProgs[builtinShaders[BUILTIN_SMALL_GEOMETRY_BUFFER_SKINNED]].usesJoints = true;
 

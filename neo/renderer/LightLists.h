@@ -368,6 +368,33 @@ renderer makes. Bodies in tr_frontend_lightlists.cpp.
 */
 
 struct viewLight_t;
+struct viewDef_t;
+struct drawSurf_t;
+class idMaterial;
+
+// what R_LightListTakePair did with a ( surface, light ) pair
+enum lightListPair_t
+{
+	LL_PAIR_LEGACY			= 0,			// not listed: the caller makes the lit surface, as it always did
+	LL_PAIR_LISTED			= 1,			// listed on the base surface: the caller makes no lit surface
+	LL_PAIR_TWIN			= 2				// listed, and the caller makes the lit surface too, marked LLH_TWIN ( the difference view, D49 )
+};
+
+// drawSurf_t::lightList of a LIT surface in the difference view: the legacy pass's copy of a pair that is also listed
+// on its base surface points at this one object, which nobody writes. Its how is LLH_TWIN, not one of
+// lightListHow_t's values ( those describe a view surface's path ); its run is NULL
+const byte	LLH_TWIN		= 0x40;
+extern const lightListSurface_t	lightListTwinMark;
+
+// The forward draws a view may have before R_LightListLoud warns. Every listing surface has a lane of its own
+// ( rpSurfLights: where its run starts ), so every forward draw commits the render parms, and on Vulkan each commit
+// takes one of the 8192 versions of the forward layout's constant buffer. NVRHI gives a version back only when
+// the command list that used it has finished on the GPU, so the ring has to hold the draws of two frames
+// ( measured: 608 forward draws a frame stop the engine in its second frame with a ring of 700 and run with one
+// of 1300 ): 4096 a view, and half that in the difference view, which draws the lit passes twice. Past the ring
+// NVRHI reports "maxVersions = 8192, which is insufficient", which this engine takes as a fatal error. ( The
+// legacy passes commit only when a value changes: per model space, per stage colour. )
+const int	LL_FORWARD_DRAWS_LOUD	= 2048;
 
 // renderLight_t::forwardMode ( the spawnarg "forward" ): a designer routes a light by hand
 enum lightForwardMode_t
@@ -402,10 +429,19 @@ struct lightListView_t
 	int						unknownLightModes;	// forwardMode values the switch does not know ( read as 0 )
 	int						showMode;			// r_showLightLists, read once per view: rpZBinScale.w
 	bool					lists;				// surfaces may be listed in this view; false: records and bins only
+	bool					allMaterials;		// r_forwardMaterials, read once per view: every material the forward pass can draw is listed, with or without the keyword
+	bool					twin;				// r_showLightDiff, read once per view: a listed pair keeps its lit surface, marked LLH_TWIN ( D49 )
+	bool					diff;				// r_showLightDiff 2: the backend draws the lit passes twice and shows their difference ( D49, D79 )
+	bool					log;				// r_lightListLog, for the backend's own line
+	float					lightScale;			// r_lightScale as this view's records hold it; the backend divides it out of the surface's stage colours
+	int						viewFrame;			// tr.frameCount of this view, for the backend ( the difference view's ring, its log line )
 };
 
 void	R_NumberRecordLights();		// frontend, called from R_RenderView after R_AddLights
 void	R_BuildLightLists();		// frontend, after R_AddModels and before R_OptimizeViewLightsList
+int		R_LightListTakePair( const viewDef_t* viewDef, const viewLight_t* vLight, const idMaterial* shader, drawSurf_t* baseDrawSurf, int maxLights );	// H3, on a model job; returns a lightListPair_t
+void	R_LightListFinishSurface( const viewDef_t* viewDef, drawSurf_t* baseDrawSurf );	// H3, after a surface's contacted-light loop, on the job
+void	R_LightListDrawParms( const lightListSurface_t& s, float out[4] );	// a draw's lane rpSurfLights ( C18 ), for the backend
 void	R_LightListViewParms( const lightListView_t* llv, float zbinParms[4], float zbinScale[4] );	// the view's two lanes ( C18 ), for the backend
 void	R_LightListInitCommands();	// called once from R_InitCommands
 

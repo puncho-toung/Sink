@@ -601,6 +601,8 @@ float idConsoleLocal::DrawFPS( float y )
 				"  [DEBUG: pattern]",
 			};
 			const int mlDebug = idMath::ClampInt( 0, mlDebugNameCount - 1, r_showMathLights.GetInteger() );
+			// track F ( F2, N12 ): math and tex count the lights the legacy pass draws. A light every one of whose
+			// surfaces lists it has no lit surface left and is in neither; the LIGHTLISTS row counts those ( listed )
 			ImGui::TextColored( mlDebug > 0 ? colorOrange : colorLtGrey, "LIGHTS: view:%-3i  math:%-3i  tex:%-3i  mathInView:%i%s",
 								commonLocal.stats_frontend.c_viewLights,
 								commonLocal.stats_backend.c_mathLights,
@@ -725,9 +727,16 @@ float idConsoleLocal::DrawFPS( float y )
 		// view, its shadow rows, and the bytes of tables written to the six buffers
 		if( commonLocal.stats_backend.c_lightListRecords > 0 )
 		{
-			ImGui::TextColored( colorLtGrey, "LIGHTLISTS: records:%i rows:%i upload:%i KiB",
+			ImGui::TextColored( colorLtGrey, "LIGHTLISTS: records:%i rows:%i upload:%i KiB listed:%i",
 								commonLocal.stats_backend.c_lightListRecords, commonLocal.stats_backend.c_lightListRows,
-								commonLocal.stats_backend.c_lightListUploadBytes / 1024 );
+								commonLocal.stats_backend.c_lightListUploadBytes / 1024, commonLocal.stats_frontend.c_listedLights );
+		}
+		// F2: the difference view's read-out ( r_showLightDiff 2 ): how far the forward light is from the legacy light,
+		// in linear HDR units, beside the legacy picture's mean. Two frames old
+		if( commonLocal.stats_backend.c_lightDiffValid != 0 )
+		{
+			ImGui::TextColored( colorLtGrey, "LIGHTDIFF: mean:%.6f max:%.5f legacyMean:%.4f",
+								commonLocal.stats_backend.c_lightDiffMean, commonLocal.stats_backend.c_lightDiffMax, commonLocal.stats_backend.c_lightDiffLegacyMean );
 		}
 		// ---- END TRACK F ----
 		// ---- TRACK V: HUD rows ----

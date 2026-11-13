@@ -132,6 +132,24 @@ void idRenderBackend::LightListReleaseBuffers()
 	lightListHeatmapLayout = nullptr;
 	lightListHeatmapVS = nullptr;
 	lightListHeatmapPS = nullptr;
+	// F2: the difference view
+	lightDiffImageA = nullptr;
+	lightDiffImageB = nullptr;
+	lightDiffReduced = nullptr;
+	lightDiffReducedTarget = nullptr;
+	lightDiffShowTarget = nullptr;
+	lightDiffShowColor = nullptr;
+	for( int i = 0; i < 3; i++ )
+	{
+		lightDiffStaging[i] = nullptr;
+		lightDiffStagingFrame[i] = -1;
+	}
+	lightDiffHasReadout = false;
+	lightDiffVS = nullptr;
+	lightDiffPS = nullptr;
+	lightDiffLayout = nullptr;
+	lightDiffShowPipeline = nullptr;
+	lightDiffReducePipeline = nullptr;
 }
 
 /*
@@ -141,10 +159,11 @@ idRenderBackend::R_BuildShadowRows
 After ShadowAtlasPass, in a view that has records: the shadow rows ( C2 ), then the upload of every table of the
 view. The rows are the legacy interaction pass's per-draw products without the model matrix ( the forward pass
 and the volumetrics come with positions relative to the view's renderOrigin, which is what shadowV and shadowP
-take ): parallel and point maps clipSpaceToWindowSpace x shadowP x shadowV, a spot map shadowP x shadowV. A row
-whose map has no place in the atlas, every row of a light without a shadow map, and every row while the atlas is
-off or shadows are skipped, has atlasRect.z = -1. Everything is uploaded here, before the first pass that reads
-it ( the fog inject, then the forward pass ).
+take ): parallel and point maps clipSpaceToWindowSpace x shadowP x shadowV, a spot map shadowP x shadowV. Every
+row of a light without a placed shadow map, and every row while the atlas is off or shadows are skipped, has
+atlasRect.z = -1. A face or cascade that was not drawn, of a light whose maps are placed, has -2: the forward loop
+keeps the shadow-map body for that light and looks nothing up there. Everything is uploaded here, before the first
+pass that reads it ( the fog inject, then the forward pass ).
 ====================
 */
 void idRenderBackend::R_BuildShadowRows( const viewDef_t* viewDef )
@@ -211,7 +230,10 @@ void idRenderBackend::R_BuildShadowRows( const viewDef_t* viewDef )
 			}
 			else
 			{
-				row.atlasRect.Set( 0.0f, 0.0f, -1.0f, w );
+				// -2: the light's maps have places and the legacy pass binds its shadow-map program for the whole
+				// light, but this face or cascade was not drawn: the forward loop keeps that program's body there,
+				// unshadowed. -1: the light has no placed map: the plain body
+				row.atlasRect.Set( 0.0f, 0.0f, ( atlas && vLight->ImageAtlasPlaced() ) ? -2.0f : -1.0f, w );
 			}
 		}
 	}
@@ -380,5 +402,298 @@ void idRenderBackend::DBG_LightLists()
 	commandList->draw( args );
 
 	// the engine's own state cache knows nothing of this draw
+	ResetGraphicsStateCache();
+}
+
+idCVar r_lightDiffScale( "r_lightDiffScale", "16", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "r_showLightDiff 2 shows the difference of the forward and the legacy light times this" );
+
+struct lightDiffConstants_t
+{
+	int		viewOrigin[2];		// the view's top-left pixel in the target
+	int		viewSize[2];
+	uint32	mode;				// 0 = the picture, 1 = the reduction
+	float	scale;
+	uint32	pad0;
+	uint32	pad1;
+};
+static_assert( sizeof( lightDiffConstants_t ) == 32, "laid out as shaders/lightdiff.cb.h" );
+
+static const int LIGHTDIFF_BLOCK = 16;		// shaders/lightdiff.cb.h: LIGHTDIFF_BLOCK
+
+static bool lightDiffSaidMultisampled = false;	// LightDiffPass: said once
+
+/*
+====================
+idRenderBackend::LightDiffPass
+
+The difference view ( r_showLightDiff 2; D10, D49, D79 ): how far the forward pass's light is from the legacy
+pass's, in this view, this frame. Called after DrawInteractions. In the twin mode every listed pair also has
+its lit surface, so the frame up to here is the LEGACY picture of the view's lit passes: the forward program
+drew the listing surfaces with the loop off and the legacy pass lit everything. This pass
+  1. keeps that picture ( B ),
+  2. clears the colour and draws the lit passes again as the FORWARD picture ( A ): the loop on, the legacy
+     pass without the twins ( lightDiffPassA ), over the same depth,
+  3. shows | A - B | times r_lightDiffScale in the view,
+  4. reduces | A - B | on the GPU to one texel per block of 16 x 16 pixels and copies that small picture into
+     a ring of three staging textures; the one written two frames ago is mapped and summed here, so the frame
+     never waits for the GPU ( D79 ). The read-out goes to the HUD and, with r_lightListLog, to the console.
+The engine's pipelines know nothing of it: its own shader pair ( builtin/debug/lightdiff ), layout and two
+pipelines, made at first use and released with ClearCaches ( they stay after the view is switched off ).
+====================
+*/
+void idRenderBackend::LightDiffPass( const drawSurf_t* const* drawSurfs, int numDrawSurfs )
+{
+	const lightListView_t* llv = viewDef->lightListView;
+	if( llv == NULL || !viewDef->listsBuilt || !llv->twin || !llv->diff || lightDiffPassA )
+	{
+		return;
+	}
+	Framebuffer* active = Framebuffer::GetActiveFramebuffer();
+	if( active == NULL )
+	{
+		return;
+	}
+	const nvrhi::FramebufferDesc& activeDesc = active->GetApiObject()->getDesc();
+	if( activeDesc.colorAttachments.empty() || !activeDesc.colorAttachments[0].valid() )
+	{
+		return;
+	}
+	nvrhi::ITexture* color = activeDesc.colorAttachments[0].texture;
+	const nvrhi::TextureDesc& colorDesc = color->getDesc();
+	if( colorDesc.sampleCount != 1 )
+	{
+		// a multisampled target cannot be copied this way
+		if( !lightDiffSaidMultisampled )
+		{
+			lightDiffSaidMultisampled = true;
+			common->Printf( "lightdiff: the view's target is multisampled: no difference view ( the twin mode stays on )\n" );
+		}
+		return;
+	}
+	nvrhi::IDevice* device = deviceManager->GetDevice();
+	const int reducedWidth = ( ( int )colorDesc.width + LIGHTDIFF_BLOCK - 1 ) / LIGHTDIFF_BLOCK;
+	const int reducedHeight = ( ( int )colorDesc.height + LIGHTDIFF_BLOCK - 1 ) / LIGHTDIFF_BLOCK;
+
+	// the two pictures in the view's own format, the reduced picture and its ring: made for the target's size
+	if( !lightDiffImageA || lightDiffImageA->getDesc().width != colorDesc.width || lightDiffImageA->getDesc().height != colorDesc.height
+			|| lightDiffImageA->getDesc().format != colorDesc.format )
+	{
+		nvrhi::TextureDesc desc;
+		desc.width = colorDesc.width;
+		desc.height = colorDesc.height;
+		desc.format = colorDesc.format;
+		desc.dimension = nvrhi::TextureDimension::Texture2D;
+		desc.initialState = nvrhi::ResourceStates::ShaderResource;
+		desc.keepInitialState = true;
+		desc.debugName = "lightDiffA";
+		lightDiffImageA = device->createTexture( desc );
+		desc.debugName = "lightDiffB";
+		lightDiffImageB = device->createTexture( desc );
+
+		nvrhi::TextureDesc reduced;
+		reduced.width = reducedWidth;
+		reduced.height = reducedHeight;
+		reduced.format = nvrhi::Format::RGBA32_FLOAT;
+		reduced.dimension = nvrhi::TextureDimension::Texture2D;
+		reduced.isRenderTarget = true;
+		reduced.initialState = nvrhi::ResourceStates::ShaderResource;
+		reduced.keepInitialState = true;
+		reduced.debugName = "lightDiffReduced";
+		lightDiffReduced = device->createTexture( reduced );
+		lightDiffReducedTarget = device->createFramebuffer( nvrhi::FramebufferDesc().addColorAttachment( lightDiffReduced ) );
+		lightDiffReducePipeline = nullptr;
+
+		nvrhi::TextureDesc staging;
+		staging.width = reducedWidth;
+		staging.height = reducedHeight;
+		staging.format = nvrhi::Format::RGBA32_FLOAT;
+		staging.dimension = nvrhi::TextureDimension::Texture2D;
+		staging.debugName = "lightDiffStaging";
+		for( int i = 0; i < 3; i++ )
+		{
+			lightDiffStaging[i] = device->createStagingTexture( staging, nvrhi::CpuAccessMode::Read );
+			lightDiffStagingFrame[i] = -1;
+		}
+		lightDiffHasReadout = false;										// the numbers of another size are not this view's
+	}
+	if( !lightDiffVS )
+	{
+		lightDiffVS = renderProgManager.GetShader( renderProgManager.FindShader( "builtin/debug/lightdiff", SHADER_STAGE_VERTEX, "", idList<shaderMacro_t>(), true, LAYOUT_DRAW_VERT ) );
+		lightDiffPS = renderProgManager.GetShader( renderProgManager.FindShader( "builtin/debug/lightdiff", SHADER_STAGE_FRAGMENT, "", idList<shaderMacro_t>(), true, LAYOUT_DRAW_VERT ) );
+
+		nvrhi::BindingLayoutDesc layoutDesc;
+		layoutDesc.visibility = nvrhi::ShaderType::All;
+		layoutDesc.bindings =
+		{
+			nvrhi::BindingLayoutItem::PushConstants( 0, sizeof( lightDiffConstants_t ) ),
+			nvrhi::BindingLayoutItem::Texture_SRV( 0 ),
+			nvrhi::BindingLayoutItem::Texture_SRV( 1 )
+		};
+		lightDiffLayout = device->createBindingLayout( layoutDesc );
+		lightDiffShowPipeline = nullptr;
+		lightDiffReducePipeline = nullptr;
+	}
+	if( !lightDiffShowTarget || lightDiffShowColor != color )
+	{
+		lightDiffShowTarget = device->createFramebuffer( nvrhi::FramebufferDesc().addColorAttachment( color ) );
+		lightDiffShowColor = color;
+		lightDiffShowPipeline = nullptr;										// a pipeline is made for a framebuffer's formats
+	}
+	if( !lightDiffShowPipeline || !lightDiffReducePipeline )
+	{
+		nvrhi::GraphicsPipelineDesc psoDesc;
+		psoDesc.bindingLayouts = { lightDiffLayout };
+		psoDesc.VS = lightDiffVS;
+		psoDesc.PS = lightDiffPS;
+		psoDesc.primType = nvrhi::PrimitiveType::TriangleList;
+		psoDesc.renderState.rasterState.setCullNone();
+		psoDesc.renderState.depthStencilState.depthTestEnable = false;
+		psoDesc.renderState.depthStencilState.depthWriteEnable = false;
+		psoDesc.renderState.depthStencilState.stencilEnable = false;
+		if( !lightDiffShowPipeline )
+		{
+			lightDiffShowPipeline = device->createGraphicsPipeline( psoDesc, lightDiffShowTarget );
+		}
+		if( !lightDiffReducePipeline )
+		{
+			lightDiffReducePipeline = device->createGraphicsPipeline( psoDesc, lightDiffReducedTarget );
+		}
+	}
+
+	renderLog.OpenBlock( "Render_LightDiff", colorBlue );
+
+	// 1. the legacy picture
+	commandList->copyTexture( lightDiffImageB, nvrhi::TextureSlice(), color, nvrhi::TextureSlice() );
+
+	// 2. the forward picture: the same two passes over the same depth, the loop on and the twins out. The legacy
+	//    pass left its last light's scissor behind
+	ResetGraphicsStateCache();
+	ResetViewportAndScissorToDefaultCamera( viewDef );
+	GL_Clear( true, false, false, 0, 0.0f, 0.0f, 0.0f, 0.0f );
+	lightDiffPassA = true;
+	ForwardPass( drawSurfs, numDrawSurfs, false );
+	DrawInteractions( viewDef );
+	lightDiffPassA = false;
+	commandList->copyTexture( lightDiffImageA, nvrhi::TextureSlice(), color, nvrhi::TextureSlice() );
+
+	nvrhi::BindingSetDesc bindingSetDesc;
+	bindingSetDesc.bindings =
+	{
+		nvrhi::BindingSetItem::PushConstants( 0, sizeof( lightDiffConstants_t ) ),
+		nvrhi::BindingSetItem::Texture_SRV( 0, lightDiffImageA ),
+		nvrhi::BindingSetItem::Texture_SRV( 1, lightDiffImageB )
+	};
+	nvrhi::BindingSetHandle bindingSet = bindingCache.GetOrCreateBindingSet( bindingSetDesc, lightDiffLayout );
+
+	lightDiffConstants_t constants;
+	constants.viewOrigin[0] = viewDef->viewport.x1;
+	constants.viewOrigin[1] = viewDef->viewport.y1;
+	constants.viewSize[0] = viewDef->viewport.x2 - viewDef->viewport.x1 + 1;
+	constants.viewSize[1] = viewDef->viewport.y2 - viewDef->viewport.y1 + 1;
+	constants.mode = 0;
+	constants.scale = r_lightDiffScale.GetFloat();
+	constants.pad0 = 0;
+	constants.pad1 = 0;
+
+	nvrhi::DrawArguments args;
+	args.instanceCount = 1;
+	args.vertexCount = 3;
+
+	// 3. the difference in the view
+	{
+		const nvrhi::Viewport viewport( ( float )constants.viewOrigin[0], ( float )( constants.viewOrigin[0] + constants.viewSize[0] ),
+										( float )constants.viewOrigin[1], ( float )( constants.viewOrigin[1] + constants.viewSize[1] ), 0.0f, 1.0f );
+		nvrhi::GraphicsState state;
+		state.indexBuffer = {};		// the fork leaves this one member uninitialized
+		state.pipeline = lightDiffShowPipeline;
+		state.framebuffer = lightDiffShowTarget;
+		state.bindings = { bindingSet };
+		state.viewport.addViewport( viewport );
+		state.viewport.addScissorRect( nvrhi::Rect( viewport ) );
+		commandList->setGraphicsState( state );
+		commandList->setPushConstants( &constants, sizeof( constants ) );
+		commandList->draw( args );
+	}
+
+	// 4. the reduction: one texel per block of the view, then into this frame's slot of the ring
+	{
+		constants.mode = 1;
+		const int blocksX = ( constants.viewSize[0] + LIGHTDIFF_BLOCK - 1 ) / LIGHTDIFF_BLOCK;
+		const int blocksY = ( constants.viewSize[1] + LIGHTDIFF_BLOCK - 1 ) / LIGHTDIFF_BLOCK;
+		const nvrhi::Viewport viewport( 0.0f, ( float )Min( blocksX, reducedWidth ), 0.0f, ( float )Min( blocksY, reducedHeight ), 0.0f, 1.0f );
+		nvrhi::GraphicsState state;
+		state.indexBuffer = {};
+		state.pipeline = lightDiffReducePipeline;
+		state.framebuffer = lightDiffReducedTarget;
+		state.bindings = { bindingSet };
+		state.viewport.addViewport( viewport );
+		state.viewport.addScissorRect( nvrhi::Rect( viewport ) );
+		commandList->setGraphicsState( state );
+		commandList->setPushConstants( &constants, sizeof( constants ) );
+		commandList->draw( args );
+
+		// a gap ( the view or the lists were off for a frame or more ): the slots written before it are not "two
+		// passes ago" any more, and the last read-out is not this stretch's
+		const int sinceLast = llv->viewFrame - lightDiffViewFrame;
+		if( sinceLast < 0 || sinceLast > 1 )
+		{
+			for( int i = 0; i < 3; i++ )
+			{
+				lightDiffStagingFrame[i] = -1;
+			}
+			lightDiffHasReadout = false;
+		}
+		lightDiffViewFrame = llv->viewFrame;
+
+		const int slot = lightDiffFrame % 3;
+		commandList->copyTexture( lightDiffStaging[slot], nvrhi::TextureSlice(), lightDiffReduced, nvrhi::TextureSlice() );
+		lightDiffStagingFrame[slot] = lightDiffFrame;
+
+		// the slot written two passes ago: the GPU has long finished it
+		const int read = ( lightDiffFrame + 1 ) % 3;
+		if( lightDiffStagingFrame[read] >= 0 && lightDiffStagingFrame[read] == lightDiffFrame - 2 )
+		{
+			size_t rowPitch = 0;
+			const byte* data = ( const byte* )device->mapStagingTexture( lightDiffStaging[read], nvrhi::TextureSlice(), nvrhi::CpuAccessMode::Read, &rowPitch );
+			if( data != NULL )
+			{
+				double sum = 0.0;
+				double sumLegacy = 0.0;
+				double count = 0.0;
+				float maxDiff = 0.0f;
+				for( int y = 0; y < Min( blocksY, reducedHeight ); y++ )
+				{
+					const float* row = ( const float* )( data + y * rowPitch );
+					for( int x = 0; x < Min( blocksX, reducedWidth ); x++ )
+					{
+						sum += row[x * 4 + 0];
+						maxDiff = Max( maxDiff, row[x * 4 + 1] );
+						sumLegacy += row[x * 4 + 2];
+						count += row[x * 4 + 3];
+					}
+				}
+				device->unmapStagingTexture( lightDiffStaging[read] );
+				if( count > 0.0 )
+				{
+					lightDiffMean = ( float )( sum / count );
+					lightDiffMax = maxDiff;
+					lightDiffLegacyMean = ( float )( sumLegacy / count );
+					lightDiffHasReadout = true;
+					if( llv->log )
+					{
+						common->Printf( "lightdiff: frame %d mean %.7f max %.6f legacy mean %.5f\n", llv->viewFrame, lightDiffMean, lightDiffMax, lightDiffLegacyMean );
+					}
+				}
+			}
+		}
+		lightDiffFrame++;
+	}
+	pc.c_lightDiffValid = lightDiffHasReadout ? 1 : 0;
+	pc.c_lightDiffMean = lightDiffMean;
+	pc.c_lightDiffMax = lightDiffMax;
+	pc.c_lightDiffLegacyMean = lightDiffLegacyMean;
+
+	renderLog.CloseBlock();
+	// the engine's own state cache knows nothing of these draws
 	ResetGraphicsStateCache();
 }

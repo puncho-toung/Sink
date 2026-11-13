@@ -1197,6 +1197,18 @@ void idRenderBackend::DrawSingleInteraction( drawInteraction_t* din, bool useFas
 	const textureUsage_t specUsage = din->specularImage->GetUsage();
 
 	// ---- TRACK F: bind the forward program ( F36 ) ----
+	// A view surface that lists lights is drawn by the forward program: the ambient term that the two branches
+	// below set up, and in the same shader the surface's listed lights. Its lane rpSurfLights says which. The
+	// program itself is bound after the branches, in place of the ambient program they bind. A material the
+	// frontend lists gets exactly one interaction here ( one bump, one diffuse, one specular stage ), so the
+	// surface is drawn once. viewDef->listsBuilt, never the cvar ( C3 )
+	const bool forwardSurf = useIBL && viewDef->listsBuilt && din->surf->lightList != NULL && din->surf->lightList->run != NULL;
+	if( forwardSurf )
+	{
+		float surfLights[4];
+		R_LightListDrawParms( *din->surf->lightList, surfLights );
+		renderProgManager.SetUniformValue( RENDERPARM_SURFLIGHTS, surfLights );
+	}
 	// ---- END TRACK F ----
 	// RB begin
 	if( useIBL && din->surf->area != NULL && r_useLightGrid.GetBool() )
@@ -1666,6 +1678,14 @@ void idRenderBackend::DrawSingleInteraction( drawInteraction_t* din, bool useFas
 	}
 	// RB end
 
+	// ---- TRACK F: the forward program takes the place of the ambient program bound above ( F36 ) ----
+	if( forwardSurf )
+	{
+		const bool pbr = ( specUsage == TD_SPECULAR_PBR_RMAO || specUsage == TD_SPECULAR_PBR_RMAOD );
+		renderProgManager.BindShader_Forward( din->surf->jointCache != 0, pbr, din->surf->area != NULL && r_useLightGrid.GetBool() );
+	}
+	// ---- END TRACK F ----
+
 	// texture 0 will be the per-surface bump map
 	GL_SelectTexture( INTERACTION_TEXUNIT_BUMP );
 	din->bumpImage->Bind();
@@ -1782,6 +1802,13 @@ void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const view
 	for( const drawSurf_t* walk = surfList; walk != NULL; walk = walk->nextOnLight )
 	{
 		const idMaterial* surfaceShader = walk->material;
+
+		// track F ( F2, D49 ): the difference view's forward picture: the loop lights the listed pairs, so their
+		// twins, the lit surfaces kept for the legacy picture, stay out
+		if( lightDiffPassA && walk->lightList == &lightListTwinMark )
+		{
+			continue;
+		}
 
 		// X0 ( D83 ): the caller says which side of the SS_FAR split this chain draws
 		if( sortFilter == INTERACTION_SORT_BELOW_FAR && surfaceShader->GetSort() >= SS_FAR )
@@ -2310,7 +2337,10 @@ void idRenderBackend::AmbientPass( const drawSurf_t* const* drawSurfs, int numDr
 		return;
 	}
 
-	renderLog.OpenMainBlock( fillGbuffer ? MRB_FILL_GEOMETRY_BUFFER : MRB_AMBIENT_PASS );
+	// track F ( F2 ): in a view with light lists this pass is the forward pass ( the lit surfaces' ambient term and
+	// their listed lights in one draw ), timed as such: the HUD's Forward row
+	const renderLogMainBlock_t litBlock = ( viewDef->listsBuilt && ( viewDef->renderView.rdflags & RDF_IRRADIANCE ) == 0 ) ? MRB_FORWARD_PASS : MRB_AMBIENT_PASS;
+	renderLog.OpenMainBlock( fillGbuffer ? MRB_FILL_GEOMETRY_BUFFER : litBlock );
 	renderLog.OpenBlock( fillGbuffer ? "Fill_GeometryBuffer" : "Render_AmbientPass", colorBlue );
 
 	// make sure rpWindowCoord is set even without post processing surfaces in the view
@@ -2368,7 +2398,7 @@ void idRenderBackend::AmbientPass( const drawSurf_t* const* drawSurfs, int numDr
 		SetFragmentParm( RENDERPARM_ALPHA_TEST, vec4_zero.ToFloatPtr() );
 
 		renderLog.CloseBlock();
-		renderLog.CloseMainBlock( fillGbuffer ? MRB_FILL_GEOMETRY_BUFFER : MRB_AMBIENT_PASS );
+		renderLog.CloseMainBlock( fillGbuffer ? MRB_FILL_GEOMETRY_BUFFER : litBlock );
 		return;
 	}
 
@@ -2574,6 +2604,13 @@ void idRenderBackend::AmbientPass( const drawSurf_t* const* drawSurfs, int numDr
 			inter.specularImage = surfaceMaterial->GetFastPathSpecularImage();
 			inter.diffuseImage = surfaceMaterial->GetFastPathDiffuseImage();
 
+			// track F ( F2 ): the surfaces come in sort order here, not fast path first as in RenderInteractions, so
+			// a surface of the slow path drawn before this one left ITS texture matrices, vertex colour and modifiers
+			// behind. The forward loop multiplies its lights by those modifiers. ( r_skipInteractionFastPath 0 only )
+			RB_SetupForFastPathInteractions( diffuseColor, specularColor );
+#if BLEND_NORMALS
+			GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO | GLS_DEPTHMASK | GLS_DEPTHFUNC_EQUAL );	// and the state: a vertex-coloured surface of the slow path leaves the additive one
+#endif
 			DrawSingleInteraction( &inter, true, useIBL, false );
 
 			renderLog.CloseBlock();
@@ -2751,15 +2788,20 @@ void idRenderBackend::AmbientPass( const drawSurf_t* const* drawSurfs, int numDr
 	renderProgManager.Unbind();
 
 	renderLog.CloseBlock();
-	renderLog.CloseMainBlock( fillGbuffer ? MRB_FILL_GEOMETRY_BUFFER : MRB_AMBIENT_PASS );
+	renderLog.CloseMainBlock( fillGbuffer ? MRB_FILL_GEOMETRY_BUFFER : litBlock );
 }
 
 /*
 ==================
 idRenderBackend::ForwardPass
 
-X0 seam ( H1, D37 ): the lit opaque pass and, from F4 on, the lit translucent pass. Until track F fills it
-the opaque call is the ambient pass and the translucent call draws nothing. It opens no main block.
+X0 seam ( H1, D37 ): the lit opaque pass and, from F4 on, the lit translucent pass. The translucent call draws
+nothing yet. It opens no main block.
+
+F2: the opaque call is the ambient pass's loop, in which a surface that lists lights is drawn by the forward
+program instead of the ambient program ( DrawSingleInteraction ). Here, once per view, what that program needs
+beyond the ambient pass's own parms and images: the view's lanes and the two image units the ambient pass
+never binds. A view without lists ( viewDef->listsBuilt false ) is the ambient pass as it was.
 ==================
 */
 void idRenderBackend::ForwardPass( const drawSurf_t* const* drawSurfs, int numDrawSurfs, bool translucent )
@@ -2768,6 +2810,38 @@ void idRenderBackend::ForwardPass( const drawSurf_t* const* drawSurfs, int numDr
 	{
 		return;
 	}
+
+	// ---- TRACK F ( F2 ): the forward program's lanes and images of this view ----
+	const lightListView_t* llv = viewDef->lightListView;
+	if( viewDef->listsBuilt && llv != NULL )
+	{
+		float zbinParms[4];
+		float zbinScale[4];
+		R_LightListViewParms( llv, zbinParms, zbinScale );
+		renderProgManager.SetUniformValue( RENDERPARM_ZBINPARMS, zbinParms );
+		renderProgManager.SetUniformValue( RENDERPARM_ZBINSCALE, zbinScale );
+		// the tiles count from the view's own corner; the surface's stage colours reach the loop times r_lightScale
+		// ( the ambient pass's modifiers ), which a record's colour already holds; in the twin mode the legacy pass
+		// lights the listed pairs and the loop adds nothing
+		const float forwardView[4] = { ( float )viewDef->viewport.x1, ( float )viewDef->viewport.y1, 1.0f / Max( llv->lightScale, 0.001f ), ( llv->twin && !lightDiffPassA ) ? 1.0f : 0.0f };
+		renderProgManager.SetUniformValue( RENDERPARM_FORWARDVIEW, forwardView );
+		// the shadow lookup's constants, each as RenderInteractions sets its own for an atlas light: the bias scales
+		// ( rpScreenCorrectionFactor.w there ), the sample count ( rpJitterTexScale.w ), the texel step ( 1 / atlas
+		// size times the jitter scale: rpScreenCorrectionFactor.z x rpJitterTexScale.x ), the noise scale and the
+		// frame index ( rpJitterTexOffset.x and .w )
+		const float shadowBias[4] = { r_shadowMapSunDepthBiasScale.GetFloat(), r_shadowMapRegularDepthBiasScale.GetFloat(), ( float )r_shadowMapSplits.GetInteger(), 0.0f };
+		renderProgManager.SetUniformValue( RENDERPARM_SHADOWBIAS, shadowBias );
+		const float shadowFilter[4] = { ( float )r_shadowMapSamples.GetInteger(), ( 1.0f / r_shadowMapAtlasSize.GetInteger() ) * r_shadowMapJitterScale.GetFloat(),
+										1.0f / globalImages->blueNoiseImage256->GetUploadWidth(), r_shadowMapRandomizeJitter.GetBool() ? ( float )( tr.frameCount % 64 ) : 0.0f
+									  };
+		renderProgManager.SetUniformValue( RENDERPARM_SHADOWFILTER, shadowFilter );
+		// the forward layout reads units 5 and 6 at every draw
+		GL_SelectTexture( INTERACTION_TEXUNIT_SHADOWMAPS );
+		globalImages->shadowAtlasImage->Bind();
+		GL_SelectTexture( INTERACTION_TEXUNIT_JITTER );
+		globalImages->blueNoiseImage256->Bind();
+	}
+	// ---- END TRACK F ----
 
 	AmbientPass( drawSurfs, numDrawSurfs, false );
 }
@@ -6566,6 +6640,10 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 	//-------------------------------------------------
 	DrawInteractions( _viewDef );
 	// ---- TRACK F: the twin difference passes ( D49, D79 ) ----
+	if( is3D )
+	{
+		LightDiffPass( drawSurfs, numDrawSurfs );		// r_showLightDiff 2 in a listing view; returns at once otherwise
+	}
 	// ---- END TRACK F ----
 
 	//-------------------------------------------------

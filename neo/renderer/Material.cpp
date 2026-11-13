@@ -94,6 +94,7 @@ void idMaterial::CommonInit()
 	contentFlags = CONTENTS_SOLID;
 	surfaceFlags = SURFTYPE_NONE;
 	materialFlags = 0;
+	forwardTag = 0;
 	sort = SS_BAD;
 	subViewType = SUBVIEW_NONE;
 	stereoEye = 0;
@@ -2817,6 +2818,20 @@ void idMaterial::ParseMaterial( idLexer& src )
 		else if( !token.Icmp( "forward" ) )
 		{
 			SetMaterialFlag( MF_FORWARD );
+			// forward [ n ]: the optional tag on the same line routes the surface by hand. The parse stores the number
+			// and gives it no meaning ( this file is also in rbdmap ): the light lists' switch reads it, and counts and
+			// warns about a value it does not know, so a new tag value never touches this file
+			if( src.ReadTokenOnLine( &token ) )
+			{
+				if( token.type == TT_NUMBER )
+				{
+					forwardTag = ( byte )idMath::ClampInt( 0, 255, token.GetIntValue() );	// a value past a byte must not wrap onto a tag that exists
+				}
+				else
+				{
+					src.UnreadToken( &token );
+				}
+			}
 			continue;
 		}
 		// lightFallofImage <imageprogram>
