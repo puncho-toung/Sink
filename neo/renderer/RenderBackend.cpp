@@ -3855,7 +3855,8 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 	{
 		// TRACK S ( S2a ): a stable order, size class first and then the order of the view's lights. Largest
 		// first is what the quad tree needs; a stable order gives a light the same tile from frame to frame
-		// while the view's lights and their order hold ( S3b's allocator keeps tiles across changes )
+		// while the view's lights and their order hold ( these tiles are handed out anew every frame; only
+		// the cache atlas keeps places from frame to frame )
 		int numSorted = 0;
 		for( int size = shadowMapResolutions[0]; size >= shadowMapResolutions[MAX_SHADOWMAP_RESOLUTIONS - 1]; size >>= 1 )
 		{
@@ -3927,6 +3928,97 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 			pc.c_shadowAtlasUsage += ( imageSize * imageSize );
 		}
 	}
+
+	// ---- TRACK S ( S3b ): every copy of this view before any light is drawn, so that the copies follow one
+	// another on one pipeline and the engine's state cache is reset once instead of once per unit ( reviews
+	// SF P1, S3aF P2 ). The tiles are disjoint and the atlas was cleared above, so it makes no difference to
+	// the image whether a unit's copy comes before another unit's active casters. tileCopied[] says, per tile
+	// in the order of the collection loop above, whether its static map was copied; a tile that was not ( it
+	// did not fit, there is no cache image, or the map the frontend expects is not in the cache ) is drawn
+	// from the chain in the light loop below, as for a light without a cache. The four tests and the sides
+	// must stay in step with the two other loops of this function
+	byte* tileCopied = NULL;
+	if( snapshot && viewDef->numShadowOps > 0 && inputSizes.Num() > 0 )
+	{
+		tileCopied = ( byte* )_alloca( inputSizes.Num() );
+		memset( tileCopied, 0, inputSizes.Num() );
+
+		renderLog.OpenBlock( "Render_ShadowCacheCopies", colorYellow );
+
+		int tileIndex = 0;
+		int numCopies = 0;
+		for( const viewLight_t* vLight = viewDef->viewLights; vLight != NULL; vLight = vLight->next )
+		{
+			if( vLight->lightShader->IsFogLight() || vLight->lightShader->IsBlendLight() )
+			{
+				continue;
+			}
+			if( !R_ViewLightIsLit( vLight ) || !R_ViewLightHasShadowMap( vLight ) )
+			{
+				continue;
+			}
+			const int numSides = vLight->parallel ? numCascades : ( ( vLight->pointLight && singleSide == -1 ) ? 6 : 1 );
+			if( vLight->shadowOp == 0 )
+			{
+				tileIndex += numSides;		// drawn without the cache
+				continue;
+			}
+			// a cached light is the primary sun, a point light with six faces or a spot light: its tiles
+			// are in side order, and so are its ops
+			for( int slice = 0; slice < numSides; slice++, tileIndex++ )
+			{
+				if( outputPositions[tileIndex].x == -1 || outputPositions[tileIndex].y == -1 )
+				{
+					continue;		// didn't fit into the atlas: the light loop counts it
+				}
+				const shadowCacheOp_t& cacheOp = viewDef->shadowOps[vLight->shadowOp - 1 + slice];
+				idImage* cacheImage = ( cacheOp.target < 0 ) ? globalImages->shadowCacheAtlasImage : globalImages->shadowCacheCascadeImage[cacheOp.target];
+				if( cacheImage->GetTextureHandle().Get() == NULL )
+				{
+					// no cache image to copy from ( it failed to create ): the static pass skipped the unit too
+					continue;
+				}
+				if( cacheOp.serial == 0 || shadowCacheBuilt[R_ShadowCacheSlot( cacheOp )] != cacheOp.serial )
+				{
+					// S3a: the map the frontend expects is not in the cache ( the frame that built it was never
+					// executed, or the cache images were lost; serial 0 is the empty stamp, which a build only
+					// gets after the 2^32 wrap ). The frontend is told ( D74 )
+					shadowCacheMissed[shadowCacheMisses & 127] = cacheOp.serial;
+					shadowCacheMisses++;
+					continue;
+				}
+
+				if( cacheOp.size != outputSizes[tileIndex] )
+				{
+					// a cached map is shown only at the tile's own size ( copied reduced it keeps the polygon
+					// offset of its own texels and shows acne ). The frontend asks for nothing else; should it
+					// ever, the unit is drawn from the chain
+					continue;
+				}
+
+				shadowCacheCopyConstants_t constants;
+				memset( &constants, 0, sizeof( constants ) );
+				constants.tileOrigin[0] = outputPositions[tileIndex].x;
+				constants.tileOrigin[1] = outputPositions[tileIndex].y;
+				constants.sourceOrigin[0] = cacheOp.x;
+				constants.sourceOrigin[1] = cacheOp.y;
+				constants.res = cacheOp.size;
+				constants.tileRes = outputSizes[tileIndex];
+				ShadowCacheCopyDraw( globalFramebuffers.shadowAtlasFBO->GetApiObject(), 0, cacheImage->GetTextureHandle().Get(), constants );
+				tileCopied[tileIndex] = 1;
+				numCopies++;
+			}
+		}
+
+		renderLog.CloseBlock();
+
+		if( numCopies > 0 )
+		{
+			// the copies set the device's state behind the engine's back ( D34 )
+			ResetGraphicsStateCache();
+		}
+	}
+	// ---- END TRACK S ----
 
 	//
 	// for each light, perform shadowing to a big atlas Framebuffer
@@ -4019,6 +4111,7 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 			vLight->imageAtlasOffset[ slice ].x = outputPositions[ shadowIndex ].x;
 			vLight->imageAtlasOffset[ slice ].y = outputPositions[ shadowIndex ].y;
 
+			const int tileIndex = shadowIndex;		// TRACK S ( S3b ): this side's tile, as the copy loop counted it
 			shadowIndex++;
 
 			if( vLight->imageAtlasOffset[ slice ].x == -1 || vLight->imageAtlasOffset[ slice ].y == -1 )
@@ -4029,58 +4122,22 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 				continue;
 			}
 
-			const shadowCacheOp_t* cacheOp = ( snapshot && vLight->shadowOp != 0 ) ? &viewDef->shadowOps[vLight->shadowOp - 1 + slice] : NULL;
-
-			idImage* cacheImage = NULL;
-			if( cacheOp != NULL )
+			if( tileCopied != NULL && tileCopied[tileIndex] != 0 )
 			{
-				cacheImage = ( cacheOp->target < 0 ) ? globalImages->shadowCacheAtlasImage : globalImages->shadowCacheCascadeImage[cacheOp->target];
-				if( cacheImage->GetTextureHandle().Get() == NULL )
-				{
-					// no cache image to copy from ( it failed to create ): the static pass skipped the unit too,
-					// so every caster that reaches the side is drawn into the tile, as before the cache
-					cacheOp = NULL;
-				}
-				else if( cacheOp->serial == 0 || shadowCacheBuilt[R_ShadowCacheSlot( *cacheOp )] != cacheOp->serial )
-				{
-					// S3a: the map the frontend expects is not in the cache ( the frame that built it was never
-					// executed, or the cache images were lost; serial 0 is the empty stamp, which a build only
-					// gets after the 2^32 wrap ). Every caster of the chain that reaches the side
-					// is drawn into the tile, as for a light without a cache, and the frontend is told ( D74 )
-					shadowCacheMissed[shadowCacheMisses & 127] = cacheOp->serial;
-					shadowCacheMisses++;
-					cacheOp = NULL;
-				}
-			}
-
-			if( cacheOp != NULL )
-			{
-				// TRACK S ( S2c ): a cached unit: the copy of its static map into the tile, then its active
-				// casters on top. Shading reads shadowV and shadowP whether or not a caster is drawn:
-				// ShadowMapPassFast sets them when it runs, so they are set here only when it does not
+				// TRACK S ( S2c, S3b ): a cached unit: its static map was copied into the tile before this
+				// loop; its active casters are drawn on top. Shading reads shadowV and shadowP whether or not
+				// a caster is drawn: ShadowMapPassFast sets them when it runs, so they are set here only when
+				// it does not
 				const int bit = 1 << slice;
-				const bool activeCasters = ( vLight->shadowActiveSides & bit ) != 0;
-				if( !activeCasters )
+				if( ( vLight->shadowActiveSides & bit ) != 0 )
+				{
+					ShadowMapPassFast( vLight->globalShadows, vLight, side, true, vLight->shadowCasterBits, bit | SCB_STATIC, bit );
+				}
+				else
 				{
 					idRenderMatrix lightProjectionRenderMatrix;
 					idRenderMatrix lightViewRenderMatrix;
 					SetupShadowMapMatrices( vLight, side, lightProjectionRenderMatrix, lightViewRenderMatrix );
-				}
-
-				shadowCacheCopyConstants_t constants;
-				memset( &constants, 0, sizeof( constants ) );
-				constants.tileOrigin[0] = vLight->imageAtlasOffset[slice].x;
-				constants.tileOrigin[1] = vLight->imageAtlasOffset[slice].y;
-				constants.sourceOrigin[0] = cacheOp->x;
-				constants.sourceOrigin[1] = cacheOp->y;
-				constants.res = cacheOp->size;
-				constants.tileRes = vLight->imageSize.x;
-				ShadowCacheCopyDraw( globalFramebuffers.shadowAtlasFBO->GetApiObject(), 0, cacheImage->GetTextureHandle().Get(), constants );
-				ResetGraphicsStateCache();
-
-				if( activeCasters )
-				{
-					ShadowMapPassFast( vLight->globalShadows, vLight, side, true, vLight->shadowCasterBits, bit | SCB_STATIC, bit );
 				}
 			}
 			else if( snapshot && vLight->shadowCasterBits != NULL )

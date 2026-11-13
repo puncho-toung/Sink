@@ -194,6 +194,14 @@ struct performanceCounters_t
 	int		c_viewEntsUnder16px;
 	int		c_viewEntsBeyond8k;
 	// ---- TRACK S: shadow cache counters ----
+	// S3b, N15: all six are written by the main view's decide pass ( R_ShadowCacheDecide ) at r_shadowCache 2;
+	// with two main views in a frame the last one's stand; nothing is written while shadows or the atlas are off
+	int		c_shadowCacheUnits;			// cached units emitted for the view ( the sun's cascades included )
+	int		c_shadowCacheLightsBuilt;	// lights whose static maps are drawn this frame ( builds and repairs )
+	int		c_shadowCacheLightsWaiting;	// lights drawn without the cache: no place, or their maps wait for a turn
+	int		c_shadowCacheEvicted;		// records that gave their place in the cache atlas up this frame
+	int		c_shadowCacheCellsUsed;		// cells ( 128 x 128 texels ) of the cache atlas in use
+	int		c_shadowCacheCells;			// cells of the cache atlas; 0 = the cache did not run this frame
 	// ---- END TRACK S ----
 	// ---- TRACK F: light lists ----
 	// N15: each track says per counter whether it counts the main view only or sums over the frame's views

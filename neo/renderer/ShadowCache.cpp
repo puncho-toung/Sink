@@ -36,12 +36,12 @@ If you have questions concerning this license or the applicable additional terms
 extern DeviceManager* deviceManager;
 
 idCVar r_shadowCache( "r_shadowCache", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "shadow cache: 0 = off ( today's path ), 1 = the primary sun's cascades use a map-anchored snapped window of constant size, 2 = also the frontend's snapshot, the atlas plan, the per-side caster cull, and static casters drawn through the cache images ( kept between frames with r_shadowCacheReuse 1 )", 0, 2 );
-idCVar r_shadowCacheLog( "r_shadowCacheLog", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "print the primary sun's cascade windows of the main view whenever one changes" );
+idCVar r_shadowCacheLog( "r_shadowCacheLog", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "1 = print the primary sun's cascade windows of the main view whenever one changes, and the shadow cache's counters every 64 frames; 2 = also one line per local light of the view with those counters", 0, 2 );
 idCVar r_shadowCacheSize( "r_shadowCacheSize", "4096", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE | CVAR_NEW, "side of the shadow cache atlas in texels: 8192, or 4096 for any other value; read when the cache images are created", 4096, 8192 );
 
 idCVar r_shadowCacheReuse( "r_shadowCacheReuse", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "with r_shadowCache 2: 1 = a local light's static shadow maps are drawn once and kept until something in them changes, 0 = every static map is drawn again every frame ( the comparison image for the cache )" );
 idCVar r_shadowCacheStaticFrames( "r_shadowCacheStaticFrames", "300", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "frames an entity must go unchanged before its shadow is drawn into a static shadow map", 1, 100000 );
-idCVar r_shadowCacheBudget( "r_shadowCacheBudget", "12", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "static shadow maps built per frame for lights that have no usable map yet; maps a change made stale are rebuilt at once and do not count", 1, 100000 );
+idCVar r_shadowCacheBudget( "r_shadowCacheBudget", "10000", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "what the static shadow maps built in one frame for lights that wait for them may cost: per side of a light, 100 plus the cells of cache atlas ( 128 x 128 texels ) times the casters drawn into them, so a point light at 256 with 35 casters costs 1440; the first build of a frame is never refused; maps a change made stale are rebuilt at once and do not count", 1, 100000000 );
 idCVar r_shadowCacheFlush( "r_shadowCacheFlush", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "set to 1 to throw every cached shadow map and its place away once; the engine sets it back to 0" );
 
 extern idCVar r_useAreasConnectedForShadowCulling;		// tr_frontend_addlights.cpp
@@ -495,6 +495,17 @@ static bool R_ShadowCacheChangesSince( const shadowCacheChanges_t& c, int change
 #define SHADOWCACHE_MAX_LIGHTS		4096				// records are indexed by idRenderLightLocal::index; a light beyond this is drawn uncached
 #define SHADOWCACHE_RETRY_FRAMES	64					// a light the atlas has no room for asks for a place again on this frame
 #define SHADOWCACHE_CAP_RETRY_FRAMES	16				// a frame in which the contacted-light cap was hit: no full gather for this many frames
+#define SHADOWCACHE_VALUE_MARGIN_NUM	5				// S3b: a light of this view gives its place up only to one whose maps are worth
+#define SHADOWCACHE_VALUE_MARGIN_DEN	4				// 5 / 4 of its own, so that two lights of nearly equal value do not take turns
+#define SHADOWCACHE_DEFAULT_CASTERS		32				// S3b: the casters a turn is priced with while a light's chain has never been counted
+#define SHADOWCACHE_RECOUNT_FRAMES		256				// S3b: a count at least this old, and as old as the static interval, is taken again before it refuses a light a turn
+#define SHADOWCACHE_PICK_HOLD_FRAMES	30				// S3b: frames the engine's pick of a size must hold before maps of another size are built again at it
+#define SHADOWCACHE_SIDE_COST			100				// S3b: what one side of a build costs before any caster, in the budget's units ( its clear, its pass, the state changes around them )
+#define SHADOWCACHE_KEY_FREE			( ( int64 ) - 1 )		// S3b: the keys of R_ShadowCacheVictimKey and R_ShadowCachePlace: a block nobody holds,
+#define SHADOWCACHE_KEY_KEPT			( ( int64 ) - 2 )		// a record that may not give way,
+#define SHADOWCACHE_KEY_IN_USE			( ( int64 )1 << 40 )	// and the base of the keys of maps in use: above every frame stamp
+
+static_assert( SHADOWCACHE_MAX_LIGHTS < 65536 && SHADOWCACHE_MAX_CELLS <= 32768, "shadowCacheState_t::cellOwner holds a record's index plus one, shadowCacheLightRec_t::cell a cell" );
 
 // One per light of the map's world that has been a cache candidate, indexed by idRenderLightLocal::index.
 struct shadowCacheLightRec_t
@@ -506,15 +517,19 @@ struct shadowCacheLightRec_t
 	int				shapeFrame;		// tr.frameCount of the light's last change of shape ( the light hook ); SHADOWCACHE_LONG_AGO = none seen
 	int				lastUsedFrame;	// tr.frameCount of the last decide pass that had the light as a cache candidate
 	int				wantSince;		// tr.frameCount since which the maps wait to be built or brought up to date; 0 = they do not wait
-	int				retryFrame;		// no place was free: the light is drawn uncached, without a full gather, until this frame
+	int				retryFrame;		// no place was free for maps of the engine's pick, or the contacted-light cap was hit: no full gather and no build until this frame
 	int				epoch;			// shadowCacheState.epoch the maps were built under
 	unsigned int	doorSig;		// R_ShadowCacheDoorSignature when the maps were built
-	short			firstCell;		// Z-order cell of side 0 in the cache atlas; -1 = no place
+	int				casters;		// S3b: surfaces of the chain that were static when the light last gathered in full ( R_ShadowCacheCountStatic ): what its maps save each frame and what a build of them costs; -1 = never counted
+	int				countFrame;		// S3b: tr.frameCount of that count. An old count is taken again before it can keep the light without a place: what has come to rest since is static now ( pass 4 of R_ShadowCacheEmitOps )
+	int				pickFrame;		// S3b: tr.frameCount of the decide pass that first saw the engine pick the size in 'pick', or SHADOWCACHE_PICK_HOLD_FRAMES before it for a light that had been out of the main view that long: maps of another size are built again only when the pick has held ( SHADOWCACHE_PICK_HOLD_FRAMES )
+	short			cell[6];		// S3b: Z-order cell of each side's block in the cache atlas; meaningful for the first numSides while size != 0
 	short			size;			// side of each map in texels; 0 = no place
 	byte			numSides;
 	bool			valid;			// the maps hold what the record says
 	bool			repair;			// a change made valid maps stale: their rebuild does not wait for the budget ( S83 )
-	byte			pad;
+	bool			granted;		// S3b: the decide pass gave the light a turn: its job gathers in full in the next frame
+	short			pick;			// S3b: the size the engine picked for the light when it was last in a main view ( pass 1 of R_ShadowCacheEmitOps ): maps of another size are not shown, so their place saves nothing
 };
 
 // S3a: the primary sun's static maps, one per cascade. WHICH entities they hold is decided for the
@@ -581,8 +596,13 @@ struct shadowCacheState_t
 	int							totalRebuilt;
 	int							totalRepaired;
 	int							totalEvicted;
+	int							evicted;		// S3b: records that gave their place up in this view's decide pass
+	int							capHit;			// S3b: this view: an entity that can be in a static map touched more lights than the engine keeps per entity ( nothing is built )
+	int							turns;			// S3b: lights given a turn for the next frame
+	int							costBuilt;		// S3b: what this view's budgeted builds cost ( R_ShadowCacheCost )
+	int							cellsUsed;		// S3b: cells of the cache atlas inside a record's place
 	shadowCacheChanges_t		changes;
-	byte						cellUsed[SHADOWCACHE_MAX_CELLS];	// the cache atlas, by Z-order cell
+	unsigned short				cellOwner[SHADOWCACHE_MAX_CELLS];	// the cache atlas, by Z-order cell: the index + 1 of the record whose map covers the cell, 0 = free
 	shadowCacheLightRec_t		recs[SHADOWCACHE_MAX_LIGHTS];
 	shadowCacheSunRec_t			sun;
 };
@@ -596,21 +616,202 @@ static int R_ShadowCacheLastChanged( const idRenderEntityLocal* def )
 	return ( def->lastModifiedFrameNum <= shadowCacheState.mapStartFrame ) ? SHADOWCACHE_LONG_AGO : def->lastModifiedFrameNum;
 }
 
-// Gives the record's place in the cache atlas back; its maps are gone with it.
-static void R_ShadowCacheFreeCells( shadowCacheLightRec_t& rec )
+// S3b: marks every block of the record's place as the record's own, or as free, in the cell map
+static void R_ShadowCacheMarkPlace( const shadowCacheLightRec_t& rec, bool used )
 {
-	if( rec.firstCell >= 0 && rec.size >= SHADOWCACHE_CELL )
+	shadowCacheState_t& s = shadowCacheState;
+	const int span = rec.size / SHADOWCACHE_CELL;
+	const int cells = span * span;
+	const unsigned short owner = ( unsigned short )( used ? ( &rec - s.recs + 1 ) : 0 );
+	for( int i = 0; i < rec.numSides; i++ )
 	{
-		const int span = rec.size / SHADOWCACHE_CELL;
-		memset( &shadowCacheState.cellUsed[rec.firstCell], 0, rec.numSides * span * span );
+		for( int c = 0; c < cells; c++ )
+		{
+			s.cellOwner[rec.cell[i] + c] = owner;
+		}
 	}
-	rec.firstCell = -1;
+	s.cellsUsed += used ? rec.numSides * cells : -( rec.numSides * cells );
+}
+
+// Gives the record's place in the cache atlas back; its maps are gone with it.
+static void R_ShadowCacheFreePlace( shadowCacheLightRec_t& rec )
+{
+	if( rec.size >= SHADOWCACHE_CELL )
+	{
+		R_ShadowCacheMarkPlace( rec, false );
+	}
 	rec.size = 0;
 	rec.numSides = 0;
 	rec.valid = false;
 	rec.retryFrame = 0;		// a light that gave its place back asks for a new one at once ( the flush and an
 							// atlas resize free every place through here; a new map zeroes the records; a
 							// rebuilt or evicted record tries again now; a claimed slot is another light's )
+}
+
+// S3b: what a record's maps are worth ( D77: eviction by value ): the static caster surfaces a cached copy
+// saves from being drawn each frame, per cell of the cache atlas the maps take, times 256 so that integers
+// compare. A count that is not known ( -1 ) is worth 0.
+static int R_ShadowCacheValue( int casters, int size, int sides )
+{
+	const int span = size / SHADOWCACHE_CELL;
+	return ( Max( 0, casters ) * 256 ) / ( sides * span * span );
+}
+
+// S3b: the a-priori price of building a light's static maps ( D77: texels times casters; the frame's GPU
+// time is five frames old when the decide pass could read it ): per side, the cells of cache atlas drawn
+// into times the surfaces drawn into them, and a fixed part for what a side costs before any caster ( its
+// clear, its pass, the state changes around them ).
+static int R_ShadowCacheCost( int casters, int size, int sides )
+{
+	const int span = size / SHADOWCACHE_CELL;
+	return sides * ( SHADOWCACHE_SIDE_COST + span * span * Max( 1, casters ) );
+}
+
+// S3b: the order in which records give their places up to a newcomer whose maps would be worth 'value': the
+// smaller key first, or SHADOWCACHE_KEY_KEPT for a record that may not give way. Maps that save nothing now
+// always may, the longest unused first: those of a light that is not in this view, and maps that are not
+// the size the engine picks now, which are not shown. Then the maps in use, by value, and those only while
+// they are worth less than the newcomer by a margin, so that two lights of nearly equal value do not take
+// turns. Never a map built this frame ( its build is ordered; with 'nextFrame' the question is about the
+// frame after, when that no longer holds ).
+static int64 R_ShadowCacheVictimKey( const shadowCacheLightRec_t& victim, int value, bool nextFrame )
+{
+	if( victim.lastUsedFrame != tr.frameCount || victim.size != victim.pick )
+	{
+		return ( int64 )victim.lastUsedFrame;
+	}
+	if( !nextFrame && victim.valid && victim.heldThrough == tr.frameCount )
+	{
+		return SHADOWCACHE_KEY_KEPT;
+	}
+	const int victimValue = R_ShadowCacheValue( victim.casters, victim.size, victim.numSides );
+	if( victimValue * SHADOWCACHE_VALUE_MARGIN_NUM >= value * SHADOWCACHE_VALUE_MARGIN_DEN )
+	{
+		return SHADOWCACHE_KEY_KEPT;
+	}
+	return SHADOWCACHE_KEY_IN_USE + victimValue;
+}
+
+/*
+=====================
+R_ShadowCachePlace
+
+S3b: a place in the cache atlas for the record's maps: 'sides' blocks of 'size' texels, for maps
+worth 'value'. The cells of a place the record already has count as free: its maps are drawn
+again in any case. With 'commit' false nothing is changed: the answer says whether the place
+could be had ( pass 4 of R_ShadowCacheEmitOps asks so, with 'nextFrame', before it gives a
+light a turn ).
+
+The atlas is handed out in square blocks of 1, 4, 16 or 64 cells, each at a multiple of its own
+cell count in Z order: the nodes of a quadtree, so a block never straddles a larger one. This
+is a buddy allocator kept as the cell map alone: a node is free when all of its cells are, and
+four free siblings are a free parent with no bookkeeping.
+The map holds, per cell, the record whose map covers it.
+
+One walk over the blocks of the size asked for finds the free ones, the lowest first ( on an
+empty atlas this places the maps exactly as S2's per-frame assignment did ), and, where those
+do not suffice, the occupied blocks that cost least: a block costs what its dearest occupant
+is worth ( R_ShadowCacheVictimKey: maps that save nothing now before any in use, then by
+value ), and is no candidate when one of its occupants may not give its place up ( a light
+of this view only when it is worth less than the newcomer by the margin; S84, D77: no light
+keeps a place because it came first, or because it is in view; frames in flight copy from a
+freed place before any later frame draws into it ). Only the occupants of the blocks taken
+lose their places, and only when all the blocks were found. False = no place, and nothing has
+changed.
+=====================
+*/
+static bool R_ShadowCachePlace( shadowCacheLightRec_t& rec, int size, int sides, int value, bool nextFrame, bool commit )
+{
+	shadowCacheState_t& s = shadowCacheState;
+	const int span = size / SHADOWCACHE_CELL;
+	const int cells = span * span;
+	const unsigned short self = ( unsigned short )( &rec - s.recs + 1 );
+
+	// the 'sides' cheapest blocks so far, in order of cost ( SHADOWCACHE_KEY_FREE first ), then of position
+	short block[6];
+	int64 blockKey[6];
+	int numBlocks = 0;
+	for( int first = 0; first + cells <= s.atlasCells; first += cells )
+	{
+		int64 key = SHADOWCACHE_KEY_FREE;
+		unsigned short lastOwner = 0;		// a map's cells follow one another: its record is asked once
+		for( int c = 0; c < cells && key != SHADOWCACHE_KEY_KEPT; c++ )
+		{
+			const unsigned short owner = s.cellOwner[first + c];
+			if( owner == 0 || owner == self || owner == lastOwner )
+			{
+				continue;
+			}
+			lastOwner = owner;
+			const int64 ownerKey = R_ShadowCacheVictimKey( s.recs[owner - 1], value, nextFrame );
+			key = ( ownerKey == SHADOWCACHE_KEY_KEPT ) ? SHADOWCACHE_KEY_KEPT : Max( key, ownerKey );
+		}
+		if( key == SHADOWCACHE_KEY_KEPT )
+		{
+			continue;		// one of its occupants may not give way
+		}
+		int at = numBlocks;
+		while( at > 0 && blockKey[at - 1] > key )
+		{
+			at--;
+		}
+		if( at >= sides )
+		{
+			continue;		// dearer than all that are kept
+		}
+		for( int k = Min( numBlocks, sides - 1 ); k > at; k-- )
+		{
+			block[k] = block[k - 1];
+			blockKey[k] = blockKey[k - 1];
+		}
+		block[at] = ( short )first;
+		blockKey[at] = key;
+		numBlocks = Min( numBlocks + 1, sides );
+		if( numBlocks == sides && blockKey[sides - 1] == SHADOWCACHE_KEY_FREE )
+		{
+			break;		// free blocks for every side: nothing cheaper follows
+		}
+	}
+	if( numBlocks < sides )
+	{
+		return false;		// nothing has changed
+	}
+	if( !commit )
+	{
+		return true;		// nothing has changed either
+	}
+
+	// the record's own old place first ( its cells may lie in the blocks taken ), then the occupants of
+	// the blocks taken, and nobody else
+	if( rec.size != 0 )
+	{
+		R_ShadowCacheMarkPlace( rec, false );
+	}
+	for( int k = 0; k < sides; k++ )
+	{
+		if( blockKey[k] == SHADOWCACHE_KEY_FREE )
+		{
+			continue;
+		}
+		for( int c = 0; c < cells; c++ )
+		{
+			const unsigned short owner = s.cellOwner[block[k] + c];
+			if( owner != 0 )
+			{
+				R_ShadowCacheFreePlace( s.recs[owner - 1] );
+				s.evicted++;
+				s.totalEvicted++;
+			}
+		}
+	}
+	for( int k = 0; k < sides; k++ )
+	{
+		rec.cell[k] = block[k];
+	}
+	rec.size = ( short )size;
+	rec.numSides = ( byte )sides;
+	R_ShadowCacheMarkPlace( rec, true );
+	return true;
 }
 
 // The record of a light of the map's world; NULL when the light can have none. A slot that still holds
@@ -627,64 +828,17 @@ static shadowCacheLightRec_t* R_ShadowCacheClaimRec( const idRenderLightLocal* l
 	{
 		if( rec.uniqueId != 0 )
 		{
-			R_ShadowCacheFreeCells( rec );
+			R_ShadowCacheFreePlace( rec );
 		}
-		memset( &rec, 0, sizeof( rec ) );
+		memset( &rec, 0, sizeof( rec ) );		// size 0: no place
 		rec.uniqueId = light->uniqueId;
-		rec.firstCell = -1;
+		rec.casters = -1;		// never counted
 		// no hook fires when a light is made: one made during play ( a projectile's, a muzzle flash ) counts as
 		// changing shape from the frame it is first met, so nothing is built for it until it has held still
 		rec.shapeFrame = ( light->uniqueId < s.mapStartId ) ? SHADOWCACHE_LONG_AGO : tr.frameCount;
 		s.recsHigh = Max( s.recsHigh, light->index + 1 );
 	}
 	return &rec;
-}
-
-// A place in the cache atlas for sides maps of size texels: consecutive Z-order blocks, the first at a
-// multiple of one block's cell count, so that every block is a square. First fit; -1 = no room.
-static int R_ShadowCacheAllocCells( int size, int sides )
-{
-	const int numCells = shadowCacheState.atlasCells;		// the atlas the places are handed out in, counted by R_ShadowCacheBeginView
-	const int span = size / SHADOWCACHE_CELL;
-	const int cells = span * span;
-	const int need = sides * cells;
-	for( int first = 0; first + need <= numCells; first += cells )
-	{
-		int i = 0;
-		while( i < need && shadowCacheState.cellUsed[first + i] == 0 )
-		{
-			i++;
-		}
-		if( i == need )
-		{
-			memset( &shadowCacheState.cellUsed[first], 1, need );
-			return first;
-		}
-	}
-	return -1;
-}
-
-// Room by eviction: the record whose place went unused longest gives it up; never one of this frame's.
-static bool R_ShadowCacheEvictOne()
-{
-	shadowCacheState_t& s = shadowCacheState;
-	shadowCacheLightRec_t* victim = NULL;
-	for( int i = 0; i < s.recsHigh; i++ )
-	{
-		shadowCacheLightRec_t& rec = s.recs[i];
-		if( rec.uniqueId != 0 && rec.firstCell >= 0 && rec.lastUsedFrame != tr.frameCount
-				&& ( victim == NULL || rec.lastUsedFrame < victim->lastUsedFrame ) )
-		{
-			victim = &rec;
-		}
-	}
-	if( victim == NULL )
-	{
-		return false;
-	}
-	R_ShadowCacheFreeCells( *victim );
-	s.totalEvicted++;
-	return true;
 }
 
 // Which of the light's areas are connected to its own. R_AddSingleLight gathers shadow casters only from
@@ -754,7 +908,7 @@ static bool R_ShadowCacheWantsGather( const idRenderLightLocal* light )
 	const shadowCacheLightRec_t& rec = s.recs[light->index];
 	if( rec.uniqueId != light->uniqueId )
 	{
-		return true;		// never a candidate so far
+		return false;		// S3b: never a candidate so far: the decide pass gives it a record and, in its turn, a full gather
 	}
 	if( tr.frameCount - rec.shapeFrame < r_shadowCacheStaticFrames.GetInteger() )
 	{
@@ -764,9 +918,17 @@ static bool R_ShadowCacheWantsGather( const idRenderLightLocal* light )
 	{
 		return false;		// no place was free: it waits, and need not gather in full while it waits
 	}
-	if( !rec.valid || rec.epoch != s.epoch || rec.wantSince != 0 )
+	// S3b: maps a change made stale are built again at once; every other build waits for the turn the decide
+	// pass gives ( R_ShadowCacheEmitOps, pass 4 ), so the lights that wait do not all gather in full every frame
+	// ( a turn is for the frame after the decide pass that gave it: a light that then is not in the view,
+	// or has no shadow to draw, must not keep gathering in full on an old turn )
+	if( rec.repair || ( rec.granted && rec.lastUsedFrame == tr.frameCount - 1 ) )
 	{
 		return true;
+	}
+	if( !rec.valid || rec.epoch != s.epoch )
+	{
+		return false;		// its maps wait for a turn
 	}
 	// the changes this record has not seen: only one whose old bounds touch the light can make its maps
 	// stale ( the decide pass makes the same test and latches it; this is the job's read-only copy )
@@ -860,7 +1022,8 @@ static void R_ShadowCacheBeginView( const viewDef_t* viewDef )
 		s.totalEvicted = 0;
 		s.changes.total = 0;
 		s.atlasCells = 0;
-		memset( s.cellUsed, 0, sizeof( s.cellUsed ) );
+		s.cellsUsed = 0;
+		memset( s.cellOwner, 0, sizeof( s.cellOwner ) );
 		memset( s.recs, 0, sizeof( s.recs ) );
 		memset( &s.sun, 0, sizeof( s.sun ) );
 	}
@@ -875,12 +1038,19 @@ static void R_ShadowCacheBeginView( const viewDef_t* viewDef )
 		{
 			if( s.recs[i].uniqueId != 0 )
 			{
-				R_ShadowCacheFreeCells( s.recs[i] );
+				R_ShadowCacheFreePlace( s.recs[i] );
 			}
 		}
-		memset( s.cellUsed, 0, sizeof( s.cellUsed ) );
+		memset( s.cellOwner, 0, sizeof( s.cellOwner ) );
+		s.cellsUsed = 0;
 		s.atlasCells = atlasCells;
 		s.epoch++;
+		if( r_shadowCacheLog.GetBool() )
+		{
+			// S3b: the capacity, stated ( D77 ): six faces of a point light take 96 cells at 512, 24 at 256, 6 at 128
+			common->Printf( "shadowCache: cache atlas %d x %d, %d cells: room for the six faces of %d point lights at 512, %d at 256, %d at 128\n",
+							atlasSide * SHADOWCACHE_CELL, atlasSide * SHADOWCACHE_CELL, atlasCells, atlasCells / 96, atlasCells / 24, atlasCells / 6 );
+		}
 	}
 
 	const unsigned int settings = R_ShadowCacheSettings();
@@ -903,7 +1073,7 @@ static void R_ShadowCacheBeginView( const viewDef_t* viewDef )
 		{
 			if( s.recs[i].uniqueId != 0 )
 			{
-				R_ShadowCacheFreeCells( s.recs[i] );
+				R_ShadowCacheFreePlace( s.recs[i] );
 			}
 		}
 		s.epoch++;
@@ -931,6 +1101,9 @@ static void R_ShadowCacheBeginView( const viewDef_t* viewDef )
 	s.moving = 0;
 	s.sunReused = 0;
 	s.sunRebuilt = 0;
+	s.evicted = 0;
+	s.turns = 0;
+	s.costBuilt = 0;
 }
 
 /*
@@ -959,7 +1132,7 @@ struct shadowCachePlanStats_t
 static shadowCachePlanStats_t shadowCachePlan;
 
 // The lights ShadowAtlasPass gives tiles to, by the same four tests in the same order;
-// the two must stay in step ( both loops of idRenderBackend::ShadowAtlasPass ). The plan and the op
+// they must stay in step ( the three loops of idRenderBackend::ShadowAtlasPass ). The plan and the op
 // emission call this while every light's shadowOp is still 0, so "has a shadow map" means "has a caster in
 // this view's chain". A cached light's chain keeps its static surfaces ( a missed copy is then drawn as the
 // engine draws the chain without the cache ), so the test stays what it is.
@@ -1245,11 +1418,94 @@ struct shadowCachePick_t
 	viewLight_t*			vLight;
 	shadowCacheLightRec_t*	rec;
 	unsigned int			doorSig;
-	short					size;
+	int						casters;		// S3b: static surfaces of the chain: counted this frame where a build is possible, else the record's last count
+	int						since;			// S3b: the frame its maps began to wait ( the record's wantSince ), or this frame: the order of the builds and of the turns
+	short					size;			// the engine's pick ( after the atlas plan )
 	byte					sides;
 	byte					decision;		// shadowCacheDecision_t
 	byte					fallback;		// decision when the budget does not reach it: SCD_REUSE or SCD_UNCACHED
+	bool					waits;			// S3b: pass 4: it waits for a turn
 };
+
+// S3b: how many surfaces of the light's chain would be in static maps built this frame: the casters a cached
+// copy saves from being drawn every frame. The measure of what the maps are worth ( R_ShadowCacheValue ) and
+// of what a build costs ( R_ShadowCacheCost ), D77. The same tests, in the same order, as the static bit of
+// R_ShadowCacheCasterBits for a map built this frame. Only asked of a chain gathered in full.
+static int R_ShadowCacheCountStatic( const viewLight_t* vLight, int staticFrames, bool reuse )
+{
+	int count = 0;
+	const viewEntity_t* lastSpace = NULL;		// the surfaces of one entity follow one another in the chain
+	bool lastSpaceStatic = false;
+	for( const drawSurf_t* surf = vLight->globalShadows; surf != NULL; surf = surf->nextOnLight )
+	{
+		if( surf->frontEndGeo == NULL || surf->space == NULL )
+		{
+			continue;
+		}
+		if( surf->space != lastSpace )
+		{
+			lastSpace = surf->space;
+			const idRenderEntityLocal* def = surf->space->entityDef;
+			lastSpaceStatic = def != NULL && R_ShadowCacheEntityCacheable( def )
+							  && ( !reuse || R_ShadowCacheIsStatic( tr.frameCount, R_ShadowCacheLastChanged( def ), staticFrames ) );
+		}
+		if( lastSpaceStatic && surf->material != NULL && R_ShadowCacheSurfaceCacheable( surf->material ) )
+		{
+			count++;
+		}
+	}
+	return count;
+}
+
+/*
+=====================
+R_ShadowCacheBuild
+
+S3b: orders the static maps of a pick's light built this frame, at the engine's pick: a cached
+map is shown only at the size the engine picks ( a smaller one would lower the shadow's
+resolution; a larger one copied reduced keeps the polygon offset of its own texels and shows
+acne on surfaces the light grazes ). Where the record's maps have another size, or it has no
+place, a place is searched ( R_ShadowCachePlace ). False = none was found and nothing is built:
+the light is drawn without the cache, keeps the maps it has when they are for as many sides
+( the pick may come back to them ), and asks again in a while.
+=====================
+*/
+static bool R_ShadowCacheBuild( shadowCachePick_t& pick )
+{
+	shadowCacheState_t& s = shadowCacheState;
+	shadowCacheLightRec_t& rec = *pick.rec;
+	if( rec.size != 0 && rec.numSides != pick.sides )
+	{
+		R_ShadowCacheFreePlace( rec );		// maps for another number of sides are of no use
+	}
+	if( rec.size != pick.size
+			&& !R_ShadowCachePlace( rec, pick.size, pick.sides, R_ShadowCacheValue( pick.casters, pick.size, pick.sides ), false, true ) )
+	{
+		rec.retryFrame = tr.frameCount + SHADOWCACHE_RETRY_FRAMES;		// no place for maps of the pick's size: ask again in a while
+		shadowCachePlan.uncachedLights++;
+		return false;
+	}
+	if( rec.repair )
+	{
+		s.repaired++;
+		s.totalRepaired++;
+	}
+	else
+	{
+		s.rebuilt++;
+		s.totalRebuilt++;
+	}
+	rec.casters = pick.casters;
+	rec.serial = s.nextSerial + 1;
+	s.nextSerial += rec.numSides;
+	rec.heldThrough = tr.frameCount;
+	rec.epoch = s.epoch;
+	rec.doorSig = pick.doorSig;
+	rec.wantSince = 0;
+	rec.repair = false;
+	rec.valid = true;
+	return true;
+}
 
 /*
 =====================
@@ -1258,9 +1514,13 @@ R_ShadowCacheEmitOps
 Gives every cached unit of this view its place in the cache and emits its op ( D74 ). The sun
 keeps one map per cascade, drawn again when its window moved or its membership must be brought
 up to date. A local light is drawn through the cache when its record's maps are usable or may be
-built this frame ( S3a ): the place stays with the record ( first fit over Z-order cells, the
-longest-unused record evicted when the atlas is full ); a light whose maps cannot be built is
-drawn uncached. The budget rations new builds; repairs and the sun do not count against it.
+built this frame ( S3a ): the place stays with the record; a light whose maps cannot be built is
+drawn uncached. S3b: a place is blocks of the cell map, one per side ( R_ShadowCachePlace ),
+and when the atlas is full the records worth least give theirs up ( D77 ); the budget rations
+the builds of lights that wait, in a-priori units, the longest wait first ( repairs and the sun
+do not count against it ); a light that waits gathers in full only in the turn pass 4 gives
+it; maps are shown only at the size the engine picks, and are built again at another size
+only when the pick has held ( D43 ).
 =====================
 */
 static void R_ShadowCacheEmitOps( viewDef_t* viewDef )
@@ -1274,11 +1534,20 @@ static void R_ShadowCacheEmitOps( viewDef_t* viewDef )
 	// the lights past the cap ( R_AddSingleModel ), by the order of the view's light list, which depends on
 	// the camera. A map built from such a chain would lack a caster the membership rule later takes to be
 	// in it. So with reuse nothing is built in a frame in which the cap was hit: a light that needs a build
-	// keeps its usable maps or is drawn without the cache ( D78: track F removes the cap ). The counter spans
-	// the frame's views and is cleared once per frame ( SwapCommandBuffers_FinishRendering ); subviews render
-	// before this pass ( R_GenerateSubViews ), so a cap hit in a subview suppresses the main view's builds
-	// too: conservative
-	const bool capHit = reuse && tr.pc.c_contactedCapHits > 0;
+	// keeps its usable maps or is drawn without the cache ( D78: track F removes the cap ). S3b: only an
+	// entity of THIS view that can be in a static map counts. One that never can ( the game's smoke particles
+	// are one model with bounds as large as the world, which touches every light of the view ) is an active
+	// caster in every frame, so its place past the cap takes nothing out of a static map. The frame's
+	// counter says whether any entity of any view hit the cap; the walk over this view's entities runs only then
+	bool capHit = false;
+	if( reuse && tr.pc.c_contactedCapHits > 0 )
+	{
+		for( const viewEntity_t* vEntity = viewDef->viewEntitys; vEntity != NULL && !capHit; vEntity = vEntity->next )
+		{
+			capHit = vEntity->contactedCapHits != 0 && vEntity->entityDef != NULL && R_ShadowCacheEntityCacheable( vEntity->entityDef );
+		}
+	}
+	s.capHit = capHit;
 
 	if( shadowMapResolutions[MAX_SHADOWMAP_RESOLUTIONS - 1] != SHADOWCACHE_CELL )
 	{
@@ -1325,28 +1594,48 @@ static void R_ShadowCacheEmitOps( viewDef_t* viewDef )
 		{
 			continue;		// its interactions are still being made, past every hook: drawn uncached until they are
 		}
+		const bool wasRecent = rec->lastUsedFrame > tr.frameCount - SHADOWCACHE_PICK_HOLD_FRAMES;		// S3b: in the main view within the hold
 		rec->lastUsedFrame = tr.frameCount;
+		rec->granted = false;		// S3b: a turn lasts one frame; pass 4 gives the next ones
 
 		shadowCachePick_t& pick = picks[numPicks++];
 		pick.vLight = vLight;
 		pick.rec = rec;
 		pick.doorSig = reuse ? R_ShadowCacheDoorSignature( light ) : 0;
+		pick.casters = rec->casters;
+		pick.since = tr.frameCount;
 		pick.size = ( short )shadowMapResolutions[vLight->shadowLOD];
+		if( rec->pick != pick.size )
+		{
+			rec->pick = pick.size;		// what its place must hold to be of use ( R_ShadowCacheVictimKey )
+			// the hold is for a pick that hovers while the light is in view, or goes in and out of it: only
+			// a light that comes back at another size after an absence as long as the hold has served it
+			rec->pickFrame = wasRecent ? tr.frameCount : tr.frameCount - SHADOWCACHE_PICK_HOLD_FRAMES;
+		}
 		pick.sides = ( byte )R_ShadowCacheNumSides( vLight, skipSet );
 		pick.decision = SCD_UNCACHED;
 		pick.fallback = SCD_UNCACHED;
+		pick.waits = false;
 
 		if( !reuse )
 		{
-			// S2's behaviour: every map again, every frame
-			pick.decision = vLight->shadowFullGather ? SCD_REBUILD : SCD_UNCACHED;
+			// S2's behaviour: every map again, every frame. S3b: a light the atlas had no room for asks
+			// again in a while, and a light that needs a place is counted: what its maps would be worth
+			if( vLight->shadowFullGather && tr.frameCount >= rec->retryFrame )
+			{
+				pick.decision = SCD_REBUILD;
+				if( rec->size != pick.size || rec->numSides != pick.sides )
+				{
+					pick.casters = R_ShadowCacheCountStatic( vLight, staticFrames, false );
+				}
+			}
 			continue;
 		}
 		if( tr.frameCount - rec->shapeFrame < staticFrames )
 		{
 			// its maps are stale and it is drawn uncached while it keeps changing: the place is free for
 			// another light ( frames in flight copy from it before any later frame draws into it )
-			R_ShadowCacheFreeCells( *rec );
+			R_ShadowCacheFreePlace( *rec );
 			s.moving++;
 			continue;		// changing shape: uncached
 		}
@@ -1360,21 +1649,31 @@ static void R_ShadowCacheEmitOps( viewDef_t* viewDef )
 		}
 		rec->changesSeen = end;
 
-		const bool built = rec->valid && rec->epoch == s.epoch && rec->firstCell >= 0 && rec->size == pick.size && rec->numSides == pick.sides;
+		// do the record's maps hold what it says? ( S3b: at whatever size they were built )
+		const bool built = rec->valid && rec->epoch == s.epoch && rec->size != 0 && rec->numSides == pick.sides;
 		if( built && ( touched || rec->doorSig != pick.doorSig ) )
 		{
 			rec->valid = false;
 			rec->repair = true;
 		}
-		const bool usable = built && rec->valid;
-		if( !usable && !rec->repair )
+		const bool good = built && rec->valid;
+		if( !good && !rec->repair )
 		{
 			rec->valid = false;		// latch it: the light jobs read this flag
 		}
+		// S3b ( D43 ): maps are shown only at the size the engine picks. A smaller map would lower the
+		// shadow's resolution; a larger one copied reduced keeps the polygon offset of its own texels and
+		// shows acne on surfaces the light grazes. With maps of another size the light is drawn without
+		// the cache. The maps keep their place meanwhile ( the pick may come back to them ), and maps of the
+		// new size are built only when the pick has held for a while, so a pick that hovers between two
+		// sizes costs no build ( a light that was out of the main view for as long has served the hold )
+		const bool usable = good && rec->size == pick.size;
+		const bool held = good && rec->size != pick.size && tr.frameCount - rec->pickFrame < SHADOWCACHE_PICK_HOLD_FRAMES;
 
 		// can a map of this light be drawn this frame? Only from a chain gathered in full, not in a frame
-		// in which the contacted-light cap was hit, and not while the light waits for a place
-		const bool mayBuild = vLight->shadowFullGather && !capHit && tr.frameCount >= rec->retryFrame;
+		// in which the contacted-light cap was hit, not while the light waits for a place, and not while
+		// its pick has yet to hold
+		const bool mayBuild = vLight->shadowFullGather && !capHit && tr.frameCount >= rec->retryFrame && !held;
 		if( usable && rec->wantSince == 0 )
 		{
 			pick.decision = SCD_REUSE;
@@ -1387,7 +1686,7 @@ static void R_ShadowCacheEmitOps( viewDef_t* viewDef )
 				rec->retryFrame = tr.frameCount + SHADOWCACHE_CAP_RETRY_FRAMES;		// the light job stops gathering in full for a while
 			}
 		}
-		else if( !usable && rec->repair )
+		else if( !good && rec->repair )
 		{
 			pick.decision = SCD_REBUILD;		// a repair does not wait for the budget
 		}
@@ -1396,20 +1695,49 @@ static void R_ShadowCacheEmitOps( viewDef_t* viewDef )
 			pick.decision = SCD_WANTS;
 			pick.fallback = usable ? SCD_REUSE : SCD_UNCACHED;
 		}
-		if( !usable && rec->wantSince == 0 )
+		// good maps of another size wait without a stamp: they queue behind every light that has none
+		if( !good && rec->wantSince == 0 )
 		{
 			rec->wantSince = tr.frameCount;
 		}
+		if( rec->wantSince != 0 )
+		{
+			pick.since = rec->wantSince;
+		}
+		// S3b: a build is priced, and its maps are valued, by the static casters of the chain gathered in full
+		if( pick.decision == SCD_REBUILD || pick.decision == SCD_WANTS )
+		{
+			pick.casters = R_ShadowCacheCountStatic( vLight, staticFrames, true );
+			rec->casters = pick.casters;
+			rec->countFrame = tr.frameCount;
+		}
 	}
 
-	// 2. the budget: the longest wait first ( the age term ), then the view's order
+	// 2. the builds. First the maps that do not wait for the budget ( a repair; without reuse, every map ),
+	// the largest first and then in the view's order ( on an empty cache atlas this places the maps exactly
+	// as S2's per-frame assignment did ). Then the lights that wait, the longest wait first,
+	// then the view's order, while the frame's budget lasts ( S3b: in a-priori units, R_ShadowCacheCost ). A
+	// build that finds no place costs nothing. Every place is settled here, before any op is emitted: a
+	// record of this view that gives its place up in this pass gets no op in pass 3, so no copy of this
+	// frame reads a place another light's map is drawn into ( S84 )
+	for( int size = shadowMapResolutions[0]; size >= SHADOWCACHE_CELL; size >>= 1 )
+	{
+		for( int p = 0; p < numPicks; p++ )
+		{
+			if( picks[p].size == size && picks[p].decision == SCD_REBUILD && !R_ShadowCacheBuild( picks[p] ) )
+			{
+				picks[p].decision = SCD_UNCACHED;
+			}
+		}
+	}
 	int budget = r_shadowCacheBudget.GetInteger();
-	while( budget > 0 )
+	bool spent = false;
+	for( ;; )
 	{
 		shadowCachePick_t* oldest = NULL;
 		for( int i = 0; i < numPicks; i++ )
 		{
-			if( picks[i].decision == SCD_WANTS && ( oldest == NULL || picks[i].rec->wantSince < oldest->rec->wantSince ) )
+			if( picks[i].decision == SCD_WANTS && ( oldest == NULL || picks[i].since < oldest->since ) )
 			{
 				oldest = &picks[i];
 			}
@@ -1418,8 +1746,23 @@ static void R_ShadowCacheEmitOps( viewDef_t* viewDef )
 		{
 			break;
 		}
-		oldest->decision = SCD_REBUILD;
-		budget -= oldest->sides;
+		// the first build of a frame is never refused, so a light dearer than the whole budget cannot starve
+		if( spent && R_ShadowCacheCost( oldest->casters, oldest->size, oldest->sides ) > budget )
+		{
+			break;
+		}
+		if( R_ShadowCacheBuild( *oldest ) )
+		{
+			const int cost = R_ShadowCacheCost( oldest->casters, oldest->rec->size, oldest->rec->numSides );
+			budget -= cost;
+			s.costBuilt += cost;
+			spent = true;
+			oldest->decision = SCD_REBUILD;
+		}
+		else
+		{
+			oldest->decision = oldest->fallback;
+		}
 	}
 	for( int i = 0; i < numPicks; i++ )
 	{
@@ -1429,8 +1772,7 @@ static void R_ShadowCacheEmitOps( viewDef_t* viewDef )
 		}
 	}
 
-	// 3. places and ops, the largest maps first and then in the view's order ( on an empty cache atlas this
-	// places the maps exactly as S2's per-frame assignment did )
+	// 3. the ops: the primary sun's, then the local lights' in the view's order
 
 	// the primary sun: cascade i lives in cascade map i, kept while its window is the one its map was drawn with
 	for( viewLight_t* vLight = viewDef->viewLights; vLight != NULL; vLight = vLight->next )
@@ -1534,87 +1876,124 @@ static void R_ShadowCacheEmitOps( viewDef_t* viewDef )
 		}
 	}
 
-	for( int size = shadowMapResolutions[0]; size >= SHADOWCACHE_CELL; size >>= 1 )
+	for( int p = 0; p < numPicks; p++ )
 	{
-		const int span = size / SHADOWCACHE_CELL;
-		const int cells = span * span;
+		shadowCachePick_t& pick = picks[p];
+		shadowCacheLightRec_t& rec = *pick.rec;
+		if( ( pick.decision != SCD_REBUILD && pick.decision != SCD_REUSE ) || rec.size == 0 )
+		{
+			// drawn without the cache ( also a light of this view that gave its place up in pass 2 ). A light
+			// that is changing shape was counted as moving in pass 1: do not count a light twice
+			if( !reuse || tr.frameCount - rec.shapeFrame >= staticFrames )
+			{
+				s.waiting++;
+			}
+			continue;
+		}
+		if( pick.decision == SCD_REUSE )
+		{
+			s.reused++;
+		}
+		assert( rec.size == pick.size );		// the backend's copy loop refuses a map of any other size
 
+		// S3b: the maps are the size the engine picked, which is the tile's ( shadowLOD )
+		pick.vLight->shadowOp = numEmitted + 1;
+		for( int i = 0; i < rec.numSides; i++ )
+		{
+			int cellX, cellY;
+			R_ShadowCacheMortonDecode( rec.cell[i], cellX, cellY );
+
+			shadowCacheOp_t& op = ops[numEmitted++];
+			op.serial = rec.serial + i;
+			op.target = -1;
+			op.size = rec.size;
+			op.x = ( short )( cellX * SHADOWCACHE_CELL );
+			op.y = ( short )( cellY * SHADOWCACHE_CELL );
+			op.flags = ( short )( ( pick.decision == SCD_REBUILD ) ? SCOP_REBUILD : 0 );
+			op.pad = 0;
+		}
+	}
+
+	// 4. S3b: the turns of the next frame. A light whose maps wait to be built gathers in full only in its
+	// turn ( R_ShadowCacheWantsGather ), so the lights that wait do not all pay for a full gather every
+	// frame. The longest wait first, as many as the budget would pay for, each priced by what its last full
+	// gather counted ( a light never counted is priced with a default, and its first turn counts it ). A
+	// light that needs a place and by its last count could find none gets no turn and asks again in a
+	// while. An old count is not trusted with that: entities that have come to rest since it was taken
+	// are static now, and only a full gather counts them, so the light gets a turn like one never counted
+	if( reuse )
+	{
 		for( int p = 0; p < numPicks; p++ )
 		{
 			shadowCachePick_t& pick = picks[p];
-			if( pick.size != size )
+			const shadowCacheLightRec_t& rec = *pick.rec;
+			if( tr.frameCount - rec.shapeFrame < staticFrames || pick.decision == SCD_REBUILD || tr.frameCount + 1 < rec.retryFrame )
 			{
-				continue;
+				pick.waits = false;		// changing shape, built this frame, or waiting out a retry
 			}
-			shadowCacheLightRec_t& rec = *pick.rec;
-			if( pick.decision == SCD_UNCACHED )
+			else if( rec.size == 0 || !rec.valid )
 			{
-				// a light that is changing shape was counted as moving in pass 1: do not count a light twice
-				if( reuse && tr.frameCount - rec.shapeFrame >= staticFrames )
-				{
-					s.waiting++;
-				}
-				continue;
+				pick.waits = !rec.repair;		// no good maps; a repair needs no turn: its light job gathers in full by itself
 			}
-			if( pick.decision == SCD_REBUILD )
+			else if( rec.size == pick.size )
 			{
-				if( rec.firstCell < 0 || rec.size != size || rec.numSides != pick.sides )
-				{
-					R_ShadowCacheFreeCells( rec );
-					int first = R_ShadowCacheAllocCells( size, pick.sides );
-					while( first < 0 && R_ShadowCacheEvictOne() )
-					{
-						first = R_ShadowCacheAllocCells( size, pick.sides );
-					}
-					if( first < 0 )
-					{
-						rec.retryFrame = tr.frameCount + SHADOWCACHE_RETRY_FRAMES;		// the atlas cannot give this light a place: ask again in a while
-						shadowCachePlan.uncachedLights++;
-						continue;		// the cache atlas is full of this frame's lights: drawn uncached
-					}
-					rec.firstCell = ( short )first;
-					rec.size = ( short )size;
-					rec.numSides = pick.sides;
-				}
-				if( rec.repair )
-				{
-					s.repaired++;
-					s.totalRepaired++;
-				}
-				else
-				{
-					s.rebuilt++;
-					s.totalRebuilt++;
-				}
-				rec.serial = s.nextSerial + 1;
-				s.nextSerial += pick.sides;
-				rec.heldThrough = tr.frameCount;
-				rec.epoch = s.epoch;
-				rec.doorSig = pick.doorSig;
-				rec.wantSince = 0;
-				rec.repair = false;
-				rec.valid = true;
+				pick.waits = rec.wantSince != 0;		// an addition waits
 			}
 			else
 			{
-				s.reused++;
+				pick.waits = tr.frameCount + 1 - rec.pickFrame >= SHADOWCACHE_PICK_HOLD_FRAMES;		// maps of another size: once the pick has held
 			}
-
-			pick.vLight->shadowOp = numEmitted + 1;
-			for( int i = 0; i < pick.sides; i++ )
+		}
+		int budgetAhead = r_shadowCacheBudget.GetInteger();
+		bool any = false;
+		for( ;; )
+		{
+			shadowCachePick_t* oldest = NULL;
+			for( int i = 0; i < numPicks; i++ )
 			{
-				int cellX, cellY;
-				R_ShadowCacheMortonDecode( rec.firstCell + i * cells, cellX, cellY );
-
-				shadowCacheOp_t& op = ops[numEmitted++];
-				op.serial = rec.serial + i;
-				op.target = -1;
-				op.size = ( short )size;
-				op.x = ( short )( cellX * SHADOWCACHE_CELL );
-				op.y = ( short )( cellY * SHADOWCACHE_CELL );
-				op.flags = ( short )( ( pick.decision == SCD_REBUILD ) ? SCOP_REBUILD : 0 );
-				op.pad = 0;
+				if( picks[i].waits && ( oldest == NULL || picks[i].since < oldest->since ) )
+				{
+					oldest = &picks[i];
+				}
 			}
+			if( oldest == NULL )
+			{
+				break;
+			}
+			oldest->waits = false;
+			shadowCacheLightRec_t& rec = *oldest->rec;
+			const bool counted = rec.casters >= 0 && tr.frameCount - rec.countFrame < Max( staticFrames, SHADOWCACHE_RECOUNT_FRAMES );
+			if( rec.size != oldest->size && counted
+					&& !R_ShadowCachePlace( rec, oldest->size, oldest->sides, R_ShadowCacheValue( rec.casters, oldest->size, oldest->sides ), true, false ) )
+			{
+				// by its last count its maps would find no place. The placement itself is asked, about the
+				// next frame, and changes nothing: a count of cells would let through a light whose blocks
+				// do not exist, which then gathers in full and fails to place every time it asks. The lights
+				// refused in one frame ask again spread over sixteen
+				rec.retryFrame = tr.frameCount + SHADOWCACHE_RETRY_FRAMES + ( int )( ( &rec - s.recs ) & 15 );
+				continue;
+			}
+			const int cost = R_ShadowCacheCost( ( rec.casters >= 0 ) ? rec.casters : SHADOWCACHE_DEFAULT_CASTERS, oldest->size, oldest->sides );
+			if( any && cost > budgetAhead )
+			{
+				break;
+			}
+			rec.granted = true;
+			budgetAhead -= cost;
+			any = true;
+			s.turns++;
+		}
+	}
+
+	if( r_shadowCacheLog.GetInteger() >= 2 && ( tr.frameCount & 63 ) == 0 )
+	{
+		for( int p = 0; p < numPicks; p++ )
+		{
+			const shadowCachePick_t& pick = picks[p];
+			const shadowCacheLightRec_t& rec = *pick.rec;
+			common->Printf( "shadowCache: frame %d light %d pick %d cached %d sides %d casters %d value %d decision %d turn %d\n",
+							tr.frameCount, pick.vLight->lightDef->index, ( int )pick.size, ( int )rec.size, ( int )pick.sides, rec.casters,
+							R_ShadowCacheValue( rec.casters, ( rec.size != 0 ) ? rec.size : pick.size, pick.sides ), ( int )pick.decision, ( int )rec.granted );
 		}
 	}
 
@@ -1948,6 +2327,14 @@ void R_ShadowCacheDecide()
 		}
 	}
 
+	// S3b: the HUD's capacity line ( the TRACK S rows of Console.cpp )
+	tr.pc.c_shadowCacheUnits = shadowCachePlan.ops;
+	tr.pc.c_shadowCacheLightsBuilt = shadowCacheState.rebuilt + shadowCacheState.repaired;
+	tr.pc.c_shadowCacheLightsWaiting = shadowCacheState.waiting;
+	tr.pc.c_shadowCacheEvicted = shadowCacheState.evicted;
+	tr.pc.c_shadowCacheCellsUsed = shadowCacheState.cellsUsed;
+	tr.pc.c_shadowCacheCells = shadowCacheState.atlasCells;
+
 	if( r_shadowCacheLog.GetBool() && ( tr.frameCount & 63 ) == 0 )
 	{
 		common->Printf( "shadowCache: frame %d plan demoted %d dropped %d casters %d sides %d of %d ops %d uncached %d static %d active %d\n",
@@ -1955,9 +2342,11 @@ void R_ShadowCacheDecide()
 						shadowCachePlan.ops, shadowCachePlan.uncachedLights, shadowCachePlan.staticSides, shadowCachePlan.activeSides );
 		common->Printf( "shadowCache: frame %d lights reused %d rebuilt %d repaired %d waiting %d moving %d sun reused %d rebuilt %d cap %d | totals rebuilt %d repaired %d evicted %d changes %d epoch %d misses %d\n",
 						tr.frameCount, shadowCacheState.reused, shadowCacheState.rebuilt, shadowCacheState.repaired, shadowCacheState.waiting, shadowCacheState.moving,
-						shadowCacheState.sunReused, shadowCacheState.sunRebuilt, ( int )( r_shadowCacheReuse.GetBool() && tr.pc.c_contactedCapHits > 0 ),
+						shadowCacheState.sunReused, shadowCacheState.sunRebuilt, shadowCacheState.capHit,
 						shadowCacheState.totalRebuilt, shadowCacheState.totalRepaired, shadowCacheState.totalEvicted, shadowCacheState.changes.total,
 						shadowCacheState.epoch, ( int )shadowCacheState.missesSeen );
+		common->Printf( "shadowCache: frame %d places evicted %d turns %d cost %d cells %d of %d\n",
+						tr.frameCount, shadowCacheState.evicted, shadowCacheState.turns, shadowCacheState.costBuilt, shadowCacheState.cellsUsed, shadowCacheState.atlasCells );
 	}
 }
 
@@ -2021,7 +2410,7 @@ void R_ShadowCacheNotifyLight( const idRenderLightLocal* light, const renderLigh
 	{
 		// the place is free at once: the frames in flight copy from it before any later frame draws into it
 		// ( one queue, frames executed in order: S84 )
-		R_ShadowCacheFreeCells( *rec );
+		R_ShadowCacheFreePlace( *rec );
 		memset( rec, 0, sizeof( *rec ) );
 		return;
 	}
@@ -2075,6 +2464,8 @@ void idRenderBackend::ShadowCacheClearCaches()
 	shadowCacheCopyVS = nullptr;
 	shadowCacheCopyPS = nullptr;
 	shadowCacheCopyLayout = nullptr;
+	shadowCacheCopySource = nullptr;
+	shadowCacheCopyBindingSet = nullptr;
 	for( int i = 0; i < 2; i++ )
 	{
 		shadowCacheCopyPipeline[i] = nullptr;
@@ -2178,13 +2569,19 @@ void idRenderBackend::ShadowCacheCopyDraw( nvrhi::IFramebuffer* target, int targ
 		shadowCacheCopyPipelineInfo[targetKind] = info;
 	}
 
-	nvrhi::BindingSetDesc bindingSetDesc;
-	bindingSetDesc.bindings =
+	// S3b: one binding set per source image, kept while the source stays the same: the copies of a view
+	// follow one another, and the local lights share one cache image
+	if( !shadowCacheCopyBindingSet || shadowCacheCopySource.Get() != source )
 	{
-		nvrhi::BindingSetItem::PushConstants( 0, sizeof( shadowCacheCopyConstants_t ) ),
-		nvrhi::BindingSetItem::Texture_SRV( 0, source )
-	};
-	nvrhi::BindingSetHandle bindingSet = bindingCache.GetOrCreateBindingSet( bindingSetDesc, shadowCacheCopyLayout );
+		nvrhi::BindingSetDesc bindingSetDesc;
+		bindingSetDesc.bindings =
+		{
+			nvrhi::BindingSetItem::PushConstants( 0, sizeof( shadowCacheCopyConstants_t ) ),
+			nvrhi::BindingSetItem::Texture_SRV( 0, source )
+		};
+		shadowCacheCopyBindingSet = bindingCache.GetOrCreateBindingSet( bindingSetDesc, shadowCacheCopyLayout );
+		shadowCacheCopySource = source;
+	}
 
 	const nvrhi::Viewport viewport( ( float )constants.tileOrigin[0], ( float )( constants.tileOrigin[0] + constants.tileRes ),
 									( float )constants.tileOrigin[1], ( float )( constants.tileOrigin[1] + constants.tileRes ), 0.0f, 1.0f );
@@ -2193,7 +2590,7 @@ void idRenderBackend::ShadowCacheCopyDraw( nvrhi::IFramebuffer* target, int targ
 	state.indexBuffer = {};		// the fork leaves this one member uninitialized
 	state.pipeline = shadowCacheCopyPipeline[targetKind];
 	state.framebuffer = target;
-	state.bindings = { bindingSet };
+	state.bindings = { shadowCacheCopyBindingSet };
 	state.viewport.addViewport( viewport );
 	state.viewport.addScissorRect( nvrhi::Rect( viewport ) );
 

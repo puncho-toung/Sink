@@ -417,6 +417,8 @@ private:
 	nvrhi::BindingLayoutHandle		shadowCacheCopyLayout;
 	nvrhi::GraphicsPipelineHandle	shadowCacheCopyPipeline[2];		// by the kind of target: 0 the per-frame atlas, 1 a cache image; the two kinds differ only in the framebuffer they were made for
 	nvrhi::FramebufferInfo			shadowCacheCopyPipelineInfo[2];	// what each pipeline was made for
+	nvrhi::TextureHandle			shadowCacheCopySource;			// S3b: the source image of the last copy draw, and its binding set, kept while the source stays the same
+	nvrhi::BindingSetHandle			shadowCacheCopyBindingSet;
 	int								shadowCacheTargetSerial;		// in the names of the cache's framebuffers, so a stale one is never found again
 	// S3a: the serial of the static map last drawn at each place of the cache images ( R_ShadowCacheSlot ),
 	// 0 = none; only the backend writes it ( D74 )

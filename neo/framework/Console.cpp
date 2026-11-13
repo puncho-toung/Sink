@@ -370,6 +370,10 @@ float idConsoleLocal::DrawFPS( float y )
 		int32 statsWindowHeight = 370 + 80 + ( com_showFPS.GetInteger() >= 5 ? 120 : 0 );		//puncho: +40 for the Int(tex)/Int(math) rows; X0: +80 for the four new GPU rows
 		// Each track adds its own row count to statsWindowHeight here.
 		// ---- TRACK S: extra stats rows ----
+		if( commonLocal.stats_frontend.c_shadowCacheCells > 0 )
+		{
+			statsWindowHeight += 20;		// S3b: the shadow cache's capacity line
+		}
 		// ---- END TRACK S ----
 		// ---- TRACK F: extra stats rows ----
 		// ---- END TRACK F ----
@@ -704,6 +708,17 @@ float idConsoleLocal::DrawFPS( float y )
 		ImGui::TextColored( rendererGPUFogApplyTime > maxTime ? colorRed : colorWhite,			"                    Fog apply:    %5llu us", rendererGPUFogApplyTime );
 		// ---- END X0 ----
 		// ---- TRACK S: HUD rows ----
+		// S3b: the shadow cache's capacity line ( only while the cache runs: r_shadowCache 2 ). Cached units
+		// of the main view, lights whose static maps were drawn, lights drawn without the cache, places given
+		// up, and the cells of the cache atlas in use ( the capacity, D77 )
+		if( commonLocal.stats_frontend.c_shadowCacheCells > 0 )
+		{
+			ImGui::TextColored( commonLocal.stats_frontend.c_shadowCacheLightsWaiting > 0 ? colorYellow : colorLtGrey,
+								"SHADOWCACHE: units:%i built:%i waiting:%i evicted:%i cells:%i/%i",
+								commonLocal.stats_frontend.c_shadowCacheUnits, commonLocal.stats_frontend.c_shadowCacheLightsBuilt,
+								commonLocal.stats_frontend.c_shadowCacheLightsWaiting, commonLocal.stats_frontend.c_shadowCacheEvicted,
+								commonLocal.stats_frontend.c_shadowCacheCellsUsed, commonLocal.stats_frontend.c_shadowCacheCells );
+		}
 		// ---- END TRACK S ----
 		// ---- TRACK F: HUD rows ----
 		// ---- END TRACK F ----
