@@ -313,6 +313,26 @@ void R_SetupDrawSurfJoints( drawSurf_t* drawSurf, const srfTriangles_t* tri, con
 
 /*
 ===================
+R_GrowContactedLights
+
+Track F ( F1 ): an entity that touches more lights than its two arrays hold moves both to frame memory at twice
+the size. Only such an entity pays; the arrays of every other stay on the stack of R_AddSingleModel.
+===================
+*/
+static void R_GrowContactedLights( viewLight_t**& contactedLights, idInteraction**& staticInteractions, int& maxContactedLights )
+{
+	const int grown = maxContactedLights * 2;
+	viewLight_t** lights = ( viewLight_t** )R_FrameAlloc( grown * sizeof( viewLight_t* ), FRAME_ALLOC_UNKNOWN );
+	idInteraction** interactions = ( idInteraction** )R_FrameAlloc( grown * sizeof( idInteraction* ), FRAME_ALLOC_UNKNOWN );
+	memcpy( lights, contactedLights, maxContactedLights * sizeof( viewLight_t* ) );
+	memcpy( interactions, staticInteractions, maxContactedLights * sizeof( idInteraction* ) );
+	contactedLights = lights;
+	staticInteractions = interactions;
+	maxContactedLights = grown;
+}
+
+/*
+===================
 R_AddSingleModel
 
 May be run in parallel.
@@ -365,9 +385,18 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 	// OPTIMIZE: world areas can assume all referenced lights are used
 	//---------------------------
 	int	numContactedLights = 0;
-	static const int MAX_CONTACTED_LIGHTS = 128;
-	viewLight_t* contactedLights[MAX_CONTACTED_LIGHTS];
-	idInteraction* staticInteractions[MAX_CONTACTED_LIGHTS];
+	// ---- TRACK F: no cap on the lights of an entity ( F1, D78 ) ----
+	// An entity keeps every light of the view that touches it, and with them the casters of those lights ( a world
+	// area is one entity ). Until F1 the two arrays held 128 entries and the lights past them were dropped, in the
+	// view's order. They start on the stack at that size, and an entity that touches more lights moves them to
+	// frame memory ( R_GrowContactedLights )
+	static const int STACK_CONTACTED_LIGHTS = 128;
+	viewLight_t* stackContactedLights[STACK_CONTACTED_LIGHTS];
+	idInteraction* stackStaticInteractions[STACK_CONTACTED_LIGHTS];
+	viewLight_t** contactedLights = stackContactedLights;
+	idInteraction** staticInteractions = stackStaticInteractions;
+	int maxContactedLights = STACK_CONTACTED_LIGHTS;
+	// ---- END TRACK F ----
 
 	if( renderEntity->hModel == NULL ||
 			renderEntity->hModel->ModelHasInteractingSurfaces() ||
@@ -385,13 +414,13 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 				// new code path, everything was done in AddLight
 				if( vLight->entityInteractionState[entityIndex] == viewLight_t::INTERACTION_YES )
 				{
+					if( numContactedLights == maxContactedLights )
+					{
+						R_GrowContactedLights( contactedLights, staticInteractions, maxContactedLights );		// track F
+					}
 					contactedLights[numContactedLights] = vLight;
 					staticInteractions[numContactedLights] = world->GetInteraction( vLight->lightDef->index, entityIndex );
-					if( ++numContactedLights == MAX_CONTACTED_LIGHTS )
-					{
-						vEntity->contactedCapHits = 1;
-						break;
-					}
+					numContactedLights++;
 				}
 				continue;
 			}
@@ -445,13 +474,13 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 					continue;
 				}
 			}
+			if( numContactedLights == maxContactedLights )
+			{
+				R_GrowContactedLights( contactedLights, staticInteractions, maxContactedLights );				// track F
+			}
 			contactedLights[numContactedLights] = vLight;
 			staticInteractions[numContactedLights] = world->GetInteraction( vLight->lightDef->index, entityIndex );
-			if( ++numContactedLights == MAX_CONTACTED_LIGHTS )
-			{
-				vEntity->contactedCapHits = 1;
-				break;
-			}
+			numContactedLights++;
 		}
 	}
 

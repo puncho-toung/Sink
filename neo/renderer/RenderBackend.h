@@ -444,6 +444,15 @@ private:
 	nvrhi::BufferHandle				zBinsBuffer;
 	nvrhi::BufferHandle				tileBitsBuffer;
 	nvrhi::BufferHandle				vanishedPrevBuffer;
+	void							LightListCreateBuffers( int tileBitWords );	// F1: creates what is missing, and the tile bits again when a view needs more words
+	void							LightListReleaseBuffers();					// F1: with ClearCaches
+	int								lightListTileBitsWords;						// F1: the uint32 words tileBitsBuffer holds; valid while the buffer exists
+	nvrhi::ShaderHandle				lightListHeatmapVS;							// F1: the heatmap pass ( r_showLightLists 1 ), made at first use
+	nvrhi::ShaderHandle				lightListHeatmapPS;
+	nvrhi::BindingLayoutHandle		lightListHeatmapLayout;
+	nvrhi::GraphicsPipelineHandle	lightListHeatmapPipeline;
+	nvrhi::FramebufferHandle		lightListHeatmapTarget;						// the colour attachment of the view's framebuffer alone
+	nvrhi::ITexture*				lightListHeatmapColor;						// the texture that target was made for; valid while the target exists
 	// ---- END TRACK F ----
 	// ---- TRACK V: volumetric fog members ----
 	// ---- END TRACK V ----

@@ -277,6 +277,9 @@ struct backEndCounters_t
 	// ---- TRACK S: shadow cache counters ----
 	// ---- END TRACK S ----
 	// ---- TRACK F: light list counters ----
+	int		c_lightListRecords;			// F1: records of the last view that had some
+	int		c_lightListRows;			// F1: its shadow rows
+	int		c_lightListUploadBytes;		// F1: bytes of tables it wrote to the six buffers
 	// ---- END TRACK F ----
 	// ---- TRACK V: volumetric fog counters ----
 	// ---- END TRACK V ----

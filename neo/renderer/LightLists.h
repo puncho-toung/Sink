@@ -58,7 +58,7 @@ enum
 
 const int MAX_RECORD_LIGHTS = 1024;
 
-struct lightListView_t;			// opaque; track F defines it later
+struct lightListView_t;			// defined at the end of this file
 
 /*
 ====================
@@ -110,7 +110,303 @@ compile_time_assert( sizeof( shadowRow_t ) == 80 );
 assert_offsetof( shadowRow_t, worldToShadow, 0 );		// S82(i)
 assert_offsetof( shadowRow_t, atlasRect, 64 );
 
-void	R_NumberRecordLights();		// frontend, called from R_RenderView after R_AddLights; body in tr_frontend_lightlists.cpp
-void	R_BuildLightLists();		// frontend, after R_AddModels and before R_OptimizeViewLightsList; same file
+/*
+==========================================================================================
+
+LIGHT LIST CORE ( F0, the merge )
+
+The per-view light-list builder of the hybrid forward pass, as pure functions over flat
+records. This part of the header is the one place the outside world is visible: it needs idVec3,
+the idLib integer types and nothing of the renderer, so the same text compiles in the engine
+( here; renderer/tr_frontend_lightlists.cpp holds the bodies ) and in an offline test behind a
+shim of idLib. The engine glue turns viewLight_t into
+lightListLight_t, cvars into lightListParms_t, and the results back into
+viewLight_t::recordNumber, numListedSurfs and the per-draw constants; nothing here reads a cvar,
+a global or the clock.
+
+What the design rests on:
+
+  - ONE numbering. The record index is decided before the model jobs run ( first hook, after
+    R_AddLights ), so the jobs list record indices and nothing translates them later. Record r
+    is recordLights[ r ], bit r of a tile word, bit r of a surface's mask and entry r of a run.
+  - Both paths shade exactly the pairs the job listed. A surface's run is used two ways: on the
+    list path every pixel loops it; on the Z-bin path its bits are ANDed into every tile word.
+    So every exclusion the job applied ( a closed door, a static interaction with no triangles,
+    spectrum, noDynamicInteractions ) holds on both paths with no test in the loop, and the Z-bin
+    path never costs more than the run.
+  - Three classes of records, each contiguous and each sorted by its far bin: narrow clustered
+    [ 1, firstWide ), wide clustered ( view-depth extent >= wideDepth ) [ firstWide,
+    firstFogOnly ), fog-only [ firstFogOnly, numRecords ). A bin holds one range per class, so a
+    few very large lights never stretch the index range of every nearer bin, and the forward
+    loop never walks the fog's records.
+  - Both loops walk records in ascending index: a run is written from its mask, so it is an
+    ascending set by construction. A surface whose path flips shades the same lights in the same
+    order: the same bits.
+  - Integer sort keys ( class, far bin, importance rank ), sorted by radix: one total order.
+  - No atomics in the jobs. A job writes its own surfaces' runs and paths; the serial pack
+    assigns pool offsets in draw order. The pool, and its hash, are the same every run.
+
+Record 0 is the primary sun's ( C1 ): never binned, no tile bit. A surface the sun's interaction
+reaches lists 0 like any other record: entry 0 of its run, bit 0 of its mask.
+
+A broken invariant is fatal ( LL_FATAL: a run that is not an ascending set of listable records, an
+arena overrun ). A full table is not: it has a counted outcome that never drops a light ( the
+record cap: the legacy path; the pool: the mask, then the shared all-ones mask ).
+
+==========================================================================================
+*/
+
+#ifndef LL_FATAL
+	#define LL_FATAL( msg )		idLib::FatalError( "%s", msg )
+#endif
+
+const int		LL_MAX_RECORDS		= 1024;				// MAX_RECORD_LIGHTS: record 0 ( the sun ) included
+const int		LL_MAX_WORDS		= LL_MAX_RECORDS / 32;	// words per tile and per surface mask at the record cap
+const int		LL_MAX_BINS			= 8192;				// r_zbinCount's ceiling
+const int		LL_BIN_STRIDE		= 4;				// uint32 per bin: narrow, wide, fog-only range, 0 ( a uint4 on the GPU, 16 bytes )
+const int		LL_MAX_TILES		= 512;				// per axis: 8192 pixels at 16-pixel tiles
+const int		LL_MAX_POOL			= 1 << 16;			// pool words per view: 256 KiB of uint32
+const int		LL_POOL_SUN			= 0;				// pool word 0 holds 0, the sun's record index: the list loop reads it on the Z-bin path
+const int		LL_POOL_ALL_ONES	= 1;				// pool words [ 1, 33 ): the shared all-ones mask ( pool overflow ); bit 0 = the sun is listed
+const int		LL_POOL_FIRST		= LL_POOL_ALL_ONES + LL_MAX_WORDS;	// 33: the first word a surface's run or mask may take
+const int		LL_MAX_SAMPLES		= 64;				// 4 x 4 over a planar chunk, 4 x 4 x 4 over a box
+const int		LL_RANK_BITS		= 11;				// importance rank in the sort key: LL_MAX_RECORDS <= 2048
+const uint32	LL_RANGE_EMPTY		= 0x0000FFFFu;		// lo = 0xFFFF, hi = 0: lo > hi
+
+// lightListSurface_t::path, rpSurfLights.z ( the shader uses the same values ); r_surfLightForcePath takes the first two
+enum lightListPath_t
+{
+	LLP_LIST				= 0,		// every pixel loops the surface's own run
+	LLP_ZBIN				= 1,		// every pixel loops its Z-bin candidates ANDed with the surface's mask
+	LLP_ZBIN_ALL			= 2			// the pool was full: the Z-bin loop under the shared all-ones mask ( loud: counted, warned, magenta )
+};
+
+// the material's forward tag ( keyword "forward [ n ]" ): a designer routes a surface by hand. A value the switch
+// does not know is counted and read as LLT_AUTO.
+enum lightListTag_t
+{
+	LLT_AUTO				= 0,		// the rule decides
+	LLT_LIST				= 1,		// always the run
+	LLT_ZBIN				= 2,		// always the Z-bins
+	LLT_NUM
+};
+
+// how a surface's path was decided, for the log line ( lightListSurface_t::how )
+enum lightListHow_t
+{
+	LLH_FORCED				= 0,		// r_surfLightForcePath
+	LLH_TAG					= 1,		// the material's tag
+	LLH_SHORT				= 2,		// n <= F: no sample needed, the estimate cannot be negative
+	LLH_SAMPLED				= 3,		// n against F + the sampled estimate
+	LLH_UNSAMPLED			= 4,		// no sample on screen: n against unsampledMax
+	LLH_NUM,
+	LLH_UNKNOWN_TAG			= 0x80		// flag: the tag was not one the switch knows
+};
+
+// per-record features; a draw ORs those of its run into rpSurfLights.w
+enum
+{
+	LLF_SHADOWED			= BIT( 0 ),	// may have a shadow row: the per-pixel Vogel set-up is needed
+	LLF_MATH				= BIT( 1 ),	// RLF_MATH
+	LLF_PROJECTED			= BIT( 2 ),	// spot / projected default texture
+	LLF_POINT				= BIT( 3 ),	// RLF_POINT
+	LLF_ALL					= 0xF
+};
+
+// a frame's knobs, read from the cvars ONCE by the glue; jobs read this, never a cvar
+struct lightListParms_t
+{
+	int			width;					// render size in pixels
+	int			height;
+	float		tanLeft;				// the projection's side planes as view x / z and y / z ( the rule's samples )
+	float		tanRight;
+	float		tanBottom;
+	float		tanTop;
+	float		zNear;
+	int			tileSize;				// r_zbinTileSize ( 16 )
+	int			numBins;				// r_zbinCount ( 8192 )
+	float		binFar;					// r_zbinFar ( 16384 ): beyond it, the last bin
+	float		wideDepth;				// r_zbinWideDepth ( 2048 ): clustered lights whose view-depth extent is at least this take the wide range
+	int			forcePath;				// r_surfLightForcePath: -1 = tags, then the rule; else LLP_LIST or LLP_ZBIN
+	float		fetchCost;				// r_surfLightFetchCost ( F, 1 )
+	int			unsampledMax;			// r_surfLightUnsampledMax ( 8 )
+	int			poolCap;				// <= LL_MAX_POOL
+};
+
+// one per view light that gets a record ( C1: not blend, not hasMatrix ), in any order
+struct lightListLight_t
+{
+	float		zMin;					// linear view distance of the light volume: zNear / zmax .. zNear / zmin ( C1, reversed-Z )
+	float		zMax;
+	int16		x0, y0, x1, y1;			// inclusive pixel rectangle, top-left origin, inside the view: the light's scissor, padded by the caller; x0 > x1 = none
+	int			importance;				// scissor area in pixels: larger survives the cap
+	uint16		features;				// LLF_*
+	byte		clustered;				// RLF_CLUSTERED: may be listed
+	byte		primarySun;				// viewLight_t::isPrimarySun ( D73 ): takes record 0
+};
+
+struct lightListRect_t					// a record's inclusive tile rectangle; x0 > x1 = none
+{
+	int16		x0, x1, y0, y1;
+};
+
+// the view's tables: built in the first hook, read only by the jobs and the pack
+struct lightListTables_t
+{
+	lightListParms_t	parms;
+	int					tilesX;
+	int					tilesY;
+	int					wordsPerTile;	// ( numRecords + 31 ) / 32: bit i is record i; also the words of a surface's mask
+	float				binScale;		// bins per unit of view distance
+	int					numRecords;		// record 0 included
+	int					firstWide;		// records [ 1, firstWide ) are narrow clustered, [ firstWide, firstFogOnly ) wide
+	int					firstFogOnly;	// records [ 1, firstFogOnly ) are clustered, the rest only for the fog
+	int					sunListed;		// 1: record 0 holds a clustered primary sun, so a run may hold 0
+	int					numCapped;		// lights past LL_MAX_RECORDS: legacy path, counted
+	int					numLights;		// the input count
+	int*				recordOfLight;	// [ numLights ]: the record, -1 = none ( capped, or wholly behind the eye )
+	int*				lightOfRecord;	// [ numRecords ]: the input light, -1 = the empty sun slot
+	uint16*				features;		// [ numRecords ]
+	uint16*				importanceRank;	// [ numRecords ]: 0 = the largest scissor among the survivors; C1's ids.x, for reading only
+	lightListRect_t*	rect;			// [ numRecords ]
+	uint32*				bins;			// [ numBins * 4 ]: narrow, wide, fog-only range, 0; each lo | hi << 16
+};
+
+// a surface's extent in view space ( +z forward ): a planar chunk ( 2 edges ) or a box ( 3 edges )
+struct lightListShape_t
+{
+	idVec3		origin;
+	idVec3		edges[3];
+	int			numEdges;
+};
+
+// one draw surface ( drawSurf_t's TRACK F block ): the job fills run, count, path and how; the pack first and featureMask
+struct lightListSurface_t
+{
+	uint16*			run;				// ascending record indices, frame memory owned by the entity's job; NULL = nothing listed
+	int16			count;
+	byte			path;				// lightListPath_t
+	byte			how;				// lightListHow_t, LLH_UNKNOWN_TAG ORed in
+	uint32			first;				// the pool word the run ( list ) or the mask ( Z-bin ) starts at; LL_POOL_ALL_ONES on overflow
+	uint32			featureMask;		// LLF_* of the run ( LLF_ALL under the all-ones mask )
+};
+
+struct lightListStats_t					// one log line per view ( r_lightListLog )
+{
+	int			records;
+	int			narrow;
+	int			wide;
+	int			fogOnly;
+	int			capped;
+	int			listSurfs;
+	int			zbinSurfs;
+	int			zbinAllSurfs;			// pool overflow, second step: unmasked ( loud )
+	int			listedPairs;
+	int			poolUsed;
+	int			poolOverflow;			// pool overflow, first step: a run that did not fit became a mask
+	int			how[LLH_NUM];
+	int			unknownTags;
+	uint32		hash;					// FNV-1a over the order, bins, tile bits, pool and paths
+};
+
+struct lightListArena_t					// one block per view from R_FrameAlloc, carved by a bump
+{
+	byte*		base;
+	int			used;
+	int			size;
+};
+
+void*			R_LightListAlloc( lightListArena_t& arena, int bytes );
+int				R_LightListArenaBytes( const lightListParms_t& parms, int numLights );
+
+// first hook ( R_NumberRecordLights ), serial
+void			R_LightListSetup( const lightListParms_t& parms, int numLights, lightListTables_t& t, lightListArena_t& arena );
+void			R_LightListNumber( const lightListLight_t* lights, int numLights, lightListTables_t& t, lightListArena_t& arena );
+// first hook, one job per tile row band ( D79 ); tileBits zeroed by the caller, each call writes only rows [ row0, row1 )
+void			R_LightListTileRows( const lightListTables_t& t, int row0, int row1, uint32* tileBits );
+
+// the model jobs ( H3 ). The job appends record indices to its run in any order, then:
+int				R_LightListFinishRun( const lightListTables_t& t, uint16* run, int count, uint32* mask );
+int				R_LightListChoosePath( const lightListTables_t& t, const uint32* tileBits, const lightListShape_t& shape,
+									   const uint16* run, int count, const uint32* mask, int tag, int* how );
+
+// second hook ( R_BuildLightLists ), serial: pool offsets in draw order, listed counts per record
+void			R_LightListPack( const lightListTables_t& t, lightListSurface_t** surfs, int numSurfs, uint32* pool,
+								 int* listedOfRecord, lightListStats_t& stats );
+uint32			R_LightListHash( const lightListTables_t& t, const uint32* tileBits, const uint32* pool, int poolUsed,
+								 lightListSurface_t* const* surfs, int numSurfs );
+
+// shared with the shader: must match lightloop.hlsli exactly, clamps included
+ID_INLINE int R_LightListBinIndex( const lightListTables_t& t, float viewZ )
+{
+	return ( int )idMath::ClampFloat( 0.0f, ( float )t.parms.numBins - 1.0f, viewZ * t.binScale );
+}
+
+ID_INLINE uint32 R_LightListWordMask( int w, int lo, int hi )
+{
+	const int first = Max( lo - w * 32, 0 );
+	const int last = Min( hi - w * 32, 31 );
+	return ( first > last ) ? 0u : ( 0xFFFFFFFFu >> ( 31 - ( last - first ) ) ) << first;
+}
+
+// what the Z-bin loop evaluates at a pixel and view depth under a surface's mask ( NULL: no mask ), ascending, the sun
+// ( bit 0 of the mask ) first. Returns the count; writes at most maxOut indices when out is not NULL.
+int				R_LightListCandidates( const lightListTables_t& t, const uint32* tileBits, const uint32* mask, int px, int py,
+									   float viewZ, int* out, int maxOut );
+
+compile_time_assert( LL_MAX_RECORDS == MAX_RECORD_LIGHTS );
+
+/*
+==========================================================================================
+
+THE ENGINE SIDE ( F1 )
+
+What the frontend keeps per view around the core's tables, and the calls the rest of the
+renderer makes. Bodies in tr_frontend_lightlists.cpp.
+
+==========================================================================================
+*/
+
+struct viewLight_t;
+
+// renderLight_t::forwardMode ( the spawnarg "forward" ): a designer routes a light by hand
+enum lightForwardMode_t
+{
+	LIGHT_FORWARD_AUTO		= 0,			// the kind rule and r_forwardLightKinds decide
+	LIGHT_FORWARD_LIST		= 1,			// listed whenever the loop can express the light
+	LIGHT_FORWARD_LEGACY	= 2				// never listed
+};
+
+/*
+====================
+lightListView_t
+
+viewDef_t::lightListView: frame memory, one per view that has records. The frontend writes it
+in the two hooks; the backend only reads it ( the uploads, the debug view ).
+====================
+*/
+struct lightListView_t
+{
+	lightListTables_t		tables;
+	lightListLight_t*		lights;				// the builder's input, kept for the capture
+	int						numLights;
+	viewLight_t**			lightOfInput;		// input index -> viewLight_t ( frontend only: the backend must not follow it to the light def )
+	uint32*					flagsOfInput;		// input index -> RLF_* as R_LightListRecordFlags decided
+	uint32*					tileBits;			// tilesX * tilesY * wordsPerTile words: the tile-bit upload
+	uint32*					pool;				// stats.poolUsed words: the pool upload
+	byte*					rowsOfRecord;		// [ numRecords ]: the shadow rows a record owns, from recordLight_t::shadowRow on; 0 = none
+	int*					vanishedPrev;		// records of the previous fog-eligible view whose lights have none now ( D82 ); NULL in any other view
+	int						numVanishedPrev;
+	int						prevFrame;			// tr.frameCount of that previous view ( ids.z and vanishedPrev refer to it ); 0 = there was none
+	lightListStats_t		stats;
+	int						unknownLightModes;	// forwardMode values the switch does not know ( read as 0 )
+	int						showMode;			// r_showLightLists, read once per view: rpZBinScale.w
+	bool					lists;				// surfaces may be listed in this view; false: records and bins only
+};
+
+void	R_NumberRecordLights();		// frontend, called from R_RenderView after R_AddLights
+void	R_BuildLightLists();		// frontend, after R_AddModels and before R_OptimizeViewLightsList
+void	R_LightListViewParms( const lightListView_t* llv, float zbinParms[4], float zbinScale[4] );	// the view's two lanes ( C18 ), for the backend
+void	R_LightListInitCommands();	// called once from R_InitCommands
 
 #endif // __LIGHTLISTS_H__

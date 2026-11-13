@@ -2719,6 +2719,7 @@ void idRenderBackend::GL_StartFrame()
 	}
 
 	// ---- TRACK F: create the light-list buffers once per render size ( D69 ) ----
+	LightListCreateBuffers( 0 );
 	// ---- END TRACK F ----
 	// ---- TRACK V: create the volumetric fog pass ----
 	// ---- END TRACK V ----
@@ -3102,6 +3103,7 @@ void idRenderBackend::ClearCaches()
 	ShadowCacheClearCaches();
 	// ---- END TRACK S ----
 	// ---- TRACK F: release the light-list buffers ----
+	LightListReleaseBuffers();
 	// ---- END TRACK F ----
 	// ---- TRACK V: delete the volumetric fog pass ----
 	// ---- END TRACK V ----
@@ -3346,5 +3348,10 @@ void idRenderBackend::ResetPipelineCache()
 	// ---- TRACK S: the shadow cache's copy pipeline holds the old shaders too ----
 	ShadowCacheClearCaches();
 	// ---- END TRACK S ----
+	// ---- TRACK F: and the heatmap's; DBG_LightLists makes them again at its next use ----
+	lightListHeatmapVS = nullptr;
+	lightListHeatmapPS = nullptr;
+	lightListHeatmapPipeline = nullptr;
+	// ---- END TRACK F ----
 }
 

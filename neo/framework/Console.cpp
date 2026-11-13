@@ -721,6 +721,14 @@ float idConsoleLocal::DrawFPS( float y )
 		}
 		// ---- END TRACK S ----
 		// ---- TRACK F: HUD rows ----
+		// F1: the light lists' line ( only while a view builds them: r_useForwardLists 1 ). The records of the main
+		// view, its shadow rows, and the bytes of tables written to the six buffers
+		if( commonLocal.stats_backend.c_lightListRecords > 0 )
+		{
+			ImGui::TextColored( colorLtGrey, "LIGHTLISTS: records:%i rows:%i upload:%i KiB",
+								commonLocal.stats_backend.c_lightListRecords, commonLocal.stats_backend.c_lightListRows,
+								commonLocal.stats_backend.c_lightListUploadBytes / 1024 );
+		}
 		// ---- END TRACK F ----
 		// ---- TRACK V: HUD rows ----
 		// ---- END TRACK V ----
