@@ -4049,7 +4049,7 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 				idImage* cacheImage = ( cacheOp.target < 0 ) ? globalImages->shadowCacheAtlasImage : globalImages->shadowCacheCascadeImage[cacheOp.target];
 				if( cacheImage->GetTextureHandle().Get() == NULL )
 				{
-					// no cache image to copy from ( it failed to create ): the static pass skipped the unit too
+					// no cache image to copy from ( none yet, given back, or failed to create ): the static pass skipped the unit too
 					continue;
 				}
 				if( cacheOp.serial == 0 || shadowCacheBuilt[R_ShadowCacheSlot( cacheOp )] != cacheOp.serial )

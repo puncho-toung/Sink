@@ -1029,7 +1029,8 @@ static void R_ShadowCacheBeginView( const viewDef_t* viewDef )
 	}
 
 	// the cache atlas may have been created again at another size ( r_shadowCacheSize, an image reload ): no
-	// place handed out in the old one stands
+	// place handed out in the old one stands. ( This thread may read the image: it is written only between
+	// two frames, by the engine's start, a reloadImages or R_ShadowCachePublish )
 	const int atlasSide = globalImages->shadowCacheAtlasImage->GetUploadWidth() / SHADOWCACHE_CELL;
 	const int atlasCells = Min( atlasSide * atlasSide, SHADOWCACHE_MAX_CELLS );
 	if( atlasCells != s.atlasCells )
@@ -2289,8 +2290,11 @@ void R_ShadowCacheDecide()
 
 		// with shadows or the atlas off there is nothing to plan. The atlas pass itself reads these two cvars
 		// live, like every other backend reader of them, so a toggle between the frontend and the backend cannot make
-		// the backend disagree with itself; without a plan and bits it then simply draws as it did before S2a
-		if( !skipSet.skipShadows && skipSet.useShadowAtlas )
+		// the backend disagree with itself; without a plan and bits it then simply draws as it did before S2a.
+		// Nor is there anything to plan without the cache images: they get their textures only at mode 2
+		// ( Image_intrinsic.cpp ), from R_ShadowCachePublish, between two frames. A view that finds none ( the
+		// mode was raised inside this frame, after the publish ) is drawn without the cache; the next has them
+		if( !skipSet.skipShadows && skipSet.useShadowAtlas && globalImages->shadowCacheAtlasImage->IsLoaded() )
 		{
 			R_ShadowCacheBeginView( viewDef );
 			memset( &shadowCachePlan, 0, sizeof( shadowCachePlan ) );
@@ -2359,6 +2363,31 @@ void R_ShadowCachePublish()
 	{
 		shadowCacheState.missesPublished = backEnd.shadowCacheMisses;
 		memcpy( shadowCacheState.missedPublished, backEnd.shadowCacheMissed, sizeof( shadowCacheState.missedPublished ) );
+	}
+	// The cache images get their textures here when the mode is 2 and they have none ( the mode was raised, or
+	// a reloadImages below mode 2 had given them back ): on the thread that makes every texture and between two
+	// frames, so the frontend never reads an image while it is written. A render target is allocated without a
+	// command list. Each of the six is asked: a debug bind ( testImage ) can have made one alone. The backend's
+	// build stamps need no clearing: they are zero at the engine's start, and the reload that gives the images
+	// back clears them ( ClearCaches )
+	if( r_shadowCache.GetInteger() >= 2 )
+	{
+		int made = 0;
+		const uint64 start = Sys_Microseconds();
+		for( int i = -1; i < 5; i++ )
+		{
+			idImage* image = ( i < 0 ) ? globalImages->shadowCacheAtlasImage : globalImages->shadowCacheCascadeImage[i];
+			if( !image->IsLoaded() )
+			{
+				image->ActuallyLoadImage( false, NULL );
+				made++;
+			}
+		}
+		if( made > 0 && r_shadowCacheLog.GetInteger() > 0 )
+		{
+			common->Printf( "shadowCache: cache images made ( %d of 6; an atlas of %d, cascade maps of %d ) in %d microseconds\n", made,
+							globalImages->shadowCacheAtlasImage->GetUploadWidth(), globalImages->shadowCacheCascadeImage[0]->GetUploadWidth(), ( int )( Sys_Microseconds() - start ) );
+		}
 	}
 }
 
