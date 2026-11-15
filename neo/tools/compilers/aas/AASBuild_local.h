@@ -76,14 +76,22 @@ public:
 };
 
 
+//puncho - TC1: skipped types keep their old behavior; only output failure fails a command.
+enum aasBuildResult_t
+{
+	AAS_BUILD_OK,
+	AAS_BUILD_SKIPPED,
+	AAS_BUILD_WRITE_FAILED
+};
+
 class idAASBuild
 {
 
 public:
 	idAASBuild();
 	~idAASBuild();
-	bool					Build( const idStr& fileName, const idAASSettings* settings );
-	bool					BuildReachability( const idStr& fileName, const idAASSettings* settings );
+	aasBuildResult_t	Build( const idStr& fileName, const idAASSettings* settings );
+	aasBuildResult_t	BuildReachability( const idStr& fileName, const idAASSettings* settings );
 	void					Shutdown();
 
 private:

@@ -32,6 +32,8 @@ If you have questions concerning this license or the applicable additional terms
 #include "Game_local.h"
 #include "../idlib/hashing/CRC32.h"
 
+extern idCVar dmap_phaseTimes; //puncho - TC0
+
 static idCVar g_pvsCache( "g_pvsCache", "1", CVAR_GAME | CVAR_BOOL, "cache static map PVS by ordered portal geometry" );
 static idCVar g_pvsCacheVerify( "g_pvsCacheVerify", "0", CVAR_GAME | CVAR_BOOL, "recompute and compare a cached map PVS" );
 
@@ -1038,6 +1040,10 @@ void idPVS::Init()
 		verifiedPVS = new( TAG_PVS ) byte[cacheBytes];
 		memcpy( verifiedPVS, areaPVS, cacheBytes );
 	}
+	//puncho - TC0: normal hits returned above; verification of a hit is not a cache-miss build.
+	const bool loadPhaseTimes = !cacheHit && dmap_phaseTimes.GetBool();
+	const int loadPhaseStart = loadPhaseTimes ? Sys_Milliseconds() : 0;
+
 	// A truncated/corrupt file may have partially overwritten the output buffer.
 	memset( areaPVS, 0xFF, cacheBytes );
 
@@ -1079,6 +1085,11 @@ void idPVS::Init()
 			fileSystem->CloseFile( cache );
 			gameLocal.Printf( "PVS cache written %s\n", cachePath.c_str() );
 		}
+	}
+	//puncho - TC0: includes PVS construction and the optional cache write/close.
+	if( loadPhaseTimes )
+	{
+		common->Printf( "load phase bpvs %i\n", Sys_Milliseconds() - loadPhaseStart );
 	}
 	timer.Stop();
 	initMilliseconds = ( int )timer.Milliseconds();

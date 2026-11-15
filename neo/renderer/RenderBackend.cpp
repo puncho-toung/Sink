@@ -46,6 +46,28 @@ If you have questions concerning this license or the applicable additional terms
 idCVar r_useNewSsaoPass( "r_useNewSSAOPass", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "use the new SSAO pass from Donut" );
 extern DeviceManager* deviceManager;
 
+//puncho - owned by lane P; captured once for each backend command frame.
+extern idCVar com_concurrencyStats;
+const char* const backendPassNames[BP_COUNT] =
+{
+	"start", "commands", "viewsetup", "depth", "hiz", "gbuffer", "ssao", "ambient",
+	"shadow", "intertexture", "interemitter", "ssr", "stages", "fog", "post",
+	"debug", "motion", "taa", "tonemap", "blit", "end"
+};
+
+//puncho - switch intervals instead of nesting timers: non-atlas shadow maps are
+// charged only to SHADOW, even though they run inside each interaction phase.
+ID_INLINE void idRenderBackend::MarkBackendPass( backendPass_t nextPass )
+{
+	const uint64 now = Sys_Microseconds();
+	const int draws = pc.c_drawElements + pc.c_shadowElements;
+	pc.passMicroSec[currentPass] += static_cast<uint32>( now - passStartMicroSec );
+	pc.passDraws[currentPass] += static_cast<uint32>( draws - passStartDraws );
+	passStartMicroSec = now;
+	passStartDraws = draws;
+	currentPass = nextPass;
+}
+
 idCVar r_drawEyeColor( "r_drawEyeColor", "0", CVAR_RENDERER | CVAR_BOOL, "Draw a colored box, red = left eye, blue = right eye, grey = non-stereo" );
 idCVar r_motionBlur( "r_motionBlur", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE, "1 - 5, log2 of the number of motion blur samples" );
 idCVar r_forceZPassStencilShadows( "r_forceZPassStencilShadows", "0", CVAR_RENDERER | CVAR_BOOL, "force Z-pass rendering for performance testing" );
@@ -4095,6 +4117,11 @@ void idRenderBackend::DrawInteractionsPass( const viewDef_t* _viewDef, bool emit
 		{
 			if( !r_useShadowAtlas.GetBool() && vLight->shadowLOD > -1 )
 			{
+				//puncho
+				if( concurrencyStats )
+				{
+					MarkBackendPass( BP_SHADOW );
+				}
 				int	side, sideStop;
 
 				if( vLight->parallel )
@@ -4138,6 +4165,11 @@ void idRenderBackend::DrawInteractionsPass( const viewDef_t* _viewDef, bool emit
 					Framebuffer::Unbind();
 				}
 				renderProgManager.Unbind();
+				//puncho
+				if( concurrencyStats )
+				{
+					MarkBackendPass( emitterPass ? BP_INTER_EMITTER : BP_INTER_TEXTURE );
+				}
 			}
 
 			GL_State( GLS_DEFAULT );
@@ -4241,6 +4273,11 @@ void idRenderBackend::DrawInteractions( const viewDef_t* _viewDef )
 		renderLog.CloseMainBlock( MRB_DRAW_INTERACTIONS_TEX );
 	}
 
+	//puncho
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_INTER_EMITTER );
+	}
 	{
 		OPTICK_GPU_EVENT( "Render_Interactions_Emitter" );
 
@@ -5783,7 +5820,20 @@ void idRenderBackend::ExecuteBackEndCommands( const emptyCommand_t* cmds )
 	//	return;
 	//}
 
+	//puncho - include command-list opening, uploads and submission in the frame edges.
+	concurrencyStats = com_concurrencyStats.GetBool();
+	if( concurrencyStats )
+	{
+		currentPass = BP_START;
+		passStartDraws = pc.c_drawElements + pc.c_shadowElements;
+		passStartMicroSec = Sys_Microseconds();
+	}
 	GL_StartFrame();
+	//puncho
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_COMMANDS );
+	}
 
 	uint64 backEndStartTime = Sys_Microseconds();
 
@@ -5862,9 +5912,24 @@ void idRenderBackend::ExecuteBackEndCommands( const emptyCommand_t* cmds )
 	// stop rendering on this thread
 	uint64 backEndFinishTime = Sys_Microseconds();
 	pc.cpuTotalMicroSec = backEndFinishTime - backEndStartTime;
+	//puncho - share the total's ending sample with the main-thread tail timer.
+	if( concurrencyStats )
+	{
+		pc.timedEndMicroSec = backEndFinishTime;
+	}
 
 	// SRS - capture backend timing before GL_EndFrame() since it can block when r_mvkSynchronousQueueSubmits is enabled on macOS/MoltenVK
+	//puncho
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_END );
+	}
 	GL_EndFrame();
+	//puncho
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_COUNT );
+	}
 
 	if( r_debugRenderToTexture.GetInteger() == 1 )
 	{
@@ -5881,6 +5946,12 @@ idRenderBackend::DrawViewInternal
 */
 void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int stereoEye )
 {
+	//puncho
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_VIEW_SETUP );
+	}
+
 	//OPTICK_EVENT( "Backend_DrawViewInternal" );
 	//OPTICK_TAG( "stereoEye", stereoEye );
 
@@ -6067,11 +6138,21 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 	//-------------------------------------------------
 	// fill the depth buffer and clear color buffer to black except on subviews
 	//-------------------------------------------------
+	//puncho
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_DEPTH );
+	}
 	FillDepthBufferFast( drawSurfs, numDrawSurfs );
 
 	//-------------------------------------------------
 	// build hierarchical depth buffer
 	//-------------------------------------------------
+	//puncho
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_HIZ );
+	}
 	if( R_UseHiZ() && is3D )
 	{
 		OPTICK_GPU_EVENT( "Render_HiZ" );
@@ -6099,6 +6180,11 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 	//
 	// fill the geometric buffer with normals and roughness
 	//-------------------------------------------------
+	//puncho
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_GBUFFER );
+	}
 	if( is3D )
 	{
 		//OPTICK_EVENT( "Render_GeometryBuffer" );
@@ -6110,6 +6196,11 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 	//-------------------------------------------------
 	// build hierarchical depth buffer and SSAO render target
 	//-------------------------------------------------
+	//puncho
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_SSAO );
+	}
 	if( r_useNewSsaoPass.GetBool() )
 	{
 		DrawScreenSpaceAmbientOcclusion2( _viewDef );
@@ -6122,6 +6213,11 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 	//-------------------------------------------------
 	// render static lighting and consider SSAO results
 	//-------------------------------------------------
+	//puncho
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_AMBIENT );
+	}
 	if( is3D )
 	{
 		//OPTICK_EVENT( "Render_AmbientPass" );
@@ -6133,16 +6229,31 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 	//-------------------------------------------------
 	// render all light <-> geometry interactions to a depth buffer atlas
 	//-------------------------------------------------
+	//puncho
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_SHADOW );
+	}
 	ShadowAtlasPass( _viewDef );
 
 	//-------------------------------------------------
 	// main light renderer
 	//-------------------------------------------------
+	//puncho
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_INTER_TEXTURE );
+	}
 	DrawInteractions( _viewDef );
 
 	//-------------------------------------------------
 	// resolve the screen for SSR
 	//-------------------------------------------------
+	//puncho
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_SSR );
+	}
 	if( is3D && r_useSSR.GetBool() && R_UseHiZ() )
 	{
 		OPTICK_GPU_EVENT( "Resolve_Screen4SSR" );
@@ -6172,6 +6283,11 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 	// now draw any non-light dependent shading passes
 	//-------------------------------------------------
 
+	//puncho
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_STAGES );
+	}
 	int processed = 0;
 	if( !r_skipShaderPasses.GetBool() )
 	{
@@ -6201,11 +6317,21 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 	// fog and blend lights, drawn after emissive surfaces
 	// so they are properly dimmed down
 	//-------------------------------------------------
+	//puncho
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_FOG );
+	}
 	FogAllLights();
 
 	//-------------------------------------------------
 	// now draw any screen warping post-process effects using _currentRender
 	//-------------------------------------------------
+	//puncho
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_POST );
+	}
 	if( processed < numDrawSurfs && !r_skipPostProcess.GetBool() )
 	{
 		OPTICK_GPU_EVENT( "Render_ShaderPassesPost" );
@@ -6268,11 +6394,21 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 	//-------------------------------------------------
 	// render debug tools
 	//-------------------------------------------------
+	//puncho
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_DEBUG );
+	}
 	DBG_RenderDebugTools( drawSurfs, numDrawSurfs );
 
 	//-------------------------------------------------
 	// motion vectors are useful for TAA and motion blur
 	//-------------------------------------------------
+	//puncho
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_MOTION );
+	}
 	DrawMotionVectors();
 
 	//-------------------------------------------------
@@ -6281,12 +6417,22 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 	// use this to eat all stochastic noise like from volumetric light sampling or SSAO
 	// runs at full resolution
 	//-------------------------------------------------
+	//puncho
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_TAA );
+	}
 	TemporalAAPass( _viewDef );
 
 	//-------------------------------------------------
 	// tonemapping: convert back from HDR to LDR range
 	//-------------------------------------------------
 
+	//puncho
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_TONEMAP );
+	}
 	if( is3D && !( _viewDef->renderView.rdflags & RDF_IRRADIANCE ) && !_viewDef->targetRender )
 	{
 		OPTICK_GPU_EVENT( "Render_ToneMapPass" );
@@ -6323,26 +6469,35 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 
 	// TODO implement bloom
 	//Bloom( _viewDef );
+	//puncho
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_BLIT );
+	}
 
 	if( _viewDef->renderView.rdflags & RDF_IRRADIANCE )
 	{
-		OPTICK_GPU_EVENT( "Blit_EnvProbeRendered" );
+		//puncho - concurrency TB3a: a bake's capture view ( RDF_BAKE_NODISPLAY, RenderCommon.h ) is not shown
+		if( !( _viewDef->renderView.rdflags & RDF_BAKE_NODISPLAY ) )
+		{
+			OPTICK_GPU_EVENT( "Blit_EnvProbeRendered" );
 
-		// copy LDR result to DX12 / Vulkan swapchain image
+			// copy LDR result to DX12 / Vulkan swapchain image
 
-		// we haven't changed ldrImage so it's basically the previewsRenderLDR
-		BlitParameters blitParms;
-		blitParms.sourceTexture = ( nvrhi::ITexture* )globalImages->ldrImage->GetTextureID();
-		blitParms.targetFramebuffer = deviceManager->GetCurrentFramebuffer();
-		blitParms.targetViewport = nvrhi::Viewport( renderSystem->GetNativeWidth(), renderSystem->GetNativeHeight() );
-		commonPasses.BlitTexture( commandList, blitParms, &bindingCache );
+			// we haven't changed ldrImage so it's basically the previewsRenderLDR
+			BlitParameters blitParms;
+			blitParms.sourceTexture = ( nvrhi::ITexture* )globalImages->ldrImage->GetTextureID();
+			blitParms.targetFramebuffer = deviceManager->GetCurrentFramebuffer();
+			blitParms.targetViewport = nvrhi::Viewport( renderSystem->GetNativeWidth(), renderSystem->GetNativeHeight() );
+			commonPasses.BlitTexture( commandList, blitParms, &bindingCache );
 
-		// blit envprobe over it for quick review where we are
+			// blit envprobe over it for quick review where we are
 
-		blitParms.sourceTexture = ( nvrhi::ITexture* )globalImages->envprobeHDRImage->GetTextureID();
-		blitParms.targetFramebuffer = deviceManager->GetCurrentFramebuffer();
-		blitParms.targetViewport = nvrhi::Viewport( ENVPROBE_CAPTURE_SIZE, ENVPROBE_CAPTURE_SIZE );
-		commonPasses.BlitTexture( commandList, blitParms, &bindingCache );
+			blitParms.sourceTexture = ( nvrhi::ITexture* )globalImages->envprobeHDRImage->GetTextureID();
+			blitParms.targetFramebuffer = deviceManager->GetCurrentFramebuffer();
+			blitParms.targetViewport = nvrhi::Viewport( ENVPROBE_CAPTURE_SIZE, ENVPROBE_CAPTURE_SIZE );
+			commonPasses.BlitTexture( commandList, blitParms, &bindingCache );
+		}
 	}
 	else
 	{
@@ -6405,6 +6560,11 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 	}
 
 	renderLog.CloseBlock();
+	//puncho
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_COMMANDS );
+	}
 }
 
 /*
@@ -6553,6 +6713,15 @@ void idRenderBackend::DrawView( const void* data, const int stereoEye )
 		if( viewDef->renderView.rdflags & RDF_IRRADIANCE )
 		{
 			nvrhi::utils::ClearColorAttachment( commandList, globalFramebuffers.envprobeFBO->GetApiObject(), 0, nvrhi::Color( 0.f ) );
+
+			//puncho - concurrency D14: else the face keeps the previous face's depth, and the environment bake saves it;
+			// the depth and stencil clear a view that draws makes ( DrawViewInternal ), whose clear value follows the
+			// attachment's depth convention ( GL_Clear )
+			if( r_bakeClearEmptyFaceDepth.GetBool() )
+			{
+				globalFramebuffers.envprobeFBO->Bind();
+				GL_Clear( false, true, true, STENCIL_SHADOW_TEST_VALUE, 0.0f, 0.0f, 0.0f, 0.0f );
+			}
 		}
 
 		return;

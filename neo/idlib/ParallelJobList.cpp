@@ -29,6 +29,81 @@ If you have questions concerning this license or the applicable additional terms
 #include "precompiled.h"
 #pragma hdrstop
 #include "ParallelJobList.h"
+#include <atomic> //puncho - C1a: publication must not use plain interlocked-wrapper loads
+//puncho - C1a: use MXCSR intrinsics on the same targets as renderer initialization.
+#if defined(USE_INTRINSICS_SSE)
+	#include <xmmintrin.h>
+#endif
+
+//puncho - C1a: opt-in normalization; latch before starting the pool, retaining mismatch diagnostics when off.
+static idCVar jobs_fpState( "jobs_fpState", "0", CVAR_BOOL | CVAR_SYSTEM | CVAR_INIT, "set job/game threads to main-thread MXCSR controls (startup only; default 0 preserves thread controls and reports mismatches)" );
+#if defined(USE_INTRINSICS_SSE)
+static const unsigned int JOB_FP_STATUS_MASK = 0x3fU;
+static const unsigned int JOB_FP_STATE_UNCAPTURED = ~0U;
+static std::atomic<unsigned int> jobFpState( JOB_FP_STATE_UNCAPTURED );
+static bool setJobFpState;
+#if defined( _DEBUG )
+// A capture during an early wake must not assert until that thread's next setup attempt.
+static thread_local unsigned int expectedJobFpState = JOB_FP_STATE_UNCAPTURED;
+#endif
+#endif
+
+void CaptureJobFpState()
+{
+#if defined(USE_INTRINSICS_SSE)
+	assert( jobFpState.load( std::memory_order_relaxed ) == JOB_FP_STATE_UNCAPTURED );
+	const unsigned int control = _mm_getcsr() & ~JOB_FP_STATUS_MASK;
+	jobFpState.store( control, std::memory_order_release );
+#if defined( _DEBUG )
+	// The main thread can execute lists inline without entering either worker Run().
+	if( setJobFpState )
+	{
+		expectedJobFpState = control;
+	}
+#endif
+#endif
+}
+
+static bool InitThreadJobFpState( const char* threadName )
+{
+#if defined(USE_INTRINSICS_SSE)
+	const unsigned int control = jobFpState.load( std::memory_order_acquire );
+	if( control == JOB_FP_STATE_UNCAPTURED )
+	{
+		return false;
+	}
+	const unsigned int previous = _mm_getcsr();
+	if( setJobFpState )
+	{
+		_mm_setcsr( control | ( previous & JOB_FP_STATUS_MASK ) );
+#if defined( _DEBUG )
+		expectedJobFpState = control;
+#endif
+	}
+	if( ( previous & ~JOB_FP_STATUS_MASK ) != control )
+	{
+#if defined( _DEBUG )
+		idLib::Printf( "Job FP controls %s: thread=0x%08x main=0x%08x\n", threadName, previous & ~JOB_FP_STATUS_MASK, control );
+#else
+		common->DPrintf( "Job FP controls %s: thread=0x%08x main=0x%08x\n", threadName, previous & ~JOB_FP_STATUS_MASK, control );
+#endif
+	}
+#else
+	( void )threadName;
+#endif
+	return true;
+}
+
+void InitGameThreadFpState()
+{
+	// Run() also executes inline on main; keep the latch local to the actual OS thread.
+	static thread_local bool initialized = false;
+	if( !initialized )
+	{
+		initialized = InitThreadJobFpState( "Game/Draw" );
+	}
+}
+//puncho end
 
 /*
 ================================================================================================
@@ -38,12 +113,18 @@ If you have questions concerning this license or the applicable additional terms
 ================================================================================================
 */
 
+//puncho - C1a: list ids are sparse; every valid id needs a positional name.
 const char* jobNames[] =
 {
 	ASSERT_ENUM_STRING( JOBLIST_RENDERER_FRONTEND,	0 ),
 	ASSERT_ENUM_STRING( JOBLIST_RENDERER_BACKEND,	1 ),
+	"joblist2", "joblist3", "joblist4", "joblist5", "joblist6", "joblist7", "joblist8",
 	ASSERT_ENUM_STRING( JOBLIST_UTILITY,			9 ),
+	"joblist10", "joblist11", "joblist12", "joblist13", "joblist14", "joblist15",
+	"joblist16", "joblist17", "joblist18", "joblist19", "joblist20", "joblist21", "joblist22", "joblist23",
+	"joblist24", "joblist25", "joblist26", "joblist27", "joblist28", "joblist29", "joblist30", "joblist31"
 };
+compile_time_assert( sizeof( jobNames ) / sizeof( jobNames[0] ) == MAX_JOBLISTS );
 
 static const int MAX_REGISTERED_JOBS = 128;
 struct registeredJob
@@ -84,6 +165,12 @@ void RegisterJob( jobRun_t function, const char* name )
 {
 	if( IsRegisteredJob( function ) )
 	{
+		return;
+	}
+	//puncho - C1a: registration is an init-time limit, not an unchecked array write.
+	if( numRegisteredJobs >= MAX_REGISTERED_JOBS )
+	{
+		common->FatalError( "RegisterJob: more than %d job functions", MAX_REGISTERED_JOBS );
 		return;
 	}
 	registeredJobs[numRegisteredJobs].function = function;
@@ -143,6 +230,48 @@ idParallelJobList_Threads
 static idCVar jobs_longJobMicroSec( "jobs_longJobMicroSec", "10000", CVAR_INTEGER, "print a warning for jobs that take more than this number of microseconds" );
 
 
+//puncho - C1a: copying is only used by idList growth while the list is unsubmitted.
+// Keep the existing RMW ordering, with acquire/release publication for plain accesses.
+struct jobListCounter_t
+{
+	jobListCounter_t() : value( 0 ) {}
+	jobListCounter_t( const jobListCounter_t& other ) : value( other.GetValue() ) {}
+	jobListCounter_t& operator=( const jobListCounter_t& other )
+	{
+		SetValue( other.GetValue() );
+		return *this;
+	}
+	int Increment()
+	{
+		return ++value;
+	}
+	int Decrement()
+	{
+		return --value;
+	}
+	int GetValue() const
+	{
+		return value.load( std::memory_order_acquire );
+	}
+	void SetValue( int v )
+	{
+		value.store( v, std::memory_order_release );
+	}
+private:
+	std::atomic<int> value;
+};
+//puncho - C1a: unsupported atomic implementations must not hide a lock per job.
+compile_time_assert( std::atomic<int>::is_always_lock_free );
+compile_time_assert( std::atomic<unsigned int>::is_always_lock_free );
+compile_time_assert( std::atomic<uint64>::is_always_lock_free );
+
+#if defined( _DEBUG )
+static idCVar jobs_warnOverrun( "jobs_warnOverrun", "1", CVAR_BOOL, "developer warning on the first job-list reservation overrun per map" );
+#else
+static idCVar jobs_warnOverrun( "jobs_warnOverrun", "0", CVAR_BOOL, "developer warning on the first job-list reservation overrun per map" );
+#endif
+//puncho end
+
 const static int		MAX_THREADS	= 32;
 
 struct threadJobListState_t
@@ -189,7 +318,7 @@ public:
 	//------------------------
 	ID_INLINE void			AddJob( jobRun_t function, void* data );
 	ID_INLINE void			InsertSyncPoint( jobSyncType_t syncType );
-	void					Submit( idParallelJobList_Threads* waitForJobList_, int parallelism );
+	void					Submit( int parallelism ); //puncho - C1a: no cross-list dependencies
 	void					Wait();
 	bool					TryWait();
 	bool					IsSubmitted() const;
@@ -236,7 +365,23 @@ public:
 		return version.GetValue();
 	}
 
-	bool					WaitForOtherJobList();
+	//puncho - G1/P0: owner-thread access; frame reads/resets require completed lists.
+	int						GetNumRealJobs() const
+	{
+		return jobList.Num() - 2 * numSyncs - 1;
+	}
+	void					ReadAndClearFrameStats( jobListFrameStats_t& stats )
+	{
+		assert( done );
+		stats = frameStats;
+		memset( &frameStats, 0, sizeof( frameStats ) );
+	}
+	void					ResetOverrunWarning()
+	{
+		assert( done );
+		warnedOverrun = false;
+		pendingOverrunJobs = 0; //puncho - RB2-02: discard any diagnostic from the previous map
+	}
 
 	//------------------------
 	// This is thread safe and called from the job threads.
@@ -252,21 +397,18 @@ public:
 	int						RunJobs( unsigned int threadNum, threadJobListState_t& state, bool singleJob );
 
 private:
-	static const int		NUM_DONE_GUARDS = 4;	// cycle through 4 guards so we can cyclicly chain job lists
-
 	bool					threaded;
 	bool					done;
 	bool					hasSignal;
+	bool					warnedOverrun; //puncho - C1a: reset by the map owner
 	jobListId_t				listId;
 	jobListPriority_t		listPriority;
 	unsigned int			maxJobs;
 	unsigned int			maxSyncs;
 	unsigned int			numSyncs;
+	unsigned int			pendingOverrunJobs; //puncho - RB2-02: id/reservation stay in listId/maxJobs
 	int						lastSignalJob;
-	idSysInterlockedInteger* waitForGuard;
-	idSysInterlockedInteger doneGuards[NUM_DONE_GUARDS];
-	int						currentDoneGuard;
-	idSysInterlockedInteger	version;
+	jobListCounter_t			version; //puncho - C1a
 	struct job_t
 	{
 		jobRun_t	function;
@@ -274,11 +416,14 @@ private:
 		int			executed;
 	};
 	idList< job_t, TAG_JOBLIST >		jobList;
-	idList< idSysInterlockedInteger, TAG_JOBLIST >	signalJobCount;
-	idSysInterlockedInteger				currentJob;
-	idSysInterlockedInteger				fetchLock;
-	idSysInterlockedInteger				numThreadsExecuting;
+	//puncho - C1a: acquire/release counters replace the plain interlocked-wrapper accesses.
+	idList< jobListCounter_t, TAG_JOBLIST >	signalJobCount;
+	jobListCounter_t					currentJob;
+	jobListCounter_t					fetchLock;
+	jobListCounter_t					numThreadsExecuting;
 
+	std::atomic<uint64>				startTime; //puncho - C1a: elected once, copied after retirement
+	jobListFrameStats_t				frameStats; //puncho - P0
 	threadStats_t						deferredThreadStats;
 	threadStats_t						threadStats;
 
@@ -304,13 +449,14 @@ idParallelJobList_Threads::idParallelJobList_Threads( jobListId_t id, jobListPri
 	threaded( true ),
 	done( true ),
 	hasSignal( false ),
+	warnedOverrun( false ), //puncho - C1a
 	listId( id ),
 	listPriority( priority ),
 	numSyncs( 0 ),
+	pendingOverrunJobs( 0 ), //puncho - RB2-02
 	lastSignalJob( 0 ),
-	waitForGuard( NULL ),
-	currentDoneGuard( 0 ),
-	jobList()
+	jobList(),
+	startTime( 0 ) //puncho - C1a
 {
 
 	assert( listPriority != JOBLIST_PRIORITY_NONE );
@@ -324,6 +470,7 @@ idParallelJobList_Threads::idParallelJobList_Threads( jobListId_t id, jobListPri
 
 	memset( &deferredThreadStats, 0, sizeof( threadStats_t ) );
 	memset( &threadStats, 0, sizeof( threadStats_t ) );
+	memset( &frameStats, 0, sizeof( frameStats ) ); //puncho - P0
 }
 
 /*
@@ -437,11 +584,11 @@ ID_INLINE void idParallelJobList_Threads::InsertSyncPoint( jobSyncType_t syncTyp
 idParallelJobList_Threads::Submit
 ========================
 */
-void idParallelJobList_Threads::Submit( idParallelJobList_Threads* waitForJobList, int parallelism )
+void idParallelJobList_Threads::Submit( int parallelism ) //puncho - C1a
 {
 	assert( done );
 	assert( numSyncs <= maxSyncs );
-	assert( ( unsigned int ) jobList.Num() <= maxJobs + numSyncs * 2 );
+	//puncho - C1a: maxJobs is a reservation; AddJob may grow in every build.
 	assert( fetchLock.GetValue() == 0 );
 
 	done = false;
@@ -454,23 +601,24 @@ void idParallelJobList_Threads::Submit( idParallelJobList_Threads* waitForJobLis
 	deferredThreadStats.startTime = 0;
 	deferredThreadStats.endTime = 0;
 	deferredThreadStats.waitTime = 0;
+	//puncho - C1a/P0: reuse existing submission figures; no extra timer read.
+	startTime.store( 0, std::memory_order_release );
+	if( !warnedOverrun && deferredThreadStats.numExecutedJobs > maxJobs && jobs_warnOverrun.GetBool() )
+	{
+		warnedOverrun = true;
+		//puncho - RB2-02: printing here could redraw into this unfinished submission.
+		pendingOverrunJobs = deferredThreadStats.numExecutedJobs;
+	}
+	if( parallelJobManager->GetCollectFrameStats() )
+	{
+		frameStats.jobs += deferredThreadStats.numExecutedJobs;
+		frameStats.submits++;
+	}
 
 	if( jobList.Num() == 0 )
 	{
 		return;
 	}
-
-	if( waitForJobList != NULL )
-	{
-		waitForGuard = & waitForJobList->doneGuards[waitForJobList->currentDoneGuard];
-	}
-	else
-	{
-		waitForGuard = NULL;
-	}
-
-	currentDoneGuard = ( currentDoneGuard + 1 ) & ( NUM_DONE_GUARDS - 1 );
-	doneGuards[currentDoneGuard].SetValue( 1 );
 
 	signalJobCount.Alloc();
 	signalJobCount[signalJobCount.Num() - 1].SetValue( jobList.Num() - lastSignalJob );
@@ -531,8 +679,28 @@ void idParallelJobList_Threads::Wait()
 		uint64 waitEnd = Sys_Microseconds();
 		deferredThreadStats.waitTime = waited ? ( waitEnd - waitStart ) : 0;
 	}
+	//puncho - C1a: every accepted visitor has published its statistics before the drain.
+	deferredThreadStats.startTime = startTime.load( std::memory_order_acquire );
 	memcpy( & threadStats, & deferredThreadStats, sizeof( threadStats ) );
+	//puncho - P0: repeated Wait/TryWait calls must not count a submission again.
+	if( parallelJobManager->GetCollectFrameStats() )
+	{
+		if( !done )
+		{
+			frameStats.execUs += GetTotalProcessingTimeMicroSec();
+			frameStats.wallUs += threadStats.endTime > 0 ? threadStats.endTime - threadStats.submitTime : 0;
+			frameStats.waitUs += threadStats.waitTime;
+		}
+	}
 	done = true;
+	//puncho - RB2-02: the owner has retired the list and finished all statistics writes.
+	// DPrintf suppresses main-thread refresh; off-main output uses the existing print relay.
+	if( pendingOverrunJobs != 0 )
+	{
+		const unsigned int overrunJobs = pendingOverrunJobs;
+		pendingOverrunJobs = 0;
+		common->DPrintf( "WARNING: Job list %d exceeded reservation %u with %u jobs\n", listId, maxJobs, overrunJobs );
+	}
 }
 
 /*
@@ -618,12 +786,6 @@ uint64 idParallelJobList_Threads::GetUnitWastedTimeMicroSec( int unit ) const
 	return threadStats.threadTotalTime[unit] - threadStats.threadExecTime[unit];
 }
 
-#ifndef _DEBUG
-	volatile float longJobTime;
-	volatile jobRun_t longJobFunc;
-	volatile void* longJobData;
-#endif
-
 /*
 ========================
 idParallelJobList_Threads::RunJobsInternal
@@ -631,17 +793,13 @@ idParallelJobList_Threads::RunJobsInternal
 */
 int idParallelJobList_Threads::RunJobsInternal( unsigned int threadNum, threadJobListState_t& state, bool singleJob )
 {
-	if( state.version != version.GetValue() )
-	{
-		// trying to run an old version of this list that is already done
-		return RUN_DONE;
-	}
-
 	assert( threadNum < MAX_THREADS );
 
-	if( deferredThreadStats.startTime == 0 )
+	//puncho - C1a: only the winning visitor publishes the first execution time.
+	if( startTime.load( std::memory_order_acquire ) == 0 )
 	{
-		deferredThreadStats.startTime = Sys_Microseconds();	// first time any thread is running jobs from this list
+		uint64 expected = 0;
+		startTime.compare_exchange_strong( expected, Sys_Microseconds(), std::memory_order_acq_rel );
 	}
 
 	int result = RUN_OK;
@@ -716,8 +874,6 @@ int idParallelJobList_Threads::RunJobsInternal( unsigned int threadNum, threadJo
 						// stalled on a synchronization point
 						return ( result | RUN_STALLED );
 					}
-					// decrement the done count
-					doneGuards[currentDoneGuard].Decrement();
 				}
 			}
 			// release the fetch lock
@@ -739,6 +895,13 @@ int idParallelJobList_Threads::RunJobsInternal( unsigned int threadNum, threadJo
 
 		// execute the next job
 		{
+#if defined( _DEBUG ) && defined(USE_INTRINSICS_SSE)
+			//puncho - C1a: status bits may change during arithmetic; controls must not drift.
+			if( expectedJobFpState != JOB_FP_STATE_UNCAPTURED )
+			{
+				assert( ( _mm_getcsr() & ~JOB_FP_STATUS_MASK ) == expectedJobFpState );
+			}
+#endif
 			uint64 jobStart = Sys_Microseconds();
 
 			jobList[state.nextJobIndex].function( jobList[state.nextJobIndex].data );
@@ -753,10 +916,12 @@ int idParallelJobList_Threads::RunJobsInternal( unsigned int threadNum, threadJo
 				if( jobEnd - jobStart > jobs_longJobMicroSec.GetInteger()
 						&& GetId() != JOBLIST_UTILITY )
 				{
-					longJobTime = ( jobEnd - jobStart ) * ( 1.0f / 1000.0f );
-					longJobFunc = jobList[state.nextJobIndex].function;
-					longJobData = jobList[state.nextJobIndex].data;
-					const char* jobName = GetJobName( jobList[state.nextJobIndex].function );
+					//puncho - C1a: diagnostics belong to this callback, not shared globals.
+					const float longJobTime = ( jobEnd - jobStart ) * ( 1.0f / 1000.0f );
+					const jobRun_t longJobFunc = jobList[state.nextJobIndex].function;
+					void* const longJobData = jobList[state.nextJobIndex].data;
+					( void )longJobData;
+					const char* jobName = GetJobName( longJobFunc );
 					const char* jobListName = GetJobListName( GetId() );
 					idLib::Printf( "%1.1f milliseconds for a single '%s' job from job list %s on thread %d\n", longJobTime, jobName, jobListName, threadNum );
 				}
@@ -794,30 +959,20 @@ int idParallelJobList_Threads::RunJobs( unsigned int threadNum, threadJobListSta
 
 	numThreadsExecuting.Increment();
 
+	//puncho - C1a: count before validating; stale visitors may not touch statistics.
+	if( state.version != version.GetValue() )
+	{
+		numThreadsExecuting.Decrement();
+		return RUN_DONE;
+	}
+
 	int result = RunJobsInternal( threadNum, state, singleJob );
 
+	deferredThreadStats.threadTotalTime[threadNum] += Sys_Microseconds() - start;
+	//puncho - C1a: publish every write before Wait can observe retirement.
 	numThreadsExecuting.Decrement();
 
-	deferredThreadStats.threadTotalTime[threadNum] += Sys_Microseconds() - start;
-
 	return result;
-}
-
-/*
-========================
-idParallelJobList_Threads::WaitForOtherJobList
-========================
-*/
-bool idParallelJobList_Threads::WaitForOtherJobList()
-{
-	if( waitForGuard != NULL )
-	{
-		if( waitForGuard->GetValue() > 0 )
-		{
-			return true;
-		}
-	}
-	return false;
 }
 
 /*
@@ -916,8 +1071,10 @@ idParallelJobList::Submit
 */
 void idParallelJobList::Submit( idParallelJobList* waitForJobList, int parallelism )
 {
-	assert( waitForJobList != this );
-	jobListThreads->Submit( ( waitForJobList != NULL ) ? waitForJobList->jobListThreads : NULL, parallelism );
+	//puncho - C1a: retain source compatibility, with no cross-list dependency state.
+	assert( waitForJobList == NULL );
+	( void )waitForJobList;
+	jobListThreads->Submit( parallelism );
 }
 
 /*
@@ -1070,11 +1227,13 @@ public:
 
 private:
 	threadJobList_t				jobLists[MAX_JOBLISTS];	// cyclic buffer with job lists
-	unsigned int				firstJobList;			// index of the last job list the thread grabbed
-	unsigned int				lastJobList;			// index where the next job list to work on will be added
+	//puncho - C1a: release/acquire in both directions protects ring-slot reuse.
+	std::atomic<unsigned int>	firstJobList;			// index of the last job list the thread grabbed
+	std::atomic<unsigned int>	lastJobList;			// index where the next job list to work on will be added
 	idSysMutex					addJobMutex;
 
 	unsigned int				threadNum;
+	bool						fpStateInitialized; //puncho - C1a: one setup per OS thread
 
 	virtual int					Run();
 };
@@ -1087,7 +1246,8 @@ idJobThread::idJobThread
 idJobThread::idJobThread() :
 	firstJobList( 0 ),
 	lastJobList( 0 ),
-	threadNum( 0 )
+	threadNum( 0 ),
+	fpStateInitialized( false ) //puncho - C1a
 {
 }
 
@@ -1108,6 +1268,7 @@ idJobThread::Start
 void idJobThread::Start( core_t core, unsigned int threadNum )
 {
 	this->threadNum = threadNum;
+	fpStateInitialized = false; //puncho - C1a: a restarted OS thread needs its own setup
 	// DG: change threadname from "JobListProcessor_%d" to "JLProc_%d", because Linux
 	// has a 15 (+ \0) char limit for threadnames.
 	// furthermore: va is not thread safe, use snPrintf instead
@@ -1127,14 +1288,16 @@ void idJobThread::AddJobList( idParallelJobList_Threads* jobList )
 	// must lock because multiple threads may try to add new job lists at the same time
 	addJobMutex.Lock();
 	// wait until there is space available because in rare cases multiple versions of the same job lists may still be queued
-	while( lastJobList - firstJobList >= MAX_JOBLISTS )
+	//puncho - C1a: producers are serialized by addJobMutex; publish the complete slot.
+	const unsigned int last = lastJobList.load( std::memory_order_relaxed );
+	while( last - firstJobList.load( std::memory_order_acquire ) >= MAX_JOBLISTS )
 	{
 		Sys_Yield();
 	}
-	assert( lastJobList - firstJobList < MAX_JOBLISTS );
-	jobLists[lastJobList & ( MAX_JOBLISTS - 1 )].jobList = jobList;
-	jobLists[lastJobList & ( MAX_JOBLISTS - 1 )].version = jobList->GetVersion();
-	lastJobList++;
+	assert( last - firstJobList.load( std::memory_order_acquire ) < MAX_JOBLISTS );
+	jobLists[last & ( MAX_JOBLISTS - 1 )].jobList = jobList;
+	jobLists[last & ( MAX_JOBLISTS - 1 )].version = jobList->GetVersion();
+	lastJobList.store( last + 1, std::memory_order_release );
 	addJobMutex.Unlock();
 }
 
@@ -1145,6 +1308,12 @@ idJobThread::Run
 */
 int idJobThread::Run()
 {
+	//puncho - C1a: later wakes only test this bool; pre-capture wakes retry next time.
+	if( !fpStateInitialized )
+	{
+		fpStateInitialized = InitThreadJobFpState( GetName() );
+	}
+
 	threadJobListState_t threadJobListState[MAX_JOBLISTS];
 	int numJobLists = 0;
 	int lastStalledJobList = -1;
@@ -1153,15 +1322,17 @@ int idJobThread::Run()
 	{
 
 		// fetch any new job lists and add them to the local list
-		if( numJobLists < MAX_JOBLISTS && firstJobList < lastJobList )
+		//puncho - C1a: acquire the slot, then release it only after copying its contents.
+		const unsigned int first = firstJobList.load( std::memory_order_relaxed );
+		if( numJobLists < MAX_JOBLISTS && first != lastJobList.load( std::memory_order_acquire ) )
 		{
-			threadJobListState[numJobLists].jobList = jobLists[firstJobList & ( MAX_JOBLISTS - 1 )].jobList;
-			threadJobListState[numJobLists].version = jobLists[firstJobList & ( MAX_JOBLISTS - 1 )].version;
+			threadJobListState[numJobLists].jobList = jobLists[first & ( MAX_JOBLISTS - 1 )].jobList;
+			threadJobListState[numJobLists].version = jobLists[first & ( MAX_JOBLISTS - 1 )].version;
 			threadJobListState[numJobLists].signalIndex = 0;
 			threadJobListState[numJobLists].lastJobIndex = 0;
 			threadJobListState[numJobLists].nextJobIndex = -1;
 			numJobLists++;
-			firstJobList++;
+			firstJobList.store( first + 1, std::memory_order_release );
 		}
 		if( numJobLists == 0 )
 		{
@@ -1175,7 +1346,7 @@ int idJobThread::Run()
 			// find the job list with the highest priority
 			for( int i = 0; i < numJobLists; i++ )
 			{
-				if( threadJobListState[i].jobList->GetPriority() > priority && !threadJobListState[i].jobList->WaitForOtherJobList() )
+				if( threadJobListState[i].jobList->GetPriority() > priority )
 				{
 					priority = threadJobListState[i].jobList->GetPriority();
 					currentJobList = i;
@@ -1189,7 +1360,7 @@ int idJobThread::Run()
 			priority = threadJobListState[lastStalledJobList].jobList->GetPriority();
 			for( int i = 0; i < numJobLists; i++ )
 			{
-				if( i != lastStalledJobList && threadJobListState[i].jobList->GetPriority() >= priority && !threadJobListState[i].jobList->WaitForOtherJobList() )
+				if( i != lastStalledJobList && threadJobListState[i].jobList->GetPriority() >= priority )
 				{
 					priority = threadJobListState[i].jobList->GetPriority();
 					currentJobList = i;
@@ -1278,7 +1449,23 @@ extern void Sys_CPUCount( int& logicalNum, int& coreNum, int& packageNum );
 								CORE_ANY, CORE_ANY, CORE_ANY, CORE_ANY }
 
 
-idCVar jobs_numThreads( "jobs_numThreads", NUM_JOB_THREADS, CVAR_INTEGER | CVAR_NOCHEAT, "number of threads used to crunch through jobs", 0, MAX_JOB_THREADS );
+//puncho - G1: automatic is opt-in; retain the default of two workers.
+idCVar jobs_numThreads( "jobs_numThreads", NUM_JOB_THREADS, CVAR_INTEGER | CVAR_NOCHEAT, "number of job workers (-1: physical cores minus two, minimum two)", -1, MAX_JOB_THREADS );
+
+static int ResolveJobThreads( int requested, int physicalCores )
+{
+	if( requested >= 0 )
+	{
+		static bool warnedSingleWorker = false;
+		if( requested == 1 && !warnedSingleWorker )
+		{
+			warnedSingleWorker = true;
+			idLib::Warning( "jobs_numThreads 1 uses one worker; use 0 for inline execution" );
+		}
+		return idMath::ClampInt( 0, MAX_JOB_THREADS, requested );
+	}
+	return idMath::ClampInt( 2, MAX_JOB_THREADS, physicalCores - 2 );
+}
 
 class idParallelJobManagerLocal : public idParallelJobManager
 {
@@ -1302,6 +1489,9 @@ public:
 	}
 
 	virtual void				WaitForAllJobLists();
+	//puncho - P0/C1a: read/reset only at quiescent frame/map boundaries.
+	virtual void				ReadAndClearJobListFrameStats( int index, jobListFrameStats_t& stats );
+	virtual void				ResetJobListOverrunWarnings();
 
 	void						Submit( idParallelJobList_Threads* jobList, int parallelism );
 
@@ -1334,6 +1524,10 @@ idParallelJobManagerLocal::Init
 */
 void idParallelJobManagerLocal::Init()
 {
+#if defined(USE_INTRINSICS_SSE)
+	//puncho - C1a: read the startup switch once, before any job thread is created.
+	setJobFpState = jobs_fpState.GetBool();
+#endif
 	// on consoles this will have specific cores for the threads, but on PC they will all be CORE_ANY
 	core_t cores[] = JOB_THREAD_CORES;
 	assert( sizeof( cores ) / sizeof( cores[0] ) >= MAX_JOB_THREADS );
@@ -1342,9 +1536,10 @@ void idParallelJobManagerLocal::Init()
 	{
 		threads[i].Start( cores[i], i );
 	}
-	maxThreads = jobs_numThreads.GetInteger();
-
 	Sys_CPUCount( numLogicalCpuCores, numPhysicalCpuCores, numCpuPackages );
+	//puncho - G1: topology resolution is init/cvar-change work, never per job.
+	maxThreads = ResolveJobThreads( jobs_numThreads.GetInteger(), numPhysicalCpuCores );
+	jobs_numThreads.ClearModified();
 }
 
 /*
@@ -1374,8 +1569,16 @@ idParallelJobList* idParallelJobManagerLocal::AllocJobList( jobListId_t id, jobL
 			// idStudio may cause job lists to be allocated multiple times
 		}
 	}
+	//puncho - C1a: diagnose the capacity before idStaticList's debug assertion.
+	if( jobLists.Num() >= jobLists.Max() )
+	{
+		idLib::FatalError( "AllocJobList: more than %d job lists", MAX_JOBLISTS );
+	}
 	idParallelJobList* jobList = new( TAG_JOBLIST ) idParallelJobList( id, priority, maxJobs, maxSyncs, color );
-	jobLists.Append( jobList );
+	if( jobLists.Append( jobList ) < 0 )
+	{
+		idLib::FatalError( "AllocJobList: could not append job list %d", id );
+	}
 	return jobList;
 }
 
@@ -1390,8 +1593,9 @@ void idParallelJobManagerLocal::FreeJobList( idParallelJobList* jobList )
 	{
 		return;
 	}
-	// wait for all job threads to finish because job list deletion is not thread safe
-	for( unsigned int i = 0; i < maxThreads; i++ )
+	//puncho - RB2-01: owners must be quiescent; explicit parallelism and old settings
+	// can leave references on any worker. Idle workers already have their done event raised.
+	for( int i = 0; i < MAX_JOB_THREADS; i++ )
 	{
 		threads[i].WaitForThread();
 	}
@@ -1456,6 +1660,21 @@ void idParallelJobManagerLocal::WaitForAllJobLists()
 	}
 }
 
+//puncho - P0: job-list index follows GetJobList; no allocation or worker-side counters.
+void idParallelJobManagerLocal::ReadAndClearJobListFrameStats( int index, jobListFrameStats_t& stats )
+{
+	jobLists[index]->jobListThreads->ReadAndClearFrameStats( stats );
+}
+
+//puncho - C1a: the map owner resets the warning latch once per list per map.
+void idParallelJobManagerLocal::ResetJobListOverrunWarnings()
+{
+	for( int i = 0; i < jobLists.Num(); i++ )
+	{
+		jobLists[i]->jobListThreads->ResetOverrunWarning();
+	}
+}
+
 /*
 ========================
 idParallelJobManagerLocal::Submit
@@ -1465,7 +1684,7 @@ void idParallelJobManagerLocal::Submit( idParallelJobList_Threads* jobList, int 
 {
 	if( jobs_numThreads.IsModified() )
 	{
-		maxThreads = idMath::ClampInt( 0, MAX_JOB_THREADS, jobs_numThreads.GetInteger() );
+		maxThreads = ResolveJobThreads( jobs_numThreads.GetInteger(), numPhysicalCpuCores ); //puncho - G1
 		jobs_numThreads.ClearModified();
 	}
 
@@ -1505,6 +1724,8 @@ void idParallelJobManagerLocal::Submit( idParallelJobList_Threads* jobList, int 
 		return;
 	}
 
+	//puncho - G1: markers do not justify waking another worker.
+	numThreads = Min( numThreads, jobList->GetNumRealJobs() );
 	for( int i = 0; i < numThreads; i++ )
 	{
 		threads[i].AddJobList( jobList );

@@ -197,7 +197,41 @@ struct performanceCounters_t
 	uint64	usAddLights;
 	uint64	mocMicroSec;
 	uint64	frontEndMicroSec;	// sum of time in all RE_RenderScene's in a frame
+
+	//puncho - point-light caster/side occupancy, summed over the frame.
+	int		c_shadowSidePairs;
+	int		c_shadowSideTotal;
+	int		c_shadowSideHist[6];
 };
+
+//puncho - CPU intervals in backend order. COMMANDS also covers work between views;
+// SHADOW includes the atlas and non-atlas maps nested in the interaction passes.
+enum backendPass_t
+{
+	BP_START,
+	BP_COMMANDS,
+	BP_VIEW_SETUP,
+	BP_DEPTH,
+	BP_HIZ,
+	BP_GBUFFER,
+	BP_SSAO,
+	BP_AMBIENT,
+	BP_SHADOW,
+	BP_INTER_TEXTURE,
+	BP_INTER_EMITTER,
+	BP_SSR,
+	BP_STAGES,
+	BP_FOG,
+	BP_POST,
+	BP_DEBUG,
+	BP_MOTION,
+	BP_TAA,
+	BP_TONEMAP,
+	BP_BLIT,
+	BP_END,
+	BP_COUNT
+};
+extern const char* const backendPassNames[BP_COUNT];
 
 // CPU & GPU counters and timers
 struct backEndCounters_t
@@ -250,6 +284,12 @@ struct backEndCounters_t
 	uint64	gpuDrawGuiMicroSec;
 	uint64	gpuCrtPostProcessingMicroSec;
 	uint64	gpuMicroSec;
+
+	//puncho - cleared and copied with pc; each interval contributes exactly once.
+	uint32	passMicroSec[BP_COUNT];
+	uint32	passDraws[BP_COUNT];
+	//puncho - absolute CPU-span end, zero when not collected; never accumulated.
+	uint64	timedEndMicroSec;
 };
 // RB end
 

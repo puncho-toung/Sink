@@ -87,6 +87,17 @@ static int mapRowsUsed;
 static int mapRowsFlushTime;
 static unsigned int mapMainAllocations;
 
+//puncho start - P0: one captured switch for the frame's diagnostic sites
+idCVar com_concurrencyStats( "com_concurrencyStats", "0", CVAR_BOOL | CVAR_SYSTEM, "collect concurrency timings and avoidance input hit rates" );
+static uint64 concurrencyFrameEnd, concurrencyRenderStart;
+static int concurrencyEndFrame;
+// Renderer Init allocates these in order: frontend (lights/models), utility bake A, utility bake B.
+// The print-relay developer test frees its temporary list before this frame snapshot.
+// Keep the CSV schema fixed even when opened before renderer startup or between renderer restarts.
+static const int MAP_ROWS_JOBLIST_COUNT = 3;
+compile_time_assert( MAP_ROWS_JOBLIST_COUNT <= MAX_JOBLISTS );
+//puncho end
+
 bool ValidDiagnosticName( const char* name )
 {
 	if( !name[0] || strlen( name ) >= 128 )
@@ -142,7 +153,7 @@ void idCommonLocal::CloseMapRowsLog()
 	mapRowsUsed = 0;
 }
 
-void idCommonLocal::LogMapRows( int tics )
+void idCommonLocal::LogMapRows( int tics, bool concurrencyStats ) //puncho - P0
 {
 	const char* name = com_mapRowsLog.GetString();
 	if( idStr::Cmp( name, mapRowsName ) )
@@ -164,7 +175,19 @@ void idCommonLocal::LogMapRows( int tics )
 				com_mapRowsLog.SetString( "" ); return;
 			}
 			idStr::Copynz( mapRowsName, name, sizeof( mapRowsName ) );
-			mapRowsFile->Printf( "frame,ms,tics,usFrameBusy,usFrameIdle,usGameRF,usGame,usRF,usRB,usGPU,usMOC,views,draws,tris,shadowViews,shadowDraws,shadowTris,atlasPct,viewEntities,shadowEntities,viewLights,staticVtxKB,staticIdxKB,frameKB,entityDefs,lightDefs,envprobeDefs,interactionKB,areas,portals,pvsKB,lightGridKB,entities,activeEntities,nonReplicated,cmModels,clipTrans,clipRot,clipMotion,clipContents,clipContacts,clipGathers,clipCandidates,clipUs,allocGameTic,allocMainFrame,probesConsidered,drawSurfs,drawSurfsClamped,atlasFailed,lightRefsWalked,contactedCapHits,skipStatics,usFindView,usAddLights,cullDistEntities,cullPixelEntities,cullLights,fadedLights,cullShadowSkips,lightRefsWalkedMax,gatherAreas,gatherMismatch,lodEntities1,lodEntities2,lodEntities3,lodTrisSaved,lodSwitches,lodThrash,lodCacheBuilds,mocOccluderTris,mocSkippedSize,mocSkippedBudget,mocSpotTests,mocSpotCulls,viewEntsUnder4px,viewEntsUnder16px,viewEntsBeyond8k,ent_highWater,ent_refused,spawnStaticsSkipped,aasCacheBytes,aasCacheEvictions,aasTravelSaturated,bud_debris_live,bud_debris_evicted,bud_debris_refused,bud_fx_live,bud_fx_evicted,bud_fx_refused,bud_item_live,bud_item_evicted,bud_item_refused,bud_gib_live,bud_gib_evicted,bud_gib_refused,itab_mode,itab_entries,itab_capacity,itab_maxProbe,itab_mismatches,itab_lateInserts,gai_ms,rec_maps,rec_entries,rec_created,rec_bytes,rec_dropped,rec_commitUs,rec_applyUs,corpse_live,corpse_evicted,dg_transitions,dg_refused,dg_inhibited,dg_prefetches\n" );
+			mapRowsFile->Printf( "frame,ms,tics,usFrameBusy,usFrameIdle,usGameRF,usGame,usRF,usRB,usGPU,usMOC,views,draws,tris,shadowViews,shadowDraws,shadowTris,atlasPct,viewEntities,shadowEntities,viewLights,staticVtxKB,staticIdxKB,frameKB,entityDefs,lightDefs,envprobeDefs,interactionKB,areas,portals,pvsKB,lightGridKB,entities,activeEntities,nonReplicated,cmModels,clipTrans,clipRot,clipMotion,clipContents,clipContacts,clipGathers,clipCandidates,clipUs,allocGameTic,allocMainFrame,probesConsidered,drawSurfs,drawSurfsClamped,atlasFailed,lightRefsWalked,contactedCapHits,skipStatics,usFindView,usAddLights,cullDistEntities,cullPixelEntities,cullLights,fadedLights,cullShadowSkips,lightRefsWalkedMax,gatherAreas,gatherMismatch,lodEntities1,lodEntities2,lodEntities3,lodTrisSaved,lodSwitches,lodThrash,lodCacheBuilds,mocOccluderTris,mocSkippedSize,mocSkippedBudget,mocSpotTests,mocSpotCulls,viewEntsUnder4px,viewEntsUnder16px,viewEntsBeyond8k,ent_highWater,ent_refused,spawnStaticsSkipped,aasCacheBytes,aasCacheEvictions,aasTravelSaturated,bud_debris_live,bud_debris_evicted,bud_debris_refused,bud_fx_live,bud_fx_evicted,bud_fx_refused,bud_item_live,bud_item_evicted,bud_item_refused,bud_gib_live,bud_gib_evicted,bud_gib_refused,itab_mode,itab_entries,itab_capacity,itab_maxProbe,itab_mismatches,itab_lateInserts,gai_ms,rec_maps,rec_entries,rec_created,rec_bytes,rec_dropped,rec_commitUs,rec_applyUs,corpse_live,corpse_evicted,dg_transitions,dg_refused,dg_inhibited,dg_prefetches" );
+			//puncho start - P0: preserve every existing column, then the frozen backend/shadow contract
+			for( int pass = 0; pass < BP_COUNT; pass++ )
+			{
+				mapRowsFile->Printf( ",bpUs_%s,bpDraws_%s", backendPassNames[pass], backendPassNames[pass] );
+			}
+			mapRowsFile->Printf( ",shSidePairs,shSideTotal,shSide1,shSide2,shSide3,shSide4,shSide5,shSide6,avoidDue,avoidEnrolled,avoidHits,avoidMisses,avoidUnenrolled,usTic,usThink,usEvents,usMainTail" );
+			for( int i = 0; i < MAP_ROWS_JOBLIST_COUNT; i++ )
+			{
+				mapRowsFile->Printf( ",jl%i_execUs,jl%i_wallUs,jl%i_waitUs,jl%i_jobs,jl%i_submits", i, i, i, i, i );
+			}
+			mapRowsFile->Printf( "\n" );
+			//puncho end
 			mapRowsFlushTime = Sys_Milliseconds();
 			Printf( "MAP CSV opened: %s\n", path );
 		}
@@ -252,12 +275,68 @@ void idCommonLocal::LogMapRows( int tics )
 		g.recordCommitUs, g.recordApplyUs, g.corpseLive, g.corpseEvicted,
 		g.dungeonTransitions, g.dungeonRefused, g.dungeonInhibited, g.dungeonPrefetches
 	};
-	char row[2048];
+	char row[4096]; //puncho - P0: room for the appended per-pass and shadow columns
 	int length = 0;
 	for( int i = 0; i < ( int )( sizeof( values ) / sizeof( values[0] ) ); i++ )
 	{
 		length += idStr::snPrintf( row + length, sizeof( row ) - length, "%s%lld", i ? "," : "", ( long long )values[i] );
 	}
+	//puncho start - P0: disabled columns are zero, even when the renderer holds an older enabled sample
+	uint32 concurrencyValues[2 * BP_COUNT + 16] = {};
+	uint64 mainTail = 0;
+	if( concurrencyStats )
+	{
+		for( int pass = 0; pass < BP_COUNT; pass++ )
+		{
+			concurrencyValues[2 * pass] = stats_backend.passMicroSec[pass];
+			concurrencyValues[2 * pass + 1] = stats_backend.passDraws[pass];
+		}
+		concurrencyValues[2 * BP_COUNT] = stats_frontend.c_shadowSidePairs;
+		concurrencyValues[2 * BP_COUNT + 1] = stats_frontend.c_shadowSideTotal;
+		for( int side = 0; side < 6; side++ )
+		{
+			concurrencyValues[2 * BP_COUNT + 2 + side] = stats_frontend.c_shadowSideHist[side];
+		}
+		concurrencyValues[2 * BP_COUNT + 8] = g.avoidDue;
+		concurrencyValues[2 * BP_COUNT + 9] = g.avoidEnrolled;
+		concurrencyValues[2 * BP_COUNT + 10] = g.avoidHits;
+		concurrencyValues[2 * BP_COUNT + 11] = g.avoidMisses;
+		concurrencyValues[2 * BP_COUNT + 12] = g.avoidUnenrolled;
+		concurrencyValues[2 * BP_COUNT + 13] = g.concurrencyUsTic;
+		concurrencyValues[2 * BP_COUNT + 14] = g.concurrencyUsThink;
+		concurrencyValues[2 * BP_COUNT + 15] = g.concurrencyUsEvents;
+		// Row N holds frame N - 1's tail: its backend timestamp is latched at this frame's swap,
+		// and concurrencyFrameEnd was captured at the end of that same frame N - 1.
+		// A loading-screen swap or a disabled frame cannot reuse a stale endpoint.
+		if( concurrencyEndFrame == idLib::frameNumber - 1 && stats_backend.timedEndMicroSec != 0 &&
+			stats_backend.timedEndMicroSec >= concurrencyRenderStart && stats_backend.timedEndMicroSec <= concurrencyFrameEnd )
+		{
+			mainTail = concurrencyFrameEnd - stats_backend.timedEndMicroSec;
+		}
+	}
+	for( int i = 0; i < 2 * BP_COUNT + 16; i++ )
+	{
+		length += idStr::snPrintf( row + length, sizeof( row ) - length, ",%u", concurrencyValues[i] );
+	}
+	length += idStr::snPrintf( row + length, sizeof( row ) - length, ",%llu", ( unsigned long long )mainTail );
+	if( concurrencyStats )
+	{
+		for( int i = 0; i < MAP_ROWS_JOBLIST_COUNT; i++ )
+		{
+			const jobListFrameStats_t& stats = stats_jobLists[i];
+			length += idStr::snPrintf( row + length, sizeof( row ) - length, ",%llu,%llu,%llu,%i,%i",
+				( unsigned long long )stats.execUs, ( unsigned long long )stats.wallUs,
+				( unsigned long long )stats.waitUs, stats.jobs, stats.submits );
+		}
+	}
+	else
+	{
+		for( int i = 0; i < MAP_ROWS_JOBLIST_COUNT; i++ )
+		{
+			length += idStr::snPrintf( row + length, sizeof( row ) - length, ",0,0,0,0,0" );
+		}
+	}
+	//puncho end
 	row[length++] = '\n';
 	if( mapRowsUsed + length > ( int )sizeof( mapRowsBuffer ) )
 	{
@@ -290,6 +369,7 @@ extern void RunPrintRelayTest();
 
 int idGameThread::Run()
 {
+	InitGameThreadFpState(); //puncho - C1a: once per calling OS thread
 	RunPrintRelayTest();
 	commonLocal.frameTiming.startGameTime = Sys_Microseconds();
 
@@ -821,6 +901,18 @@ void idCommonLocal::Frame()
 
 		eventLoop->RunEventLoop();
 
+		//puncho - P0: console commands have run; capture once for this frame's sites
+		const bool concurrencyStats = com_concurrencyStats.GetBool();
+		parallelJobManager->SetCollectFrameStats( concurrencyStats ); //puncho - P0
+		//puncho - P0 RO-04: all list owners are idle; discard totals left by an early return or error.
+		if( concurrencyStats )
+		{
+			jobListFrameStats_t discardedStats;
+			for( int i = 0; i < parallelJobManager->GetNumJobLists(); i++ )
+			{
+				parallelJobManager->ReadAndClearJobListFrameStats( i, discardedStats );
+			}
+		}
 		renderSystem->OnFrame();
 
 		// DG: prepare new ImGui frame - I guess this is a good place, as all new events should be available?
@@ -1272,15 +1364,35 @@ void idCommonLocal::Frame()
 			FatalError( "idCommon::Frame: the FPU stack is not empty at the end of the frame\n" );
 		}
 
+		//puncho - P0: all owners have finished; drain once even with no CSV open.
+		if( concurrencyStats )
+		{
+			memset( stats_jobLists, 0, sizeof( stats_jobLists ) );
+			for( int i = 0; i < parallelJobManager->GetNumJobLists(); i++ )
+			{
+				parallelJobManager->ReadAndClearJobListFrameStats( i, stats_jobLists[i] );
+			}
+		}
+
 		mapMainAllocations = Mem_GetAllocationCount() - frameAllocStart;
-		LogMapRows( numGameFrames );
+		LogMapRows( numGameFrames, concurrencyStats ); //puncho - P0
 		mainFrameTiming = frameTiming;
 
 		session->GetSaveGameManager().Pump();
+		//puncho - P0: endpoint after the save-manager pump, logging and all ordinary frame work
+		if( concurrencyStats )
+		{
+			concurrencyFrameEnd = Sys_Microseconds();
+			concurrencyRenderStart = frameTiming.startRenderTime;
+			concurrencyEndFrame = idLib::frameNumber;
+		}
 	}
 	catch( idException& )
 	{
 		DrainPrintRelay();
+		//puncho - concurrency RA2-04: a bake that this error unwound restores its settings and frees what it held
+		extern void R_BakeEndAfterError();
+		R_BakeEndAfterError();
 		// an ERP_DROP was thrown
 #if defined(USE_DOOMCLASSIC)
 		if( currentGame == DOOM_CLASSIC || currentGame == DOOM2_CLASSIC )

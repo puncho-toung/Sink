@@ -539,7 +539,7 @@ int			NumberNodes_r( node_t* node, int nextNode, int& nextLeaf );
 int			NumberNodes_r( node_t* node, int nextNumber );
 
 srfTriangles_t*	ShareMapTriVerts( const mapTri_t* tris, const int maxVerts, const mapTri_t** rest, const bool carriesColor, idList<idVec2>& texCoords );	//puncho - camera-relative dmap st: texCoords gets the full st of each vertex
-void WriteOutputFile();
+bool WriteOutputFile(); //puncho - TC1
 
 //=============================================================================
 

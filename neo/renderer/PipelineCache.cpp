@@ -32,10 +32,16 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/RenderCommon.h"
 #include "PipelineCache.h"
 
+//puncho - held off until the alternating-key frame-time gate has passed.
+idCVar r_usePipelineMemo( "r_usePipelineMemo", "0", CVAR_RENDERER | CVAR_BOOL, "reuse the last pipeline lookup when state caching is enabled" );
 
 
 PipelineCache::PipelineCache()
 {
+	//puncho
+	memset( &memoKey, 0, sizeof( memoKey ) );
+	memoPipeline = nullptr;
+	memoValid = false;
 }
 
 void PipelineCache::Init( nvrhi::DeviceHandle deviceHandle )
@@ -51,11 +57,35 @@ void PipelineCache::Shutdown()
 
 void PipelineCache::Clear()
 {
+	//puncho - invalidate before releasing the pipelines that own the memo's pointer.
+	memoValid = false;
+	memoPipeline = nullptr;
 	pipelines.Clear();
 	pipelineHash.Clear();
 }
 
-nvrhi::GraphicsPipelineHandle PipelineCache::GetOrCreatePipeline( const PipelineKey& key )
+//puncho - state caching remains the common bypass for both optimizations.
+nvrhi::GraphicsPipelineHandle PipelineCache::GetOrCreatePipelineWithMemo( const PipelineKey& key )
+{
+	if( r_useStateCaching.GetBool() )
+	{
+		if( memoValid && key == memoKey )
+		{
+			return memoPipeline;
+		}
+
+		nvrhi::GraphicsPipelineHandle pipeline = FindOrCreatePipeline( key );
+		memoKey = key;
+		memoPipeline = pipeline.Get();
+		memoValid = true;
+		return pipeline;
+	}
+
+	return FindOrCreatePipeline( key );
+}
+
+//puncho - unchanged lookup, shared by the bypass and memo misses.
+nvrhi::GraphicsPipelineHandle PipelineCache::FindOrCreatePipeline( const PipelineKey& key )
 {
 	std::size_t h = std::hash<PipelineKey> {}( key );
 

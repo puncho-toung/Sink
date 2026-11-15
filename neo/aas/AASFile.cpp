@@ -771,9 +771,14 @@ bool idAASFileLocal::Write( const idStr& fileName, unsigned int mapFileCRC )
 	aasFile = fileSystem->OpenFileWrite( fileName, "fs_basepath" );
 	if( !aasFile )
 	{
-		common->Error( "Error opening %s", fileName.c_str() );
+		common->Warning( "Error opening %s", fileName.c_str() ); //puncho - TC1: let the builder clean up
 		return false;
 	}
+
+	//puncho - TC1: checked completion, including abort on unwind.
+	idFile_WriteBuffer bufferedFile;
+	bufferedFile.Init( aasFile );
+	aasFile = &bufferedFile;
 
 	aasFile->WriteFloatString( "%s \"%s\"\n\n", AAS_FILEID, AAS_FILEVERSION );
 	aasFile->WriteFloatString( "%u\n\n", mapFileCRC );
@@ -892,7 +897,12 @@ bool idAASFileLocal::Write( const idStr& fileName, unsigned int mapFileCRC )
 	aasFile->WriteFloatString( "}\n" );
 
 	// close file
-	fileSystem->CloseFile( aasFile );
+	//puncho - TC1
+	if( !bufferedFile.Close() )
+	{
+		common->Warning( "Error writing %s", fileName.c_str() );
+		return false;
+	}
 
 	common->Printf( "done.\n" );
 

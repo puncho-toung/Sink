@@ -41,6 +41,10 @@ extern idCVar		dmap_verbose;
 
 // map processing (also see SuperOptimizeOccluders in tr_local.h)
 void Dmap_f( const idCmdArgs& args );
+//puncho - TC1: checked compile entry points return after releasing owned data.
+class idMapFile;
+bool CM_CompileMap( const idMapFile* mapFile );
+bool RunAAS( const idCmdArgs& args );
 
 // AAS file compiler
 void RunAAS_f( const idCmdArgs& args );

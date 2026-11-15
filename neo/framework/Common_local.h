@@ -28,6 +28,8 @@ If you have questions concerning this license or the applicable additional terms
 ===========================================================================
 */
 
+#include "../idlib/ParallelJobList.h" //puncho - P0: job-list frame snapshots
+
 static const int MAX_USERCMD_BACKUP = 256;
 static const int NUM_USERCMD_RELAY = 10;
 static const int NUM_USERCMD_SEND = 8;
@@ -699,6 +701,7 @@ private:
 	// RB: r_speeds counters
 	backEndCounters_t		stats_backend;
 	performanceCounters_t	stats_frontend;
+	jobListFrameStats_t		stats_jobLists[MAX_JOBLISTS]; //puncho - P0
 
 	// SRS - MoltenVK's Vulkan to Metal command buffer encoding time, set default to 0 for non-macOS platforms (Windows and Linux)
 	uint64					metal_encode = 0;
@@ -757,7 +760,7 @@ private:
 	void	CloseLogFile();
 	void	DrainPrintRelay();
 	void	CloseMapRowsLog();
-	void	LogMapRows( int tics );
+	void	LogMapRows( int tics, bool concurrencyStats ); //puncho - P0
 	void FinishLoadTimeline();
 	void	WriteConfiguration();
 	void	DumpWarnings();

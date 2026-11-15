@@ -180,10 +180,12 @@ struct aiTicStats_t
 	int		awakeFar;
 	int		dormCatchUps;
 	//puncho end
+	//puncho - P0: appended diagnostics; the five extra aggregate ints are director-approved
+	int		avoidDue, avoidEnrolled, avoidHits, avoidMisses, avoidUnenrolled;
 };
 //puncho start - ai-combat: the block is summed and differenced as an int array (idAI::Think, RunAIStats); the count keeps a
 // member of another size out, a float of the same size still needs the reader's eye (an X-macro list would close that)
-#define AI_TIC_STAT_INTS	93
+#define AI_TIC_STAT_INTS	98 //puncho - P0
 compile_time_assert( sizeof( aiTicStats_t ) == AI_TIC_STAT_INTS * sizeof( int ) );
 //puncho end
 
@@ -214,6 +216,9 @@ struct mapGameStats_t
 	int recordMaps, recordEntries, recordCreated, recordBytes, recordDropped, corpseLive, corpseEvicted;
 	unsigned int recordCommitUs, recordApplyUs;
 	unsigned int dungeonTransitions, dungeonRefused, dungeonInhibited, dungeonPrefetches;
+	//puncho - P0: appended, never saved or networked
+	int avoidDue, avoidEnrolled, avoidHits, avoidMisses, avoidUnenrolled;
+	uint32 concurrencyUsTic, concurrencyUsThink, concurrencyUsEvents;
 };
 
 // The last tic's record for the com_showFPS 3 window, the aistats: line and the CSV (§2.5). POD on

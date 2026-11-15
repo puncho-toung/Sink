@@ -502,6 +502,9 @@ struct viewEntity_t
 	int					mocVerts;
 	int					mocTests;
 	int					mocCulled;
+
+	//puncho - model-job output only; pairs and total are derived at the serial merge.
+	int					shadowSideHist[6];
 };
 
 // RB: viewEnvprobes are allocated on the frame temporary stack memory
@@ -556,6 +559,11 @@ struct calcEnvprobeParms_t
 
 	int								probeIndex;				// for SH copy-back (irradiance job)
 	idVec3							shIrradiance[9];		// out: L2 SH coefficients (irradiance job only)
+
+	//puncho start - concurrency TB1a/TB1b: the bake's tables, read-only in the job; NULL runs today's conversions
+	const float*					halfToFloat;			// bakeContext_t::halfToFloat
+	const idVec3*					ggxH;					// radiance job: bakeContext_t::ggxH
+	//puncho end
 };
 
 
@@ -564,11 +572,28 @@ struct calcEnvprobeParms_t
 static const int LIGHTGRID_IRRADIANCE_BORDER_SIZE = 2;	// one pixel border all around the octahedron so 2 on each side
 static const int LIGHTGRID_IRRADIANCE_SIZE = 14 + LIGHTGRID_IRRADIANCE_BORDER_SIZE;
 
+//puncho start - concurrency TB1c: one source texel of the light-grid job's SH projection, everything the job
+// computes before it reads radiance, from the functions it calls; only valid texels, in its ( side, x, y ) order
+struct lightGridShSample_t
+{
+	SphericalHarmonicsT<float, 4>	sh;						// shEvaluate<4>( dir ), all 25 basis values
+	float							texelArea;				// CubemapTexelSolidAngle of the texel the sampler picks
+	int								face;					// the face R_SampleCubeMapHDR16F picks for dir
+	int								texel;					// ( y * size + x ) * 3 in that face
+};
+//puncho end
+
 struct calcLightGridPointParms_t
 {
 	// input
 	byte*							radiance[6];			// HDR RGB16F standard OpenGL cubemap sides
 	int								gridCoord[3];
+
+	//puncho start - concurrency TB1a/TB1c: the bake's tables, read-only in the job; NULL runs today's loop
+	const float*					halfToFloat;			// bakeContext_t::halfToFloat
+	const lightGridShSample_t*		shTable;				// bakeContext_t::shTable
+	int								shTableNum;
+	//puncho end
 
 	int								outWidth;				// LIGHTGRID_IRRADIANCE_SIZE
 	int								outHeight;
@@ -582,6 +607,66 @@ struct calcLightGridPointParms_t
 	int								time;					// execution time in milliseconds
 };
 // RB end
+
+//puncho start - concurrency TB0/TB1: the state of one bake command, set up on the bake's thread when it
+// starts and given back when it ends ( R_BakeBegin / R_BakeEnd ); tr.bake is NULL outside a bake
+static const int ENVPROBE_JOBLIST_MAX_JOBS = 2048;			// the jobs tr.envprobeJobList reserves; Submit asserts it
+
+// TB3a: a renderer-internal renderView_t::rdflags bit, the next after RenderWorld.h's RDF_MAINVIEW ( BIT( 4 ) ).
+// A bake's capture view is not shown, so the backend skips its two preview blits to the swapchain
+// ( DrawViewInternal, "Blit_EnvProbeRendered" ). Nothing else reads it
+static const int RDF_BAKE_NODISPLAY = BIT( 5 );
+
+enum bakeStage_t
+{
+	BAKE_STAGE_SETUP,				// argument checks done: map hints, grid layout, old files, the tables
+	BAKE_STAGE_FRONTEND,			// RenderScene of a capture view
+	BAKE_STAGE_CLOSEOUT,			// the SwapCommandBuffers before and after a capture view
+	BAKE_STAGE_BACKEND,				// RenderCommandBuffers of a capture view
+	BAKE_STAGE_READBACK_WAIT,		// readback: command list, copy, execute and map ( the map waits for the GPU )
+	BAKE_STAGE_READBACK_CONVERT,	// readback: row copy, RGBA to RGB, garbage scan; the probe depth's linearisation
+	BAKE_STAGE_PROGRESS,			// progress bar and progress screens
+	BAKE_STAGE_JOB_WAIT,			// job set-up, Submit and Wait
+	BAKE_STAGE_WRITE,				// assemble and write: atlas, EXR, depth cube, BC6, SH sidecar, .lightgrid
+	BAKE_STAGE_RELOAD,				// images read back in: LoadLightGridImages, ImageFromFile, Reload
+	BAKE_STAGE_COUNT
+};
+
+struct bakeStageStats_t
+{
+	uint64							us[BAKE_STAGE_COUNT];	// microseconds of the bake's thread in each stage
+};
+
+struct bakeContext_t
+{
+	float*							halfToFloat;			// [65536] = F16toF32( pattern ); NULL with -exactHalf
+	idVec3*							ggxH;					// environment: [( mip - 1 ) * samples + s]; NULL with -exactGgx
+	lightGridShSample_t*			shTable;				// light grid: NULL with -exactSh
+	int								shTableNum;
+
+	int								oldJitter;				// r_shadowMapRandomizeJitter
+	int								oldScissor;				// r_useScissor
+	int								oldAddModels;			// r_useParallelAddModels
+	int								oldAddShadows;			// r_useParallelAddShadows
+	int								oldAddLights;			// r_useParallelAddLights
+	int								oldSwapInterval;		// r_swapInterval
+	char*							oldClear;				// r_clear, the whole string ( 'r g b' is allowed ); Mem_Alloc, freed by R_BakeEnd
+	bool							oldTakingEnvprobe;		// tr.takingEnvprobe
+
+	// RA2-01: the environment probe being captured, before its two jobs own its faces; NULL otherwise. The faces
+	// ( R_ReadProbeColorAndDepthRGB16FInBake ), then the linear depth, then the packed depth faces
+	byte*							probeFaces[6];
+	byte*							probeDepth[6];
+
+	// RB3-03: the finalisation's packed cube mips of the specular job being written, [side * levels + level]; NULL
+	// once freed
+	byte*							finalMips[6 * 16];
+
+	uint64							startMicroSec;
+	bakeStageStats_t				stats;
+};
+//puncho end
+
 
 const int	MAX_CLIP_PLANES	= 1;				// we may expand this to six for some subview issues
 
@@ -745,6 +830,11 @@ struct viewDef_t
 	Framebuffer*		targetRender;				// SP: The framebuffer to render to
 
 	int					taaFrameCount;				// RB: so we have the same frame index in frontend and backend
+
+	//puncho - captured by the frontend owner before dispatching this view's model jobs.
+	float				shadowSideFrustumFOV;
+	bool				shadowSideStats;
+	bool				shadowSidePSX;
 };
 
 /*
@@ -1198,8 +1288,11 @@ public:
 
 	// RB irradiance and GGX background jobs
 	idParallelJobList* 					envprobeJobList;
+	idParallelJobList* 					envprobeJobList2;	//puncho - concurrency TB2: the bakes' second list, alternating with the first
 	idList<calcEnvprobeParms_t*>		envprobeJobs;
 	idList<calcLightGridPointParms_t*>	lightGridJobs;
+
+	bakeContext_t* 						bake;			//puncho - concurrency TB0: set from R_BakeBegin to R_BakeEnd, else NULL
 
 #if defined(USE_INTRINSICS_SSE)
 
@@ -1402,6 +1495,7 @@ extern idCVar r_shadowMapImageSize;
 extern idCVar r_shadowMapJitterScale;
 //extern idCVar r_shadowMapBiasScale;
 extern idCVar r_shadowMapRandomizeJitter;
+extern idCVar r_bakeClearEmptyFaceDepth;		//puncho - concurrency D14
 extern idCVar r_shadowMapSamples;
 extern idCVar r_shadowMapSplits;
 extern idCVar r_shadowMapSplitWeight;
@@ -1521,6 +1615,36 @@ NVRHI helpers
 bool R_ReadPixelsRGB8( nvrhi::IDevice* device, CommonRenderPasses* pPasses, nvrhi::ITexture* texture, nvrhi::ResourceStates textureState, const char* fullname );
 bool R_ReadPixelsRGB16F( nvrhi::IDevice* device, CommonRenderPasses* pPasses, nvrhi::ITexture* texture, nvrhi::ResourceStates textureState, byte** pic, int picWidth, int picHeight );
 bool R_ReadProbeColorAndDepthRGB16F(nvrhi::IDevice* device, CommonRenderPasses* pPasses, nvrhi::ITexture* colorTexture, nvrhi::ITexture* depthTexture, byte** colorPic, byte** depthPic, int picWidth, int picHeight);
+
+//puncho start - concurrency TB0 ( RenderSystem_init.cpp ): a bake's context. R_BakeBegin saves the switches a bake
+// changes, forces the shadow jitter off, builds the half table unless exactHalf and sets tr.bake. R_BakeStage adds the
+// time since 'since' to a stage and returns now. R_BakeEnd restores every saved switch, prints the stages and frees
+// the tables, also those a command built and handed to the context
+bakeContext_t*	R_BakeBegin( bool exactHalf );
+void			R_BakeRestoreCaptureSwitches( const bakeContext_t* bake );
+uint64			R_BakeStage( bakeContext_t* bake, bakeStage_t stage, uint64 since );
+void			R_BakeEnd( bool printStages );
+
+// RA2-01/02/04: R_BakeEnd is the one cleanup. It first quiets both bake job lists ( a list with jobs added and not
+// submitted is submitted, so Wait empties it ), then releases every job a bake left ( R_FreeLightGridJobs,
+// R_FreeEnvprobeJobs: faces, outputs, parms ), the probe in capture, the staging textures and the tables, and restores
+// every setting the bake changed. R_BakeEndAfterError runs it for a bake an error unwound ( idCommonLocal::Frame's catch )
+void			R_BakeEndAfterError();
+void			R_FreeLightGridJobs();
+void			R_FreeEnvprobeJobs();
+
+// RA2-06: the readbacks a bake makes, with its timers and its half table; R_ReadPixelsRGB16F and
+// R_ReadProbeColorAndDepthRGB16F stay today's code for everything else
+bool			R_ReadPixelsRGB16FInBake( nvrhi::IDevice* device, CommonRenderPasses* pPasses, nvrhi::ITexture* texture, nvrhi::ResourceStates textureState, byte** pic, int picWidth, int picHeight, bakeContext_t* bake );
+bool			R_ReadProbeColorAndDepthRGB16FInBake( nvrhi::IDevice* device, CommonRenderPasses* pPasses, nvrhi::ITexture* colorTexture, nvrhi::ITexture* depthTexture, byte** colorPic, byte** depthPic, int picWidth, int picHeight, bakeContext_t* bake );
+
+// TB3a ( bakeLightGrids fastReadback ), inside a bake only: R_CopyCaptureFaceRGB16F records and executes the copy of an
+// RGBA16F capture target into the bake's staging texture for one face ( 0 to 5 ) and returns without waiting; after the
+// sixth, R_MapCaptureFacesRGB16F waits once for all six copies, then maps the six in face order without waiting, and
+// gives each face what R_ReadPixelsRGB16F would have given it
+void			R_CopyCaptureFaceRGB16F( nvrhi::IDevice* device, nvrhi::ITexture* texture, nvrhi::ResourceStates textureState, int face );
+void			R_MapCaptureFacesRGB16F( nvrhi::IDevice* device, byte* pics[6], int picWidth, int picHeight );
+//puncho end
 
 /*
 ====================================================================
@@ -1698,6 +1822,7 @@ RENDERWORLD_ENVPROBES
 
 void R_SampleCubeMapHDR( const idVec3& dir, int size, byte* buffers[6], float result[3], float& u, float& v );
 void R_SampleCubeMapHDR16F( const idVec3& dir, int size, halfFloat_t* buffers[6], float result[3], float& u, float& v );
+void R_CubeMapTexelHDR16F( const idVec3& dir, int size, int& axis, int& x, int& y );	//puncho - concurrency TB1c: the texel R_SampleCubeMapHDR16F reads
 
 idVec2 NormalizedOctCoord( int x, int y, const int probeSideLength );
 

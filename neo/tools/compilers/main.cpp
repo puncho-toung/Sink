@@ -1048,6 +1048,7 @@ public:
 		{
 			common->UpdateScreen( false );
 		}
+		idFile_WriteBuffer::AbortAll(); //puncho - TC1: exit does not unwind
 		exit( 1 );
 	}
 	virtual void			FatalError( const char* fmt, ... )
@@ -1058,6 +1059,7 @@ public:
 		{
 			common->UpdateScreen( false );
 		}
+		idFile_WriteBuffer::AbortAll(); //puncho - TC1: exit does not unwind
 		exit( 1 );
 	}
 

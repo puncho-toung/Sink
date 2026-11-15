@@ -34,6 +34,8 @@ If you have questions concerning this license or the applicable additional terms
 extern idCVar r_bakeStaleGuard;
 #include "Model_local.h"
 
+extern idCVar dmap_phaseTimes; //puncho - TC0
+
 
 /*
 ================
@@ -242,6 +244,7 @@ idRenderModel* idRenderWorldLocal::ParseModel( idLexer* src, const char* mapName
 		src->ExpectAnyToken( &token );
 
 		modelSurface_t surf;
+		surf.id = i; //puncho - D21: stable, unique nonnegative surface id
 		surf.shader = declManager->FindMaterial( token );
 
 		( ( idMaterial* )surf.shader )->AddReference();
@@ -1042,6 +1045,10 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 
 	if( !loaded )
 	{
+		//puncho - TC0: cache hits never read the cvar or the clock.
+		const bool loadPhaseTimes = dmap_phaseTimes.GetBool();
+		const int loadPhaseStart = loadPhaseTimes ? Sys_Milliseconds() : 0;
+
 		// a .bproc that failed part way may have recorded some areas; the parse records them all
 		areaChunks.Clear();
 
@@ -1065,6 +1072,8 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 		}
 		const int procVersion = ProcFileVersion( token );
 
+		//puncho - TC0: close the output before taking the end timestamp.
+		{
 		int numEntries = 0;
 		idFileLocal outputFile( fileSystem->OpenFileWrite( generatedFileName, "fs_basepath" ) );
 		if( outputFile != NULL )
@@ -1140,6 +1149,13 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 			outputFile->WriteBig( numEntries );
 		}
 
+		} //puncho - outputFile closes here
+
+		//puncho - TC0: includes parsing, model finishing, header patch and close.
+		if( loadPhaseTimes )
+		{
+			common->Printf( "load phase bproc %i\n", Sys_Milliseconds() - loadPhaseStart );
+		}
 	}
 
 

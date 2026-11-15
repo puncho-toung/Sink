@@ -32,6 +32,7 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "Common_local.h"
+#include "../idlib/ParallelJobList.h" //puncho - C1a: main-thread FP capture
 
 #include "ConsoleHistory.h"
 
@@ -1323,6 +1324,7 @@ void idCommonLocal::Init( int argc, const char* const* argv, const char* cmdline
 
 		// initialize the renderSystem data structures
 		renderSystem->Init();
+		CaptureJobFpState(); //puncho - C1a: renderer init has established the main-thread controls
 
 		whiteMaterial = declManager->FindMaterial( "_white" );
 

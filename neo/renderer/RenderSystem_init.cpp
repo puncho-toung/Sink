@@ -288,6 +288,8 @@ idCVar r_shadowMapImageSize( "r_shadowMapImageSize", "1024", CVAR_RENDERER | CVA
 idCVar r_shadowMapJitterScale( "r_shadowMapJitterScale", "2.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "scale factor for jitter offset" );
 //idCVar r_shadowMapBiasScale( "r_shadowMapBiasScale", "0.0001", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "scale factor for jitter bias" );
 idCVar r_shadowMapRandomizeJitter( "r_shadowMapRandomizeJitter", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "randomly offset jitter texture each draw" );
+//puncho - concurrency D14: off keeps today's bake output, where a face with nothing to draw keeps the previous face's depth
+idCVar r_bakeClearEmptyFaceDepth( "r_bakeClearEmptyFaceDepth", "0", CVAR_RENDERER | CVAR_BOOL, "1 = an environment-probe face with nothing to draw clears its depth, as a view that draws does" );
 idCVar r_shadowMapSamples( "r_shadowMapSamples", "16", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "1, 4, 12 or 16", 1, 64 );
 idCVar r_shadowMapSplits( "r_shadowMapSplits", "3", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "number of splits for cascaded shadow mapping with parallel lights", 0, 4 );
 idCVar r_shadowMapSplitWeight( "r_shadowMapSplitWeight", "0.9", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "" );
@@ -956,7 +958,20 @@ bool R_ReadPixelsRGB8( nvrhi::IDevice* device, CommonRenderPasses* pPasses, nvrh
 	return true;
 }
 
-bool R_ReadPixelsRGB16F( nvrhi::IDevice* device, CommonRenderPasses* pPasses, nvrhi::ITexture* texture, nvrhi::ResourceStates textureState, byte** pic, int picWidth, int picHeight )
+//puncho start - concurrency TB0/RA2-06: the readback's tail is chosen once, by its caller. R_MapConvertFilterRGB16F is
+// today's tail and reads neither the bake nor the clock; R_MapConvertFilterRGB16FInBake adds the bake's timers and half
+// table. The bodies below take the tail as a function, so an ordinary readback makes no test for a bake
+typedef bool ( *readbackTail_t )( nvrhi::IDevice* device, nvrhi::IStagingTexture* stagingTexture, const nvrhi::TextureDesc& desc,
+								  int picWidth, int picHeight, byte** pic, bakeContext_t* bake, uint64 waitStart );
+
+static bool R_MapConvertFilterRGB16F( nvrhi::IDevice* device, nvrhi::IStagingTexture* stagingTexture,
+									  const nvrhi::TextureDesc& desc, int picWidth, int picHeight, byte** pic, bakeContext_t*, uint64 );
+static bool R_MapConvertFilterRGB16FInBake( nvrhi::IDevice* device, nvrhi::IStagingTexture* stagingTexture,
+		const nvrhi::TextureDesc& desc, int picWidth, int picHeight, byte** pic, bakeContext_t* bake, uint64 waitStart );
+//puncho end
+
+static bool R_ReadPixelsRGB16FWith( nvrhi::IDevice* device, CommonRenderPasses* pPasses, nvrhi::ITexture* texture, nvrhi::ResourceStates textureState, byte** pic, int picWidth, int picHeight,
+									readbackTail_t tail, bakeContext_t* bake, uint64 waitStart )
 {
 	nvrhi::TextureDesc desc = texture->getDesc();
 	nvrhi::TextureHandle tempTexture;
@@ -1006,107 +1021,25 @@ bool R_ReadPixelsRGB16F( nvrhi::IDevice* device, CommonRenderPasses* pPasses, nv
 	commandList->close();
 	device->executeCommandList( commandList );
 
-	size_t rowPitch = 0;
-	void* pData = device->mapStagingTexture( stagingTexture, nvrhi::TextureSlice(), nvrhi::CpuAccessMode::Read, &rowPitch );
-
-	if( !pData )
-	{
-		return false;
-	}
-
-	uint16_t* newData = nullptr;
-
-	if( rowPitch != desc.width * 8 )
-	{
-		newData = new uint16_t[desc.width * desc.height * 2];
-
-		for( uint32_t row = 0; row < desc.height; row++ )
-		{
-			memcpy( newData + row * desc.width, static_cast<char*>( pData ) + row * rowPitch, desc.width * sizeof( uint16_t ) * 4 );
-		}
-
-		pData = newData;
-	}
-
-	int pix = picWidth * picHeight;
-	const int bufferSize = pix * 3 * 2;
-
-	void* floatRGB16F = R_StaticAlloc( bufferSize );
-	*pic = ( byte* ) floatRGB16F;
-
-	// copy from RGBA16F to RGB16F
-	uint16_t* data = static_cast<uint16_t*>( pData );
-	uint16_t* outData = static_cast<uint16_t*>( floatRGB16F );
-
-#if 0
-	for( int i = 0; i < ( desc.width * desc.height ); i++ )
-	{
-		outData[ i * 3 + 0 ] = F32toF16( 1 );
-		outData[ i * 3 + 1 ] = F32toF16( 0 );
-		outData[ i * 3 + 2 ] = F32toF16( 0 );
-	}
-#endif
-
-	for( uint32_t i = 0; i < ( desc.width * desc.height ); i++ )
-	{
-		outData[ i * 3 + 0 ] = data[ i * 4 + 0 ];
-		outData[ i * 3 + 1 ] = data[ i * 4 + 1 ];
-		outData[ i * 3 + 2 ] = data[ i * 4 + 2 ];
-	}
-
-	// RB: filter out garbage and reset it to black
-	// this is a rare case but with a high visual impact
-	bool isCorrupted = false;
-
-	const idVec3 LUMINANCE_LINEAR( 0.299f, 0.587f, 0.144f );
-	idVec3 rgb;
-
-	for( uint32_t i = 0; i < ( desc.width * desc.height ); i++ )
-	{
-		rgb.x = F16toF32( outData[ i * 3 + 0 ] );
-		rgb.y = F16toF32( outData[ i * 3 + 1 ] );
-		rgb.z = F16toF32( outData[ i * 3 + 2 ] );
-
-		if( IsNAN( rgb.x ) || IsNAN( rgb.y ) || IsNAN( rgb.z ) )
-		{
-			isCorrupted = true;
-			break;
-		}
-
-		// captures within the Doom 3 main campaign usually have a luminance of ~ 0.5 - 4.0
-		// the threshold is a bit higher and might need to be adapted for total conversion content
-		float luminance = rgb * LUMINANCE_LINEAR;
-		if( luminance > 30.0f )
-		{
-			isCorrupted = true;
-			break;
-		}
-	}
-
-	if( isCorrupted )
-	{
-		for( uint32_t i = 0; i < ( desc.width * desc.height ); i++ )
-		{
-			outData[ i * 3 + 0 ] = F32toF16( 0 );
-			outData[ i * 3 + 1 ] = F32toF16( 0 );
-			outData[ i * 3 + 2 ] = F32toF16( 0 );
-		}
-	}
-
-	if( newData )
-	{
-		delete[] newData;
-		newData = nullptr;
-	}
-
-	device->unmapStagingTexture( stagingTexture );
-
-	return ( !isCorrupted );
+	//puncho - concurrency TB0: the tail is R_MapConvertFilterRGB16F's, token for token; one copy keeps D13 in one place
+	return tail( device, stagingTexture, desc, picWidth, picHeight, pic, bake, waitStart );
 }
 
-// shared tail of R_ReadPixelsRGB16F
+bool R_ReadPixelsRGB16F( nvrhi::IDevice* device, CommonRenderPasses* pPasses, nvrhi::ITexture* texture, nvrhi::ResourceStates textureState, byte** pic, int picWidth, int picHeight )
+{
+	return R_ReadPixelsRGB16FWith( device, pPasses, texture, textureState, pic, picWidth, picHeight, R_MapConvertFilterRGB16F, NULL, 0 );
+}
+
+//puncho - concurrency TB0: a bake's readback; its wait stage starts here
+bool R_ReadPixelsRGB16FInBake( nvrhi::IDevice* device, CommonRenderPasses* pPasses, nvrhi::ITexture* texture, nvrhi::ResourceStates textureState, byte** pic, int picWidth, int picHeight, bakeContext_t* bake )
+{
+	const uint64 waitStart = Sys_Microseconds();
+	return R_ReadPixelsRGB16FWith( device, pPasses, texture, textureState, pic, picWidth, picHeight, R_MapConvertFilterRGB16FInBake, bake, waitStart );
+}
+
+// shared tail of R_ReadPixelsRGB16F: today's code, D13 aside
 static bool R_MapConvertFilterRGB16F(nvrhi::IDevice* device, nvrhi::IStagingTexture* stagingTexture,
-	const nvrhi::TextureDesc& desc, int picWidth, int picHeight, byte** pic)
+	const nvrhi::TextureDesc& desc, int picWidth, int picHeight, byte** pic, bakeContext_t*, uint64)
 {
 	size_t rowPitch = 0;
 	void* pData = device->mapStagingTexture(stagingTexture, nvrhi::TextureSlice(), nvrhi::CpuAccessMode::Read, &rowPitch);
@@ -1120,11 +1053,13 @@ static bool R_MapConvertFilterRGB16F(nvrhi::IDevice* device, nvrhi::IStagingText
 
 	if (rowPitch != desc.width * 8)
 	{
-		newData = new uint16_t[desc.width * desc.height * 2];
+		//puncho - concurrency D13: four values a pixel, so a row is desc.width * 4 of them ( it allocated two and
+		// stepped one; not taken at today's 256-wide RGBA16F rows )
+		newData = new uint16_t[desc.width * desc.height * 4];
 
 		for (uint32_t row = 0; row < desc.height; row++)
 		{
-			memcpy(newData + row * desc.width, static_cast<char*>(pData) + row * rowPitch, desc.width * sizeof(uint16_t) * 4);
+			memcpy(newData + row * desc.width * 4, static_cast<char*>(pData) + row * rowPitch, desc.width * sizeof(uint16_t) * 4);
 		}
 
 		pData = newData;
@@ -1196,10 +1131,138 @@ static bool R_MapConvertFilterRGB16F(nvrhi::IDevice* device, nvrhi::IStagingText
 	return (!isCorrupted);
 }
 
+//puncho - concurrency TB0/TB1a: the same tail inside a bake ( bake is never NULL ): the wait stage runs from waitStart to
+// the end of the map ( waitStart 0: the map is not timed as a wait ), the convert stage from there to the end, and the
+// scan reads the half table unless the bake runs -exactHalf
+static bool R_MapConvertFilterRGB16FInBake(nvrhi::IDevice* device, nvrhi::IStagingTexture* stagingTexture,
+	const nvrhi::TextureDesc& desc, int picWidth, int picHeight, byte** pic, bakeContext_t* bake, uint64 waitStart)
+{
+	size_t rowPitch = 0;
+	void* pData = device->mapStagingTexture(stagingTexture, nvrhi::TextureSlice(), nvrhi::CpuAccessMode::Read, &rowPitch);
+
+	if (!pData)
+	{
+		return false;
+	}
+
+	const float* halfToFloat = bake->halfToFloat;
+	const uint64 convertStart = ( waitStart != 0 ) ? R_BakeStage(bake, BAKE_STAGE_READBACK_WAIT, waitStart) : Sys_Microseconds();
+
+	uint16_t* newData = nullptr;
+
+	if (rowPitch != desc.width * 8)
+	{
+		//puncho - concurrency D13: four values a pixel, so a row is desc.width * 4 of them ( it allocated two and
+		// stepped one; not taken at today's 256-wide RGBA16F rows )
+		newData = new uint16_t[desc.width * desc.height * 4];
+
+		for (uint32_t row = 0; row < desc.height; row++)
+		{
+			memcpy(newData + row * desc.width * 4, static_cast<char*>(pData) + row * rowPitch, desc.width * sizeof(uint16_t) * 4);
+		}
+
+		pData = newData;
+	}
+
+	int pix = picWidth * picHeight;
+	const int bufferSize = pix * 3 * 2;
+
+	void* floatRGB16F = R_StaticAlloc(bufferSize);
+	*pic = (byte*)floatRGB16F;
+
+	// copy from RGBA16F to RGB16F
+	uint16_t* data = static_cast<uint16_t*>(pData);
+	uint16_t* outData = static_cast<uint16_t*>(floatRGB16F);
+
+	for (uint32_t i = 0; i < (desc.width * desc.height); i++)
+	{
+		outData[i * 3 + 0] = data[i * 4 + 0];
+		outData[i * 3 + 1] = data[i * 4 + 1];
+		outData[i * 3 + 2] = data[i * 4 + 2];
+	}
+
+	// RB: filter out garbage and reset it to black (rare, high visual impact).
+	// Safe for the depth target too: it stores hardware depth in [0,1] at this point,
+	// so the luminance > 30 test can never trip on it.
+	bool isCorrupted = false;
+
+	const idVec3 LUMINANCE_LINEAR(0.299f, 0.587f, 0.144f);
+	idVec3 rgb;
+
+	//puncho start - concurrency TB1a: inside a bake the half table, built from F16toF32 itself; the tests are today's
+	if (halfToFloat != NULL)
+	{
+		for (uint32_t i = 0; i < (desc.width * desc.height); i++)
+		{
+			rgb.x = halfToFloat[outData[i * 3 + 0]];
+			rgb.y = halfToFloat[outData[i * 3 + 1]];
+			rgb.z = halfToFloat[outData[i * 3 + 2]];
+
+			if (IsNAN(rgb.x) || IsNAN(rgb.y) || IsNAN(rgb.z))
+			{
+				isCorrupted = true;
+				break;
+			}
+
+			float luminance = rgb * LUMINANCE_LINEAR;
+			if (luminance > 30.0f)
+			{
+				isCorrupted = true;
+				break;
+			}
+		}
+	}
+	else	// a bake's -exactHalf: today's loop
+	//puncho end
+	for (uint32_t i = 0; i < (desc.width * desc.height); i++)
+	{
+		rgb.x = F16toF32(outData[i * 3 + 0]);
+		rgb.y = F16toF32(outData[i * 3 + 1]);
+		rgb.z = F16toF32(outData[i * 3 + 2]);
+
+		if (IsNAN(rgb.x) || IsNAN(rgb.y) || IsNAN(rgb.z))
+		{
+			isCorrupted = true;
+			break;
+		}
+
+		float luminance = rgb * LUMINANCE_LINEAR;
+		if (luminance > 30.0f)
+		{
+			isCorrupted = true;
+			break;
+		}
+	}
+
+	if (isCorrupted)
+	{
+		for (uint32_t i = 0; i < (desc.width * desc.height); i++)
+		{
+			outData[i * 3 + 0] = F32toF16(0);
+			outData[i * 3 + 1] = F32toF16(0);
+			outData[i * 3 + 2] = F32toF16(0);
+		}
+	}
+
+	if (newData)
+	{
+		delete[] newData;
+		newData = nullptr;
+	}
+
+	device->unmapStagingTexture(stagingTexture);
+
+	R_BakeStage(bake, BAKE_STAGE_READBACK_CONVERT, convertStart);	//puncho - concurrency TB0
+
+	return (!isCorrupted);
+}
+
 //reads the envprobe COLOUR and DEPTH targets with one command list,
-bool R_ReadProbeColorAndDepthRGB16F(nvrhi::IDevice* device, CommonRenderPasses* pPasses,
+//puncho - concurrency RA2-06: the tail, the bake and the wait's start come from the entry point ( see readbackTail_t )
+static bool R_ReadProbeColorAndDepthRGB16FWith(nvrhi::IDevice* device, CommonRenderPasses* pPasses,
 	nvrhi::ITexture* colorTexture, nvrhi::ITexture* depthTexture,
-	byte** colorPic, byte** depthPic, int picWidth, int picHeight)
+	byte** colorPic, byte** depthPic, int picWidth, int picHeight,
+	readbackTail_t tail, bakeContext_t* bake, uint64 waitStart)
 {
 	*colorPic = NULL;
 	*depthPic = NULL;
@@ -1261,12 +1324,315 @@ bool R_ReadProbeColorAndDepthRGB16F(nvrhi::IDevice* device, CommonRenderPasses* 
 	commandList->close();
 	device->executeCommandList(commandList);
 
-	bool colorOK = R_MapConvertFilterRGB16F(device, colorStaging, colorDesc, picWidth, picHeight, colorPic);	// waits for the GPU
-	bool depthOK = R_MapConvertFilterRGB16F(device, depthStaging, depthDesc, picWidth, picHeight, depthPic);	// returns immediately
+	bool colorOK = tail(device, colorStaging, colorDesc, picWidth, picHeight, colorPic, bake, waitStart);	// waits for the GPU
+	bool depthOK = tail(device, depthStaging, depthDesc, picWidth, picHeight, depthPic, bake, 0);			// returns immediately
 	(void)colorOK;																								// colour corruption is already zeroed in-buffer
 
 	return depthOK;
 }
+
+bool R_ReadProbeColorAndDepthRGB16F(nvrhi::IDevice* device, CommonRenderPasses* pPasses,
+	nvrhi::ITexture* colorTexture, nvrhi::ITexture* depthTexture,
+	byte** colorPic, byte** depthPic, int picWidth, int picHeight)
+{
+	return R_ReadProbeColorAndDepthRGB16FWith(device, pPasses, colorTexture, depthTexture, colorPic, depthPic, picWidth, picHeight, R_MapConvertFilterRGB16F, NULL, 0);
+}
+
+//puncho - concurrency TB0: a bake's readback; its wait stage starts here
+bool R_ReadProbeColorAndDepthRGB16FInBake(nvrhi::IDevice* device, CommonRenderPasses* pPasses,
+	nvrhi::ITexture* colorTexture, nvrhi::ITexture* depthTexture,
+	byte** colorPic, byte** depthPic, int picWidth, int picHeight, bakeContext_t* bake)
+{
+	const uint64 waitStart = Sys_Microseconds();
+	return R_ReadProbeColorAndDepthRGB16FWith(device, pPasses, colorTexture, depthTexture, colorPic, depthPic, picWidth, picHeight, R_MapConvertFilterRGB16FInBake, bake, waitStart);
+}
+
+/*
+==================
+R_BakeBegin, R_BakeRestoreCaptureSwitches, R_BakeStage, R_BakeEnd
+
+//puncho - concurrency TB0/TB1a: the context of one bake command ( bakeLightGrids, bakeEnvironmentProbes ), on the
+bake's thread. A file-scope instance, not the command's stack, so that a bake an error ended leaves tr.bake pointing
+at live memory. R_BakeEnd is its one cleanup ( RA2-01, RA2-02, RA2-04 ): the command calls it when it ends,
+R_BakeEndAfterError when an error unwound the command, idRenderSystemLocal::Shutdown before the device goes, and
+R_BakeBegin before a new bake if anything of an old one is still there.
+==================
+*/
+static const char* bakeStageNames[BAKE_STAGE_COUNT] =
+{
+	"setup",
+	"frontend",
+	"closeout",
+	"backend",
+	"readback_wait",
+	"readback_convert",
+	"progress",
+	"job_wait",
+	"assemble_write",
+	"reload",
+};
+
+static bakeContext_t bakeContext;
+
+// TB3a: one staging texture for each cube face, made by the first copy of a bake from the capture target's own
+// description ( as R_ReadPixelsRGB16F makes one a call ) and released by R_BakeEnd; handles, so not in bakeContext_t
+static nvrhi::StagingTextureHandle	bakeFaceStaging[6];
+static nvrhi::TextureDesc			bakeFaceDesc;
+static nvrhi::EventQueryHandle		bakeFaceQuery;		// RA2-05: set after the sixth face's copy
+
+bakeContext_t* R_BakeBegin( bool exactHalf )
+{
+	if( tr.bake != NULL )
+	{
+		R_BakeEnd( false );
+	}
+
+	bakeContext_t* bake = &bakeContext;
+	memset( bake, 0, sizeof( *bake ) );
+	bake->startMicroSec = Sys_Microseconds();
+
+	extern idCVar r_useParallelAddModels;
+	extern idCVar r_useParallelAddShadows;
+	extern idCVar r_useParallelAddLights;
+
+	bake->oldJitter = r_shadowMapRandomizeJitter.GetInteger();
+	bake->oldScissor = r_useScissor.GetInteger();
+	bake->oldAddModels = r_useParallelAddModels.GetInteger();
+	bake->oldAddShadows = r_useParallelAddShadows.GetInteger();
+	bake->oldAddLights = r_useParallelAddLights.GetInteger();
+	bake->oldSwapInterval = r_swapInterval.GetInteger();
+	bake->oldTakingEnvprobe = tr.takingEnvprobe;
+
+	// RB3-01: the context is published before anything is changed or allocated, so that from here on an error finds
+	// every saved value and every allocation in it ( R_BakeEndAfterError, or the next R_BakeBegin )
+	tr.bake = bake;
+
+	// RB3-04: r_clear is a string of any length ( 'r g b' ), kept whole in storage the context owns
+	const char* clearString = r_clear.GetString();
+	const size_t clearBytes = strlen( clearString ) + 1;
+	bake->oldClear = ( char* )Mem_Alloc( clearBytes, TAG_RENDER );
+	if( bake->oldClear == NULL )
+	{
+		common->Error( "R_BakeBegin: out of memory for r_clear" );
+	}
+	memcpy( bake->oldClear, clearString, clearBytes );
+
+	// the owner's decision ( concurrency plan, decision 2 ): a bake's shadows take no random jitter
+	r_shadowMapRandomizeJitter.SetBool( false );
+
+	if( !exactHalf )
+	{
+		// every pattern from F16toF32 itself, so each entry is the value the conversion it replaces returns
+		bake->halfToFloat = ( float* )Mem_Alloc( 65536 * sizeof( float ), TAG_RENDER );
+		if( bake->halfToFloat == NULL )
+		{
+			common->Error( "R_BakeBegin: out of memory for the half table" );
+		}
+		for( int h = 0; h < 65536; h++ )
+		{
+			bake->halfToFloat[h] = F16toF32( ( halfFloat_t )h );
+		}
+	}
+
+	return bake;
+}
+
+// the capture's switches as they were before the bake ( it used to set them to true )
+void R_BakeRestoreCaptureSwitches( const bakeContext_t* bake )
+{
+	extern idCVar r_useParallelAddModels;
+	extern idCVar r_useParallelAddShadows;
+	extern idCVar r_useParallelAddLights;
+
+	r_useScissor.SetInteger( bake->oldScissor );
+	r_useParallelAddModels.SetInteger( bake->oldAddModels );
+	r_useParallelAddShadows.SetInteger( bake->oldAddShadows );
+	r_useParallelAddLights.SetInteger( bake->oldAddLights );
+}
+
+uint64 R_BakeStage( bakeContext_t* bake, bakeStage_t stage, uint64 since )
+{
+	const uint64 now = Sys_Microseconds();
+	bake->stats.us[stage] += now - since;
+	return now;
+}
+
+// the copy half of R_ReadPixelsRGB16F's RGBA16F path, the same calls, into the bake's staging texture for this face
+void R_CopyCaptureFaceRGB16F( nvrhi::IDevice* device, nvrhi::ITexture* texture, nvrhi::ResourceStates textureState, int face )
+{
+	assert( tr.bake != NULL && face >= 0 && face < 6 );
+	assert( texture->getDesc().format == nvrhi::Format::RGBA16_FLOAT );
+
+	const uint64 waitStart = Sys_Microseconds();
+
+	if( !bakeFaceStaging[face] )
+	{
+		bakeFaceDesc = texture->getDesc();
+		bakeFaceStaging[face] = device->createStagingTexture( bakeFaceDesc, nvrhi::CpuAccessMode::Read );
+	}
+
+	nvrhi::CommandListHandle commandList = device->createCommandList();
+	commandList->open();
+
+	if( textureState != nvrhi::ResourceStates::Unknown )
+	{
+		commandList->beginTrackingTextureState( texture, nvrhi::TextureSubresourceSet( 0, 1, 0, 1 ), textureState );
+	}
+
+	commandList->copyTexture( bakeFaceStaging[face], nvrhi::TextureSlice(), texture, nvrhi::TextureSlice() );
+
+	if( textureState != nvrhi::ResourceStates::Unknown )
+	{
+		commandList->setTextureState( texture, nvrhi::TextureSubresourceSet( 0, 1, 0, 1 ), textureState );
+		commandList->commitBarriers();
+	}
+
+	commandList->close();
+	device->executeCommandList( commandList );
+
+	// RA2-05: the queue runs the six copies in order, so this query is reached when all six are done
+	if( face == 5 )
+	{
+		if( !bakeFaceQuery )
+		{
+			bakeFaceQuery = device->createEventQuery();
+		}
+		device->resetEventQuery( bakeFaceQuery );
+		device->setEventQuery( bakeFaceQuery, nvrhi::CommandQueue::Graphics );
+	}
+
+	R_BakeStage( tr.bake, BAKE_STAGE_READBACK_WAIT, waitStart );
+}
+
+// the map half: one wait for the six copies ( RA2-05 ), then R_ReadPixelsRGB16F's own tail for each face in order;
+// each map's own wait finds its copy done
+void R_MapCaptureFacesRGB16F( nvrhi::IDevice* device, byte* pics[6], int picWidth, int picHeight )
+{
+	bakeContext_t* bake = tr.bake;
+	assert( bake != NULL );
+
+	const uint64 waitStart = Sys_Microseconds();
+	if( bakeFaceQuery )
+	{
+		device->waitEventQuery( bakeFaceQuery );
+	}
+	R_BakeStage( bake, BAKE_STAGE_READBACK_WAIT, waitStart );
+
+	for( int face = 0; face < 6; face++ )
+	{
+		pics[face] = NULL;
+		if( bakeFaceStaging[face] )
+		{
+			R_MapConvertFilterRGB16FInBake( device, bakeFaceStaging[face], bakeFaceDesc, picWidth, picHeight, &pics[face], bake, 0 );
+		}
+	}
+}
+
+void R_BakeEnd( bool printStages )
+{
+	bakeContext_t* bake = tr.bake;
+	if( bake == NULL )
+	{
+		return;
+	}
+
+	// RA2-01: quiet both lists before anything they read is freed. A submitted list is waited for; a list with jobs
+	// added and never submitted ( an error between AddJob and Submit ) is submitted first, because Wait returns at once
+	// from a list that was never submitted and leaves its jobs in it. Those jobs then run against the faces, outputs and
+	// tables that are all still alive here, and Wait empties the list. Submitting an empty list and waiting is a no-op
+	idParallelJobList* bakeLists[2] = { tr.envprobeJobList, tr.envprobeJobList2 };
+	for( int i = 0; i < 2; i++ )
+	{
+		if( bakeLists[i] == NULL )
+		{
+			continue;
+		}
+		if( !bakeLists[i]->IsSubmitted() )
+		{
+			bakeLists[i]->Submit( NULL, JOBLIST_PARALLELISM_MAX_CORES );
+		}
+		bakeLists[i]->Wait();
+	}
+
+	// RA2-01: every job, face and output a bake left; empty after a bake that ended normally
+	R_FreeLightGridJobs();
+	R_FreeEnvprobeJobs();
+	for( int j = 0; j < 6; j++ )
+	{
+		if( bake->probeFaces[j] != NULL )
+		{
+			Mem_Free( bake->probeFaces[j] );
+		}
+		if( bake->probeDepth[j] != NULL )
+		{
+			R_StaticFree( bake->probeDepth[j] );
+		}
+	}
+	for( int i = 0; i < 6 * 16; i++ )
+	{
+		if( bake->finalMips[i] != NULL )
+		{
+			R_StaticFree( bake->finalMips[i] );	// RB3-03
+		}
+	}
+
+	// RA2-04: every setting the bake changed; R_BakeBegin saved them all before it changed one ( RB3-01 )
+	R_BakeRestoreCaptureSwitches( bake );
+	r_shadowMapRandomizeJitter.SetInteger( bake->oldJitter );
+	r_swapInterval.SetInteger( bake->oldSwapInterval );
+	if( bake->oldClear != NULL )
+	{
+		r_clear.SetString( bake->oldClear );	// RB3-04: the whole string
+		Mem_Free( bake->oldClear );
+	}
+	tr.takingEnvprobe = bake->oldTakingEnvprobe;
+
+	if( printStages )
+	{
+		// "other" is the command's time no stage holds; with it the lines add up to "total"
+		const uint64 total = Sys_Microseconds() - bake->startMicroSec;
+		uint64 staged = 0;
+		for( int i = 0; i < BAKE_STAGE_COUNT; i++ )
+		{
+			common->Printf( "bake phase %s %.1f\n", bakeStageNames[i], bake->stats.us[i] * 0.001 );
+			staged += bake->stats.us[i];
+		}
+		common->Printf( "bake phase other %.1f\n", ( total > staged ) ? ( total - staged ) * 0.001 : 0.0 );
+		common->Printf( "bake phase total %.1f\n", total * 0.001 );
+	}
+
+	if( bake->halfToFloat != NULL )
+	{
+		Mem_Free( bake->halfToFloat );
+	}
+	if( bake->ggxH != NULL )
+	{
+		Mem_Free( bake->ggxH );
+	}
+	if( bake->shTable != NULL )
+	{
+		Mem_Free( bake->shTable );
+	}
+	for( int face = 0; face < 6; face++ )
+	{
+		bakeFaceStaging[face] = nullptr;	// TB3a; NVRHI keeps it until the GPU is done with it
+	}
+	bakeFaceQuery = nullptr;
+	memset( bake, 0, sizeof( *bake ) );
+
+	tr.bake = NULL;
+}
+
+// RA2-04: idCommonLocal::Frame's catch, after an error unwound a command; nothing to do unless a bake was running
+void R_BakeEndAfterError()
+{
+	if( tr.bake != NULL )
+	{
+		common->Warning( "a bake was ended by an error; its settings are restored and what it held is freed" );
+		R_BakeEnd( false );
+	}
+}
+//puncho end
 
 /*
 ==================
@@ -1995,8 +2361,10 @@ void idRenderSystemLocal::Clear()
 
 	// RB
 	envprobeJobList = NULL;
+	envprobeJobList2 = NULL;	//puncho - concurrency TB2
 	envprobeJobs.Clear();
 	lightGridJobs.Clear();
+	bake = NULL;	//puncho - concurrency TB0: at construction; Shutdown has already ended any bake ( R_BakeEnd ) before this
 
 #if defined(USE_INTRINSICS_SSE)
 	// destroy occlusion culling object and free hierarchical z-buffer
@@ -2646,7 +3014,8 @@ void idRenderSystemLocal::Init()
 	}
 
 	frontEndJobList = parallelJobManager->AllocJobList( JOBLIST_RENDERER_FRONTEND, JOBLIST_PRIORITY_MEDIUM, 2048, 0, NULL );
-	envprobeJobList = parallelJobManager->AllocJobList( JOBLIST_UTILITY, JOBLIST_PRIORITY_MEDIUM, 2048, 0, NULL ); // RB
+	envprobeJobList = parallelJobManager->AllocJobList( JOBLIST_UTILITY, JOBLIST_PRIORITY_MEDIUM, ENVPROBE_JOBLIST_MAX_JOBS, 0, NULL ); // RB //puncho - concurrency D18: the bakes submit in chunks of this
+	envprobeJobList2 = parallelJobManager->AllocJobList( JOBLIST_UTILITY, JOBLIST_PRIORITY_MEDIUM, ENVPROBE_JOBLIST_MAX_JOBS, 0, NULL ); //puncho - concurrency TB2
 
 	if( deviceManager->GetGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN )
 	{
@@ -2729,7 +3098,12 @@ void idRenderSystemLocal::Shutdown()
 
 	delete guiModel;
 
+	//puncho - concurrency RA2-02: a bake an error left behind gives back its jobs, faces, staging textures and tables
+	// while the job lists and the device still exist ( a no-op without one )
+	R_BakeEnd( false );
+
 	parallelJobManager->FreeJobList( envprobeJobList );
+	parallelJobManager->FreeJobList( envprobeJobList2 );	//puncho - concurrency TB2
 	parallelJobManager->FreeJobList( frontEndJobList );
 
 	Clear();
@@ -2857,6 +3231,7 @@ idRenderSystemLocal::BeginLevelLoad
 */
 void idRenderSystemLocal::BeginLevelLoad()
 {
+	parallelJobManager->ResetJobListOverrunWarnings();	//puncho - C1a: every list is idle here; each warns once a map again
 	drawSurfClampWarned = false;
 	backEnd.shadowAtlasFailedHighWater = 0;
 	// clear binding sets for previous level images and light data #676

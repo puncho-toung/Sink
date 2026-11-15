@@ -3270,6 +3270,194 @@ void idAI::SetCollisionGroup()
 }
 //puncho end
 
+//puncho start - P0: keys only, no precomputed path and no changes to a walker's state.
+struct avoidPlanKey_t
+{
+	const idAAS*			navigation;
+	const idAASSettings*	settings;
+	idVec3				origin, goalPos, velocity, gravity, gravityNormal;
+	idBounds			bounds, absBounds;
+	int					enemyEntityNum, enemySpawnId, moveStartTime, spawnId, clipMask, ownGroup;
+};
+
+struct avoidStatsSlot_t
+{
+	avoidPlanKey_t	key;
+	idVec3			lastGoal;
+	int				lastGoalSpawnId, lastGoalPlanTic;
+	uint32			enrolledEpoch, plannedEpoch;
+	bool			goalValid;
+};
+
+static avoidStatsSlot_t* avoidStatsSlots;
+static uint32 avoidStatsEpoch;
+static int avoidStatsLastTic;
+
+void idAI::BuildAvoidanceKey( avoidPlanKey_t& key, const idVec3& goalPos ) const
+{
+	key.navigation = aas;
+	key.settings = aas != NULL ? aas->GetSettings() : NULL;
+	key.origin = physicsObj.GetOrigin();
+	key.goalPos = goalPos;
+	key.velocity = physicsObj.GetLinearVelocity();
+	key.gravity = physicsObj.GetGravity();
+	key.gravityNormal = physicsObj.GetGravityNormal();
+	key.bounds = physicsObj.GetBounds();
+	key.absBounds = physicsObj.GetAbsBounds();
+	const idActor* enemyEnt = enemy.GetEntity();
+	key.enemyEntityNum = enemyEnt != NULL ? enemyEnt->entityNumber : -1;
+	key.enemySpawnId = enemyEnt != NULL ? gameLocal.GetSpawnId( enemyEnt ) : 0;
+	key.moveStartTime = move.startTime;
+	key.spawnId = gameLocal.GetSpawnId( this );
+	key.clipMask = physicsObj.GetClipMask();
+	key.ownGroup = physicsObj.GetClipModel()->GetGroup();
+}
+
+void idAI::CaptureAvoidanceStats( bool reset )
+{
+	if( avoidStatsSlots == NULL )
+	{
+		avoidStatsSlots = ( avoidStatsSlot_t* )Mem_ClearedAlloc( MAX_GENTITIES * sizeof( avoidStatsSlot_t ), TAG_GAME );
+	}
+	else if( reset || gameLocal.framenum <= avoidStatsLastTic || avoidStatsEpoch == 0xffffffffU )
+	{
+		// Re-enabling, restarting a map or wrapping the epoch cannot reuse an old goal or enrolment.
+		memset( avoidStatsSlots, 0, MAX_GENTITIES * sizeof( avoidStatsSlot_t ) );
+		avoidStatsEpoch = 0;
+	}
+	avoidStatsEpoch++;
+	avoidStatsLastTic = gameLocal.framenum;
+	if( !ai_think.GetBool() )
+	{
+		return;
+	}
+	const bool tiers = ai_avoidTiers.GetBool();
+	const int periodDefault = ai_avoidPeriod.GetInteger();
+	const int periods[] = { ai_avoidPeriodClose.GetInteger(), ai_avoidPeriodSeen.GetInteger(), ai_avoidPeriodUnseen.GetInteger() };
+	const bool allGroups = g_timeentities.GetFloat() != 0.0f || gameLocal.inCinematic;
+	const bool cinematicOnly = g_cinematic.GetBool() && gameLocal.inCinematic;
+	for( idEntity* ent = gameLocal.activeEntities.Next(); ent != NULL; ent = ent->activeNode.Next() )
+	{
+		// Group 2 has its own unconditional pass, including during a cinematic.
+		if( ( !allGroups && ent->timeGroup != TIME_GROUP1 && ent->timeGroup != TIME_GROUP2 ) ||
+			( cinematicOnly && !ent->cinematic && ent->timeGroup != TIME_GROUP2 ) || !ent->IsType( idAI::Type ) )
+		{
+			continue;
+		}
+		const idAI* ai = static_cast<const idAI*>( ent );
+		// Read-only gates from Think, GetMovePos and AnimMove. moveStatus is not a gate:
+		// GetMovePos resets it to MOVING, including when the preceding plan was blocked.
+		const moveCommand_t command = ai->move.moveCommand;
+		if( !( ai->thinkFlags & TH_THINK ) || ai->num_cinematics || ( !ai->allowHiddenMovement && ai->IsHidden() ) ||
+			command < NUM_NONMOVING_COMMANDS || command == MOVE_TO_POSITION_DIRECT ||
+			command == MOVE_SLIDE_TO_POSITION || command == MOVE_WANDER )
+		{
+			continue;
+		}
+		if( ai->move.moveType != MOVETYPE_ANIM || ai->ignore_obstacles || ai->EffectiveAvoidClass() == AVOID_CLASS_OFF ||
+			ai->move.startTime != ai->avoidMoveStart )
+		{
+			continue;
+		}
+		// A blocked-time move may still plan through the wandering fallback. Only test arrival when
+		// GetMovePos would. Group 2 can first think in the ordinary pass, then again at fast time.
+		const bool fastThink = ai->timeGroup == TIME_GROUP2 && ( !allGroups || ( cinematicOnly && !ai->cinematic ) );
+		const int thinkTime = fastThink ? gameLocal.GetTimeGroupTime( 1 ) : gameLocal.time;
+		if( thinkTime > ai->move.blockTime )
+		{
+			if( command == MOVE_TO_ENTITY )
+			{
+				const idEntity* goal = ai->move.goalEntity.GetEntity();
+				if( goal == NULL )
+				{
+					continue;
+				}
+				const idVec3& goalOrigin = goal->GetPhysics()->GetOrigin();
+				// A changed target needs GetFloorPos/routing, which must not run during enrollment.
+				if( goalOrigin == ai->move.goalEntityOrigin && ai->ReachedPos( goalOrigin, MOVE_TO_ENTITY ) )
+				{
+					continue;
+				}
+			}
+			else if( ai->ReachedPos( ai->move.moveDest, command ) )
+			{
+				continue;
+			}
+		}
+		// CheckDormant, UpdateEnemyPosition/UpdateAIScript, routing/wandering and FlowFieldExit
+		// write state or caches. Their current-tic outcomes stay out of this prediction.
+		// The previous think's cached tier is a prediction. Never call AvoidPeriod/UpdateAvoidTier/PVS here.
+		const int tier = ai->avoidTier == AVOID_TIER_CLOSE ? 0 : ( ai->avoidTier == AVOID_TIER_SEEN ? 1 : 2 );
+		const int period = tiers ? periods[tier] : periodDefault;
+		if( period > 1 && ai->avoidPlanTic >= 0 && !ai->avoidBlocked &&
+			gameLocal.framenum - ai->avoidPlanTic < period && ( ( gameLocal.framenum + ai->entityNumber ) % period ) != 0 )
+		{
+			continue;
+		}
+		avoidStatsSlot_t& slot = avoidStatsSlots[ai->entityNumber];
+		ai->BuildAvoidanceKey( slot.key, slot.lastGoal );
+		slot.goalValid = ai->avoidPlanTic >= 0 && slot.lastGoalPlanTic == ai->avoidPlanTic && slot.lastGoalSpawnId == slot.key.spawnId;
+		slot.enrolledEpoch = avoidStatsEpoch;
+		gameLocal.aiStats.avoidEnrolled++;
+	}
+}
+
+void idAI::RecordAvoidanceStats( const idVec3& goalPos )
+{
+	// Script calls before the census reset are outside this sample (including the first enabled tic).
+	if( avoidStatsSlots == NULL || avoidStatsLastTic != gameLocal.framenum || move.moveType != MOVETYPE_ANIM )
+	{
+		return;
+	}
+	avoidStatsSlot_t& slot = avoidStatsSlots[entityNumber];
+	const int spawnId = gameLocal.GetSpawnId( this );
+	if( slot.plannedEpoch == avoidStatsEpoch && slot.lastGoalSpawnId == spawnId )
+	{
+		// Count walkers, not repeated script queries. Retain the final goal for the next tic.
+		slot.lastGoal = goalPos;
+		return;
+	}
+	slot.plannedEpoch = avoidStatsEpoch;
+	gameLocal.aiStats.avoidDue++;
+	avoidPlanKey_t live;
+	BuildAvoidanceKey( live, goalPos );
+	if( slot.enrolledEpoch != avoidStatsEpoch || slot.key.spawnId != live.spawnId )
+	{
+		gameLocal.aiStats.avoidUnenrolled++;
+	}
+	else
+	{
+		const avoidPlanKey_t& key = slot.key;
+		const bool equal = slot.goalValid && key.origin == live.origin && key.goalPos == live.goalPos &&
+			key.velocity == live.velocity && key.gravity == live.gravity && key.gravityNormal == live.gravityNormal &&
+			key.bounds == live.bounds && key.absBounds == live.absBounds && key.enemyEntityNum == live.enemyEntityNum &&
+			key.enemySpawnId == live.enemySpawnId && key.moveStartTime == live.moveStartTime && key.spawnId == live.spawnId &&
+			key.clipMask == live.clipMask && key.ownGroup == live.ownGroup && key.navigation == live.navigation && key.settings == live.settings;
+		if( equal )
+		{
+			gameLocal.aiStats.avoidHits++;
+		}
+		else
+		{
+			gameLocal.aiStats.avoidMisses++;
+		}
+		// Retire this prediction, including before any reuse of its entity slot.
+		slot.enrolledEpoch = 0;
+	}
+	slot.lastGoal = goalPos;
+	slot.lastGoalSpawnId = live.spawnId;
+	slot.lastGoalPlanTic = gameLocal.framenum;
+}
+
+void idAI::FreeAvoidanceStats()
+{
+	Mem_Free( avoidStatsSlots );
+	avoidStatsSlots = NULL;
+	avoidStatsEpoch = 0;
+	avoidStatsLastTic = 0;
+}
+//puncho end
+
 /*
 =====================
 idAI::CheckObstacleAvoidance
@@ -3326,6 +3514,12 @@ void idAI::CheckObstacleAvoidance( const idVec3& goalPos, idVec3& newPos )
 		return;
 	}
 	//puncho end
+
+	//puncho - P0: one captured-flag test per actual plan; sampling never computes a path
+	if( gameLocal.concurrencyStats )
+	{
+		RecordAvoidanceStats( goalPos );
+	}
 
 	obstacle = NULL;
 	AI_OBSTACLE_IN_PATH = false;

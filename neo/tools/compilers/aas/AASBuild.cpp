@@ -32,6 +32,8 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "AASBuild_local.h"
+#include "../compiler_public.h" //puncho - TC1
+#include "../dmap/CompilerPhase.h" //puncho - TC0
 
 #define BFL_PATCH		0x1000
 
@@ -809,7 +811,7 @@ void idAASBuild::ChangeMultipleBoundingBoxContents_r( idBrushBSPNode* node, int 
 idAASBuild::Build
 ============
 */
-bool idAASBuild::Build( const idStr& fileName, const idAASSettings* settings )
+aasBuildResult_t idAASBuild::Build( const idStr& fileName, const idAASSettings* settings )
 {
 	int i, bit, mask, startTime;
 	idMapFile* mapFile;
@@ -823,6 +825,9 @@ bool idAASBuild::Build( const idStr& fileName, const idAASSettings* settings )
 	idStrList entityClassNames;
 
 	startTime = Sys_Milliseconds();
+	//puncho - TC0: stages accumulate across all selected AAS types.
+	const bool phaseTimes = dmap_phaseTimes.GetBool();
+	int phaseStart = phaseTimes ? Sys_Milliseconds() : 0;
 
 	Shutdown();
 
@@ -836,7 +841,15 @@ bool idAASBuild::Build( const idStr& fileName, const idAASSettings* settings )
 	{
 		delete mapFile;
 		common->Error( "Couldn't load map file: '%s'", name.c_str() );
-		return false;
+		return AAS_BUILD_SKIPPED;
+	}
+
+	//puncho - TC0
+	if( phaseTimes )
+	{
+		const int now = Sys_Milliseconds();
+		DmapPhaseAdd( DP_AAS_LOAD, now - phaseStart );
+		phaseStart = now;
 	}
 
 	// check if this map has any entities that use this AAS file
@@ -844,7 +857,7 @@ bool idAASBuild::Build( const idStr& fileName, const idAASSettings* settings )
 	{
 		delete mapFile;
 		common->Printf( "no entities in map that use %s\n", settings->fileExtension.c_str() );
-		return true;
+		return AAS_BUILD_OK;
 	}
 
 	name.SetFileExtension( aasSettings->fileExtension );
@@ -859,7 +872,7 @@ bool idAASBuild::Build( const idStr& fileName, const idAASSettings* settings )
 	{
 		delete mapFile;
 		common->Error( "%s is empty", name.c_str() );
-		return false;
+		return AAS_BUILD_SKIPPED;
 	}
 
 	// merge as many brushes as possible before expansion
@@ -870,6 +883,14 @@ bool idAASBuild::Build( const idStr& fileName, const idAASSettings* settings )
 	{
 		ClipBrushSidesWithProcBSP( brushList );
 		DeleteProcBSP();
+	}
+
+	//puncho - TC0
+	if( phaseTimes )
+	{
+		const int now = Sys_Milliseconds();
+		DmapPhaseAdd( DP_AAS_BRUSHES, now - phaseStart );
+		phaseStart = now;
 	}
 
 	// make copies of the brush list
@@ -904,6 +925,14 @@ bool idAASBuild::Build( const idStr& fileName, const idAASSettings* settings )
 		bsp.WriteBrushMap( fileName, "_" + aasSettings->fileExtension, AREACONTENTS_SOLID );
 	}
 
+	//puncho - TC0
+	if( phaseTimes )
+	{
+		const int now = Sys_Milliseconds();
+		DmapPhaseAdd( DP_AAS_EXPAND, now - phaseStart );
+		phaseStart = now;
+	}
+
 	// build BSP tree from brushes
 	bsp.Build( brushList, AREACONTENTS_SOLID, ExpandedChopAllowed, ExpandedMergeAllowed );
 
@@ -919,7 +948,15 @@ bool idAASBuild::Build( const idStr& fileName, const idAASSettings* settings )
 		bsp.LeakFile( name );
 		delete mapFile;
 		common->Printf( "%s has no outside", name.c_str() );
-		return false;
+		return AAS_BUILD_SKIPPED;
+	}
+
+	//puncho - TC0
+	if( phaseTimes )
+	{
+		const int now = Sys_Milliseconds();
+		DmapPhaseAdd( DP_AAS_BSP, now - phaseStart );
+		phaseStart = now;
 	}
 
 	// gravitational subdivision
@@ -948,15 +985,47 @@ bool idAASBuild::Build( const idStr& fileName, const idAASSettings* settings )
 	// melt portal windings
 	bsp.MeltPortals( AREACONTENTS_SOLID );
 
+	//puncho - TC0
+	if( phaseTimes )
+	{
+		const int now = Sys_Milliseconds();
+		DmapPhaseAdd( DP_AAS_SUBDIVIDE, now - phaseStart );
+		phaseStart = now;
+	}
+
 	// store the file from the bsp tree
 	StoreFile( bsp );
 	file->settings = *aasSettings;
 
+	//puncho - TC0
+	if( phaseTimes )
+	{
+		const int now = Sys_Milliseconds();
+		DmapPhaseAdd( DP_AAS_STORE, now - phaseStart );
+		phaseStart = now;
+	}
+
 	// calculate reachability
 	reach.Build( mapFile, file );
 
+	//puncho - TC0
+	if( phaseTimes )
+	{
+		const int now = Sys_Milliseconds();
+		DmapPhaseAdd( DP_AAS_REACH, now - phaseStart );
+		phaseStart = now;
+	}
+
 	// build clusters
 	cluster.Build( file );
+
+	//puncho - TC0
+	if( phaseTimes )
+	{
+		const int now = Sys_Milliseconds();
+		DmapPhaseAdd( DP_AAS_CLUSTER, now - phaseStart );
+		phaseStart = now;
+	}
 
 	// optimize the file
 	if( !aasSettings->noOptimize )
@@ -964,17 +1033,37 @@ bool idAASBuild::Build( const idStr& fileName, const idAASSettings* settings )
 		file->Optimize();
 	}
 
+	//puncho - TC0
+	if( phaseTimes )
+	{
+		const int now = Sys_Milliseconds();
+		DmapPhaseAdd( DP_AAS_OPTIMIZE, now - phaseStart );
+		phaseStart = now;
+	}
+
 	// write the file
 	name.SetFileExtension( aasSettings->fileExtension );
-	file->Write( name, mapFile->GetGeometryCRC() );
+	//puncho - TC1: propagate checked completion.
+	const bool written = file->Write( name, mapFile->GetGeometryCRC() );
+
+	//puncho - TC0
+	if( phaseTimes )
+	{
+		const int now = Sys_Milliseconds();
+		DmapPhaseAdd( DP_AAS_WRITE, now - phaseStart );
+	}
 
 	// delete the map file
 	delete mapFile;
+	if( !written )
+	{
+		return AAS_BUILD_WRITE_FAILED; //puncho - TC1: distinguish output failure from a skipped type
+	}
 
 	common->Printf( "%6d seconds to create AAS\n", ( Sys_Milliseconds() - startTime ) / 1000 );
 	common->DmapPacifierInfo( "%6d seconds to create AAS\n", ( Sys_Milliseconds() - startTime ) / 1000 );
 
-	return true;
+	return AAS_BUILD_OK;
 }
 
 /*
@@ -982,7 +1071,7 @@ bool idAASBuild::Build( const idStr& fileName, const idAASSettings* settings )
 idAASBuild::BuildReachability
 ============
 */
-bool idAASBuild::BuildReachability( const idStr& fileName, const idAASSettings* settings )
+aasBuildResult_t idAASBuild::BuildReachability( const idStr& fileName, const idAASSettings* settings )
 {
 	int startTime;
 	idMapFile* mapFile;
@@ -1002,7 +1091,7 @@ bool idAASBuild::BuildReachability( const idStr& fileName, const idAASSettings* 
 	{
 		delete mapFile;
 		common->Error( "Couldn't load map file: '%s'", name.c_str() );
-		return false;
+		return AAS_BUILD_SKIPPED;
 	}
 
 	file = new idAASFileLocal();
@@ -1012,7 +1101,7 @@ bool idAASBuild::BuildReachability( const idStr& fileName, const idAASSettings* 
 	{
 		delete mapFile;
 		common->Error( "Couldn't load AAS file: '%s'", name.c_str() );
-		return false;
+		return AAS_BUILD_SKIPPED;
 	}
 
 	file->settings = *aasSettings;
@@ -1024,14 +1113,19 @@ bool idAASBuild::BuildReachability( const idStr& fileName, const idAASSettings* 
 	cluster.Build( file );
 
 	// write the file
-	file->Write( name, mapFile->GetGeometryCRC() );
+	//puncho - TC1
+	const bool written = file->Write( name, mapFile->GetGeometryCRC() );
 
 	// delete the map file
 	delete mapFile;
+	if( !written )
+	{
+		return AAS_BUILD_WRITE_FAILED; //puncho - TC1: distinguish output failure from a skipped type
+	}
 
 	common->Printf( "%6d seconds to calculate reachability\n", ( Sys_Milliseconds() - startTime ) / 1000 );
 
-	return true;
+	return AAS_BUILD_OK;
 }
 
 /*
@@ -1091,8 +1185,9 @@ static const idDict* FindEntityDefDict( const char* name, bool makeDefault )
 RunAAS_f
 ============
 */
-void RunAAS_f( const idCmdArgs& args )
+bool RunAAS( const idCmdArgs& args ) //puncho - TC1: return before command Error
 {
+	bool succeeded = true;
 	int i;
 	idAASBuild aas;
 	idAASSettings settings;
@@ -1105,7 +1200,7 @@ void RunAAS_f( const idCmdArgs& args )
 						"  -usePatches        = use bezier patches for collision detection.\n"
 						"  -writeBrushMap     = write a brush map with the AAS geometry.\n"
 						"  -playerFlood       = use player spawn points as valid AAS positions.\n" );
-		return;
+		return true;
 	}
 
 	common->ClearWarnings( "compiling AAS" );
@@ -1137,7 +1232,11 @@ void RunAAS_f( const idCmdArgs& args )
 			{
 				mapName = "maps/" + mapName;
 			}
-			aas.Build( mapName, &settings );
+			if( aas.Build( mapName, &settings ) == AAS_BUILD_WRITE_FAILED ) //puncho - TC1
+			{
+				succeeded = false;
+				break;
+			}
 		}
 
 		kv = dict->MatchPrefix( "type", kv );
@@ -1148,6 +1247,16 @@ void RunAAS_f( const idCmdArgs& args )
 	}
 	common->SetRefreshOnPrint( false );
 	common->PrintWarnings();
+	return succeeded;
+}
+
+//puncho - TC1: the builder and command temporaries are gone before Error can exit.
+void RunAAS_f( const idCmdArgs& args )
+{
+	if( !RunAAS( args ) )
+	{
+		common->Error( "RunAAS failed" );
+	}
 }
 
 /*
@@ -1155,8 +1264,9 @@ void RunAAS_f( const idCmdArgs& args )
 RunAASDir_f
 ============
 */
-void RunAASDir_f( const idCmdArgs& args )
+static bool RunAASDir( const idCmdArgs& args ) //puncho - TC1: return before command Error
 {
+	bool succeeded = true;
 	int i;
 	idAASBuild aas;
 	idAASSettings settings;
@@ -1165,7 +1275,7 @@ void RunAASDir_f( const idCmdArgs& args )
 	if( args.Argc() <= 1 )
 	{
 		common->Printf( "runAASDir <folder>\n" );
-		return;
+		return true;
 	}
 
 	common->ClearWarnings( "compiling AAS" );
@@ -1183,7 +1293,7 @@ void RunAASDir_f( const idCmdArgs& args )
 	mapFiles = fileSystem->ListFiles( idStr( "maps/" ) + args.Argv( 1 ), ".map" );
 
 	// create AAS files for all the .map files
-	for( i = 0; i < mapFiles->GetNumFiles(); i++ )
+	for( i = 0; succeeded && i < mapFiles->GetNumFiles(); i++ )
 	{
 		if( i )
 		{
@@ -1201,7 +1311,11 @@ void RunAASDir_f( const idCmdArgs& args )
 			else
 			{
 				settings.FromDict( kv->GetValue(), settingsDict );
-				aas.Build( idStr( "maps/" ) + args.Argv( 1 ) + "/" + mapFiles->GetFile( i ), &settings );
+				if( aas.Build( idStr( "maps/" ) + args.Argv( 1 ) + "/" + mapFiles->GetFile( i ), &settings ) == AAS_BUILD_WRITE_FAILED ) //puncho - TC1
+				{
+					succeeded = false;
+					break;
+				}
 			}
 
 			kv = dict->MatchPrefix( "type", kv );
@@ -1216,6 +1330,16 @@ void RunAASDir_f( const idCmdArgs& args )
 
 	common->SetRefreshOnPrint( false );
 	common->PrintWarnings();
+	return succeeded;
+}
+
+//puncho - TC1: the builder and command temporaries are gone before Error can exit.
+void RunAASDir_f( const idCmdArgs& args )
+{
+	if( !RunAASDir( args ) )
+	{
+		common->Error( "RunAASDir failed" );
+	}
 }
 
 /*
@@ -1223,8 +1347,9 @@ void RunAASDir_f( const idCmdArgs& args )
 RunReach_f
 ============
 */
-void RunReach_f( const idCmdArgs& args )
+static bool RunReach( const idCmdArgs& args ) //puncho - TC1: return before command Error
 {
+	bool succeeded = true;
 	int i;
 	idAASBuild aas;
 	idAASSettings settings;
@@ -1232,7 +1357,7 @@ void RunReach_f( const idCmdArgs& args )
 	if( args.Argc() <= 1 )
 	{
 		common->Printf( "runReach [options] <mapfile>\n" );
-		return;
+		return true;
 	}
 
 	common->ClearWarnings( "calculating AAS reachability" );
@@ -1258,7 +1383,11 @@ void RunReach_f( const idCmdArgs& args )
 		{
 			settings.FromDict( kv->GetValue(), settingsDict );
 			i = ParseOptions( args, settings );
-			aas.BuildReachability( idStr( "maps/" ) + args.Argv( i ), &settings );
+			if( aas.BuildReachability( idStr( "maps/" ) + args.Argv( i ), &settings ) == AAS_BUILD_WRITE_FAILED ) //puncho - TC1
+			{
+				succeeded = false;
+				break;
+			}
 		}
 
 		kv = dict->MatchPrefix( "type", kv );
@@ -1270,4 +1399,14 @@ void RunReach_f( const idCmdArgs& args )
 
 	common->SetRefreshOnPrint( false );
 	common->PrintWarnings();
+	return succeeded;
+}
+
+//puncho - TC1: the builder and command temporaries are gone before Error can exit.
+void RunReach_f( const idCmdArgs& args )
+{
+	if( !RunReach( args ) )
+	{
+		common->Error( "RunReach failed" );
+	}
 }

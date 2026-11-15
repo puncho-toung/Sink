@@ -32,6 +32,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "dmap.h"
 #include "dress.h"
+#include "CompilerPhase.h" //puncho - TC0
 
 idCVar dmap_verbose( "dmap_verbose", "0", CVAR_BOOL | CVAR_SYSTEM | CVAR_NEW, "dmap developer mode" );
 // the .proc indexes are 16 bit (triIndex_t), so the default is the hard limit; lower values only
@@ -43,8 +44,22 @@ dmapGlobals_t	dmapGlobals;
 idCVar dmap_phaseTimes( "dmap_phaseTimes", "1", CVAR_TOOL | CVAR_BOOL, "print summed compiler phase milliseconds" );
 int dmapOptimizeGroups;
 int dmapMaxGroupTris;
-static const char* dmapPhaseNames[] = { "load", "facebsp", "portals", "filter", "flood", "fillOutside", "clipSides", "floodAreas", "putPrimitives", "dressPre", "prelight", "optimize", "dressPost", "tjunc", "dressPostTj", "write", "cm" };
+static const char* dmapPhaseNames[] = { "load", "facebsp", "portals", "filter", "flood", "fillOutside", "clipSides", "floodAreas", "putPrimitives", "dressPre", "prelight", "optimize", "dressPost", "tjunc", "dressPostTj", "write", "cm",
+	//puncho - TC0: keep the existing columns above in their original order.
+	"writeSurfaces", "writeFormat", "writeFile", "cmBuild", "cmWrite", "aasLoad", "aasBrushes", "aasExpand", "aasBsp", "aasSubdivide", "aasStore", "aasReach", "aasCluster", "aasOptimize", "aasWrite" };
 static int dmapPhaseMS[sizeof( dmapPhaseNames ) / sizeof( dmapPhaseNames[0] )];
+static_assert( sizeof( dmapPhaseNames ) / sizeof( dmapPhaseNames[0] ) == DP_COUNT, "compiler phase names must match slots" ); //puncho - TC0
+
+//puncho - TC0: callers already captured and tested the flag.
+void DmapPhaseAdd( compilerPhase_t phase, int milliseconds )
+{
+	dmapPhaseMS[phase] += milliseconds;
+}
+
+int DmapPhaseMilliseconds( compilerPhase_t phase )
+{
+	return dmapPhaseMS[phase];
+}
 
 static void DmapPhaseEnd( int phase, int started )
 {
@@ -359,7 +374,7 @@ public:
 Dmap
 ============
 */
-void Dmap( const idCmdArgs& args )
+bool Dmap( const idCmdArgs& args ) //puncho - TC1: command errors follow cleanup
 {
 	idScopedDmapEditorFlag	editorFlag;
 	int			i;
@@ -367,6 +382,7 @@ void Dmap( const idCmdArgs& args )
 	char		path[1024];
 	idStr		passedName;
 	bool		leaked = false;
+	bool		failed = false; //puncho - TC1
 	bool		noCM = false;
 	bool		noAAS = false;
 
@@ -375,7 +391,7 @@ void Dmap( const idCmdArgs& args )
 	if( args.Argc() < 2 )
 	{
 		DmapHelp();
-		return;
+		return true;
 	}
 
 	common->Printf( "---- dmap ----\n" );
@@ -576,7 +592,7 @@ void Dmap( const idCmdArgs& args )
 	int phaseStart = Sys_Milliseconds();
 	if( !LoadDMapFile( passedName ) )
 	{
-		return;
+		return true; //puncho - TC1: keep the original warning-and-return for an input failure
 	}
 
 	DmapPhaseEnd( 0, phaseStart );
@@ -584,7 +600,7 @@ void Dmap( const idCmdArgs& args )
 	if( ProcessModels() )
 	{
 		phaseStart = Sys_Milliseconds();
-		WriteOutputFile();
+		failed = !WriteOutputFile(); //puncho - TC1
 		DmapPhaseEnd( 15, phaseStart );
 	}
 	else
@@ -612,7 +628,7 @@ void Dmap( const idCmdArgs& args )
 	common->Printf( "%5.0f seconds for dmap\n", ( end - start ) * 0.001f );
 	common->DmapPacifierInfo( "%5.0f seconds for dmap\n", ( end - start ) * 0.001f );
 
-	if( !leaked )
+	if( !leaked && !failed )
 	{
 		if( !noCM )
 		{
@@ -627,8 +643,7 @@ void Dmap( const idCmdArgs& args )
 			start = Sys_Milliseconds();
 
 			// write always a fresh .cm file
-			collisionModelManager->LoadMap( dmapGlobals.dmapFile, true );
-			collisionModelManager->FreeMap();
+			failed = !CM_CompileMap( dmapGlobals.dmapFile ); //puncho - TC1
 			DmapPhaseEnd( 16, start );
 
 			end = Sys_Milliseconds();
@@ -637,10 +652,10 @@ void Dmap( const idCmdArgs& args )
 			common->DmapPacifierInfo( "%5.0f seconds to create collision map\n", ( end - start ) * 0.001f );
 		}
 
-		if( !noAAS && !region )
+		if( !failed && !noAAS && !region )
 		{
 			// create AAS files
-			RunAAS_f( args );
+			failed = !RunAAS( args ); //puncho - TC1
 		}
 
 		if( dmap_phaseTimes.GetBool() )
@@ -651,7 +666,7 @@ void Dmap( const idCmdArgs& args )
 			}
 			common->Printf( "dmap optimize groups %i maxGroupTris %i\n", dmapOptimizeGroups, dmapMaxGroupTris );
 		}
-		common->DmapPacifierFilename( passedName, "Done" );
+		common->DmapPacifierFilename( passedName, failed ? "Failed due to errors. Quit program." : "Done" );
 	}
 	else
 	{
@@ -661,9 +676,11 @@ void Dmap( const idCmdArgs& args )
 
 	// free the common .map representation
 	delete dmapGlobals.dmapFile;
+	dmapGlobals.dmapFile = NULL; //puncho - TC1
 
 	// clear the map plane list
 	dmapGlobals.mapPlanes.Clear();
+	return !failed; //puncho - TC1
 }
 
 /*
@@ -678,8 +695,12 @@ void Dmap_f( const idCmdArgs& args )
 	// refresh the screen each time we print so it doesn't look
 	// like it is hung
 	common->SetRefreshOnPrint( true );
-	Dmap( args );
+	const bool succeeded = Dmap( args ); //puncho - TC1
 	common->SetRefreshOnPrint( false );
 
 	common->PrintWarnings();
+	if( !succeeded ) //puncho - TC1: no compiler allocations survive this error
+	{
+		common->Error( "dmap failed" );
+	}
 }

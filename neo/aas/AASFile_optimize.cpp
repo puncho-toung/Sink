@@ -66,9 +66,11 @@ void idAASFileLocal::Optimize()
 	newVertices.Resize( vertices.Num() );
 	newEdges.Resize( edges.Num() );
 	newEdges.SetNum( 1 );
+	memset( &newEdges[0], 0, sizeof( newEdges[0] ) ); //puncho - D22: preserve the dummy entry
 	newEdgeIndex.Resize( edgeIndex.Num() );
 	newFaces.Resize( faces.Num() );
 	newFaces.SetNum( 1 );
+	memset( &newFaces[0], 0, sizeof( newFaces[0] ) ); //puncho - D22: preserve the dummy entry
 	newFaceIndex.Resize( faceIndex.Num() );
 
 	for( i = 0; i < areas.Num(); i++ )

@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "dmap.h"
+#include "CompilerPhase.h" //puncho - TC0
 
 //=================================================================================
 
@@ -315,7 +316,7 @@ static void WriteUTriangles( idFile* procFile, const srfTriangles_t* uTris, cons
 	// above 65535 gets here
 	if( uTris->numVerts > 65535 )
 	{
-		// no CloseFile: procFile is WriteOutputFile's idFileLocal, closed when Error unwinds; closing it here would free it twice
+		//puncho - WriteOutputFile owns procFile; its buffer aborts the output when Error unwinds
 		common->Error( "WriteUTriangles: %i vertexes in one surface, the .proc index is 16-bit (max 65535)", uTris->numVerts );
 	}
 
@@ -463,6 +464,9 @@ WriteOutputSurfaces
 */
 static void WriteOutputSurfaces( int entityNum, int areaNum, idFile* procFile, idFile* objFile )
 {
+	//puncho - TC0: include sharing and cleanup in surface construction, without moving either.
+	const bool phaseTimes = dmap_phaseTimes.GetBool();
+	int phaseStart = phaseTimes ? Sys_Milliseconds() : 0;
 	mapTri_t*	ambient, *copy;
 	int			surfaceNum;
 	idMapEntity*	entity;
@@ -564,6 +568,12 @@ static void WriteOutputSurfaces( int entityNum, int areaNum, idFile* procFile, i
 		FreeTriList( ambient );
 	}
 
+	//puncho - TC0
+	if( phaseTimes )
+	{
+		DmapPhaseAdd( DP_WRITE_SURFACES, Sys_Milliseconds() - phaseStart );
+	}
+
 	if( entityNum == 0 )
 	{
 		procFile->WriteFloatString( "model { /* name = */ \"_area%i\" /* numSurfaces = */ %i\n\n",
@@ -593,7 +603,16 @@ static void WriteOutputSurfaces( int entityNum, int areaNum, idFile* procFile, i
 		procFile->WriteFloatString( "/* surface %i */ { ", surfaceNum );
 		procFile->WriteFloatString( "\"%s\" ", matName );
 
+		//puncho - TC0
+		if( phaseTimes )
+		{
+			phaseStart = Sys_Milliseconds();
+		}
 		CleanupUTriangles( uTri );
+		if( phaseTimes )
+		{
+			DmapPhaseAdd( DP_WRITE_SURFACES, Sys_Milliseconds() - phaseStart );
+		}
 		WriteUTriangles( procFile, uTri, surfaces[surfaceNum].texCoords, entity->originOffset, surfaces[surfaceNum].vertexFormat );
 
 		// RB
@@ -1012,8 +1031,14 @@ static void WriteOutputEntity( int entityNum, idFile* procFile, idFile* objFile 
 WriteOutputFile
 ====================
 */
-void WriteOutputFile()
+bool WriteOutputFile() //puncho - TC1: return through dmap cleanup before reporting failure
 {
+	//puncho - TC0: formatting is the residual after surface construction and destination I/O.
+	const bool phaseTimes = dmap_phaseTimes.GetBool();
+	const int started = phaseTimes ? Sys_Milliseconds() : 0;
+	const int surfacesBefore = phaseTimes ? DmapPhaseMilliseconds( DP_WRITE_SURFACES ) : 0;
+	int fileMilliseconds = 0;
+	int fileStarted = 0;
 	int				i;
 	uEntity_t*		entity;
 
@@ -1023,11 +1048,25 @@ void WriteOutputFile()
 	idStrStatic< MAX_OSPATH > qpath;
 	qpath.Format( "%s." PROC_FILE_EXT, dmapGlobals.mapFileBase );
 	common->Printf( "writing %s\n", qpath.c_str() );
-	idFileLocal procFile = fileSystem->OpenFileWrite( qpath, "fs_basepath" );
+	if( phaseTimes )
+	{
+		fileStarted = Sys_Milliseconds();
+	}
+	idFile* procFile = fileSystem->OpenFileWrite( qpath, "fs_basepath" );
+	if( phaseTimes )
+	{
+		fileMilliseconds += Sys_Milliseconds() - fileStarted;
+	}
 	if( !procFile )
 	{
-		common->Error( "Error opening %s", qpath.c_str() );
+		common->Warning( "Error opening %s", qpath.c_str() );
+		return false;
 	}
+
+	//puncho - TC1: owns the destination and removes it on failure or unwind.
+	idFile_WriteBuffer bufferedFile;
+	bufferedFile.Init( procFile, phaseTimes );
+	procFile = &bufferedFile;
 
 	// RB: write area models as OBJ file
 	idFile* objFile = NULL;
@@ -1038,7 +1077,8 @@ void WriteOutputFile()
 		objFile = fileSystem->OpenFileWrite( qpath, "fs_basepath" );
 		if( !objFile )
 		{
-			common->Error( "Error opening %s", qpath.c_str() );
+			common->Warning( "Error opening %s", qpath.c_str() );
+			return false;
 		}
 
 		c_totalObjVerts = 0;
@@ -1063,4 +1103,27 @@ void WriteOutputFile()
 	{
 		delete objFile;
 	}
+	//puncho - TC0: separate close time without counting its buffer drain twice.
+	int writesBeforeClose = 0;
+	if( phaseTimes )
+	{
+		writesBeforeClose = bufferedFile.GetWriteMilliseconds();
+		fileStarted = Sys_Milliseconds();
+	}
+	//puncho - TC1: Close flushes the tail and aborts an incomplete file.
+	if( !bufferedFile.Close() )
+	{
+		common->Warning( "Error writing %s", qpath.c_str() );
+		return false;
+	}
+	//puncho - TC0: includes buffer copies and ancillary output work in writeFormat.
+	if( phaseTimes )
+	{
+		const int ended = Sys_Milliseconds();
+		fileMilliseconds += ended - fileStarted + writesBeforeClose;
+		const int surfaceMilliseconds = DmapPhaseMilliseconds( DP_WRITE_SURFACES ) - surfacesBefore;
+		DmapPhaseAdd( DP_WRITE_FILE, fileMilliseconds );
+		DmapPhaseAdd( DP_WRITE_FORMAT, ended - started - surfaceMilliseconds - fileMilliseconds );
+	}
+	return true;
 }

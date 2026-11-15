@@ -536,6 +536,9 @@ public:
 	int					numDormantSources;
 	int					dormantWakesRemaining;
 	aiTicStats_t			aiStats;				// the live tic census, zeroed after SortActiveEntityList
+	//puncho - P0: captured by RunFrame; diagnostic values are not save/snapshot state
+	bool					concurrencyStats = false;
+	uint32					concurrencyUsTic = 0, concurrencyUsThink = 0, concurrencyUsEvents = 0;
 	snapStats_t				snapStats;				// written by ServerWriteSnapshot on the main thread between game frames
 	aiHudStats_t			aiHudStats;				// the last tic's record for the HUD, filled by RunAIStats
 	int						aiThinkRing[ 128 ];		// per-tic usThink by framenum, for the HUD peak
@@ -1282,5 +1285,9 @@ const int	CINEMATIC_SKIP_DELAY	= SEC2MS( 2.0f );
 #include "script/Script_Compiler.h"
 #include "script/Script_Interpreter.h"
 #include "script/Script_Thread.h"
+
+//puncho - P0: release the scenario text at the game shutdown choke point
+void GameVerify_Shutdown();
+void GameVerify_MapShutdown(); //puncho - P0: abort an already-started scenario before map teardown
 
 #endif	/* !__GAME_LOCAL_H__ */

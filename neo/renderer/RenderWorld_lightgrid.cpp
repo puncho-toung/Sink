@@ -38,6 +38,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include <sys/DeviceManager.h>
 extern DeviceManager* deviceManager;
+extern idCVar dmap_phaseTimes; //puncho - concurrency package 5: the load timer of the .blightgrid build
 
 
 #define LGRID_FILE_EXT			"lightgrid"
@@ -664,6 +665,10 @@ bool idRenderWorldLocal::LoadLightGridFile( const char* name )
 
 	if( !loaded )
 	{
+		//puncho - concurrency package 5: as TC0's bproc timer; a cache hit never reads the cvar or the clock
+		const bool loadPhaseTimes = dmap_phaseTimes.GetBool();
+		const int loadPhaseStart = loadPhaseTimes ? Sys_Milliseconds() : 0;
+
 		fileName.SetFileExtension( LGRID_FILE_EXT );
 		src = new( TAG_RENDER ) idLexer( fileName, LEXFL_NOSTRINGCONCAT | LEXFL_NODOLLARPRECOMPILE );
 		if( !src->IsLoaded() )
@@ -772,6 +777,11 @@ bool idRenderWorldLocal::LoadLightGridFile( const char* name )
 			outputFile->WriteBig( sourceTimeStamp );
 			outputFile->WriteBig( numEntries );
 			outputFile->WriteBig( mapCRC );
+		}
+
+		if( loadPhaseTimes )
+		{
+			common->Printf( "load phase blightgrid %i\n", Sys_Milliseconds() - loadPhaseStart );
 		}
 	}
 
@@ -1021,6 +1031,77 @@ static inline idVec3 MapXYSToDirection( uint64 x, uint64 y, uint64 s, uint64 wid
 	return dir;
 }
 
+/*
+==================
+R_BuildLightGridShTable
+
+//puncho - concurrency TB1c: the shared table of CalculateLightGridPointJob, built once a bake on its thread. The
+same loops, the same functions and the same expressions as the job's own loop, in its order, stopping where the job
+reads radiance; R_CubeMapTexelHDR16F is the texel choice of R_SampleCubeMapHDR16F, and u and v are its texel
+coordinates as the sampler returns them. Invalid samples ( a NaN basis value ) are left out, as the job skips them.
+The caller allocates the table ( LIGHTGRID_SH_TABLE_SAMPLES entries ) and records it in the bake context first ( RB3-01 );
+this fills it and returns how many entries it used.
+==================
+*/
+static const int LIGHTGRID_SH_TABLE_SAMPLES = 6 * ENVPROBE_CAPTURE_SIZE * ENVPROBE_CAPTURE_SIZE;
+
+static int R_BuildLightGridShTable( lightGridShSample_t* table )
+{
+	const float invDstSize = 1.0f / float( ENVPROBE_CAPTURE_SIZE );
+	const idVec2i sourceImageSize( ENVPROBE_CAPTURE_SIZE, ENVPROBE_CAPTURE_SIZE );
+
+	int numSamples = 0;
+
+	for( int side = 0; side < 6; side++ )
+	{
+		for( int x = 0; x < sourceImageSize.x; x++ )
+		{
+			for( int y = 0; y < sourceImageSize.y; y++ )
+			{
+				// convert UV coord to 3D direction
+				idVec3 dir = MapXYSToDirection( x, y, side, sourceImageSize.x, sourceImageSize.y );
+
+				int axis, texelX, texelY;
+				R_CubeMapTexelHDR16F( dir, ENVPROBE_CAPTURE_SIZE, axis, texelX, texelY );
+
+				// R_SampleCubeMapHDR16F: u = x; v = y;
+				float u, v;
+				u = texelX;
+				v = texelY;
+
+				// convert from [0 .. size-1] to [-1.0 + invSize .. 1.0 - invSize]
+				const float uu = 2.0f * ( u * invDstSize ) - 1.0f;
+				const float vv = 2.0f * ( v * invDstSize ) - 1.0f;
+
+				float texelArea = CubemapTexelSolidAngle( uu, vv, invDstSize );
+
+				const SphericalHarmonicsT<float, 4>& sh = shEvaluate<4>( dir );
+
+				bool shValid = true;
+				for( int i = 0; i < shSize( 4 ); i++ )
+				{
+					if( IsNAN( sh[i] ) )
+					{
+						shValid = false;
+						break;
+					}
+				}
+
+				if( shValid )
+				{
+					lightGridShSample_t& sample = table[numSamples++];
+					sample.sh = sh;
+					sample.texelArea = texelArea;
+					sample.face = axis;
+					sample.texel = ( texelY * ENVPROBE_CAPTURE_SIZE + texelX ) * 3;
+				}
+			}
+		}
+	}
+
+	return numSamples;
+}
+
 void CalculateLightGridPointJob( calcLightGridPointParms_t* parms )
 {
 	halfFloat_t*		buffers[6];
@@ -1045,6 +1126,37 @@ void CalculateLightGridPointJob( calcLightGridPointParms_t* parms )
 
 	// build SH by iterating over all cubemap pixels
 
+	//puncho start - concurrency TB1c: the bake's table holds, for each valid ( side, x, y ) of the loop below and in
+	// its order, what that loop computes before it reads radiance; left per sample are the radiance read, through
+	// the half table (TB1a), and today's accumulation
+	if( parms->shTable != NULL )
+	{
+		const float* halfToFloat = parms->halfToFloat;
+
+		for( int i = 0; i < parms->shTableNum; i++ )
+		{
+			const lightGridShSample_t& sample = parms->shTable[i];
+			const halfFloat_t* texel = &buffers[ sample.face ][ sample.texel ];
+
+			idVec3 radiance;
+			if( halfToFloat != NULL )
+			{
+				radiance[0] = halfToFloat[ texel[0] ];
+				radiance[1] = halfToFloat[ texel[1] ];
+				radiance[2] = halfToFloat[ texel[2] ];
+			}
+			else
+			{
+				radiance[0] = F16toF32( texel[0] );
+				radiance[1] = F16toF32( texel[1] );
+				radiance[2] = F16toF32( texel[2] );
+			}
+
+			shAddWeighted( shRadiance, sample.sh, radiance * sample.texelArea );
+		}
+	}
+	else	// bakeLightGrids -exactSh: today's loop, the one the table is built from
+	//puncho end
 	for( int side = 0; side < 6; side++ )
 	{
 		for( int x = 0; x < sourceImageSize.x; x++ )
@@ -1143,6 +1255,129 @@ REGISTER_PARALLEL_JOB( CalculateLightGridPointJob, "CalculateLightGridPointJob" 
 
 
 
+/*
+==================
+R_PrepareLightGridJob, R_LightGridStreamSubmit, R_LightGridStreamRetire
+
+//puncho - concurrency TB2: streaming. The capture fills a batch of LIGHTGRID_STREAM_BATCH probes, submits it on one
+of two job lists and goes on capturing into the other while its jobs run; before a list takes a new batch, the bake
+waits for it and frees that batch's six faces, so at most two batches of faces live at once. Everything else a job
+made ( its outBuffer, the parms ) stays in tr.lightGridJobs until today's assembly after the area, which is unchanged,
+so the atlas is filled in today's order from the same buffers. The faces are owned and freed by the bake's thread.
+==================
+*/
+static const int LIGHTGRID_STREAM_BATCH = 32;		// probes a batch; 32 * 2,359,296 bytes of faces
+
+struct lightGridStream_t
+{
+	idParallelJobList*		lists[2];
+	int						first[2];		// the batch each list runs: [first, last) of tr.lightGridJobs; first -1: none
+	int						last[2];
+	int						current;		// the list the next batch is submitted on
+	int						batchFirst;		// the first probe of tr.lightGridJobs not yet submitted
+};
+
+static void R_PrepareLightGridJob( calcLightGridPointParms_t* jobParms, const bakeContext_t* bake )
+{
+	jobParms->outWidth = LIGHTGRID_IRRADIANCE_SIZE;
+	jobParms->outHeight = LIGHTGRID_IRRADIANCE_SIZE;
+	jobParms->outBuffer = ( halfFloat_t* )R_StaticAlloc( idMath::Ceil( LIGHTGRID_IRRADIANCE_SIZE * LIGHTGRID_IRRADIANCE_SIZE * 3 * sizeof( halfFloat_t ) * 1.5f ), TAG_IMAGE );
+
+	//puncho - concurrency TB1: the bake's tables, NULL where a switch asks for today's code
+	jobParms->halfToFloat = bake->halfToFloat;
+	jobParms->shTable = bake->shTable;
+	jobParms->shTableNum = bake->shTableNum;
+}
+
+// waits for the batch on this list and frees its faces; the jobs read nothing else the bake's thread frees
+static void R_LightGridStreamRetire( lightGridStream_t& stream, int list )
+{
+	if( stream.first[list] < 0 )
+	{
+		return;
+	}
+
+	stream.lists[list]->Wait();
+
+	for( int j = stream.first[list]; j < stream.last[list]; j++ )
+	{
+		calcLightGridPointParms_t* job = tr.lightGridJobs[ j ];
+		for( int i = 0; i < 6; i++ )
+		{
+			if( job->radiance[i] )
+			{
+				Mem_Free( job->radiance[i] );
+				job->radiance[i] = NULL;
+			}
+		}
+	}
+
+	stream.first[list] = -1;
+}
+
+// submits the probes captured since the last batch, then retires the other list's batch before the capture refills it
+static void R_LightGridStreamSubmit( lightGridStream_t& stream, const bakeContext_t* bake, int numThreads )
+{
+	const int last = tr.lightGridJobs.Num();
+	if( last == stream.batchFirst )
+	{
+		return;
+	}
+
+	idParallelJobList* jobList = stream.lists[stream.current];
+	for( int j = stream.batchFirst; j < last; j++ )
+	{
+		R_PrepareLightGridJob( tr.lightGridJobs[ j ], bake );
+		jobList->AddJob( ( jobRun_t )CalculateLightGridPointJob, tr.lightGridJobs[ j ] );
+	}
+	jobList->Submit( NULL, numThreads );
+
+	stream.first[stream.current] = stream.batchFirst;
+	stream.last[stream.current] = last;
+	stream.batchFirst = last;
+
+	stream.current ^= 1;
+	R_LightGridStreamRetire( stream, stream.current );
+}
+
+/*
+==================
+R_FreeLightGridJobs
+
+//puncho - concurrency RA2-01: R_BakeEnd's release of every light-grid job a bake left in tr.lightGridJobs, after the
+job lists are quiet: its faces, its outBuffer, its parms. The parms are zeroed when made, so a probe an error stopped
+part way frees only what it has; entries the assembly already deleted are NULL. Empty after a bake that ended normally.
+==================
+*/
+void R_FreeLightGridJobs()
+{
+	for( int j = 0; j < tr.lightGridJobs.Num(); j++ )
+	{
+		calcLightGridPointParms_t* job = tr.lightGridJobs[ j ];
+		if( job == NULL )
+		{
+			continue;
+		}
+
+		for( int i = 0; i < 6; i++ )
+		{
+			if( job->radiance[i] )
+			{
+				Mem_Free( job->radiance[i] );
+			}
+		}
+
+		if( job->outBuffer )
+		{
+			Mem_Free( job->outBuffer );
+		}
+
+		delete job;
+	}
+
+	tr.lightGridJobs.Clear();
+}
+
 CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NULL )
 {
 	idStr			baseName;
@@ -1156,6 +1391,13 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 
 	bool useThreads = true;
 	int numThreads = JOBLIST_PARALLELISM_MAX_CORES;
+
+	//puncho - concurrency TB1: each switch runs today's code in place of one of the bake's tables
+	bool exactHalf = false;
+	bool exactSh = false;
+	bool noPreviewBlit = false;		// TB3a, opt-in: do not show each capture on the screen
+	bool fastReadback = false;		// TB3a, opt-in: read a probe's six faces with one wait
+	bool exactStream = false;		// TB2: capture the whole area, then run its jobs, as today
 
 	bool helpRequested = false;
 	idStr option;
@@ -1206,6 +1448,26 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 				numThreads = idMath::ClampInt( 1, maxCores, threads );
 			}
 		}
+		else if( option.Icmp( "exactHalf" ) == 0 )
+		{
+			exactHalf = true;
+		}
+		else if( option.Icmp( "exactSh" ) == 0 )
+		{
+			exactSh = true;
+		}
+		else if( option.Icmp( "noPreviewBlit" ) == 0 )
+		{
+			noPreviewBlit = true;
+		}
+		else if( option.Icmp( "fastReadback" ) == 0 )
+		{
+			fastReadback = true;
+		}
+		else if( option.Icmp( "exactStream" ) == 0 )
+		{
+			exactStream = true;
+		}
 		else if( option.Icmp( "h" ) == 0 || option.Icmp( "help" ) == 0 )
 		{
 			helpRequested = true;
@@ -1221,6 +1483,12 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 		idLib::Printf( " bounce[num] : number of bounces or number of light reuse (default 1)\n" );
 		idLib::Printf( " grid( xdim ydim zdim ) : light grid size steps into each direction (default 64 64 128)\n" );
 		idLib::Printf( " mt[num] : number of threads used for baking (default max logical cores)\n" );
+		idLib::Printf( " exactHalf : convert half floats with F16toF32 instead of the bake's table\n" );
+		idLib::Printf( " exactSh : project each probe with today's per-sample loop instead of the bake's SH table\n" );
+		idLib::Printf( "           ( today's whole loop, so its radiance is converted with F16toF32 whatever exactHalf says )\n" );
+		idLib::Printf( " noPreviewBlit : do not show each captured face on the screen ( refused on Vulkan )\n" );
+		idLib::Printf( " fastReadback : read a probe's six captured faces with one wait instead of one wait a face\n" );
+		idLib::Printf( " exactStream : capture a whole area before running its jobs instead of batches of %i probes\n", LIGHTGRID_STREAM_BATCH );
 		return;
 	}
 
@@ -1235,6 +1503,38 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 		idLib::Printf( "No primary view.\n" );
 		return;
 	}
+
+	//puncho start - concurrency TB0/TB1: no return below this; R_BakeEnd at the end restores every switch the bake
+	// changes and frees the tables. stageTime is the end of the last timed stage ( R_BakeStage )
+	//puncho - concurrency RA2-03: a capture that is not shown can present a Vulkan swapchain image that never reached the
+	// present layout, so the switch is refused there
+	if( noPreviewBlit && deviceManager->GetGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN )
+	{
+		common->Printf( "noPreviewBlit is refused on Vulkan; the preview blits run\n" );
+		noPreviewBlit = false;
+	}
+
+	bakeContext_t* bake = R_BakeBegin( exactHalf );
+	if( !exactSh )
+	{
+		//puncho - concurrency RB3-01: recorded in the context before it is filled; a failed allocation is the engine's
+		// recoverable error, after which R_BakeEndAfterError gives back what the bake already holds
+		bake->shTable = ( lightGridShSample_t* )Mem_Alloc( LIGHTGRID_SH_TABLE_SAMPLES * sizeof( lightGridShSample_t ), TAG_RENDER );
+		if( bake->shTable == NULL )
+		{
+			common->Error( "bakeLightGrids: out of memory for the SH table" );
+		}
+		bake->shTableNum = R_BuildLightGridShTable( bake->shTable );
+	}
+	uint64 stageTime = bake->startMicroSec;
+
+	// TB3a: a probe's six faces read back with one wait; the copy path is R_ReadPixelsRGB16F's RGBA16F one, so any
+	// other capture format keeps today's readback
+	const bool sixFaceReadback = fastReadback &&globalImages->envprobeHDRImage->GetTextureHandle()->getDesc().format == nvrhi::Format::RGBA16_FLOAT;
+
+	// TB2: batches on two alternating lists while the capture continues; needs the job lists ( useThreads )
+	const bool streamJobs = !exactStream && useThreads;
+	//puncho end
 
 	int sysWidth = renderSystem->GetWidth();
 	int sysHeight = renderSystem->GetHeight();
@@ -1343,13 +1643,13 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 		}
 	}
 
+	stageTime = R_BakeStage( bake, BAKE_STAGE_SETUP, stageTime );	//puncho - concurrency TB0
+
 	// turn vsync off for faster capturing of the probes
-	int oldVsync = r_swapInterval.GetInteger();
-	r_swapInterval.SetInteger( 0 );
+	r_swapInterval.SetInteger( 0 );	//puncho - concurrency RA2-04: R_BakeBegin saved it, R_BakeEnd restores it
 
 	// turn off clear in between views so we keep the progress bar visible
-	int oldClear = r_clear.GetInteger();
-	r_clear.SetInteger( 0 );
+	r_clear.SetInteger( 0 );	//puncho - concurrency RA2-04: R_BakeBegin saved it, R_BakeEnd restores it
 
 	idLib::Printf( "----------------------------------\n" );
 	idLib::Printf( "Processing %i light probes in %i areas for %i bounces\n", totalProcessedProbes, totalProcessedAreas, bounces );
@@ -1362,6 +1662,8 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 			portalArea_t* area = &tr.primaryWorld->portalAreas[a];
 
 			area->lightGrid.SetupLightGrid( area->globalBounds, tr.primaryWorld->mapName, tr.primaryWorld, areaGridSizes[a], a, tr.primaryWorld->NumAreas(), areaGridLimits[a], true );
+
+			stageTime = R_BakeStage( bake, BAKE_STAGE_SETUP, stageTime );	//puncho - concurrency TB0
 
 			//puncho - light-grid hints (P2 review): with r_lightGridAtlasEdgeRule on SetupLightGrid has already coarsened
 			// the grid to fit, so only the rule's off position reaches this; drop the points so the file stores no
@@ -1383,6 +1685,8 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 
 			CommandlineProgressBar progressBar( numGridPoints, sysWidth, sysHeight );
 			progressBar.Start();
+
+			stageTime = R_BakeStage( bake, BAKE_STAGE_PROGRESS, stageTime );	//puncho - concurrency TB0
 
 			int	start = Sys_Milliseconds();
 
@@ -1413,10 +1717,23 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 			r_useParallelAddShadows.SetBool( false );
 			r_useParallelAddLights.SetBool( false );
 
+			stageTime = R_BakeStage( bake, BAKE_STAGE_SETUP, stageTime );	//puncho - concurrency TB0
+
 			// discard anything currently on the list (this triggers SwapBuffers)
 			tr.SwapCommandBuffers( NULL, NULL, NULL, NULL, NULL, NULL );
 
+			stageTime = R_BakeStage( bake, BAKE_STAGE_CLOSEOUT, stageTime );	//puncho - concurrency TB0
+
 			tr.takingEnvprobe = true;
+
+			//puncho - concurrency TB2: both lists idle; tr.lightGridJobs is empty at an area's start
+			lightGridStream_t lgStream;
+			lgStream.lists[0] = tr.envprobeJobList;
+			lgStream.lists[1] = tr.envprobeJobList2;
+			lgStream.first[0] = lgStream.first[1] = -1;
+			lgStream.last[0] = lgStream.last[1] = 0;
+			lgStream.current = 0;
+			lgStream.batchFirst = tr.lightGridJobs.Num();
 
 			for( int i = 0; i < area->lightGrid.lightGridBounds[0]; i += 1 )
 			{
@@ -1436,6 +1753,10 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 						}
 
 						calcLightGridPointParms_t* jobParms = new calcLightGridPointParms_t;
+						//puncho - concurrency RA2-01: zeroed and listed before its faces are read back, so that
+						// R_FreeLightGridJobs finds whatever an error leaves in it ( the parms are plain data )
+						memset( jobParms, 0, sizeof( *jobParms ) );
+						tr.lightGridJobs.Append( jobParms );
 						jobParms->gridCoord[0] = i;
 						jobParms->gridCoord[1] = j;
 						jobParms->gridCoord[2] = k;
@@ -1450,6 +1771,12 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 								ref.rdflags |= RDF_NOAMBIENT;
 							}
 
+							//puncho - concurrency TB3a: the capture is not shown; the backend skips its preview blits
+							if( noPreviewBlit )
+							{
+								ref.rdflags |= RDF_BAKE_NODISPLAY;
+							}
+
 							ref.fov_x = ref.fov_y = 90;
 
 							ref.vieworg = gridPoint->origin;
@@ -1461,14 +1788,22 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 							// build commands to render the scene
 							tr.primaryWorld->RenderScene( &ref );
 
+							stageTime = R_BakeStage( bake, BAKE_STAGE_FRONTEND, stageTime );	//puncho - concurrency TB0
+
 							// finish off these commands
 							const emptyCommand_t* cmd = tr.SwapCommandBuffers( NULL, NULL, NULL, NULL, NULL, NULL );
+
+							stageTime = R_BakeStage( bake, BAKE_STAGE_CLOSEOUT, stageTime );	//puncho - concurrency TB0
 
 							// issue the commands to the GPU
 							tr.RenderCommandBuffers( cmd );
 
+							stageTime = R_BakeStage( bake, BAKE_STAGE_BACKEND, stageTime );	//puncho - concurrency TB0
+
 							// discard anything currently on the list (this triggers SwapBuffers)
 							tr.SwapCommandBuffers( NULL, NULL, NULL, NULL, NULL, NULL );
+
+							stageTime = R_BakeStage( bake, BAKE_STAGE_CLOSEOUT, stageTime );	//puncho - concurrency TB0
 
 							// make sure that all frames have finished rendering
 							//deviceManager->GetDevice()->waitForIdle();
@@ -1481,8 +1816,18 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 								idLib::Printf( "debugging shitty capture\n" );
 							}
 #endif
+							//puncho start - concurrency TB3a: the face is copied now and read with the probe's other five
+							// after the last, into the same buffers in the same order ( R_MapCaptureFacesRGB16F )
+							if( sixFaceReadback )
+							{
+								R_CopyCaptureFaceRGB16F( deviceManager->GetDevice(), globalImages->envprobeHDRImage->GetTextureHandle(), nvrhi::ResourceStates::RenderTarget, side );
+							}
+							else	// the default: today's readback, one wait a face ( timed by the bake: RA2-06 )
+							//puncho end
 							//bool validCapture =
-							R_ReadPixelsRGB16F( deviceManager->GetDevice(), &backEnd.GetCommonPasses(), globalImages->envprobeHDRImage->GetTextureHandle() , nvrhi::ResourceStates::RenderTarget, &floatRGB16F, captureSize, captureSize );
+							R_ReadPixelsRGB16FInBake( deviceManager->GetDevice(), &backEnd.GetCommonPasses(), globalImages->envprobeHDRImage->GetTextureHandle() , nvrhi::ResourceStates::RenderTarget, &floatRGB16F, captureSize, captureSize, bake );
+
+							stageTime = Sys_Microseconds();	//puncho - concurrency TB0: the readback timed its own wait and convert
 
 							// release all in-flight references to the render targets
 							//deviceManager->GetDevice()->runGarbageCollection();
@@ -1498,12 +1843,28 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 							jobParms->radiance[ side ] = floatRGB16F;
 						}
 
-						tr.lightGridJobs.Append( jobParms );
+						//puncho start - concurrency TB3a: the six faces' maps and conversions, timed inside as readback
+						if( sixFaceReadback )
+						{
+							R_MapCaptureFacesRGB16F( deviceManager->GetDevice(), jobParms->radiance, captureSize, captureSize );
+							stageTime = Sys_Microseconds();
+						}
+						//puncho end
 
+						//puncho start - concurrency TB2: a full batch goes to its list, and the other list's batch is
+						// waited for and its faces freed before the capture goes on
+						if( streamJobs && tr.lightGridJobs.Num() - lgStream.batchFirst >= LIGHTGRID_STREAM_BATCH )
+						{
+							R_LightGridStreamSubmit( lgStream, bake, numThreads );
+							stageTime = R_BakeStage( bake, BAKE_STAGE_JOB_WAIT, stageTime );
+						}
+						//puncho end
 
 						tr.takingEnvprobe = false;
 						progressBar.Increment( true );
 						tr.takingEnvprobe = true;
+
+						stageTime = R_BakeStage( bake, BAKE_STAGE_PROGRESS, stageTime );	//puncho - concurrency TB0
 					}
 				}
 			}
@@ -1512,10 +1873,8 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 
 			tr.takingEnvprobe = false;
 
-			r_useScissor.SetBool( true );
-			r_useParallelAddModels.SetBool( true );
-			r_useParallelAddShadows.SetBool( true );
-			r_useParallelAddLights.SetBool( true );
+			//puncho - concurrency D15: back to what they were before the bake, not to true
+			R_BakeRestoreCaptureSwitches( bake );
 
 			common->Printf( "captured light grid radiance for area %i in %5.1f seconds\n\n", a, ( end - start ) * 0.001f );
 
@@ -1531,35 +1890,58 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 
 			start = Sys_Milliseconds();
 
-			for( int j = 0; j < tr.lightGridJobs.Num(); j++ )
+			//puncho start - concurrency TB2: the last, partial batch, then both lists retired, the older batch first;
+			// after this every job of the area has run and every face is freed, and the loops below only assemble
+			if( streamJobs )
+			{
+				R_LightGridStreamSubmit( lgStream, bake, numThreads );
+				R_LightGridStreamRetire( lgStream, lgStream.current ^ 1 );
+				R_LightGridStreamRetire( lgStream, lgStream.current );
+			}
+			//puncho end
+
+			for( int j = streamJobs ? tr.lightGridJobs.Num() : 0; j < tr.lightGridJobs.Num(); j++ )	//puncho - TB2: streamed jobs are prepared
 			{
 				calcLightGridPointParms_t* jobParms = tr.lightGridJobs[ j ];
 
-				jobParms->outWidth = LIGHTGRID_IRRADIANCE_SIZE;
-				jobParms->outHeight = LIGHTGRID_IRRADIANCE_SIZE;
-				jobParms->outBuffer = ( halfFloat_t* )R_StaticAlloc( idMath::Ceil( LIGHTGRID_IRRADIANCE_SIZE * LIGHTGRID_IRRADIANCE_SIZE * 3 * sizeof( halfFloat_t ) * 1.5f ), TAG_IMAGE );
+				R_PrepareLightGridJob( jobParms, bake );	//puncho - concurrency TB1/TB2
 
-				if( useThreads )
-				{
-					tr.envprobeJobList->AddJob( ( jobRun_t )CalculateLightGridPointJob, jobParms );
-				}
-				else
+				if( !useThreads )
 				{
 					CalculateLightGridPointJob( jobParms );
 					progressBar.Increment( true );
 				}
 			}
 
-			if( useThreads )
+			stageTime = R_BakeStage( bake, BAKE_STAGE_JOB_WAIT, stageTime );	//puncho - concurrency TB0
+
+			if( useThreads && !streamJobs )	//puncho - concurrency TB2: bakeLightGrids -exactStream, today's path
 			{
 				idLib::Printf( "Processing probes on all available cores... Please wait.\n" );
 				common->UpdateScreen( false );
 				common->UpdateScreen( false );
 
-				//tr.envprobeJobList->Submit();
-				tr.envprobeJobList->Submit( NULL, numThreads );
-				tr.envprobeJobList->Wait();
+				stageTime = R_BakeStage( bake, BAKE_STAGE_PROGRESS, stageTime );	//puncho - concurrency TB0
+
+				//puncho start - concurrency D18: the list reserves ENVPROBE_JOBLIST_MAX_JOBS jobs, so an area with more
+				// probes goes in chunks of at most that many, each submitted and waited for; the jobs are independent
+				// and keep their order, so the output is the same
+				for( int first = 0; first < tr.lightGridJobs.Num(); first += ENVPROBE_JOBLIST_MAX_JOBS )
+				{
+					const int last = Min( first + ENVPROBE_JOBLIST_MAX_JOBS, tr.lightGridJobs.Num() );
+					for( int j = first; j < last; j++ )
+					{
+						tr.envprobeJobList->AddJob( ( jobRun_t )CalculateLightGridPointJob, tr.lightGridJobs[ j ] );
+					}
+
+					//tr.envprobeJobList->Submit();
+					tr.envprobeJobList->Submit( NULL, numThreads );
+					tr.envprobeJobList->Wait();
+				}
+				//puncho end
 			}
+
+			stageTime = R_BakeStage( bake, BAKE_STAGE_JOB_WAIT, stageTime );	//puncho - concurrency TB0
 
 			int atlasWidth = area->lightGrid.lightGridBounds[0] * area->lightGrid.lightGridBounds[2] * LIGHTGRID_IRRADIANCE_SIZE;
 			int atlasHeight = area->lightGrid.lightGridBounds[1] * LIGHTGRID_IRRADIANCE_SIZE;
@@ -1611,6 +1993,7 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 				Mem_Free( job->outBuffer );
 
 				delete job;
+				tr.lightGridJobs[ j ] = NULL;	//puncho - concurrency RA2-01: R_FreeLightGridJobs skips it if an error follows
 			}
 
 			filename.Format( "env/%s/area%i_lightgrid_amb.exr", baseName.c_str(), a );
@@ -1619,12 +2002,16 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 
 			tr.lightGridJobs.Clear();
 
+			stageTime = R_BakeStage( bake, BAKE_STAGE_WRITE, stageTime );	//puncho - concurrency TB0
+
 			end = Sys_Milliseconds();
 
 			common->Printf( "computed light grid irradiance for area %i in %5.1f seconds\n\n", a, ( end - start ) * 0.001f );
 		}
 
 		tr.primaryWorld->LoadLightGridImages();
+
+		stageTime = R_BakeStage( bake, BAKE_STAGE_RELOAD, stageTime );	//puncho - concurrency TB0
 	}
 
 	int totalEnd = Sys_Milliseconds();
@@ -1634,12 +2021,14 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 	filename.Format( "%s.lightgrid", baseName.c_str() );
 	tr.primaryWorld->WriteLightGridsToFile( filename );
 
+	stageTime = R_BakeStage( bake, BAKE_STAGE_WRITE, stageTime );	//puncho - concurrency TB0
+
 	idLib::Printf( "----------------------------------\n" );
 	idLib::Printf( "Processed %i light probes in %i areas\n", totalProcessedProbes, totalProcessedAreas );
 	common->Printf( "Baked light grid irradiance in %5.1f minutes\n\n", ( totalEnd - totalStart ) / ( 1000.0f * 60 ) );
 
-	// restore vsync setting
-	r_swapInterval.SetInteger( oldVsync );
-	r_clear.SetInteger( oldClear );
+	//puncho - concurrency TB0/RA2-04: restores every setting the bake changed ( vsync and clear among them ), prints
+	// "bake phase" lines, frees the tables
+	R_BakeEnd( true );
 }
 

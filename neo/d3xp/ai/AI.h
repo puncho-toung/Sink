@@ -301,6 +301,8 @@ private:
 #define AI_RECORD_SCHEMA( X, s ) \
 	X( s, Corpse,		HAND,	R,	RAW,	0,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA )
 
+struct avoidPlanKey_t; //puncho - P0: private diagnostic record defined in AI.cpp
+
 class idAI : public idActor
 {
 public:
@@ -343,6 +345,12 @@ public:
 	virtual float			DormantRadiusScale() const;
 	virtual void			DormantCatchUp( int elapsedMs );
 	idActor*					GetEnemy() const;
+	//puncho - P0: read the current movement values without running movement or script code
+	const idMoveState&		GetMoveStateForDigest() const { return move; }
+	int						GetEnemySpawnIdForDigest() const { return enemy.GetSpawnId(); }
+	//puncho - P0: diagnostic sampling owns only its lazy table and the statistics counters
+	static void				CaptureAvoidanceStats( bool reset );
+	static void				FreeAvoidanceStats();
 	void					TalkTo( idActor* actor );
 	talkState_t				GetTalkState() const;
 
@@ -613,6 +621,8 @@ protected:
 	void					CheckObstacleAvoidance( const idVec3& goalPos, idVec3& newPos );
 	//puncho start - ai-avoidance
 	int						AvoidPeriod();
+	void					RecordAvoidanceStats( const idVec3& goalPos ); //puncho - P0
+	void					BuildAvoidanceKey( avoidPlanKey_t& key, const idVec3& goalPos ) const; //puncho - P0
 	void					UpdateAvoidTier();	// WP-A1: this tic's tier from the players' positions and the merged PVS, once per tic
 	void					SetCollisionGroup();	// WP-A3: the clip model's group from the team, at spawn and after restore
 	void					Separation( idVec3& seekPos );	// WP-A5: bend seekPos away from the neighbours of the grid (AI_crowd.cpp)

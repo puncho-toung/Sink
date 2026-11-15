@@ -369,6 +369,9 @@ void idRenderBackend::DrawElementsWithCounters( const drawSurf_t* surf, bool sha
 		if( frameNum != ( ( vertexCache.currentFrame - 1 ) & VERTCACHE_FRAME_MASK ) )
 		{
 			idLib::Warning( "RB_DrawElementsWithCounters, indexBuffer == NULL" );
+			//puncho - this draw never submitted the vertex binding remembered above.
+			currentVertexBuffer = nullptr;
+			currentVertexOffset = 0;
 			return;
 		}
 		indexBuffer = &vertexCache.frameData[vertexCache.drawListNum].indexBuffer;
@@ -390,8 +393,7 @@ void idRenderBackend::DrawElementsWithCounters( const drawSurf_t* surf, bool sha
 	// get GPU Skinning joint buffer
 	//
 	const vertCacheHandle_t jointHandle = surf->jointCache;
-	currentJointBuffer = nullptr;
-	currentJointOffset = 0;
+	//puncho - retain the last palette until the resolved buffer and offset have been compared.
 
 #if 0
 	if( jointHandle )
@@ -425,6 +427,13 @@ void idRenderBackend::DrawElementsWithCounters( const drawSurf_t* surf, bool sha
 			if( frameNum != ( ( vertexCache.currentFrame - 1 ) & VERTCACHE_FRAME_MASK ) )
 			{
 				idLib::Warning( "RB_DrawElementsWithCounters, jointBuffer == NULL" );
+				//puncho - neither buffer binding was submitted; also preserve the cleared palette.
+				currentVertexBuffer = nullptr;
+				currentVertexOffset = 0;
+				currentIndexBuffer = nullptr;
+				currentIndexOffset = 0;
+				currentJointBuffer = nullptr;
+				currentJointOffset = 0;
 				return;
 			}
 			jointBuffer = &vertexCache.frameData[vertexCache.drawListNum].jointBuffer;
@@ -438,6 +447,12 @@ void idRenderBackend::DrawElementsWithCounters( const drawSurf_t* surf, bool sha
 
 		currentJointBuffer = jointBuffer->GetAPIObject();
 		currentJointOffset = offset;
+	}
+	else
+	{
+		//puncho - preserve the unskinned assignment without forcing a state change.
+		currentJointBuffer = nullptr;
+		currentJointOffset = 0;
 	}
 
 	//
@@ -2510,6 +2525,11 @@ idRenderBackend::idRenderBackend
 */
 idRenderBackend::idRenderBackend()
 {
+	//puncho
+	concurrencyStats = false;
+	passStartMicroSec = 0;
+	passStartDraws = 0;
+	currentPass = BP_START;
 	shadowAtlasFailedHighWater = 0;
 	hiZGenPass = nullptr;
 	ssaoPass = nullptr;

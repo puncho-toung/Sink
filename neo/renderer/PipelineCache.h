@@ -62,6 +62,9 @@ struct std::hash<PipelineKey>
 	}
 };
 
+//puncho
+extern idCVar r_usePipelineMemo;
+
 class PipelineCache
 {
 public:
@@ -73,9 +76,24 @@ public:
 
 	void Clear();
 
-	nvrhi::GraphicsPipelineHandle GetOrCreatePipeline( const PipelineKey& key );
+	//puncho - keep the disabled path to one test followed by the original lookup.
+	ID_INLINE nvrhi::GraphicsPipelineHandle GetOrCreatePipeline( const PipelineKey& key )
+	{
+		if( r_usePipelineMemo.GetBool() )
+		{
+			return GetOrCreatePipelineWithMemo( key );
+		}
+		return FindOrCreatePipeline( key );
+	}
 
 private:
+
+	//puncho - the cache owns the pipeline; the memo must not add another reference.
+	nvrhi::GraphicsPipelineHandle FindOrCreatePipeline( const PipelineKey& key );
+	nvrhi::GraphicsPipelineHandle GetOrCreatePipelineWithMemo( const PipelineKey& key );
+	PipelineKey					memoKey;
+	nvrhi::IGraphicsPipeline*	memoPipeline;
+	bool						memoValid;
 
 	void GetRenderState( uint64 stateBits, PipelineKey key, nvrhi::RenderState& renderState );
 	nvrhi::DepthStencilState::StencilOpDesc GetStencilOpState( uint64 stateBits );

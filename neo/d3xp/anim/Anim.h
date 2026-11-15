@@ -536,6 +536,11 @@ public:
 	bool						IsAnimating( int currentTime ) const;
 
 	void						GetJoints( int* numJoints, idJointMat** jointsPtr );
+	//puncho start - P0: inspect the stored pose without calling CreateFrame or changing animator state
+	const idJointMat*		GetBuiltJoints() const { return joints; }
+	int						GetLastTransformTime() const { return lastTransformTime; }
+	bool					GetStoppedAnimatingUpdate() const { return stoppedAnimatingUpdate; }
+	//puncho end
 	int							NumJoints() const;
 	jointHandle_t				GetFirstChild( jointHandle_t jointnum ) const;
 	jointHandle_t				GetFirstChild( const char* name ) const;

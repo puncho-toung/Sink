@@ -40,6 +40,8 @@ If you have questions concerning this license or the applicable additional terms
 #include "CollisionModel_local.h"
 #include "../renderer/Model_gltf.h"
 
+extern idCVar dmap_phaseTimes; //puncho - TC0
+
 #define CM_FILE_EXT			"cm"
 #define CM_BINARYFILE_EXT	"bcm"
 #define CM_FILEID			"CM"
@@ -255,7 +257,7 @@ void idCollisionModelManagerLocal::WriteCollisionModel( idFile* fp, cm_model_t* 
 idCollisionModelManagerLocal::WriteCollisionModelsToFile
 ================
 */
-void idCollisionModelManagerLocal::WriteCollisionModelsToFile( const char* filename, int firstModel, int lastModel, unsigned int mapFileCRC )
+bool idCollisionModelManagerLocal::WriteCollisionModelsToFile( const char* filename, int firstModel, int lastModel, unsigned int mapFileCRC )
 {
 	int i;
 	idFile* fp;
@@ -269,8 +271,13 @@ void idCollisionModelManagerLocal::WriteCollisionModelsToFile( const char* filen
 	if( !fp )
 	{
 		common->Warning( "idCollisionModelManagerLocal::WriteCollisionModelsToFile: Error opening file %s\n", name.c_str() );
-		return;
+		return false;
 	}
+
+	//puncho - TC1: own the file through checked completion or abort.
+	idFile_WriteBuffer bufferedFile;
+	bufferedFile.Init( fp );
+	fp = &bufferedFile;
 
 	// write file id and version
 	fp->WriteFloatString( "%s \"%s\"\n\n", CM_FILEID, CM_FILEVERSION );
@@ -283,7 +290,13 @@ void idCollisionModelManagerLocal::WriteCollisionModelsToFile( const char* filen
 		WriteCollisionModel( fp, models[ i ] );
 	}
 
-	fileSystem->CloseFile( fp );
+	//puncho - TC1
+	if( !bufferedFile.Close() )
+	{
+		common->Warning( "Error writing %s", name.c_str() );
+		return false;
+	}
+	return true;
 }
 
 /*
@@ -313,6 +326,11 @@ bool idCollisionModelManagerLocal::WriteCollisionModelForMapEntity( const idMapE
 		return false;
 	}
 
+	//puncho - TC1
+	idFile_WriteBuffer bufferedFile;
+	bufferedFile.Init( fp );
+	fp = &bufferedFile;
+
 	// write file id and version
 	fp->WriteFloatString( "%s \"%s\"\n\n", CM_FILEID, CM_FILEVERSION );
 	// write the map file crc
@@ -321,7 +339,13 @@ bool idCollisionModelManagerLocal::WriteCollisionModelForMapEntity( const idMapE
 	// write the collision model
 	WriteCollisionModel( fp, model );
 
-	fileSystem->CloseFile( fp );
+	//puncho - TC1
+	if( !bufferedFile.Close() )
+	{
+		FreeModel( model );
+		common->Warning( "Error writing %s", name.c_str() );
+		return false;
+	}
 
 	if( testTraceModel )
 	{
@@ -691,6 +715,10 @@ bool idCollisionModelManagerLocal::LoadCollisionModelFile( const char* name, uns
 
 	if( !loaded )
 	{
+		//puncho - TC0: time only the text fallback and binary-cache build.
+		const bool loadPhaseTimes = dmap_phaseTimes.GetBool();
+		const int loadPhaseStart = loadPhaseTimes ? Sys_Milliseconds() : 0;
+
 		// A rejected cache must not leave a partial world before the text fallback.
 		while( numModels > firstModel )
 		{
@@ -705,17 +733,6 @@ bool idCollisionModelManagerLocal::LoadCollisionModelFile( const char* name, uns
 		{
 			delete src;
 			return false;
-		}
-
-		int numEntries = 0;
-		idFileLocal outputFile( fileSystem->OpenFileWrite( generatedFileName, "fs_basepath" ) );
-		if( outputFile != NULL )
-		{
-			outputFile->WriteBig( numEntries );
-			outputFile->WriteString( mapName );
-			outputFile->WriteBig( mapFileCRC );
-			outputFile->WriteString( CM_FILEID );
-			outputFile->WriteString( CM_FILEVERSION );
 		}
 
 		if( !src->ExpectTokenString( CM_FILEID ) )
@@ -745,6 +762,21 @@ bool idCollisionModelManagerLocal::LoadCollisionModelFile( const char* name, uns
 			common->Printf( "%s is out of date\n", fileName.c_str() );
 			delete src;
 			return false;
+		}
+
+		int numEntries = 0;
+		//puncho - TC1: validate the text before opening a cache; keep the successful write order.
+		idFile_WriteBuffer bufferedFile;
+		idFile* outputFile = fileSystem->OpenFileWrite( generatedFileName, "fs_basepath" );
+		if( outputFile != NULL )
+		{
+			bufferedFile.Init( outputFile );
+			outputFile = &bufferedFile;
+			outputFile->WriteBig( numEntries );
+			outputFile->WriteString( mapName );
+			outputFile->WriteBig( mapFileCRC );
+			outputFile->WriteString( CM_FILEID );
+			outputFile->WriteString( CM_FILEVERSION );
 		}
 
 		// parse the file
@@ -783,6 +815,16 @@ bool idCollisionModelManagerLocal::LoadCollisionModelFile( const char* name, uns
 		{
 			outputFile->Seek( 0, FS_SEEK_SET );
 			outputFile->WriteBig( numEntries );
+			//puncho - TC1: Close writes the patch through before releasing the file.
+			if( !bufferedFile.Close() )
+			{
+				common->Warning( "Error writing %s", generatedFileName.c_str() );
+			}
+		}
+		//puncho - TC0: the count patch and checked close are inside the measured span.
+		if( loadPhaseTimes )
+		{
+			common->Printf( "load phase bcm %i\n", Sys_Milliseconds() - loadPhaseStart );
 		}
 	}
 

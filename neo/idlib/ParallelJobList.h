@@ -75,6 +75,14 @@ enum jobListParallelism_t
 	#undef AddJob
 #endif
 
+//puncho - P0: totals across every submission in a frame, in microseconds.
+// execUs sums callback time; wallUs sums submit-to-finish time; waitUs sums owner wait time.
+struct jobListFrameStats_t
+{
+	uint64					execUs, wallUs, waitUs;
+	int						jobs, submits;
+};
+
 /*
 ================================================
 idParallelJobList
@@ -95,7 +103,7 @@ public:
 	CellSpursJob128* 		AddJobSPURS();
 	void					InsertSyncPoint( jobSyncType_t syncType );
 
-	// Submit the jobs in this list.
+	// Submit the jobs in this list. waitForJobList must be NULL. //puncho - C1a
 	void					Submit( idParallelJobList* waitForJobList = NULL, int parallelism = JOBLIST_PARALLELISM_DEFAULT );
 
 	// Wait for the jobs in this list to finish. Will spin in place if any jobs are not done.
@@ -164,6 +172,8 @@ should be allocated or freed.
 class idParallelJobManager
 {
 public:
+	//puncho - P0: the frame owner changes this only while list owners are quiescent.
+	idParallelJobManager() : collectFrameStats( false ) {}
 	virtual						~idParallelJobManager() {}
 
 	virtual void				Init() = 0;
@@ -180,9 +190,29 @@ public:
 	virtual int					GetLogicalCpuCores() const = 0;	// RB
 
 	virtual void				WaitForAllJobLists() = 0;
+
+	//puncho - P0: set once before frame work; read/clear once after all owners finish.
+	void						SetCollectFrameStats( bool enabled )
+	{
+		collectFrameStats = enabled;
+	}
+	bool						GetCollectFrameStats() const
+	{
+		return collectFrameStats;
+	}
+	virtual void				ReadAndClearJobListFrameStats( int index, jobListFrameStats_t& stats ) = 0;
+	//puncho - C1a: call once at the map boundary, with no list under construction/execution.
+	virtual void				ResetJobListOverrunWarnings() = 0;
+
+private:
+	bool						collectFrameStats;
 };
 
 extern idParallelJobManager* 	parallelJobManager;
+
+//puncho - C1a: capture once on main after renderer init; initialize once per calling game thread.
+void CaptureJobFpState();
+void InitGameThreadFpState();
 
 // jobRun_t functions can have the debug name associated with them
 // by explicitly calling this, or using the REGISTER_PARALLEL_JOB()

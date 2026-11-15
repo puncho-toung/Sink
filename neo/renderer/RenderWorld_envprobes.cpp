@@ -264,10 +264,11 @@ void R_SampleCubeMapHDR( const idVec3& dir, int size, byte* buffers[6], float re
 	r11g11b10f_to_float3( tmp.i, result );
 }
 
-void R_SampleCubeMapHDR16F( const idVec3& dir, int size, halfFloat_t* buffers[6], float result[3], float& u, float& v )
+//puncho - concurrency TB1c: the texel choice of R_SampleCubeMapHDR16F, moved out unchanged, so that the light-grid
+// bake's table ( R_BuildLightGridShTable ) picks the texel this sampler reads
+void R_CubeMapTexelHDR16F( const idVec3& dir, int size, int& axis, int& x, int& y )
 {
 	float	adir[3];
-	int		axis, x, y;
 
 	adir[0] = fabs( dir[0] );
 	adir[1] = fabs( dir[1] );
@@ -322,6 +323,14 @@ void R_SampleCubeMapHDR16F( const idVec3& dir, int size, halfFloat_t* buffers[6]
 		y = size - 1;
 	}
 
+}
+
+void R_SampleCubeMapHDR16F( const idVec3& dir, int size, halfFloat_t* buffers[6], float result[3], float& u, float& v )
+{
+	int		axis, x, y;
+
+	R_CubeMapTexelHDR16F( dir, size, axis, x, y );
+
 	u = x;
 	v = y;
 
@@ -342,7 +351,7 @@ clamp to the face border (cross-face filtering is left to a future pass; at
 ENVPROBE_CAPTURE_SIZE the 1-texel border error is below BC6H quantization).
 ==================
 */
-static void R_SampleCubeMapHDR16F_Bilinear(const idVec3& dir, int size, halfFloat_t* buffers[6], float result[3])
+static void R_SampleCubeMapHDR16F_Bilinear(const idVec3& dir, int size, halfFloat_t* buffers[6], float result[3], const float* halfToFloat)
 {
 	float	adir[3];
 	int		axis;
@@ -410,6 +419,24 @@ static void R_SampleCubeMapHDR16F_Bilinear(const idVec3& dir, int size, halfFloa
 	const int i01 = (y1 * size + x0) * 3;
 	const int i11 = (y1 * size + x1) * 3;
 
+	//puncho start - concurrency TB1a: inside a bake the half table, built from F16toF32 itself; the interpolation
+	// is today's
+	if (halfToFloat != NULL)
+	{
+		for (int c = 0; c < 3; c++)
+		{
+			const float c00 = halfToFloat[buf[i00 + c]];
+			const float c10 = halfToFloat[buf[i10 + c]];
+			const float c01 = halfToFloat[buf[i01 + c]];
+			const float c11 = halfToFloat[buf[i11 + c]];
+
+			const float a = c00 + (c10 - c00) * tx;
+			const float b = c01 + (c11 - c01) * tx;
+			result[c] = a + (b - a) * ty;
+		}
+	}
+	else	// bakeEnvironmentProbes -exactHalf: today's loop
+	//puncho end
 	for (int c = 0; c < 3; c++)
 	{
 		const float c00 = F16toF32(buf[i00 + c]);
@@ -484,6 +511,48 @@ idVec3 ImportanceSampleGGX( const idVec2& Xi, const idVec3& N, float roughness )
 	sampleVec.Normalize();
 
 	return sampleVec;
+}
+
+/*
+==================
+ImportanceSampleGGXTangent, R_BuildGGXSampleTable
+
+//puncho - concurrency TB1b: the first half of ImportanceSampleGGX, its lines copied unchanged: the tangent-space H
+depends only on the sample and the roughness, so a bake tabulates it once. CalculateRadianceJob does the second half,
+the frame of N, once a texel with the same lines. Entry [( mip - 1 ) * samples + s] is H for mip 1 .. numMips - 1, with
+CalculateRadianceJob's roughness for that mip and its Hammersley point for sample s.
+==================
+*/
+static idVec3 ImportanceSampleGGXTangent( const idVec2& Xi, float roughness )
+{
+	float a = roughness * roughness;
+
+	// cosinus distributed direction (Z-up or tangent space) from the hammersley point xi
+	float Phi = 2 * idMath::PI * Xi.x;
+	float cosTheta = idMath::Sqrt( ( 1 - Xi.y ) / ( 1 + ( a * a - 1 ) * Xi.y ) );
+	float sinTheta = idMath::Sqrt( 1 - cosTheta * cosTheta );
+
+	idVec3 H;
+	H.x = sinTheta * idMath::Cos( Phi );
+	H.y = sinTheta * idMath::Sin( Phi );
+	H.z = cosTheta;
+
+	return H;
+}
+
+// RB3-01: the caller allocates the table, ( numMips - 1 ) * samples entries, and records it in the bake context first
+static void R_BuildGGXSampleTable( idVec3* table, int numMips, int samples )
+{
+	for( int mip = 1; mip < numMips; mip++ )
+	{
+		const float roughness = (numMips > 1) ? ((float)mip / (float)(numMips - 1)) : 0.0f;
+
+		for( int s = 0; s < samples; s++ )
+		{
+			idVec2 Xi = Hammersley2D(s, samples);
+			table[( mip - 1 ) * samples + s] = ImportanceSampleGGXTangent( Xi, roughness );
+		}
+	}
 }
 
 float Geometry_SchlickGGX( float NdotV, float roughness )
@@ -894,7 +963,7 @@ void CalculateRadianceJob(calcEnvprobeParms_t* parms)
 					{
 						// 'samples'-tap weighted average collapses to a single tap along N.
 						float sample[3];
-						R_SampleCubeMapHDR16F_Bilinear(N, ENVPROBE_CAPTURE_SIZE, buffers, sample);
+						R_SampleCubeMapHDR16F_Bilinear(N, ENVPROBE_CAPTURE_SIZE, buffers, sample, parms->halfToFloat);
 
 						outColor[0] = sample[0];
 						outColor[1] = sample[1];
@@ -906,17 +975,42 @@ void CalculateRadianceJob(calcEnvprobeParms_t* parms)
 						const idVec3 V = R;
 						float totalWeight = 0.0f;
 
+						//puncho start - concurrency TB1b: with the bake's table, ImportanceSampleGGX in its two halves:
+						// H from the table, and the frame of N once a texel, the same lines as ImportanceSampleGGX
+						const idVec3* ggxH = ( parms->ggxH != NULL ) ? &parms->ggxH[( mip - 1 ) * parms->samples] : NULL;
+						idVec3 tangentX;
+						idVec3 tangentY;
+						if( ggxH != NULL )
+						{
+							idVec3 upVector = abs( N.z ) < 0.999f ? idVec3( 0, 0, 1 ) : idVec3( 1, 0, 0 );
+							tangentX = upVector.Cross( N );
+							tangentX.Normalize();
+							tangentY = N.Cross( tangentX );
+						}
+						//puncho end
+
 						for (int s = 0; s < parms->samples; s++)
 						{
-							idVec2 Xi = Hammersley2D(s, parms->samples);
-							idVec3 H = ImportanceSampleGGX(Xi, N, roughness);
+							//puncho start - concurrency TB1b
+							idVec3 H;
+							if( ggxH != NULL )
+							{
+								H = tangentX * ggxH[s].x + tangentY * ggxH[s].y + N * ggxH[s].z;
+								H.Normalize();
+							}
+							else	// bakeEnvironmentProbes -exactGgx: today's call
+							{
+								idVec2 Xi = Hammersley2D(s, parms->samples);
+								H = ImportanceSampleGGX(Xi, N, roughness);
+							}
+							//puncho end
 							idVec3 L = (2.0 * (H * (V * H)) - V);
 
 							float NdotL = Max((N * L), 0.0f);
 							if (NdotL > 0.0)
 							{
 								float sample[3];
-								R_SampleCubeMapHDR16F_Bilinear(L, ENVPROBE_CAPTURE_SIZE, buffers, sample);
+								R_SampleCubeMapHDR16F_Bilinear(L, ENVPROBE_CAPTURE_SIZE, buffers, sample, parms->halfToFloat);
 
 								outColor[0] += sample[0] * NdotL;
 								outColor[1] += sample[1] * NdotL;
@@ -948,6 +1042,9 @@ void CalculateRadianceJob(calcEnvprobeParms_t* parms)
 	int	end = Sys_Milliseconds();
 	parms->time = end - start;
 }
+
+//puncho - concurrency TB1b: the radiance job's sample count, which R_BuildGGXSampleTable tabulates
+static const int ENVPROBE_RADIANCE_SAMPLES = 1000;
 
 REGISTER_PARALLEL_JOB( CalculateIrradianceJob, "CalculateIrradianceJob" );
 REGISTER_PARALLEL_JOB( CalculateRadianceJob, "CalculateRadianceJob" );
@@ -984,7 +1081,10 @@ float LinearizeProbeDepth(float hwDepth, float zNear, int face, int pixel, int s
 }
 
 
-void R_MakeAmbientMap( const char* baseName, byte* buffers[6], const char* suffix, int outSize, bool specular, bool useThreads, int probeIndex )
+//puncho - concurrency TB1: halfToFloat and ggxH are the bake's tables ( bakeContext_t ), NULL for today's code
+//puncho - concurrency TB2: jobList is the list the job is added to when useThreads; NULL leaves that to the caller
+// ( the bake's streaming adds a batch's jobs at its Submit, so a list never holds jobs it has not submitted, RA2-01 )
+void R_MakeAmbientMap( const char* baseName, byte* buffers[6], const char* suffix, int outSize, bool specular, bool useThreads, int probeIndex, const float* halfToFloat, const idVec3* ggxH, idParallelJobList* jobList )
 {
 	idStr		fullname;
 	renderView_t	ref;
@@ -1002,8 +1102,10 @@ void R_MakeAmbientMap( const char* baseName, byte* buffers[6], const char* suffi
 
 	jobParms->freeRadiance = specular ? 1 : 0;
 
-	jobParms->samples = 1000;
+	jobParms->samples = ENVPROBE_RADIANCE_SAMPLES;
 	jobParms->probeIndex = probeIndex;
+	jobParms->halfToFloat = halfToFloat;
+	jobParms->ggxH = specular ? ggxH : NULL;
 	jobParms->filename.Format( "env/%s%s.exr", baseName, suffix );
 
 	jobParms->printProgress = !useThreads;
@@ -1034,18 +1136,18 @@ void R_MakeAmbientMap( const char* baseName, byte* buffers[6], const char* suffi
 
 	tr.envprobeJobs.Append( jobParms );
 
-	if( useThreads )
+	if( useThreads && jobList != NULL )	//puncho - concurrency TB2
 	{
 		if( specular )
 		{
-			tr.envprobeJobList->AddJob( ( jobRun_t )CalculateRadianceJob, jobParms );
+			jobList->AddJob( ( jobRun_t )CalculateRadianceJob, jobParms );
 		}
 		else
 		{
-			tr.envprobeJobList->AddJob( ( jobRun_t )CalculateIrradianceJob, jobParms );
+			jobList->AddJob( ( jobRun_t )CalculateIrradianceJob, jobParms );
 		}
 	}
-	else
+	else if( !useThreads )	//puncho - concurrency TB2
 	{
 		if( specular )
 		{
@@ -1056,6 +1158,142 @@ void R_MakeAmbientMap( const char* baseName, byte* buffers[6], const char* suffi
 			CalculateIrradianceJob( jobParms );
 		}
 	}
+}
+
+/*
+==================
+R_EnvprobeStreamSubmit, R_EnvprobeStreamRetire
+
+//puncho - concurrency TB2: streaming. Every ENVPROBE_STREAM_BATCH probes the irradiance and specular jobs captured
+since the last batch are added to the current list and submitted, and the capture goes on, after the other list's
+batch is waited for and its six faces freed. Jobs are added only at the submit ( RA2-01 ). Both jobs of a probe read the same six faces and sit in the
+same batch, so the faces are freed only after both have run. Everything else ( outBuffer, outFaces, the parms ) stays
+in tr.envprobeJobs for today's finalisation after the capture, which is unchanged; it frees radiance only where it is
+still set.
+==================
+*/
+static const int ENVPROBE_STREAM_BATCH = 8;		// probes a batch, two jobs each
+
+struct envprobeStream_t
+{
+	idParallelJobList*		lists[2];
+	int						first[2];		// the batch each list runs: [first, last) of tr.envprobeJobs; first -1: none
+	int						last[2];
+	int						current;		// the list the capture adds jobs to
+	int						batchFirst;	// the first job of tr.envprobeJobs not yet submitted
+};
+
+static void R_EnvprobeStreamRetire( envprobeStream_t& stream, int list )
+{
+	if( stream.first[list] < 0 )
+	{
+		return;
+	}
+
+	stream.lists[list]->Wait();
+
+	// the specular job owns the faces ( freeRadiance ); its irradiance twin holds the same pointers
+	for( int j = stream.first[list]; j < stream.last[list]; j++ )
+	{
+		calcEnvprobeParms_t* job = tr.envprobeJobs[j];
+		if( job->freeRadiance > 0 )
+		{
+			for( int i = 0; i < 6; i++ )
+			{
+				if( job->radiance[i] )
+				{
+					Mem_Free( job->radiance[i] );
+				}
+			}
+		}
+	}
+	for( int j = stream.first[list]; j < stream.last[list]; j++ )
+	{
+		for( int i = 0; i < 6; i++ )
+		{
+			tr.envprobeJobs[j]->radiance[i] = NULL;
+		}
+	}
+
+	stream.first[list] = -1;
+}
+
+// submits the jobs added since the last batch, then retires the other list's batch before the capture adds to it
+static void R_EnvprobeStreamSubmit( envprobeStream_t& stream, int numThreads )
+{
+	const int last = tr.envprobeJobs.Num();
+	if( last == stream.batchFirst )
+	{
+		return;
+	}
+
+	idParallelJobList* jobList = stream.lists[stream.current];
+	for( int j = stream.batchFirst; j < last; j++ )
+	{
+		calcEnvprobeParms_t* job = tr.envprobeJobs[j];
+		jobList->AddJob( ( job->freeRadiance > 0 ) ? ( jobRun_t )CalculateRadianceJob : ( jobRun_t )CalculateIrradianceJob, job );
+	}
+	jobList->Submit( NULL, numThreads );
+
+	stream.first[stream.current] = stream.batchFirst;
+	stream.last[stream.current] = last;
+	stream.batchFirst = last;
+
+	stream.current ^= 1;
+	R_EnvprobeStreamRetire( stream, stream.current );
+}
+
+/*
+==================
+R_FreeEnvprobeJobs
+
+//puncho - concurrency RA2-01: R_BakeEnd's release of every environment job a bake left in tr.envprobeJobs, after the
+job lists are quiet. A specular job ( freeRadiance ) owns the probe's six faces, which its irradiance twin shares, and its
+cube mips; an irradiance job owns its outBuffer. Entries the finalisation already deleted are NULL. Empty after a bake
+that ended normally.
+==================
+*/
+void R_FreeEnvprobeJobs()
+{
+	for( int j = 0; j < tr.envprobeJobs.Num(); j++ )
+	{
+		calcEnvprobeParms_t* job = tr.envprobeJobs[j];
+		if( job == NULL )
+		{
+			continue;
+		}
+
+		if( job->freeRadiance > 0 )
+		{
+			for( int i = 0; i < 6; i++ )
+			{
+				if( job->radiance[i] )
+				{
+					Mem_Free( job->radiance[i] );
+				}
+			}
+
+			const int numMips = idMath::BitsForInteger( job->outHeight );
+			for( int side = 0; side < 6; side++ )
+			{
+				for( int mip = 0; mip < numMips; mip++ )
+				{
+					if( job->outFaces[side][mip] )
+					{
+						R_StaticFree( job->outFaces[side][mip] );
+					}
+				}
+			}
+		}
+		else if( job->outBuffer != NULL )
+		{
+			Mem_Free( job->outBuffer );
+		}
+
+		delete job;
+	}
+
+	tr.envprobeJobs.Clear();
 }
 
 CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
@@ -1077,6 +1315,12 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 	bool useThreads = true;
 	int numThreads = JOBLIST_PARALLELISM_MAX_CORES;
 
+	//puncho - concurrency TB1: each switch runs today's code in place of one of the bake's tables
+	bool exactHalf = false;
+	bool exactGgx = false;
+	bool noPreviewBlit = false;		// TB3a, opt-in: do not show each capture on the screen
+	bool exactStream = false;		// TB2: capture every probe, then run the jobs, as today
+
 	bool helpRequested = false;
 	idStr option;
 
@@ -1095,6 +1339,22 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 				numThreads = idMath::ClampInt( 1, maxCores, threads );
 			}
 		}
+		else if( option.Icmp( "exactHalf" ) == 0 )
+		{
+			exactHalf = true;
+		}
+		else if( option.Icmp( "exactGgx" ) == 0 )
+		{
+			exactGgx = true;
+		}
+		else if( option.Icmp( "noPreviewBlit" ) == 0 )
+		{
+			noPreviewBlit = true;
+		}
+		else if( option.Icmp( "exactStream" ) == 0 )
+		{
+			exactStream = true;
+		}
 		else if( option.Icmp( "h" ) == 0 || option.Icmp( "help" ) == 0 )
 		{
 			helpRequested = true;
@@ -1107,6 +1367,11 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 		idLib::Printf( "USAGE: bakeEnvironmentProbes [<switches>...]\n\n" );
 		idLib::Printf( "<Switches>\n" );
 		idLib::Printf( " mt[num] : number of threads used for baking (default max logical cores)\n" );
+		idLib::Printf( " exactHalf : convert half floats with F16toF32 instead of the bake's table\n" );
+		idLib::Printf( " exactGgx : compute each GGX sample direction with today's call instead of the bake's table\n" );
+		idLib::Printf( " noPreviewBlit : do not show each captured face on the screen ( refused on Vulkan )\n" );
+		idLib::Printf( " ( the readback stays one wait a face here; fastReadback is a bakeLightGrids switch )\n" );
+		idLib::Printf( " exactStream : capture every probe before running the jobs instead of batches of %i probes\n", ENVPROBE_STREAM_BATCH );
 		return;
 	}
 
@@ -1121,6 +1386,43 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 		return;
 	}
 
+	//puncho start - concurrency TB0/TB1: no return below this; R_BakeEnd at the end restores every switch the bake
+	// changes and frees the tables. stageTime is the end of the last timed stage ( R_BakeStage )
+	//puncho - concurrency RA2-03: a capture that is not shown can present a Vulkan swapchain image that never reached the
+	// present layout, so the switch is refused there
+	if( noPreviewBlit && deviceManager->GetGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN )
+	{
+		common->Printf( "noPreviewBlit is refused on Vulkan; the preview blits run\n" );
+		noPreviewBlit = false;
+	}
+
+	bakeContext_t* bake = R_BakeBegin( exactHalf );
+	if( !exactGgx )
+	{
+		//puncho - concurrency RB3-01: recorded in the context before it is filled; a failed allocation is the engine's
+		// recoverable error, after which R_BakeEndAfterError gives back what the bake already holds
+		const int ggxMips = idMath::BitsForInteger( RADIANCE_OCTAHEDRON_SIZE );
+		bake->ggxH = ( idVec3* )Mem_Alloc( ( ggxMips - 1 ) * ENVPROBE_RADIANCE_SAMPLES * sizeof( idVec3 ), TAG_RENDER );
+		if( bake->ggxH == NULL )
+		{
+			common->Error( "bakeEnvironmentProbes: out of memory for the GGX table" );
+		}
+		R_BuildGGXSampleTable( bake->ggxH, ggxMips, ENVPROBE_RADIANCE_SAMPLES );
+	}
+	uint64 stageTime = bake->startMicroSec;
+	int queuedJobs = 0;		// D18: jobs on tr.envprobeJobList since its last Submit
+
+	// TB2: batches on two alternating lists while the capture continues; needs the job lists ( useThreads )
+	const bool streamJobs = !exactStream && useThreads;
+	envprobeStream_t epStream;
+	epStream.lists[0] = tr.envprobeJobList;
+	epStream.lists[1] = tr.envprobeJobList2;
+	epStream.first[0] = epStream.first[1] = -1;
+	epStream.last[0] = epStream.last[1] = 0;
+	epStream.current = 0;
+	epStream.batchFirst = tr.envprobeJobs.Num();
+	//puncho end
+
 	const viewDef_t primary = *tr.primaryView;
 
 	//--------------------------------------------
@@ -1131,12 +1433,10 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 	commonLocal.WaitGameThread();
 
 	// turn vsync off for faster capturing of the probes
-	int oldVsync = r_swapInterval.GetInteger();
-	r_swapInterval.SetInteger( 0 );
+	r_swapInterval.SetInteger( 0 );	//puncho - concurrency RA2-04: R_BakeBegin saved it, R_BakeEnd restores it
 
 	// turn off clear in between views so we keep the progress bar visible
-	int oldClear = r_clear.GetInteger();
-	r_clear.SetInteger( 0 );
+	r_clear.SetInteger( 0 );	//puncho - concurrency RA2-04: R_BakeBegin saved it, R_BakeEnd restores it
 
 	// disable scissor, so we don't need to adjust all those rects
 	r_useScissor.SetBool( false );
@@ -1150,8 +1450,12 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 	r_useParallelAddShadows.SetBool( false );
 	r_useParallelAddLights.SetBool( false );
 
+	stageTime = R_BakeStage( bake, BAKE_STAGE_SETUP, stageTime );	//puncho - concurrency TB0
+
 	// discard anything currently on the list (this triggers SwapBuffers)
 	tr.SwapCommandBuffers( NULL, NULL, NULL, NULL, NULL, NULL );
+
+	stageTime = R_BakeStage( bake, BAKE_STAGE_CLOSEOUT, stageTime );	//puncho - concurrency TB0
 
 	tr.takingEnvprobe = true;
 
@@ -1183,8 +1487,12 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 
 	idLib::Printf( "Shooting %i environment probes...\n", totalProcessedProbes );
 
+	stageTime = R_BakeStage( bake, BAKE_STAGE_SETUP, stageTime );	//puncho - concurrency TB0
+
 	CommandlineProgressBar progressBar( totalProcessedProbes, sysWidth, sysHeight );
 	progressBar.Start();
+
+	stageTime = R_BakeStage( bake, BAKE_STAGE_PROGRESS, stageTime );	//puncho - concurrency TB0
 
 	int	start = Sys_Milliseconds();
 
@@ -1211,6 +1519,12 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 			ref = primary.renderView;
 
 			ref.rdflags = RDF_NOAMBIENT | RDF_IRRADIANCE;
+
+			//puncho - concurrency TB3a: the capture is not shown; the backend skips its preview blits
+			if( noPreviewBlit )
+			{
+				ref.rdflags |= RDF_BAKE_NODISPLAY;
+			}
 			ref.fov_x = ref.fov_y = 90;
 
 			ref.vieworg = def->parms.origin;
@@ -1222,22 +1536,32 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 			// build commands to render the scene
 			tr.primaryWorld->RenderScene( &ref );
 
+			stageTime = R_BakeStage( bake, BAKE_STAGE_FRONTEND, stageTime );	//puncho - concurrency TB0
+
 			// finish off these commands
 			const emptyCommand_t* cmd = tr.SwapCommandBuffers( NULL, NULL, NULL, NULL, NULL, NULL );
+
+			stageTime = R_BakeStage( bake, BAKE_STAGE_CLOSEOUT, stageTime );	//puncho - concurrency TB0
 
 			// issue the commands to the GPU
 			tr.RenderCommandBuffers( cmd );
 
+			stageTime = R_BakeStage( bake, BAKE_STAGE_BACKEND, stageTime );	//puncho - concurrency TB0
+
 			// discard anything currently on the list (this triggers SwapBuffers)
 			tr.SwapCommandBuffers( NULL, NULL, NULL, NULL, NULL, NULL );
+
+			stageTime = R_BakeStage( bake, BAKE_STAGE_CLOSEOUT, stageTime );	//puncho - concurrency TB0
 
 			byte* floatRGB16F = NULL;
 			byte* depthPacked = NULL;
 
-			bool  depthOK = R_ReadProbeColorAndDepthRGB16F(deviceManager->GetDevice(), &backEnd.GetCommonPasses(),
+			bool  depthOK = R_ReadProbeColorAndDepthRGB16FInBake(deviceManager->GetDevice(), &backEnd.GetCommonPasses(),
 				globalImages->envprobeHDRImage->GetTextureHandle(),
 				globalImages->envprobeDepthImage->GetTextureHandle(),
-				&floatRGB16F, &depthPacked, captureSize, captureSize);
+				&floatRGB16F, &depthPacked, captureSize, captureSize, bake);
+
+			stageTime = Sys_Microseconds();	//puncho - concurrency TB0: the readback timed its own wait and convert
 
 #if 0
 			idStr testName;
@@ -1250,6 +1574,7 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 			}
 #endif
 			buffers[ j ] = floatRGB16F;
+			bake->probeFaces[j] = floatRGB16F;	//puncho - concurrency RA2-01: the bake owns it until the probe's jobs do
 
 			float* dist = (float*)R_StaticAlloc(captureSize * captureSize * sizeof(float));
 
@@ -1257,6 +1582,10 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 			{
 				common->Warning("depth read-back FAILED, probe %i side %i", i, j);
 				for (int p = 0; p < captureSize * captureSize; p++) { dist[p] = 0.0f; }
+				if (depthPacked != NULL)
+				{
+					R_StaticFree(depthPacked);	//puncho - concurrency RB3-05: a rejected readback still allocated it
+				}
 			}
 			else
 			{
@@ -1288,18 +1617,46 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 				R_StaticFree(depthPacked);
 			}
 			depthBuffers[j] = (byte*)dist;
+			bake->probeDepth[j] = (byte*)dist;	//puncho - concurrency RA2-01
+
+			stageTime = R_BakeStage( bake, BAKE_STAGE_READBACK_CONVERT, stageTime );	//puncho - concurrency TB0: the depth's linearisation
 		}
 
 		tr.takingEnvprobe = false;
 		progressBar.Increment( true );
 		tr.takingEnvprobe = true;
 
+		stageTime = R_BakeStage( bake, BAKE_STAGE_PROGRESS, stageTime );	//puncho - concurrency TB0
+
 		fullname.Format( "%s/area%i_envprobe_%i_%i_%i", baseName.c_str(), areaNum, int( point.x ), int( point.y ), int( point.z ) );
 		fullname.ReplaceChar( '-', '_' );
 
+		//puncho start - concurrency D18: the list reserves ENVPROBE_JOBLIST_MAX_JOBS jobs and each probe adds two, so
+		// past that the jobs added so far are submitted and waited for first; the jobs are independent and the
+		// results are read after the last wait, in the order of tr.envprobeJobs, so the output is the same
+		if( useThreads && !streamJobs && queuedJobs + 2 > ENVPROBE_JOBLIST_MAX_JOBS )
+		{
+			tr.envprobeJobList->Submit( NULL, numThreads );
+			tr.envprobeJobList->Wait();
+			queuedJobs = 0;
+		}
+		queuedJobs += 2;
+		//puncho end
+
 		// create 2 jobs
-		R_MakeAmbientMap( fullname.c_str(), buffers, "_amb", IRRADIANCE_OCTAHEDRON_SIZE, false, useThreads, def->index);
-		R_MakeAmbientMap( fullname.c_str(), buffers, "_spec", RADIANCE_OCTAHEDRON_SIZE, true, useThreads, def->index);
+		idParallelJobList* probeJobList = streamJobs ? NULL : tr.envprobeJobList;	//puncho - concurrency TB2: streaming adds the jobs at its submit
+		R_MakeAmbientMap( fullname.c_str(), buffers, "_amb", IRRADIANCE_OCTAHEDRON_SIZE, false, useThreads, def->index, bake->halfToFloat, bake->ggxH, probeJobList );
+		R_MakeAmbientMap( fullname.c_str(), buffers, "_spec", RADIANCE_OCTAHEDRON_SIZE, true, useThreads, def->index, bake->halfToFloat, bake->ggxH, probeJobList );
+		memset( bake->probeFaces, 0, sizeof( bake->probeFaces ) );	//puncho - concurrency RA2-01: the two jobs in tr.envprobeJobs own the faces now
+
+		//puncho - concurrency TB2: a full batch goes to its list, and the other list's batch is waited for and its
+		// faces freed before the capture adds to it
+		if( streamJobs && tr.envprobeJobs.Num() - epStream.batchFirst >= 2 * ENVPROBE_STREAM_BATCH )
+		{
+			R_EnvprobeStreamSubmit( epStream, numThreads );
+		}
+
+		stageTime = R_BakeStage( bake, BAKE_STAGE_JOB_WAIT, stageTime );	//puncho - concurrency TB0
 
 		// write per-probe distance cube in memory
 		idStr depthName;
@@ -1341,6 +1698,7 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 
 			depthFaces[j] = (const byte*)packed;
 			R_StaticFree(depthBuffers[j]);
+			bake->probeDepth[j] = (byte*)packed;	//puncho - concurrency RA2-01
 		}
 
 		{
@@ -1352,36 +1710,61 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 			im.WriteGeneratedFile(FILE_NOT_FOUND_TIMESTAMP);
 		}
 
+		stageTime = R_BakeStage( bake, BAKE_STAGE_WRITE, stageTime );	//puncho - concurrency TB0
+
 		def->depthImage = globalImages->ImageFromFile(depthName, TF_LINEAR, TR_CLAMP, TD_HDRI, CF_NATIVE_HDR);
 
 		for (int j = 0; j < 6; j++)
 		{
 			R_StaticFree((void*)depthFaces[j]);
+			bake->probeDepth[j] = NULL;	//puncho - concurrency RA2-01
 		}
 		def->depthImage = globalImages->ImageFromFile(depthName, TF_LINEAR, TR_CLAMP, TD_HDRI, CF_NATIVE_HDR);
+
+		stageTime = R_BakeStage( bake, BAKE_STAGE_RELOAD, stageTime );	//puncho - concurrency TB0
 	}
 
 	int	end = Sys_Milliseconds();
 
 	tr.takingEnvprobe = false;
 
-	r_useScissor.SetBool( true );
-	r_useParallelAddModels.SetBool( true );
-	r_useParallelAddShadows.SetBool( true );
-	r_useParallelAddLights.SetBool( true );
+	//puncho - concurrency D15: back to what they were before the bake, not to true
+	R_BakeRestoreCaptureSwitches( bake );
 
 	common->Printf( "captured environment probes %5.1f seconds\n\n", ( end - start ) * 0.001f );
 
-	if( useThreads )
+	//puncho start - concurrency TB2: the last, partial batch, then both lists retired, the older batch first; after
+	// this every job has run and every face is freed, and the finalisation below reads the outputs as before
+	if( streamJobs )
+	{
+		idLib::Printf( "Processing the last probes on all available cores... Please wait.\n" );
+		common->UpdateScreen( false );
+		common->UpdateScreen( false );
+
+		stageTime = R_BakeStage( bake, BAKE_STAGE_PROGRESS, stageTime );
+
+		R_EnvprobeStreamSubmit( epStream, numThreads );
+		R_EnvprobeStreamRetire( epStream, epStream.current ^ 1 );
+		R_EnvprobeStreamRetire( epStream, epStream.current );
+	}
+	//puncho end
+
+	if( useThreads && !streamJobs )	//puncho - concurrency TB2: bakeEnvironmentProbes -exactStream, today's path
 	{
 		idLib::Printf( "Processing probes on all available cores... Please wait.\n" );
 		common->UpdateScreen( false );
 		common->UpdateScreen( false );
 
+		stageTime = R_BakeStage( bake, BAKE_STAGE_PROGRESS, stageTime );	//puncho - concurrency TB0
+
 		//tr.envprobeJobList->Submit();
 		tr.envprobeJobList->Submit( NULL, numThreads );
 		tr.envprobeJobList->Wait();
 	}
+
+	stageTime = R_BakeStage( bake, BAKE_STAGE_JOB_WAIT, stageTime );	//puncho - concurrency TB0
+
+	const float* halfToFloat = bake->halfToFloat;	//puncho - concurrency TB1a: the finalisation's conversion
 
 	for (int j = 0; j < tr.envprobeJobs.Num(); j++)
 	{
@@ -1402,12 +1785,24 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 				{
 					const halfFloat_t* s = job->outFaces[side][level];	
 					byte* packed = (byte*)R_StaticAlloc(mipSize * mipSize * 4, TAG_IMAGE);
+					//puncho start - concurrency TB1a: inside a bake the half table, built from F16toF32 itself
+					if (halfToFloat != NULL)
+					{
+						for (int p = 0; p < mipSize * mipSize; p++)
+						{
+							float rgb[3] = { halfToFloat[s[p * 3 + 0]], halfToFloat[s[p * 3 + 1]], halfToFloat[s[p * 3 + 2]] };
+							((uint32_t*)packed)[p] = float3_to_r11g11b10f(rgb);
+						}
+					}
+					else	// bakeEnvironmentProbes -exactHalf: today's loop
+					//puncho end
 					for (int p = 0; p < mipSize * mipSize; p++)
 					{
 						float rgb[3] = { F16toF32(s[p * 3 + 0]), F16toF32(s[p * 3 + 1]), F16toF32(s[p * 3 + 2]) };
 						((uint32_t*)packed)[p] = float3_to_r11g11b10f(rgb);
 					}
 					faceMips[side * numLevels + level] = packed;
+					bake->finalMips[side * numLevels + level] = packed;	//puncho - concurrency RB3-03
 					mipSize = Max(1, mipSize >> 1);
 				}
 			}
@@ -1422,12 +1817,17 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 			im.LoadCubeMipchainFromMemory(faceSize, (const byte* const*)faceMips.Ptr(), numLevels, fmt);
 			im.WriteGeneratedFile(FILE_NOT_FOUND_TIMESTAMP);
 
+			stageTime = R_BakeStage( bake, BAKE_STAGE_WRITE, stageTime );	//puncho - concurrency TB0
+
 			globalImages->ImageFromFile(baseName, TF_DEFAULT, TR_CLAMP, TD_HDR_LIGHTPROBE, CF_NATIVE_HDR);
+
+			stageTime = R_BakeStage( bake, BAKE_STAGE_RELOAD, stageTime );	//puncho - concurrency TB0
 
 			
 			for (int i = 0; i < faceMips.Num(); i++)
 			{
 				R_StaticFree(faceMips[i]);
+				bake->finalMips[i] = NULL;	//puncho - concurrency RB3-03
 			}
 			for (int side = 0; side < 6; side++)
 			{
@@ -1441,7 +1841,9 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 		else												
 		{
 			R_WriteEXR(job->filename, (byte*)job->outBuffer, 3, job->outWidth, job->outHeight, "fs_basepath");
+			stageTime = R_BakeStage( bake, BAKE_STAGE_WRITE, stageTime );	//puncho - concurrency TB0
 			globalImages->ImageFromFile(job->filename, TF_LINEAR, TR_CLAMP, TD_HDR_LIGHTPROBE, CF_2D_PACKED_MIPCHAIN);
+			stageTime = R_BakeStage( bake, BAKE_STAGE_RELOAD, stageTime );	//puncho - concurrency TB0
 			Mem_Free(job->outBuffer);
 			
 			if (job->probeIndex >= 0 && job->probeIndex < tr.primaryWorld->envprobeDefs.Num())
@@ -1472,6 +1874,7 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 		}
 
 		delete job;		// PRESERVED FROM STOCK (L1181)
+		tr.envprobeJobs[j] = NULL;	//puncho - concurrency RA2-01: R_FreeEnvprobeJobs skips it if an error stops this loop
 	}
 
 	tr.envprobeJobs.Clear();
@@ -1530,6 +1933,8 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 		}
 	}
 
+	stageTime = R_BakeStage( bake, BAKE_STAGE_WRITE, stageTime );	//puncho - concurrency TB0
+
 	int	totalEnd = Sys_Milliseconds();
 
 	nvrhi::CommandListHandle commandList = deviceManager->GetDevice()->createCommandList();
@@ -1555,13 +1960,15 @@ CONSOLE_COMMAND_SHIP( bakeEnvironmentProbes, "Bake environment probes", NULL )
 	commandList->close();
 	deviceManager->GetDevice()->executeCommandList( commandList );
 
+	stageTime = R_BakeStage( bake, BAKE_STAGE_RELOAD, stageTime );	//puncho - concurrency TB0
+
 	idLib::Printf( "----------------------------------\n" );
 	idLib::Printf( "Processed %i light probes\n", totalProcessedProbes );
 	common->Printf( "Baked SH irradiance and GGX mip maps in %5.1f minutes\n\n", ( totalEnd - totalStart ) / ( 1000.0f * 60 ) );
 
-	// restore vsync setting
-	r_swapInterval.SetInteger( oldVsync );
-	r_clear.SetInteger( oldClear );
+	//puncho - concurrency TB0/RA2-04: restores every setting the bake changed ( vsync and clear among them ), prints
+	// "bake phase" lines, frees the tables
+	R_BakeEnd( true );
 }
 
 CONSOLE_COMMAND( makeBrdfLUT, "make a GGX BRDF lookup table", NULL )

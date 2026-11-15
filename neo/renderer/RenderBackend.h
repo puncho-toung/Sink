@@ -146,6 +146,8 @@ public:
 	void				DrawElementsWithCounters( const drawSurf_t* surf, bool shadowCounter = false );
 
 private:
+	//puncho - callers test the flag captured by ExecuteBackEndCommands.
+	void				MarkBackendPass( backendPass_t nextPass );
 	void				DrawFlickerBox();
 
 	void				GetCurrentBindingLayout( int bindingLayoutType );
@@ -342,6 +344,12 @@ public:
 	float				depthBias;
 
 private:
+	//puncho - recording-thread state, no timer or counter access at disabled marks.
+	uint64				passStartMicroSec;
+	int					passStartDraws;
+	backendPass_t		currentPass;
+	bool				concurrencyStats;
+
 	uint64				glStateBits;			// for all render APIs
 
 	const viewDef_t* 	viewDef;

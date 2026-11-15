@@ -36,6 +36,243 @@ unsigned int FileReadBytes() { return ( unsigned int )fileReadBytes.GetValue(); 
 
 #include "Unzip.h"
 
+#if defined( _WIN32 )
+//puncho - same UTF-8/long-path conversion used when opening the destination.
+wchar_t* MakeWindowsLongPathW( const char* utf8Path );
+#endif
+
+//puncho start - TC1: bounded output with sticky errors and abort on unwind.
+idFile_WriteBuffer* idFile_WriteBuffer::liveWriters = NULL;
+
+idFile_WriteBuffer::idFile_WriteBuffer() : previous( NULL ), next( NULL ), dst( NULL ), buf( NULL ), used( 0 ), failed( false ), timeWrites( false ), writeMilliseconds( 0 )
+{
+}
+
+idFile_WriteBuffer::~idFile_WriteBuffer()
+{
+	Abort();
+}
+
+void idFile_WriteBuffer::Init( idFile* destination, bool measureWrites )
+{
+	assert( dst == NULL && buf == NULL && destination != NULL );
+	dst = destination;
+	next = liveWriters;
+	if( next != NULL )
+	{
+		next->previous = this;
+	}
+	liveWriters = this;
+	used = 0;
+	failed = false;
+	timeWrites = measureWrites;
+	writeMilliseconds = 0;
+	buf = ( byte* )Mem_Alloc( BUFFER_SIZE, TAG_TOOLS );
+}
+
+int idFile_WriteBuffer::WriteThrough( const void* buffer, int len ) const
+{
+	int written;
+	if( timeWrites )
+	{
+		const int started = Sys_Milliseconds();
+		written = dst->Write( buffer, len );
+		writeMilliseconds += Sys_Milliseconds() - started;
+	}
+	else
+	{
+		written = dst->Write( buffer, len );
+	}
+	if( written != len )
+	{
+		failed = true;
+	}
+	return written;
+}
+
+bool idFile_WriteBuffer::FlushBuffer() const
+{
+	if( failed || dst == NULL )
+	{
+		return false;
+	}
+	if( used != 0 )
+	{
+		const int written = WriteThrough( buf, used );
+		// Keep the unwritten suffix until explicit abort, including on a short write.
+		if( written > 0 && written <= used )
+		{
+			used -= written;
+			memmove( buf, buf + written, used );
+		}
+	}
+	return !failed;
+}
+
+int idFile_WriteBuffer::Write( const void* buffer, int len )
+{
+	if( failed || dst == NULL || len < 0 )
+	{
+		failed = true;
+		return 0;
+	}
+	if( len >= BUFFER_SIZE )
+	{
+		// Unaccepted direct-write bytes remain the caller's; never claim success for them.
+		return FlushBuffer() ? WriteThrough( buffer, len ) : 0;
+	}
+	if( len > BUFFER_SIZE - used && !FlushBuffer() )
+	{
+		return 0;
+	}
+	if( len > 0 )
+	{
+		memcpy( buf + used, buffer, len );
+		used += len;
+	}
+	if( used == BUFFER_SIZE && !FlushBuffer() )
+	{
+		return 0;
+	}
+	return len;
+}
+
+//puncho - TC1: metadata describes the destination after draining both layers.
+int idFile_WriteBuffer::Length() const
+{
+	return const_cast<idFile_WriteBuffer*>( this )->FlushChecked() ? dst->Length() : -1;
+}
+
+ID_TIME_T idFile_WriteBuffer::Timestamp() const
+{
+	return const_cast<idFile_WriteBuffer*>( this )->FlushChecked() ? dst->Timestamp() : FILE_NOT_FOUND_TIMESTAMP;
+}
+
+int idFile_WriteBuffer::Tell() const
+{
+	return FlushBuffer() ? dst->Tell() : -1;
+}
+
+int idFile_WriteBuffer::Seek( long offset, fsOrigin_t origin )
+{
+	if( !FlushBuffer() )
+	{
+		return -1;
+	}
+	const int result = dst->Seek( offset, origin );
+	if( result != 0 )
+	{
+		failed = true;
+	}
+	return result;
+}
+
+bool idFile_WriteBuffer::FlushChecked()
+{
+	if( !FlushBuffer() )
+	{
+		return false;
+	}
+	if( !dst->FlushChecked() )
+	{
+		failed = true;
+	}
+	return !failed;
+}
+
+void idFile_WriteBuffer::Flush()
+{
+	FlushChecked();
+}
+
+void idFile_WriteBuffer::ForceFlush()
+{
+	if( FlushBuffer() )
+	{
+		dst->ForceFlush();
+	}
+}
+
+const char* idFile_WriteBuffer::GetName() const
+{
+	return dst != NULL ? dst->GetName() : "";
+}
+
+const char* idFile_WriteBuffer::GetFullPath() const
+{
+	return dst != NULL ? dst->GetFullPath() : "";
+}
+
+bool idFile_WriteBuffer::Close()
+{
+	if( !FlushChecked() )
+	{
+		Abort();
+		return false;
+	}
+	Unlink();
+	fileSystem->CloseFile( dst );
+	dst = NULL;
+	Mem_Free( buf );
+	buf = NULL;
+	return true;
+}
+
+void idFile_WriteBuffer::Abort()
+{
+	if( dst != NULL )
+	{
+		// The relative-name removal API deletes from multiple search roots.
+		const idStr path = dst->GetFullPath();
+		Unlink();
+		fileSystem->CloseFile( dst );
+		dst = NULL;
+		bool removed = false;
+#if defined( _WIN32 )
+		wchar_t* widePath = MakeWindowsLongPathW( path );
+		if( widePath != NULL )
+		{
+			removed = DeleteFileW( widePath ) != 0;
+			free( widePath );
+		}
+#else
+		removed = remove( path.c_str() ) == 0;
+#endif
+		common->Warning( removed ? "Aborted incomplete output %s" : "Failed to remove incomplete output %s", path.c_str() );
+		failed = true;
+	}
+	Mem_Free( buf );
+	buf = NULL;
+	used = 0;
+}
+
+void idFile_WriteBuffer::Unlink()
+{
+	if( previous != NULL )
+	{
+		previous->next = next;
+	}
+	else
+	{
+		liveWriters = next;
+	}
+	if( next != NULL )
+	{
+		next->previous = previous;
+	}
+	previous = next = NULL;
+}
+
+void idFile_WriteBuffer::AbortAll()
+{
+	// Compiler outputs are owned by one thread; this list needs no allocation or lock.
+	while( liveWriters != NULL )
+	{
+		liveWriters->Abort();
+	}
+}
+//puncho end
+
 
 /*
 =================
@@ -255,6 +492,13 @@ idFile::Flush
 */
 void idFile::Flush()
 {
+}
+
+//puncho - TC1: memory/other destinations retain their existing flush behavior.
+bool idFile::FlushChecked()
+{
+	Flush();
+	return true;
 }
 
 /*
@@ -1520,6 +1764,17 @@ void idFile_Permanent::Flush()
 	fflush( o );
 #endif
 	// RB end
+}
+
+//puncho - TC1: fwrite acceptance is not completion until stdio has drained.
+bool idFile_Permanent::FlushChecked()
+{
+#if defined( _WIN32 )
+	// WriteFile is already unbuffered at this layer. Do not add FlushFileBuffers.
+	return o != NULL;
+#else
+	return o != NULL && fflush( o ) == 0 && ferror( o ) == 0;
+#endif
 }
 
 /*

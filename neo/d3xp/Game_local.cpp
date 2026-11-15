@@ -32,6 +32,8 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "Game_local.h"
+
+extern idCVar com_concurrencyStats; //puncho - P0
 #include "../idlib/MapInline.h"	//puncho - P2b.1.10b: dmap's inline rule, shared
 
 #ifdef GAME_DLL
@@ -451,6 +453,8 @@ void idGameLocal::Shutdown()
 	aasNames.Clear();
 
 	idAI::FreeObstacleAvoidanceNodes();
+	idAI::FreeAvoidanceStats(); //puncho - P0
+	GameVerify_Shutdown(); //puncho - P0
 
 	idEvent::Shutdown();
 
@@ -1233,6 +1237,7 @@ idGameLocal::LocalMapRestart
 */
 void idGameLocal::LocalMapRestart()
 {
+	GameVerify_MapShutdown(); //puncho - P0: a restart also discards the scenario's bound map
 	worldStore.CommitCurrentMap();
 	int i;	//puncho - identity (P1-A2)
 
@@ -1978,6 +1983,7 @@ idGameLocal::MapShutdown
 */
 void idGameLocal::MapShutdown()
 {
+	GameVerify_MapShutdown(); //puncho - P0: map changes cannot continue a started scenario
 	//puncho - transitions (stage 3 review): host and clients carry their speakers' emitters here, at the pre-delete
 	// boundary of an accepted transition load; the host no longer detaches them at commit, where a refused change left
 	// them playing ownerless
@@ -2965,6 +2971,16 @@ idGameLocal::RunFrame
 */
 void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 {
+	//puncho start - P0: one cvar capture; clocks and diagnostic writes are behind that captured bool
+	bool resetAvoidanceStats = !concurrencyStats;
+	concurrencyStats = com_concurrencyStats.GetBool();
+	uint64 concurrencyStart = 0, concurrencyEnd = 0;
+	if( concurrencyStats )
+	{
+		concurrencyStart = Sys_Microseconds();
+		concurrencyUsTic = concurrencyUsThink = concurrencyUsEvents = 0;
+	}
+	//puncho end
 	clip.GetMapStatistics( mapClipStart );
 	mapAllocStart = Mem_GetAllocationCount();
 	SCOPED_PROFILE_EVENT( "RunFrame" );
@@ -3099,6 +3115,13 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			aiHudStats.snap = snapStats;
 			clip.GetStatistics( clipBefore );
 			//puncho end
+
+			//puncho - P0: census is reset; prediction reads only the state left by previous thinks
+			if( concurrencyStats )
+			{
+				idAI::CaptureAvoidanceStats( resetAvoidanceStats );
+				resetAvoidanceStats = false;
+			}
 
 			timer_think.Clear();
 			timer_think.Start();
@@ -3258,6 +3281,16 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 
 			CommitMapTransition();
 			BuildReturnValue( ret );
+			//puncho start - P0: last whole tic, including the pre-think work; keep the existing phase timers
+			if( concurrencyStats )
+			{
+				concurrencyEnd = Sys_Microseconds();
+				concurrencyUsTic = ( uint32 )( concurrencyEnd - concurrencyStart );
+				concurrencyStart = concurrencyEnd;
+				concurrencyUsThink = ( uint32 )( timer_think.Milliseconds() * 1000.0 );
+				concurrencyUsEvents = ( uint32 )( timer_events.Milliseconds() * 1000.0 );
+			}
+			//puncho end
 
 			// see if a target_sessionCommand has forced a changelevel
 			if( sessionCommand.Length() )
@@ -3303,6 +3336,11 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 	declRemapDeferred = false;
 	ServerFlushDeclRemap();
 	//puncho end
+	//puncho - P0: the final tic also owns RunFrame's debug/network epilogue; stopped time has no tic
+	if( concurrencyStats && concurrencyEnd != 0 )
+	{
+		concurrencyUsTic += ( uint32 )( Sys_Microseconds() - concurrencyEnd );
+	}
 }
 
 //puncho start - ai-harness (plans/ai-harness/00-PLAN.md §2.5)
@@ -3325,7 +3363,7 @@ static const char* const aiProfileCsvHeader =
 	"flowSteps,flowCellsBuilt,flowFieldsOpened,flowPromoted,roleFollowers,"	// ai-avoidance: appended after wallMs; WP-A2/A4 after avoidDropped; WP-A1/A3, WP-A5, WP-A6/A7 after those
 	"attacksMelee,attacksMissile,attacksCharge,projectilesAlive,damageEvents,friendlyDamage,painEvents,deaths,ragdollsActive,"
 	"enemyChanges,enemyLost,noEnemy,canHitTraces,attackPosSearches,coverSearches,usCombatTraces,"	// ai-combat (plans/ai-combat/00-PLAN.md §2.4): appended after roleFollowers
-	"usShooterTokens,shooterCandidates,shooterHolders,shooterGrants,shooterYields,shooterExpired,shooterDenied,shooterTests,shooterSniperAsks,dormTests,dormAsleep,dormClosedOff,dormFar,dormUnseen,dormWakes,dormSleeps,dormDeferred,dormForced,dormViolations,awakeNear2k,awakeNear4k,awakeNear8k,awakeFar,dormCatchUps,aasCacheBytes,aasCacheEvictions,aasTravelSaturated\n";	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): appended after usCombatTraces
+	"usShooterTokens,shooterCandidates,shooterHolders,shooterGrants,shooterYields,shooterExpired,shooterDenied,shooterTests,shooterSniperAsks,dormTests,dormAsleep,dormClosedOff,dormFar,dormUnseen,dormWakes,dormSleeps,dormDeferred,dormForced,dormViolations,awakeNear2k,awakeNear4k,awakeNear8k,awakeFar,dormCatchUps,aasCacheBytes,aasCacheEvictions,aasTravelSaturated,avoidDue,avoidEnrolled,avoidHits,avoidMisses,avoidUnenrolled\n";	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): appended after usCombatTraces
 
 /*
 ================
@@ -3474,7 +3512,8 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 	}
 	if( aiProfileFile != NULL )
 	{
-		char	row[ 1536 ];		//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): 91 columns since 08; 1024 could truncate a row of wide values into a malformed line
+		char	row[ 2048 ]; //puncho - P0: appended avoidance counts
+		//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): 91 columns since 08; 1024 could truncate a row of wide values into a malformed line
 		char	snap[ 128 ];
 		const aiTicStats_t& t = aiStats;
 		const snapStats_t& sn = aiHudStats.snap;
@@ -3512,7 +3551,7 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 										"%d,%d,%d,%d,"
 										"%d,%d,%d,%d,%d,"
 										"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
-										"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%lld,%lld,%lld\n",	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): the shooter tokens
+										"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%lld,%lld,%lld,%d,%d,%d,%d,%d\n",	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): the shooter tokens
 										framenum, time, usTic, numEnts, t.thinks, t.moveTics,
 										t.usThink, t.usPerceive, t.usScript, t.usMove, t.usMovePath, t.usMoveAvoid, t.usMovePhysics, t.usPath, t.usAnimUpdate, t.usAnimCtl,
 										aiHudStats.worst.usThink, aiHudStats.worstName,
@@ -3527,7 +3566,7 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 										t.flowSteps, t.flowCellsBuilt, t.flowFieldsOpened, t.flowPromoted, t.roleFollowers,
 										t.attacksMelee, t.attacksMissile, t.attacksCharge, t.projectilesAlive, t.damageEvents, t.friendlyDamage, t.painEvents, t.deaths, t.ragdollsActive,
 										t.enemyChanges, t.enemyLost, t.noEnemy, t.canHitTraces, t.attackPosSearches, t.coverSearches, t.usCombatTraces,
-										t.usShooterTokens, t.shooterCandidates, t.shooterHolders, t.shooterGrants, t.shooterYields, t.shooterExpired, t.shooterDenied, t.shooterTests, t.shooterSniperAsks, t.dormTests, t.dormAsleep, t.dormClosedOff, t.dormFar, t.dormUnseen, t.dormWakes, t.dormSleeps, t.dormDeferred, t.dormForced, t.dormViolations, t.awakeNear2k, t.awakeNear4k, t.awakeNear8k, t.awakeFar, t.dormCatchUps, ( long long )aasBytes, ( long long )aasEvictions, ( long long )aasSaturated );	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md)
+										t.usShooterTokens, t.shooterCandidates, t.shooterHolders, t.shooterGrants, t.shooterYields, t.shooterExpired, t.shooterDenied, t.shooterTests, t.shooterSniperAsks, t.dormTests, t.dormAsleep, t.dormClosedOff, t.dormFar, t.dormUnseen, t.dormWakes, t.dormSleeps, t.dormDeferred, t.dormForced, t.dormViolations, t.awakeNear2k, t.awakeNear4k, t.awakeNear8k, t.awakeFar, t.dormCatchUps, ( long long )aasBytes, ( long long )aasEvictions, ( long long )aasSaturated, t.avoidDue, t.avoidEnrolled, t.avoidHits, t.avoidMisses, t.avoidUnenrolled );	//puncho - P0: appended avoidance counts; ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md)
 		if( aiProfileLen + len >= ( int )sizeof( aiProfileBuf ) )
 		{
 			FlushAIProfileLog();
@@ -7629,6 +7668,18 @@ bool idGameLocal::SimulateProjectiles()
 void idGameLocal::GetMapStats( mapGameStats_t& stats ) const
 {
 	memset( &stats, 0, sizeof( stats ) );
+	//puncho - P0: GetMapStats already snapshots the game after the join; no HUD/profile cvar dependency
+	if( concurrencyStats && concurrencyUsTic != 0 && gamestate == GAMESTATE_ACTIVE && !common->IsClient() )
+	{
+		stats.avoidDue = aiStats.avoidDue;
+		stats.avoidEnrolled = aiStats.avoidEnrolled;
+		stats.avoidHits = aiStats.avoidHits;
+		stats.avoidMisses = aiStats.avoidMisses;
+		stats.avoidUnenrolled = aiStats.avoidUnenrolled;
+		stats.concurrencyUsTic = concurrencyUsTic;
+		stats.concurrencyUsThink = concurrencyUsThink;
+		stats.concurrencyUsEvents = concurrencyUsEvents;
+	}
 	//puncho - instruments (P2 review): the live list, not all MAX_GENTITIES slots; com_showFPS 5 runs this in Draw on the
 	// game thread, inside the usGameRF figure it reports
 	for( const idEntity* ent = spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )

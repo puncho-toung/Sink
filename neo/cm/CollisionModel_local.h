@@ -339,6 +339,7 @@ public:
 #endif
 	// load collision models from a map file
 	void			LoadMap( const idMapFile* mapFile, bool ignoreOldCollisionFile );
+	bool			LoadMapChecked( const idMapFile* mapFile, bool ignoreOldCollisionFile ); //puncho - TC1
 	// frees all the collision models
 	void			FreeMap();
 
@@ -526,7 +527,7 @@ private:			// CollisionMap_load.cpp
 	void			RemapEdges( cm_node_t* node, int* edgeRemap );
 	void			OptimizeArrays( cm_model_t* model );
 	void			FinishModel( cm_model_t* model );
-	void			BuildModels( const idMapFile* mapFile, bool ignoreOldCollisionFile );
+	bool			BuildModels( const idMapFile* mapFile, bool ignoreOldCollisionFile );
 	cmHandle_t		FindModel( const char* name );
 	cm_model_t* 	CollisionModelForMapEntity( const idMapEntity* mapEnt );	// brush/patch model from .map
 	cm_model_t* 	LoadRenderModel( const char* fileName );					// ASE/LWO models
@@ -545,7 +546,7 @@ private:			// CollisionMap_files.cpp
 	int				CountBrushMemory( cm_node_t* node ) const;
 	void			WriteBrushes( idFile* fp, cm_node_t* node );
 	void			WriteCollisionModel( idFile* fp, cm_model_t* model );
-	void			WriteCollisionModelsToFile( const char* filename, int firstModel, int lastModel, unsigned int mapFileCRC );
+	bool			WriteCollisionModelsToFile( const char* filename, int firstModel, int lastModel, unsigned int mapFileCRC );
 	// loading
 	cm_node_t* 		ParseNodes( idLexer* src, cm_model_t* model, cm_node_t* parent );
 	void			ParseVertices( idLexer* src, cm_model_t* model );

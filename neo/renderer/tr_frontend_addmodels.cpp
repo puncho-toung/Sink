@@ -41,6 +41,10 @@ If you have questions concerning this license or the applicable additional terms
 #include "RenderCommon.h"
 #include "Model_local.h"
 
+//puncho - finite checks for diagnostic shadow-side bounds.
+#include <cmath>
+extern idCVar com_concurrencyStats;
+
 idCVar r_skipStaticShadows( "r_skipStaticShadows", "0", CVAR_RENDERER | CVAR_BOOL, "skip static shadows" );
 idCVar r_skipDynamicShadows( "r_skipDynamicShadows", "0", CVAR_RENDERER | CVAR_BOOL, "skip dynamic shadows" );
 idCVar r_useParallelAddModels( "r_useParallelAddModels", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NOCHEAT, "add all models in parallel with jobs" );
@@ -332,6 +336,12 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 
 	// globals we really should pass in...
 	const viewDef_t* viewDef = tr.viewDef;
+
+	//puncho - clear before every early return; only this job writes its histogram.
+	if( viewDef->shadowSideStats )
+	{
+		memset( vEntity->shadowSideHist, 0, sizeof( vEntity->shadowSideHist ) );
+	}
 
 	idRenderEntityLocal* entityDef = vEntity->entityDef;
 	const renderEntity_t* renderEntity = &entityDef->parms;
@@ -1255,6 +1265,85 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 
 					R_SetupDrawSurfJoints( shadowDrawSurf, tri, shader );
 
+					//puncho - occupancy only: never store a mask or change shadow submission.
+					if( viewDef->shadowSideStats )
+					{
+						if( vLight->pointLight && !vLight->parallel )
+						{
+							int sideCount = 6;
+							const float fov = viewDef->shadowSideFrustumFOV;
+							const float* matrix = vEntity->modelMatrixRel;
+							bool valid = !viewDef->shadowSidePSX && std::isfinite( fov ) && fov > 0.0f && fov < 180.0f;
+							if( valid )
+							{
+								for( int i = 0; i < 16; i++ )
+								{
+									valid = valid && std::isfinite( matrix[i] );
+								}
+								// The bounds transform below is affine, as is the backend's model matrix.
+								valid = valid && matrix[3] == 0.0f && matrix[7] == 0.0f && matrix[11] == 0.0f && matrix[15] == 1.0f;
+								for( int i = 0; i < 3; i++ )
+								{
+									valid = valid && std::isfinite( tri->bounds[0][i] ) && std::isfinite( tri->bounds[1][i] ) &&
+											std::isfinite( vLight->globalLightOrigin[i] ) && tri->bounds[0][i] <= tri->bounds[1][i];
+								}
+							}
+							if( valid )
+							{
+								const idMat3 axis( matrix[0], matrix[1], matrix[2], matrix[4], matrix[5], matrix[6], matrix[8], matrix[9], matrix[10] );
+								const idVec3 origin( matrix[12], matrix[13], matrix[14] );
+								idBounds box;
+								box.FromTransformedBounds( tri->bounds, origin, axis );
+								box.TranslateSelf( -vLight->globalLightOrigin );
+								const idVec3 extent = box[1] - box[0];
+								const float margin = 1.0f + 0.01f * Max( extent[0], Max( extent[1], extent[2] ) );
+								box.ExpandSelf( margin );
+								valid = std::isfinite( margin );
+								for( int i = 0; i < 3; i++ )
+								{
+									valid = valid && std::isfinite( box[0][i] ) && std::isfinite( box[1][i] ) && box[0][i] <= box[1][i];
+								}
+
+								// SetupShadowMapMatrices' degree conversion and rounded projection scale.
+								// Inverting that scale in double avoids narrowing the backend's side planes.
+								const float zNear = 4;
+								const float xmax = zNear * tan( fov * idMath::PI / 360.0f );
+								const float xmin = -xmax;
+								const float width = xmax - xmin;
+								const float projectionScale = 2.0f * zNear / width;
+								valid = valid && std::isfinite( width ) && width > 0.0f &&
+										std::isfinite( projectionScale ) && projectionScale > 0.0f;
+								if( valid )
+								{
+									const double tangent = 1.0 / static_cast<double>( projectionScale );
+									sideCount = 0;
+									for( int side = 0; side < 6; side++ )
+									{
+										// SetupShadowMapMatrices, before its OpenGL flip: +X,-X,+Y,-Y,+Z,-Z.
+										const int a = side / 2;
+										const int b = ( a + 1 ) % 3;
+										const int c = ( a + 2 ) % 3;
+										const double forward = ( side & 1 ) ? -static_cast<double>( box[0][a] ) : static_cast<double>( box[1][a] );
+										const double reach = forward * tangent;
+										// Reject only when the entire box is outside one side plane; no near/far rejection.
+										if( reach < box[0][b] || reach < -static_cast<double>( box[1][b] ) ||
+											reach < box[0][c] || reach < -static_cast<double>( box[1][c] ) )
+										{
+											continue;
+										}
+										sideCount++;
+									}
+									// A narrow/degenerate frustum may leave gaps. Keep uncertainty in the six-side bin.
+									if( sideCount == 0 )
+									{
+										sideCount = 6;
+									}
+								}
+							}
+							vEntity->shadowSideHist[sideCount - 1]++;
+						}
+					}
+
 					// determine which linked list to add the shadow surface to
 
 					//shadowDrawSurf->linkChain = shader->TestMaterialFlag( MF_NOSELFSHADOW ) ? &vLight->localShadows : &vLight->globalShadows;
@@ -1319,6 +1408,16 @@ void R_AddModels()
 {
 	SCOPED_PROFILE_EVENT( "R_AddModels" );
 
+	//puncho - capture diagnostic cvars once; no projection work with stats disabled.
+	tr.viewDef->shadowSideStats = com_concurrencyStats.GetBool();
+	if( tr.viewDef->shadowSideStats )
+	{
+		//puncho - this is the frontend's FOV; the backend reads the live cvar, so changes can skew this statistic.
+		tr.viewDef->shadowSideFrustumFOV = r_shadowMapFrustumFOV.GetFloat();
+		// Retain all sides throughout PSX mode, including zero or invalid jitter settings.
+		tr.viewDef->shadowSidePSX = r_renderMode.GetInteger() == RENDERMODE_PSX;
+	}
+
 	// RB: already done in R_FillMaskedOcclusionBufferWithModels
 	// tr.viewDef->viewEntitys = R_SortViewEntities( tr.viewDef->viewEntitys );
 
@@ -1353,6 +1452,21 @@ void R_AddModels()
 
 	for( viewEntity_t* vEntity = tr.viewDef->viewEntitys; vEntity != NULL; vEntity = vEntity->next )
 	{
+		//puncho - all model entities passed through R_AddSingleModel above. GUI spaces
+		// can be linked separately by EmitSurfaces and have no model-job output to merge.
+		if( tr.viewDef->shadowSideStats )
+		{
+			if( !vEntity->isGuiSurface )
+			{
+				for( int sideCount = 1; sideCount <= 6; sideCount++ )
+				{
+					const int pairs = vEntity->shadowSideHist[sideCount - 1];
+					tr.pc.c_shadowSidePairs += pairs;
+					tr.pc.c_shadowSideTotal += sideCount * pairs;
+					tr.pc.c_shadowSideHist[sideCount - 1] += pairs;
+				}
+			}
+		}
 		tr.pc.c_contactedCapHits += vEntity->contactedCapHits;
 		tr.pc.c_lodEntities1 += vEntity->lodLevel == 1;
 		tr.pc.c_lodEntities2 += vEntity->lodLevel == 2;

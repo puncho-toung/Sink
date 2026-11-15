@@ -70,6 +70,8 @@ public:
 	virtual void			ForceFlush();
 	// Causes any buffered data to be written to the file.
 	virtual void			Flush();
+	//puncho - TC1: drain userspace buffers with a result; no disk sync is required.
+	virtual bool			FlushChecked();
 	// Seek on a file.
 	virtual int				Seek( long offset, fsOrigin_t origin );
 	// Go back to the beginning of the file.
@@ -143,6 +145,46 @@ public:
 		}
 		return r;
 	}
+};
+
+//puncho - TC1: owns an open output. Checked Close commits; destruction without Close aborts.
+class idFile_WriteBuffer : public idFile
+{
+public:
+	idFile_WriteBuffer();
+	virtual ~idFile_WriteBuffer();
+	void					Init( idFile* destination, bool measureWrites = false );
+	bool					Close();
+	void					Abort();
+	static void				AbortAll(); //puncho - standalone errors do not unwind
+	virtual int				Write( const void* buffer, int len );
+	virtual int				Length() const;
+	virtual ID_TIME_T		Timestamp() const;
+	virtual bool			FlushChecked();
+	virtual int				Tell() const;
+	virtual int				Seek( long offset, fsOrigin_t origin );
+	virtual void			Flush();
+	virtual void			ForceFlush();
+	virtual const char*		GetName() const;
+	virtual const char*		GetFullPath() const;
+	int						GetWriteMilliseconds() const { return writeMilliseconds; }
+
+private:
+	idFile_WriteBuffer( const idFile_WriteBuffer& );
+	idFile_WriteBuffer& operator=( const idFile_WriteBuffer& );
+	bool					FlushBuffer() const;
+	int						WriteThrough( const void* buffer, int len ) const;
+	void					Unlink();
+	static idFile_WriteBuffer* liveWriters;
+	idFile_WriteBuffer*	previous;
+	idFile_WriteBuffer*	next;
+	static const int		BUFFER_SIZE = 1024 * 1024;
+	idFile*					dst;
+	byte*					buf;
+	mutable int				used;
+	mutable bool			failed;
+	bool					timeWrites;
+	mutable int				writeMilliseconds;
 };
 
 /*
@@ -299,6 +341,8 @@ public:
 	virtual void			ForceFlush();
 	virtual void			Flush();
 	virtual int				Seek( long offset, fsOrigin_t origin );
+
+	virtual bool			FlushChecked(); //puncho - TC1
 
 	// returns file pointer
 	idFileHandle			GetFilePtr()

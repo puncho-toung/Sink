@@ -50,6 +50,8 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "CollisionModel_local.h"
+#include "../tools/compilers/compiler_public.h" //puncho - TC1
+#include "../tools/compilers/dmap/CompilerPhase.h" //puncho - TC0
 #include "../renderer/Model_gltf.h"
 
 #define CMODEL_BINARYFILE_EXT	"bcmodel"
@@ -3864,6 +3866,53 @@ cm_model_t* idCollisionModelManagerLocal::LoadBinaryModel( const char* fileName,
 	return LoadBinaryModelFromFile( file, sourceTimeStamp );
 }
 
+//puncho start - TC1b: hashes only find indices; the list still assigns first-encounter numbering.
+static int CM_WritePointerKey( const void* pointer, const idHashIndex& hash )
+{
+	const uint64 bits = ( uint64 )( uintptr_t )pointer;
+	return hash.GenerateKey( ( int )( ( bits * 0x9E3779B97F4A7C15ULL ) >> 32 ) );
+}
+
+template< typename T >
+static int CM_WriteFindIndex( const idList< T* >& list, const idHashIndex& hash, T* pointer )
+{
+	if( list.Num() < 64 )
+	{
+		return list.FindIndex( pointer );
+	}
+	for( int i = hash.First( CM_WritePointerKey( pointer, hash ) ); i != -1; i = hash.Next( i ) )
+	{
+		if( list[i] == pointer )
+		{
+			return i;
+		}
+	}
+	return -1;
+}
+
+template< typename T >
+static void CM_WriteAddUnique( idList< T* >& list, idHashIndex& hash, T* pointer )
+{
+	if( CM_WriteFindIndex( list, hash, pointer ) != -1 )
+	{
+		return;
+	}
+	const int index = list.Append( pointer );
+	if( list.Num() == 64 )
+	{
+		// The first 63 entries use no hash allocation or initialization.
+		for( int i = 0; i < list.Num(); i++ )
+		{
+			hash.Add( CM_WritePointerKey( list[i], hash ), i );
+		}
+	}
+	else if( list.Num() > 64 )
+	{
+		hash.Add( CM_WritePointerKey( pointer, hash ), index );
+	}
+}
+//puncho end
+
 /*
 ================
 idCollisionModelManagerLocal::WriteBinaryModel
@@ -3912,57 +3961,61 @@ void idCollisionModelManagerLocal::WriteBinaryModelToFile( cm_model_t* model, id
 	file->WriteBig( model->brushMemory );
 	struct local
 	{
-		static void BuildUniqueLists( cm_node_t* node, idList< cm_polygon_t* >& polys, idList< cm_brush_t* >& brushes )
+		static void BuildUniqueLists( cm_node_t* node, idList< cm_polygon_t* >& polys, idList< cm_brush_t* >& brushes, idHashIndex& polyIndex, idHashIndex& brushIndex )
 		{
 			for( cm_polygonRef_t* pr = node->polygons; pr != NULL; pr = pr->next )
 			{
-				polys.AddUnique( pr->p );
+				CM_WriteAddUnique( polys, polyIndex, pr->p );
 			}
 			for( cm_brushRef_t* br = node->brushes; br != NULL; br = br->next )
 			{
-				brushes.AddUnique( br->b );
+				CM_WriteAddUnique( brushes, brushIndex, br->b );
 			}
 			if( node->planeType != -1 )
 			{
-				BuildUniqueLists( node->children[0], polys, brushes );
-				BuildUniqueLists( node->children[1], polys, brushes );
+				BuildUniqueLists( node->children[0], polys, brushes, polyIndex, brushIndex );
+				BuildUniqueLists( node->children[1], polys, brushes, polyIndex, brushIndex );
 			}
 		}
-		static void WriteNodeTree( idFile* file, cm_node_t* node, idList< cm_polygon_t* >& polys, idList< cm_brush_t* >& brushes )
+		static void WriteNodeTree( idFile* file, cm_node_t* node, idList< cm_polygon_t* >& polys, idList< cm_brush_t* >& brushes, idHashIndex& polyIndex, idHashIndex& brushIndex )
 		{
 			file->WriteBig( node->planeType );
 			file->WriteBig( node->planeDist );
 			for( cm_polygonRef_t* pr = node->polygons; pr != NULL; pr = pr->next )
 			{
-				file->WriteBig( polys.FindIndex( pr->p ) );
+				file->WriteBig( CM_WriteFindIndex( polys, polyIndex, pr->p ) );
 			}
 			file->WriteBig( -1 );
 			for( cm_brushRef_t* br = node->brushes; br != NULL; br = br->next )
 			{
-				file->WriteBig( brushes.FindIndex( br->b ) );
+				file->WriteBig( CM_WriteFindIndex( brushes, brushIndex, br->b ) );
 			}
 			file->WriteBig( -1 );
 			if( node->planeType != -1 )
 			{
-				WriteNodeTree( file, node->children[0], polys, brushes );
-				WriteNodeTree( file, node->children[1], polys, brushes );
+				WriteNodeTree( file, node->children[0], polys, brushes, polyIndex, brushIndex );
+				WriteNodeTree( file, node->children[1], polys, brushes, polyIndex, brushIndex );
 			}
 		}
 	};
+	//puncho - TC1b: power-of-two buckets plus one chain index, at most 8 bytes per primitive.
+	idHashIndex polyIndex( idMath::FloorPowerOfTwo( Max( 1, model->numPolygons ) ), Max( 64, model->numPolygons ) );
+	idHashIndex brushIndex( idMath::FloorPowerOfTwo( Max( 1, model->numBrushes ) ), Max( 64, model->numBrushes ) );
 	idList< cm_polygon_t* > polys;
 	idList< cm_brush_t* > brushes;
-	local::BuildUniqueLists( model->node, polys, brushes );
+	local::BuildUniqueLists( model->node, polys, brushes, polyIndex, brushIndex );
 	assert( polys.Num() == model->numPolygons );
 	assert( brushes.Num() == model->numBrushes );
 
 	idList< const idMaterial* > materials;
+	idHashIndex materialIndex( 256, 256 );
 	for( int i = 0; i < polys.Num(); i++ )
 	{
-		materials.AddUnique( polys[i]->material );
+		CM_WriteAddUnique( materials, materialIndex, polys[i]->material );
 	}
 	for( int i = 0; i < brushes.Num(); i++ )
 	{
-		materials.AddUnique( brushes[i]->material );
+		CM_WriteAddUnique( materials, materialIndex, brushes[i]->material );
 	}
 	file->WriteBig( materials.Num() );
 	for( int i = 0; i < materials.Num(); i++ )
@@ -3978,7 +4031,7 @@ void idCollisionModelManagerLocal::WriteBinaryModelToFile( cm_model_t* model, id
 	}
 	for( int i = 0; i < polys.Num(); i++ )
 	{
-		file->WriteBig( ( int )materials.FindIndex( polys[i]->material ) );
+		file->WriteBig( ( int )CM_WriteFindIndex( materials, materialIndex, polys[i]->material ) );
 		file->WriteBig( polys[i]->numEdges );
 		file->WriteBig( polys[i]->bounds );
 		file->WriteBig( polys[i]->checkcount );
@@ -3988,7 +4041,7 @@ void idCollisionModelManagerLocal::WriteBinaryModelToFile( cm_model_t* model, id
 	}
 	for( int i = 0; i < brushes.Num(); i++ )
 	{
-		file->WriteBig( ( int )materials.FindIndex( brushes[i]->material ) );
+		file->WriteBig( ( int )CM_WriteFindIndex( materials, materialIndex, brushes[i]->material ) );
 		file->WriteBig( brushes[i]->numPlanes );
 		file->WriteBig( brushes[i]->checkcount );
 		file->WriteBig( brushes[i]->bounds );
@@ -3996,7 +4049,7 @@ void idCollisionModelManagerLocal::WriteBinaryModelToFile( cm_model_t* model, id
 		file->WriteBig( brushes[i]->primitiveNum );
 		file->WriteBigArray( brushes[i]->planes, brushes[i]->numPlanes );
 	}
-	local::WriteNodeTree( file, model->node, polys, brushes );
+	local::WriteNodeTree( file, model->node, polys, brushes, polyIndex, brushIndex );
 }
 
 /*
@@ -4006,13 +4059,20 @@ idCollisionModelManagerLocal::WriteBinaryModel
 */
 void idCollisionModelManagerLocal::WriteBinaryModel( cm_model_t* model, const char* fileName, ID_TIME_T sourceTimeStamp )
 {
-	idFileLocal file( fileSystem->OpenFileWrite( fileName, "fs_basepath" ) );
+	idFile* file = fileSystem->OpenFileWrite( fileName, "fs_basepath" );
 	if( file == NULL )
 	{
 		common->Printf( "Failed to open %s\n", fileName );
 		return;
 	}
-	WriteBinaryModelToFile( model, file, sourceTimeStamp );
+	//puncho - TC1: model caches use the same checked writer as the map cache.
+	idFile_WriteBuffer bufferedFile;
+	bufferedFile.Init( file );
+	WriteBinaryModelToFile( model, &bufferedFile, sourceTimeStamp );
+	if( !bufferedFile.Close() )
+	{
+		common->Warning( "Error writing %s", fileName );
+	}
 }
 
 /*
@@ -4435,8 +4495,9 @@ void idCollisionModelManagerLocal::ListModels()
 idCollisionModelManagerLocal::BuildModels
 ================
 */
-void idCollisionModelManagerLocal::BuildModels( const idMapFile* mapFile, bool ignoreOldCollisionFile )
+bool idCollisionModelManagerLocal::BuildModels( const idMapFile* mapFile, bool ignoreOldCollisionFile )
 {
+	bool written = true; //puncho - TC1: report output status after the normal load diagnostics
 	int i;
 	const idMapEntity* mapEnt;
 
@@ -4447,8 +4508,12 @@ void idCollisionModelManagerLocal::BuildModels( const idMapFile* mapFile, bool i
 	{
 		if( !mapFile->GetNumEntities() )
 		{
-			return;
+			return true;
 		}
+
+		//puncho - TC0: only actual construction, never the cache-hit load path.
+		const bool phaseTimes = dmap_phaseTimes.GetBool();
+		int phaseStart = phaseTimes ? Sys_Milliseconds() : 0;
 
 		// load the .proc file bsp for data optimisation
 		LoadProcBSP( mapFile->GetName() );
@@ -4474,8 +4539,19 @@ void idCollisionModelManagerLocal::BuildModels( const idMapFile* mapFile, bool i
 		Mem_Free( procNodes );
 		procNodes = NULL;
 
+		//puncho - TC0
+		if( phaseTimes )
+		{
+			const int now = Sys_Milliseconds();
+			DmapPhaseAdd( DP_CM_BUILD, now - phaseStart );
+			phaseStart = now;
+		}
 		// write the collision models to a file
-		WriteCollisionModelsToFile( mapFile->GetName(), 0, numModels, mapFile->GetGeometryCRC() );
+		written = WriteCollisionModelsToFile( mapFile->GetName(), 0, numModels, mapFile->GetGeometryCRC() ); //puncho - TC1
+		if( phaseTimes )
+		{
+			DmapPhaseAdd( DP_CM_WRITE, Sys_Milliseconds() - phaseStart );
+		}
 	}
 
 	timer.Stop();
@@ -4491,6 +4567,7 @@ void idCollisionModelManagerLocal::BuildModels( const idMapFile* mapFile, bool i
 	{
 		common->Printf( "cm: mergesRefused %d polygonsRefused %d\n", numMergesRefused, numPolygonsRefused );
 	}
+	return written;
 }
 
 
@@ -4537,13 +4614,26 @@ void idCollisionModelManagerLocal::Preload( const char* mapName )
 idCollisionModelManagerLocal::LoadMap
 ================
 */
+//puncho - TC1: game loads keep the rebuilt models even when saving the .cm fails.
 void idCollisionModelManagerLocal::LoadMap( const idMapFile* mapFile, bool ignoreOldCollisionFile )
+{
+	LoadMapChecked( mapFile, ignoreOldCollisionFile );
+}
+
+bool CM_CompileMap( const idMapFile* mapFile )
+{
+	const bool written = collisionModelManagerLocal.LoadMapChecked( mapFile, true );
+	collisionModelManagerLocal.FreeMap();
+	return written;
+}
+
+bool idCollisionModelManagerLocal::LoadMapChecked( const idMapFile* mapFile, bool ignoreOldCollisionFile )
 {
 
 	if( mapFile == NULL )
 	{
 		common->Error( "idCollisionModelManagerLocal::LoadMap: NULL mapFile" );
-		return;
+		return false;
 	}
 
 	// check whether we can keep the current collision map based on the mapName and mapFileTime
@@ -4554,7 +4644,7 @@ void idCollisionModelManagerLocal::LoadMap( const idMapFile* mapFile, bool ignor
 			if( mapFile->GetFileTime() == mapFileTime )
 			{
 				common->DPrintf( "Using loaded version\n" );
-				return;
+				return true;
 			}
 			common->DPrintf( "Reloading modified map\n" );
 		}
@@ -4580,7 +4670,7 @@ void idCollisionModelManagerLocal::LoadMap( const idMapFile* mapFile, bool ignor
 	common->UpdateLevelLoadPacifier();
 
 	// build collision models
-	BuildModels( mapFile, ignoreOldCollisionFile );
+	const bool written = BuildModels( mapFile, ignoreOldCollisionFile ); //puncho - TC1
 
 	common->UpdateLevelLoadPacifier();
 
@@ -4591,6 +4681,7 @@ void idCollisionModelManagerLocal::LoadMap( const idMapFile* mapFile, bool ignor
 
 	// shutdown the hash
 	ShutdownHash();
+	return written; //puncho - TC1: loaded is set, so FreeMap can release every model
 }
 
 /*
