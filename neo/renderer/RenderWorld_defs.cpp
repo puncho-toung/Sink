@@ -33,14 +33,6 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "RenderCommon.h"
 
-// parallel (sun) lights are faked as a point this far along their direction.
-// 1e9 keeps the direction error under 0.03 degrees anywhere in the world:
-// the MIN_WORLD_COORD..MAX_WORLD_COORD diagonal is ~454k units, atan( 454k / 1e9 ) ~= 0.026.
-// Never larger (and never INFINITUM): the shaders take the vector to this point
-// ( interactionSM.vs.hlsl:144 and :213 ) and normalize it, which forms dot( L, L ) in fp32,
-// so |L| must stay below sqrt( FLT_MAX ) ~= 1.8e19.
-static const float PARALLEL_LIGHT_FAKE_DISTANCE = 1.0e9f;
-
 /*
 =================================================================================
 
@@ -654,6 +646,7 @@ void R_DeriveLightData( idRenderLightLocal* light )
 			// make point straight up if not specified
 			dir[2] = 1.0f;
 		}
+		// PARALLEL_LIGHT_FAKE_DISTANCE and why 1e9: see RenderWorld.h
 		light->globalLightOrigin = light->parms.origin + dir * PARALLEL_LIGHT_FAKE_DISTANCE;
 	}
 	else
@@ -1201,6 +1194,9 @@ ReloadModels and RegenerateWorld call this
 */
 void R_FreeDerivedData()
 {
+	// ---- TRACK S: this free reaches no notify call ----
+	R_ShadowCacheInvalidateAll();
+	// ---- END TRACK S ----
 	for( int j = 0; j < tr.worlds.Num(); j++ )
 	{
 		idRenderWorldLocal* rw = tr.worlds[j];
@@ -1261,6 +1257,9 @@ void R_CheckForEntityDefsUsingModel( idRenderModel* model )
 			{
 				//assert( 0 );
 				// this should never happen but Radiant messes it up all the time so just free the derived data
+				// ---- TRACK S: this free reaches no notify call ----
+				R_ShadowCacheInvalidateAll();
+				// ---- END TRACK S ----
 				R_FreeEntityDefDerivedData( def, false, false );
 			}
 		}

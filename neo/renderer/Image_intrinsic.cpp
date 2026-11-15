@@ -674,6 +674,36 @@ static void R_CreateShadowMapImage_Atlas( idImage* image, nvrhi::ICommandList* c
 	image->GenerateImage( NULL, r_shadowMapAtlasSize.GetInteger(), r_shadowMapAtlasSize.GetInteger(), TF_LINEAR, TR_CLAMP_TO_ZERO_ALPHA, TD_DEPTH, commandList, true );
 }
 
+// track S ( S2b ): the shadow cache. Like the shadow atlas, but NOT reloaded by Framebuffer::ReloadImages:
+// their size does not follow the window, and a reload throws their contents away.
+// The six images ( 84 MiB at the default sizes ) get a texture only at r_shadowCache 2, and keep it until a
+// reloadImages below that mode. Below mode 2 a generator makes nothing and gives back what the image had, so
+// the engine's start and reloadImages leave them empty in modes 0 and 1 ( vid_restart, a window resize and a
+// new map run no generator ). When the mode goes up, R_ShadowCachePublish makes them, between two frames.
+// Every user of them takes an image without a texture.
+static void R_CreateShadowCacheImage_Atlas( idImage* image, nvrhi::ICommandList* commandList )
+{
+	if( r_shadowCache.GetInteger() < 2 )
+	{
+		image->PurgeImage();
+		return;
+	}
+	// r_shadowCacheSize is read here, when the image is created ( D77 ). Only the two sizes the plan names:
+	// the frontend hands out tiles in Z order and needs a power of two
+	const int size = ( r_shadowCacheSize.GetInteger() >= 8192 ) ? 8192 : 4096;
+	image->GenerateImage( NULL, size, size, TF_LINEAR, TR_CLAMP_TO_ZERO_ALPHA, TD_DEPTH, commandList, true );
+}
+
+static void R_CreateShadowCacheImage_Cascade( idImage* image, nvrhi::ICommandList* commandList )
+{
+	if( r_shadowCache.GetInteger() < 2 )
+	{
+		image->PurgeImage();
+		return;
+	}
+	image->GenerateImage( NULL, shadowMapResolutions[0], shadowMapResolutions[0], TF_LINEAR, TR_CLAMP_TO_ZERO_ALPHA, TD_DEPTH, commandList, true );
+}
+
 static void R_CreateShadowMapImage_Res0( idImage* image, nvrhi::ICommandList* commandList )
 {
 	int size = shadowMapResolutions[0];
@@ -1075,6 +1105,13 @@ void idImageManager::CreateIntrinsicImages()
 
 	// RB begin
 	shadowAtlasImage = ImageFromFunction( "_shadowMapAtlas", R_CreateShadowMapImage_Atlas );
+	// ---- TRACK S: the shadow cache images ( ImageFromFunction, D45 ); their textures only at r_shadowCache 2 ----
+	shadowCacheAtlasImage = ImageFromFunction( "_shadowCacheAtlas", R_CreateShadowCacheImage_Atlas );
+	for( int i = 0; i < 5; i++ )
+	{
+		shadowCacheCascadeImage[i] = ImageFromFunction( va( "_shadowCacheCascade%i", i ), R_CreateShadowCacheImage_Cascade );
+	}
+	// ---- END TRACK S ----
 	shadowImage[0] = ImageFromFunction( va( "_shadowMapArray0_%i", shadowMapResolutions[0] ), R_CreateShadowMapImage_Res0 );
 	shadowImage[1] = ImageFromFunction( va( "_shadowMapArray1_%i", shadowMapResolutions[1] ), R_CreateShadowMapImage_Res1 );
 	shadowImage[2] = ImageFromFunction( va( "_shadowMapArray2_%i", shadowMapResolutions[2] ), R_CreateShadowMapImage_Res2 );

@@ -755,6 +755,8 @@ void LightInfo::Defaults()
 	skipSpecular = false;
 	hasCenter = false;
 	lightStyle = -1;
+	primarySun = false;
+	forwardMode = 0;
 
 	hasLightOrigin = false;
 	angles.Zero();
@@ -850,6 +852,8 @@ void LightInfo::FromDict( const idDict* e )
 	strTexture = e->GetString( "texture" );
 
 	bool isParallel = e->GetBool( "parallel" );
+	primarySun = e->GetBool( "primarySun" );
+	forwardMode = idMath::ClampInt( 0, 2, e->GetInt( "forward", 0 ) );
 
 	if( !e->GetVector( "_color", "", color ) )
 	{
@@ -1142,6 +1146,25 @@ void LightInfo::ToDict( idDict* e )
 	else
 	{
 		e->Set( "style", DELETE_VAL );
+	}
+
+	// X0: primarySun only means something on a sun; forward 0 is the default, so it needs no key
+	if( primarySun && lightType == LIGHT_SUN )
+	{
+		e->Set( "primarySun", "1" );
+	}
+	else
+	{
+		e->Set( "primarySun", DELETE_VAL );
+	}
+
+	if( forwardMode == 1 || forwardMode == 2 )
+	{
+		e->SetInt( "forward", forwardMode );
+	}
+	else
+	{
+		e->Set( "forward", DELETE_VAL );
 	}
 
 	e->Set( "rotation", DELETE_VAL );
@@ -2845,6 +2868,11 @@ void LightEditor::Draw()
 			{
 				ImGui::TextDisabled( "As an emitter the lit box is centred on the bulb: it moved by the offset." );
 			}
+			//puncho - reconcile: the primary sun control also applies to an emitter sun
+			if( lightSelectionRadioBtn == LIGHT_SUN )
+			{
+				changes |= ImGui::Checkbox( "Primary sun", &cur.primarySun );
+			}
 			ImGui::PopItemWidth(); // back to default alignment on right side
 		}
 		else if( lightSelectionRadioBtn == LIGHT_SPOT )
@@ -3073,6 +3101,10 @@ void LightEditor::Draw()
 
 		changes |= ImGui::Checkbox( "Cast Shadows", &cur.castShadows );
 		changes |= ImGui::Checkbox( "Skip Specular", &cur.skipSpecular );
+
+		// X0: the mapper's override of the lighting path ( track F ); Auto writes no key
+		static const char* forwardPathOptions[] = { "Auto", "Forward list", "Legacy" };
+		changes |= ImGui::Combo( "Lighting path", &cur.forwardMode, forwardPathOptions, IM_ARRAYSIZE( forwardPathOptions ) );
 
 		// TODO: allow multiple lights selected at the same time + "apply different" button?
 		//       then only the changed attribute (e.g. color) would be set to all lights,

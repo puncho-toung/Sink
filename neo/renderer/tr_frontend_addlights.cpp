@@ -328,6 +328,8 @@ static void R_AddSingleLight( viewLight_t* vLight )
 	vLight->baseLightProject = light->baseLightProject;
 	vLight->pointLight = light->parms.pointLight;
 	vLight->parallel = light->parms.parallel;
+	vLight->isPrimarySun = light->isPrimarySun;	// X0 ( D73 ): the world picked its sun; the view light copies the flag
+	vLight->recordNumber = -1;					// X0: no record until F1 numbers the lights (the allocation is cleared, so the other X0 fields are already zero)
 	vLight->lightCenter = light->parms.lightCenter;
 	// RB end
 
@@ -414,6 +416,10 @@ static void R_AddSingleLight( viewLight_t* vLight )
 	vLight->shaderRegisters = lightRegs;
 
 	const bool lightCastsShadows = light->LightCastsShadows();
+
+	// track S ( S2c ): a light that draws its static shadow maps this frame keeps every cacheable caster of
+	// its volume in its chain, whatever the camera sees; R_AddSingleModel reads the flag
+	vLight->shadowFullGather = lightCastsShadows && R_ShadowCacheFullGather( viewDef, light );
 
 	if( r_useLightScissors.GetInteger() != 0 )
 	{
@@ -939,7 +945,10 @@ static void R_AddSingleLight( viewLight_t* vLight )
 
 			// this doesn't say that the shadow can't effect anything, only that it can't
 			// effect anything in the view, so we shouldn't set up a view entity
-			if( idRenderMatrix::CullBoundsToMVP( viewDef->worldCullMVP, shadowBounds ) )
+
+			// track S ( S2c ): a cacheable caster of a light that draws its static maps is kept even when its
+			// shadow misses the view: the static map must hold it when the camera turns
+			if( !( vLight->shadowFullGather && R_ShadowCacheEntityCacheable( edef ) ) && idRenderMatrix::CullBoundsToMVP( viewDef->worldCullMVP, shadowBounds ) )
 			{
 				continue;
 			}
@@ -1128,7 +1137,7 @@ void R_OptimizeViewLightsList()
 		numViewLights++;
 		// If the light didn't have any lit surfaces visible, there is no need to
 		// draw any of the shadows.  We still keep the vLight for debugging draws.
-		if( !vLight->localInteractions && !vLight->globalInteractions && !vLight->translucentInteractions )
+		if( !R_ViewLightIsLit( vLight ) )
 		{
 			vLight->localShadows = NULL;
 			vLight->globalShadows = NULL;
@@ -1164,6 +1173,13 @@ void R_OptimizeViewLightsList()
 			idScreenRect surfRect;
 
 			if( !vLight->lightShader->LightCastsShadows() )
+			{
+				continue;
+			}
+
+			// X0 ( F39 ): a light that is lit only through the light lists or the fog has no chain rectangles to unite;
+			// shrinking would empty its scissor. An unlit light still goes through the shrink exactly as before X0.
+			if( !vLight->localInteractions && !vLight->globalInteractions && !vLight->translucentInteractions && R_ViewLightIsLit( vLight ) )
 			{
 				continue;
 			}

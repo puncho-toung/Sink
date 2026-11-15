@@ -455,6 +455,8 @@ void idPlayerView::SingleView( const renderView_t* view, idMenuHandler_HUD* hudM
 	if( gameLocal.portalSkyEnt.GetEntity() && gameLocal.IsPortalSkyAcive() && g_enablePortalSky.GetBool() )
 	{
 		renderView_t portalView = hackedView;
+		// X0 ( D28, D41 ): the sky box view takes no froxel fog
+		portalView.rdflags |= RDF_NOFOG;
 		idEntity* skyEnt = gameLocal.portalSkyEnt.GetEntity();
 		if( skyEnt->IsType( idPortalSky::Type ) )
 		{

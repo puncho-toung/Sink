@@ -317,6 +317,26 @@ void R_SetupDrawSurfJoints( drawSurf_t* drawSurf, const srfTriangles_t* tri, con
 
 /*
 ===================
+R_GrowContactedLights
+
+Track F ( F1 ): an entity that touches more lights than its two arrays hold moves both to frame memory at twice
+the size. Only such an entity pays; the arrays of every other stay on the stack of R_AddSingleModel.
+===================
+*/
+static void R_GrowContactedLights( viewLight_t**& contactedLights, idInteraction**& staticInteractions, int& maxContactedLights )
+{
+	const int grown = maxContactedLights * 2;
+	viewLight_t** lights = ( viewLight_t** )R_FrameAlloc( grown * sizeof( viewLight_t* ), FRAME_ALLOC_UNKNOWN );
+	idInteraction** interactions = ( idInteraction** )R_FrameAlloc( grown * sizeof( idInteraction* ), FRAME_ALLOC_UNKNOWN );
+	memcpy( lights, contactedLights, maxContactedLights * sizeof( viewLight_t* ) );
+	memcpy( interactions, staticInteractions, maxContactedLights * sizeof( idInteraction* ) );
+	contactedLights = lights;
+	staticInteractions = interactions;
+	maxContactedLights = grown;
+}
+
+/*
+===================
 R_AddSingleModel
 
 May be run in parallel.
@@ -375,9 +395,18 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 	// OPTIMIZE: world areas can assume all referenced lights are used
 	//---------------------------
 	int	numContactedLights = 0;
-	static const int MAX_CONTACTED_LIGHTS = 128;
-	viewLight_t* contactedLights[MAX_CONTACTED_LIGHTS];
-	idInteraction* staticInteractions[MAX_CONTACTED_LIGHTS];
+	// ---- TRACK F: no cap on the lights of an entity ( F1, D78 ) ----
+	// An entity keeps every light of the view that touches it, and with them the casters of those lights ( a world
+	// area is one entity ). Until F1 the two arrays held 128 entries and the lights past them were dropped, in the
+	// view's order. They start on the stack at that size, and an entity that touches more lights moves them to
+	// frame memory ( R_GrowContactedLights )
+	static const int STACK_CONTACTED_LIGHTS = 128;
+	viewLight_t* stackContactedLights[STACK_CONTACTED_LIGHTS];
+	idInteraction* stackStaticInteractions[STACK_CONTACTED_LIGHTS];
+	viewLight_t** contactedLights = stackContactedLights;
+	idInteraction** staticInteractions = stackStaticInteractions;
+	int maxContactedLights = STACK_CONTACTED_LIGHTS;
+	// ---- END TRACK F ----
 
 	if( renderEntity->hModel == NULL ||
 			renderEntity->hModel->ModelHasInteractingSurfaces() ||
@@ -395,13 +424,13 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 				// new code path, everything was done in AddLight
 				if( vLight->entityInteractionState[entityIndex] == viewLight_t::INTERACTION_YES )
 				{
+					if( numContactedLights == maxContactedLights )
+					{
+						R_GrowContactedLights( contactedLights, staticInteractions, maxContactedLights );		// track F
+					}
 					contactedLights[numContactedLights] = vLight;
 					staticInteractions[numContactedLights] = world->GetInteraction( vLight->lightDef->index, entityIndex );
-					if( ++numContactedLights == MAX_CONTACTED_LIGHTS )
-					{
-						vEntity->contactedCapHits = 1;
-						break;
-					}
+					numContactedLights++;
 				}
 				continue;
 			}
@@ -447,18 +476,21 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 
 				// this doesn't say that the shadow can't effect anything, only that it can't
 				// effect anything in the view
-				if( idRenderMatrix::CullBoundsToMVP( viewDef->worldCullMVP, shadowBounds ) )
+
+				// track S ( S2c ): see R_AddSingleLight: a cacheable caster of a light that draws its static
+				// maps is kept even when its shadow misses the view
+				if( !( vLight->shadowFullGather && R_ShadowCacheEntityCacheable( entityDef ) ) && idRenderMatrix::CullBoundsToMVP( viewDef->worldCullMVP, shadowBounds ) )
 				{
 					continue;
 				}
 			}
+			if( numContactedLights == maxContactedLights )
+			{
+				R_GrowContactedLights( contactedLights, staticInteractions, maxContactedLights );				// track F
+			}
 			contactedLights[numContactedLights] = vLight;
 			staticInteractions[numContactedLights] = world->GetInteraction( vLight->lightDef->index, entityIndex );
-			if( ++numContactedLights == MAX_CONTACTED_LIGHTS )
-			{
-				vEntity->contactedCapHits = 1;
-				break;
-			}
+			numContactedLights++;
 		}
 	}
 
@@ -814,14 +846,28 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 					surfaceBounds = tri->bounds;
 				}
 
+				// F1 ( impl/BUILD-AND-G0.md 10 ): like the light test, this test is formed in the
+				// render-origin frame, the same frame the occluders are rasterised in, not from
+				// renderEntity->origin times worldCullUnjitteredMVP. The absolute product cancels two
+				// world-sized translations in float, and far from the map origin a surface box whose face
+				// lies on an occluder lands behind it and is culled. At r_cameraRelative 0 the origin is
+				// zero and both products are the same bits.
+				idVec3 relativeOrigin = renderEntity->origin;
+				if( !renderOrigin.IsZero() )
+				{
+					// only the translation moves, subtracted in double from the entity origin
+					relativeOrigin.x = float( double( renderEntity->origin.x ) - renderOrigin.x );
+					relativeOrigin.y = float( double( renderEntity->origin.y ) - renderOrigin.y );
+					relativeOrigin.z = float( double( renderEntity->origin.z ) - renderOrigin.z );
+				}
 				idRenderMatrix modelRenderMatrix;
-				idRenderMatrix::CreateFromOriginAxis( renderEntity->origin, renderEntity->axis, modelRenderMatrix );
+				idRenderMatrix::CreateFromOriginAxis( relativeOrigin, renderEntity->axis, modelRenderMatrix );
 
 				idRenderMatrix inverseBaseModelProject;
 				idRenderMatrix::OffsetScaleForBounds( modelRenderMatrix, surfaceBounds, inverseBaseModelProject );
 
 				idRenderMatrix invProjectMVPMatrix;
-				idRenderMatrix::Multiply( viewDef->worldCullUnjitteredMVP, inverseBaseModelProject, invProjectMVPMatrix );
+				idRenderMatrix::Multiply( viewDef->worldSpace.unjitteredMVP, inverseBaseModelProject, invProjectMVPMatrix );
 
 				vEntity->mocTests += 1;
 
@@ -855,6 +901,7 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 		//--------------------------
 		const float* shaderRegisters = NULL;
 		drawSurf_t* baseDrawSurf = NULL;
+		bool baseLinked = false;									// track F: only a surface linked to the view can hold a run
 		if( surfaceDirectlyVisible && shader->IsDrawn() )
 		{
 			//puncho - static arena (P2b.1.8): a stale static handle (its segment reset since) fails CacheIsCurrent, which
@@ -932,6 +979,7 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 				baseDrawSurf->indexCache = tri->indexCache;
 
 				baseDrawSurf->linkChain = NULL;		// link to the view
+				baseLinked = true;
 				baseDrawSurf->nextOnLight = vEntity->drawSurfs;
 				vEntity->drawSurfs = baseDrawSurf;
 			}
@@ -1082,10 +1130,20 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 						shaderRegisters = scratchSurf.shaderRegisters;
 					}
 
-					if( shaderRegisters != NULL )
+					// ---- TRACK F: the pair is listed on the base surface instead of getting a lit surface ( C5, C13 ) ----
+					// The tests above ( the spectrum, the static interaction's empty triangle list, the entity's interaction
+					// state ) all ran, so every exclusion the job applies is in the run. The shadow surface below is made
+					// either way: a listed pair keeps its caster ( D9 )
+					const int pairListed = ( shaderRegisters != NULL ) ? R_LightListTakePair( viewDef, vLight, shader, baseLinked ? baseDrawSurf : NULL, numContactedLights ) : LL_PAIR_LEGACY;
+					// ---- END TRACK F ----
+					if( shaderRegisters != NULL && pairListed != LL_PAIR_LISTED )
 					{
 						// create a drawSurf for this interaction
 						drawSurf_t* lightDrawSurf = ( drawSurf_t* )R_FrameAlloc( sizeof( *lightDrawSurf ), FRAME_ALLOC_DRAW_SURFACE );
+						if( pairListed == LL_PAIR_TWIN )
+						{
+							lightDrawSurf->lightList = ( lightListSurface_t* )&lightListTwinMark;	// track F: the difference view's copy of a listed pair ( D49 ); read only
+						}
 
 						if( surfInter != NULL )
 						{
@@ -1356,6 +1414,10 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 				}
 			}
 			// RB end
+		}
+		if( baseLinked )
+		{
+			R_LightListFinishSurface( viewDef, baseDrawSurf );		// track F: the run becomes an ascending set and the path is chosen, here on the job
 		}
 	}
 }

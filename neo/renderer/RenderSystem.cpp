@@ -673,6 +673,9 @@ void idRenderSystemLocal::SwapCommandBuffers_FinishRendering(
 		backEnd.GL_BlockingSwapBuffers();
 	}
 
+	// S2 ( D74 ): the backend's shadow-cache results become visible to the frontend here, in every frame, also when a screenshot or a bake passes no counters
+	R_ShadowCachePublish();
+
 	if( gpuMicroSec != NULL )
 	{
 		*gpuMicroSec = backEnd.pc.gpuMicroSec;

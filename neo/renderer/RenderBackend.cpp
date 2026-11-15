@@ -43,6 +43,8 @@ If you have questions concerning this license or the applicable additional terms
 #include <sys/DeviceManager.h>
 #include <nvrhi/utils.h>
 
+#include "Passes/VolumetricFogPass_cb.h"		//puncho - reconcile: keep X0's per-view "fog off" write
+
 idCVar r_useNewSsaoPass( "r_useNewSSAOPass", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "use the new SSAO pass from Donut" );
 extern DeviceManager* deviceManager;
 
@@ -50,9 +52,12 @@ extern DeviceManager* deviceManager;
 extern idCVar com_concurrencyStats;
 const char* const backendPassNames[BP_COUNT] =
 {
-	"start", "commands", "viewsetup", "depth", "hiz", "gbuffer", "ssao", "ambient",
-	"shadow", "intertexture", "interemitter", "ssr", "stages", "fog", "post",
-	"debug", "motion", "taa", "tonemap", "blit", "end"
+	//puncho - reconcile: same order as backendPass_t, including the new pass slots.
+	"start", "commands", "viewsetup", "depth", "fogsky", "hiz", "gbuffer", "ssao",
+	"shadowcache", "shadow", "lightlists", "volumetrics", "ambient", "forward",
+	"intertexture", "interemitter", "lightdiff", "ssr", "stages", "volumetricsapply",
+	"intertranslucent", "forwardtranslucent", "fog", "post", "debug", "motion", "taa",
+	"tonemap", "blit", "end"
 };
 
 //puncho - switch intervals instead of nesting timers: non-atlas shadow maps are
@@ -1215,6 +1220,20 @@ void idRenderBackend::DrawSingleInteraction( drawInteraction_t* din, bool useFas
 
 	const textureUsage_t specUsage = din->specularImage->GetUsage();
 
+	// ---- TRACK F: bind the forward program ( F36 ) ----
+	// A view surface that lists lights is drawn by the forward program: the ambient term that the two branches
+	// below set up, and in the same shader the surface's listed lights. Its lane rpSurfLights says which. The
+	// program itself is bound after the branches, in place of the ambient program they bind. A material the
+	// frontend lists gets exactly one interaction here ( one bump, one diffuse, one specular stage ), so the
+	// surface is drawn once. viewDef->listsBuilt, never the cvar ( C3 )
+	const bool forwardSurf = useIBL && viewDef->listsBuilt && din->surf->lightList != NULL && din->surf->lightList->run != NULL;
+	if( forwardSurf )
+	{
+		float surfLights[4];
+		R_LightListDrawParms( *din->surf->lightList, surfLights );
+		renderProgManager.SetUniformValue( RENDERPARM_SURFLIGHTS, surfLights );
+	}
+	// ---- END TRACK F ----
 	// RB begin
 	if( useIBL && din->surf->area != NULL && r_useLightGrid.GetBool() )
 	{
@@ -1449,7 +1468,7 @@ void idRenderBackend::DrawSingleInteraction( drawInteraction_t* din, bool useFas
 			}
 			else
 			{
-				if( !r_skipShadows.GetBool() && din->vLight->globalShadows && din->vLight->shadowLOD > -1 )
+				if( !r_skipShadows.GetBool() && R_ViewLightHasShadowMap( din->vLight ) )
 				{
 					// RB: we have shadow mapping enabled and shadow maps so do a shadow compare
 
@@ -1573,7 +1592,7 @@ void idRenderBackend::DrawSingleInteraction( drawInteraction_t* din, bool useFas
 			}
 			else
 			{
-				if( !r_skipShadows.GetBool() && din->vLight->globalShadows )
+				if( !r_skipShadows.GetBool() && R_ViewLightHasShadowMap( din->vLight ) )
 				{
 					// RB: we have shadow mapping enabled and shadow maps so do a shadow compare
 
@@ -1683,6 +1702,14 @@ void idRenderBackend::DrawSingleInteraction( drawInteraction_t* din, bool useFas
 	}
 	// RB end
 
+	// ---- TRACK F: the forward program takes the place of the ambient program bound above ( F36 ) ----
+	if( forwardSurf )
+	{
+		const bool pbr = ( specUsage == TD_SPECULAR_PBR_RMAO || specUsage == TD_SPECULAR_PBR_RMAOD );
+		renderProgManager.BindShader_Forward( din->surf->jointCache != 0, pbr, din->surf->area != NULL && r_useLightGrid.GetBool() );
+	}
+	// ---- END TRACK F ----
+
 	// texture 0 will be the per-surface bump map
 	GL_SelectTexture( INTERACTION_TEXUNIT_BUMP );
 	din->bumpImage->Bind();
@@ -1735,7 +1762,7 @@ idRenderBackend::RenderInteractions
 With added sorting and trivial path work.
 =============
 */
-void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const viewLight_t* vLight, int depthFunc, bool performStencilTest, bool useLightDepthBounds )
+void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const viewLight_t* vLight, int depthFunc, bool performStencilTest, bool useLightDepthBounds, const interactionSort_t sortFilter )
 {
 	if( surfList == NULL )
 	{
@@ -1799,6 +1826,24 @@ void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const view
 	for( const drawSurf_t* walk = surfList; walk != NULL; walk = walk->nextOnLight )
 	{
 		const idMaterial* surfaceShader = walk->material;
+
+		// track F ( F2, D49 ): the difference view's forward picture: the loop lights the listed pairs, so their
+		// twins, the lit surfaces kept for the legacy picture, stay out
+		if( lightDiffPassA && walk->lightList == &lightListTwinMark )
+		{
+			continue;
+		}
+
+		// X0 ( D83 ): the caller says which side of the SS_FAR split this chain draws
+		if( sortFilter == INTERACTION_SORT_BELOW_FAR && surfaceShader->GetSort() >= SS_FAR )
+		{
+			continue;
+		}
+		if( sortFilter == INTERACTION_SORT_FAR_AND_ABOVE && surfaceShader->GetSort() < SS_FAR )
+		{
+			continue;
+		}
+
 		if( surfaceShader->GetFastPathBumpImage() )
 		{
 			allSurfaces.Append( walk );
@@ -1816,7 +1861,7 @@ void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const view
 	bool lightDepthBoundsDisabled = false;
 
 	// RB begin
-	if( !r_skipShadows.GetBool() && vLight->shadowLOD > -1 )
+	if( !r_skipShadows.GetBool() && R_ViewLightHasShadowMap( vLight ) )
 	{
 		const static int JITTER_SIZE = 128;
 
@@ -1979,7 +2024,7 @@ void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const view
 		//puncho start
 		if( R_LightUsesEmitterPath( vLight ) )
 		{
-			// packed once per view by R_AddSingleLight ( G0 section 8 )
+			//puncho - reconcile: emitter in place of the math light; packed once per view by R_AddSingleLight
 			const viewEmitter_t* em = vLight->emitter;
 			SetFragmentParm( RENDERPARM_USER0, em->parms[0].ToFloatPtr() );
 			SetFragmentParm( RENDERPARM_USER1, em->parms[1].ToFloatPtr() );
@@ -2002,8 +2047,10 @@ void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const view
 		{
 			globalImages->shadowAtlasImage->Bind();
 		}
-		else
+		else if( R_ViewLightHasShadowMap( vLight ) )
 		{
+			// A light with no shadow map would index shadowImage[-1]. Binding nothing is safe:
+			// the unshadowed program's binding layout never reads this unit.
 			globalImages->shadowImage[vLight->shadowLOD]->Bind();
 		}
 
@@ -2319,7 +2366,10 @@ void idRenderBackend::AmbientPass( const drawSurf_t* const* drawSurfs, int numDr
 		return;
 	}
 
-	renderLog.OpenMainBlock( fillGbuffer ? MRB_FILL_GEOMETRY_BUFFER : MRB_AMBIENT_PASS );
+	// track F ( F2 ): in a view with light lists this pass is the forward pass ( the lit surfaces' ambient term and
+	// their listed lights in one draw ), timed as such: the HUD's Forward row
+	const renderLogMainBlock_t litBlock = ( viewDef->listsBuilt && ( viewDef->renderView.rdflags & RDF_IRRADIANCE ) == 0 ) ? MRB_FORWARD_PASS : MRB_AMBIENT_PASS;
+	renderLog.OpenMainBlock( fillGbuffer ? MRB_FILL_GEOMETRY_BUFFER : litBlock );
 	renderLog.OpenBlock( fillGbuffer ? "Fill_GeometryBuffer" : "Render_AmbientPass", colorBlue );
 
 	// make sure rpWindowCoord is set even without post processing surfaces in the view
@@ -2377,7 +2427,7 @@ void idRenderBackend::AmbientPass( const drawSurf_t* const* drawSurfs, int numDr
 		SetFragmentParm( RENDERPARM_ALPHA_TEST, vec4_zero.ToFloatPtr() );
 
 		renderLog.CloseBlock();
-		renderLog.CloseMainBlock();
+		renderLog.CloseMainBlock( fillGbuffer ? MRB_FILL_GEOMETRY_BUFFER : litBlock );
 		return;
 	}
 
@@ -2583,6 +2633,13 @@ void idRenderBackend::AmbientPass( const drawSurf_t* const* drawSurfs, int numDr
 			inter.specularImage = surfaceMaterial->GetFastPathSpecularImage();
 			inter.diffuseImage = surfaceMaterial->GetFastPathDiffuseImage();
 
+			// track F ( F2 ): the surfaces come in sort order here, not fast path first as in RenderInteractions, so
+			// a surface of the slow path drawn before this one left ITS texture matrices, vertex colour and modifiers
+			// behind. The forward loop multiplies its lights by those modifiers. ( r_skipInteractionFastPath 0 only )
+			RB_SetupForFastPathInteractions( diffuseColor, specularColor );
+#if BLEND_NORMALS
+			GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO | GLS_DEPTHMASK | GLS_DEPTHFUNC_EQUAL );	// and the state: a vertex-coloured surface of the slow path leaves the additive one
+#endif
 			DrawSingleInteraction( &inter, true, useIBL, false );
 
 			renderLog.CloseBlock();
@@ -2760,7 +2817,62 @@ void idRenderBackend::AmbientPass( const drawSurf_t* const* drawSurfs, int numDr
 	renderProgManager.Unbind();
 
 	renderLog.CloseBlock();
-	renderLog.CloseMainBlock();
+	renderLog.CloseMainBlock( fillGbuffer ? MRB_FILL_GEOMETRY_BUFFER : litBlock );
+}
+
+/*
+==================
+idRenderBackend::ForwardPass
+
+X0 seam ( H1, D37 ): the lit opaque pass and, from F4 on, the lit translucent pass. The translucent call draws
+nothing yet. It opens no main block.
+
+F2: the opaque call is the ambient pass's loop, in which a surface that lists lights is drawn by the forward
+program instead of the ambient program ( DrawSingleInteraction ). Here, once per view, what that program needs
+beyond the ambient pass's own parms and images: the view's lanes and the two image units the ambient pass
+never binds. A view without lists ( viewDef->listsBuilt false ) is the ambient pass as it was.
+==================
+*/
+void idRenderBackend::ForwardPass( const drawSurf_t* const* drawSurfs, int numDrawSurfs, bool translucent )
+{
+	if( translucent )
+	{
+		return;
+	}
+
+	// ---- TRACK F ( F2 ): the forward program's lanes and images of this view ----
+	const lightListView_t* llv = viewDef->lightListView;
+	if( viewDef->listsBuilt && llv != NULL )
+	{
+		float zbinParms[4];
+		float zbinScale[4];
+		R_LightListViewParms( llv, zbinParms, zbinScale );
+		renderProgManager.SetUniformValue( RENDERPARM_ZBINPARMS, zbinParms );
+		renderProgManager.SetUniformValue( RENDERPARM_ZBINSCALE, zbinScale );
+		// the tiles count from the view's own corner; the surface's stage colours reach the loop times r_lightScale
+		// ( the ambient pass's modifiers ), which a record's colour already holds; in the twin mode the legacy pass
+		// lights the listed pairs and the loop adds nothing
+		const float forwardView[4] = { ( float )viewDef->viewport.x1, ( float )viewDef->viewport.y1, 1.0f / Max( llv->lightScale, 0.001f ), ( llv->twin && !lightDiffPassA ) ? 1.0f : 0.0f };
+		renderProgManager.SetUniformValue( RENDERPARM_FORWARDVIEW, forwardView );
+		// the shadow lookup's constants, each as RenderInteractions sets its own for an atlas light: the bias scales
+		// ( rpScreenCorrectionFactor.w there ), the sample count ( rpJitterTexScale.w ), the texel step ( 1 / atlas
+		// size times the jitter scale: rpScreenCorrectionFactor.z x rpJitterTexScale.x ), the noise scale and the
+		// frame index ( rpJitterTexOffset.x and .w )
+		const float shadowBias[4] = { r_shadowMapSunDepthBiasScale.GetFloat(), r_shadowMapRegularDepthBiasScale.GetFloat(), ( float )r_shadowMapSplits.GetInteger(), 0.0f };
+		renderProgManager.SetUniformValue( RENDERPARM_SHADOWBIAS, shadowBias );
+		const float shadowFilter[4] = { ( float )r_shadowMapSamples.GetInteger(), ( 1.0f / r_shadowMapAtlasSize.GetInteger() ) * r_shadowMapJitterScale.GetFloat(),
+										1.0f / globalImages->blueNoiseImage256->GetUploadWidth(), r_shadowMapRandomizeJitter.GetBool() ? ( float )( tr.frameCount % 64 ) : 0.0f
+									  };
+		renderProgManager.SetUniformValue( RENDERPARM_SHADOWFILTER, shadowFilter );
+		// the forward layout reads units 5 and 6 at every draw
+		GL_SelectTexture( INTERACTION_TEXUNIT_SHADOWMAPS );
+		globalImages->shadowAtlasImage->Bind();
+		GL_SelectTexture( INTERACTION_TEXUNIT_JITTER );
+		globalImages->blueNoiseImage256->Bind();
+	}
+	// ---- END TRACK F ----
+
+	AmbientPass( drawSurfs, numDrawSurfs, false );
 }
 
 // RB end
@@ -2874,6 +2986,31 @@ void idRenderBackend::SetupShadowMapMatrices( viewLight_t* vLight, int side, idR
 	if( vLight->parallel && side >= 0 )
 	{
 		assert( side >= 0 && side < 6 );
+
+		// ---- TRACK S ( S1 ): the primary sun's cascade on the map-anchored grid ----
+		// the frontend's decide pass placed this cascade's window ( r_shadowCache >= 1, main view );
+		// without a record this is today's crop below
+		const shadowCacheCascade_t* cascade = R_ShadowCacheCascade( viewDef, vLight, side );
+		if( cascade != NULL )
+		{
+			R_ShadowCacheParallelMatrices( *viewDef->shadowCacheView, *cascade, lightViewRenderMatrix, lightProjectionRenderMatrix );
+
+			vLight->shadowV[side] = lightViewRenderMatrix;
+			vLight->shadowP[side] = lightProjectionRenderMatrix;
+
+#if defined( USE_NVRHI )
+			ALIGNTYPE16 const idRenderMatrix matClipToUvzw(
+				1.0f,  0.0f, 0.0f,  0.0f,
+				0.0f, -1.0f, 0.0f,  0.0f,
+				0.0f,  0.0f, 2.0f, -1.0f,
+				0.0f,  0.0f, 0.0f,  1.0f
+			);
+
+			idRenderMatrix::Multiply( matClipToUvzw, lightProjectionRenderMatrix, vLight->shadowP[side] );
+#endif
+			return;
+		}
+		// ---- END TRACK S ----
 
 		// original light direction is from surface to light origin
 		idVec3 lightDir = -vLight->lightCenter;
@@ -3117,7 +3254,8 @@ void idRenderBackend::SetupShadowMapMatrices( viewLight_t* vLight, int side, idR
 
 		// set up 90 degree projection matrix
 		const float zNear = 4;
-		const float	fov = r_shadowMapFrustumFOV.GetFloat();
+		// TRACK S ( S2a ): with a snapshot the faces are the ones the frontend culled the casters against
+		const float	fov = viewDef->shadowSkipSet.valid ? viewDef->shadowSkipSet.shadowMapFrustumFOV : r_shadowMapFrustumFOV.GetFloat();
 
 		float ymax = zNear * tan( fov * idMath::PI / 360.0f );
 		float ymin = -ymax;
@@ -3430,7 +3568,7 @@ void idRenderBackend::ShadowMapPassPerforated( const drawSurf_t** drawSurfs, int
 idRenderBackend::ShadowMapPassFast
 =====================
 */
-void idRenderBackend::ShadowMapPassFast( const drawSurf_t* drawSurfs, viewLight_t* vLight, int side, bool atlas )
+void idRenderBackend::ShadowMapPassFast( const drawSurf_t* drawSurfs, viewLight_t* vLight, int side, bool atlas, const byte* casterBits, int casterMask, int casterWant, const shadowCacheOp_t* cacheOp, Framebuffer* cacheTarget )
 {
 	if( r_skipShadows.GetBool() )
 	{
@@ -3492,7 +3630,19 @@ void idRenderBackend::ShadowMapPassFast( const drawSurf_t* drawSurfs, viewLight_
 
 	int slice = Max( 0, side );
 
-	if( atlas )
+	if( cacheOp != NULL )
+	{
+		// TRACK S ( S2c ): the static casters of a cached unit, into the unit's region of its cache image
+		if( cacheTarget == NULL )
+		{
+			renderLog.CloseBlock();
+			return;
+		}
+		cacheTarget->Bind();
+
+		GL_ViewportAndScissor( cacheOp->x, cacheOp->y, cacheOp->size, cacheOp->size );
+	}
+	else if( atlas )
 	{
 		globalFramebuffers.shadowAtlasFBO->Bind();
 
@@ -3525,8 +3675,23 @@ void idRenderBackend::ShadowMapPassFast( const drawSurf_t* drawSurfs, viewLight_
 	const drawSurf_t** perforatedSurfaces = ( const drawSurf_t** )_alloca( numDrawSurfs * sizeof( drawSurf_t* ) );
 	int numPerforatedSurfaces = 0;
 
+	int casterIndex = -1;
 	for( const drawSurf_t* drawSurf = drawSurfs; drawSurf != NULL; drawSurf = drawSurf->nextOnLight )
 	{
+		casterIndex++;
+
+		// TRACK S ( S2a ): the frontend's bits for this caster ( the per-side cull, later static or active )
+		if( casterBits != NULL )
+		{
+			// the chain must be the one the decide pass walked; a surface past its end is drawn into every
+			// side, as an active caster ( SCB_SIDE_MASK has no static bit )
+			assert( casterIndex < vLight->numShadowCasterBits );
+			const int bits = ( casterIndex < vLight->numShadowCasterBits ) ? casterBits[casterIndex] : SCB_SIDE_MASK;
+			if( ( bits & casterMask ) != casterWant )
+			{
+				continue;
+			}
+		}
 
 		if( drawSurf->numIndexes == 0 )
 		{
@@ -3640,10 +3805,39 @@ public:
 
 void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 {
+	// ---- TRACK S ( S2a ): the frontend's snapshot ( D36 ). With a valid one the pass takes from it what must
+	// match the frontend's own data: the cascade count, the single-side setting, the caster bits. Whether shadows
+	// and the atlas are on is read from the cvars here, as every other backend reader of them does ( the
+	// interaction program select, the matrix upload, the non-atlas path ): a toggle between the frontend and the
+	// backend of one frame must not make the backend disagree with itself
+	const shadowSkipSet_t& skipSet = viewDef->shadowSkipSet;
+	const bool snapshot = skipSet.valid;
+	const int numCascades = ( snapshot ? skipSet.shadowMapSplits : r_shadowMapSplits.GetInteger() ) + 1;
+	const int singleSide = snapshot ? skipSet.shadowMapSingleSide : r_shadowMapSingleSide.GetInteger();
+	// ---- END TRACK S ----
+
 	if( r_skipShadows.GetBool() || !r_useShadowAtlas.GetBool() || viewDef->viewLights == NULL )
 	{
 		return;
 	}
+
+	// ---- TRACK S ( S2c ): the static maps of this view's cached units, in their own main block, opened and
+	// closed before the atlas block opens ( D70 ) ----
+	if( snapshot && viewDef->numShadowOps > 0 )
+	{
+		//puncho - reconcile: account for the renderer upgrade pass.
+		if( concurrencyStats )
+		{
+			MarkBackendPass( BP_SHADOW_CACHE );
+		}
+		ShadowCacheDrawStaticMaps();
+		//puncho - reconcile: resume atlas work after static cache builds.
+		if( concurrencyStats )
+		{
+			MarkBackendPass( BP_SHADOW );
+		}
+	}
+	// ---- END TRACK S ----
 
 	//OPTICK_EVENT( "Render_ShadowAtlas" );
 
@@ -3700,12 +3894,12 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 			continue;
 		}
 
-		if( vLight->localInteractions == NULL && vLight->globalInteractions == NULL && vLight->translucentInteractions == NULL )
+		if( !R_ViewLightIsLit( vLight ) )
 		{
 			continue;
 		}
 
-		if( vLight->shadowLOD == -1 || vLight->globalShadows == NULL )
+		if( !R_ViewLightHasShadowMap( vLight ) )
 		{
 			// light doesn't cast shadows
 			continue;
@@ -3716,13 +3910,13 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 		if( vLight->parallel )
 		{
 			side = 0;
-			sideStop = r_shadowMapSplits.GetInteger() + 1;
+			sideStop = numCascades;
 		}
 		else if( vLight->pointLight )
 		{
-			if( r_shadowMapSingleSide.GetInteger() != -1 )
+			if( singleSide != -1 )
 			{
-				side = r_shadowMapSingleSide.GetInteger();
+				side = singleSide;
 				sideStop = side + 1;
 			}
 			else
@@ -3773,7 +3967,38 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 	// Sort the rects from largest to smallest (it makes allocating them in the image better)
 	idSortrects sortrectsBySize;
 	sortrectsBySize.inputSizes = &inputSizes;
-	sizeRemap.SortWithTemplate( sortrectsBySize );
+	if( snapshot )
+	{
+		// TRACK S ( S2a ): a stable order, size class first and then the order of the view's lights. Largest
+		// first is what the quad tree needs; a stable order gives a light the same tile from frame to frame
+		// while the view's lights and their order hold ( these tiles are handed out anew every frame; only
+		// the cache atlas keeps places from frame to frame )
+		int numSorted = 0;
+		for( int size = shadowMapResolutions[0]; size >= shadowMapResolutions[MAX_SHADOWMAP_RESOLUTIONS - 1]; size >>= 1 )
+		{
+			for( int i = 0; i < inputSizes.Num(); i++ )
+			{
+				if( inputSizes[i].x == size )
+				{
+					sizeRemap[numSorted++] = i;
+				}
+			}
+		}
+		if( numSorted != inputSizes.Num() )
+		{
+			// a size outside the table's powers of two: cannot happen with shadowMapResolutions as it is
+			assert( false );
+			for( int i = 0; i < inputSizes.Num(); i++ )
+			{
+				sizeRemap[i] = i;
+			}
+			sizeRemap.SortWithTemplate( sortrectsBySize );
+		}
+	}
+	else
+	{
+		sizeRemap.SortWithTemplate( sortrectsBySize );
+	}
 
 	tileMap.Clear();
 
@@ -3820,6 +4045,107 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 		}
 	}
 
+	// ---- TRACK S ( S3b ): every copy of this view before any light is drawn, so that the copies follow one
+	// another on one pipeline and the engine's state cache is reset once instead of once per unit ( reviews
+	// SF P1, S3aF P2 ). The tiles are disjoint and the atlas was cleared above, so it makes no difference to
+	// the image whether a unit's copy comes before another unit's active casters. tileCopied[] says, per tile
+	// in the order of the collection loop above, whether its static map was copied; a tile that was not ( it
+	// did not fit, there is no cache image, or the map the frontend expects is not in the cache ) is drawn
+	// from the chain in the light loop below, as for a light without a cache. The four tests and the sides
+	// must stay in step with the two other loops of this function
+	byte* tileCopied = NULL;
+	if( snapshot && viewDef->numShadowOps > 0 && inputSizes.Num() > 0 )
+	{
+		//puncho - reconcile: account for the renderer upgrade pass.
+		if( concurrencyStats )
+		{
+			MarkBackendPass( BP_SHADOW_CACHE );
+		}
+		tileCopied = ( byte* )_alloca( inputSizes.Num() );
+		memset( tileCopied, 0, inputSizes.Num() );
+
+		renderLog.OpenBlock( "Render_ShadowCacheCopies", colorYellow );
+
+		int tileIndex = 0;
+		int numCopies = 0;
+		for( const viewLight_t* vLight = viewDef->viewLights; vLight != NULL; vLight = vLight->next )
+		{
+			if( vLight->lightShader->IsFogLight() || vLight->lightShader->IsBlendLight() )
+			{
+				continue;
+			}
+			if( !R_ViewLightIsLit( vLight ) || !R_ViewLightHasShadowMap( vLight ) )
+			{
+				continue;
+			}
+			const int numSides = vLight->parallel ? numCascades : ( ( vLight->pointLight && singleSide == -1 ) ? 6 : 1 );
+			if( vLight->shadowOp == 0 )
+			{
+				tileIndex += numSides;		// drawn without the cache
+				continue;
+			}
+			// a cached light is the primary sun, a point light with six faces or a spot light: its tiles
+			// are in side order, and so are its ops
+			for( int slice = 0; slice < numSides; slice++, tileIndex++ )
+			{
+				if( outputPositions[tileIndex].x == -1 || outputPositions[tileIndex].y == -1 )
+				{
+					continue;		// didn't fit into the atlas: the light loop counts it
+				}
+				const shadowCacheOp_t& cacheOp = viewDef->shadowOps[vLight->shadowOp - 1 + slice];
+				idImage* cacheImage = ( cacheOp.target < 0 ) ? globalImages->shadowCacheAtlasImage : globalImages->shadowCacheCascadeImage[cacheOp.target];
+				if( cacheImage->GetTextureHandle().Get() == NULL )
+				{
+					// no cache image to copy from ( none yet, given back, or failed to create ): the static pass skipped the unit too
+					continue;
+				}
+				if( cacheOp.serial == 0 || shadowCacheBuilt[R_ShadowCacheSlot( cacheOp )] != cacheOp.serial )
+				{
+					// S3a: the map the frontend expects is not in the cache ( the frame that built it was never
+					// executed, or the cache images were lost; serial 0 is the empty stamp, which a build only
+					// gets after the 2^32 wrap ). The frontend is told ( D74 )
+					shadowCacheMissed[shadowCacheMisses & 127] = cacheOp.serial;
+					shadowCacheMisses++;
+					continue;
+				}
+
+				if( cacheOp.size != outputSizes[tileIndex] )
+				{
+					// a cached map is shown only at the tile's own size ( copied reduced it keeps the polygon
+					// offset of its own texels and shows acne ). The frontend asks for nothing else; should it
+					// ever, the unit is drawn from the chain
+					continue;
+				}
+
+				shadowCacheCopyConstants_t constants;
+				memset( &constants, 0, sizeof( constants ) );
+				constants.tileOrigin[0] = outputPositions[tileIndex].x;
+				constants.tileOrigin[1] = outputPositions[tileIndex].y;
+				constants.sourceOrigin[0] = cacheOp.x;
+				constants.sourceOrigin[1] = cacheOp.y;
+				constants.res = cacheOp.size;
+				constants.tileRes = outputSizes[tileIndex];
+				ShadowCacheCopyDraw( globalFramebuffers.shadowAtlasFBO->GetApiObject(), 0, cacheImage->GetTextureHandle().Get(), constants );
+				tileCopied[tileIndex] = 1;
+				numCopies++;
+			}
+		}
+
+		renderLog.CloseBlock();
+
+		if( numCopies > 0 )
+		{
+			// the copies set the device's state behind the engine's back ( D34 )
+			ResetGraphicsStateCache();
+		}
+		//puncho - reconcile: active casters and fallback maps belong to the atlas.
+		if( concurrencyStats )
+		{
+			MarkBackendPass( BP_SHADOW );
+		}
+	}
+	// ---- END TRACK S ----
+
 	//
 	// for each light, perform shadowing to a big atlas Framebuffer
 	//
@@ -3845,12 +4171,12 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 			continue;
 		}
 
-		if( vLight->localInteractions == NULL && vLight->globalInteractions == NULL && vLight->translucentInteractions == NULL )
+		if( !R_ViewLightIsLit( vLight ) )
 		{
 			continue;
 		}
 
-		if( vLight->shadowLOD == -1 || vLight->globalShadows == NULL )
+		if( !R_ViewLightHasShadowMap( vLight ) )
 		{
 			// light doesn't cast shadows
 			vLight->imageSize.x = vLight->imageSize.y = -1;
@@ -3875,13 +4201,13 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 		if( vLight->parallel )
 		{
 			side = 0;
-			sideStop = r_shadowMapSplits.GetInteger() + 1;
+			sideStop = numCascades;
 		}
 		else if( vLight->pointLight )
 		{
-			if( r_shadowMapSingleSide.GetInteger() != -1 )
+			if( singleSide != -1 )
 			{
-				side = r_shadowMapSingleSide.GetInteger();
+				side = singleSide;
 				sideStop = side + 1;
 			}
 			else
@@ -3911,6 +4237,7 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 			vLight->imageAtlasOffset[ slice ].x = outputPositions[ shadowIndex ].x;
 			vLight->imageAtlasOffset[ slice ].y = outputPositions[ shadowIndex ].y;
 
+			const int tileIndex = shadowIndex;		// TRACK S ( S3b ): this side's tile, as the copy loop counted it
 			shadowIndex++;
 
 			if( vLight->imageAtlasOffset[ slice ].x == -1 || vLight->imageAtlasOffset[ slice ].y == -1 )
@@ -3921,7 +4248,33 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 				continue;
 			}
 
-			ShadowMapPassFast( vLight->globalShadows, vLight, side, true );
+			if( tileCopied != NULL && tileCopied[tileIndex] != 0 )
+			{
+				// TRACK S ( S2c, S3b ): a cached unit: its static map was copied into the tile before this
+				// loop; its active casters are drawn on top. Shading reads shadowV and shadowP whether or not
+				// a caster is drawn: ShadowMapPassFast sets them when it runs, so they are set here only when
+				// it does not
+				const int bit = 1 << slice;
+				if( ( vLight->shadowActiveSides & bit ) != 0 )
+				{
+					ShadowMapPassFast( vLight->globalShadows, vLight, side, true, vLight->shadowCasterBits, bit | SCB_STATIC, bit );
+				}
+				else
+				{
+					idRenderMatrix lightProjectionRenderMatrix;
+					idRenderMatrix lightViewRenderMatrix;
+					SetupShadowMapMatrices( vLight, side, lightProjectionRenderMatrix, lightViewRenderMatrix );
+				}
+			}
+			else if( snapshot && vLight->shadowCasterBits != NULL )
+			{
+				// TRACK S ( S2a ): only the casters whose bounds reach this side
+				ShadowMapPassFast( vLight->globalShadows, vLight, side, true, vLight->shadowCasterBits, 1 << slice, 1 << slice );
+			}
+			else
+			{
+				ShadowMapPassFast( vLight->globalShadows, vLight, side, true );
+			}
 		}
 
 		if( !imageFitsIntoAtlas )
@@ -4013,6 +4366,62 @@ static const char* R_EmitterFalloffName( int falloff )
 }
 //puncho end
 
+/*
+==================
+idRenderBackend::ShadowMapsForLightNoAtlas
+
+One light's shadow maps rendered into the shared per-LOD images - the non-atlas path, moved out of
+DrawInteractionsPass so DrawTranslucentInteractions can render them again before that light's
+translucent chain samples the same images.
+==================
+*/
+void idRenderBackend::ShadowMapsForLightNoAtlas( const viewLight_t* vLight, Framebuffer* previousFramebuffer )
+{
+	int	side, sideStop;
+
+	if( vLight->parallel )
+	{
+		side = 0;
+		sideStop = r_shadowMapSplits.GetInteger() + 1;
+	}
+	else if( vLight->pointLight )
+	{
+		if( r_shadowMapSingleSide.GetInteger() != -1 )
+		{
+			side = r_shadowMapSingleSide.GetInteger();
+			sideStop = side + 1;
+		}
+		else
+		{
+			side = 0;
+			sideStop = 6;
+		}
+	}
+	else
+	{
+		side = -1;
+		sideStop = 0;
+	}
+
+	for( ; side < sideStop ; side++ )
+	{
+		// vLight is const but we make an exception here to store the shadow matrices per vLight
+		// OPTIMIZE: these calculations could be moved to the renderer frontend into the multithreaded job
+		ShadowMapPassFast( vLight->globalShadows, ( viewLight_t* ) vLight, side, false );
+	}
+
+	// go back to main render target
+	if( previousFramebuffer != NULL )
+	{
+		previousFramebuffer->Bind();
+	}
+	else
+	{
+		Framebuffer::Unbind();
+	}
+	renderProgManager.Unbind();
+}
+
 //puncho start
 /*
 ==================
@@ -4027,7 +4436,9 @@ exactly one phase, so the per-light Optick scopes and the counters fire once per
 void idRenderBackend::DrawInteractionsPass( const viewDef_t* _viewDef, bool emitterPass, Framebuffer* previousFramebuffer, bool useLightDepthBounds )
 {
 	//puncho start
-	const int profileLights = r_profileLights.GetInteger();
+	//puncho - reconcile RO-1: the diagnostic replay draws the same lights without counting or profiling them.
+	const bool countLights = !lightDiffPassA;
+	const int profileLights = countLights ? r_profileLights.GetInteger() : 0;
 	PROFILE_STATIC_DESC( descEmitterCpu, "Interactions_Emitter", Optick::Category::Rendering );
 	PROFILE_STATIC_DESC( descEmitterGpu, "Interactions_Emitter", Optick::Category::GPU_Lighting );
 	PROFILE_STATIC_DESC( descLightCpu, "Interactions_Light", Optick::Category::Rendering );
@@ -4062,13 +4473,17 @@ void idRenderBackend::DrawInteractionsPass( const viewDef_t* _viewDef, bool emit
 		{
 			continue;
 		}
-		if( isEmitter )
+		//puncho - reconcile RO-1: one replay test per light; profileLights is masked once per call above.
+		if( countLights )
 		{
-			pc.c_emitterLights++;
-		}
-		else
-		{
-			pc.c_textureLights++;
+			if( isEmitter )
+			{
+				pc.c_emitterLights++;
+			}
+			else
+			{
+				pc.c_textureLights++;
+			}
 		}
 		//puncho end
 
@@ -4115,60 +4530,18 @@ void idRenderBackend::DrawInteractionsPass( const viewDef_t* _viewDef, bool emit
 
 		// RB: render interactions with shadow mapping
 		{
-			if( !r_useShadowAtlas.GetBool() && vLight->shadowLOD > -1 )
+			if( !r_useShadowAtlas.GetBool() && R_ViewLightHasShadowMap( vLight ) )
 			{
-				//puncho
+				//puncho - reconcile: keep shadow time out of the resumed interaction interval.
 				if( concurrencyStats )
 				{
 					MarkBackendPass( BP_SHADOW );
 				}
-				int	side, sideStop;
-
-				if( vLight->parallel )
-				{
-					side = 0;
-					sideStop = r_shadowMapSplits.GetInteger() + 1;
-				}
-				else if( vLight->pointLight )
-				{
-					if( r_shadowMapSingleSide.GetInteger() != -1 )
-					{
-						side = r_shadowMapSingleSide.GetInteger();
-						sideStop = side + 1;
-					}
-					else
-					{
-						side = 0;
-						sideStop = 6;
-					}
-				}
-				else
-				{
-					side = -1;
-					sideStop = 0;
-				}
-
-				for( ; side < sideStop ; side++ )
-				{
-					// vLight is const but we make an exception here to store the shadow matrices per vLight
-					// OPTIMIZE: these calculations could be moved to the renderer frontend into the multithreaded job
-					ShadowMapPassFast( vLight->globalShadows, ( viewLight_t* ) vLight, side, false );
-				}
-
-				// go back to main render target
-				if( previousFramebuffer != NULL )
-				{
-					previousFramebuffer->Bind();
-				}
-				else
-				{
-					Framebuffer::Unbind();
-				}
-				renderProgManager.Unbind();
-				//puncho
+				ShadowMapsForLightNoAtlas( vLight, previousFramebuffer );
 				if( concurrencyStats )
 				{
-					MarkBackendPass( emitterPass ? BP_INTER_EMITTER : BP_INTER_TEXTURE );
+					//puncho - reconcile: the diagnostic replay resumes its own interval.
+					MarkBackendPass( lightDiffPassA ? BP_LIGHT_DIFF : ( emitterPass ? BP_INTER_EMITTER : BP_INTER_TEXTURE ) );
 				}
 			}
 
@@ -4182,19 +4555,20 @@ void idRenderBackend::DrawInteractionsPass( const viewDef_t* _viewDef, bool emit
 			if( vLight->localInteractions != NULL )
 			{
 				renderLog.OpenBlock( "Local Light Interactions", colorPurple );
-				RenderInteractions( vLight->localInteractions, vLight, GLS_DEPTHFUNC_EQUAL, false, useLightDepthBounds );
+				RenderInteractions( vLight->localInteractions, vLight, GLS_DEPTHFUNC_EQUAL, false, useLightDepthBounds, INTERACTION_SORT_ALL );
 				renderLog.CloseBlock();
 			}
 
 			if( vLight->globalInteractions != NULL )
 			{
 				renderLog.OpenBlock( "Global Light Interactions", colorPurple );
-				RenderInteractions( vLight->globalInteractions, vLight, GLS_DEPTHFUNC_EQUAL, false, useLightDepthBounds );
+				RenderInteractions( vLight->globalInteractions, vLight, GLS_DEPTHFUNC_EQUAL, false, useLightDepthBounds, INTERACTION_SORT_ALL );
 				renderLog.CloseBlock();
 			}
 		}
 		// RB end
 
+		// X0 ( D83 ): only the lit decals ( sort < SS_FAR ) are drawn here; free-standing translucents are drawn after the fog apply, in DrawTranslucentInteractions
 		if( vLight->translucentInteractions != NULL && !r_skipTranslucent.GetBool() )
 		{
 			renderLog.OpenBlock( "Translucent Interactions", colorCyan );
@@ -4214,7 +4588,7 @@ void idRenderBackend::DrawInteractionsPass( const viewDef_t* _viewDef, bool emit
 			// stencil shadows only affect surfaces that contribute to the view depth
 			// buffer and translucent surfaces do not contribute to the view depth buffer.
 
-			RenderInteractions( vLight->translucentInteractions, vLight, GLS_DEPTHFUNC_LESS, false, false );
+			RenderInteractions( vLight->translucentInteractions, vLight, GLS_DEPTHFUNC_LESS, false, false, INTERACTION_SORT_BELOW_FAR );
 
 			renderLog.CloseBlock();
 		}
@@ -4276,7 +4650,8 @@ void idRenderBackend::DrawInteractions( const viewDef_t* _viewDef )
 	//puncho
 	if( concurrencyStats )
 	{
-		MarkBackendPass( BP_INTER_EMITTER );
+		//puncho - reconcile: LightDiffPass replays both phases inside its diagnostic interval.
+		MarkBackendPass( lightDiffPassA ? BP_LIGHT_DIFF : BP_INTER_EMITTER );
 	}
 	{
 		OPTICK_GPU_EVENT( "Render_Interactions_Emitter" );
@@ -4309,6 +4684,122 @@ void idRenderBackend::DrawInteractions( const viewDef_t* _viewDef )
 }
 
 /*
+==================
+idRenderBackend::DrawTranslucentInteractions
+
+The free-standing lit translucents of every light ( sort >= SS_FAR: glass ), drawn after the fog
+apply ( D83 ) so the apply dims what lies behind them. Lit decals ( sort < SS_FAR ) stay in
+DrawInteractionsPass: a decal lies on an opaque surface, its light must be added before the blended
+surfaces that can lie over it, and the apply then fogs it like the surface under it.
+==================
+*/
+void idRenderBackend::DrawTranslucentInteractions( const viewDef_t* _viewDef )
+{
+	if( r_skipInteractions.GetBool() || r_skipTranslucent.GetBool() || viewDef->viewLights == NULL )
+	{
+		return;
+	}
+
+	//puncho - reconcile RV2-2: same profile descriptions as DrawInteractionsPass; create none while off.
+	const int profileLights = r_profileLights.GetInteger();
+	const profileDesc_t* descEmitterCpu = NULL;
+	const profileDesc_t* descEmitterGpu = NULL;
+	const profileDesc_t* descLightCpu = NULL;
+	const profileDesc_t* descLightGpu = NULL;
+	if( profileLights != 0 )
+	{
+		PROFILE_STATIC_DESC( emitterCpu, "Interactions_Emitter", Optick::Category::Rendering );
+		PROFILE_STATIC_DESC( emitterGpu, "Interactions_Emitter", Optick::Category::GPU_Lighting );
+		PROFILE_STATIC_DESC( lightCpu, "Interactions_Light", Optick::Category::Rendering );
+		PROFILE_STATIC_DESC( lightGpu, "Interactions_Light", Optick::Category::GPU_Lighting );
+		descEmitterCpu = emitterCpu;
+		descEmitterGpu = emitterGpu;
+		descLightCpu = lightCpu;
+		descLightGpu = lightGpu;
+	}
+
+	renderLog.OpenBlock( "Render_Interactions_Translucent", colorCyan );
+
+	GL_SelectTexture( 0 );
+
+	Framebuffer* previousFramebuffer = Framebuffer::GetActiveFramebuffer();
+
+	for( const viewLight_t* vLight = viewDef->viewLights; vLight != NULL; vLight = vLight->next )
+	{
+		if( vLight->translucentInteractions == NULL )
+		{
+			continue;
+		}
+		if( vLight->lightShader->IsFogLight() || vLight->lightShader->IsBlendLight() )
+		{
+			continue;
+		}
+
+		// the chain may hold only lit decals, which DrawInteractionsPass already drew; skip the light
+		// before any work, so its shadow maps are not re-rendered for nothing when the atlas is off
+		bool hasFarSurface = false;
+		for( const drawSurf_t* walk = vLight->translucentInteractions; walk != NULL; walk = walk->nextOnLight )
+		{
+			if( walk->material->GetSort() >= SS_FAR )
+			{
+				hasFarSurface = true;
+				break;
+			}
+		}
+		if( !hasFarSurface )
+		{
+			continue;
+		}
+
+		//puncho - reconcile RV2-2: profile the moved light work only after the far-surface filter.
+		const bool isEmitter = R_LightUsesEmitterPath( vLight );
+		const bool profileLight = ( profileLights == 2 ) || ( profileLights == 1 && isEmitter );
+		idOptionalGpuProfileScope lightScope( profileLight ? ( isEmitter ? descEmitterCpu : descLightCpu ) : NULL,
+											  profileLight ? ( isEmitter ? descEmitterGpu : descLightGpu ) : NULL );
+		if( profileLight && isEmitter )
+		{
+			PROFILE_EVENT_TAG( "lightShader", vLight->lightShader->GetName() );
+			PROFILE_EVENT_TAG( "emShape", vLight->emitter->shape );
+			PROFILE_EVENT_TAG( "emFalloff", vLight->emitter->falloff );
+			PROFILE_EVENT_TAG( "emPattern", vLight->emitter->pattern );
+			PROFILE_EVENT_TAG( "origin", vLight->globalLightOrigin.x, vLight->globalLightOrigin.y, vLight->globalLightOrigin.z );
+		}
+
+		// without the atlas every light renders into the same per-LOD shadow images just before its own
+		// interactions, so this light's maps are rendered again before its translucent chain samples them
+		if( !r_useShadowAtlas.GetBool() && R_ViewLightHasShadowMap( vLight ) )
+		{
+			//puncho - reconcile: the moved translucent chain also redraws non-atlas maps.
+			if( concurrencyStats )
+			{
+				MarkBackendPass( BP_SHADOW );
+			}
+			ShadowMapsForLightNoAtlas( vLight, previousFramebuffer );
+			//puncho - reconcile: resume the translucent interval.
+			if( concurrencyStats )
+			{
+				MarkBackendPass( BP_INTER_TRANSLUCENT );
+			}
+		}
+
+		GL_State( GLS_DEFAULT );
+		SetFragmentParm( RENDERPARM_ALPHA_TEST, vec4_zero.ToFloatPtr() );
+		ResetViewportAndScissorToDefaultCamera( _viewDef );
+
+		renderLog.OpenBlock( "Translucent Interactions", colorCyan );
+		// ---- TRACK V ( V5 ): the fog view binds the INTERACTION_SM_FOG twins for these draws ( D83 ) ----
+		// ---- END TRACK V ----
+		RenderInteractions( vLight->translucentInteractions, vLight, GLS_DEPTHFUNC_LESS, false, false, INTERACTION_SORT_FAR_AND_ABOVE );
+		renderLog.CloseBlock();
+	}
+
+	GL_State( GLS_DEFAULT );
+	GL_SelectTexture( 0 );
+
+	renderLog.CloseBlock();
+}
+
+/*
 =============================================================================================
 
 NON-INTERACTION SHADER PASSES
@@ -4327,7 +4818,7 @@ be multiplied by guiEye for polarity and screenSeparation for scale.
 =====================
 */
 int idRenderBackend::DrawShaderPasses( const drawSurf_t* const* const drawSurfs, const int numDrawSurfs,
-									   const float guiStereoScreenOffset, const int stereoEye )
+									   const float guiStereoScreenOffset, const int stereoEye, const bool stopAtFar )
 {
 	// only obey skipAmbient if we are rendering a view
 	if( viewDef->viewEntitys && r_skipAmbient.GetBool() )
@@ -4381,6 +4872,13 @@ int idRenderBackend::DrawShaderPasses( const drawSurf_t* const* const drawSurfs,
 			{
 				continue;
 			}
+		}
+
+		// X0 ( C8 ): stop at the first blended surface so that the caller can draw the fog apply and the lit
+		// translucent light before it; the caller resumes from the returned index
+		if( stopAtFar && shader->GetSort() >= SS_FAR )
+		{
+			break;
 		}
 
 		// we need to draw the post process shaders after we have drawn the fog lights
@@ -5254,19 +5752,11 @@ void idRenderBackend::DrawMotionVectors()
 		// strafe leaves unjitteredMVP bit-identical and the whole motion is in d
 		const idVec3d d = viewDef->renderOrigin - prevRenderOrigin[mvpIndex];
 
-		// a jump this far along one axis in one frame is a teleport or a camera change, not motion
-		const double cutDistance = 4096.0;
-
-		if( viewDef->invalidateHistory || fabs( d.x ) > cutDistance || fabs( d.y ) > cutDistance || fabs( d.z ) > cutDistance )
+		if( viewHistoryCut )
 		{
 			// a camera cut or the first main view after a map load: the draw below is skipped and
 			// TemporalAAPass resolves without history, then sets prevViewsValid again
 			prevViewsValid = false;
-
-			if( r_logCameraCuts.GetBool() )
-			{
-				common->Printf( "camera cut: |d| = %.1f%s\n", sqrt( d.x * d.x + d.y * d.y + d.z * d.z ), viewDef->invalidateHistory ? " ( map load )" : "" );
-			}
 		}
 		else if( memcmp( &viewDef->worldSpace.unjitteredMVP[0][0], &prevMVP[mvpIndex][0][0], sizeof( idRenderMatrix ) ) != 0 || !d.IsZero() )
 		{
@@ -5295,9 +5785,6 @@ void idRenderBackend::DrawMotionVectors()
 
 			cameraMoved = true;
 		}
-
-		prevMVP[mvpIndex] = viewDef->worldSpace.unjitteredMVP;
-		prevRenderOrigin[mvpIndex] = viewDef->renderOrigin;
 	}
 
 	// make sure rpWindowCoord is set even without post processing surfaces in the view
@@ -5383,6 +5870,7 @@ void idRenderBackend::TemporalAAPass( const viewDef_t* _viewDef )
 
 	renderLog.CloseBlock();
 	renderLog.CloseMainBlock();
+	ResetGraphicsStateCache();
 }
 
 idVec2 idRenderBackend::GetCurrentPixelOffset( int frameIndex ) const
@@ -5775,6 +6263,7 @@ void idRenderBackend::DrawScreenSpaceAmbientOcclusion2( const viewDef_t* _viewDe
 
 	renderLog.CloseBlock();
 	renderLog.CloseMainBlock();
+	ResetGraphicsStateCache();
 }
 
 /*
@@ -5876,7 +6365,18 @@ void idRenderBackend::ExecuteBackEndCommands( const emptyCommand_t* cmds )
 
 			case RC_DRAW_VIEW_3D:
 				drawView3D = true;
-				DrawView( cmds, 0 );
+				// X0 ( D64 ): a block is timed only on its first open/close pair in a frame, and the sky view,
+				// subviews and GUI worlds are drawn before the main view: time the main view only.
+				if( ( ( const drawSurfsCommand_t* )cmds )->viewDef->isMainView )
+				{
+					DrawView( cmds, 0 );
+				}
+				else
+				{
+					glConfig.timerQueryAvailable = false;
+					DrawView( cmds, 0 );
+					glConfig.timerQueryAvailable = timerQueryAvailable;
+				}
 				c_draw3d++;
 				break;
 
@@ -5893,7 +6393,18 @@ void idRenderBackend::ExecuteBackEndCommands( const emptyCommand_t* cmds )
 			case RC_POST_PROCESS:
 			{
 				// apply optional post processing
-				PostProcess( cmds );
+				// X0 ( D64 ): a block is timed only on its first open/close pair in a frame, and the sky view,
+				// subviews and GUI worlds are drawn before the main view: time the main view only.
+				if( ( ( const postProcessCommand_t* )cmds )->viewDef->isMainView )
+				{
+					PostProcess( cmds );
+				}
+				else
+				{
+					glConfig.timerQueryAvailable = false;
+					PostProcess( cmds );
+					glConfig.timerQueryAvailable = timerQueryAvailable;
+				}
 				break;
 			}
 
@@ -5964,6 +6475,39 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 	//OPTICK_GPU_EVENT( "DrawView" );	// SRS - now in DrawView() for 3D vs. GUI
 
 	bool is3D = _viewDef->viewEntitys && !_viewDef->is2Dgui;
+
+	// X0 ( H10 ): the previous main-view state ( prevMVP, prevRenderOrigin ) is shared by TAA, motion blur and the
+	// fog history. The camera cut is decided once, here, so every reader in this view agrees on it.
+	viewHistoryCut = false;
+	const bool keepsViewHistory = _viewDef->isMainView && _viewDef->viewEntitys
+								  && !( _viewDef->renderView.rdflags & ( RDF_NOAMBIENT | RDF_IRRADIANCE ) );
+	const int historyIndex = ( _viewDef->renderView.viewEyeBuffer == 1 ) ? 1 : 0;
+	if( keepsViewHistory )
+	{
+		// a jump this far along one axis in one frame is a teleport or a camera change, not motion
+		const double cutDistance = 4096.0;
+		const idVec3d d = _viewDef->renderOrigin - prevRenderOrigin[historyIndex];
+
+		if( _viewDef->invalidateHistory || fabs( d.x ) > cutDistance || fabs( d.y ) > cutDistance || fabs( d.z ) > cutDistance )
+		{
+			viewHistoryCut = true;
+
+			if( r_logCameraCuts.GetBool() )
+			{
+				common->Printf( "camera cut: |d| = %.1f%s\n", sqrt( d.x * d.x + d.y * d.y + d.z * d.z ), _viewDef->invalidateHistory ? " ( map load )" : "" );
+			}
+		}
+	}
+
+	// X0 ( D66, B22 ): a binding set that holds a volatile constant buffer which was not written in this command
+	// list is a fatal error at the draw. Every 3D view therefore starts with "fog off"; the fog pass ( V1 )
+	// overwrites it at the apply slot of the one view that has fog.
+	if( is3D )
+	{
+		froxelFogParms_t fogOff;
+		memset( &fogOff, 0, sizeof( fogOff ) );
+		commandList->writeBuffer( froxelFogParms, &fogOff, sizeof( fogOff ) );
+	}
 
 	// ugly but still faster than building the string
 	if( !is3D )
@@ -6145,6 +6689,25 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 	}
 	FillDepthBufferFast( drawSurfs, numDrawSurfs );
 
+	//puncho - reconcile: account for the renderer upgrade pass.
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_FOG_SKY );
+	}
+	// X0 ( C8 ): the one view the froxel fog runs in. froxelApplied guards the apply: true from the start
+	// everywhere else.
+	const bool fogEligible = _viewDef->isMainView && _viewDef->viewEntitys
+							 && !( _viewDef->renderView.rdflags & ( RDF_IRRADIANCE | RDF_NOAMBIENT | RDF_NOFOG ) );
+	bool froxelApplied = !fogEligible;
+
+	// the fog's sky mask ( V1, D52 ); it opens no main block
+	if( volumetricFogPass && fogEligible )
+	{
+		OPTICK_GPU_EVENT( "Render_FogSkyMask" );
+		volumetricFogPass->DrawSkyMask( commandList, _viewDef );
+		ResetGraphicsStateCache();
+	}
+
 	//-------------------------------------------------
 	// build hierarchical depth buffer
 	//-------------------------------------------------
@@ -6173,6 +6736,7 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 
 		renderLog.CloseBlock();
 		renderLog.CloseMainBlock();
+		ResetGraphicsStateCache();
 	}
 
 	//-------------------------------------------------
@@ -6211,30 +6775,61 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 	}
 
 	//-------------------------------------------------
+	// render all light <-> geometry interactions to a depth buffer atlas
+	//-------------------------------------------------
+	//puncho - reconcile: account for the renderer upgrade pass.
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_SHADOW );
+	}
+	ShadowAtlasPass( _viewDef );			// moved up: the lit pass and the fog inject sample the atlas ( H1 )
+	//puncho - reconcile: account for the renderer upgrade pass.
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_LIGHT_LISTS );
+	}
+	R_BuildShadowRows( _viewDef );			// C2 rows; a no-op until F1
+
+	//puncho - reconcile: account for the renderer upgrade pass.
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_VOLUMETRICS );
+	}
+	if( fogEligible )
+	{
+		// froxel inject, resolve, integrate ( V1 ). The pair stays even while the pass is NULL: the block's HUD row
+		OPTICK_GPU_EVENT( "Render_Volumetrics" );
+		renderLog.OpenMainBlock( MRB_VOLUMETRICS );
+		if( volumetricFogPass )
+		{
+			volumetricFogPass->Render( commandList, _viewDef );
+		}
+		renderLog.CloseMainBlock( MRB_VOLUMETRICS );
+		ResetGraphicsStateCache();
+	}
+
+	//-------------------------------------------------
 	// render static lighting and consider SSAO results
 	//-------------------------------------------------
 	//puncho
 	if( concurrencyStats )
 	{
-		MarkBackendPass( BP_AMBIENT );
+		//puncho - reconcile: the no-list forward fallback and probe bakes keep the ambient interval.
+		MarkBackendPass( _viewDef->listsBuilt && !( _viewDef->renderView.rdflags & RDF_IRRADIANCE ) ? BP_FORWARD : BP_AMBIENT );
 	}
 	if( is3D )
 	{
-		//OPTICK_EVENT( "Render_AmbientPass" );
-		OPTICK_GPU_EVENT( "Render_AmbientPass" );
+		OPTICK_GPU_EVENT( "Render_ForwardPass" );		// this zone was "Render_AmbientPass"
 
-		AmbientPass( drawSurfs, numDrawSurfs, false );
+		if( _viewDef->renderView.rdflags & RDF_IRRADIANCE )
+		{
+			AmbientPass( drawSurfs, numDrawSurfs, false );	// probe bakes keep the ambient pass ( D6 )
+		}
+		else
+		{
+			ForwardPass( drawSurfs, numDrawSurfs, false );
+		}
 	}
-
-	//-------------------------------------------------
-	// render all light <-> geometry interactions to a depth buffer atlas
-	//-------------------------------------------------
-	//puncho
-	if( concurrencyStats )
-	{
-		MarkBackendPass( BP_SHADOW );
-	}
-	ShadowAtlasPass( _viewDef );
 
 	//-------------------------------------------------
 	// main light renderer
@@ -6245,6 +6840,17 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 		MarkBackendPass( BP_INTER_TEXTURE );
 	}
 	DrawInteractions( _viewDef );
+	//puncho - reconcile: account for the renderer upgrade pass.
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_LIGHT_DIFF );
+	}
+	// ---- TRACK F: the twin difference passes ( D49, D79 ) ----
+	if( is3D )
+	{
+		LightDiffPass( drawSurfs, numDrawSurfs );		// r_showLightDiff 2 in a listing view; returns at once otherwise
+	}
+	// ---- END TRACK F ----
 
 	//-------------------------------------------------
 	// resolve the screen for SSR
@@ -6275,6 +6881,7 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 			blitParms.targetViewport = nvrhi::Viewport( renderSystem->GetWidth(), renderSystem->GetHeight() );
 			commonPasses.BlitTexture( commandList, blitParms, &bindingCache );
 		}
+		ResetGraphicsStateCache();
 
 		renderLog.CloseBlock();
 	}
@@ -6289,12 +6896,15 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 		MarkBackendPass( BP_STAGES );
 	}
 	int processed = 0;
-	if( !r_skipShaderPasses.GetBool() )
+	const bool drawShaderPasses = !r_skipShaderPasses.GetBool();
+	float guiScreenOffset = 0.0f;
+	if( drawShaderPasses )
 	{
 		OPTICK_GPU_EVENT( "Render_GenericShaderPasses" );
 
+		// one pair spans the first call, the slot below and the resumed call ( D70 ); the blocks nested in it
+		// are closed with their ids and the HUD subtracts their time from this one
 		renderLog.OpenMainBlock( MRB_DRAW_SHADER_PASSES );
-		float guiScreenOffset;
 		if( _viewDef->viewEntitys != NULL )
 		{
 			// guiScreenOffset will be 0 in non-gui views
@@ -6304,8 +6914,73 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 		{
 			guiScreenOffset = stereoEye * _viewDef->renderView.stereoScreenSeparation;
 		}
-		processed = DrawShaderPasses( drawSurfs, numDrawSurfs, guiScreenOffset, stereoEye );
-		renderLog.CloseMainBlock();
+		// every 3D view stops at its first blended surface ( sort >= SS_FAR )
+		processed = DrawShaderPasses( drawSurfs, numDrawSurfs, guiScreenOffset, stereoEye, is3D );
+	}
+
+	if( is3D )
+	{
+		//puncho - reconcile: account for the renderer upgrade pass.
+		if( concurrencyStats )
+		{
+			MarkBackendPass( BP_VOLUMETRICS_APPLY );
+		}
+		if( !froxelApplied )
+		{
+			// the fog apply ( V1 ): once per fog-eligible view, also when the shader passes are skipped
+			OPTICK_GPU_EVENT( "Render_VolumetricsApply" );
+			renderLog.OpenMainBlock( MRB_VOLUMETRICS_APPLY );
+			if( volumetricFogPass )
+			{
+				volumetricFogPass->Apply( commandList, _viewDef );
+			}
+			renderLog.CloseMainBlock( MRB_VOLUMETRICS_APPLY );
+			froxelApplied = true;
+		}
+		// even an empty main-block pair ends the Vulkan render pass ( S69 )
+		ResetGraphicsStateCache();
+
+		//puncho - reconcile: account for the renderer upgrade pass.
+		if( concurrencyStats )
+		{
+			MarkBackendPass( BP_INTER_TRANSLUCENT );
+		}
+		{
+			// lit translucent light, after the apply ( D83 )
+			OPTICK_GPU_EVENT( "Render_Interactions_Translucent" );
+			renderLog.OpenMainBlock( MRB_DRAW_INTERACTIONS_TRANSLUCENT );
+			DrawTranslucentInteractions( _viewDef );
+			renderLog.CloseMainBlock( MRB_DRAW_INTERACTIONS_TRANSLUCENT );
+		}
+		//puncho - reconcile: account for the renderer upgrade pass.
+		if( concurrencyStats )
+		{
+			MarkBackendPass( BP_FORWARD_TRANSLUCENT );
+		}
+		{
+			OPTICK_GPU_EVENT( "Render_ForwardTranslucent" );
+			// probe bakes keep the ambient pass ( D6 ); F4 must also decide what an RDF_NOAMBIENT view draws here
+			if( !( _viewDef->renderView.rdflags & RDF_IRRADIANCE ) )
+			{
+				ForwardPass( drawSurfs, numDrawSurfs, true );		// draws nothing until F4, which opens MRB_FORWARD_TRANSLUCENT
+			}
+		}
+		ResetGraphicsStateCache();
+	}
+
+	//puncho - reconcile: charge the resumed shader stages to the original interval.
+	if( concurrencyStats )
+	{
+		MarkBackendPass( BP_STAGES );
+	}
+	if( drawShaderPasses )
+	{
+		if( processed < numDrawSurfs )
+		{
+			OPTICK_GPU_EVENT( "Render_GenericShaderPasses" );
+			processed += DrawShaderPasses( drawSurfs + processed, numDrawSurfs - processed, guiScreenOffset, stereoEye, false );
+		}
+		renderLog.CloseMainBlock( MRB_DRAW_SHADER_PASSES );
 	}
 
 	//-------------------------------------------------
@@ -6362,6 +7037,7 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 			blitParms.targetViewport = nvrhi::Viewport( renderSystem->GetWidth(), renderSystem->GetHeight() );
 			commonPasses.BlitTexture( commandList, blitParms, &bindingCache );
 		}
+		ResetGraphicsStateCache();
 
 		renderLog.CloseBlock();
 
@@ -6387,8 +7063,8 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 		SetFragmentParm( RENDERPARM_WINDOWCOORD, windowCoordParm ); // rpWindowCoord
 
 		// render the remaining surfaces
-		DrawShaderPasses( drawSurfs + processed, numDrawSurfs - processed, 0.0f /* definitely not a gui */, stereoEye );
-		renderLog.CloseMainBlock();
+		DrawShaderPasses( drawSurfs + processed, numDrawSurfs - processed, 0.0f /* definitely not a gui */, stereoEye, false );
+		renderLog.CloseMainBlock( MRB_DRAW_SHADER_PASSES_POST );
 	}
 
 	//-------------------------------------------------
@@ -6410,6 +7086,13 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 		MarkBackendPass( BP_MOTION );
 	}
 	DrawMotionVectors();
+
+	// X0 ( H10 ): written in every frame for the main view, whether or not TAA or motion blur ran
+	if( keepsViewHistory )
+	{
+		prevMVP[historyIndex] = _viewDef->worldSpace.unjitteredMVP;
+		prevRenderOrigin[historyIndex] = _viewDef->renderOrigin;
+	}
 
 	//-------------------------------------------------
 	// resolve of HDR target using temporal anti aliasing before any tonemapping and post processing

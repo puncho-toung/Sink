@@ -360,6 +360,7 @@ typedef enum
 	MF_LOD_PERSISTENT			= BIT( 11 ), // motorsep 11-24-2014; material flag for persistent LOD iteration
 	MF_ORIGIN					= BIT( 12 ), // Admer: for origin brushes
 	MF_UNLIT					= BIT( 13 ), // RB: receive no lighting
+	MF_FORWARD					= BIT( 14 ), // X0: surfaces of this material are lit through the forward light lists ( track F )
 } materialFlags_t;
 
 // contents flags, NOTE: make sure to keep the defines in doom_defs.script up to date with these!
@@ -773,6 +774,13 @@ public:
 		return ( materialFlags & flag ) != 0;
 	}
 
+	// track F: the forward tag, the optional number after the "forward" keyword: 0 = the rule decides, 1 = always the
+	// list, 2 = always the Z-bins ( lightListTag_t in LightLists.h ). The material stores it; only the light lists read it
+	int					GetForwardTag() const
+	{
+		return forwardTag;
+	}
+
 	// get content flags
 	const int			GetContentFlags() const
 	{
@@ -1027,6 +1035,7 @@ private:
 	int					contentFlags;		// content flags
 	int					surfaceFlags;		// surface flags
 	mutable int			materialFlags;		// material flags
+	byte				forwardTag;			// track F: see GetForwardTag; 0 when the keyword has no number
 
 	decalInfo_t			decalInfo;
 
@@ -1085,5 +1094,9 @@ private:
 };
 
 typedef idList<const idMaterial*, TAG_MATERIAL> idMatList;
+
+// ---- TRACK S: the materials whose parsed data was thrown away ( Material.cpp ); the shadow cache compares it ----
+extern int c_materialFrees;
+// ---- END TRACK S ----
 
 #endif /* !__MATERIAL_H__ */

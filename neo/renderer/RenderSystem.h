@@ -193,6 +193,23 @@ struct performanceCounters_t
 	int		c_viewEntsUnder4px;
 	int		c_viewEntsUnder16px;
 	int		c_viewEntsBeyond8k;
+	// ---- TRACK S: shadow cache counters ----
+	// S3b, N15: all six are written by the main view's decide pass ( R_ShadowCacheDecide ) at r_shadowCache 2;
+	// with two main views in a frame the last one's stand; nothing is written while shadows or the atlas are off
+	int		c_shadowCacheUnits;			// cached units emitted for the view ( the sun's cascades included )
+	int		c_shadowCacheLightsBuilt;	// lights whose static maps are drawn this frame ( builds and repairs )
+	int		c_shadowCacheLightsWaiting;	// lights drawn without the cache: no place, or their maps wait for a turn
+	int		c_shadowCacheEvicted;		// records that gave their place in the cache atlas up this frame
+	int		c_shadowCacheCellsUsed;		// cells ( 128 x 128 texels ) of the cache atlas in use
+	int		c_shadowCacheCells;			// cells of the cache atlas; 0 = the cache did not run this frame
+	// ---- END TRACK S ----
+	// ---- TRACK F: light lists ----
+	// N15: each track says per counter whether it counts the main view only or sums over the frame's views
+	int		c_listedLights;
+	int		c_surfLightNoRecord;
+	// ---- END TRACK F ----
+	// ---- TRACK V: volumetric fog counters ----
+	// ---- END TRACK V ----
 	uint64	usFindView;
 	uint64	usAddLights;
 	uint64	mocMicroSec;
@@ -212,15 +229,24 @@ enum backendPass_t
 	BP_COMMANDS,
 	BP_VIEW_SETUP,
 	BP_DEPTH,
+	BP_FOG_SKY,			//puncho - reconcile: fog sky-mask slot
 	BP_HIZ,
 	BP_GBUFFER,
 	BP_SSAO,
-	BP_AMBIENT,
+	BP_SHADOW_CACHE,		//puncho - reconcile: static cache builds and copies
 	BP_SHADOW,
+	BP_LIGHT_LISTS,		//puncho - reconcile: shadow rows and light-table uploads
+	BP_VOLUMETRICS,		//puncho - reconcile: fog inject/resolve/integrate slot
+	BP_AMBIENT,
+	BP_FORWARD,			//puncho - reconcile: forward opaque pass
 	BP_INTER_TEXTURE,
 	BP_INTER_EMITTER,
+	BP_LIGHT_DIFF,		//puncho - reconcile: difference view setup, comparison and readback
 	BP_SSR,
 	BP_STAGES,
+	BP_VOLUMETRICS_APPLY,	//puncho - reconcile: fog composite slot
+	BP_INTER_TRANSLUCENT,	//puncho - reconcile: lit surfaces at or above SS_FAR
+	BP_FORWARD_TRANSLUCENT,	//puncho - reconcile: forward translucent slot
 	BP_FOG,
 	BP_POST,
 	BP_DEBUG,
@@ -283,6 +309,27 @@ struct backEndCounters_t
 	uint64	gpuPostProcessingMicroSec;
 	uint64	gpuDrawGuiMicroSec;
 	uint64	gpuCrtPostProcessingMicroSec;
+	// ---- X0: gpu timing counters (renderer upgrade seams) ----
+	uint64	gpuShadowCacheMicroSec;
+	uint64	gpuForwardPassMicroSec;
+	uint64	gpuForwardTranslucentMicroSec;
+	uint64	gpuVolumetricsMicroSec;
+	uint64	gpuVolumetricsApplyMicroSec;
+	uint64	gpuInteractionsTranslucentMicroSec;
+	// ---- END X0 ----
+	// ---- TRACK S: shadow cache counters ----
+	// ---- END TRACK S ----
+	// ---- TRACK F: light list counters ----
+	int		c_lightListRecords;			// F1: records of the last view that had some
+	int		c_lightListRows;			// F1: its shadow rows
+	int		c_lightListUploadBytes;		// F1: bytes of tables it wrote to the six buffers
+	int		c_lightDiffValid;			// F2: 1 while the difference view runs and has a read-out
+	float	c_lightDiffMean;			// F2: mean over the view's pixels of | forward - legacy |, the three channels averaged ( linear HDR units ), two frames old
+	float	c_lightDiffMax;				// F2: the largest channel difference of any pixel
+	float	c_lightDiffLegacyMean;		// F2: the legacy picture's mean, for scale
+	// ---- END TRACK F ----
+	// ---- TRACK V: volumetric fog counters ----
+	// ---- END TRACK V ----
 	uint64	gpuMicroSec;
 
 	//puncho - cleared and copied with pc; each interval contributes exactly once.

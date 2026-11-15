@@ -11,8 +11,10 @@ rbdoom-cr/base/maps/test beside this tree:
     cr_far       cr_origin moved by FAR_OFFSET = ( 122880, 122880, 0 )	# 120 x 1024: dmap splits on a 1024 block grid, and its st fix keeps a side's arithmetic identical when the move is a multiple of 8192 (impl/BUILD-AND-G0.md 11-12): the same description, the same entity
                  order, only every coordinate offset, so the two maps differ by the translation alone
     cr_subviews  a mirror, a direct-portal surface whose func_cameraview sits in a sealed remote room between two
-                 marker plates 1 unit either side of its plane, a remoteRenderMap monitor with its own camera, a
-                 plain func_fracture window and a func_smoke (an idSmokeParticles emitter, not a func_emitter)
+                 marker plates: one centred 1 unit before the portal's oblique clip plane (must be clipped), one 1 unit
+                 beyond the camera plane (must be drawn, lit by a light on the portal's side); a remoteRenderMap
+                 monitor with its own camera, a plain func_fracture window and a func_smoke (an idSmokeParticles
+                 emitter, not a func_emitter)
     cr_sky       a portal sky whose info_portalSky is more than 131072 units from the player, plus a func_smoke
     cr_plain     one room, two shadowed lights, a few boxes: no sky, no subview
     rz_zfight    two func_static plates 0.5 units apart at 10000 and at 100000 units from the start, each pair
@@ -212,17 +214,23 @@ SUB_ROOM = ( 1024, 1024, 384 )
 SUB_REMOTE = ( ( 3072, 0, 0 ), ( 6144, 1024, 512 ) )	# sealed room the direct portal looks into; deep enough behind the
 													# camera to hold the portal view's eye, which sits behind it by the
 													# player's distance to the portal surface (R_PortalViewBySurface)
-SUB_PORTAL_CAM = ( 4608, 512, 192 )					# faces +x; the portal's oblique plane is x = 4608
+SUB_PORTAL_CAM = ( 4608, 512, 192 )					# faces +x; the camera plane is x = 4608
+SUB_PORTAL_FUDGE = 2								# R_PortalViewBySurface (renderer/tr_frontend_subview.cpp) moves the oblique
+													# clip plane this far toward the virtual eye, so it sits this far before
+													# the camera plane (x = 4606 here); regenerate this fixture if the
+													# engine's value changes
 
 def cr_subviews():
 	X, Y, Z = SUB_ROOM
 	cx, cy, cz = SUB_PORTAL_CAM
 	w = MapWriter( "cr_subviews", """
 		Mirror and direct portal on the +x wall, remoteRenderMap monitor on the +y wall, func_fracture pane, func_smoke.
-		The direct portal looks through func_cameraview cam_portal ( %s ) yaw 0 in a sealed room; marker plates centred
-		1 unit before ( x = %s ) and 1 unit beyond ( x = %s ) its plane, 0.5 units thick (V3.5a).
+		The direct portal looks through func_cameraview cam_portal ( %s ) yaw 0 in a sealed room; its oblique clip plane
+		is %s units before the camera plane ( R_PortalViewBySurface's fudge ). Marker plates are 0.5 units thick (V3.5a):
+		marker_before, centred 1 unit before the clip plane ( x = %s ), must be clipped; marker_beyond, centred 1 unit
+		beyond the camera plane ( x = %s ), must be drawn, lit by light_markers ( on the portal's side of the plates ).
 		Start ( 96 512 0 ) yaw 0: setviewpos 96 512 68 0
-	""" % ( vec( SUB_PORTAL_CAM ), fmt( cx - 1 ), fmt( cx + 1 ) ) )
+	""" % ( vec( SUB_PORTAL_CAM ), fmt( SUB_PORTAL_FUDGE ), fmt( cx - SUB_PORTAL_FUDGE - 1 ), fmt( cx + 1 ) ) )
 
 	world = hull( ( 0, 0, 0 ), ( X, Y, Z ), { "default": WALL, "floor": FLOOR_A } )
 	world += hull( SUB_REMOTE[0], SUB_REMOTE[1], { "default": WALL_RED, "floor": FLOOR_B } )
@@ -233,12 +241,17 @@ def cr_subviews():
 	point_light( w, "light_1", ( 512, 512, 320 ), ( 640, 640, 384 ) )
 	point_light( w, "light_2", ( 256, 832, 256 ), ( 384, 384, 384 ) )
 	point_light( w, "light_remote", ( 5120, 512, 448 ), ( 1280, 768, 512 ) )
+	# the portal sees the plates' -x faces, which point away from light_remote; without this light the plate that
+	# must be drawn ( marker_beyond ) is a black rectangle no capture can tell from "nothing drawn"
+	point_light( w, "light_markers", ( cx - 400, cy, cz + 64 ), ( 512, 384, 224 ) )
 
 	w.brush_entity( "func_static", "mirror_1", ( X - 4, 576, 64 ), ( X, 896, 320 ), { "default": CAULK, "-x": MIRROR } )
 	w.brush_entity( "func_static", "portal_1", ( X - 4, 128, 64 ), ( X, 448, 320 ), { "default": CAULK, "-x": DIRECT_PORTAL },
 		[ ( "cameraTarget", "cam_portal" ) ] )
 	w.entity( [ ( "classname", "func_cameraview" ), ( "name", "cam_portal" ), ( "origin", vec( SUB_PORTAL_CAM ) ), ( "angle", "0" ) ] )
-	w.brush_entity( "func_static", "marker_before", ( cx - 1.25, cy - 256, cz - 128 ), ( cx - 0.75, cy, cz + 128 ), FLOOR_B )
+	# marker_before is centred 1 unit before the clip plane (SUB_PORTAL_FUDGE before the camera plane) and must be
+	# clipped; marker_beyond is centred 1 unit beyond the camera plane, so 3 beyond the clip plane, and must be drawn
+	w.brush_entity( "func_static", "marker_before", ( cx - SUB_PORTAL_FUDGE - 1.25, cy - 256, cz - 128 ), ( cx - SUB_PORTAL_FUDGE - 0.75, cy, cz + 128 ), FLOOR_B )
 	w.brush_entity( "func_static", "marker_beyond", ( cx + 0.75, cy, cz - 128 ), ( cx + 1.25, cy + 256, cz + 128 ), WALL )
 
 	# the remote-render monitor (the "security camera" subview) and its camera in the main room

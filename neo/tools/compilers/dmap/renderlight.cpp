@@ -40,8 +40,10 @@ idRenderLightLocal::idRenderLightLocal()
 	memset( lightProject, 0, sizeof( lightProject ) );
 
 	lightHasMoved			= false;
+	isPrimarySun			= false;
 	world					= NULL;
 	index					= 0;
+	uniqueId				= 0;
 	areaNum					= 0;
 	lastModifiedFrameNum	= 0;
 	lightShader				= NULL;
@@ -436,7 +438,7 @@ void R_DeriveLightData( idRenderLightLocal* light )
 			// make point straight up if not specified
 			dir[2] = 1.0f;
 		}
-		light->globalLightOrigin = light->parms.origin + dir * 100000.0f;
+		light->globalLightOrigin = light->parms.origin + dir * PARALLEL_LIGHT_FAKE_DISTANCE;
 	}
 	else
 	{

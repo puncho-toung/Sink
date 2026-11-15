@@ -210,6 +210,9 @@ void idGameEdit::ParseSpawnArgsToRenderLight( const idDict* args, renderLight_t*
 	args->GetFloat( "shaderParm7", "0", renderLight->shaderParms[ SHADERPARM_MODE ] );
 	args->GetBool( "noshadows", "0", renderLight->noShadows );
 	args->GetBool( "nospecular", "0", renderLight->noSpecular );
+	//puncho - reconcile: read the upgrade keys for emitter and texture lights alike
+	args->GetBool( "primarySun", "0", renderLight->primarySun );
+	renderLight->forwardMode = ( byte )idMath::ClampInt( 0, 2, args->GetInt( "forward", "0" ) );
 	//puncho start - an emitter reads neither parallel ( the emitter branch sets it from the shape, and the
 	// emitter parse reads the key when it needs it ) nor texture, whose material is fixed below: a light
 	// that kept its texture key would otherwise load that material and its images for nothing ( G0
@@ -488,6 +491,9 @@ void idLight::Restore( idRestoreGame* savefile )
 	const float pixelScale = gameLocal.world != NULL ? gameLocal.world->spawnArgs.GetFloat( "minVisPixelsScale", "1" ) : 1.0f;
 	renderLight.maxVisDist = Max( 0.0f, spawnArgs.GetFloat( "maxVisDist", "0" ) * distanceScale );
 	renderLight.minVisPixels = Max( 0.0f, spawnArgs.GetFloat( "minVisPixels", "0" ) * pixelScale );
+	// the save stream holds neither of these two keys; the entity's saved dict does (no format change)
+	renderLight.primarySun = spawnArgs.GetBool( "primarySun", "0" );
+	renderLight.forwardMode = ( byte )idMath::ClampInt( 0, 2, spawnArgs.GetInt( "forward", "0" ) );
 
 	//puncho start - emit_effect plays from the saved emitter block and needs no light_styles; its frame
 	// time is spawn data, so it comes back from the restored spawnArgs instead of the constructor's 100

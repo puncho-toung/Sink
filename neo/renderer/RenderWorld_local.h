@@ -134,8 +134,11 @@ typedef struct portalArea_s
 // does not exist yet then, and FreeDefs, which the retain path runs, must not lose it
 struct areaChunk_t
 {
-	idVec3			origin;			// multiple of 1024, the parms.origin of the area's world entity
+	// snapped to AREA_CHUNK_SNAP when the .proc is parsed ( a .bproc cache keeps the origin
+	// it was written with ); the parms.origin of the area's world entity
+	idVec3			origin;
 	idBounds		absBounds;		// FinishSurfaces bounds of the absolute vertices, source of globalBounds
+	bool			valid;			// true once SetAreaChunk stored this area; entries the list grew past are false
 };
 
 
@@ -282,6 +285,8 @@ public:
 	idList<idRenderEntityLocal*, TAG_ENTITY>		entityDefs;
 	idList<idRenderLightLocal*, TAG_LIGHT>			lightDefs;
 	idList<RenderEnvprobeLocal*, TAG_ENVPROBE>		envprobeDefs; // RB
+
+	int						nextUniqueId;			// X0 ( D44 ): source of the defs' uniqueId; 1 in the constructor, never reset by InitFromMap
 
 	// lazy once-per-map cache of <mapbase>.shprobes
 	idList<shProbeEntry_t>	shProbeEntries;
@@ -476,5 +481,8 @@ ID_INLINE idInteraction* idRenderWorldLocal::GetInteraction( int light, int enti
 void R_ListRenderLightDefs_f( const idCmdArgs& args );
 void R_CheckOpenAreas_f( const idCmdArgs& args );
 void R_ListRenderEntityDefs_f( const idCmdArgs& args );
+
+// X0 ( D42, D73 ): flags the one parallel light of the world that is its sun; per world, never per view
+void R_PickPrimarySun( idRenderWorldLocal* world );
 
 #endif /* !__RENDERWORLDLOCAL_H__ */

@@ -306,14 +306,33 @@ float idConsoleLocal::DrawFPS( float y )
 	const uint64 rendererGPU_SSRTime = commonLocal.GetRendererGpuSSRMicroseconds();
 	const uint64 rendererGPUAmbientPassTime = commonLocal.GetRendererGpuAmbientPassMicroseconds();
 	const uint64 rendererGPUShadowAtlasTime = commonLocal.GetRendererGpuShadowAtlasPassMicroseconds();
-	const uint64 rendererGPUInteractionsTime = commonLocal.GetRendererGpuInteractionsMicroseconds();
-	const uint64 rendererGPUShaderPassesTime = commonLocal.GetRendererGpuShaderPassMicroseconds() + commonLocal.GetRendererGpuFogAllLightsMicroseconds() + commonLocal.GetRendererGpuShaderPassPostMicroseconds() + commonLocal.GetRendererGpuDrawGuiMicroseconds();
+	const uint64 rendererGPUInteractionsTime = commonLocal.GetRendererGpuInteractionsMicroseconds() + commonLocal.GetRendererGpuInteractionsTranslucentMicroseconds();	// X0 - the row shows both interaction phases
+	// X0 - volumetrics apply, the translucent interactions and the forward translucent pass draw inside
+	// the MRB_DRAW_SHADER_PASSES pair after X0, so their time is already inside gpuShaderPassMicroSec;
+	// subtract it so it is not counted twice ( each shows on its own row ). Subtract only when the shader
+	// pass block is non-zero: with r_skipShaderPasses 1 the blocks are not nested in it. Clamped at 0
+	// because the sum is unsigned
+	const uint64 shaderPassNestedTime = commonLocal.GetRendererGpuShaderPassMicroseconds() > 0 ? commonLocal.GetRendererGpuVolumetricsApplyMicroseconds() + commonLocal.GetRendererGpuInteractionsTranslucentMicroseconds() + commonLocal.GetRendererGpuForwardTranslucentMicroseconds() : 0;
+	const uint64 shaderPassTotalTime = commonLocal.GetRendererGpuShaderPassMicroseconds() + commonLocal.GetRendererGpuFogAllLightsMicroseconds() + commonLocal.GetRendererGpuShaderPassPostMicroseconds() + commonLocal.GetRendererGpuDrawGuiMicroseconds();
+	const uint64 rendererGPUShaderPassesTime = shaderPassTotalTime > shaderPassNestedTime ? shaderPassTotalTime - shaderPassNestedTime : 0;
 	const uint64 rendererGPU_TAATime = commonLocal.GetRendererGpuMotionVectorsMicroseconds() + commonLocal.GetRendererGpuTAAMicroseconds();
 	const uint64 rendererGPUPostProcessingTime = commonLocal.GetRendererGpuToneMapPassMicroseconds() + commonLocal.GetRendererGpuPostProcessingMicroseconds() + commonLocal.GetRendererGpuCrtPostProcessingMicroseconds();
 	//puncho start - the two halves of rendererGPUInteractionsTime above
 	const uint64 rendererGPUInteractionsTexTime = commonLocal.GetRendererGpuInteractionsTexMicroseconds();
 	const uint64 rendererGPUInteractionsEmitterTime = commonLocal.GetRendererGpuInteractionsEmitterMicroseconds();
 	//puncho end
+	// ---- X0: the new GPU buckets (renderer upgrade seams) ----
+	const uint64 rendererGPUShadowCacheTime = commonLocal.GetRendererGpuShadowCacheMicroseconds();
+	const uint64 rendererGPUForwardTime = commonLocal.GetRendererGpuForwardPassMicroseconds() + commonLocal.GetRendererGpuForwardTranslucentMicroseconds();
+	const uint64 rendererGPUVolumetricsTime = commonLocal.GetRendererGpuVolumetricsMicroseconds();
+	const uint64 rendererGPUFogApplyTime = commonLocal.GetRendererGpuVolumetricsApplyMicroseconds();
+	// ---- END X0 ----
+	// ---- TRACK S: HUD values ----
+	// ---- END TRACK S ----
+	// ---- TRACK F: HUD values ----
+	// ---- END TRACK F ----
+	// ---- TRACK V: HUD values ----
+	// ---- END TRACK V ----
 
 	// SRS - Calculate max fps and max frame time based on glConfig.displayFrequency if vsync enabled and lower than engine Hz, otherwise use com_engineHz_latched
 	const int maxFPS = ( r_swapInterval.GetInteger() > 0 && glConfig.displayFrequency > 0 ? std::min( glConfig.displayFrequency, int( com_engineHz_latched ) ) : com_engineHz_latched );
@@ -348,7 +367,27 @@ float idConsoleLocal::DrawFPS( float y )
 	{
 		// start smaller
 		int32 statsWindowWidth = com_showFPS.GetInteger() >= 5 ? 850 : 320;
-		int32 statsWindowHeight = 370 + ( com_showFPS.GetInteger() >= 5 ? 120 : 0 );		//puncho: +40 for the Int(tex)/Int(emit) rows
+		int32 statsWindowHeight = 370 + 80 + ( com_showFPS.GetInteger() >= 5 ? 120 : 0 );		//puncho - reconcile: +40 for the Int(tex)/Int(emit) rows; X0: +80 for the four new GPU rows
+		// Each track adds its own row count to statsWindowHeight here.
+		// ---- TRACK S: extra stats rows ----
+		if( commonLocal.stats_frontend.c_shadowCacheCells > 0 )
+		{
+			statsWindowHeight += 20;		// S3b: the shadow cache's capacity line
+		}
+		// ---- END TRACK S ----
+		// ---- TRACK F: extra stats rows ----
+		//puncho - reconcile: reserve a row for each active forward diagnostic
+		if( commonLocal.stats_backend.c_lightListRecords > 0 )
+		{
+			statsWindowHeight += 20;
+		}
+		if( commonLocal.stats_backend.c_lightDiffValid != 0 )
+		{
+			statsWindowHeight += 20;
+		}
+		// ---- END TRACK F ----
+		// ---- TRACK V: extra stats rows ----
+		// ---- END TRACK V ----
 
 		//puncho start - ai-harness (plans/ai-harness/00-PLAN.md §2.5): the host's AI census of the last tic, read in
 		// place with no copy and no lock because the game thread is idle or has just finished when this draws (on the
@@ -571,6 +610,9 @@ float idConsoleLocal::DrawFPS( float y )
 				"  [DEBUG: pattern]",
 				"  [DEBUG: unlit in volume]",
 			};
+			//puncho - reconcile: emitters in place of math lights in track F; emit and tex count the legacy pass.
+			// A light whose surfaces all list it has no legacy lit surface left and is in neither;
+			// the LIGHTLISTS row counts those lights ( listed ).
 			const int emDebug = idMath::ClampInt( 0, emDebugNameCount - 1, r_showEmitters.GetInteger() );
 			ImGui::TextColored( emDebug > 0 ? colorOrange : colorLtGrey, "LIGHTS: view:%-3i  emit:%-3i  tex:%-3i  emitInView:%i%s",
 								commonLocal.stats_frontend.c_viewLights,
@@ -672,6 +714,44 @@ float idConsoleLocal::DrawFPS( float y )
 		ImGui::TextColored( rendererGPUInteractionsTexTime > maxTime ? colorRed : colorWhite,  "                    Int(tex):     %5llu us", rendererGPUInteractionsTexTime );
 		ImGui::TextColored( rendererGPUInteractionsEmitterTime > maxTime ? colorRed : colorWhite, "                    Int(emit):    %5llu us", rendererGPUInteractionsEmitterTime );
 		//puncho end
+		// ---- X0: the new GPU rows, same 14-character label column and colour rule (renderer upgrade seams) ----
+		ImGui::TextColored( rendererGPUShadowCacheTime > maxTime ? colorRed : colorWhite,		"                    Shadow cache: %5llu us", rendererGPUShadowCacheTime );
+		ImGui::TextColored( rendererGPUForwardTime > maxTime ? colorRed : colorWhite,			"                    Forward:      %5llu us", rendererGPUForwardTime );
+		ImGui::TextColored( rendererGPUVolumetricsTime > maxTime ? colorRed : colorWhite,		"                    Volumetrics:  %5llu us", rendererGPUVolumetricsTime );
+		ImGui::TextColored( rendererGPUFogApplyTime > maxTime ? colorRed : colorWhite,			"                    Fog apply:    %5llu us", rendererGPUFogApplyTime );
+		// ---- END X0 ----
+		// ---- TRACK S: HUD rows ----
+		// S3b: the shadow cache's capacity line ( only while the cache runs: r_shadowCache 2 ). Cached units
+		// of the main view, lights whose static maps were drawn, lights drawn without the cache, places given
+		// up, and the cells of the cache atlas in use ( the capacity, D77 )
+		if( commonLocal.stats_frontend.c_shadowCacheCells > 0 )
+		{
+			ImGui::TextColored( commonLocal.stats_frontend.c_shadowCacheLightsWaiting > 0 ? colorYellow : colorLtGrey,
+								"SHADOWCACHE: units:%i built:%i waiting:%i evicted:%i cells:%i/%i",
+								commonLocal.stats_frontend.c_shadowCacheUnits, commonLocal.stats_frontend.c_shadowCacheLightsBuilt,
+								commonLocal.stats_frontend.c_shadowCacheLightsWaiting, commonLocal.stats_frontend.c_shadowCacheEvicted,
+								commonLocal.stats_frontend.c_shadowCacheCellsUsed, commonLocal.stats_frontend.c_shadowCacheCells );
+		}
+		// ---- END TRACK S ----
+		// ---- TRACK F: HUD rows ----
+		// F1: the light lists' line ( only while a view builds them: r_useForwardLists 1 ). The records of the main
+		// view, its shadow rows, and the bytes of tables written to the six buffers
+		if( commonLocal.stats_backend.c_lightListRecords > 0 )
+		{
+			ImGui::TextColored( colorLtGrey, "LIGHTLISTS: records:%i rows:%i upload:%i KiB listed:%i",
+								commonLocal.stats_backend.c_lightListRecords, commonLocal.stats_backend.c_lightListRows,
+								commonLocal.stats_backend.c_lightListUploadBytes / 1024, commonLocal.stats_frontend.c_listedLights );
+		}
+		// F2: the difference view's read-out ( r_showLightDiff 2 ): how far the forward light is from the legacy light,
+		// in linear HDR units, beside the legacy picture's mean. Two frames old
+		if( commonLocal.stats_backend.c_lightDiffValid != 0 )
+		{
+			ImGui::TextColored( colorLtGrey, "LIGHTDIFF: mean:%.6f max:%.5f legacyMean:%.4f",
+								commonLocal.stats_backend.c_lightDiffMean, commonLocal.stats_backend.c_lightDiffMax, commonLocal.stats_backend.c_lightDiffLegacyMean );
+		}
+		// ---- END TRACK F ----
+		// ---- TRACK V: HUD rows ----
+		// ---- END TRACK V ----
 		ImGui::TextColored( frameBusyTime > maxTime || rendererGPUTime > maxTime ? colorRed : colorWhite, "Total:   %5lld us   Total:        %5lld us", frameBusyTime, rendererGPUTime );
 		ImGui::TextColored( colorWhite,														"Idle:    %5lld us   Idle:         %5lld us", frameIdleTime, rendererGPUIdleTime );
 		// SRS - Show CPU and GPU overall usage statistics

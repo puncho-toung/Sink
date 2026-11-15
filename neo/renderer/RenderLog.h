@@ -60,11 +60,18 @@ enum renderLogMainBlock_t
 	MRB_POSTPROCESS,
 	MRB_DRAW_GUI,
 	MRB_CRT_POSTPROCESS,
-	//puncho start - light profiling: one main block per interaction phase. Placed immediately
-	// before MRB_TOTAL so that only MRB_TOTAL's ordinal moves in the ASSERT_ENUM_STRING table.
+	//puncho start - reconcile: keep the texture/emitter phases at 21/22, before X0's six timed blocks.
 	MRB_DRAW_INTERACTIONS_TEX,
 	MRB_DRAW_INTERACTIONS_EMITTER,
 	//puncho end
+	// ---- X0: timed blocks (renderer upgrade seams) ----
+	MRB_SHADOW_CACHE,
+	MRB_FORWARD_PASS,
+	MRB_FORWARD_TRANSLUCENT,
+	MRB_VOLUMETRICS,
+	MRB_VOLUMETRICS_APPLY,
+	MRB_DRAW_INTERACTIONS_TRANSLUCENT,
+	// ---- END X0 ----
 	MRB_TOTAL,
 
 	MRB_TOTAL_QUERIES = MRB_TOTAL * 2,
@@ -89,6 +96,13 @@ private:
 
 	uint64							frameCounter;
 	uint32							frameParity;
+
+	// ---- X0: main-block verification (renderer upgrade seams) ----
+	uint32							mainBlocksOpen;		// a bit per block open right now
+	uint32							mainBlocksUsed;		// a bit per block opened since the frame began
+	uint32							mainBlocksWarned;	// a bit per block already warned about, never cleared
+	compile_time_assert( MRB_TOTAL <= 32 );
+	// ---- END X0 ----
 
 	idStaticList<nvrhi::TimerQueryHandle, MRB_TOTAL* NUM_FRAME_DATA> timerQueries;
 	idStaticList<bool, MRB_TOTAL* NUM_FRAME_DATA> timerUsed;

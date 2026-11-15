@@ -79,6 +79,8 @@ struct viewEntity_t;
 struct viewLight_t;
 struct viewEnvprobe_t;
 
+#include "LightLists.h"		// track F: lightListSurface_t, for drawSurf_t below ( the include near the end of this file stays; its guard makes it a no-op )
+
 // drawSurf_t structures command the back end to render surfaces
 // a given srfTriangles_t may be used with multiple viewEntity_t,
 // as when viewed in a subview or multiple viewport render, or
@@ -103,7 +105,13 @@ struct drawSurf_t
 	drawSurf_t** 			linkChain;			// defer linking to lights to a serial section to avoid a mutex
 	idScreenRect			scissorRect;		// for scissor clipping, local inside renderView viewport
 	const struct portalArea_s*	area;			// RB: if != NULL then the area provides valid lightgrid
+	// ---- TRACK F: light-list fields ----
+	lightListSurface_t*		lightList;			// F2: on a view surface that lists lights, its run of record lights and its path, in frame memory; NULL = nothing listed. On a lit surface NULL, or &lightListTwinMark in the difference view
+	// ---- END TRACK F ----
 };
+// track F: R_FrameAlloc hands out whole cache lines of 128 bytes and clears them. The light list is a pointer because
+// the struct itself ( 24 bytes ) took every surface, lit and shadow surfaces too, to two lines, with the lists off as well
+compile_time_assert( sizeof( drawSurf_t ) <= 128 );
 
 // areas have references to hold all the lights and entities in them
 struct areaReference_t
@@ -186,8 +194,10 @@ public:
 
 	bool					lightHasMoved;			// the light has changed its position since it was
 	// first added, so the prelight model is not valid
+	bool					isPrimarySun;			// X0: this parallel light is the map's sun ( D42, D73 )
 	idRenderWorldLocal* 	world;
 	int						index;					// in world lightdefs
+	int						uniqueId;				// X0: world-monotonic id assigned at the new in RenderWorld.cpp; 0 = never assigned ( D44 )
 
 	int						areaNum;				// if not -1, we may be able to cull all the light's
 	// interactions if !viewDef->connectedAreas[areaNum]
@@ -322,6 +332,7 @@ public:
 	// but the entity may still be off screen
 	viewEntity_t* 			viewEntity;				// in frame temporary memory
 	int						cullCountView;			// tr.viewCount of the view that last counted its distance cull
+	int						uniqueId;				// X0: world-monotonic id assigned at the new in RenderWorld.cpp; 0 = never assigned ( D44 )
 
 	idRenderModelDecal* 	decals;					// decals that have been projected on this model
 	idRenderModelOverlay* 	overlays;				// blood overlays on animated models
@@ -443,14 +454,46 @@ struct viewLight_t
 	{
 		return ( imageSize.x != -1 ) && ( imageSize.y != -1 );
 	}
+
+	//puncho - reconcile: emitter in place of the math light; retain every X0/track S field.
+	// ---- X0: viewLight_t fields (renderer upgrade seams) ----
+	int			numListedSurfs;		// F: surfaces that list this light ( C3 ); 0 until F1
+	int			recordNumber;		// F: index of this light's record, -1 = none
+	int			shadowOp;			// S: the decide pass's order for this light's shadow units ( D36 ); 0 = none
+	bool		fogRelevant;		// F/V: set by R_NumberRecordLights only while r_volumetricFog is on
+	bool		isPrimarySun;		// copied from idRenderLightLocal::isPrimarySun ( D73 )
+	// ---- END X0 ----
+	// ---- TRACK S: shadow cache fields ( S2, S3 ) ----
+	const byte* 	shadowCasterBits;		// S2: one byte ( SCB_* ) per surface of globalShadows, in chain order; NULL = every surface reaches every side
+	int				numShadowCasterBits;	// the length of that chain when the decide pass walked it
+	bool			shadowFullGather;		// S2c: set by R_AddSingleLight: the chain holds every cacheable caster of the light's volume, whatever the camera sees
+	byte			shadowActiveSides;		// S2c: one bit per side that an ACTIVE caster of a cached light reaches; the backend draws no active pass into the others
+	// ---- END TRACK S ----
 };
 
-//puncho start - 1232 bytes, ten 128-byte units of the frame allocator as before the emitter work ( 1280 );
+//puncho start - reconcile: 1264 bytes with X0/track S, still ten 128-byte frame units ( 1280 );
 // every view light of every view pays for any growth ( review finding RV-C-EP-01 )
 #if defined( _WIN64 )
-	static_assert( sizeof( viewLight_t ) == 1232, "viewLight_t must keep its size: put an emitter's data in viewEmitter_t" );
+	static_assert( sizeof( viewLight_t ) == 1264, "viewLight_t must keep its size: put an emitter's data in viewEmitter_t" );
 #endif
 //puncho end
+
+/*
+====================
+R_ViewLightHasShadowMap
+
+True if this view light has a shadow map to sample. The body now lives in
+ShadowCache.h ( track S's file, included at the end of this header ) so track S can change it
+without touching RenderCommon.h ( C3 ).
+====================
+*/
+bool R_ViewLightHasShadowMap( const viewLight_t* vLight );
+
+ID_INLINE bool R_ViewLightIsLit( const viewLight_t* vLight )
+{
+	return vLight->localInteractions != NULL || vLight->globalInteractions != NULL || vLight->translucentInteractions != NULL
+		   || vLight->numListedSurfs > 0 || vLight->fogRelevant;
+}
 
 // a viewEntity is created whenever a idRenderEntityLocal is considered for inclusion
 // in the current view, but it may still turn out to be culled.
@@ -612,10 +655,10 @@ struct calcLightGridPointParms_t
 // starts and given back when it ends ( R_BakeBegin / R_BakeEnd ); tr.bake is NULL outside a bake
 static const int ENVPROBE_JOBLIST_MAX_JOBS = 2048;			// the jobs tr.envprobeJobList reserves; Submit asserts it
 
-// TB3a: a renderer-internal renderView_t::rdflags bit, the next after RenderWorld.h's RDF_MAINVIEW ( BIT( 4 ) ).
+// TB3a: a renderer-internal renderView_t::rdflags bit; public view flags occupy bits 0 through 5.
 // A bake's capture view is not shown, so the backend skips its two preview blits to the swapchain
 // ( DrawViewInternal, "Blit_EnvProbeRendered" ). Nothing else reads it
-static const int RDF_BAKE_NODISPLAY = BIT( 5 );
+static const int RDF_BAKE_NODISPLAY = BIT( 30 ); //puncho - reconcile: a high bit, clear of the RDF_ list in RenderWorld.h, which grows upward from bit 6
 
 enum bakeStage_t
 {
@@ -713,6 +756,21 @@ struct lightGatherArea_t
 	int oversize;
 	float cellSize;
 	idVec3 origin;
+};
+
+// D36: the cvars the shadow atlas pass reads, as the frontend's decide pass saw them. X0 only zeroes it
+// ( valid = false ) in R_RenderView; the decide pass of track S fills it. The atlas pass takes the cascade
+// count, the single-side setting and the face angle from it, and reads the two on/off cvars itself, as
+// every other backend reader does.
+struct shadowSkipSet_t
+{
+	int			shadowMapSplits;		// r_shadowMapSplits
+	int			shadowMapSingleSide;	// r_shadowMapSingleSide ( -1 = all six faces of a point light )
+	float		shadowMapFrustumFOV;	// r_shadowMapFrustumFOV: the faces the caster bits were culled against ( S2a )
+	float		shadowMapSplitFar;		// r_shadowMapSplitFar; nothing reads it yet: the cascade cache's epoch test will ( S3a )
+	bool		skipShadows;			// r_skipShadows; read only by the decide pass's own test ( the backend reads the cvar )
+	bool		useShadowAtlas;			// r_useShadowAtlas; read only by the decide pass's own test ( the backend reads the cvar )
+	bool		valid;					// false until the decide pass of track S fills the rest
 };
 
 struct viewDef_t
@@ -835,6 +893,21 @@ struct viewDef_t
 	float				shadowSideFrustumFOV;
 	bool				shadowSideStats;
 	bool				shadowSidePSX;
+
+	//puncho - reconcile: retain the upgrade view data alongside the concurrency snapshot.
+	// ---- X0: viewDef_t fields (renderer upgrade seams) ----
+	struct shadowCacheView_t* 	shadowCacheView;	// S, frame memory
+	struct lightListView_t* 	lightListView;		// F, frame memory
+	struct froxelView_t* 		froxelView;			// V, frame memory
+	struct recordLight_t* 		recordLights;		// C1 table, frame memory; NULL when the view builds no tables
+	int							numRecordLights;
+	struct shadowRow_t* 		shadowRows;			// C2 table, filled by the backend in R_BuildShadowRows from the backend's own memory; the frontend allocates nothing here and the backend never calls R_FrameAlloc
+	int							numShadowRows;
+	struct shadowCacheOp_t* 	shadowOps;			// D36: the decide pass's ops for this view ( S defines the struct ); frame memory allocated by the decide pass ( frontend, track S )
+	int							numShadowOps;
+	shadowSkipSet_t				shadowSkipSet;		// D36: what the decide pass saw; the atlas pass takes the cascade count, the single-side setting and the face angle from it, and reads the two on/off cvars itself
+	bool						listsBuilt;			// set by R_BuildLightLists; the only thing F's backend tests
+	// ---- END X0 ----
 };
 
 /*
@@ -1088,6 +1161,15 @@ enum bindingLayoutType_t
 	BINDING_LAYOUT_TONEMAP,
 	BINDING_LAYOUT_HISTOGRAM,
 	BINDING_LAYOUT_EXPOSURE,
+
+	// X0: the forward light-list pass ( track F ) and the froxel-fog twins ( track V )
+	BINDING_LAYOUT_FORWARD,
+	BINDING_LAYOUT_FORWARD_SKINNED,
+	BINDING_LAYOUT_TEXTURE_FOG,
+	BINDING_LAYOUT_TEXTURE_SKINNED_FOG,
+	BINDING_LAYOUT_TEXGEN_FOG,
+	BINDING_LAYOUT_INTERACTION_SM_FOG,
+	BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG,
 
 	NUM_BINDING_LAYOUTS
 };
@@ -2131,6 +2213,8 @@ void RB_SetVertexColorParms( stageVertexColor_t svc );
 
 #include "ResolutionScale.h"
 #include "RenderLog.h"
+#include "ShadowCache.h"
+#include "LightLists.h"
 #include "GLMatrix.h"
 
 #include "BufferObject.h"

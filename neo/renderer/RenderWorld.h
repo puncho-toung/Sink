@@ -211,15 +211,17 @@ typedef struct renderLight_s
 	// which can allow player gun gui lights and such to not effect everyone
 	int						allowLightInViewID;
 
-	// I am sticking the four bools together so there are no unused gaps in
-	// the padded structure, which could confuse the memcmp that checks for redundant
-	// updates
+	// I am sticking the bools and the byte field together so there are no unused
+	// gaps in the padded structure, which could confuse the memcmp that checks for
+	// redundant updates
 	bool					forceShadows;		// Used to override the material parameters
 	bool					noShadows;			// (should we replace this with material parameters on the shader?)
 	bool					noSpecular;			// (should we replace this with material parameters on the shader?)
 
 	bool					pointLight;			// otherwise a projection light (should probably invert the sense of this, because points are way more common)
 	bool					parallel;			// lightCenter gives the direction to the light at infinity
+	bool					primarySun;			// spawnarg "primarySun": this parallel light is the map's sun ( D42, D73 )
+	byte					forwardMode;		// spawnarg "forward": 0 = default, 1 = force the light list, 2 = force legacy
 	idVec3					lightRadius;		// xyz radius for point lights
 	idVec3					lightCenter;		// offset the lighting direction for shading and
 	// shadows, relative to origin
@@ -247,6 +249,13 @@ typedef struct renderLight_s
 	float					minVisPixels;
 } renderLight_t;
 
+// parallel (sun) lights are faked as a point this far along their direction.
+// 1e9 keeps the direction error under 0.03 degrees anywhere in the world:
+// the MIN_WORLD_COORD..MAX_WORLD_COORD diagonal is ~454k units, atan( 454k / 1e9 ) ~= 0.026.
+// Never larger (and never INFINITUM): the shaders take the vector to this point
+// ( interactionSM.vs.hlsl:144 and :213 ) and normalize it, which forms dot( L, L ) in fp32,
+// so |L| must stay below sqrt( FLT_MAX ) ~= 1.8e19.
+const float PARALLEL_LIGHT_FAKE_DISTANCE = 1.0e9f;
 
 // RB begin
 typedef struct
@@ -273,6 +282,7 @@ const int RDF_NOAMBIENT		= BIT( 1 ); // don't render indirect lighting
 const int RDF_IRRADIANCE	= BIT( 2 ); // render into 256^2 HDR render target for irradiance/radiance GGX calculation
 const int RDF_UNDERWATER	= BIT( 3 ); // TODO enable automatic underwater caustics and fog
 const int RDF_MAINVIEW		= BIT( 4 ); // the player's main 3D view: the only view that stores previous-frame state (motion vectors, TAA history)
+const int RDF_NOFOG			= BIT( 5 ); // no froxel fog in this view ( the portal sky view ); set by the game
 
 typedef struct renderView_s
 {

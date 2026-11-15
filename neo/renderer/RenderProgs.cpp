@@ -409,8 +409,16 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 		layoutTypeAttributes[BINDING_LAYOUT_GBUFFER].pcEnabled = false;
 		layoutTypeAttributes[BINDING_LAYOUT_GBUFFER_SKINNED].pcEnabled = false;
 		layoutTypeAttributes[BINDING_LAYOUT_TEXTURE].pcEnabled = false;
+		layoutTypeAttributes[BINDING_LAYOUT_TEXTURE_FOG].pcEnabled = false;
 		layoutTypeAttributes[BINDING_LAYOUT_TEXTURE_SKINNED].pcEnabled = false;
+		layoutTypeAttributes[BINDING_LAYOUT_TEXTURE_SKINNED_FOG].pcEnabled = false;
 	}
+
+	// X0 ( C4, D51 ): the forward shaders are compiled without a USE_PUSH_CONSTANTS axis, so their layouts
+	// always take the volatile constant buffer, also where the device's push-constant limit would fit set 9
+	// ( MoltenVK reports 4096 bytes )
+	layoutTypeAttributes[BINDING_LAYOUT_FORWARD].pcEnabled = false;
+	layoutTypeAttributes[BINDING_LAYOUT_FORWARD_SKINNED].pcEnabled = false;
 
 	auto defaultLayoutDesc = nvrhi::BindingLayoutDesc()
 							 .setVisibility( nvrhi::ShaderType::Pixel )
@@ -423,6 +431,15 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 								.addItem( nvrhi::BindingLayoutItem::Sampler( 0 ) );
 	auto samplerOneBindingLayout = device->createBindingLayout( samplerOneLayoutDesc );
 
+	// X0: the froxel-fog set - one object, the last set of all seven new layouts ( D35 ); the parms buffer is
+	// backEnd.froxelFogParms, written before any draw binds it, so no shader ever reads it unwritten
+	auto froxelFogLayoutDesc = nvrhi::BindingLayoutDesc()
+							   .setVisibility( nvrhi::ShaderType::Pixel )
+							   .addItem( nvrhi::BindingLayoutItem::VolatileConstantBuffer( 1 ) )	// froxel fog parms
+							   .addItem( nvrhi::BindingLayoutItem::Texture_SRV( 15 ) )				// froxel volume
+							   .addItem( nvrhi::BindingLayoutItem::Sampler( 5 ) );					// volume sampler
+	auto froxelFogLayout = device->createBindingLayout( froxelFogLayoutDesc );
+
 	bindingLayouts[BINDING_LAYOUT_DEFAULT] = { uniformsLayout( BINDING_LAYOUT_DEFAULT, false ), defaultLayout, samplerOneBindingLayout };
 	bindingLayouts[BINDING_LAYOUT_DEFAULT_SKINNED] = { uniformsLayout( BINDING_LAYOUT_DEFAULT_SKINNED, true ), defaultLayout, samplerOneBindingLayout };
 
@@ -432,6 +449,11 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 	bindingLayouts[BINDING_LAYOUT_TEXTURE] = { uniformsLayout( BINDING_LAYOUT_TEXTURE, false ), defaultLayout, samplerOneBindingLayout };
 	bindingLayouts[BINDING_LAYOUT_TEXTURE_SKINNED] = { uniformsLayout( BINDING_LAYOUT_TEXTURE_SKINNED, true ), defaultLayout, samplerOneBindingLayout };
 	bindingLayouts[BINDING_LAYOUT_TEXGEN] = { uniformsLayout( BINDING_LAYOUT_TEXGEN, false ), defaultLayout, samplerOneBindingLayout };
+
+	// X0: the fog twins - the base layout plus the froxel-fog set as the fourth
+	bindingLayouts[BINDING_LAYOUT_TEXTURE_FOG] = { uniformsLayout( BINDING_LAYOUT_TEXTURE_FOG, false ), defaultLayout, samplerOneBindingLayout, froxelFogLayout };
+	bindingLayouts[BINDING_LAYOUT_TEXTURE_SKINNED_FOG] = { uniformsLayout( BINDING_LAYOUT_TEXTURE_SKINNED_FOG, true ), defaultLayout, samplerOneBindingLayout, froxelFogLayout };
+	bindingLayouts[BINDING_LAYOUT_TEXGEN_FOG] = { uniformsLayout( BINDING_LAYOUT_TEXGEN_FOG, false ), defaultLayout, samplerOneBindingLayout, froxelFogLayout };
 
 	bindingLayouts[BINDING_LAYOUT_LEGACY] = { uniformsLayout( BINDING_LAYOUT_LEGACY, false ), defaultLayout, samplerOneBindingLayout };
 
@@ -467,11 +489,46 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 
 	auto ambientIblLayout = device->createBindingLayout( ambientIblLayoutDesc );
 
+	// X0: the forward pass's image set - every ambientIblLayout item in its order, then the frozen C4 tail;
+	// the item order is frozen, the HLSL binds each by position
+	auto forwardLayoutDesc = nvrhi::BindingLayoutDesc()
+							 .setVisibility( nvrhi::ShaderType::Pixel )
+							 .addItem( nvrhi::BindingLayoutItem::Texture_SRV( 3 ) )					// brdf lut
+							 .addItem( nvrhi::BindingLayoutItem::Texture_SRV( 4 ) )					// ssao
+							 .addItem( nvrhi::BindingLayoutItem::Texture_SRV( 7 ) )					// irradiance cube map
+							 .addItem( nvrhi::BindingLayoutItem::Texture_SRV( 8 ) )					// radiance cube map 1
+							 .addItem( nvrhi::BindingLayoutItem::Texture_SRV( 9 ) )					// radiance cube map 2
+							 .addItem( nvrhi::BindingLayoutItem::Texture_SRV( 10 ) )					// radiance cube map 3
+							 .addItem( nvrhi::BindingLayoutItem::Texture_SRV( 12 ) )					// depth cube
+							 .addItem( nvrhi::BindingLayoutItem::Texture_SRV( 13 ) )					// inter-probe distance, probe 1
+							 .addItem( nvrhi::BindingLayoutItem::Texture_SRV( 14 ) )					// inter-probe distance, probe 2
+							 .addItem( nvrhi::BindingLayoutItem::Texture_SRV( 5 ) )					// shadow atlas
+							 .addItem( nvrhi::BindingLayoutItem::Texture_SRV( 6 ) )					// jitter
+							 .addItem( nvrhi::BindingLayoutItem::StructuredBuffer_SRV( 16 ) )		// light records
+							 .addItem( nvrhi::BindingLayoutItem::StructuredBuffer_SRV( 17 ) )		// atlas rows
+							 .addItem( nvrhi::BindingLayoutItem::StructuredBuffer_SRV( 18 ) )		// record pool
+							 .addItem( nvrhi::BindingLayoutItem::StructuredBuffer_SRV( 19 ) )		// cluster bins
+							 .addItem( nvrhi::BindingLayoutItem::StructuredBuffer_SRV( 20 ) )		// tile bits
+							 .addItem( nvrhi::BindingLayoutItem::Texture_SRV( 21 ) )					// default projection image
+							 .addItem( nvrhi::BindingLayoutItem::Texture_SRV( 22 ) )					// point default falloff
+							 .addItem( nvrhi::BindingLayoutItem::Texture_SRV( 23 ) );				// projected default falloff
+	auto forwardLayout = device->createBindingLayout( forwardLayoutDesc );
+
 	auto samplerTwoBindingLayoutDesc = nvrhi::BindingLayoutDesc()
 									   .setVisibility( nvrhi::ShaderType::Pixel )
 									   .addItem( nvrhi::BindingLayoutItem::Sampler( 0 ) )	// (Wrap) Anisotropic sampler: normal sampler & specular sampler
 									   .addItem( nvrhi::BindingLayoutItem::Sampler( 1 ) );	// (Clamp) Linear sampler: brdf lut sampler & ssao sampler
 	auto samplerTwoBindingLayout = device->createBindingLayout( samplerTwoBindingLayoutDesc );
+
+	// X0: the forward pass's five samplers, in place of the IBL pair ( C4 )
+	auto samplerFiveBindingLayoutDesc = nvrhi::BindingLayoutDesc()
+										.setVisibility( nvrhi::ShaderType::Pixel )
+										.addItem( nvrhi::BindingLayoutItem::Sampler( 0 ) )	// material wrap
+										.addItem( nvrhi::BindingLayoutItem::Sampler( 1 ) )	// LinearClamp
+										.addItem( nvrhi::BindingLayoutItem::Sampler( 2 ) )	// shadow compare
+										.addItem( nvrhi::BindingLayoutItem::Sampler( 3 ) )	// LinearBorder for the light images
+										.addItem( nvrhi::BindingLayoutItem::Sampler( 4 ) );	// PointWrap for blue noise
+	auto samplerFiveBindingLayout = device->createBindingLayout( samplerFiveBindingLayoutDesc );
 
 	bindingLayouts[BINDING_LAYOUT_AMBIENT_LIGHTING_IBL] =
 	{
@@ -480,6 +537,16 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 	bindingLayouts[BINDING_LAYOUT_AMBIENT_LIGHTING_IBL_SKINNED] =
 	{
 		uniformsLayout( BINDING_LAYOUT_AMBIENT_LIGHTING_IBL_SKINNED, true ), defaultMaterialLayout, ambientIblLayout, samplerTwoBindingLayout
+	};
+
+	// X0: the forward light-list pass - five sets, NVRHI's cap ( uniforms + joints, material, images, samplers, fog )
+	bindingLayouts[BINDING_LAYOUT_FORWARD] =
+	{
+		uniformsLayout( BINDING_LAYOUT_FORWARD, false ), defaultMaterialLayout, forwardLayout, samplerFiveBindingLayout, froxelFogLayout
+	};
+	bindingLayouts[BINDING_LAYOUT_FORWARD_SKINNED] =
+	{
+		uniformsLayout( BINDING_LAYOUT_FORWARD_SKINNED, true ), defaultMaterialLayout, forwardLayout, samplerFiveBindingLayout, froxelFogLayout
 	};
 
 	auto blitLayoutDesc = nvrhi::BindingLayoutDesc()
@@ -551,6 +618,16 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 	bindingLayouts[BINDING_LAYOUT_DRAW_INTERACTION_SM_SKINNED] =
 	{
 		uniformsLayout( BINDING_LAYOUT_DRAW_INTERACTION_SM_SKINNED, true ), defaultMaterialLayout, interactionSmBindingLayout, samplerFourBindingLayout
+	};
+
+	// X0: the fog twins of the shadow-mapped interactions - the fog set as the fifth, at NVRHI's cap
+	bindingLayouts[BINDING_LAYOUT_INTERACTION_SM_FOG] =
+	{
+		uniformsLayout( BINDING_LAYOUT_INTERACTION_SM_FOG, false ), defaultMaterialLayout, interactionSmBindingLayout, samplerFourBindingLayout, froxelFogLayout
+	};
+	bindingLayouts[BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG] =
+	{
+		uniformsLayout( BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG, true ), defaultMaterialLayout, interactionSmBindingLayout, samplerFourBindingLayout, froxelFogLayout
 	};
 
 	auto fogBindingLayoutDesc = nvrhi::BindingLayoutDesc()
@@ -753,6 +830,17 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 	//	   - allocate constant buffers only when needed, i.e. when push constants are not enabled for binding layout type
 	for( int i = 0; i < NUM_BINDING_LAYOUTS; i++ )
 	{
+		// X0: a seam layout has no program yet, so it gets no RenderParams buffer ( 8192 versions of
+		// host-visible memory on Vulkan ). A track deletes its lines here with its first builtins[] row.
+		// ---- TRACK F: the forward layouts have builtins since F2 and take their RenderParams buffer ----
+		// ---- END TRACK F ----
+		// ---- TRACK V: remove with the first fog-twin builtin ----
+		if( i == BINDING_LAYOUT_TEXTURE_FOG || i == BINDING_LAYOUT_TEXTURE_SKINNED_FOG || i == BINDING_LAYOUT_TEXGEN_FOG
+				|| i == BINDING_LAYOUT_INTERACTION_SM_FOG || i == BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG )
+		{
+			continue;
+		}
+		// ---- END TRACK V ----
 		if( !renderProgManager.layoutTypeAttributes[i].pcEnabled )
 		{
 			nvrhi::BufferDesc constantBufferDesc;
@@ -960,6 +1048,20 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 
 		// r_showDepth ( DBG_ShowDepth ): reuses the retro post-process layout, whose t3 is a depth texture
 		{ BUILTIN_DEBUG_DEPTH, "builtin/debug/depth", "", { { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_POST_PROCESS_FINAL2 ) } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_POST_PROCESS_FINAL2 },
+		// ---- TRACK F: builtins[] rows ( keep the enum order ) ----
+		// the forward program ( F2 ). No USE_PUSH_CONSTANTS key: the forward layouts always take the constant buffer
+		// ( D51 ). USE_WAVE_OPS 0 and USE_TRANSLUCENT 0: the other halves of those axes are F3's and F4's
+		{ BUILTIN_FORWARD, "builtin/lighting/forward", "", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
+		{ BUILTIN_FORWARD_SKINNED, "builtin/lighting/forward", "_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
+		{ BUILTIN_FORWARD_PBR, "builtin/lighting/forward", "_PBR", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
+		{ BUILTIN_FORWARD_PBR_SKINNED, "builtin/lighting/forward", "_PBR_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
+		{ BUILTIN_FORWARD_LIGHTGRID, "builtin/lighting/forward", "_lightgrid", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "1" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
+		{ BUILTIN_FORWARD_LIGHTGRID_SKINNED, "builtin/lighting/forward", "_lightgrid_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "1" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
+		{ BUILTIN_FORWARD_LIGHTGRID_PBR, "builtin/lighting/forward", "_lightgrid_PBR", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "1" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
+		{ BUILTIN_FORWARD_LIGHTGRID_PBR_SKINNED, "builtin/lighting/forward", "_lightgrid_PBR_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "1" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
+		// ---- END TRACK F ----
+		// ---- TRACK V: builtins[] rows ( keep the enum order ) ----
+		// ---- END TRACK V ----
 	};
 	int numBuiltins = sizeof( builtins ) / sizeof( builtins[0] );
 
@@ -1043,6 +1145,12 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 
 		renderProgs[builtinShaders[BUILTIN_AMBIENT_LIGHTGRID_IBL_SKINNED]].usesJoints = true;
 		renderProgs[builtinShaders[BUILTIN_AMBIENT_LIGHTGRID_IBL_PBR_SKINNED]].usesJoints = true;
+
+		// track F ( F2 )
+		renderProgs[builtinShaders[BUILTIN_FORWARD_SKINNED]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_FORWARD_PBR_SKINNED]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_FORWARD_LIGHTGRID_SKINNED]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_FORWARD_LIGHTGRID_PBR_SKINNED]].usesJoints = true;
 
 		renderProgs[builtinShaders[BUILTIN_SMALL_GEOMETRY_BUFFER_SKINNED]].usesJoints = true;
 

@@ -1986,7 +1986,11 @@ idFileSystemLocal::BuildOSPath
 */
 const char* idFileSystemLocal::BuildOSPath( const char* base, const char* game, const char* relativePath )
 {
-	static char OSPath[MAX_STRING_CHARS];
+	// One buffer per thread. The save-game thread builds paths ( idSaveGameThread::Enumerate and the rest ) while the
+	// main and game threads open files, and a caller's idStr( const char* ) measures the string and then copies it:
+	// with one buffer for all threads another thread rewrote it in between, and the longer path overran the copy's
+	// allocation. The pointer still lasts only until the calling thread's next call, as it always did
+	static thread_local char OSPath[MAX_STRING_CHARS];
 	idStr newPath;
 
 	// handle case of this already being an OS path
@@ -2287,7 +2291,7 @@ int idFileSystemLocal::ReadFile( const char* relativePath, void** buffer, ID_TIM
 		// RB: moved here
 		if( buffer == NULL && timestamp != NULL && UsingResourceFiles() )
 		{
-			static idResourceCacheEntry rc;
+			idResourceCacheEntry rc;	// was static: ReadFile runs on several threads, and a hit writes rc
 			int size = 0;
 			if( GetResourceCacheEntry( relativePath, rc ) )
 			{

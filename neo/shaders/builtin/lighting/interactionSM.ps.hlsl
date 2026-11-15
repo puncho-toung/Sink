@@ -54,6 +54,12 @@ SamplerState 			s_Lighting : register( s1 VK_DESCRIPTOR_SET( 3 ) ); // for sampl
 SamplerComparisonState  s_Shadow   : register( s2 VK_DESCRIPTOR_SET( 3 ) ); // for the depth shadow map sampler with a compare function
 SamplerState 			s_Jitter   : register( s3 VK_DESCRIPTOR_SET( 3 ) ); // for sampling the jitter
 
+#if defined( USE_FROXEL_FOG ) && USE_FROXEL_FOG
+	// X0 stub ( D33, D83 ): the froxel fog permutation. Track V ( V5 ) fogs this stage here; nothing is sampled yet.
+#define FROXEL_FOG_SET 4
+#include "froxel_fog.inc.hlsl"
+#endif
+
 struct PS_IN
 {
 	float4 position		: SV_Position;

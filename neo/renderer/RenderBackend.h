@@ -40,6 +40,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "Passes/SsaoPass.h"
 #include "Passes/TonemapPass.h"
 #include "Passes/TemporalAntiAliasingPass.h"
+#include "Passes/VolumetricFogPass.h"
 
 #include "PipelineCache.h"
 
@@ -57,6 +58,14 @@ enum stencilFace_t
 	STENCIL_FACE_FRONT,
 	STENCIL_FACE_BACK,
 	STENCIL_FACE_NUM
+};
+
+// which surfaces of an interaction chain RenderInteractions draws, by material sort ( X0, D83 )
+enum interactionSort_t
+{
+	INTERACTION_SORT_ALL,			// every surface of the chain
+	INTERACTION_SORT_BELOW_FAR,		// sort < SS_FAR: lit decals, which lie on opaque surfaces
+	INTERACTION_SORT_FAR_AND_ABOVE	// sort >= SS_FAR: free-standing translucents ( glass ), drawn after the fog apply
 };
 
 struct gfxImpParms_t
@@ -176,21 +185,28 @@ private:
 			idVec4 matrix[2], float color[4] );
 
 	void				DrawInteractions( const viewDef_t* _viewDef );
+	void				DrawTranslucentInteractions( const viewDef_t* _viewDef );
 	//puncho start
 	void				DrawInteractionsPass( const viewDef_t* _viewDef, bool emitterPass, Framebuffer* previousFramebuffer, bool useLightDepthBounds );
 	//puncho end
 	void				DrawSingleInteraction( drawInteraction_t* din, bool useFastPath, bool useIBL, bool setInteractionShader );
 	int					DrawShaderPasses( const drawSurf_t* const* const drawSurfs, const int numDrawSurfs,
-										  const float guiStereoScreenOffset, const int stereoEye );
+										  const float guiStereoScreenOffset, const int stereoEye, const bool stopAtFar );
 
-	void				RenderInteractions( const drawSurf_t* surfList, const viewLight_t* vLight, int depthFunc, bool performStencilTest, bool useLightDepthBounds );
+	void				RenderInteractions( const drawSurf_t* surfList, const viewLight_t* vLight, int depthFunc, bool performStencilTest, bool useLightDepthBounds, const interactionSort_t sortFilter );
 
 	// RB
 	void				AmbientPass( const drawSurf_t* const* drawSurfs, int numDrawSurfs, bool fillGbuffer );
 
+	// ---- X0: renderer upgrade seams ----
+	void				ForwardPass( const drawSurf_t* const* drawSurfs, int numDrawSurfs, bool translucent );
+	void				ResetGraphicsStateCache();
+	// ---- END X0 ----
+
 	void				SetupShadowMapMatrices( viewLight_t* vLight, int side, idRenderMatrix& lightProjectionRenderMatrix, idRenderMatrix& lightViewRenderMatrix );
-	void				ShadowMapPassFast( const drawSurf_t* drawSurfs, viewLight_t* vLight, int side, bool atlas );
+	void				ShadowMapPassFast( const drawSurf_t* drawSurfs, viewLight_t* vLight, int side, bool atlas, const byte* casterBits = NULL, int casterMask = 0, int casterWant = 0, const struct shadowCacheOp_t* cacheOp = NULL, Framebuffer* cacheTarget = NULL );
 	void				ShadowMapPassPerforated( const drawSurf_t** drawSurfs, int numDrawSurfs, viewLight_t* vLight, int side, const idRenderMatrix& lightProjectionRenderMatrix, const idRenderMatrix& lightViewRenderMatrix );
+	void				ShadowMapsForLightNoAtlas( const viewLight_t* vLight, Framebuffer* previousFramebuffer );
 
 	void				ShadowAtlasPass( const viewDef_t* _viewDef );
 
@@ -395,6 +411,80 @@ private:
 	nvrhi::CommandListHandle		commandList;
 	CommonRenderPasses				commonPasses;
 	SsaoPass*						ssaoPass;
+	// ---- X0: renderer upgrade seams ----
+	VolumetricFogPass*				volumetricFogPass;		// created by track V; X0 only nulls and guards it
+	nvrhi::BufferHandle				froxelFogParms;			// volatile, sizeof( froxelFogParms_t ); zeroed at the start of every 3D view
+	nvrhi::TextureHandle			froxelDummyVolume;		// the 1x1x1 "no fog" volume; owned here for the backend's lifetime
+	nvrhi::TextureHandle			froxelVolume;			// the volume the fog set binds: the dummy until track V swaps in its own at a pass boundary
+	// ResetGraphicsStateCache() after the swap, because a binding set is re-patched only when GetCurrentBindingLayout runs again
+	bool							viewHistoryCut;			// H10: this main view's camera cut, decided once at the start of its draw
+	// ---- END X0 ----
+	// ---- TRACK S: shadow cache members ----
+	nvrhi::ShaderHandle				shadowCacheCopyVS;
+	nvrhi::ShaderHandle				shadowCacheCopyPS;
+	nvrhi::BindingLayoutHandle		shadowCacheCopyLayout;
+	nvrhi::GraphicsPipelineHandle	shadowCacheCopyPipeline[2];		// by the kind of target: 0 the per-frame atlas, 1 a cache image; the two kinds differ only in the framebuffer they were made for
+	nvrhi::FramebufferInfo			shadowCacheCopyPipelineInfo[2];	// what each pipeline was made for
+	nvrhi::TextureHandle			shadowCacheCopySource;			// S3b: the source image of the last copy draw, and its binding set, kept while the source stays the same
+	nvrhi::BindingSetHandle			shadowCacheCopyBindingSet;
+	int								shadowCacheTargetSerial;		// in the names of the cache's framebuffers, so a stale one is never found again
+	// S3a: the serial of the static map last drawn at each place of the cache images ( R_ShadowCacheSlot ),
+	// 0 = none; only the backend writes it ( D74 )
+	unsigned int					shadowCacheBuilt[4096 + 5];
+public:
+	// S3a: the frontend reads these two ( R_ShadowCachePublish takes the miss count and the ring of missed
+	// serials ); the rest of the cache stays the backend's
+	unsigned int					shadowCacheMisses;				// S3a: copies that found no map, or another one, where the frontend expected one; R_ShadowCachePublish hands the count to the frontend
+	unsigned int					shadowCacheMissed[128];			// S3a: the serials of the last 128 missed copies: miss n is at index n & 127 ( a point light that misses takes six ); the frontend's copy is checked against this width by a static_assert in ShadowCache.cpp
+private:
+
+	void				ShadowCacheCopyDraw( nvrhi::IFramebuffer* target, int targetKind, nvrhi::ITexture* source, const struct shadowCacheCopyConstants_t& constants );
+	Framebuffer*		ShadowCacheTarget( int which, bool* recreated );		// which: -1 the cache atlas, 0..4 a cascade map
+	void				ShadowCacheDrawStaticMaps();
+	void				ShadowCacheClearCaches();
+	// ---- END TRACK S ----
+	// ---- TRACK F: light lists ----
+	void							R_BuildShadowRows( const viewDef_t* viewDef );
+	void							DBG_LightLists();		// track F's debug overlay, called from DBG_RenderDebugTools
+	nvrhi::BufferHandle				recordLightsBuffer;		// declared by X0, created by F1 ( D69 )
+	nvrhi::BufferHandle				shadowRowsBuffer;
+	nvrhi::BufferHandle				lightPoolBuffer;
+	nvrhi::BufferHandle				zBinsBuffer;
+	nvrhi::BufferHandle				tileBitsBuffer;
+	nvrhi::BufferHandle				vanishedPrevBuffer;
+	void							LightListCreateBuffers( int tileBitWords );	// F1: creates what is missing, and the tile bits again when a view needs more words
+	void							LightListReleaseBuffers();					// F1: with ClearCaches
+	int								lightListTileBitsWords;						// F1: the uint32 words tileBitsBuffer holds; valid while the buffer exists
+	nvrhi::ShaderHandle				lightListHeatmapVS;							// F1: the heatmap pass ( r_showLightLists 1 ), made at first use
+	nvrhi::ShaderHandle				lightListHeatmapPS;
+	nvrhi::BindingLayoutHandle		lightListHeatmapLayout;
+	nvrhi::GraphicsPipelineHandle	lightListHeatmapPipeline;
+	nvrhi::FramebufferHandle		lightListHeatmapTarget;						// the colour attachment of the view's framebuffer alone
+	nvrhi::ITexture*				lightListHeatmapColor;						// the texture that target was made for; valid while the target exists
+	void							LightDiffPass( const drawSurf_t* const* drawSurfs, int numDrawSurfs );	// F2: the difference view ( r_showLightDiff 2 ), after DrawInteractions
+	bool							lightDiffPassA;								// F2: true while LightDiffPass draws the forward picture: the loop lights and the legacy pass leaves the twins out
+	bool							lightDiffHasReadout;						// F2: a reduced picture of the present size has been read
+	nvrhi::TextureHandle			lightDiffImageA;							// the forward picture of the view's lit passes
+	nvrhi::TextureHandle			lightDiffImageB;							// the legacy picture
+	nvrhi::TextureHandle			lightDiffReduced;							// per block of 16 x 16 pixels: the sum and the maximum of their difference
+	nvrhi::FramebufferHandle		lightDiffReducedTarget;
+	nvrhi::FramebufferHandle		lightDiffShowTarget;						// the colour attachment of the view's framebuffer alone
+	nvrhi::ITexture*				lightDiffShowColor;							// the texture that target was made for; valid while the target exists
+	nvrhi::StagingTextureHandle		lightDiffStaging[3];						// a ring: a reduced picture is read two frames after it was drawn ( D79 )
+	int								lightDiffStagingFrame[3];					// lightDiffFrame when the slot was written; -1 = never
+	int								lightDiffFrame;								// counts the passes
+	int								lightDiffViewFrame;							// lightListView_t::viewFrame of the last pass; a gap empties the ring
+	float							lightDiffMean;								// the last read-out: the mean and the maximum of the difference, the legacy picture's mean
+	float							lightDiffMax;
+	float							lightDiffLegacyMean;
+	nvrhi::ShaderHandle				lightDiffVS;
+	nvrhi::ShaderHandle				lightDiffPS;
+	nvrhi::BindingLayoutHandle		lightDiffLayout;
+	nvrhi::GraphicsPipelineHandle	lightDiffShowPipeline;
+	nvrhi::GraphicsPipelineHandle	lightDiffReducePipeline;
+	// ---- END TRACK F ----
+	// ---- TRACK V: volumetric fog members ----
+	// ---- END TRACK V ----
 	MipMapGenPass*					hiZGenPass;
 	TonemapPass*					toneMapPass;
 	TemporalAntiAliasingPass*		taaPass;
