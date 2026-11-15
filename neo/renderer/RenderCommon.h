@@ -686,6 +686,7 @@ struct bakeContext_t
 	idVec3*							ggxH;					// environment: [( mip - 1 ) * samples + s]; NULL with -exactGgx
 	lightGridShSample_t*			shTable;				// light grid: NULL with -exactSh
 	int								shTableNum;
+	int								nonFinitePixels;		// capture pixels the readback set to black because they were not finite ( D17 )
 
 	int								oldJitter;				// r_shadowMapRandomizeJitter
 	int								oldScissor;				// r_useScissor

@@ -289,7 +289,7 @@ idCVar r_shadowMapJitterScale( "r_shadowMapJitterScale", "2.5", CVAR_RENDERER | 
 //idCVar r_shadowMapBiasScale( "r_shadowMapBiasScale", "0.0001", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "scale factor for jitter bias" );
 idCVar r_shadowMapRandomizeJitter( "r_shadowMapRandomizeJitter", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "randomly offset jitter texture each draw" );
 //puncho - concurrency D14: off keeps today's bake output, where a face with nothing to draw keeps the previous face's depth
-idCVar r_bakeClearEmptyFaceDepth( "r_bakeClearEmptyFaceDepth", "0", CVAR_RENDERER | CVAR_BOOL, "1 = an environment-probe face with nothing to draw clears its depth, as a view that draws does" );
+idCVar r_bakeClearEmptyFaceDepth( "r_bakeClearEmptyFaceDepth", "1", CVAR_RENDERER | CVAR_BOOL, "1 = an environment-probe face with nothing to draw clears its depth, as a view that draws does" );
 idCVar r_shadowMapSamples( "r_shadowMapSamples", "16", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "1, 4, 12 or 16", 1, 64 );
 idCVar r_shadowMapSplits( "r_shadowMapSplits", "3", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "number of splits for cascaded shadow mapping with parallel lights", 0, 4 );
 idCVar r_shadowMapSplitWeight( "r_shadowMapSplitWeight", "0.9", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "" );
@@ -1037,6 +1037,28 @@ bool R_ReadPixelsRGB16FInBake( nvrhi::IDevice* device, CommonRenderPasses* pPass
 	return R_ReadPixelsRGB16FWith( device, pPasses, texture, textureState, pic, picWidth, picHeight, R_MapConvertFilterRGB16FInBake, bake, waitStart );
 }
 
+//puncho - concurrency D17 (GA-05): a half with all five exponent bits set is infinity or NaN; such a pixel becomes
+// black, every other pixel stays as read. The test is on the bits, since F16toF32 turns both into finite values
+static int R_BlackenNonFiniteRGB16F(uint16_t* rgb, uint32_t numPixels)
+{
+	int blackened = 0;
+
+	for (uint32_t i = 0; i < numPixels; i++)
+	{
+		uint16_t* p = rgb + i * 3;
+
+		if ((p[0] & 0x7C00) == 0x7C00 || (p[1] & 0x7C00) == 0x7C00 || (p[2] & 0x7C00) == 0x7C00)
+		{
+			p[0] = 0;
+			p[1] = 0;
+			p[2] = 0;
+			blackened++;
+		}
+	}
+
+	return blackened;
+}
+
 // shared tail of R_ReadPixelsRGB16F: today's code, D13 aside
 static bool R_MapConvertFilterRGB16F(nvrhi::IDevice* device, nvrhi::IStagingTexture* stagingTexture,
 	const nvrhi::TextureDesc& desc, int picWidth, int picHeight, byte** pic, bakeContext_t*, uint64)
@@ -1082,43 +1104,9 @@ static bool R_MapConvertFilterRGB16F(nvrhi::IDevice* device, nvrhi::IStagingText
 		outData[i * 3 + 2] = data[i * 4 + 2];
 	}
 
-	// RB: filter out garbage and reset it to black (rare, high visual impact).
-	// Safe for the depth target too: it stores hardware depth in [0,1] at this point,
-	// so the luminance > 30 test can never trip on it.
-	bool isCorrupted = false;
-
-	const idVec3 LUMINANCE_LINEAR(0.299f, 0.587f, 0.144f);
-	idVec3 rgb;
-
-	for (uint32_t i = 0; i < (desc.width * desc.height); i++)
-	{
-		rgb.x = F16toF32(outData[i * 3 + 0]);
-		rgb.y = F16toF32(outData[i * 3 + 1]);
-		rgb.z = F16toF32(outData[i * 3 + 2]);
-
-		if (IsNAN(rgb.x) || IsNAN(rgb.y) || IsNAN(rgb.z))
-		{
-			isCorrupted = true;
-			break;
-		}
-
-		float luminance = rgb * LUMINANCE_LINEAR;
-		if (luminance > 30.0f)
-		{
-			isCorrupted = true;
-			break;
-		}
-	}
-
-	if (isCorrupted)
-	{
-		for (uint32_t i = 0; i < (desc.width * desc.height); i++)
-		{
-			outData[i * 3 + 0] = F32toF16(0);
-			outData[i * 3 + 1] = F32toF16(0);
-			outData[i * 3 + 2] = F32toF16(0);
-		}
-	}
+	//puncho - concurrency D17 (GA-05): bright pixels are kept; only non-finite values are set to black, pixel by
+	// pixel. The depth target passes through here too and is finite
+	const int nonFinite = R_BlackenNonFiniteRGB16F(outData, desc.width * desc.height);
 
 	if (newData)
 	{
@@ -1128,12 +1116,12 @@ static bool R_MapConvertFilterRGB16F(nvrhi::IDevice* device, nvrhi::IStagingText
 
 	device->unmapStagingTexture(stagingTexture);
 
-	return (!isCorrupted);
+	return (nonFinite == 0);
 }
 
 //puncho - concurrency TB0/TB1a: the same tail inside a bake ( bake is never NULL ): the wait stage runs from waitStart to
 // the end of the map ( waitStart 0: the map is not timed as a wait ), the convert stage from there to the end, and the
-// scan reads the half table unless the bake runs -exactHalf
+// scan's count of non-finite pixels goes to bake->nonFinitePixels ( D17 )
 static bool R_MapConvertFilterRGB16FInBake(nvrhi::IDevice* device, nvrhi::IStagingTexture* stagingTexture,
 	const nvrhi::TextureDesc& desc, int picWidth, int picHeight, byte** pic, bakeContext_t* bake, uint64 waitStart)
 {
@@ -1145,7 +1133,6 @@ static bool R_MapConvertFilterRGB16FInBake(nvrhi::IDevice* device, nvrhi::IStagi
 		return false;
 	}
 
-	const float* halfToFloat = bake->halfToFloat;
 	const uint64 convertStart = ( waitStart != 0 ) ? R_BakeStage(bake, BAKE_STAGE_READBACK_WAIT, waitStart) : Sys_Microseconds();
 
 	uint16_t* newData = nullptr;
@@ -1181,68 +1168,10 @@ static bool R_MapConvertFilterRGB16FInBake(nvrhi::IDevice* device, nvrhi::IStagi
 		outData[i * 3 + 2] = data[i * 4 + 2];
 	}
 
-	// RB: filter out garbage and reset it to black (rare, high visual impact).
-	// Safe for the depth target too: it stores hardware depth in [0,1] at this point,
-	// so the luminance > 30 test can never trip on it.
-	bool isCorrupted = false;
-
-	const idVec3 LUMINANCE_LINEAR(0.299f, 0.587f, 0.144f);
-	idVec3 rgb;
-
-	//puncho start - concurrency TB1a: inside a bake the half table, built from F16toF32 itself; the tests are today's
-	if (halfToFloat != NULL)
-	{
-		for (uint32_t i = 0; i < (desc.width * desc.height); i++)
-		{
-			rgb.x = halfToFloat[outData[i * 3 + 0]];
-			rgb.y = halfToFloat[outData[i * 3 + 1]];
-			rgb.z = halfToFloat[outData[i * 3 + 2]];
-
-			if (IsNAN(rgb.x) || IsNAN(rgb.y) || IsNAN(rgb.z))
-			{
-				isCorrupted = true;
-				break;
-			}
-
-			float luminance = rgb * LUMINANCE_LINEAR;
-			if (luminance > 30.0f)
-			{
-				isCorrupted = true;
-				break;
-			}
-		}
-	}
-	else	// a bake's -exactHalf: today's loop
-	//puncho end
-	for (uint32_t i = 0; i < (desc.width * desc.height); i++)
-	{
-		rgb.x = F16toF32(outData[i * 3 + 0]);
-		rgb.y = F16toF32(outData[i * 3 + 1]);
-		rgb.z = F16toF32(outData[i * 3 + 2]);
-
-		if (IsNAN(rgb.x) || IsNAN(rgb.y) || IsNAN(rgb.z))
-		{
-			isCorrupted = true;
-			break;
-		}
-
-		float luminance = rgb * LUMINANCE_LINEAR;
-		if (luminance > 30.0f)
-		{
-			isCorrupted = true;
-			break;
-		}
-	}
-
-	if (isCorrupted)
-	{
-		for (uint32_t i = 0; i < (desc.width * desc.height); i++)
-		{
-			outData[i * 3 + 0] = F32toF16(0);
-			outData[i * 3 + 1] = F32toF16(0);
-			outData[i * 3 + 2] = F32toF16(0);
-		}
-	}
+	//puncho - concurrency D17 (GA-05): bright pixels are kept; only non-finite values are set to black, pixel by
+	// pixel. The depth target passes through here too and is finite
+	const int nonFinite = R_BlackenNonFiniteRGB16F(outData, desc.width * desc.height);
+	bake->nonFinitePixels += nonFinite;
 
 	if (newData)
 	{
@@ -1254,7 +1183,7 @@ static bool R_MapConvertFilterRGB16FInBake(nvrhi::IDevice* device, nvrhi::IStagi
 
 	R_BakeStage(bake, BAKE_STAGE_READBACK_CONVERT, convertStart);	//puncho - concurrency TB0
 
-	return (!isCorrupted);
+	return (nonFinite == 0);
 }
 
 //reads the envprobe COLOUR and DEPTH targets with one command list,
@@ -1599,6 +1528,7 @@ void R_BakeEnd( bool printStages )
 		}
 		common->Printf( "bake phase other %.1f\n", ( total > staged ) ? ( total - staged ) * 0.001 : 0.0 );
 		common->Printf( "bake phase total %.1f\n", total * 0.001 );
+		common->Printf( "bake nonfinite pixels %d\n", bake->nonFinitePixels );	//puncho - concurrency D17 (GA-05)
 	}
 
 	if( bake->halfToFloat != NULL )
