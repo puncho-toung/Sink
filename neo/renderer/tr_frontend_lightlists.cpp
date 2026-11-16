@@ -1287,8 +1287,7 @@ void R_LightListFinishSurface( const viewDef_t* viewDef, drawSurf_t* baseDrawSur
 ====================
 R_LightListLoud
 
-A full table, an unknown tag, or more forward draws than the render parms' ring is sure to hold
-( LL_FORWARD_DRAWS_LOUD ): one console warning of each kind per map, not per frame, and the counters every
+A full table or an unknown tag: one console warning of each kind per map, not per frame, and the counters every
 frame in the log line. The session keeps one render world for every map, so the kinds a map has had are cleared
 where the engine drops its view history ( R_NumberRecordLights ). With r_lightListStrict it stops the author's
 machine instead, in any view that has one of them.
@@ -1297,8 +1296,7 @@ machine instead, in any view that has one of them.
 static void R_LightListLoud( const lightListView_t* llv )
 {
 	const lightListStats_t& st = llv->stats;
-	const int now = ( st.capped > 0 ? 1 : 0 ) | ( st.zbinAllSurfs > 0 ? 2 : 0 ) | ( ( st.unknownTags + llv->unknownLightModes ) > 0 ? 4 : 0 )
-					| ( ( st.listSurfs + st.zbinSurfs ) > LL_FORWARD_DRAWS_LOUD ? 8 : 0 );
+	const int now = ( st.capped > 0 ? 1 : 0 ) | ( st.zbinAllSurfs > 0 ? 2 : 0 ) | ( ( st.unknownTags + llv->unknownLightModes ) > 0 ? 4 : 0 );
 	const int fresh = r_lightListStrict.GetBool() ? now : ( now & ~lightListWarned );
 	if( fresh == 0 )
 	{
@@ -1317,10 +1315,6 @@ static void R_LightListLoud( const lightListView_t* llv )
 	if( fresh & 4 )
 	{
 		msg += va( "%d surfaces and %d lights carry a forward tag the engine does not know, read as 0. ", st.unknownTags, llv->unknownLightModes );
-	}
-	if( fresh & 8 )
-	{
-		msg += va( "%d surfaces list lights: past %d forward draws a view the forward layouts' ring of render parms can run out on Vulkan ( at about twice that NVRHI's \"maxVersions\" error stops the engine ). ", st.listSurfs + st.zbinSurfs, LL_FORWARD_DRAWS_LOUD );
 	}
 	if( r_lightListStrict.GetBool() )
 	{
@@ -1451,7 +1445,8 @@ R_LightListDrawParms
 R_LightListViewParms
 
 The backend's lanes ( C18 ). Per draw, rpSurfLights: the first pool word, the run length, the path and the feature
-mask. Per view: the tile size, the tiles per row, the words per tile and the bin count; the bins per unit, near,
+mask; since F3 the draw pushes this lane as a push-constant range of its own ( RP_SURFLIGHTS_SLOT ), and no parm set
+holds it. Per view: the tile size, the tiles per row, the words per tile and the bin count; the bins per unit, near,
 far, and r_showLightLists in the spare lane.
 
 The integers travel as FLOAT VALUES, which the shader converts back with uint( x ): every one of them is far below

@@ -40,6 +40,13 @@ If you have questions concerning this license or the applicable additional terms
 // that program is bound only for an ambient light material, and an emitter's material is always
 // lights/defaultPointLight (G0 section 8).
 //
+// F3 (D61): EMEvaluate is the form for a pixel stage that reaches it in uniform control flow. It takes
+// the screen step of the pattern's position (fwidth) and calls the core, EMEvaluateFootprint, which
+// gets that footprint as an argument and takes no screen derivative itself. The forward pass's light
+// loop calls the core with a footprint formed from the pixel's position derivatives
+// (builtin/lighting/forward.ps.hlsl), so there the call may stand under a per-pixel test and inside
+// the Z-bin loop; a froxel inject would pass the froxel's size in the pattern's units.
+//
 // Uniform packing (RENDERPARM_USER0/1/2), done once per view light in R_AddSingleLight
 // (tr_frontend_addlights.cpp):
 //   rpUser0 = ( mode, ids, cotH, cotV )
@@ -238,8 +245,12 @@ float EMSpotMask(float2 uv, float k, float penumbra)
 //              as streaks down surfaces parallel to the projection axis
 //----------------------------------------------------------------------------------
 //   t        - normalized distance from the source (radial for point lights)
+//----------------------------------------------------------------------------------
+//   footprint - the sampling step of p in domain units, per axis: what fwidth(p)
+//              gives a pixel stage. An argument, so that a caller which may take
+//              no screen derivative where it stands can form it (D61)
 //==================================================================================
-float3 EMPattern(float3 p, float t, int kind, float strength, float scale, float phase)
+float3 EMPattern(float3 p, float3 footprint, float t, int kind, float strength, float scale, float phase)
 {
     if (kind == EMP_NONE || strength <= 0.0)
     {
@@ -256,8 +267,8 @@ float3 EMPattern(float3 p, float t, int kind, float strength, float scale, float
 
     // frequency fade: as pattern features shrink toward the pixel footprint,
     // blend back to flat 1.0 instead of letting the pattern alias and shimmer.
-    // length(fwidth(p)) is the screen-space sampling step in domain units
-    float fade = saturate(1.0 - length(fwidth(p)) * scale * 12.0);
+    // length(footprint) is the sampling step in domain units (a pixel stage's fwidth(p))
+    float fade = saturate(1.0 - length(footprint) * scale * 12.0);
     if (fade <= 0.0)
     {
         return float3(1.0, 1.0, 1.0);
@@ -319,10 +330,28 @@ float3 EMEnergyClamp(float3 rgb, bool clampOn)
 #define EM_SPOT		1
 #define EM_SUN		2
 
-// true when the emitter path ran. Outputs are linear.
+// Whether the light has a pattern to evaluate: its kind and its strength, in the lanes of rpUser0 and rpUser2.
+// One test for the core, for EMEvaluate's derivative and for a caller that forms the footprint itself
+bool EMHasPattern( float4 flags, float4 pattern )
+{
+	return ( int( flags.y + 0.5 ) >> 6 ) != EMP_NONE && pattern.x > 0.0;
+}
+
+// The pattern's position is the light-local position p ( each axis in [-1, 1] ) in units of radius.x on all
+// three axes; a spot's radii are equal. This is the scale that takes p there, per axis
+float3 EMPatternAxisScale( float4 flags )
+{
+	int emShape = int( flags.y + 0.5 ) & 7;
+	return ( emShape == EM_SPOT ) ? float3( 1.0, 1.0, 1.0 ) : float3( 1.0, flags.z, flags.w );
+}
+
+// The core ( F3, D61 ). True when the emitter path ran. Outputs are linear.
 // earlyOut is true when the caller may return black before the shadow taps.
-bool EMEvaluate(
-	float4 tc2, float4 tc3,
+// patternFootprint is the sampling step of the pattern's position, per axis ( EMPattern's footprint ). The
+// function takes no screen derivative, so it may be called under a per-pixel test and in a loop whose trip
+// count differs between the pixels of a quad
+bool EMEvaluateFootprint(
+	float4 tc2, float4 tc3, float3 patternFootprint,
 	float4 flags, float4 shape, float4 pattern,
 	out float3 lightFalloffRGB,
 	out float3 lightProjRGB,
@@ -365,7 +394,9 @@ bool EMEvaluate(
 	bool energyClamp = pattern.w > 0.5;
 
 	// POSITION. An emitter's texgens are a box, which is affine, so tc3.w and tc2.w are exactly 1 and
-	// the position needs no divide (G0 section 5)
+	// the position needs no divide (G0 section 5). EMEvaluate ( below ) and the footprint that
+	// LL_EvaluateRecord forms ( lightrecord.inc.hlsl ) repeat this mapping, 2 * texgen - 1 and then the
+	// pattern's axis scale: change all three together
 	float3 p;
 	p.x = 2.0 * tc3.x - 1.0;
 	p.y = 2.0 * tc3.y - 1.0;
@@ -373,26 +404,23 @@ bool EMEvaluate(
 
 	float t = saturate( length( p ) );
 
-	// PATTERN first: EMPattern takes screen derivatives of its position, which are only defined while
-	// every pixel of the quad is still running, so it comes before any select or return.
-	// patternId and pStrength are uniform, so both branches below are taken the same way by every
-	// pixel of the draw: a light without a pattern pays for none of it, only banded pays for the
-	// length, and the derivatives inside EMPattern stay defined (DP-E4-03).
+	// PATTERN. patternId and pStrength belong to the light, so a light without a pattern pays for none of
+	// this and only banded pays for the length (DP-E4-03). The pattern's footprint is the caller's
+	// ( patternFootprint ): nothing below takes a screen derivative, so the block need not stand before
+	// the per-pixel selects and returns that follow it
 	float3 patternRGB = float3( 1.0, 1.0, 1.0 );
 	[branch]
-	if( patternId != EMP_NONE && pStrength > 0.0 )
+	if( EMHasPattern( flags, pattern ) )
 	{
 		// the position scaled to radius.x units on all three axes; a spot's radii are equal
-		float ry = ( emShape == EM_SPOT ) ? 1.0 : flags.z;
-		float rz = ( emShape == EM_SPOT ) ? 1.0 : flags.w;
-		float3 patternPos = float3( p.x, p.y * ry, p.z * rz );
+		float3 patternPos = p * EMPatternAxisScale( flags );
 		float patternT = t;
 		[branch]
 		if( patternId == EMP_BANDED )
 		{
 			patternT = length( patternPos );
 		}
-		patternRGB = EMPattern( patternPos, patternT, patternId, pStrength, pScale, pPhase );
+		patternRGB = EMPattern( patternPos, patternFootprint, patternT, patternId, pStrength, pScale, pPhase );
 	}
 
 	// FALLOFF AND MASK
@@ -406,8 +434,7 @@ bool EMEvaluate(
 
 	if( emShape == EM_SPOT )
 	{
-		// the divide is guarded and the zero behind the bulb is a select, never a branch on a per-pixel
-		// value, so the pattern's derivatives above stay defined
+		// the divide is guarded and the zero behind the bulb is a select, not a branch
 		float a = p.x;
 		float safeA = max( a, 1e-4 );
 		float2 uv = float2( p.y * cotH / safeA, p.z * cotV / safeA );
@@ -470,5 +497,27 @@ bool EMEvaluate(
 	}
 
 	return true;
+}
+
+// The pixel-stage form, as the two interaction shaders call it: the pattern's footprint is the screen step of
+// its position, taken HERE. So the call has to stand where every pixel of the quad is still running: before
+// any per-pixel select or return, and in no loop whose trip count differs between pixels. flags and pattern
+// are the same for every pixel of such a draw, so only an emitter with a pattern pays for the derivative
+bool EMEvaluate(
+	float4 tc2, float4 tc3,
+	float4 flags, float4 shape, float4 pattern,
+	out float3 lightFalloffRGB,
+	out float3 lightProjRGB,
+	out bool earlyOut )
+{
+	float3 patternFootprint = float3( 0.0, 0.0, 0.0 );
+	[branch]
+	if( int( flags.x + 0.5 ) >= 8 && EMHasPattern( flags, pattern ) )
+	{
+		// the position as the core forms it
+		const float3 p = float3( 2.0 * tc3.x - 1.0, 2.0 * tc3.y - 1.0, 2.0 * tc2.x - 1.0 );
+		patternFootprint = fwidth( p * EMPatternAxisScale( flags ) );
+	}
+	return EMEvaluateFootprint( tc2, tc3, patternFootprint, flags, shape, pattern, lightFalloffRGB, lightProjRGB, earlyOut );
 }
 //puncho end

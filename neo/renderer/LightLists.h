@@ -386,16 +386,6 @@ enum lightListPair_t
 const byte	LLH_TWIN		= 0x40;
 extern const lightListSurface_t	lightListTwinMark;
 
-// The forward draws a view may have before R_LightListLoud warns. Every listing surface has a lane of its own
-// ( rpSurfLights: where its run starts ), so every forward draw commits the render parms, and on Vulkan each commit
-// takes one of the 8192 versions of the forward layout's constant buffer. NVRHI gives a version back only when
-// the command list that used it has finished on the GPU, so the ring has to hold the draws of two frames
-// ( measured: 608 forward draws a frame stop the engine in its second frame with a ring of 700 and run with one
-// of 1300 ): 4096 a view, and half that in the difference view, which draws the lit passes twice. Past the ring
-// NVRHI reports "maxVersions = 8192, which is insufficient", which this engine takes as a fatal error. ( The
-// legacy passes commit only when a value changes: per model space, per stage colour. )
-const int	LL_FORWARD_DRAWS_LOUD	= 2048;
-
 // renderLight_t::forwardMode ( the spawnarg "forward" ): a designer routes a light by hand
 enum lightForwardMode_t
 {

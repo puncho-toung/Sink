@@ -25,7 +25,8 @@
 // ascending set, the Z-bin words and bits ascend, the sun ( record 0 ) comes first on both paths and the narrow class
 // precedes the wide one. So the loops test no flag, no channel mask and no exclusion per candidate, and a surface whose
 // path flips shades the same bits. The path is a per-draw constant: every branch on it is uniform. The includer samples
-// with SampleLevel / SampleCmpLevelZero only ( the Z-bin loop's trip count is not uniform, C5 ).
+// with explicit gradients or levels only: SampleGrad, SampleLevel, SampleCmpLevelZero ( the Z-bin loop's trip count is
+// not uniform, C5 ).
 
 static const uint LLP_LIST = 0;									// lightListPath_t; anything else is the Z-bin loop
 static const uint LL_POOL_SUN = 0;								// the pool word that always holds 0, the sun's record index

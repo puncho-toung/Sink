@@ -600,6 +600,16 @@ void idRenderBackend::DrawElementsWithCounters( const drawSurf_t* surf, bool sha
 		renderProgManager.CommitPushConstants( commandList, bindingLayoutType );
 	}
 
+	// ---- TRACK F ( F3 ): the forward layouts' per-draw lane ----
+	// rpSurfLights is a push-constant range of its own, so a listing surface's lane takes no version of the render
+	// parms' volatile buffer. Pushed with every draw of such a layout: a new graphics state needs the range set
+	// again, and between two states 16 bytes pushed cost less than remembering the last lane
+	if( renderProgManager.layoutTypeAttributes[bindingLayoutType].pcSurfLights )
+	{
+		commandList->setPushConstants( renderProgManager.GetUniformValue( RENDERPARM_SURFLIGHTS ), sizeof( idVec4 ) );
+	}
+	// ---- END TRACK F ----
+
 	//
 	// draw command
 	//
@@ -2057,11 +2067,14 @@ void idRenderBackend::GetCurrentBindingLayout( int type )
 		// X0: the forward light-list pass and the froxel-fog twins - one branch per new layout type ( D35 ).
 		// Each set supplies exactly what its bindingLayouts[...] object in RenderProgs.cpp declares, item for
 		// item in order; NVRHI compares a set with its layout positionally, so a mismatch is a draw-time fatal.
+		// F3: the uniforms set ends with the per-draw lane's push-constant range ( uniformsLayout ); the item
+		// holds no resource, so only the first item is written again
 		if( desc[0].bindings.empty() )
 		{
 			desc[0].bindings =
 			{
-				uniformsBindingSetItem
+				uniformsBindingSetItem,
+				nvrhi::BindingSetItem::PushConstants( RP_SURFLIGHTS_SLOT, sizeof( idVec4 ) )
 			};
 		}
 		else
@@ -2201,7 +2214,8 @@ void idRenderBackend::GetCurrentBindingLayout( int type )
 			desc[0].bindings =
 			{
 				uniformsBindingSetItem,
-				nvrhi::BindingSetItem::StructuredBuffer_SRV( 11, currentJointBuffer, nvrhi::Format::UNKNOWN, nvrhi::BufferRange( currentJointOffset, sizeof( idVec4 ) * numBoneMatrices ) )
+				nvrhi::BindingSetItem::StructuredBuffer_SRV( 11, currentJointBuffer, nvrhi::Format::UNKNOWN, nvrhi::BufferRange( currentJointOffset, sizeof( idVec4 ) * numBoneMatrices ) ),
+				nvrhi::BindingSetItem::PushConstants( RP_SURFLIGHTS_SLOT, sizeof( idVec4 ) )	// F3: the per-draw lane, last as in uniformsLayout
 			};
 		}
 		else
@@ -2851,6 +2865,10 @@ void idRenderBackend::GL_EndFrame()
 
 	// update jitter for perspective matrix
 	taaPass->AdvanceFrame();
+
+	// ---- TRACK F ( F3 ): this frame's commits of the render parms, against their rings ----
+	renderProgManager.CheckFrameCommits();
+	// ---- END TRACK F ----
 }
 
 /*

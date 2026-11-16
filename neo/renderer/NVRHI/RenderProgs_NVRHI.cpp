@@ -565,6 +565,7 @@ bool idRenderProgManager::CommitConstantBuffer( nvrhi::ICommandList* commandList
 		SelectUniforms( &renderParmSet, bindingLayoutType );
 
 		commandList->writeBuffer( constantBuffer[bindingLayoutType], &renderParmSet, layoutTypeAttributes[bindingLayoutType].rpBufSize );
+		frameCommits[bindingLayoutType]++;		// F3: one version of the layout's ring ( CheckFrameCommits )
 
 		uniformsChanged[bindingLayoutType] = false;
 
@@ -588,5 +589,33 @@ void idRenderProgManager::CommitPushConstants( nvrhi::ICommandList* commandList,
 		commandList->setPushConstants( &renderParmSet, layoutTypeAttributes[bindingLayoutType].rpBufSize );
 
 		uniformsChanged[bindingLayoutType] = false;
+	}
+}
+
+/*
+================================================================================================
+idRenderProgManager::CheckFrameCommits
+
+F3. Called once a frame by the backend, after the frame's draws. The render parms of a layout whose parm set is
+not pushed are a ring of RP_PARM_VERSIONS versions of a volatile constant buffer, and CommitConstantBuffer takes one
+whenever a value of the layout's parm set has changed since the layout's last commit ( a model space, a stage
+colour ) or the draw before had another layout. On Vulkan a version comes back only when the command list that used it has finished
+on the GPU, so the ring has to hold about two frames' commits, and past it NVRHI's "maxVersions" error stops the
+engine. A frame of very many model spaces can come near, and so can one that switches between two layouts draw
+by draw, as the ambient pass does between the ambient and the forward program when the light lists are on.
+One warning per layout and run, at half of what a frame may take. D3D12 has no such ring.
+================================================================================================
+*/
+void idRenderProgManager::CheckFrameCommits()
+{
+	const bool ring = ( deviceManager->GetGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN );
+	for( int i = 0; i < NUM_BINDING_LAYOUTS; i++ )
+	{
+		if( ring && frameCommits[i] > RP_FRAME_COMMITS_LOUD && !frameCommitsWarned[i] )
+		{
+			frameCommitsWarned[i] = true;
+			common->Warning( "render parms: binding layout %d was committed %d times in one frame. Its buffer has %d versions, which hold about two frames' commits; past them NVRHI's \"maxVersions\" error stops the engine", i, frameCommits[i], RP_PARM_VERSIONS );
+		}
+		frameCommits[i] = 0;
 	}
 }

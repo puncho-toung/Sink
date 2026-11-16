@@ -1381,6 +1381,22 @@ bool DeviceManager_VK::CreateDeviceAndSwapChain()
 		m_DeviceParams.maxPushConstantSize = Min( deviceProperties.limits.maxPushConstantsSize, nvrhi::c_MaxPushConstantSize );
 	}
 
+	// ---- TRACK F ( F3, D51 ): wave intrinsics in a pixel shader ----
+	// The forward pass's Z-bin loop uses WaveActiveMin, WaveActiveMax, WaveActiveBitOr and WaveReadLaneFirst, which
+	// compile to subgroup operations of the arithmetic and the ballot set. Subgroups are core since Vulkan 1.1 and
+	// need no feature bit, but which sets a device has, and in which stages, is a property of the device
+	{
+		vk::PhysicalDeviceSubgroupProperties subgroupProperties;
+		vk::PhysicalDeviceProperties2 deviceProperties2;
+		deviceProperties2.pNext = &subgroupProperties;
+		m_VulkanPhysicalDevice.getProperties2( &deviceProperties2 );
+
+		const vk::SubgroupFeatureFlags neededOperations = vk::SubgroupFeatureFlagBits::eBasic | vk::SubgroupFeatureFlagBits::eArithmetic | vk::SubgroupFeatureFlagBits::eBallot;
+		m_DeviceParams.waveOps = ( subgroupProperties.supportedOperations & neededOperations ) == neededOperations
+								 && ( subgroupProperties.supportedStages & vk::ShaderStageFlagBits::eFragment ) == vk::ShaderStageFlagBits::eFragment;
+	}
+	// ---- END TRACK F ----
+
 	CHECK( createSwapChain() );
 
 	//m_BarrierCommandList = m_NvrhiDevice->createCommandList();		// SRS - no longer needed

@@ -1231,7 +1231,7 @@ void idRenderBackend::DrawSingleInteraction( drawInteraction_t* din, bool useFas
 	{
 		float surfLights[4];
 		R_LightListDrawParms( *din->surf->lightList, surfLights );
-		renderProgManager.SetUniformValue( RENDERPARM_SURFLIGHTS, surfLights );
+		renderProgManager.SetUniformValue( RENDERPARM_SURFLIGHTS, surfLights );	// F3: no parm set holds the lane; the draw pushes it ( DrawElementsWithCounters )
 	}
 	// ---- END TRACK F ----
 	// RB begin

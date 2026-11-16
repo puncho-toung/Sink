@@ -463,6 +463,18 @@ bool DeviceManager_DX12::CreateDeviceAndSwapChain()
 		m_DeviceParams.maxPushConstantSize = Min( ( uint32_t )( 256 - sizeof( DWORD ) * 4 ), nvrhi::c_MaxPushConstantSize );
 	}
 
+	// ---- TRACK F ( F3, D51 ): wave intrinsics in a pixel shader ----
+	// shader model 6.0 wave operations, which the forward pass's Z-bin loop uses. ( A DXBC build of the shaders
+	// compiles that row without them, see forward.ps.hlsl, so a true answer does no harm there. )
+	{
+		D3D12_FEATURE_DATA_D3D12_OPTIONS1 options1 = {};
+		if( SUCCEEDED( m_Device12->CheckFeatureSupport( D3D12_FEATURE_D3D12_OPTIONS1, &options1, sizeof( options1 ) ) ) )
+		{
+			m_DeviceParams.waveOps = ( options1.WaveOps != FALSE );
+		}
+	}
+	// ---- END TRACK F ----
+
 	if( !CreateRenderTargets() )
 	{
 		return false;

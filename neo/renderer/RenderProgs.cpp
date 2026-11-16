@@ -71,6 +71,10 @@ static void R_ReloadShaders( const idCmdArgs& args )
 	renderProgManager.LoadAllShaders();
 }
 
+// ---- TRACK F ( F3, D51 ): the forward programs' wave row ----
+idCVar r_forwardWaveOps( "r_forwardWaveOps", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_INIT | CVAR_NEW, "the forward pass's Z-bin loop uses wave intrinsics where the device runs them in a pixel shader; 0 = the row without them ( read when the render programs are made: at start-up and by vid_restart )" );
+// ---- END TRACK F ----
+
 /*
 ================================================================================================
 uniformsLayout
@@ -95,6 +99,12 @@ nvrhi::BindingLayoutHandle idRenderProgManager::uniformsLayout( bindingLayoutTyp
 								  .addItem( rpLayoutItem )
 								  .addItem( nvrhi::BindingLayoutItem::StructuredBuffer_SRV( 11 ) ); // joint buffer;
 
+		// ---- TRACK F ( F3 ): the per-draw lane's push-constant range, the set's last item ----
+		if( layoutTypeAttributes[layoutType].pcSurfLights )
+		{
+			skinningLayoutDesc.addItem( nvrhi::BindingLayoutItem::PushConstants( RP_SURFLIGHTS_SLOT, sizeof( idVec4 ) ) );
+		}
+		// ---- END TRACK F ----
 		return device->createBindingLayout( skinningLayoutDesc );
 	}
 	else
@@ -103,6 +113,12 @@ nvrhi::BindingLayoutHandle idRenderProgManager::uniformsLayout( bindingLayoutTyp
 								  .setVisibility( nvrhi::ShaderType::All )
 								  .addItem( rpLayoutItem );
 
+		// ---- TRACK F ( F3 ): the per-draw lane's push-constant range, the set's last item ----
+		if( layoutTypeAttributes[layoutType].pcSurfLights )
+		{
+			uniformsLayoutDesc.addItem( nvrhi::BindingLayoutItem::PushConstants( RP_SURFLIGHTS_SLOT, sizeof( idVec4 ) ) );
+		}
+		// ---- END TRACK F ----
 		return device->createBindingLayout( uniformsLayoutDesc );
 	}
 }
@@ -124,6 +140,10 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 	this->device = device;
 
 	ZeroUniforms();
+
+	// F3: the commit counters ( CheckFrameCommits )
+	memset( frameCommits, 0, sizeof( frameCommits ) );
+	memset( frameCommitsWarned, 0, sizeof( frameCommitsWarned ) );
 
 	// === Main draw vertex layout ===
 	vertexLayoutDescs.SetNum( NUM_VERTEX_LAYOUTS, {} );
@@ -391,6 +411,7 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 		}
 
 		layoutTypeAttributes[layoutType].pcEnabled = layoutTypeAttributes[layoutType].rpBufSize <= deviceManager->GetMaxPushConstantSize() && layoutTypeAttributes[layoutType].rpSubSet != renderParmNullSet;
+		layoutTypeAttributes[layoutType].pcSurfLights = false;	// F3: true for the two forward layouts, below
 	}
 
 	// RB: isolated render passes can have their own push constant buffer sizes
@@ -419,6 +440,18 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 	// ( MoltenVK reports 4096 bytes )
 	layoutTypeAttributes[BINDING_LAYOUT_FORWARD].pcEnabled = false;
 	layoutTypeAttributes[BINDING_LAYOUT_FORWARD_SKINNED].pcEnabled = false;
+	// ---- TRACK F ( F3 ): the per-draw lane of the two forward layouts ----
+	// rpSurfLights is a push-constant range of 16 bytes beside the volatile buffer ( every device has room: Vulkan
+	// guarantees 128 bytes, a D3D12 root signature 64 words ). A listing surface's lane then takes no version of
+	// that buffer. A forward draw still commits the buffer when a value of set 9 has changed ( a model space, a
+	// stage colour ) and when the draw before it had another layout, as a draw of any layout does: the lane's own
+	// commit is gone, the ring's limit is not ( CheckFrameCommits ). The range does not ask r_vkUsePushConstants
+	// or r_dxUsePushConstants, which decide whether a layout's WHOLE parm set is pushed: the forward shaders have
+	// one form, with the lane in the range ( D51 ). On D3D12, where that switch is off by default, the range is
+	// the main draw path's only root constants
+	layoutTypeAttributes[BINDING_LAYOUT_FORWARD].pcSurfLights = true;
+	layoutTypeAttributes[BINDING_LAYOUT_FORWARD_SKINNED].pcSurfLights = true;
+	// ---- END TRACK F ----
 
 	auto defaultLayoutDesc = nvrhi::BindingLayoutDesc()
 							 .setVisibility( nvrhi::ShaderType::Pixel )
@@ -854,7 +887,7 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 			}
 			else
 			{
-				constantBufferDesc = nvrhi::utils::CreateVolatileConstantBufferDesc( layoutTypeAttributes[i].rpBufSize, va( "RenderParams_%d", i ), 8192 );
+				constantBufferDesc = nvrhi::utils::CreateVolatileConstantBufferDesc( layoutTypeAttributes[i].rpBufSize, va( "RenderParams_%d", i ), RP_PARM_VERSIONS );
 			}
 
 			constantBuffer[i] = device->createBuffer( constantBufferDesc );
@@ -863,6 +896,14 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 
 	// SRS - added support for runtime configuration of push constants
 #define usePushConstants( layoutType ) ( layoutTypeAttributes[layoutType].pcEnabled ? "1" : "0" )
+
+	// ---- TRACK F ( F3, D51 ): the run-time choice of the forward programs' USE_WAVE_OPS row ----
+	// Both rows are compiled ( shaders.cfg ) and draw the same picture: with the intrinsics the Z-bin loop walks the
+	// union of a wave's bits, so every record index the wave visits is uniform ( lightloop.inc.hlsl ). The device
+	// says whether a pixel shader may use them; the cvar is the way back to the row without
+	const char* useWaveOps = ( r_forwardWaveOps.GetBool() && deviceManager->GetWaveOpsSupported() ) ? "1" : "0";
+	common->Printf( "forward light loop: wave intrinsics %s ( device %s, r_forwardWaveOps %d )\n", useWaveOps[0] == '1' ? "on" : "off", deviceManager->GetWaveOpsSupported() ? "yes" : "no", r_forwardWaveOps.GetInteger() );
+	// ---- END TRACK F ----
 
 	// RB: added checks for GPU skinning
 	struct builtinShaders_t
@@ -1050,15 +1091,16 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 		{ BUILTIN_DEBUG_DEPTH, "builtin/debug/depth", "", { { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_POST_PROCESS_FINAL2 ) } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_POST_PROCESS_FINAL2 },
 		// ---- TRACK F: builtins[] rows ( keep the enum order ) ----
 		// the forward program ( F2 ). No USE_PUSH_CONSTANTS key: the forward layouts always take the constant buffer
-		// ( D51 ). USE_WAVE_OPS 0 and USE_TRANSLUCENT 0: the other halves of those axes are F3's and F4's
-		{ BUILTIN_FORWARD, "builtin/lighting/forward", "", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
-		{ BUILTIN_FORWARD_SKINNED, "builtin/lighting/forward", "_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
-		{ BUILTIN_FORWARD_PBR, "builtin/lighting/forward", "_PBR", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
-		{ BUILTIN_FORWARD_PBR_SKINNED, "builtin/lighting/forward", "_PBR_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
-		{ BUILTIN_FORWARD_LIGHTGRID, "builtin/lighting/forward", "_lightgrid", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "1" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
-		{ BUILTIN_FORWARD_LIGHTGRID_SKINNED, "builtin/lighting/forward", "_lightgrid_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "1" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
-		{ BUILTIN_FORWARD_LIGHTGRID_PBR, "builtin/lighting/forward", "_lightgrid_PBR", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "1" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
-		{ BUILTIN_FORWARD_LIGHTGRID_PBR_SKINNED, "builtin/lighting/forward", "_lightgrid_PBR_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "1" }, { "USE_WAVE_OPS", "0" }, { "USE_TRANSLUCENT", "0" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
+		// ( D51 ). USE_WAVE_OPS: the row the device check above picked ( F3 ). USE_TRANSLUCENT 0: the other half
+		// of that axis is F4's
+		{ BUILTIN_FORWARD, "builtin/lighting/forward", "", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "0" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
+		{ BUILTIN_FORWARD_SKINNED, "builtin/lighting/forward", "_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "0" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
+		{ BUILTIN_FORWARD_PBR, "builtin/lighting/forward", "_PBR", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "0" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
+		{ BUILTIN_FORWARD_PBR_SKINNED, "builtin/lighting/forward", "_PBR_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "0" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
+		{ BUILTIN_FORWARD_LIGHTGRID, "builtin/lighting/forward", "_lightgrid", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "1" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "0" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
+		{ BUILTIN_FORWARD_LIGHTGRID_SKINNED, "builtin/lighting/forward", "_lightgrid_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "1" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "0" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
+		{ BUILTIN_FORWARD_LIGHTGRID_PBR, "builtin/lighting/forward", "_lightgrid_PBR", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "1" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "0" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
+		{ BUILTIN_FORWARD_LIGHTGRID_PBR_SKINNED, "builtin/lighting/forward", "_lightgrid_PBR_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "1" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "0" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
 		// ---- END TRACK F ----
 		// ---- TRACK V: builtins[] rows ( keep the enum order ) ----
 		// ---- END TRACK V ----

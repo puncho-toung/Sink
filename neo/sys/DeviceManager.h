@@ -113,6 +113,10 @@ struct DeviceCreationParameters
 
 	// SRS - Used by RenderProgs to determine maximum push constant size (default = off, override during device init)
 	uint32_t maxPushConstantSize = 0;
+
+	// F3 ( D51 ): the device runs wave intrinsics in a pixel shader ( default = off, decided during device init ).
+	// RenderProgs picks the forward programs' USE_WAVE_OPS row by it
+	bool waveOps = false;
 };
 
 struct DefaultMessageCallback : public nvrhi::IMessageCallback
@@ -207,6 +211,12 @@ public:
 	uint32_t GetMaxPushConstantSize() const
 	{
 		return m_DeviceParams.maxPushConstantSize;
+	}
+
+	// F3 ( D51 ): wave intrinsics in a pixel shader ( shader model 6.0 wave operations; Vulkan subgroup operations )
+	bool GetWaveOpsSupported() const
+	{
+		return m_DeviceParams.waveOps;
 	}
 
 	virtual nvrhi::ITexture* GetCurrentBackBuffer() = 0;

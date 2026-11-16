@@ -217,7 +217,7 @@ enum renderParm_t
 	RENDERPARM_SHADOWCASCADEFAR,	// rpShadowCascadeFar: .x = viewDef_t::shadowCascadeFar, view depth beyond it is lit ( set 11, last )
 
 	// X0 ( C4 ): the forward light loop's six lanes, the tail of set 9; track F appends its own after these
-	RENDERPARM_SURFLIGHTS,		// rpSurfLights: x = first, y = count, z = path, w = feature mask ( set 9 )
+	RENDERPARM_SURFLIGHTS,		// rpSurfLights: x = first, y = count, z = path, w = feature mask ( F3: in no set; the forward layouts' push-constant lane, RP_SURFLIGHTS_SLOT )
 	RENDERPARM_ZBINPARMS,		// rpZBinParms: tile size, tiles X, words per tile, bin count ( set 9 )
 	RENDERPARM_ZBINSCALE,		// rpZBinScale: scale, near, far, 0 ( set 9 )
 	RENDERPARM_RECORDCOUNTS,	// rpRecordCounts: records, rows, sun present, vanished count ( set 9 )
@@ -229,6 +229,21 @@ enum renderParm_t
 
 	RENDERPARM_TOTAL,
 };
+
+// F3: the per-draw lane of the two forward layouts ( RENDERPARM_SURFLIGHTS ) is a push-constant range of its own,
+// the item PushConstants( RP_SURFLIGHTS_SLOT, sizeof( idVec4 ) ) of their uniforms set, beside the render parms'
+// buffer at slot 0. The slot is the D3D12 register of the range ( b0 is the render parms, b1 the froxel fog's
+// parms ), and on Vulkan it keeps the item's empty layout binding apart from the buffer's. forward.ps.hlsl
+// declares the block at register( b2 )
+const int RP_SURFLIGHTS_SLOT = 2;
+
+// F3: the render parms of a layout whose parm set is not pushed are a volatile constant buffer of
+// RP_PARM_VERSIONS versions ( idRenderProgManager::Init ). A commit takes one, and on Vulkan NVRHI gives it back only when the command list
+// that used it has finished on the GPU, so the ring holds the commits of about two frames; past it NVRHI reports
+// "maxVersions", which this engine takes as a fatal error. idRenderProgManager::CheckFrameCommits warns when one
+// layout commits more than RP_FRAME_COMMITS_LOUD times in one frame, half of what a frame may take
+const int RP_PARM_VERSIONS = 8192;
+const int RP_FRAME_COMMITS_LOUD = RP_PARM_VERSIONS / 4;
 
 // SRS - This enum list corresponds 1:1 to hlsl include files and renderparm subsets defined below
 
@@ -302,7 +317,7 @@ const idList<renderParm_t, TAG_RENDER> rpNominalSet8 = { RENDERPARM_WINDOWCOORD,
 const idList<bindingLayoutType_t, TAG_RENDER> rpNominalSet8LayoutTypes = { BINDING_LAYOUT_POST_PROCESS_INGAME };
 
 // SRS - rpMaximalSets have more than 16 idVec4 entries (>16*16 = 256 bytes) and are useful for MoltenVK on Apple platforms where the push constant limit is 4096 bytes
-const idList<renderParm_t, TAG_RENDER> rpMaximalSet9 = { RENDERPARM_SCREENCORRECTIONFACTOR, RENDERPARM_WINDOWCOORD, RENDERPARM_DIFFUSEMODIFIER, RENDERPARM_SPECULARMODIFIER, RENDERPARM_LOCALLIGHTORIGIN, RENDERPARM_LOCALVIEWORIGIN, RENDERPARM_BUMPMATRIX_S, RENDERPARM_BUMPMATRIX_T, RENDERPARM_DIFFUSEMATRIX_S, RENDERPARM_DIFFUSEMATRIX_T, RENDERPARM_SPECULARMATRIX_S, RENDERPARM_SPECULARMATRIX_T, RENDERPARM_VERTEXCOLOR_MODULATE, RENDERPARM_VERTEXCOLOR_ADD, RENDERPARM_GLOBALEYEPOS, RENDERPARM_MVPMATRIX_X, RENDERPARM_MVPMATRIX_Y, RENDERPARM_MVPMATRIX_Z, RENDERPARM_MVPMATRIX_W, RENDERPARM_MODELMATRIX_X, RENDERPARM_MODELMATRIX_Y, RENDERPARM_MODELMATRIX_Z, RENDERPARM_MODELMATRIX_W, RENDERPARM_PROJMATRIX_W, RENDERPARM_AMBIENT_COLOR, RENDERPARM_GLOBALLIGHTORIGIN, RENDERPARM_JITTERTEXSCALE, RENDERPARM_JITTERTEXOFFSET, RENDERPARM_PSX_DISTORTIONS, RENDERPARM_CASCADEDISTANCES, RENDERPARM_WOBBLESKY_X, RENDERPARM_WOBBLESKY_Y, RENDERPARM_WOBBLESKY_Z, RENDERPARM_TEXGEN_0_S, RENDERPARM_TEXGEN_0_T, RENDERPARM_TEXGEN_0_Q, RENDERPARM_SH_IRRADIANCE_0, RENDERPARM_SH_IRRADIANCE_1, RENDERPARM_SH_IRRADIANCE_2,RENDERPARM_SH_IRRADIANCE_3, RENDERPARM_SH_IRRADIANCE_4, RENDERPARM_SH_IRRADIANCE_5, RENDERPARM_SH_IRRADIANCE_6, RENDERPARM_SH_IRRADIANCE_7, RENDERPARM_SH_IRRADIANCE_8, RENDERPARM_SURFLIGHTS, RENDERPARM_ZBINPARMS, RENDERPARM_ZBINSCALE, RENDERPARM_RECORDCOUNTS, RENDERPARM_SHADOWBIAS, RENDERPARM_SHADOWFILTER, RENDERPARM_FORWARDVIEW };
+const idList<renderParm_t, TAG_RENDER> rpMaximalSet9 = { RENDERPARM_SCREENCORRECTIONFACTOR, RENDERPARM_WINDOWCOORD, RENDERPARM_DIFFUSEMODIFIER, RENDERPARM_SPECULARMODIFIER, RENDERPARM_LOCALLIGHTORIGIN, RENDERPARM_LOCALVIEWORIGIN, RENDERPARM_BUMPMATRIX_S, RENDERPARM_BUMPMATRIX_T, RENDERPARM_DIFFUSEMATRIX_S, RENDERPARM_DIFFUSEMATRIX_T, RENDERPARM_SPECULARMATRIX_S, RENDERPARM_SPECULARMATRIX_T, RENDERPARM_VERTEXCOLOR_MODULATE, RENDERPARM_VERTEXCOLOR_ADD, RENDERPARM_GLOBALEYEPOS, RENDERPARM_MVPMATRIX_X, RENDERPARM_MVPMATRIX_Y, RENDERPARM_MVPMATRIX_Z, RENDERPARM_MVPMATRIX_W, RENDERPARM_MODELMATRIX_X, RENDERPARM_MODELMATRIX_Y, RENDERPARM_MODELMATRIX_Z, RENDERPARM_MODELMATRIX_W, RENDERPARM_PROJMATRIX_W, RENDERPARM_AMBIENT_COLOR, RENDERPARM_GLOBALLIGHTORIGIN, RENDERPARM_JITTERTEXSCALE, RENDERPARM_JITTERTEXOFFSET, RENDERPARM_PSX_DISTORTIONS, RENDERPARM_CASCADEDISTANCES, RENDERPARM_WOBBLESKY_X, RENDERPARM_WOBBLESKY_Y, RENDERPARM_WOBBLESKY_Z, RENDERPARM_TEXGEN_0_S, RENDERPARM_TEXGEN_0_T, RENDERPARM_TEXGEN_0_Q, RENDERPARM_SH_IRRADIANCE_0, RENDERPARM_SH_IRRADIANCE_1, RENDERPARM_SH_IRRADIANCE_2,RENDERPARM_SH_IRRADIANCE_3, RENDERPARM_SH_IRRADIANCE_4, RENDERPARM_SH_IRRADIANCE_5, RENDERPARM_SH_IRRADIANCE_6, RENDERPARM_SH_IRRADIANCE_7, RENDERPARM_SH_IRRADIANCE_8, RENDERPARM_ZBINPARMS, RENDERPARM_ZBINSCALE, RENDERPARM_RECORDCOUNTS, RENDERPARM_SHADOWBIAS, RENDERPARM_SHADOWFILTER, RENDERPARM_FORWARDVIEW };
 
 const idList<bindingLayoutType_t, TAG_RENDER> rpMaximalSet9LayoutTypes = { BINDING_LAYOUT_AMBIENT_LIGHTING_IBL, BINDING_LAYOUT_AMBIENT_LIGHTING_IBL_SKINNED, BINDING_LAYOUT_FORWARD, BINDING_LAYOUT_FORWARD_SKINNED };
 
@@ -1196,6 +1211,11 @@ public:
 	const char*	GetGLSLParmName( int rp ) const;
 
 	void		SetUniformValue( const renderParm_t rp, const float value[4] );
+	// F3: a lane as it was last set. The backend pushes rpSurfLights from here ( DrawElementsWithCounters )
+	ID_INLINE const float*	GetUniformValue( const renderParm_t rp ) const
+	{
+		return uniforms[rp].ToFloatPtr();
+	}
 	void		CommitUniforms( uint64 stateBits );
 	int			FindProgram( const char* name, int vIndex, int fIndex, bindingLayoutType_t bindingType = BINDING_LAYOUT_DEFAULT );
 	void		ZeroUniforms();
@@ -1205,6 +1225,7 @@ public:
 	bool									CommitConstantBuffer( nvrhi::ICommandList* commandList, bool bindingLayoutTypeChanged );
 
 	void									CommitPushConstants( nvrhi::ICommandList* commandList, int bindingLayoutType );
+	void									CheckFrameCommits();	// F3: once a frame, by the backend ( GL_EndFrame )
 
 	ID_INLINE nvrhi::IBuffer*				ConstantBuffer()
 	{
@@ -1312,6 +1333,7 @@ private:
 		uint32_t			rpBufSize;
 		bool				cbStatic;
 		bool				pcEnabled;
+		bool				pcSurfLights;	// F3: the layout has the per-draw lane rpSurfLights as a push-constant range of its own, beside its constant buffer
 	};
 
 	int											currentIndex;
@@ -1319,6 +1341,8 @@ private:
 	idList<shader_t, TAG_RENDER>				shaders;
 	idStaticList< idVec4, RENDERPARM_TOTAL >	uniforms;
 	bool										uniformsChanged[NUM_BINDING_LAYOUTS];
+	int											frameCommits[NUM_BINDING_LAYOUTS];			// F3: this frame's commits of each layout's buffer ( CommitConstantBuffer counts, CheckFrameCommits reads and clears; the backend's thread only )
+	bool										frameCommitsWarned[NUM_BINDING_LAYOUTS];	// F3: a layout is warned about once a run
 	layoutTypeAttributes_t						layoutTypeAttributes[NUM_BINDING_LAYOUTS];
 	idList<bindingLayoutType_t, TAG_RENDER>		renderParmLayoutTypes[RENDERPARM_TOTAL];
 	nvrhi::IDevice*								device;

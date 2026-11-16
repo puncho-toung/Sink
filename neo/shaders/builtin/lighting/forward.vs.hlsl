@@ -56,7 +56,6 @@ struct VS_OUT
 	float4 texcoord0	: TEXCOORD0_centroid;
 	float4 texcoord1	: TEXCOORD1_centroid;
 	float4 texcoord2	: TEXCOORD2_centroid;
-	float4 texcoord3	: TEXCOORD3_centroid;
 	float4 texcoord4	: TEXCOORD4_centroid;
 	float4 texcoord5	: TEXCOORD5_centroid;
 	float4 texcoord6	: TEXCOORD6_centroid;
@@ -176,13 +175,13 @@ void main( VS_IN vertex, out VS_OUT result )
 	}
 
 	//# calculate normalized vector to viewer in R1
-	//result.texcoord3 = modelPosition;
-
+	// the view vector in the relative frame; texcoord8 below takes it into the vertex frame
 	float4 toEye = normalize( pc.rpLocalViewOrigin - modelPosition );
 
-	result.texcoord3.x = dot3( toEye, pc.rpModelMatrixX );
-	result.texcoord3.y = dot3( toEye, pc.rpModelMatrixY );
-	result.texcoord3.z = dot3( toEye, pc.rpModelMatrixZ );
+	float3 toEyeWorld;
+	toEyeWorld.x = dot3( toEye, pc.rpModelMatrixX );
+	toEyeWorld.y = dot3( toEye, pc.rpModelMatrixY );
+	toEyeWorld.z = dot3( toEye, pc.rpModelMatrixZ );
 
 	result.texcoord4.x = dot3( tangent, pc.rpModelMatrixX );
 	result.texcoord5.x = dot3( tangent, pc.rpModelMatrixY );
@@ -216,7 +215,7 @@ void main( VS_IN vertex, out VS_OUT result )
 	const float3 frameT = float3( result.texcoord4.x, result.texcoord5.x, result.texcoord6.x );
 	const float3 frameB = float3( result.texcoord4.y, result.texcoord5.y, result.texcoord6.y );
 	const float3 frameN = float3( result.texcoord4.z, result.texcoord5.z, result.texcoord6.z );
-	result.texcoord8 = float4( dot( frameT, result.texcoord3.xyz ), dot( frameB, result.texcoord3.xyz ), dot( frameN, result.texcoord3.xyz ), 1.0f );
+	result.texcoord8 = float4( dot( frameT, toEyeWorld ), dot( frameB, toEyeWorld ), dot( frameN, toEyeWorld ), 1.0f );
 	result.texcoord9 = float4( dot( frameT, worldPosition.xyz ), dot( frameB, worldPosition.xyz ), dot( frameN, worldPosition.xyz ), 1.0f );
 
 #if USE_GPU_SKINNING
