@@ -1,9 +1,21 @@
-// froxel_resolve.cs.hlsl - the froxel resolve pass ( D33 ): X0 landed this as a stub that compiles and
-// does nothing; track V owns this file and writes the resolve compute there ( V1-V5 ).
+// froxel_resolve.cs.hlsl - the froxel resolve ( track V ): this frame's injected volume into the resolved one.
+// V1: a copy; the history comes with V3.
 
 #include "vulkan.hlsli"
+#include "builtin/volumetrics/froxel_grid.inc.hlsl"
 
-[numthreads( 8, 8, 1 )] void main( uint3 globalIdx : SV_DispatchThreadID )
+// *INDENT-OFF*
+Texture3D<float4> t_Injected : register( t0 );
+VK_IMAGE_FORMAT( "rgba16f" ) RWTexture3D<float4> u_Resolved : register( u0 );
+// *INDENT-ON*
+
+[numthreads( 8, 8, 1 )]
+void main( uint3 froxelId : SV_DispatchThreadID )
 {
-	// X0 stub: nothing is resolved yet.
+	if( any( froxelId >= uint3( froxel.gridSize.xyz ) ) )
+	{
+		return;
+	}
+
+	u_Resolved[ froxelId ] = t_Injected[ froxelId ];
 }

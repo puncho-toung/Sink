@@ -19,13 +19,15 @@
 #endif
 
 #include "vulkan.hlsli"
+#include "builtin/volumetrics/froxel_slices.inc.hlsl"
 
+// the C++ mirror is renderer/Passes/VolumetricFogPass_cb.h, lane for lane; all zeros mean "fog off"
 struct froxelFogParms_t
 {
-	float4 volumeParms;
-	float4 depthParms;
-	float4 fogParms;
-	float4 reserved;
+	float4 volumeParms;		// xy = the fog view's screen UV to volume UV, z = the slice count G, w = 1 / G
+	float4 depthParms;		// xy = the slices' bias S and step, as the kernels have them; zw = the projection's depth terms: distance = z / ( depth + w )
+	float4 fogParms;		// x = 1 where the fog is on, y = the apply's debug view ( r_volumetricFogDebug ), zw = the fog view's first pixel
+	float4 reserved;		// xy = 1 / the fog view's size in pixels, zw = the volume UV of the view's last column and row: the lookup stays inside the view's grid
 };
 
 VK_BINDING( 257, FROXEL_FOG_SET )
@@ -40,11 +42,58 @@ Texture3D<float4> t_FroxelVolume : register( t15 );
 VK_BINDING( 133, FROXEL_FOG_SET )
 SamplerState s_FroxelLinearClamp : register( s5 );
 
-// in-scatter in rgb, transmittance in a; all zero parms mean "fog off" and the function returns ( 0, 0, 0, 1 )
+// the slice coordinate of a distance along the view axis: 0 at the camera, G at the volume's far end and beyond it
+// ( froxel_slices.inc.hlsl )
+float FroxelFogSlice( float viewDepth )
+{
+	return min( froxelFogParms.volumeParms.z, FroxelSliceOf( viewDepth, froxelFogParms.depthParms.x, froxelFogParms.depthParms.y ) );
+}
+
+// The distance along the view axis of a device depth ( a texel of the scene's depth, or a pixel's own SV_Position.z ),
+// from the projection's two depth terms: z / ( depth + w ). Under reversed-Z that is zNear / depth, and a depth of
+// 0, the clear value, is infinitely far; a forward-Z build has a negative z and reaches its far plane where
+// depth + w is 0. Infinitely far comes back as 1e30
+float FroxelFogViewDepth( float deviceDepth )
+{
+	const float denominator = deviceDepth + froxelFogParms.depthParms.w;
+	return ( denominator * froxelFogParms.depthParms.z > 0.0 ) ? froxelFogParms.depthParms.z / denominator : 1e30;
+}
+
+// a pixel's place in the fog view, 0..1 with the origin top-left, from its SV_Position
+float2 FroxelFogScreenUV( float2 svPosition )
+{
+	return ( svPosition - froxelFogParms.fogParms.zw ) * froxelFogParms.reserved.xy;
+}
+
+// The fog between the camera and a point: the in-scatter in rgb and the transmittance in a, so that the point's
+// colour seen through the fog is rgb + colour * a. screenUV is the point's place in the fog view ( 0..1, top-left
+// origin, y down ), viewDepth its distance along the view axis in units; beyond the volume's far end no fog is
+// added. All zero parms mean "fog off": the function returns ( 0, 0, 0, 1 ) without a sample
 float4 FroxelFogSample( float2 screenUV, float viewDepth )
 {
-	// X0 stub: track V writes the real sample here ( V5 ). Nothing is sampled yet, so the fog is off.
-	return float4( 0.0, 0.0, 0.0, 1.0 );
+	if( froxelFogParms.fogParms.x <= 0.0 )
+	{
+		return float4( 0.0, 0.0, 0.0, 1.0 );
+	}
+
+	// Texel k of the volume holds the fog from the camera to the FAR face of slice k, and its centre is at
+	// ( k + 0.5 ) / G. The fog to slice coordinate s is therefore read half a texel nearer, at ( s - 0.5 ) / G: at
+	// s = k that is texel k - 1 alone, the fog to the face the point lies on. Read at s / G it would be half a
+	// slice too much: light in front of walls. In front of the first far face the volume has no texel: there the
+	// fog runs from none at the camera to texel 0
+	// Sideways the lookup stays inside the view's grid: the volume may hold more columns and rows than this view
+	// fills, and nothing wrote those. At the view's last column and row this is what the sampler's clamp does at the
+	// edge of a volume that is the view's size
+	const float s = FroxelFogSlice( viewDepth );
+	const float3 uvw = float3( min( screenUV * froxelFogParms.volumeParms.xy, froxelFogParms.reserved.zw ), ( max( s, 1.0 ) - 0.5 ) * froxelFogParms.volumeParms.w );
+	const float4 fog = t_FroxelVolume.SampleLevel( s_FroxelLinearClamp, uvw, 0.0 );
+	return lerp( float4( 0.0, 0.0, 0.0, 1.0 ), fog, saturate( s ) );
+}
+
+// the same for a pixel of the fog view, from its SV_Position: what a fogged pixel shader calls
+float4 FroxelFogSamplePixel( float2 svPosition, float viewDepth )
+{
+	return FroxelFogSample( FroxelFogScreenUV( svPosition ), viewDepth );
 }
 
 #endif // FROXEL_FOG_INC_HLSL

@@ -484,6 +484,9 @@ private:
 	nvrhi::GraphicsPipelineHandle	lightDiffReducePipeline;
 	// ---- END TRACK F ----
 	// ---- TRACK V: volumetric fog members ----
+	// the pass writes froxelFogParms and swaps froxelVolume at its apply ( D27, D66 ), puts the dummy back and clears
+	// bindingCache where its volume dies, and draws its sky mask through the backend's draw path
+	friend class VolumetricFogPass;
 	// ---- END TRACK V ----
 	MipMapGenPass*					hiZGenPass;
 	TonemapPass*					toneMapPass;

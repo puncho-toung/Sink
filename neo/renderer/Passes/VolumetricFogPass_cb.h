@@ -29,11 +29,24 @@ If you have questions concerning this license or the applicable additional terms
 
 #pragma once
 
+// The fog set's constants: shaders/froxel_fog.inc.hlsl has the same struct, lane for lane. X0 created the buffer
+// ( backEnd.froxelFogParms ) and writes zeros into it at the start of every 3D view: all zeros mean "fog off". The
+// fog pass writes the real values at the apply slot of the fog view ( D66 ).
 struct froxelFogParms_t
 {
-	idVec4	volumeParms;	// V defines the lanes in V1; X0 writes zeros
-	idVec4	depthParms;
-	idVec4	fogParms;
-	idVec4	reserved;
+	idVec4	volumeParms;	// xy = the fog view's screen UV to volume UV, z = the slice count G, w = 1 / G
+	idVec4	depthParms;		// xy = the slices' bias S and step, as froxelConstants_t::sliceParms.xy; zw = the projection's depth terms: distance = z / ( depth + w )
+	idVec4	fogParms;		// x = 1 where the fog is on, y = the apply's debug view ( r_volumetricFogDebug ), zw = the fog view's first pixel
+	idVec4	reserved;		// xy = 1 / the fog view's size in pixels, zw = the volume UV of the view's last column and row: the lookup stays inside the view's grid
 };
 compile_time_assert( sizeof( froxelFogParms_t ) == 64 );
+
+// The kernels' constants: shaders/builtin/volumetrics/froxel_grid.inc.hlsl has the same struct, lane for lane.
+struct froxelConstants_t
+{
+	idVec4	gridSize;		// xyz = the columns, rows and slices the kernels fill: the view's grid and, where the volumes have them, one column and row more
+	idVec4	sliceParms;		// x = S, y = ln( 1 + farEnd / S ) / slices, z = 1 / the store scale
+	idVec4	rayParms;		// a column's ray: lateral = ( column + 0.5, row + 0.5 ) * xy - zw, forward 1
+	idVec4	medium;			// the uniform medium: rgb = sigma_s * L, a = sigma_t, both times the store scale
+};
+compile_time_assert( sizeof( froxelConstants_t ) == 64 );

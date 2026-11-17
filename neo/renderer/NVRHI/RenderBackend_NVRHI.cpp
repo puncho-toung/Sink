@@ -2772,6 +2772,22 @@ void idRenderBackend::GL_StartFrame()
 	LightListCreateBuffers( 0 );
 	// ---- END TRACK F ----
 	// ---- TRACK V: create the volumetric fog pass ----
+	// The pass lives while r_volumetricFog is on. At 0 there is no pass and every fog slot of the view is a no-op:
+	// the picture is the engine's without the fog ( D23 ). Its volumes follow the render size and the grid cvars
+	// from inside the pass ( VolumetricFogPass::CheckVolumes ), and the pass puts the dummy volume back when it
+	// goes; ClearCaches deletes it with every map load, resize and vid_restart
+	if( r_volumetricFog.GetBool() )
+	{
+		if( !volumetricFogPass )
+		{
+			volumetricFogPass = new VolumetricFogPass( deviceManager->GetDevice(), &commonPasses );
+		}
+	}
+	else if( volumetricFogPass )
+	{
+		delete volumetricFogPass;
+		volumetricFogPass = nullptr;
+	}
 	// ---- END TRACK V ----
 
 	if( ( globalImages->hierarchicalZbufferImage->GetTextureID() != textureId || !hiZGenPass ) && R_UseHiZ() )
@@ -3160,6 +3176,13 @@ void idRenderBackend::ClearCaches()
 	LightListReleaseBuffers();
 	// ---- END TRACK F ----
 	// ---- TRACK V: delete the volumetric fog pass ----
+	if( volumetricFogPass )
+	{
+		delete volumetricFogPass;
+		volumetricFogPass = nullptr;
+	}
+	// the fog set binds the dummy again; before the first frame there is none yet and GL_StartFrame sets it
+	froxelVolume = froxelDummyVolume;
 	// ---- END TRACK V ----
 
 	if( toneMapPass )

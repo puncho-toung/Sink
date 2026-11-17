@@ -1,5 +1,5 @@
-// froxel_apply.vs.hlsl - vertex stage of the froxel fog apply ( D33 ): X0 landed this as a stub;
-// track V owns this file ( V5 ). Full-screen triangle from SV_VertexID, no vertex buffer.
+// froxel_apply.vs.hlsl - vertex stage of the froxel fog apply ( track V, package V1 ): one triangle over the
+// view from SV_VertexID, no vertex buffer. The pass's viewport and scissor cut it to the fog view.
 
 // *INDENT-OFF*
 struct VS_OUT
