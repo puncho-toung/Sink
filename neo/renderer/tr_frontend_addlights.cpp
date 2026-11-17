@@ -1154,6 +1154,7 @@ void R_OptimizeViewLightsList()
 		//puncho start - in view means the backend will draw it. Counted here and not in R_AddLights so that a
 		// light whose volume passed the portal, frustum and occlusion tests there but holds no visible
 		// surface is left out. The HUD comment in Console.cpp says why a light behind a wall can still count
+		// V2: a light that only the froxel fog keeps lit ( fogRelevant ) counts too; the backend draws its shadow maps and no surface
 		tr.pc.c_viewLights++;
 		if( R_LightUsesEmitterPath( vLight ) )
 		{

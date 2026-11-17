@@ -32,11 +32,15 @@ If you have questions concerning this license or the applicable additional terms
 /*
 ================================
 
-VolumetricFogPass ( track V of the renderer upgrade, package V1 )
+VolumetricFogPass ( track V of the renderer upgrade, packages V1 and V2 )
 
 Froxel fog: a 3D texture aligned with the fog view's frustum, a column per block of screen pixels and a slice per
 step in depth. Three compute kernels fill it in every frame ( inject, resolve, integrate ), and the apply fogs the
 opaque picture with one lookup per pixel at the pixel's depth, before the first translucent surface is drawn.
+
+The inject lights the fog ( V2 ) with the view's ambient light and with the view's light records
+( renderer/LightLists.h ), which the frontend builds in the fog view while r_volumetricFog is on and the backend
+uploads right before this pass. No shadow is looked up yet ( V3 ): a light is taken where its shadow is known.
 
 The conventions, the same in every kernel and in the apply ( shaders/builtin/volumetrics/froxel_grid.inc.hlsl,
 shaders/froxel_fog.inc.hlsl ):
@@ -81,7 +85,9 @@ private:
 	};
 
 	void	InitKernel( kernel_t& kernel, const char* shaderName, bool readsVolume );
+	void	InitInject();
 	bool	CheckVolumes( int gridWidth, int gridHeight, int gridSlices );
+	bool	CheckInjectSet();
 	void	ReleaseVolume();
 	void	ProbeCopy( nvrhi::ICommandList* commandList );
 	void	ProbeStage( nvrhi::ICommandList* commandList, nvrhi::ITexture* color, const viewDef_t* viewDef );
@@ -106,9 +112,13 @@ private:
 	nvrhi::TextureHandle			m_Resolved;			// the same behind the temporal resolve ( V1: a copy )
 	nvrhi::TextureHandle			m_Integrated;		// in-scatter in rgb, transmittance in a: camera to the slice's far face
 
-	kernel_t						m_Inject;
+	kernel_t						m_Inject;			// its layout is its own ( InitInject ) and its set is made by CheckInjectSet
 	kernel_t						m_Resolve;
 	kernel_t						m_Integrate;
+
+	// what the inject's set was made for besides the pass's own objects: the light lists' four tables and the three
+	// light images, which belong to the engine and can be made again under a living pass
+	nvrhi::IResource*				m_InjectSetKey[7];
 
 	// the apply: one triangle over the view, blended into the view's colour target
 	nvrhi::ShaderHandle				m_ApplyVS;
@@ -141,6 +151,11 @@ private:
 	float							m_ProbeSliceStep;
 	float							m_ProbeSigmaT;
 	float							m_ProbeSource;		// sigma_s * L
+	bool							m_ProbeLit;			// the fog was lit ( no furnace ): its in-scatter has no closed form
+	int								m_ProbeRecords;		// the light records of the view
+	int								m_ProbeTakeable;	// and how many of them the fog could take ( the take mask's bits )
+	int								m_ProbeCull;		// and how it found them
+	float							m_ProbeSigmaS;		// the lit fog's sigma_s ( m_ProbeSource is the furnace's share and 0 then )
 };
 
 #endif // RENDERER_PASSES_VOLUMETRICFOGPASS_H_

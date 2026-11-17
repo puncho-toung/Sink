@@ -752,7 +752,9 @@ static uint32 R_LightListRecordFlags( const viewLight_t* vLight, bool emitterDeb
 	}
 	if( shader->IsAmbientLight() )
 	{
-		return RLF_AMBIENT;
+		// V2: with the kind's bit, which says which of the two default falloff images the froxel inject reads for it
+		// ( the stock ambient light material has the point light's ). The record is the fog's alone: it is never listed
+		return RLF_AMBIENT | ( vLight->pointLight ? RLF_POINT : 0 );
 	}
 
 	uint32 flags = ( vLight->pointLight ? RLF_POINT : 0 ) | ( vLight->parallel ? RLF_PARALLEL : 0 ) | ( vLight->isPrimarySun ? RLF_SUN : 0 );
@@ -874,6 +876,15 @@ static void R_LightListFlattenRecord( const viewLight_t* vLight, uint32 flags, i
 	// "moved" is any update of the light def in this frame, a change of colour alone included: the def keeps no
 	// stamp for a change of shape
 	rec.flags = flags | ( light->parms.noSpecular ? RLF_NOSPECULAR : 0 ) | ( ( light->lastModifiedFrameNum == tr.frameCount ) ? RLF_MOVED_THIS_FRAME : 0 );
+	// V2: the light's word on the froxel fog ( the spawnarg "volumetric" ); any other value reads as LIGHT_VOLUMETRIC_AUTO
+	if( light->parms.volumetricMode == LIGHT_VOLUMETRIC_ALWAYS )
+	{
+		rec.flags |= RLF_FOG_NOSHADOW;
+	}
+	else if( light->parms.volumetricMode == LIGHT_VOLUMETRIC_NEVER )
+	{
+		rec.flags |= RLF_FOG_OFF;
+	}
 	rec.uniqueId = light->uniqueId;
 	for( int i = 0; i < 4; i++ )
 	{
@@ -1029,6 +1040,7 @@ void R_NumberRecordLights()
 	{
 		vLight->recordNumber = -1;
 		vLight->numListedSurfs = 0;
+		vLight->fogRelevant = false;
 	}
 	if( viewDef->invalidateHistory )
 	{
@@ -1040,11 +1052,17 @@ void R_NumberRecordLights()
 		common->Printf( "lightlists: r_useForwardLists needs r_useShadowAtlas: with the atlas off it reads as 0\n" );
 	}
 	// No view lists a pair unless the forward pass runs in it, and lists need the atlas; the sky view, mirrors and
-	// GUI worlds build nothing ( D40, D79 ). The volumetrics will join their own switch here: records and bins
-	// without lists.
+	// GUI worlds build nothing ( D40, D79 ).
 	const bool wantLists = r_useForwardLists.GetBool() && r_useShadowAtlas.GetInteger() != 0 && viewDef->isMainView
 						   && ( viewDef->renderView.rdflags & ( RDF_IRRADIANCE | RDF_NOAMBIENT ) ) == 0;
-	const bool wantRecords = wantLists;
+	// ---- TRACK V ( V2 ): the froxel fog's own switch ( D40 ). In the view the fog runs in, while its inject reads
+	// light records ( R_VolumetricFogRecordReach: the fog on, air that scatters, no furnace ), the records, the bins and the tile bits are
+	// built with the lists off as well. It lists nothing: llv->lists stays the lists' own switch ----
+	const bool fogEligible = viewDef->isMainView && ( viewDef->renderView.rdflags & ( RDF_IRRADIANCE | RDF_NOAMBIENT | RDF_NOFOG ) ) == 0;
+	const float fogReach = fogEligible ? R_VolumetricFogRecordReach() : 0.0f;
+	const bool wantFog = fogReach > 0.0f;
+	// ---- END TRACK V ----
+	const bool wantRecords = wantLists || wantFog;
 	if( !wantRecords )
 	{
 		return;
@@ -1176,11 +1194,28 @@ void R_NumberRecordLights()
 			R_LightListFlattenRecord( llv->lightOfInput[input], llv->flagsOfInput[input], t.importanceRank[r], llv->lightScale, records[r] );
 		}
 	}
-	const bool fogEligible = viewDef->isMainView && ( viewDef->renderView.rdflags & ( RDF_IRRADIANCE | RDF_NOAMBIENT | RDF_NOFOG ) ) == 0;
 	if( fogEligible )
 	{
 		R_LightListHistory( viewDef, llv, records );
 	}
+	// ---- TRACK V ( V2 ): a light the froxel inject can take counts as lit ( R_ViewLightIsLit ), so one whose
+	// surfaces are all out of sight keeps its place in the view and its shadow maps: its fog is in sight. A light
+	// the fog can take ( R_FogCanTakeRecord, with "can have a shadow map in this view" from its shadow LOD ) that
+	// begins nearer than the fog's far end ----
+	if( wantFog )
+	{
+		for( int r = 0; r < t.numRecords; r++ )
+		{
+			const int input = t.lightOfRecord[r];
+			if( input < 0 )
+			{
+				continue;														// the empty sun slot
+			}
+			viewLight_t* vLight = llv->lightOfInput[input];
+			vLight->fogRelevant = llv->lights[input].zMin < fogReach && R_FogCanTakeRecord( records[r], vLight->shadowLOD != -1 );
+		}
+	}
+	// ---- END TRACK V ----
 	viewDef->recordLights = records;
 	viewDef->numRecordLights = t.numRecords;
 	viewDef->lightListView = llv;
@@ -1381,6 +1416,21 @@ void R_BuildLightLists()
 			continue;
 		}
 		const viewLight_t* vLight = llv->lightOfInput[input];
+		// ---- TRACK V ( V2 ): a light that casts shadows and has no caster in this view's chain, which holds every
+		// caster whose shadow can reach the view ( R_AddSingleLight leaves out one whose shadow bounds miss the view's
+		// frustum ). The light gets no shadow map ( R_ViewLightHasShadowMap ): its rows read "not placed", or it has
+		// no rows at all ( a shadow LOD of -1 ); unless the shadow cache holds a map for it ( r_shadowCache 2 ), and
+		// then its row has a place, the inject takes the light by the row and the flag changes nothing. The froxel
+		// inject leaves a light out where its shadow map is missing, because it does not know the shadow ( D80 ); here
+		// it knows: nothing shadows this light inside the view. The chain is gathered for every light that casts
+		// shadows, whatever its shadow LOD ( R_AddSingleModel ), and it is final here: the model jobs have run, and
+		// the optimize pass, which empties the chain of a light that is not lit, runs behind this hook. The flag is a
+		// fact about the record: it is set whether or not the fog is on ----
+		if( vLight->globalShadows == NULL && vLight->lightDef->LightCastsShadows() )
+		{
+			viewDef->recordLights[r].flags |= RLF_FOG_NOSHADOW;
+		}
+		// ---- END TRACK V ----
 		if( vLight->shadowLOD == -1 )
 		{
 			continue;															// the light casts no shadow
@@ -1422,7 +1472,19 @@ void R_BuildLightLists()
 		}
 	}
 	viewDef->listsBuilt = llv->lists;
-	R_LightListLoud( llv );
+	// ---- TRACK V ( V2 ): the warnings speak of the lists ( the legacy path, forward tags ). A view that builds its
+	// tables for the fog alone lists nothing; of the record cap it says its own word, once a map: the lights past
+	// the cap have no record, so they add nothing to the fog ----
+	if( llv->lists )
+	{
+		R_LightListLoud( llv );
+	}
+	else if( llv->stats.capped > 0 && ( lightListWarned & 8 ) == 0 )
+	{
+		lightListWarned |= 8;
+		common->Warning( "lightlists: %d lights past the %d records of a view add nothing to the froxel fog", llv->stats.capped, LL_MAX_RECORDS );
+	}
+	// ---- END TRACK V ----
 	if( r_lightListLog.GetBool() )
 	{
 		const lightListStats_t& st = llv->stats;

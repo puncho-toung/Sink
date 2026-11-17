@@ -240,10 +240,19 @@ const int RP_SURFLIGHTS_SLOT = 2;
 // F3: the render parms of a layout whose parm set is not pushed are a volatile constant buffer of
 // RP_PARM_VERSIONS versions ( idRenderProgManager::Init ). A commit takes one, and on Vulkan NVRHI gives it back only when the command list
 // that used it has finished on the GPU, so the ring holds the commits of about two frames; past it NVRHI reports
-// "maxVersions", which this engine takes as a fatal error. idRenderProgManager::CheckFrameCommits warns when one
-// layout commits more than RP_FRAME_COMMITS_LOUD times in one frame, half of what a frame may take
+// "maxVersions", which this engine takes as a fatal error.
+//
+// RP_FRAME_COMMITS_MAX is what follows for one frame: on a steady view a layout may commit half the ring. Nothing
+// here enforces it; NVRHI's error is the stop.
+//
+// RP_FRAME_COMMITS_LOUD is an early notice and nothing else. When one layout commits more often than this in one
+// frame, idRenderProgManager::CheckFrameCommits prints one console warning for that layout, once a run. No draw is
+// skipped, clamped or slowed. It stands at three quarters of RP_FRAME_COMMITS_MAX ( 3,072 of 4,096 ): a view that
+// grows heavier is reported while a quarter of the room is left. Nearer the limit the notice would come in the
+// frame before the stop, or not at all, since the count is read after the frame's draws.
 const int RP_PARM_VERSIONS = 8192;
-const int RP_FRAME_COMMITS_LOUD = RP_PARM_VERSIONS / 4;
+const int RP_FRAME_COMMITS_MAX = RP_PARM_VERSIONS / 2;
+const int RP_FRAME_COMMITS_LOUD = RP_FRAME_COMMITS_MAX * 3 / 4;
 
 // SRS - This enum list corresponds 1:1 to hlsl include files and renderparm subsets defined below
 

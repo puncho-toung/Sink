@@ -603,7 +603,8 @@ colour ) or the draw before had another layout. On Vulkan a version comes back o
 on the GPU, so the ring has to hold about two frames' commits, and past it NVRHI's "maxVersions" error stops the
 engine. A frame of very many model spaces can come near, and so can one that switches between two layouts draw
 by draw, as the ambient pass does between the ambient and the forward program when the light lists are on.
-One warning per layout and run, at half of what a frame may take. D3D12 has no such ring.
+One warning per layout and run, at RP_FRAME_COMMITS_LOUD, three quarters of what a frame may take. It is an early
+notice: it changes nothing that is drawn. D3D12 has no such ring.
 ================================================================================================
 */
 void idRenderProgManager::CheckFrameCommits()
@@ -614,7 +615,7 @@ void idRenderProgManager::CheckFrameCommits()
 		if( ring && frameCommits[i] > RP_FRAME_COMMITS_LOUD && !frameCommitsWarned[i] )
 		{
 			frameCommitsWarned[i] = true;
-			common->Warning( "render parms: binding layout %d was committed %d times in one frame. Its buffer has %d versions, which hold about two frames' commits; past them NVRHI's \"maxVersions\" error stops the engine", i, frameCommits[i], RP_PARM_VERSIONS );
+			common->Warning( "render parms: notice only, nothing has failed. Binding layout %d committed its constants %d times in one frame. This notice is printed once per layout, past %d commits, three quarters of the %d that one frame may take. Beyond those, on Vulkan, the layout's ring of %d buffer versions cannot hold two frames and NVRHI's \"maxVersions\" error stops the engine", i, frameCommits[i], RP_FRAME_COMMITS_LOUD, RP_FRAME_COMMITS_MAX, RP_PARM_VERSIONS );
 		}
 		frameCommits[i] = 0;
 	}

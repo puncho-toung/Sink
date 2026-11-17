@@ -1,6 +1,8 @@
 // lightrecord.inc.hlsl - one light record at one surface point ( track F, package F3 ): what a light loop adds for a
 // pair ( light, surface ). It was part of builtin/lighting/forward.ps.hlsl and is a file of its own so that other
-// passes that walk the light lists can include it ( the translucent pass, the decals, the froxel inject ). It holds
+// passes that walk the light lists can include it ( the translucent pass, the decals ). The froxel inject cannot: a
+// compute stage has none of what this file needs, and shaders/builtin/volumetrics/froxel_lights.inc.hlsl repeats the
+// planes' test, the pick of a point light's face and the emitter's call. Change both. It holds
 // the per-light half only. FILLING an LL_SURFACE decides as much of the picture ( both bodies' normals and energy
 // terms, the material, the stage colours, the shadow filter's set-up ) and is still the end of forward.ps.hlsl's
 // main: a second includer has to fill it the same way to light alike.
@@ -67,8 +69,8 @@ float2 LL_VogelDiskSample( float sampleIndex, float sqrtSamplesCount, float phi 
 // the record's rows. Returns the lit share, 1 where the light is unshadowed at the point; shadowBody says whether the
 // light is on the shadow-map body. shadowRow and flags are the record's; P is the point in the relative frame;
 // toLight the direction itself ( origin - point ), which picks a point light's face; vogelPhi and vogelSqrtSamples
-// are the filter's set-up at the pixel ( LL_SURFACE ). A function of its own so that a pass without a surface ( the
-// froxel inject ) can take a light's shadow alone
+// are the filter's set-up at the pixel ( LL_SURFACE ). A function of its own so that a pass without a surface can
+// take a light's shadow alone ( not the froxel inject, which cannot include this file and has the face pick again )
 float LL_RecordShadow( int shadowRow, uint flags, float4 P, float3 toLight, float vogelPhi, float vogelSqrtSamples, out bool shadowBody )
 {
 	// the shadow rows: one for a projected light, six for a point light. A row without a place leaves the light

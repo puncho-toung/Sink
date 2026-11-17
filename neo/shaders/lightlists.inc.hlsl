@@ -37,6 +37,8 @@ static const uint RLF_AMBIENT			= 1u << 6;
 static const uint RLF_FOGLIGHT			= 1u << 7;
 static const uint RLF_NOSPECULAR		= 1u << 8;
 static const uint RLF_MOVED_THIS_FRAME	= 1u << 9;
+static const uint RLF_FOG_NOSHADOW		= 1u << 10;	// the froxel inject takes the light also where it has no placed shadow map
+static const uint RLF_FOG_OFF			= 1u << 11;	// the froxel inject leaves the light out
 
 // rpSurfLights.w, the features of a draw's run ( LLF_* of the light-list core )
 static const uint LLF_SHADOWED			= 1u << 0;
