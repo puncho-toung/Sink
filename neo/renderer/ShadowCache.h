@@ -42,8 +42,9 @@ decide pass the ops ( shadowCacheOp_t: where each cached unit's static map lives
 cacheable tests and the static bit of the caster bits, and the backend the block that
 draws the static maps and composites each unit through the cache; S3a fills the two
 notify hooks and the publish and gives local lights records, so with r_shadowCacheReuse 1
-a static map is drawn once and kept until something in it changes; the debug overlay is
-still a no-op; the calls are in R_RenderView,
+a static map is drawn once and kept until something in it changes; S4 keeps the sun's
+cascade maps in toroidal storage, so a window that moves by whole texels draws only the
+strips it gained; the debug overlay is still a no-op; the calls are in R_RenderView,
 SwapCommandBuffers_FinishRendering, RenderWorld.cpp and DBG_RenderDebugTools.
 Included from RenderCommon.h, so it sees the complete idRenderEntityLocal /
 idRenderLightLocal / renderEntity_t / renderLight_t.
@@ -65,16 +66,16 @@ enum shadowCacheNotify_t
 
 struct shadowCacheCascade_t
 {
-	int64		originX;		// grid texel under column 0 ( unused when clampedX ); S4's scroll between two windows reads it, today only the log
-	int64		originY;		// grid texel under row 0 ( unused when clampedY ); S4's scroll between two windows reads it, today only the log
-	double		texelWorld;		// map units per texel of the snapped window; S4's scroll between two windows reads it, today only the log
+	int64		originX;		// grid texel under column 0 ( unused when clampedX ); S4's scroll between two windows reads it
+	int64		originY;		// grid texel under row 0 ( unused when clampedY ); S4's scroll between two windows reads it
+	double		texelWorld;		// map units per texel of the snapped window; S4's scroll between two windows reads it
 	double		left;			// orthographic extents in the sun's light view, measured from shadowCacheView_t::sunViewOrigin
 	double		right;
 	double		bottom;
 	double		top;
 	int			res;			// texels per side ( shadowMapResolutions[ shadowLOD ] )
-	bool		clampedX;		// this axis uses the light's own box, not the window; S4's scroll between two windows reads it, today only the log
-	bool		clampedY;		// this axis uses the light's own box, not the window; S4's scroll between two windows reads it, today only the log
+	bool		clampedX;		// this axis uses the light's own box, not the window; S4's scroll between two windows reads it
+	bool		clampedY;		// this axis uses the light's own box, not the window; S4's scroll between two windows reads it
 };
 
 struct shadowCacheView_t
@@ -117,7 +118,29 @@ static_assert( sizeof( shadowCacheCopyConstants_t ) == 32, "laid out as shaders/
 // S3a: what the backend does with a cached unit's static map this frame
 enum shadowCacheOpFlags_t
 {
-	SCOP_REBUILD	= 1		// clear the unit's region of its cache image and draw its static casters into it, before any copy
+	SCOP_REBUILD	= 1,	// clear the unit's region of its cache image and draw its static casters into it, before any copy
+	SCOP_SCROLL		= 2		// S4: a cascade whose window moved by whole texels: clear and draw only the strips the window gained, on
+							// top of the build baseSerial ( the whole window instead when that build is not in the map ), before any copy
+};
+
+// S4: a half-open rectangle of texels, x0 <= x < x1 and y0 <= y < y1: in a cascade window's logical texels, or in its
+// map's physical texels
+struct shadowCacheRect_t
+{
+	int		x0;
+	int		y0;
+	int		x1;
+	int		y1;
+};
+
+// S4: one piece of a logical rectangle in toroidal storage: drawn with the window's own projection through a viewport of
+// the map's size whose corner is at ( viewportX, viewportY ) ( it may lie partly outside the map ), with 'physical' as the
+// scissor
+struct shadowCacheToroidalRect_t
+{
+	shadowCacheRect_t	physical;
+	int					viewportX;
+	int					viewportY;
 };
 
 // S2c: one cached unit of this view ( a spot light's map, a face of a point light, a cascade of the
@@ -134,6 +157,16 @@ struct shadowCacheOp_t
 	short			y;
 	short			flags;		// SCOP_*
 	short			pad;
+	// S4: the primary sun's cascades are kept in toroidal storage ( 08 section 6 ): the window's logical texel ( x, y )
+	// lives at physical texel ( ( x + wrap[0] ) & ( size - 1 ), ( y + wrap[1] ) & ( size - 1 ) ) of its cascade map. Frame
+	// memory is zero-filled, so a unit that is not a cascade has no wrap, no strips and no strip bits
+	unsigned int		baseSerial;		// SCOP_SCROLL: the build the strips are drawn on top of
+	short				wrap[2];		// ( 0, 0 ) for every other unit, and for a cascade map drawn in full since its window last moved
+	int					numRects;		// SCOP_SCROLL: the strips, 1 or 2 ( R_ShadowCacheExposedRects )
+	shadowCacheRect_t	rects[2];		// SCOP_SCROLL: the strips, in the window's logical texels: what the window gained
+	const byte*			stripBits;		// SCOP_SCROLL: one byte per caster of the light's chain, bit r = a static caster of this cascade
+										// whose bounds reach rects[r] ( R_ShadowCacheCasterBits ), with SCB_STATIC beside any bit r;
+										// NULL = no caster in the chain
 };
 
 // S3a: the backend's built stamp for the place this unit's static map starts at: its cell of the cache

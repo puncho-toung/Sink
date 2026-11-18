@@ -3568,7 +3568,7 @@ void idRenderBackend::ShadowMapPassPerforated( const drawSurf_t** drawSurfs, int
 idRenderBackend::ShadowMapPassFast
 =====================
 */
-void idRenderBackend::ShadowMapPassFast( const drawSurf_t* drawSurfs, viewLight_t* vLight, int side, bool atlas, const byte* casterBits, int casterMask, int casterWant, const shadowCacheOp_t* cacheOp, Framebuffer* cacheTarget )
+void idRenderBackend::ShadowMapPassFast( const drawSurf_t* drawSurfs, viewLight_t* vLight, int side, bool atlas, const byte* casterBits, int casterMask, int casterWant, const shadowCacheOp_t* cacheOp, Framebuffer* cacheTarget, const shadowCacheToroidalRect_t* cachePiece )
 {
 	if( r_skipShadows.GetBool() )
 	{
@@ -3640,7 +3640,19 @@ void idRenderBackend::ShadowMapPassFast( const drawSurf_t* drawSurfs, viewLight_
 		}
 		cacheTarget->Bind();
 
-		GL_ViewportAndScissor( cacheOp->x, cacheOp->y, cacheOp->size, cacheOp->size );
+		if( cachePiece != NULL )
+		{
+			assert( cacheOp->x == 0 && cacheOp->y == 0 );		// a cascade map sits at ( 0, 0 ) of its own image
+			// TRACK S ( S4 ): one piece of a strip of a cascade in toroidal storage: the window's own projection through a
+			// viewport of the map's size whose corner the wrap moved ( it may reach past the map ), and the piece as the
+			// scissor ( which may not )
+			GL_Viewport( cachePiece->viewportX, cachePiece->viewportY, cacheOp->size, cacheOp->size );
+			GL_Scissor( cachePiece->physical.x0, cachePiece->physical.y0, cachePiece->physical.x1 - cachePiece->physical.x0, cachePiece->physical.y1 - cachePiece->physical.y0 );
+		}
+		else
+		{
+			GL_ViewportAndScissor( cacheOp->x, cacheOp->y, cacheOp->size, cacheOp->size );
+		}
 	}
 	else if( atlas )
 	{
@@ -4125,6 +4137,9 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 				constants.sourceOrigin[1] = cacheOp.y;
 				constants.res = cacheOp.size;
 				constants.tileRes = outputSizes[tileIndex];
+				// S4: a cascade's map is in toroidal storage and the draw unwraps it; every other unit's wrap is ( 0, 0 )
+				constants.wrap[0] = cacheOp.wrap[0];
+				constants.wrap[1] = cacheOp.wrap[1];
 				ShadowCacheCopyDraw( globalFramebuffers.shadowAtlasFBO->GetApiObject(), 0, cacheImage->GetTextureHandle().Get(), constants );
 				tileCopied[tileIndex] = 1;
 				numCopies++;

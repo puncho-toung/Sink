@@ -3326,6 +3326,7 @@ idRenderBackend::idRenderBackend()
 	shadowCacheTargetSerial = 0;
 	memset( shadowCacheBuilt, 0, sizeof( shadowCacheBuilt ) );
 	shadowCacheMisses = 0;
+	shadowCacheHeals = 0;
 	memset( shadowCacheMissed, 0, sizeof( shadowCacheMissed ) );
 	// ---- END TRACK S ----
 	// ---- TRACK F: light lists ( the handles construct themselves empty ) ----
