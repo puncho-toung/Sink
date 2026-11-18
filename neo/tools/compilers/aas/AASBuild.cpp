@@ -733,7 +733,8 @@ idBrushList idAASBuild::AddBrushesForMapFile( const idMapFile* mapFile, idBrushL
 idAASBuild::CheckForEntities
 ============
 */
-bool idAASBuild::CheckForEntities( const idMapFile* mapFile, idStrList& entityClassNames ) const
+//puncho - P2b.3.8: explicit type selection enables generic flood seeds.
+bool idAASBuild::CheckForEntities( const idMapFile* mapFile, idStrList& entityClassNames, bool useSeeds ) const
 {
 	int		i;
 	idStr	classname;
@@ -747,7 +748,7 @@ bool idAASBuild::CheckForEntities( const idMapFile* mapFile, idStrList& entityCl
 			continue;
 		}
 
-		if( aasSettings->ValidEntity( classname ) )
+		if( ( useSeeds && classname.Icmp( "aas_seed" ) == 0 ) || aasSettings->ValidEntity( classname ) )
 		{
 			entityClassNames.AddUnique( classname );
 		}
@@ -811,7 +812,8 @@ void idAASBuild::ChangeMultipleBoundingBoxContents_r( idBrushBSPNode* node, int 
 idAASBuild::Build
 ============
 */
-aasBuildResult_t idAASBuild::Build( const idStr& fileName, const idAASSettings* settings )
+//puncho - P2b.3.8: useSeeds; TC1: the result
+aasBuildResult_t idAASBuild::Build( const idStr& fileName, const idAASSettings* settings, bool useSeeds )
 {
 	int i, bit, mask, startTime;
 	idMapFile* mapFile;
@@ -853,8 +855,18 @@ aasBuildResult_t idAASBuild::Build( const idStr& fileName, const idAASSettings* 
 	}
 
 	// check if this map has any entities that use this AAS file
-	if( !CheckForEntities( mapFile, entityClassNames ) )
+	if( !CheckForEntities( mapFile, entityClassNames, useSeeds ) )
 	{
+//puncho start - P2b.3.8
+		if( useSeeds )
+		{
+			common->Warning( "aas %s: no using entities or seeds; 0 areas", settings->fileExtension.c_str() );
+			// The loader starts at node 1; an empty AAS file is not loadable.
+			name.SetFileExtension( aasSettings->fileExtension );
+			fileSystem->RemoveFile( name );
+			common->Printf( "aas %s: areas 0\n", settings->fileExtension.c_str() );
+		}
+//puncho end - P2b.3.8
 		delete mapFile;
 		common->Printf( "no entities in map that use %s\n", settings->fileExtension.c_str() );
 		return AAS_BUILD_OK;
@@ -1144,6 +1156,13 @@ int ParseOptions( const idCmdArgs& args, idAASSettings& settings )
 		str = args.Argv( i );
 		str.StripLeading( '-' );
 
+//puncho start - P2b.3.8
+		if( str.Icmp( "aasType" ) == 0 || str.Icmp( "aasTypes" ) == 0 )
+		{
+			i++;
+			continue;
+		}
+//puncho end - P2b.3.8
 		if( str.Icmp( "usePatches" ) == 0 )
 		{
 			settings.usePatches = true;
@@ -1197,6 +1216,10 @@ bool RunAAS( const idCmdArgs& args ) //puncho - TC1: return before command Error
 	{
 		common->Printf( "runAAS [options] <mapfile>\n"
 						"options:\n"
+//puncho start - P2b.3.8
+						"  -aasType <type>    = build only this AAS type and enable generic seeds.\n"
+						"  -aasTypes <list>   = enable listed types (spaces or +) and generic seeds.\n"
+//puncho end - P2b.3.8
 						"  -usePatches        = use bezier patches for collision detection.\n"
 						"  -writeBrushMap     = write a brush map with the AAS geometry.\n"
 						"  -playerFlood       = use player spawn points as valid AAS positions.\n" );
@@ -1214,9 +1237,77 @@ bool RunAAS( const idCmdArgs& args ) //puncho - TC1: return before command Error
 		common->Error( "Unable to find entityDef for 'aas_types'" );
 	}
 
+//puncho start - P2b.3.8
+	idStr selectedType;
+	idStrList listedTypes;
+	bool hasList = false;
+	for( i = 1; i < args.Argc() - 1; i++ )
+	{
+		idStr option = args.Argv( i );
+		option.StripLeading( '-' );
+		if( option.Icmp( "aasType" ) && option.Icmp( "aasTypes" ) )
+		{
+			continue;
+		}
+		if( i + 1 >= args.Argc() - 1 )
+		{
+			common->Error( "runAAS: %s needs a type argument and a map", option.c_str() );
+		}
+		if( !option.Icmp( "aasType" ) )
+		{
+			i++;
+			selectedType = args.Argv( i );
+			if( selectedType.IsEmpty() )
+			{
+				common->Error( "runAAS: aasType needs a nonempty type" );
+			}
+		}
+		else
+		{
+			hasList = true;
+			i++;
+			idStr list = args.Argv( i );
+			list.Replace( "+", " " );
+			idLexer src( list, list.Length(), "aasTypes", LEXFL_ONLYSTRINGS );
+			idToken token;
+			while( src.ReadToken( &token ) )
+			{
+				listedTypes.AddUnique( token );
+			}
+		}
+	}
+	// every named type must be an aas_types entry, and a -aasType must also be in the aasTypes list
+	for( i = -1; i < listedTypes.Num(); i++ )
+	{
+		const idStr& type = ( i < 0 ) ? selectedType : listedTypes[i];
+		if( type.IsEmpty() )
+		{
+			continue;
+		}
+		const idKeyValue* known = dict->MatchPrefix( "type" );
+		while( known != NULL && known->GetValue() != type )
+		{
+			known = dict->MatchPrefix( "type", known );
+		}
+		if( known == NULL || ( i < 0 && hasList && listedTypes.Find( type ) == NULL ) )
+		{
+			common->Error( "runAAS: refused aas type %s", type.c_str() );
+		}
+	}
+	const bool useSeeds = hasList || !selectedType.IsEmpty();
+//puncho end - P2b.3.8
 	const idKeyValue* kv = dict->MatchPrefix( "type" );
 	while( kv != NULL )
 	{
+//puncho start - P2b.3.8
+		if( ( hasList && !listedTypes.Find( kv->GetValue() ) ) ||
+				( !selectedType.IsEmpty() && selectedType != kv->GetValue() ) )
+		{
+			common->Printf( "aas: type %s not listed, skipped\n", kv->GetValue().c_str() );
+			kv = dict->MatchPrefix( "type", kv );
+			continue;
+		}
+//puncho end - P2b.3.8
 		const idDict* settingsDict = FindEntityDefDict( kv->GetValue(), false );
 		if( !settingsDict )
 		{
@@ -1232,11 +1323,18 @@ bool RunAAS( const idCmdArgs& args ) //puncho - TC1: return before command Error
 			{
 				mapName = "maps/" + mapName;
 			}
-			if( aas.Build( mapName, &settings ) == AAS_BUILD_WRITE_FAILED ) //puncho - TC1
+//puncho start - P2b.3.8, TC1
+			const aasBuildResult_t result = aas.Build( mapName, &settings, useSeeds );
+			if( result == AAS_BUILD_WRITE_FAILED || ( useSeeds && result != AAS_BUILD_OK ) )
 			{
+				if( useSeeds )
+				{
+					common->Printf( "aas %s failed: %s\n", kv->GetValue().c_str(), mapName.c_str() );
+				}
 				succeeded = false;
 				break;
 			}
+//puncho end - P2b.3.8, TC1
 		}
 
 		kv = dict->MatchPrefix( "type", kv );

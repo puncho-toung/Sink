@@ -304,6 +304,9 @@ void DmapHelp()
 		"noCurves               = don't process curves\n"
 		"noCM                   = don't create collision map\n"
 		"noAAS                  = don't create AAS files\n"
+//puncho start - P2b.3.8
+		"aasTypes \"<a> <b>\"     = build listed AAS types; a+b is also accepted\n"
+//puncho end - P2b.3.8
 		"noFlood                = skip area flooding = bad performance\n"
 		"blockSize <x> <y> <z>  = cut BSP along these dimensions or disable with 0 0 0\n"
 		"obj                    = export BSP render surfaces as .obj file\n"
@@ -386,6 +389,19 @@ bool Dmap( const idCmdArgs& args ) //puncho - TC1: command errors follow cleanup
 	bool		noCM = false;
 	bool		noAAS = false;
 
+//puncho start - P2b.3.8
+#if defined( DMAP )
+	if( args.Argc() > 1 && !idStr::Icmp( args.Argv( 1 ), "runAAS" ) )
+	{
+		idCmdArgs command;
+		for( int arg = 1; arg < args.Argc(); arg++ )
+		{
+			command.AppendArg( args.Argv( arg ) );
+		}
+		return RunAAS( command );	//puncho - TC1: Dmap_f raises the error after cleanup
+	}
+#endif
+//puncho end - P2b.3.8
 	ResetDmapGlobals();
 
 	if( args.Argc() < 2 )
@@ -521,6 +537,16 @@ bool Dmap( const idCmdArgs& args ) //puncho - TC1: command errors follow cleanup
 			noCM = true;
 			common->Printf( "noCM = true\n" );
 		}
+//puncho start - P2b.3.8
+		else if( !idStr::Icmp( s, "aasTypes" ) )
+		{
+			if( i + 2 >= args.Argc() )
+			{
+				common->Error( "usage: dmap aasTypes <type+type> mapfile" );
+			}
+			i++;
+		}
+//puncho end - P2b.3.8
 		else if( !idStr::Icmp( s, "noAAS" ) )
 		{
 			noAAS = true;

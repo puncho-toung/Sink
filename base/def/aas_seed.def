@@ -1,0 +1,85 @@
+//puncho start - P2b.3.8
+entityDef aas_seed
+{
+	"dmapOnly"	"1"
+	"mins"	"0 0 0"
+	"maxs"	"0 0 0"
+	"editor_color"	"0 1 0.5"
+	"editor_mins"	"-8 -8 -8"
+	"editor_maxs"	"8 8 8"
+	"editor_usage"	"AAS flood seed: walkable floor inside the map"
+}
+
+entityDef aas_seed_aas48
+{
+	"dmapOnly"	"1"
+	"mins"	"0 0 0"
+	"maxs"	"0 0 0"
+	"editor_color"	"0 1 0.5"
+	"editor_mins"	"-8 -8 -8"
+	"editor_maxs"	"8 8 8"
+	"editor_usage"	"AAS flood seed: walkable floor inside the map"
+	"use_aas"	"aas48"
+}
+
+entityDef aas_seed_aas96
+{
+	"dmapOnly"	"1"
+	"mins"	"0 0 0"
+	"maxs"	"0 0 0"
+	"editor_color"	"0 1 0.5"
+	"editor_mins"	"-8 -8 -8"
+	"editor_maxs"	"8 8 8"
+	"editor_usage"	"AAS flood seed: walkable floor inside the map"
+	"use_aas"	"aas96"
+}
+
+entityDef aas_seed_aas_guardian
+{
+	"dmapOnly"	"1"
+	"mins"	"0 0 0"
+	"maxs"	"0 0 0"
+	"editor_color"	"0 1 0.5"
+	"editor_mins"	"-8 -8 -8"
+	"editor_maxs"	"8 8 8"
+	"editor_usage"	"AAS flood seed: walkable floor inside the map"
+	"use_aas"	"aas_guardian"
+}
+
+entityDef aas_seed_aas_mancubus
+{
+	"dmapOnly"	"1"
+	"mins"	"0 0 0"
+	"maxs"	"0 0 0"
+	"editor_color"	"0 1 0.5"
+	"editor_mins"	"-8 -8 -8"
+	"editor_maxs"	"8 8 8"
+	"editor_usage"	"AAS flood seed: walkable floor inside the map"
+	"use_aas"	"aas_mancubus"
+}
+
+entityDef aas_seed_aas_sabaoth
+{
+	"dmapOnly"	"1"
+	"mins"	"0 0 0"
+	"maxs"	"0 0 0"
+	"editor_color"	"0 1 0.5"
+	"editor_mins"	"-8 -8 -8"
+	"editor_maxs"	"8 8 8"
+	"editor_usage"	"AAS flood seed: walkable floor inside the map"
+	"use_aas"	"aas_sabaoth"
+}
+
+entityDef aas_seed_aas_cyberdemon
+{
+	"dmapOnly"	"1"
+	"mins"	"0 0 0"
+	"maxs"	"0 0 0"
+	"editor_color"	"0 1 0.5"
+	"editor_mins"	"-8 -8 -8"
+	"editor_maxs"	"8 8 8"
+	"editor_usage"	"AAS flood seed: walkable floor inside the map"
+	"use_aas"	"aas_cyberdemon"
+}
+
+//puncho end - P2b.3.8
