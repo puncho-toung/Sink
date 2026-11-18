@@ -34,6 +34,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "AASBuild_local.h"
 #include "../compiler_public.h" //puncho - TC1
 #include "../dmap/CompilerPhase.h" //puncho - TC0
+#include "../../../aas/AASFile_router.h"	//puncho - R2 router
 
 #define BFL_PATCH		0x1000
 
@@ -1508,3 +1509,105 @@ void RunReach_f( const idCmdArgs& args )
 		common->Error( "RunReach failed" );
 	}
 }
+
+//puncho start - R2 router
+/*
+============
+RunRouterMap
+
+  rbdmap -nogui routerMap <mapfile>
+  Writes, for every AAS file the map has, the two router maps the bake tool reads, beside the AAS file:
+  <aas file name>.walk.rtg and <aas file name>.fly.rtg. False when a map could not be built or written,
+  and when the map has no AAS file at all.
+============
+*/
+bool RunRouterMap( const idCmdArgs& args )
+{
+	static const int masks[2] = { TFL_WALK | TFL_AIR, TFL_WALK | TFL_AIR | TFL_FLY };
+	static const char* labels[2] = { "walk", "fly" };
+	bool succeeded = true;
+	int written = 0;
+	idStr mapName;
+
+	if( args.Argc() <= 1 )
+	{
+		common->Printf( "routerMap <mapfile>\n" );
+		return true;
+	}
+
+	common->ClearWarnings( "writing router maps" );
+
+	common->SetRefreshOnPrint( true );
+
+	const idDict* dict = FindEntityDefDict( "aas_types", false );
+	if( !dict )
+	{
+		common->Error( "Unable to find entityDef for 'aas_types'" );
+	}
+
+	// the map's name as runAAS takes it
+	mapName = args.Argv( 1 );
+	mapName.BackSlashesToSlashes();
+	if( mapName.Icmpn( "maps/", 4 ) != 0 )
+	{
+		mapName = "maps/" + mapName;
+	}
+
+	const idKeyValue* kv = dict->MatchPrefix( "type" );
+	while( kv != NULL )
+	{
+		idStr name = mapName;
+		name.SetFileExtension( kv->GetValue().c_str() );
+
+		idAASFileLocal* file = new idAASFileLocal();
+		if( !file->Load( name, 0 ) )
+		{
+			common->Printf( "routerMap: no AAS file %s\n", name.c_str() );
+		}
+		else
+		{
+			for( int p = 0; p < 2; p++ )
+			{
+				idAASRouterMap map;
+				idStr error;
+				if( !map.Build( file, masks[p], error ) )
+				{
+					common->Warning( "routerMap: %s (%s): %s", name.c_str(), labels[p], error.c_str() );
+					succeeded = false;
+					continue;
+				}
+
+				idStr outName = name + "." + labels[p] + ".rtg";
+				idFile* f = fileSystem->OpenFileWrite( outName, "fs_basepath" );
+				if( !f || !map.Write( f ) )
+				{
+					common->Warning( "routerMap: cannot write %s", outName.c_str() );
+					succeeded = false;
+				}
+				else
+				{
+					common->Printf( "routerMap: wrote %s: %d areas, %d reaches\n", outName.c_str(), map.numAreas, map.edges.Num() );
+					written++;
+				}
+				if( f )
+				{
+					fileSystem->CloseFile( f );
+				}
+			}
+		}
+		delete file;
+
+		kv = dict->MatchPrefix( "type", kv );
+	}
+
+	if( written == 0 )
+	{
+		common->Warning( "routerMap: %s has no AAS file", mapName.c_str() );
+		succeeded = false;
+	}
+
+	common->SetRefreshOnPrint( false );
+	common->PrintWarnings();
+	return succeeded;
+}
+//puncho end - R2 router

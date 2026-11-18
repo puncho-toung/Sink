@@ -85,6 +85,7 @@ If you have questions concerning this license or the applicable additional terms
 #define AREACONTENTS_BBOX_BIT		24
 
 #define MAX_REACH_PER_AREA			256
+#define LEDGE_TRAVELTIME_PANALTY	250		//puncho - R2 router: moved here from d3xp/ai/AAS_routing.cpp; the router map (AASFile_router.cpp) charges the same
 #define MAX_AAS_TREE_DEPTH			128
 
 #define MAX_AAS_BOUNDING_BOXES		4

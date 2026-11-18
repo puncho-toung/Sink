@@ -402,6 +402,19 @@ bool Dmap( const idCmdArgs& args ) //puncho - TC1: command errors follow cleanup
 	}
 #endif
 //puncho end - P2b.3.8
+//puncho start - R2 router: rbdmap -nogui routerMap <mapfile>
+#if defined( DMAP )
+	if( args.Argc() > 1 && !idStr::Icmp( args.Argv( 1 ), "routerMap" ) )
+	{
+		idCmdArgs command;
+		for( int arg = 1; arg < args.Argc(); arg++ )
+		{
+			command.AppendArg( args.Argv( arg ) );
+		}
+		return RunRouterMap( command );
+	}
+#endif
+//puncho end - R2 router
 	ResetDmapGlobals();
 
 	if( args.Argc() < 2 )

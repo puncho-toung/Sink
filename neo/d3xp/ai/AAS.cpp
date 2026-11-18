@@ -31,6 +31,9 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "AAS_local.h"
+#include "AAS_router.h"	//puncho - R2 router
+
+static idCVar aas_router( "aas_router", "0", CVAR_GAME | CVAR_BOOL, "1 = answer RouteToGoalArea from a map's baked router files when it has them; read when a map loads" );	//puncho - R2 router
 #include "../Game_local.h"		//puncho - ai-harness: gameLocal.aiStats
 
 /*
@@ -60,6 +63,7 @@ idAASLocal::idAASLocal
 idAASLocal::idAASLocal()
 {
 	file = NULL;
+	router = NULL;	//puncho - R2 router
 	totalCacheMemory = 0;
 	cacheEvictions = 0;
 	travelSaturated = 0;
@@ -95,6 +99,7 @@ bool idAASLocal::Init( const idStr& mapName, unsigned int mapFileCRC )
 		common->Printf( "Keeping %s\n", file->GetName() );
 		RemoveAllObstacles();
 		FlushFlowFields();	//puncho - ai-avoidance (WP-A6, audit M5): the previous game's slots and cells go (its first asks filled them); the routing cache stays, as stock keeps it
+		SetupRouter();	//puncho - R2 router: loaded again on a kept file; it follows the switch and starts from the file's present doors
 	}
 	else
 	{
@@ -109,9 +114,44 @@ bool idAASLocal::Init( const idStr& mapName, unsigned int mapFileCRC )
 		SetupRouting();
 		SetupWallCache();	//puncho - ai-avoidance (WP-A2)
 		SetupFlowFields();	//puncho - ai-avoidance (WP-A6, audit M4)
+		SetupRouter();	//puncho - R2 router
 	}
 	return true;
 }
+
+//puncho start - R2 router
+/*
+============
+idAASLocal::SetupRouter
+
+  the map's baked router files, when it has them and aas_router is set
+============
+*/
+void idAASLocal::SetupRouter()
+{
+	ShutdownRouter();
+	if( !aas_router.GetBool() )
+	{
+		return;
+	}
+	router = new( TAG_AAS ) idAASRouter;
+	if( router->Init( file, file->GetName() ) == 0 )
+	{
+		ShutdownRouter();	// the map has none
+	}
+}
+
+/*
+============
+idAASLocal::ShutdownRouter
+============
+*/
+void idAASLocal::ShutdownRouter()
+{
+	delete router;
+	router = NULL;
+}
+//puncho end - R2 router
 
 /*
 ============
@@ -126,6 +166,7 @@ void idAASLocal::Shutdown()
 		ShutdownWallCache();	//puncho - ai-avoidance (WP-A2)
 		ShutdownFlowFields();	//puncho - ai-avoidance (WP-A6)
 		RemoveAllObstacles();
+		ShutdownRouter();	//puncho - R2 router: it points into the file
 		AASFileManager->FreeAAS( file );
 		file = NULL;
 	}
@@ -145,6 +186,12 @@ void idAASLocal::Stats() const
 	common->Printf( "[%s]\n", file->GetName() );
 	file->PrintInfo();
 	RoutingStats();
+	//puncho start - R2 router: what the baked router has answered
+	if( router != NULL )
+	{
+		router->PrintStats();
+	}
+	//puncho end - R2 router
 }
 
 /*

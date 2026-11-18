@@ -32,6 +32,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "AAS_local.h"
 #include "../Game_local.h"		// for print and error
+#include "AAS_router.h"	//puncho - R2 router
 
 #define CACHETYPE_AREA				1
 #define CACHETYPE_PORTAL			2
@@ -59,7 +60,7 @@ void idAASLocal::GetRoutingStats( int& bytes, int& evictions, int& saturated ) c
 	saturated = travelSaturated;
 }
 
-#define LEDGE_TRAVELTIME_PANALTY	250
+//puncho - R2 router: LEDGE_TRAVELTIME_PANALTY is in aas/AASFile.h now
 
 /*
 ============
@@ -442,6 +443,12 @@ void idAASLocal::DisableArea( int areaNum )
 	}
 
 	file->SetAreaTravelFlag( areaNum, TFL_INVALID );
+	//puncho start - R2 router: its door state follows
+	if( router != NULL )
+	{
+		router->SetAreaEnabled( areaNum, false );
+	}
+	//puncho end - R2 router
 
 	RemoveRoutingCacheUsingArea( areaNum );
 	FlushWallCache();	//puncho - ai-avoidance (WP-A2)
@@ -462,6 +469,12 @@ void idAASLocal::EnableArea( int areaNum )
 	}
 
 	file->RemoveAreaTravelFlag( areaNum, TFL_INVALID );
+	//puncho start - R2 router: its door state follows
+	if( router != NULL )
+	{
+		router->SetAreaEnabled( areaNum, true );
+	}
+	//puncho end - R2 router
 
 	RemoveRoutingCacheUsingArea( areaNum );
 	FlushWallCache();	//puncho - ai-avoidance (WP-A2)
@@ -535,7 +548,18 @@ bool idAASLocal::SetAreaState( const idBounds& bounds, const int areaContents, b
 	expBounds[1] = bounds[1] - file->GetSettings().boundingBoxes[0][0];
 
 	// find all areas within or touching the bounds with the given contents and disable/enable them for routing
-	return SetAreaState_r( 1, expBounds, areaContents, disabled );
+	//puncho start - R2 router: the areas of one call change together, as one door change of the router
+	if( router != NULL )
+	{
+		router->BeginAreaChanges();
+	}
+	const bool found = SetAreaState_r( 1, expBounds, areaContents, disabled );
+	if( router != NULL )
+	{
+		router->EndAreaChanges();
+	}
+	return found;
+	//puncho end - R2 router
 }
 
 /*
@@ -1210,6 +1234,19 @@ bool idAASLocal::RouteToGoalArea( int areaNum, const idVec3 origin, int goalArea
 		gameLocal.Printf( "RouteToGoalArea: goalAreaNum %d out of range\n", goalAreaNum );
 		return false;
 	}
+	//puncho start - R2 router: a map with baked router files answers from them. Routing obstacles switch single
+	// reachabilities off, which the router does not model: with an obstacle in the list the stock routing answers.
+	// (Nothing in the game adds an obstacle today. SetObstacleState marks reachabilities when an obstacle is
+	// REMOVED and never unmarks them; if obstacles come into use, this test must count marked reachabilities.)
+	if( router != NULL && obstacleList.Num() == 0 )
+	{
+		bool routerFound;
+		if( router->Route( areaNum, goalAreaNum, travelFlags, routerFound, travelTime, reach ) )
+		{
+			return routerFound;
+		}
+	}
+	//puncho end - R2 router
 
 	while( totalCacheMemory > aas_routingCacheKB.GetInteger() * 1024 && cacheListStart != NULL )
 	{
