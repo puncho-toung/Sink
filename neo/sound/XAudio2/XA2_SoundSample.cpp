@@ -35,6 +35,7 @@ extern idCVar s_noSound;
 #define GPU_CONVERT_CPU_TO_CPU_CACHED_READONLY_ADDRESS( x ) x
 
 const uint32 SOUND_MAGIC_IDMSA = 0x6D7A7274;
+const char* const SOUND_MISSING_FILE = "sound/_missing.wav";	//puncho - DR-175: the owner's chosen noise, the one name the _default sample reads
 
 extern idCVar sys_lang;
 
@@ -190,6 +191,16 @@ void idSoundSample_XAudio2::LoadResource()
 
 	if( idStr::Icmpn( GetName(), "_default", 8 ) == 0 )
 	{
+		//puncho start - DR-175: the noise stays a default sample, so IsDefault()'s readers (HasDefaultSound, s_playDefaultSound,
+		// GetAmplitude) keep their meaning: LoadWav stamped the file's time and leaves loaded to its caller
+		//puncho - DR-175 (DR-178): under 1 ms is refused: the voice divides by playLength, the emitter's amplitude by LengthInMsec
+		if( !s_noSound.GetBool() && LoadWav( SOUND_MISSING_FILE ) && LengthInMsec() > 0 )
+		{
+			timestamp = FILE_NOT_FOUND_TIMESTAMP;
+			loaded = true;
+			return;
+		}
+		//puncho end
 		MakeDefault();
 		return;
 	}

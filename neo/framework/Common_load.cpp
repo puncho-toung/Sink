@@ -44,7 +44,7 @@ If you have questions concerning this license or the applicable additional terms
 #define LAUNCH_TITLE_DOOM2_EXECUTABLE		"doom2.exe"
 
 
-idCVar com_loadTimeline( "com_loadTimeline", "0", CVAR_SYSTEM | CVAR_BOOL | CVAR_NOCHEAT, "print the 28 map transition phases" );
+idCVar com_loadTimeline( "com_loadTimeline", "0", CVAR_SYSTEM | CVAR_BOOL | CVAR_NOCHEAT, "print the 29 map transition phases" );	//puncho - SB3: ACOUSTICS is the 29th
 idCVar com_loadTimelineLog( "com_loadTimelineLog", "", CVAR_SYSTEM | CVAR_NOCHEAT, "append load phases to loadtimeline/<plain name>.csv" );
 struct loadTimelineRow_t
 {
@@ -70,7 +70,7 @@ static renderMapStats_t loadResourceStart;
 static char loadPreviousMap[MAX_OSPATH];
 static bool loadWasSavegame;
 static const char* loadPhaseNames[LOAD_PHASE_COUNT] = {
-	"MOVE", "BEGIN", "UNLOAD", "PURGE", "LOADGUI", "PRELOAD", "RENDER_WORLD", "MAP_PARSE", "CM", "GAME_INIT", "PVS", "AAS", "MEDIA", "SCRIPT", "SPAWN", "POST_SPAWN", "RESTORE", "SESSION", "FIRST_FRAME", "END_RENDER", "END_SOUND", "END_DECL", "END_UI", "END_FS", "SETTLE", "AUTOSAVE", "INTERACTIONS", "FINISH"
+	"MOVE", "BEGIN", "UNLOAD", "PURGE", "LOADGUI", "PRELOAD", "RENDER_WORLD", "MAP_PARSE", "CM", "GAME_INIT", "PVS", "AAS", "MEDIA", "SCRIPT", "SPAWN", "POST_SPAWN", "RESTORE", "SESSION", "FIRST_FRAME", "END_RENDER", "END_SOUND", "END_DECL", "END_UI", "END_FS", "SETTLE", "AUTOSAVE", "INTERACTIONS", "FINISH", "ACOUSTICS"	//puncho - SB3 (R-SB3-20)
 };
 
 void idCommonLocal::LoadPhase( loadPhase_t phase )
@@ -872,6 +872,7 @@ void idCommonLocal::ExecuteMapChange()
 	sm = Sys_Milliseconds();
 	LoadPhase( LOAD_PURGE );
 	renderSystem->BeginLevelLoad();
+	//puncho - P5-4 (DR-166): no decl may be parsed between these two calls; ParseShader in sound/snd_shader.cpp pins by the sound system's flag
 	soundSystem->BeginLevelLoad();
 	declManager->BeginLevelLoad();
 	uiManager->BeginLevelLoad();
@@ -1045,6 +1046,7 @@ void idCommonLocal::ExecuteMapChange()
 	{
 		soundWorld->TouchTransitionMedia();
 	}
+	//puncho - P5-4 (DR-166): the sound system's level load must end before the decl manager's; ParseShader in sound/snd_shader.cpp pins by the sound system's flag
 	soundSystem->EndLevelLoad();
 	LoadPhase( LOAD_END_DECL );
 	declManager->EndLevelLoad();
@@ -2149,6 +2151,7 @@ CONSOLE_COMMAND( testmap, "tests a map", idCmdSystem::ArgCompletion_MapName )
 	idStr map, string;
 	bool noAAS = false;
 	bool keepView = false;
+	bool bake = false;	//puncho - SB1a (R-SB1a-36)
 	for( int i = 2; i < args.Argc(); i++ )
 	{
 		if( idStr::Icmp( args.Argv( i ), "noAAS" ) == 0 )
@@ -2159,9 +2162,13 @@ CONSOLE_COMMAND( testmap, "tests a map", idCmdSystem::ArgCompletion_MapName )
 		{
 			keepView = true;
 		}
+		else if( idStr::Icmp( args.Argv( i ), "bake" ) == 0 ) //puncho - SB1a (R-SB1a-36)
+		{
+			bake = true;
+		}
 		else
 		{
-			common->Printf( "usage: testmap <map> [noAAS] [keepView]\n" );
+			common->Printf( "usage: testmap <map> [noAAS] [keepView] [bake]\n" ); //puncho - SB1a (R-SB1a-36)
 			return;
 		}
 	}
@@ -2186,7 +2193,8 @@ CONSOLE_COMMAND( testmap, "tests a map", idCmdSystem::ArgCompletion_MapName )
 
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, "disconnect" );
 
-	sprintf( string, "dmap %smaps/%s.map", noAAS ? "noAAS " : "", map.c_str() );
+	//puncho - SB1a (R-SB1a-36): the edit loop pays Stage A only and the map sounds as today; bake runs the fast bake
+	sprintf( string, "dmap %s%s maps/%s.map", noAAS ? "noAAS " : "", bake ? "acousticFast" : "noAcousticBake", map.c_str() );
 	cmdSystem->BufferCommandText( CMD_EXEC_NOW, string );
 
 	sprintf( string, "devmap %s", map.c_str() );

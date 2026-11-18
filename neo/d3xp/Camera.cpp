@@ -286,6 +286,7 @@ idCameraAnim::idCameraAnim()
 	cycle = 1;
 	starttime = 0;
 	activator = NULL;
+	soundCut = -1;		//puncho - R-E6-7
 
 }
 
@@ -536,6 +537,7 @@ void idCameraAnim::Start()
 	}
 
 	starttime = gameLocal.time;
+	soundCut = -1;		//puncho - R-E6-7
 	gameLocal.SetCamera( this );
 	BecomeActive( TH_THINK );
 
@@ -629,6 +631,19 @@ void idCameraAnim::GetViewParms( renderView_t* view )
 		cut++;
 	}
 
+	//puncho - R-E6-7: a camera cut (or the anim's first frame, or its wrap) jumps the listener; this runs inside the
+	// view build, so it calls the sound world directly. Only as the active camera or the local player's private camera
+	// view; not as a monitor's camera target (idCamera::GetRenderView).
+	if( cut != soundCut )
+	{
+		const idPlayer* local = gameLocal.GetLocalPlayer();
+		if( gameLocal.GetCamera() == this || ( local != NULL && local->GetPrivateCameraView() == this ) )
+		{
+			soundCut = cut;
+			gameSoundWorld->ListenerCut( LCUT_CAMERA );
+		}
+	}
+
 	if( g_debugCinematic.GetBool() )
 	{
 		int prevFrameTime	= ( gameLocal.previousTime - starttime ) * frameRate;
@@ -671,6 +686,7 @@ void idCameraAnim::GetViewParms( renderView_t* view )
 		{
 			// advance start time so that we loop
 			starttime += ( ( camera.Num() - cameraCuts.Num() ) * 1000 ) / frameRate;
+			soundCut = -1;		//puncho - R-E6-7: the wrap is a cut even when the anim has none
 			GetViewParms( view );
 			return;
 		}

@@ -69,6 +69,7 @@ enum loadPhase_t
 	LOAD_AUTOSAVE,
 	LOAD_INTERACTIONS,
 	LOAD_FINISH,
+	LOAD_ACOUSTICS,		//puncho - SB3 (R-SB3-20): last, so no older row index moves
 	LOAD_PHASE_COUNT
 };
 

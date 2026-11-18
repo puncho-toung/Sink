@@ -190,6 +190,11 @@ option existing simultaniously with a live game.
 ===============================================================================
 */
 
+//puncho - R-E6-5: why the listener jumped; ORed together, reported for exactly one world update
+enum listenerCutReason_t { LCUT_TELEPORT = BIT( 0 ), LCUT_RESPAWN = BIT( 1 ), LCUT_CAMERA = BIT( 2 ),
+						   LCUT_LOAD = BIT( 3 ), LCUT_DISTANCE = BIT( 4 )
+						 };
+
 class idSoundWorld
 {
 public:
@@ -197,6 +202,10 @@ public:
 
 	// call at each map start
 	virtual void			ClearAllSoundEmitters() = 0;
+	//puncho - SB3 (R-SB3-1): the map's baked acoustics. Load: once per map load, before the collision map; mapFile is
+	// read during the call only. Free: at map shutdown; the world's destructor frees on its own path
+	virtual void			LoadMapAcoustics( const char* mapName, unsigned int mapGeometryCRC, const idMapFile* mapFile ) = 0;
+	virtual void			FreeMapAcoustics() = 0;
 	virtual bool CarryEmitter( idSoundEmitter* emitter, const char* shader ) { return false; }
 	virtual idSoundEmitter* AdoptCarriedEmitter( const char* shader ) { return NULL; }
 	virtual void TransitionArrival() {}
@@ -215,6 +224,8 @@ public:
 	// where is the camera/microphone
 	// listenerId allows listener-private and antiPrivate sounds to be filtered
 	virtual void			PlaceListener( const idVec3& origin, const idMat3& axis, const int listenerId ) = 0;
+	//puncho - R-E6-5: the game says the listener jumped (listenerCutReason_t bits); raised on the game thread before Render
+	virtual void			ListenerCut( int reasons ) {}
 
 	// fade all sounds in the world with a given shader soundClass
 	// to is in Db, over is in seconds

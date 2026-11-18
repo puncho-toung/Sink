@@ -121,6 +121,7 @@ private:
 	idList<int>				cameraCuts;
 	idList<cameraFrame_t>	camera;
 	idEntityPtr<idEntity>	activator;
+	int						soundCut;		//puncho - R-E6-7: the cut count last told to the sound world; -1 in Start, not saved
 
 	void					Start();
 	void					Stop();

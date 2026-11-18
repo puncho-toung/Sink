@@ -33,6 +33,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "RenderCommon.h"
 extern idCVar r_bakeStaleGuard;
 #include "Model_local.h"
+#include "../sound/snd_acousticfile.h"	//puncho - SB1b (R-SB1b-31): the SndStructure* helpers
 
 extern idCVar dmap_phaseTimes; //puncho - TC0
 
@@ -95,6 +96,7 @@ void idRenderWorldLocal::FreeWorld()
 	{
 		R_StaticFree( areaNodes );
 		areaNodes = NULL;
+		numAreaNodes = 0;	//puncho - SB1b (R-SB1b-31): ClearWorld's dummy node stays uncounted, so GetMapCompileId gives 0
 	}
 
 	// free all the inline idRenderModels
@@ -773,6 +775,43 @@ void idRenderWorldLocal::ReadBinaryNodes( idFile* file )
 
 /*
 ================
+idRenderWorldLocal::GetMapCompileId
+
+puncho - SB1b (R-SB1b-31). The structure id from the loaded world: the same integers dmap's
+AcousticStructureId feeds, in the same order. The .proc's "numPoints a1 a2" are not kept as such: a1 is
+the area portals[1] leads into and a2 the area portals[0] leads into, so the pair is read crosswise.
+Nodes are in file order, which is dmap's preorder numbering, and children are the ints the parse stored.
+Computed on every call and never cached; called once per load of a baked map.
+================
+*/
+uint64 idRenderWorldLocal::GetMapCompileId() const
+{
+	if( areaNodes == NULL || numAreaNodes <= 0 )
+	{
+		return 0;
+	}
+
+	sndStructureHash_t state;
+	SndStructureBegin( state, numPortalAreas, numInterAreaPortals );
+	for( int i = 0; i < numInterAreaPortals; i++ )
+	{
+		const doublePortal_t& dp = doublePortals[i];
+		// a half-loaded world (a parse that dropped midway) has portals not yet made: no id
+		if( dp.portals[0] == NULL || dp.portals[1] == NULL )
+		{
+			return 0;
+		}
+		SndStructurePortal( state, dp.portals[0]->w->GetNumPoints(), dp.portals[1]->intoArea, dp.portals[0]->intoArea );
+	}
+	for( int i = 0; i < numAreaNodes; i++ )
+	{
+		SndStructureNode( state, areaNodes[i].children[0], areaNodes[i].children[1] );
+	}
+	return SndStructureEnd( state );
+}
+
+/*
+================
 idRenderWorldLocal::CommonChildrenArea_r
 ================
 */
@@ -839,6 +878,7 @@ void idRenderWorldLocal::ClearWorld()
 	areaNodes[0].plane[3] = 1;
 	areaNodes[0].children[0] = -1;
 	areaNodes[0].children[1] = -1;
+	numAreaNodes = 0;	//puncho - SB1b (S3-1): the dummy node is never counted, whatever count a dropped load left
 }
 
 /*

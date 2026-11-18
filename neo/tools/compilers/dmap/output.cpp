@@ -682,6 +682,7 @@ WriteNode_r
 
 ===============
 */
+//puncho - SB1b: this walk and its child numbers are mirrored by AcousticStructureId (acoustic_structure.cpp) and idRenderWorldLocal::GetMapCompileId; change them with it
 static void WriteNode_r( node_t* node, idFile* procFile )
 {
 	int		child[2];
@@ -911,6 +912,7 @@ static void WriteOutputPortals( uEntity_t* e, idFile* procFile )
 	{
 		iap = &interAreaPortals[i];
 
+		//puncho - SB1b: this winding choice is mirrored by AcousticStructureId (acoustic_structure.cpp) and AcousticMesh_PortalWinding (acoustic_mesh.cpp); change them with it
 		// RB: support new area portals
 		if( iap->side )
 		{

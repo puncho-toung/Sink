@@ -1701,6 +1701,7 @@ void idCommonLocal::CreateMainMenu()
 
 		// load
 		renderSystem->EndLevelLoad();
+		//puncho - P5-4 (DR-166): the sound system's level load must end before the decl manager's; ParseShader in sound/snd_shader.cpp pins by the sound system's flag
 		soundSystem->EndLevelLoad();
 		declManager->EndLevelLoad();
 		uiManager->EndLevelLoad( "" );
@@ -1761,9 +1762,12 @@ void idCommonLocal::InitCommands()
 {
 	// compilers
 	cmdSystem->AddCommand( "dmap", Dmap_f, CMD_FL_TOOL, "compiles a map", idCmdSystem::ArgCompletion_MapName );
+	cmdSystem->AddCommand( "bakeAcoustics", BakeAcoustics_f, CMD_FL_TOOL, "bakeAcoustics [fast] <map>: bakes the room acoustics of a compiled map from its .sndmesh", idCmdSystem::ArgCompletion_MapName ); //puncho - SB2-I
+	cmdSystem->AddCommand( "phononInfo", PhononInfo_f, CMD_FL_TOOL, "loads phonon.dll beside the executable, creates and releases a context, unloads it, prints the times" ); //puncho - SB0
 	cmdSystem->AddCommand( "runAAS", RunAAS_f, CMD_FL_TOOL, "compiles an AAS file for a map", idCmdSystem::ArgCompletion_MapName );
 	cmdSystem->AddCommand( "runAASDir", RunAASDir_f, CMD_FL_TOOL, "compiles AAS files for all maps in a folder", idCmdSystem::ArgCompletion_MapName );
 	cmdSystem->AddCommand( "runReach", RunReach_f, CMD_FL_TOOL, "calculates reachability for an AAS file", idCmdSystem::ArgCompletion_MapName );
+	cmdSystem->AddCommand( "acousticEstimateSelfTest", AcousticEstimateSelfTest_f, CMD_FL_TOOL, "runs the acoustic bake's estimator and zoning on synthetic histograms, prints pass or fail per case" ); //puncho - SB2-E
 }
 
 /*

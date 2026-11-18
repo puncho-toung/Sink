@@ -1103,6 +1103,25 @@ bool idBrittleFracture::IsBroken() const
 
 /*
 ================
+idBrittleFracture::GetPhysicsToSoundTransform
+
+//puncho - R-E6-34: idPhysics_StaticMulti::GetBounds( -1 ) is world-axis bounds less the first clip
+model's origin, not bounds in the frame GetAxis gives, so the centre keeps the identity axis as before
+================
+*/
+bool idBrittleFracture::GetPhysicsToSoundTransform( idVec3& origin, idMat3& axis )
+{
+	if( GetPhysics()->GetNumClipModels() > 0 )
+	{
+		origin = GetPhysics()->GetBounds().GetCenter();
+		axis.Identity();
+		return true;
+	}
+	return false;
+}
+
+/*
+================
 idBrittleFracture::Killed
 ================
 */

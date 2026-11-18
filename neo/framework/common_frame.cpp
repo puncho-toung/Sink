@@ -1325,7 +1325,9 @@ void idCommonLocal::Frame()
 			soundSystem->SetMute( true );
 		}
 
+		frameTiming.startSoundTime = Sys_Microseconds();	//puncho - R-E6-31: the Sound row, out of Sync
 		soundSystem->Render();
+		frameTiming.finishSoundTime = Sys_Microseconds();
 
 		// process the game return for map changes, etc
 		ProcessGameReturn( ret );

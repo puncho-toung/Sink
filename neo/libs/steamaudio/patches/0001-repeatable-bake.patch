@@ -1,0 +1,429 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 5f9bb6a..79b311a 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -356,6 +356,12 @@ if (STEAMAUDIO_ENABLE_OCTAVE_BANDS)
+     add_definitions(-DIPL_ENABLE_OCTAVE_BANDS)
+ endif()
+ 
++# D3-Sink local patch 0001: -DIPL_LOCAL_MEASURE=1 makes the measurement build (seed export, job-sum timer, patch
++# level bit 31). Never shipped.
++if (IPL_LOCAL_MEASURE)
++    add_definitions(-DIPL_LOCAL_MEASURE=1)
++endif()
++
+ 
+ #
+ # TARGETS
+diff --git a/src/core/api_baking.cpp b/src/core/api_baking.cpp
+index ebe24e5..8f49aed 100644
+--- a/src/core/api_baking.cpp
++++ b/src/core/api_baking.cpp
+@@ -123,3 +123,42 @@ void CContext::cancelBakePaths()
+ }
+ 
+ }
++
++// --------------------------------------------------------------------------------------------------------------------
++// D3-Sink local patches
++// --------------------------------------------------------------------------------------------------------------------
++
++// One bit per local patch (0001 = bit 0). A patch change that changes bake output changes this value and the
++// engine's matching constant together.
++static const IPLuint32 kLocalPatchLevel = 0x1u;
++
++// the level names one layout: three bands. A build with octave bands would bake another energy field.
++static_assert(IPL_NUM_BANDS == 3 && Bands::kNumBands == 3, "iplLocalPatchLevel is valid for three bands only");
++
++extern "C" {
++
++IPLAPI IPLuint32 IPLCALL iplLocalPatchLevel(void)
++{
++#if defined(IPL_LOCAL_MEASURE)
++    return kLocalPatchLevel | 0x80000000u;
++#else
++    return kLocalPatchLevel;
++#endif
++}
++
++#if defined(IPL_LOCAL_MEASURE)
++IPLAPI void IPLCALL iplLocalSetBakeSeed(IPLuint64 seed)
++{
++    IReflectionSimulator::sLocalBakeSeed = seed;
++}
++
++IPLAPI void IPLCALL iplLocalGetFinalizeTime(IPLuint64* nanoseconds)
++{
++    if (nanoseconds)
++    {
++        *nanoseconds = IReflectionSimulator::sLocalFinalizeNanoseconds;
++    }
++}
++#endif
++
++}
+diff --git a/src/core/phonon.h b/src/core/phonon.h
+index 4c22edd..3f03da3 100644
+--- a/src/core/phonon.h
++++ b/src/core/phonon.h
+@@ -3617,6 +3617,20 @@ IPLAPI void IPLCALL iplReflectionsBakerBake(IPLContext context, IPLReflectionsBa
+ */
+ IPLAPI void IPLCALL iplReflectionsBakerCancelBake(IPLContext context);
+ 
++/** D3-Sink local patches (not part of Steam Audio). Which local patches this build carries, one bit each:
++    bit 0 = 0001 (repeatable bake: fixed per-ray seeds, per-job energy fields summed in job order), bit 1 = 0002
++    (per-probe statistics); bit 31 = a measurement build. A loader accepts only the exact level it was written for.
++*/
++IPLAPI IPLuint32 IPLCALL iplLocalPatchLevel(void);
++
++#if defined(IPL_LOCAL_MEASURE)
++/** Measurement build only: replaces the fixed bake seed for the bakes that follow. */
++IPLAPI void IPLCALL iplLocalSetBakeSeed(IPLuint64 seed);
++
++/** Measurement build only: the time the last probe's job sum (finalizeJob) took, in nanoseconds. */
++IPLAPI void IPLCALL iplLocalGetFinalizeTime(IPLuint64* nanoseconds);
++#endif
++
+ /** Bakes a single layer of pathing data in a probe batch.
+ 
+     Only one bake can be in progress at any point in time.
+diff --git a/src/core/reflection_simulator.cpp b/src/core/reflection_simulator.cpp
+index 6d1b832..899a2c9 100644
+--- a/src/core/reflection_simulator.cpp
++++ b/src/core/reflection_simulator.cpp
+@@ -21,6 +21,10 @@
+ #include "sh.h"
+ #include "profiler.h"
+ 
++#if defined(IPL_LOCAL_MEASURE)
++#include <chrono>
++#endif
++
+ namespace ipl {
+ 
+ // --------------------------------------------------------------------------------------------------------------------
+@@ -32,6 +36,21 @@ const float IReflectionSimulator::kSpecularExponent = 1e2f;
+ const float IReflectionSimulator::kSourceRadius = 0.1f;
+ const float IReflectionSimulator::kListenerRadius = 0.1f;
+ 
++#if defined(IPL_LOCAL_MEASURE)
++uint64_t IReflectionSimulator::sLocalBakeSeed = RandomNumberGenerator::kBakeSeed;
++uint64_t IReflectionSimulator::sLocalFinalizeNanoseconds = 0;
++#define IPL_LOCAL_BAKE_SEED IReflectionSimulator::sLocalBakeSeed
++#else
++#define IPL_LOCAL_BAKE_SEED RandomNumberGenerator::kBakeSeed
++#endif
++
++// D3-Sink local patch 0001 (R-SB0-7): ray i starts its own stream at the bake seed + (i << 32). No probe, thread
++// or counter enters the seed, so a probe's result depends only on the scene, its position and the settings.
++static inline uint64_t localRaySeed(int rayIndex)
++{
++    return IPL_LOCAL_BAKE_SEED + (static_cast<uint64_t>(rayIndex) << 32);
++}
++
+ 
+ // --------------------------------------------------------------------------------------------------------------------
+ // ReflectionSimulator
+@@ -64,6 +83,8 @@ ReflectionSimulator::ReflectionSimulator(int maxNumRays,
+     , mDiffuseSamples(numDiffuseSamples)
+     , mListenerCoeffs(maxNumRays, SphericalHarmonics::numCoeffsForOrder(maxOrder))
+     , mThreadState(numThreads)
++    , mNumJobs(0)
++    , mJobEnergyFields(((maxNumRays + kRayBatchSize - 1) / kRayBatchSize) * maxNumSources)
+ {
+     Sampling::generateSphereSamples(maxNumRays, mListenerSamples.data());
+     Sampling::generateHemisphereSamples(numDiffuseSamples, mDiffuseSamples.data());
+@@ -87,6 +108,11 @@ ReflectionSimulator::ReflectionSimulator(int maxNumRays,
+             mThreadState[i].energyFields[j] = make_unique<EnergyField>(maxDuration, maxOrder);
+         }
+     }
++
++    for (auto i = 0; i < static_cast<int>(mJobEnergyFields.totalSize()); ++i)
++    {
++        mJobEnergyFields[i] = make_unique<EnergyField>(maxDuration, maxOrder);
++    }
+ }
+ 
+ void ReflectionSimulator::simulate(const IScene& scene,
+@@ -191,6 +217,7 @@ void ReflectionSimulator::simulate(const IScene& scene,
+     }
+ 
+     mNumJobsRemaining = 0;
++    mNumJobs = (numRays + kRayBatchSize - 1) / kRayBatchSize;
+ 
+     for (auto i = 0; i < numRays; i += kRayBatchSize)
+     {
+@@ -198,10 +225,11 @@ void ReflectionSimulator::simulate(const IScene& scene,
+ 
+         auto start = i;
+         auto end = std::min(numRays, i + kRayBatchSize);
++        auto jobIndex = i / kRayBatchSize;
+ 
+-        jobGraph.addJob([this, &scene, energyFields, start, end](int threadId, std::atomic<bool>& cancel)
++        jobGraph.addJob([this, &scene, energyFields, start, end, jobIndex](int threadId, std::atomic<bool>& cancel)
+         {
+-            simulateJob(scene, start, end, threadId, cancel);
++            simulateJob(scene, start, end, jobIndex, threadId, cancel);
+ 
+             if (--mNumJobsRemaining == 0)
+             {
+@@ -250,6 +278,7 @@ void ReflectionSimulator::simulate(const IScene& scene,
+     for (auto i = 0; i < numRays; ++i)
+     {
+         Ray ray{ listeners[0].origin, mListenerSamples[i] };
++        RandomNumberGenerator rng(localRaySeed(i));
+ 
+         float accumEnergy[Bands::kNumBands];
+         for (auto j = 0; j < Bands::kNumBands; ++j)
+@@ -280,7 +309,7 @@ void ReflectionSimulator::simulate(const IScene& scene,
+ 
+             if (j < numBounces - 1)
+             {
+-                bounce(scene, j, hit, hitPoint, 0, ray, accumEnergy, accumDistance);
++                bounce(scene, j, hit, hitPoint, rng, ray, accumEnergy, accumDistance);
+             }
+         }
+     }
+@@ -307,6 +336,7 @@ void ReflectionSimulator::simulateJob(const IScene& scene,
+         auto direction = Vector3f::unitVector((camera.right * du) + (camera.up * dv) - camera.ahead);
+ 
+         Ray ray{ camera.origin, direction };
++        RandomNumberGenerator rng(localRaySeed(i));
+ 
+         float accumEnergy[Bands::kNumBands];
+         for (auto j = 0; j < Bands::kNumBands; ++j)
+@@ -338,7 +368,7 @@ void ReflectionSimulator::simulateJob(const IScene& scene,
+ 
+             if (j < mNumBounces - 1)
+             {
+-                bounce(scene, j, hit, hitPoint, threadId, ray, accumEnergy, accumDistance);
++                bounce(scene, j, hit, hitPoint, rng, ray, accumEnergy, accumDistance);
+             }
+         }
+     }
+@@ -347,6 +377,7 @@ void ReflectionSimulator::simulateJob(const IScene& scene,
+ void ReflectionSimulator::simulateJob(const IScene& scene,
+                                       int start,
+                                       int end,
++                                      int jobIndex,
+                                       int threadId,
+                                       std::atomic<bool>& cancel)
+ {
+@@ -354,13 +385,21 @@ void ReflectionSimulator::simulateJob(const IScene& scene,
+ 
+     assert(0 <= threadId && threadId < mNumThreads);
+     assert(0 < mNumSources && mNumSources <= mMaxNumSources);
++    assert(0 <= jobIndex && jobIndex < mNumJobs);
+ 
+     const auto scalar = (4.0f * Math::kPi) / mNumRays;
+     const auto& listener = *mListener;
+ 
++    // this job's records start empty; only this job writes them (patch 0001)
++    for (auto k = 0; k < mNumSources; ++k)
++    {
++        mJobEnergyFields[jobIndex * mMaxNumSources + k]->reset();
++    }
++
+     for (auto i = start; i < end; ++i)
+     {
+         Ray ray{ listener.origin, mListenerSamples[i] };
++        RandomNumberGenerator rng(localRaySeed(i));
+ 
+         float accumEnergy[Bands::kNumBands];
+         for (auto j = 0; j < Bands::kNumBands; ++j)
+@@ -388,7 +427,7 @@ void ReflectionSimulator::simulateJob(const IScene& scene,
+                 if (!shade(scene, ray, j, k, hit, hitPoint, accumEnergy, accumDistance, scalar, energy, delay))
+                     continue;
+ 
+-                auto& energyField = *mThreadState[threadId].energyFields[k];
++                auto& energyField = *mJobEnergyFields[jobIndex * mMaxNumSources + k];
+ 
+                 auto bin = static_cast<int>(floorf(delay / EnergyField::kBinDuration));
+                 if (bin < 0 || energyField.numBins() <= bin)
+@@ -408,7 +447,7 @@ void ReflectionSimulator::simulateJob(const IScene& scene,
+ 
+             if (j < mNumBounces - 1)
+             {
+-                bounce(scene, j, hit, hitPoint, threadId, ray, accumEnergy, accumDistance);
++                bounce(scene, j, hit, hitPoint, rng, ray, accumEnergy, accumDistance);
+ 
+                 if (cancel)
+                     return;
+@@ -420,14 +459,24 @@ void ReflectionSimulator::simulateJob(const IScene& scene,
+ void ReflectionSimulator::finalizeJob(EnergyField* const* energyFields,
+                                       std::atomic<bool>& cancel)
+ {
++#if defined(IPL_LOCAL_MEASURE)
++    const auto measureStart = std::chrono::steady_clock::now();
++#endif
++
++    // one sum per source in job-index order, on the thread that finished last (patch 0001)
+     for (auto i = 0; i < mNumSources; ++i)
+     {
+         auto& energyField = *energyFields[i];
+-        for (auto j = 0; j < mNumThreads; ++j)
++        for (auto j = 0; j < mNumJobs; ++j)
+         {
+-            EnergyField::add(energyField, *mThreadState[j].energyFields[i], energyField);
++            EnergyField::add(energyField, *mJobEnergyFields[j * mMaxNumSources + i], energyField);
+         }
+     }
++
++#if defined(IPL_LOCAL_MEASURE)
++    sLocalFinalizeNanoseconds = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
++        std::chrono::steady_clock::now() - measureStart).count());
++#endif
+ }
+ 
+ bool ReflectionSimulator::trace(const IScene& scene,
+@@ -525,7 +574,7 @@ void ReflectionSimulator::bounce(const IScene& scene,
+                                  int bounce,
+                                  const Hit& hit,
+                                  const Vector3f& hitPoint,
+-                                 int threadId,
++                                 RandomNumberGenerator& rng,
+                                  Ray& ray,
+                                  float* accumEnergy,
+                                  float& accumDistance)
+@@ -539,9 +588,9 @@ void ReflectionSimulator::bounce(const IScene& scene,
+ 
+     ray.origin = hitPoint;
+ 
+-    if (mThreadState[threadId].rng.uniformRandomNormalized() < hit.material->scattering)
++    if (rng.uniformRandomNormalized() < hit.material->scattering)
+     {
+-        auto diffuseSampleIndex = mThreadState[threadId].rng.uniformRandom() % mNumDiffuseSamples;
++        auto diffuseSampleIndex = rng.uniformRandom() % mNumDiffuseSamples;
+         ray.direction = Sampling::transformHemisphereSample(mDiffuseSamples[diffuseSampleIndex], hit.normal);
+     }
+     else
+diff --git a/src/core/reflection_simulator.h b/src/core/reflection_simulator.h
+index a161bbd..4efe1ac 100644
+--- a/src/core/reflection_simulator.h
++++ b/src/core/reflection_simulator.h
+@@ -84,6 +84,13 @@ public:
+                           float irradianceMinDistance,
+                           vector<Ray>& escapedRays) = 0;
+ 
++#if defined(IPL_LOCAL_MEASURE)
++    // D3-Sink measurement build only: the seed that replaces kBakeSeed (iplLocalSetBakeSeed), and the time the last
++    // finalizeJob took, in nanoseconds of the steady clock (QueryPerformanceCounter under MSVC).
++    static uint64_t sLocalBakeSeed;
++    static uint64_t sLocalFinalizeNanoseconds;
++#endif
++
+     static const float kHitSurfaceOffset;
+     static const float kSpecularExponent;
+     static const float kSourceRadius;
+@@ -178,6 +185,12 @@ private:
+     std::atomic<int> mNumJobsRemaining;
+     Array<ThreadState> mThreadState;
+ 
++    // D3-Sink local patch 0001: one energy field per job and source, [job * mMaxNumSources + source], each written
++    // only by its own job and summed in job order by finalizeJob, so the thread count cannot change the result.
++    // ThreadState's rng and energy fields are no longer used by the energy simulation.
++    int mNumJobs;
++    Array<unique_ptr<EnergyField>> mJobEnergyFields;
++
+     void simulateJob(const IScene& scene,
+                      Array<float, 2>& image,
+                      int start,
+@@ -187,6 +200,7 @@ private:
+     void simulateJob(const IScene& scene,
+                      int start,
+                      int end,
++                     int jobIndex,
+                      int threadId,
+                      std::atomic<bool>& cancel);
+ 
+@@ -216,7 +230,7 @@ private:
+                 int bounce,
+                 const Hit& hit,
+                 const Vector3f& hitPoint,
+-                int threadId,
++                RandomNumberGenerator& rng,
+                 Ray& ray,
+                 float* accumEnergy,
+                 float& accumDistance);
+diff --git a/src/core/sampling.cpp b/src/core/sampling.cpp
+index a36904d..b5f5439 100644
+--- a/src/core/sampling.cpp
++++ b/src/core/sampling.cpp
+@@ -26,20 +26,35 @@ namespace ipl {
+ // RandomNumberGenerator
+ // --------------------------------------------------------------------------------------------------------------------
+ 
++const uint64_t RandomNumberGenerator::kBakeSeed;
++
+ RandomNumberGenerator::RandomNumberGenerator()
+-    : mGenerator(static_cast<int>(time(NULL)))
+-    , mUniformDistribution(0, std::numeric_limits<int>::max())
+-    , mUniformDistributionNormalized(0.0f, 1.0f)
++    : mState(kBakeSeed)
++{}
++
++RandomNumberGenerator::RandomNumberGenerator(uint64_t seed)
++    : mState(seed)
+ {}
+ 
++// splitmix64 (Steele, Lea, Flood 2014).
++uint64_t RandomNumberGenerator::next()
++{
++    mState += 0x9E3779B97F4A7C15ull;
++    auto z = mState;
++    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
++    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
++    return z ^ (z >> 31);
++}
++
+ int RandomNumberGenerator::uniformRandom()
+ {
+-    return mUniformDistribution(mGenerator);
++    return static_cast<int>(next() >> 33);
+ }
+ 
+ float RandomNumberGenerator::uniformRandomNormalized()
+ {
+-    return mUniformDistributionNormalized(mGenerator);
++    // the top 24 bits, so every value is exact in a float and 1 is never reached
++    return static_cast<float>(next() >> 40) * (1.0f / 16777216.0f);
+ }
+ 
+ 
+diff --git a/src/core/sampling.h b/src/core/sampling.h
+index 24fad46..b54c312 100644
+--- a/src/core/sampling.h
++++ b/src/core/sampling.h
+@@ -28,21 +28,28 @@ namespace ipl {
+ // --------------------------------------------------------------------------------------------------------------------
+ 
+ // Random number generator. Create one per thread for generating random numbers in a thread-safe way.
++// D3-Sink local patch 0001 (repeatable bake): splitmix64 on one 64-bit state, seeded by value, never by the clock,
++// with no STL engine or distribution, so the same seed gives the same draws on every build and machine.
+ class RandomNumberGenerator
+ {
+ public:
++    // The fixed seed of the bake: a ray i of a bake starts at kBakeSeed + (i << 32).
++    static const uint64_t kBakeSeed = 0x243F6A8885A308D3ull;
++
+     RandomNumberGenerator();
+ 
+-    // Returns a random number sampled from the uniform distribution over the domain [0, 1].
++    explicit RandomNumberGenerator(uint64_t seed);
++
++    // Returns a random number sampled from the uniform distribution over the domain [0, 1).
+     float uniformRandomNormalized();
+ 
+     // Returns a random number sampled from the uniform distribution over the domain [0, INT_MAX].
+     int uniformRandom();
+ 
+ private:
+-    std::default_random_engine mGenerator;
+-    std::uniform_int_distribution<int> mUniformDistribution;
+-    std::uniform_real_distribution<float> mUniformDistributionNormalized;
++    uint64_t mState;
++
++    uint64_t next();
+ };
+ 
+ 

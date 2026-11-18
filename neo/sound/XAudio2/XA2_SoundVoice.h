@@ -28,7 +28,22 @@ If you have questions concerning this license or the applicable additional terms
 #ifndef __XA2_SOUNDVOICE_H__
 #define __XA2_SOUNDVOICE_H__
 
+#include <atomic> //puncho - R-E6-17: values the XAudio2 callback reads without a lock
+
 static const int MAX_QUEUED_BUFFERS = 3;
+
+class idSoundVoice_XAudio2;
+class idSoundSample_XAudio2;
+
+//puncho - R-E6-18: the context XAudio2 hands back to the voice's callback. Each voice embeds
+// MAX_QUEUED_BUFFERS of them, so neither thread takes a lock; the shared pool and
+// idSoundSystemLocal::bufferContext_t (declared after this header) stay for OpenAL only
+struct xa2BufferContext_t
+{
+	idSoundVoice_XAudio2*	voice;
+	idSoundSample_XAudio2*	sample;
+	int						bufferNumber;
+};
 
 /*
 ================================================
@@ -63,10 +78,16 @@ public:
 	// returns true if we can re-use this voice
 	bool					CompatibleFormat( idSoundSample_XAudio2* s );
 
+	//puncho - R-E6-15: the field test CompatibleFormat runs, callable without a created voice (E6-S's self-test)
+	static bool				FormatsMatch( const idWaveFile::waveFmt_t& a, const idWaveFile::waveFmt_t& b );
+
 	uint32					GetSampleRate() const
 	{
-		return sampleRate;
+		return sampleRate.load( std::memory_order_relaxed );
 	}
+
+	//puncho - R-SB4-5: the send into the reverb bus; returns at once when the voice does not list the bus
+	void					SetReverbSend( float s );
 
 	// callback function
 	void					OnBufferStart( idSoundSample_XAudio2* sample, int bufferNumber );
@@ -90,21 +111,47 @@ private:
 	int						SubmitBuffer( idSoundSample_XAudio2* sample, int bufferNumber, int offset );
 
 	// Adjust the voice frequency based on the new sample rate for the buffer
-	void					SetSampleRate( uint32 newSampleRate, uint32 operationSet );
+	//puncho - R-E6-17: reads only sampleRate, pitchShared, occlusionShared; onBufferStart issues both calls,
+	// the main thread's Update issues the filter and the ratio each only when it differs from the last one it issued
+	void					SetSampleRate( uint32 operationSet, bool onBufferStart );
+
+	//puncho start - WP-SB4: the voice's send lists, main thread only (R-SB4-28)
+	// {master, bus} or {master}; the master matrix reissued and a bus matrix cut at once (D-30); false when XAudio2
+	// refused the list, the flags then left as they were
+	bool					SetReverbList( bool toBus );
+	// the bus matrix cut at once and reverbSend 0
+	void					ClearReverbSend();
+	// the two flags, with the hardware's count of voices that have either (D-47)
+	void					SetReverbFlags( bool hasBus, bool pending );
+	//puncho end
 
 	IXAudio2SourceVoice* 	pSourceVoice;
 	idSoundSample_XAudio2* leadinSample;
 	idSoundSample_XAudio2* loopingSample;
 
-	// These are the fields from the sample format that matter to us for voice reuse
-	uint16					formatTag;
-	uint16					numChannels;
+	//puncho - R-E6-15: the whole format the source voice was created with, copied at CreateSourceVoice
+	idWaveFile::waveFmt_t	voiceFormat;
 
 	uint32					sourceVoiceRate;
-	uint32					sampleRate;
+	std::atomic<uint32>		sampleRate;			//puncho - R-E6-17: written by Create while not playing, then only by the callback
 
-	bool					hasVUMeter;
+	//puncho - R-E6-17: published by Update on the main thread, read by the callback (relaxed)
+	std::atomic<float>		pitchShared;
+	std::atomic<float>		occlusionShared;
+	// the last values Update issued; main thread only; < 0 = issue on the next Update
+	float					lastFreqRatio;
+	float					lastFilterFreq;
+
+	//puncho - R-E6-18: at most two buffers are queued at once (RestartAt submits one, each OnBufferStart one more),
+	// so a ring of three never overwrites a context XAudio2 still holds
+	xa2BufferContext_t		contexts[ MAX_QUEUED_BUFFERS ];
+	int						nextContext;
+
+	bool					hasVUMeter;			// this start uses the meter (GetAmplitude reads it)
+	bool					vuMeterAttached;	//puncho - R-E6-15: a meter chain is set on pSourceVoice (kept until it is destroyed)
 	bool					paused;
+	bool					listHasBus = false;		//puncho - R-SB4-5: the voice's XAudio2 list holds the reverb bus
+	bool					listPending = false;	//puncho - R-SB4-29: held when its list was set; reset once free
 };
 
 /*

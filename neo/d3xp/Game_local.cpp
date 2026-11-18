@@ -254,6 +254,7 @@ void idGameLocal::Clear()
 	cinematicSkipTime = 0;
 	cinematicStopTime = 0;
 	cinematicMaxSkipTime = 0;
+	listenerCutPending = 0;		//puncho - R-E6-7
 	inCinematic = false;
 	framenum = 0;
 	previousTime = 0;
@@ -1037,6 +1038,7 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 
 	// clear the sound system
 	gameSoundWorld->ClearAllSoundEmitters();
+	listenerCutPending = 0;		//puncho - R-E6-7: no latched cut of the old map crosses a load or a restore
 
 	// clear envirosuit sound fx
 	gameSoundWorld->SetEnviroSuit( false );
@@ -1073,6 +1075,11 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 			mapEnt->RemovePrimitiveData();
 		}
 	}
+
+	//puncho - SB3 (R-SB3-2): the map's baked acoustics; the render world is loaded, the sound world cleared, nothing
+	// of collision, AAS, entities or the listener exists yet. On a map with no bake: one missed open and one line
+	common->LoadPhase( LOAD_ACOUSTICS );
+	gameSoundWorld->LoadMapAcoustics( mapFileName, mapFile->GetGeometryCRC(), mapFile );
 
 	// load the collision map
 	common->LoadPhase( LOAD_CM );
@@ -1990,6 +1997,11 @@ void idGameLocal::MapShutdown()
 	if( common->IsGameDrivenLoad() && session->GetState() == idSession::LOADING && gameSoundWorld != NULL )
 	{
 		CarryTransitionSounds();
+	}
+	//puncho - SB3 (R-SB3-3): after the carry, inside LOAD_UNLOAD, so the timeline's UNLOAD row holds the end hooks
+	if( gameSoundWorld != NULL )
+	{
+		gameSoundWorld->FreeMapAcoustics();
 	}
 	worldStore.CommitCurrentMap();
 	idProjectile::ClearSimulationQueue();
@@ -6492,6 +6504,11 @@ void idGameLocal::SetCamera( idCamera* cam )
 		return;
 	}
 
+	//puncho - R-E6-7: entry, exit or a change of cinematic camera moves the listener; latched until the view that shows it
+	if( cam != camera )
+	{
+		listenerCutPending |= LCUT_CAMERA;
+	}
 	camera = cam;
 	if( camera )
 	{

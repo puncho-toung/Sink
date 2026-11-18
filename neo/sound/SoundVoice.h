@@ -61,6 +61,17 @@ public:
 	}
 	// RB end
 
+	//puncho - R-SB4-5: the level of the voice's send into the reverb bus, stored as SetGain stores the gain. The XAudio2
+	// voice overrides it: on a voice that lists the bus it sets the bus matrix and stores the level, on any other it returns
+	virtual void	SetReverbSend( float s )
+	{
+		reverbSend = s;
+	}
+	float		GetReverbSend() const
+	{
+		return reverbSend;
+	}
+
 	void		SetCenterChannel( float c )
 	{
 		centerChannel = c;
@@ -77,7 +88,7 @@ public:
 
 	const idSoundSample* GetCurrentSample();
 
-	// Controls the low pass filter, where 0.0f = no filtering, 1.0f = full filter
+	//puncho - DR-203: controls low-pass as 1000 / cutoff (Hz); 0 open, up to 50
 	void		SetOcclusion( float f )
 	{
 		occlusion = f;
@@ -98,12 +109,13 @@ protected:
 	float		centerChannel;		// Value (0-1) which indicates how much of this voice goes to the center channel
 	float		pitch;				// Pitch multiplier
 	float		innerRadius;		// Anything closer than this is omni
-	float		occlusion;			// How much of this sound is occluded (0-1)
+	float		occlusion;			//puncho - DR-203: 1000 / cutoff (Hz); 0 open, up to 50
 	uint32		channelMask;		// Set to override the default channel mask
 
 	// These are some setting used to do SSF_DISTANCE_BASED_STERO blending
 	float		innerSampleRangeSqr;
 	float		outerSampleRangeSqr;
+	float		reverbSend = 0.0f;	//puncho - R-SB4-5 (TW-19): 0 = no send; here it fills the gap before samples
 
 	idList< idSoundSample*, TAG_AUDIO> samples;
 

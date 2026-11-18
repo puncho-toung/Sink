@@ -79,6 +79,11 @@ option(REPRODUCIBLE_BUILD
 option(REVERSED_Z
 		"Reversed-Z depth (D32S8, near at 1, infinite far at 0); shaders go to renderprogs2/<api>_rz" ON)
 
+# puncho - SB0: the acoustic bake loads libs/steamaudio's phonon.dll by path at run time (dmap, phononInfo);
+# the executable never links it. Effective for MSVC and Win64 only.
+option(STEAMAUDIO_BAKE
+		"Build the acoustic bake: the dmap bake loads phonon.dll at run time (MSVC Win64 only)" ON)
+
 #set(NVRHI_INSTALL OFF)
 
 set(CPU_TYPE "" CACHE STRING "When set, passes this string as CPU-ID which will be embedded into the binary.")
@@ -556,14 +561,21 @@ file(GLOB MINIZIP_C_SOURCES libs/zlib/minizip/*.c)
 
 set(SOUND_INCLUDES
 	sound/snd_local.h
+	sound/snd_acousticfile.h
+	sound/snd_acoustics.h
+	sound/snd_occlusion.h
+	sound/snd_reverb.h
 	sound/sound.h
 	sound/SoundVoice.h
 	sound/WaveFile.h
 	sound/CinematicAudio.h)
 	
 set(SOUND_SOURCES
+	sound/snd_acoustics.cpp
 	sound/snd_decoder.cpp
 	sound/snd_emitter.cpp
+	sound/snd_occlusion.cpp
+	sound/snd_reverb.cpp
 	sound/snd_shader.cpp
 	sound/snd_system.cpp
 	sound/snd_world.cpp
@@ -1148,7 +1160,21 @@ if(MSVC)
 			list(APPEND RBDOOM3_SOURCES	${DOOMCLASSIC_XAUDIO2_SOURCES})
 		endif()
 	endif()
-	
+
+	# puncho - SB0: headers only; no import library, no delayimp, no /DELAYLOAD (R-SB0-14).
+	# The bake is built in only when phonon.h and phonon_version.h are on disk at configure time;
+	# without them the engine builds in the "built without the acoustic bake" form and phononInfo says so.
+	set(STEAMAUDIO_BAKE_IN_BUILD OFF)
+	if(STEAMAUDIO_BAKE AND CMAKE_CL_64)
+		if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/libs/steamaudio/include/phonon.h AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/libs/steamaudio/include/phonon_version.h)
+			set(STEAMAUDIO_BAKE_IN_BUILD ON)
+			add_definitions(-DUSE_STEAMAUDIO_BAKE)
+			include_directories(libs/steamaudio/include)
+		else()
+			message(WARNING "STEAMAUDIO_BAKE: libs/steamaudio/include/phonon.h or phonon_version.h not found (run libs/steamaudio/build_phonon.cmd); the engine is built without the acoustic bake")
+		endif()
+	endif()
+
 	if(FFMPEG)
 		add_definitions(-DUSE_FFMPEG)
 	
@@ -1256,7 +1282,24 @@ if(MSVC)
 	if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.8")
 		set_target_properties(${APP_NAME} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/..")
 	endif()
-	
+
+	# puncho - SB0: phonon.dll beside the dev executable, where PhononApi_Load looks for it.
+	# No install() rule: a packaged game has no phonon.dll (R-SB0-19, C-SB95).
+	# Without the DLL on disk at configure time the copy is left out and the build still succeeds;
+	# phononInfo then prints "phonon: ... not found". Re-run cmake once the DLL exists.
+	# A build without the headers has no loader, so nothing is copied.
+	if(STEAMAUDIO_BAKE_IN_BUILD)
+		if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/libs/steamaudio/bin/win64/phonon.dll)
+			add_custom_command(TARGET ${APP_NAME} POST_BUILD
+				COMMAND ${CMAKE_COMMAND} -E copy_if_different
+					${CMAKE_CURRENT_SOURCE_DIR}/libs/steamaudio/bin/win64/phonon.dll
+					$<TARGET_FILE_DIR:${APP_NAME}>
+				COMMENT "Copying phonon.dll beside ${APP_NAME}")
+		else()
+			message(WARNING "STEAMAUDIO_BAKE: libs/steamaudio/bin/win64/phonon.dll not found; it is not copied beside ${APP_NAME}, and the acoustic bake reports it missing at run time")
+		endif()
+	endif()
+
 	#CMAKE_BINARY_DIR
 	if(CMAKE_CL_64)
 		install(TARGETS ${APP_NAME}

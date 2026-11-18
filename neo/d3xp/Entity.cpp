@@ -3977,7 +3977,7 @@ bool idEntity::GetPhysicsToSoundTransform( idVec3& origin, idMat3& axis )
 	if( GetPhysics()->GetNumClipModels() > 0 )
 	{
 		origin = GetPhysics()->GetBounds().GetCenter();
-		axis.Identity();
+		axis = GetPhysics()->GetAxis();	//puncho - R-E6-34: the bounds are model space, so the centre turns with the entity
 		return true;
 	}
 	return false;

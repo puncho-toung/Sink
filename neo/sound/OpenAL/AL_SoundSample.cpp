@@ -1191,7 +1191,7 @@ int32 idSoundSample_OpenAL::MS_ADPCM_nibble( MS_ADPCM_decodeState_t* state, int8
 
 int idSoundSample_OpenAL::MS_ADPCM_decode( uint8** audio_buf, uint32* audio_len )
 {
-	static MS_ADPCM_decodeState_t	states[2];
+	MS_ADPCM_decodeState_t			states[2] = {};	//puncho - R-E6-33: a local, not shared between calls or threads
 	MS_ADPCM_decodeState_t*			state[2];
 
 	uint8* freeable, *encoded, *decoded;

@@ -32,6 +32,9 @@ If you have questions concerning this license or the applicable additional terms
 class idSoundSample_OpenAL;
 class idSoundVoice_OpenAL;
 class idSoundHardware_OpenAL;
+//puncho - WP-SB4 (SEAMS section 3)
+class idSoundReverb;
+struct reverbCarrierFrame_t;
 
 
 
@@ -68,6 +71,34 @@ public:
 	{
 		return freeVoices.Num();
 	}
+
+	//puncho start - WP-SB4 (R-SB4-1, SEAMS section 3): no reverb carrier on OpenAL, so SB3's step 3 turns every map off
+	bool			SupportsReverbCarrier() const
+	{
+		return false;
+	}
+	bool			AcquireReverbCarrier()
+	{
+		return false;
+	}
+	void			SubmitReverbFrame( const reverbCarrierFrame_t& frame ) {}
+	bool			ReverbCarrierLive() const
+	{
+		return false;
+	}
+	bool			ReleaseIdleReverbGraph()
+	{
+		return false;
+	}
+	void			PrintReverbVoices() const {}
+	void			BeginReverbMap( idSoundReverb* owner ) {}
+	void			EndReverbMap( bool soundCarried ) {}
+	void			DetachReverb( const idSoundReverb* owner ) {}
+	int				ReverbBusVoiceCount() const
+	{
+		return 0;
+	}
+	//puncho end
 
 	// OpenAL info
 	static void		PrintDeviceList( const char* list );

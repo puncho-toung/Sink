@@ -132,6 +132,7 @@ void CinematicAudio_XAudio2::InitAudio( void* audioContext )
 	voiceFormatcine.nAvgBytesPerSec = voiceFormatcine.nSamplesPerSec * voiceFormatcine.nBlockAlign; //fixed
 	voiceFormatcine.cbSize = 22; //fixed
 	exvoice.Format = voiceFormatcine;
+	//puncho - R-E6-32: masks by channel count (6 and 8 were mono before); an unknown count gets no mask
 	switch( voiceFormatcine.nChannels )
 	{
 		case 1:
@@ -143,14 +144,14 @@ void CinematicAudio_XAudio2::InitAudio( void* audioContext )
 		case 4:
 			exvoice.dwChannelMask = SPEAKER_QUAD;
 			break;
-		case 5:
-			exvoice.dwChannelMask = SPEAKER_5POINT1_SURROUND;
+		case 6:
+			exvoice.dwChannelMask = SPEAKER_5POINT1;
 			break;
-		case 7:
+		case 8:
 			exvoice.dwChannelMask = SPEAKER_7POINT1_SURROUND;
 			break;
 		default:
-			exvoice.dwChannelMask = SPEAKER_MONO;
+			exvoice.dwChannelMask = 0;
 			break;
 	}
 	exvoice.Samples.wReserved = 0;
@@ -161,12 +162,30 @@ void CinematicAudio_XAudio2::InitAudio( void* audioContext )
 	// SRS - Hook up the voice callback interface to get notice when audio buffers can be freed
 	if( soundSystemLocal.GetIXAudio2() )
 	{
-		( ( IXAudio2* )soundSystemLocal.GetIXAudio2() )->CreateSourceVoice( &pMusicSourceVoice1, ( WAVEFORMATEX* )&exvoice, XAUDIO2_VOICE_USEFILTER, XAUDIO2_DEFAULT_FREQ_RATIO, &voiceCallback );
+		//puncho - R-E6-32: check the result; a failed create leaves no voice, and PlayAudio then plays nothing
+		HRESULT hr = ( ( IXAudio2* )soundSystemLocal.GetIXAudio2() )->CreateSourceVoice( &pMusicSourceVoice1, ( WAVEFORMATEX* )&exvoice, XAUDIO2_VOICE_USEFILTER, XAUDIO2_DEFAULT_FREQ_RATIO, &voiceCallback );
+		if( FAILED( hr ) )
+		{
+			common->Warning( "Cinematic audio: CreateSourceVoice failed (0x%08x) for %d channels\n", ( unsigned int )hr, ( int )voiceFormatcine.nChannels );
+			pMusicSourceVoice1 = NULL;
+		}
 	}
 }
 
 void CinematicAudio_XAudio2::PlayAudio( uint8_t* data, int size )
 {
+	//puncho - R-E6-32: no voice (a failed or missing create): free the buffer as a failed submit does, and play nothing
+	if( pMusicSourceVoice1 == NULL )
+	{
+#if defined(USE_FFMPEG)
+		av_freep( &data );
+#elif defined(USE_BINKDEC)
+		Mem_Free( data );
+		data = NULL;
+#endif
+		return;
+	}
+
 	//Store the data to XAudio2 buffer
 	Packet.Flags = XAUDIO2_END_OF_STREAM;
 	Packet.AudioBytes = size;

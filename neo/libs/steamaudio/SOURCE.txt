@@ -1,0 +1,10 @@
+Steam Audio 4.8.1 core, built by build_phonon.cmd without Intel IPP (WP-SB0).
+pristine core/ tree SHA-256 (phonon_build.py treehash): b474a15bfb6ca971be11900c6183ff50b58802514df625b14543f5b7102bb3fb
+dependency flatbuffers https://github.com/google/flatbuffers.git 6df40a2471737b27271bdd9b900ab5f3aec746c7
+dependency pffft https://github.com/marton78/pffft.git e0bf595c98ded55cc457a371c1b29c8cab552628
+dependency zlib https://github.com/madler/zlib.git 51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf
+dependency mysofa https://github.com/hoene/libmysofa.git dd315a8ec1fee7193d40e4a59b12c5590a4a918c
+dependency catch https://github.com/catchorg/Catch2.git 3b18d9e962835100d7e12ac80d22882e408e40dc
+patch 0001-repeatable-bake.patch SHA-256 598b3b4167644a15fc109b51a27ff87c92db3198eddfced2f0eb6d5700a68248
+patch 0002-probe-stats.patch SHA-256 35c0553c322c8cd102c95eb18fdeff81420bfa1a6669d02997511ddd0203eb6f
+compiler MSVC cl 19.44.35225.0
