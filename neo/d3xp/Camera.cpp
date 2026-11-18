@@ -351,7 +351,7 @@ void idCameraAnim::Spawn()
 	}
 
 	// always think during cinematics
-	cinematic = true;
+	SetCinematic( true );	//puncho - P2b.2.1a
 
 	LoadAnim();
 }
@@ -610,7 +610,7 @@ void idCameraAnim::GetViewParms( renderView_t* view )
 		return;
 	}
 
-	SetTimeState ts( timeGroup );
+	SetTimeState ts( GetTimeGroup() );
 
 	frameTime	= ( gameLocal.time - starttime ) * frameRate;
 	frame		= frameTime / 1000;
@@ -744,7 +744,7 @@ idCameraAnim::Event_Activate
 void idCameraAnim::Event_Activate( idEntity* _activator )
 {
 	activator = _activator;
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		Stop();
 	}

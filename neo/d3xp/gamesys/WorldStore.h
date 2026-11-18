@@ -96,6 +96,11 @@ public:
 	void RetireInstanceAfterActivation( uint64 identity, const char* destination );
 	void FinishMapActivation();
 	void ReplaceMapEntity( idEntity* oldEntity, idEntity* replacement );
+	//puncho - P2b.2.1b: idEntityHot::SetCell's hook when an entity's cellId changes, called after the row is written (a
+	// body reading entityHot.cell[ n ] sees the new id); empty until stage 7 (P2b.7.1)
+	void OnCellChanged( idEntity* ent, uint32 oldCell, uint32 newCell )
+	{
+	}
 	//puncho start - P2b.1.1b: the director, the game and the dev commands reach the store's state through these
 	void SetWorld( const char* name, uint64 instance )
 	{

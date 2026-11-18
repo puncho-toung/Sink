@@ -320,6 +320,8 @@ EVENT( AI_GetEmitter,						idAI::Event_GetEmitter )
 EVENT( AI_StopEmitter,						idAI::Event_StopEmitter )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idAI, AI_SCHEMA )	//puncho - P2b.2.3b: the FGD's rows and the row checks (gamesys/Schema.h)
+
 /*
 =====================
 idAI::Event_Activate

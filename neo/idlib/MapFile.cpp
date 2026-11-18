@@ -2000,8 +2000,22 @@ bool idMapFile::LoadLayerSource( idLexer& src, const char* fileName, idList<char
 		return false;
 	}
 	const int length = f->Length();
+	//puncho start - P2b.3.1b: never parse an incomplete byte stream
+	if( length < 0 )
+	{
+		idLib::fileSystem->CloseFile( f );
+		idLib::Error( "idMapFile::LoadLayerSource: length failed for %s", fileName );
+		return false;
+	}
 	text.SetNum( length + 1 );
-	f->Read( text.Ptr(), length );
+	const int bytesRead = f->Read( text.Ptr(), length );
+	if( bytesRead != length )
+	{
+		idLib::fileSystem->CloseFile( f );
+		idLib::Error( "idMapFile::LoadLayerSource: read failed for %s", fileName );
+		return false;
+	}
+	//puncho end - P2b.3.1b
 	text[length] = '\0';
 	fileTime = f->Timestamp();
 	idLib::fileSystem->CloseFile( f );
@@ -2726,6 +2740,21 @@ void idMapFile::RemoveEntities( const char* classname )
 		{
 			delete entities[i];
 			entities.RemoveIndex( i );
+			if( i < entityLines.Num() )
+			{
+				entityLines.RemoveIndex( i );
+			}
+			for( int j = 0; j < patchEntities.Num(); j++ )
+			{
+				if( patchEntities[j].entity == i )
+				{
+					patchEntities[j].entity = -1;
+				}
+				else if( patchEntities[j].entity > i )
+				{
+					patchEntities[j].entity--;
+				}
+			}
 			i--;
 		}
 	}

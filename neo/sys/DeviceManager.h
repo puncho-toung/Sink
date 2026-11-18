@@ -117,6 +117,11 @@ struct DeviceCreationParameters
 	// F3 ( D51 ): the device runs wave intrinsics in a pixel shader ( default = off, decided during device init ).
 	// RenderProgs picks the forward programs' USE_WAVE_OPS row by it
 	bool waveOps = false;
+	//puncho start - R1.2: used by RenderProgs to size and preflight volatile render-parm buffers
+	// Vulkan uses nvrhi's createBuffer alignment: max of minUniformBufferOffsetAlignment and nonCoherentAtomSize.
+	// Zero on APIs that keep no versioned storage.
+	uint32_t volatileConstantBufferAlignment = 0;
+	//puncho end
 };
 
 struct DefaultMessageCallback : public nvrhi::IMessageCallback
@@ -218,6 +223,13 @@ public:
 	{
 		return m_DeviceParams.waveOps;
 	}
+
+	//puncho start - R1.2: expose the backend's volatile-buffer stride alignment for preflight
+	uint32_t GetVolatileConstantBufferAlignment() const
+	{
+		return m_DeviceParams.volatileConstantBufferAlignment;
+	}
+	//puncho end
 
 	virtual nvrhi::ITexture* GetCurrentBackBuffer() = 0;
 	virtual nvrhi::ITexture* GetBackBuffer( uint32_t index ) = 0;

@@ -501,6 +501,7 @@ idPhysics_RigidBody::idPhysics_RigidBody()
 	integrator = new( TAG_PHYSICS ) idODE_Euler( sizeof( rigidBodyIState_t ) / sizeof( float ), RigidBodyDerivatives, this );
 
 	dropToFloor = false;
+	testSolid = false;	//puncho - P2b.7.0: saved before DropToFloor sets it
 	noImpact = false;
 	noContact = false;
 
@@ -1632,6 +1633,37 @@ const int	RB_FORCE_TOTAL_BITS			= 16;
 const int	RB_FORCE_EXPONENT_BITS		= idMath::BitsForInteger( idMath::BitsForFloat( RB_FORCE_MAX ) ) + 1;
 const int	RB_FORCE_MANTISSA_BITS		= RB_FORCE_TOTAL_BITS - 1 - RB_FORCE_EXPONENT_BITS;
 
+//puncho start - P2b.2.5d: RIGIDBODY_PSTATE_SCHEMA's HAND row (Physics_RigidBody.h), hand-written at its place in the list
+/*
+================
+WriteRigidBodyPState_Orientation
+================
+*/
+static void WriteRigidBodyPState_Orientation( idBitMsg& msg, const rigidBodyIState_t& s )
+{
+	const idCQuat quat = s.orientation.ToCQuat();
+
+	msg.WriteFloat( quat.x );
+	msg.WriteFloat( quat.y );
+	msg.WriteFloat( quat.z );
+}
+
+/*
+================
+ReadRigidBodyPState_Orientation
+================
+*/
+static void ReadRigidBodyPState_Orientation( const idBitMsg& msg, rigidBodyIState_t& s )
+{
+	idCQuat quat;
+
+	quat.x = msg.ReadFloat();
+	quat.y = msg.ReadFloat();
+	quat.z = msg.ReadFloat();
+	s.orientation = quat.ToMat3();
+}
+//puncho end
+
 /*
 ================
 idPhysics_RigidBody::WriteToSnapshot
@@ -1639,19 +1671,7 @@ idPhysics_RigidBody::WriteToSnapshot
 */
 void idPhysics_RigidBody::WriteToSnapshot( idBitMsg& msg ) const
 {
-	idCQuat quat, localQuat;
-
-	quat = current.i.orientation.ToCQuat();
-
-	msg.WriteFloat( current.i.position[0] );
-	msg.WriteFloat( current.i.position[1] );
-	msg.WriteFloat( current.i.position[2] );
-	msg.WriteFloat( quat.x );
-	msg.WriteFloat( quat.y );
-	msg.WriteFloat( quat.z );
-	msg.WriteFloat( current.i.linearMomentum[0], RB_MOMENTUM_EXPONENT_BITS, RB_MOMENTUM_MANTISSA_BITS );
-	msg.WriteFloat( current.i.linearMomentum[1], RB_MOMENTUM_EXPONENT_BITS, RB_MOMENTUM_MANTISSA_BITS );
-	msg.WriteFloat( current.i.linearMomentum[2], RB_MOMENTUM_EXPONENT_BITS, RB_MOMENTUM_MANTISSA_BITS );
+	RIGIDBODY_PSTATE_SCHEMA( SCHEMA_WRITE, current.i )	//puncho - P2b.2.5d: from current.i (Physics_RigidBody.h)
 }
 
 /*
@@ -1661,21 +1681,9 @@ idPhysics_RigidBody::ReadFromSnapshot
 */
 void idPhysics_RigidBody::ReadFromSnapshot( const idBitMsg& msg )
 {
-	idCQuat quat, localQuat;
-
 	previous = next;
 
-	next.i.position[0] = msg.ReadFloat();
-	next.i.position[1] = msg.ReadFloat();
-	next.i.position[2] = msg.ReadFloat();
-	quat.x = msg.ReadFloat();
-	quat.y = msg.ReadFloat();
-	quat.z = msg.ReadFloat();
-	next.i.linearMomentum[0] = msg.ReadFloat( RB_MOMENTUM_EXPONENT_BITS, RB_MOMENTUM_MANTISSA_BITS );
-	next.i.linearMomentum[1] = msg.ReadFloat( RB_MOMENTUM_EXPONENT_BITS, RB_MOMENTUM_MANTISSA_BITS );
-	next.i.linearMomentum[2] = msg.ReadFloat( RB_MOMENTUM_EXPONENT_BITS, RB_MOMENTUM_MANTISSA_BITS );
-
-	next.i.orientation = quat.ToMat3();
+	RIGIDBODY_PSTATE_SCHEMA( SCHEMA_READ, next.i )	//puncho - P2b.2.5d: into next.i (Physics_RigidBody.h)
 
 	// Make sure to initially set them up. Dont try to interpolate yet.
 	if( self->GetNumSnapshotsReceived() <= 1 )

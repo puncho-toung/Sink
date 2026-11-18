@@ -83,6 +83,9 @@ typedef struct trace_s
 } trace_t;
 
 typedef int cmHandle_t;
+//puncho start - R1.3: ModelInfo's selector for every loaded model together, never a handle or an index
+#define CM_MODEL_INFO_ALL ( -1 )
+//puncho end
 
 #define CM_CLIP_EPSILON		0.25f			// always stay this distance away from any model
 #define CM_BOX_EPSILON		1.0f			// should always be larger than clip epsilon
@@ -100,8 +103,11 @@ public:
 
 	virtual void			Preload( const char* mapName ) = 0;
 
-	// Gets the clip handle for a model.
-	virtual cmHandle_t		LoadModel( const char* modelName, const bool precache ) = 0;
+	//puncho start - R1.3: distinguish a loaded world's handle 0 from failure
+	// Gets the clip handle for a model: true sets outHandle (the world is handle 0);
+	// false (a precache miss or a model that does not load) leaves it unchanged.
+	virtual bool			LoadModel( const char* modelName, const bool precache, cmHandle_t& outHandle ) = 0;
+	//puncho end
 
 	// Sets up a trace model for collision with other trace models.
 	virtual cmHandle_t		SetupTrmModel( const idTraceModel& trm, const idMaterial* material ) = 0;
@@ -150,6 +156,12 @@ public:
 	virtual int				PointContents( const idVec3 p, cmHandle_t model ) = 0;
 
 	virtual int GetNumModels() const = 0;
+	//puncho start - R1.3: ordinary handle capacity, CM_MODEL_MAX_NORMAL while a map is loaded, 0 when cleared
+	virtual int GetMaxModels() const = 0;
+	//puncho end
+	//puncho - P2b.0.2: usedMemory summed over the loaded models ( collisionModelInfo all's total )
+	virtual int64			GetModelMemory() const = 0;
+	virtual int64			GetPolygonIdMemory() const = 0;	//puncho - P2b.0.2: OQ-B4 tables, outside usedMemory
 #if !defined( ID_RETAIL )
 	virtual void SelfTest( int count, int seed ) = 0;	//puncho - dev guard (P2 review): cm_selfTest is test scaffolding
 #endif
@@ -161,7 +173,7 @@ public:
 	virtual void			DrawModel( cmHandle_t model, const idVec3& modelOrigin, const idMat3& modelAxis,
 									   const idVec3& viewOrigin, const float radius ) = 0;
 
-	// Prints model information, use -1 handle for accumulated model info.
+	//puncho - R1.3: Prints model information, use CM_MODEL_INFO_ALL for accumulated model info.
 	virtual void			ModelInfo( cmHandle_t model ) = 0;
 
 	// Lists all loaded models.

@@ -182,10 +182,19 @@ struct aiTicStats_t
 	//puncho end
 	//puncho - P0: appended diagnostics; the five extra aggregate ints are director-approved
 	int		avoidDue, avoidEnrolled, avoidHits, avoidMisses, avoidUnenrolled;
+	//puncho start - P2b.2.6 (plans/map-graph/stages/S2b-2-entity-tables.md §8): the phase block, appended after the
+	// dormancy counts so the CSV keeps its column order
+	int		usPhaseSense;			// the phase block's ThinkSense calls (ai_profile); under ai_thinkPhases usThink is the four phases' sum
+	int		usPhaseDecide;			// its ThinkDecide calls, each member's pain clear included (ai_profile)
+	int		usPhaseMove;			// its ThinkMove calls (ai_profile)
+	int		usPhasePresent;			// its ThinkPresent calls (ai_profile)
+	int		phasedMonsters;			// members phase 0 found awake: the monsters that ran the four phases this tic
+	int		phaseLateJoins;			// phased rows the walk thought whole after the block: joined during it, or a member's slot reused
+	//puncho end
 };
 //puncho start - ai-combat: the block is summed and differenced as an int array (idAI::Think, RunAIStats); the count keeps a
 // member of another size out, a float of the same size still needs the reader's eye (an X-macro list would close that)
-#define AI_TIC_STAT_INTS	98 //puncho - P0
+#define AI_TIC_STAT_INTS	104	//puncho - 93, P0: the avoidance counts' 5, P2b.2.6: the phase block's 6
 compile_time_assert( sizeof( aiTicStats_t ) == AI_TIC_STAT_INTS * sizeof( int ) );
 //puncho end
 
@@ -219,6 +228,8 @@ struct mapGameStats_t
 	//puncho - P0: appended, never saved or networked
 	int avoidDue, avoidEnrolled, avoidHits, avoidMisses, avoidUnenrolled;
 	uint32 concurrencyUsTic, concurrencyUsThink, concurrencyUsEvents;
+	int cmModelsCap;	//puncho - R1.3: collisionModelManager->GetMaxModels(), the MAP row's cm denominator, 0 when cleared; appended, never saved or sent
+	int eventHighWater, eventCapacity, eventPassHighWater;	//puncho - R1.1: idEvent's H, MAX_EVENTS and P for the MAP alloc row; appended, never saved or sent
 };
 
 // The last tic's record for the com_showFPS 3 window, the aistats: line and the CSV (§2.5). POD on
@@ -287,6 +298,27 @@ struct contentDigests_t
 
 // the bytes after the load id for numLayers layers (sys_session_local.cpp asserts the largest fits a packet)
 #define CONTENT_DIGESTS_WIRE_SIZE( numLayers )	( CONTENT_DIGEST_COUNT * 4 + 1 + ( numLayers ) * LAYER_DIGEST_COUNT * 4 )
+//puncho end
+
+//puncho start - P2b.2.3b: one schema row's spawn side (C6, K1), as CLASS_SCHEMA_KEYS (gamesys/Schema.h) builds it for a
+// class's list; the FGD exporter reads a class's rows through idGame::GetSchemaKeys
+enum schemaKeyType_t
+{
+	SCHEMA_KEY_NONE		= 0,	// no FGD value: the row's type takes no key
+	SCHEMA_KEY_INTEGER	= 1,
+	SCHEMA_KEY_FLOAT	= 2,
+	SCHEMA_KEY_BOOL		= 3,
+	SCHEMA_KEY_STRING	= 4
+};
+
+struct schemaKey_t
+{
+	const char* 	field;			// the row's name
+	const char* 	key;			// the spawnArg, NULL for a row without one
+	const char* 	defaultValue;	// the spawn value when the key is absent, NULL for the constructor's
+	const char* 	editor;			// the FGD text, NULL for none
+	int				type;			// schemaKeyType_t
+};
 //puncho end
 
 class idGame
@@ -450,6 +482,10 @@ public:
 	virtual void				Shell_SetGameComplete() = 0;
 	virtual bool				SkipCinematicScene() = 0;
 	virtual bool				CheckInCinematic() = 0;
+
+	//puncho - P2b.2.3b: every schema row of spawnclass's chain, the root class's first, each class's in list order;
+	// false when no class has that name
+	virtual bool				GetSchemaKeys( const char* spawnclass, idList<const schemaKey_t*>& keys ) const = 0;
 };
 
 extern idGame* 					game;
@@ -594,7 +630,7 @@ extern idGameEdit* 				gameEdit;
 ===============================================================================
 */
 
-const int GAME_API_VERSION		= 12; // P2b stage 1: GetLevelKeep, RefusesMapWithPeers, FormatMapRows virtual, LoadPhase slot, skipStaticsCap, IsResident, IsSampleResident, bool SaveGame
+const int GAME_API_VERSION		= 16; // the GitHub line merged (v0001.3e, AAS-router): mapGameStats_t appends avoidDue, avoidEnrolled, avoidHits, avoidMisses, avoidUnenrolled, concurrencyUsTic, concurrencyUsThink, concurrencyUsEvents; idFile::FlushChecked virtual; renderLight_t holds emitter in place of mathLight; R1: idCollisionModelManager::LoadModel bool + out handle, GetMaxModels; mapGameStats_t (idGame::GetMapStats) appends cmModelsCap, eventHighWater, eventCapacity, eventPassHighWater; P2b stage 2: GetSchemaKeys; stage 1: GetLevelKeep, RefusesMapWithPeers, FormatMapRows virtual, LoadPhase slot, skipStaticsCap, IsResident, IsSampleResident, bool SaveGame; stage 0: idCommon::LoadSpanAdd/LoadSpanName, idFileSystem::GetReadUs/GetThreadReadBytes
 
 typedef struct
 {

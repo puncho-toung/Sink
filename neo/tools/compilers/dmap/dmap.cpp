@@ -44,6 +44,10 @@ dmapGlobals_t	dmapGlobals;
 idCVar dmap_phaseTimes( "dmap_phaseTimes", "1", CVAR_TOOL | CVAR_BOOL, "print summed compiler phase milliseconds" );
 int dmapOptimizeGroups;
 int dmapMaxGroupTris;
+//puncho start - R1.4: componentwise compile maxima of per-group cursors
+int dmapMaxGroupVerts;
+int dmapMaxGroupEdges;
+//puncho end
 static const char* dmapPhaseNames[] = { "load", "facebsp", "portals", "filter", "flood", "fillOutside", "clipSides", "floodAreas", "putPrimitives", "dressPre", "prelight", "optimize", "dressPost", "tjunc", "dressPostTj", "write", "cm",
 	//puncho - TC0: keep the existing columns above in their original order.
 	"writeSurfaces", "writeFormat", "writeFile", "cmBuild", "cmWrite", "aasLoad", "aasBrushes", "aasExpand", "aasBsp", "aasSubdivide", "aasStore", "aasReach", "aasCluster", "aasOptimize", "aasWrite" };
@@ -628,6 +632,11 @@ bool Dmap( const idCmdArgs& args ) //puncho - TC1: command errors follow cleanup
 	memset( dmapPhaseMS, 0, sizeof( dmapPhaseMS ) );
 	dmapOptimizeGroups = 0;
 	dmapMaxGroupTris = 0;
+	//puncho start - R1.4: an earlier compile may have left a group open
+	dmapMaxGroupVerts = 0;
+	dmapMaxGroupEdges = 0;
+	ResetOptWorkingSet();
+	//puncho end
 	int phaseStart = Sys_Milliseconds();
 	if( !LoadDMapFile( passedName ) )
 	{
@@ -704,6 +713,10 @@ bool Dmap( const idCmdArgs& args ) //puncho - TC1: command errors follow cleanup
 				common->Printf( "dmap phase %s %i\n", dmapPhaseNames[phase], dmapPhaseMS[phase] );
 			}
 			common->Printf( "dmap optimize groups %i maxGroupTris %i\n", dmapOptimizeGroups, dmapMaxGroupTris );
+			//puncho start - R1.4: report once per successful compile
+			common->Printf( "optimize: largest group %d verts %d edges (caps %d %d)\n", dmapMaxGroupVerts, dmapMaxGroupEdges, MAX_OPT_VERTEXES, MAX_OPT_EDGES );
+			common->Printf( "optimize: working set %llu live, %llu peak, cap %llu bytes\n", ( unsigned long long )optWorkingSetLive, ( unsigned long long )optWorkingSetPeak, ( unsigned long long )MAX_OPT_WORKING_SET );
+			//puncho end
 		}
 		common->DmapPacifierFilename( passedName, failed ? "Failed due to errors. Quit program." : "Done" );
 	}

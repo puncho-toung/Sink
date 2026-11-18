@@ -924,6 +924,9 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 		return true;
 	}
 
+	//puncho - P2b.0.4b: only a map load is a span; a GUI's empty world above adds nothing
+	idScopedLoadSpan procSpan( SPAN_RW_PROC );	// ends before SetupLightGrid, whose spans are LIGHTGRID_*
+
 	// load it
 	idStrStatic< MAX_OSPATH > filename = name;
 	filename.SetFileExtension( PROC_FILE_EXT );
@@ -946,6 +949,7 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 			TouchWorldModels();
 			AddWorldModelEntities();
 			ClearPortalStates();
+			procSpan.End();
 			SetupLightGrid();
 
 			// a map restart is a camera cut too: the next main view drops the TAA history
@@ -955,7 +959,10 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 		common->Printf( "idRenderWorldLocal::InitFromMap: timestamp has changed, reloading.\n" );
 	}
 
-	FreeWorld();
+	{
+		idScopedLoadSpan freeSpan( SPAN_FREE_RW );
+		FreeWorld();
+	}
 
 	// see if we have a generated version of this
 	// versions: 1 BFG, 2 MOC data, 3 vertex colour (opaque white for a surface without), 4 the same
@@ -1104,7 +1111,7 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 
 		if( !src->ReadToken( &token ) || ProcFileVersion( token ) == 0 )
 		{
-			common->Printf( "idRenderWorldLocal::InitFromMap: bad id '%s' instead of '%s' or '%s'\n", token.c_str(), PROC_FILE_ID, PROC_FILE_ID_003 );
+			common->Printf( "idRenderWorldLocal::InitFromMap: bad id '%s' instead of '%s', '%s' or '%s'\n", token.c_str(), PROC_FILE_ID, PROC_FILE_ID_004, PROC_FILE_ID_003 );
 			delete src;
 			return false;
 		}
@@ -1209,6 +1216,7 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 
 	AddWorldModelEntities();
 	ClearPortalStates();
+	procSpan.End();
 	SetupLightGrid();
 
 	// the next main view drops the previous map's motion vector and TAA history; the loader never

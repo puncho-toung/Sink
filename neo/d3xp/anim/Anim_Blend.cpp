@@ -1220,7 +1220,7 @@ void idAnim::CallFrameCommands( idEntity* ent, int from, int to ) const
 							gameLocal.Printf( "census %c frametrigger %s from %s\n", common->IsClient() ? 'C' : 'S', target->name.c_str(), ent->name.c_str() );
 						}
 						//puncho end
-						SetTimeState ts( target->timeGroup );
+						SetTimeState ts( target->GetTimeGroup() );
 						target->Signal( SIG_TRIGGER );
 						target->ProcessEvent( &EV_Activate, ent );
 						target->TriggerGuis();
@@ -4045,12 +4045,12 @@ size_t idAnimator::Allocated() const
 
 //puncho start - schema (P1-A1a): the element lists of idAnimator's two struct lists, and their element functions
 #define AFPOSEJOINTMOD_SCHEMA( X, s ) \
-	X( s, mod,		ENUM,	S,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, axis,		MAT3,	S,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, origin,	VEC3,	S,	RAW,	0,	SCHEMA_STOCK )
+	X( s, mod,		ENUM,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, axis,		MAT3,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, origin,	VEC3,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ )
 #define JOINTQUAT_SCHEMA( X, s ) \
-	X( s, q,		QUAT,	S,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, t,		VEC3,	S,	RAW,	0,	SCHEMA_STOCK )
+	X( s, q,		QUAT,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, t,		VEC3,	S,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ )
 SCHEMA_STRUCT_FUNCTIONS( AFPoseJointMod, idAFPoseJointMod, AFPOSEJOINTMOD_SCHEMA )
 SCHEMA_STRUCT_FUNCTIONS( JointQuat, idJointQuat, JOINTQUAT_SCHEMA )
 //puncho end

@@ -744,7 +744,7 @@ void idEntityFx::Think()
 		return;
 	}
 
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		Run( gameLocal.time );
 	}

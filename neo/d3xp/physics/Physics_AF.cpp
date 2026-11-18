@@ -3786,6 +3786,7 @@ idAFConstraint_ConeLimit::idAFConstraint_ConeLimit()
 {
 	type = CONSTRAINT_CONELIMIT;
 	name = "coneLimit";
+	epsilon = LCP_EPSILON;	//puncho - P2b.7.0: saved even before SetEpsilon; Add uses LIMIT_LCP_EPSILON
 	InitSize( 1 );
 	fl.allowPrimary = false;
 	fl.frameConstraint = true;
@@ -4058,6 +4059,7 @@ idAFConstraint_PyramidLimit::idAFConstraint_PyramidLimit()
 {
 	type = CONSTRAINT_PYRAMIDLIMIT;
 	name = "pyramidLimit";
+	epsilon = LCP_EPSILON;	//puncho - P2b.7.0: saved even before SetEpsilon; Add uses LIMIT_LCP_EPSILON
 	InitSize( 1 );
 	fl.allowPrimary = false;
 	fl.frameConstraint = true;
@@ -8982,6 +8984,37 @@ const int	AF_FORCE_TOTAL_BITS			= 16;
 const int	AF_FORCE_EXPONENT_BITS		= idMath::BitsForInteger( idMath::BitsForFloat( AF_FORCE_MAX ) ) + 1;
 const int	AF_FORCE_MANTISSA_BITS		= AF_FORCE_TOTAL_BITS - 1 - AF_FORCE_EXPONENT_BITS;
 
+//puncho start - P2b.2.5d: AF_BODY_PSTATE_SCHEMA's HAND row (Physics_AF.h), hand-written at its place in the list
+/*
+================
+WriteAFBodyPState_WorldAxis
+================
+*/
+static void WriteAFBodyPState_WorldAxis( idBitMsg& msg, const AFBodyPState_t& s )
+{
+	const idCQuat quat = s.worldAxis.ToCQuat();
+
+	msg.WriteFloat( quat.x );
+	msg.WriteFloat( quat.y );
+	msg.WriteFloat( quat.z );
+}
+
+/*
+================
+ReadAFBodyPState_WorldAxis
+================
+*/
+static void ReadAFBodyPState_WorldAxis( const idBitMsg& msg, AFBodyPState_t& s )
+{
+	idCQuat quat;
+
+	quat.x = msg.ReadFloat();
+	quat.y = msg.ReadFloat();
+	quat.z = msg.ReadFloat();
+	s.worldAxis = quat.ToMat3();
+}
+//puncho end
+
 /*
 ================
 idPhysics_AF::WriteToSnapshot
@@ -8990,37 +9023,16 @@ idPhysics_AF::WriteToSnapshot
 void idPhysics_AF::WriteToSnapshot( idBitMsg& msg ) const
 {
 	int i;
-	idCQuat quat;
 
-	msg.WriteLong( current.atRest );
-	msg.WriteFloat( current.noMoveTime );
-	msg.WriteFloat( current.activateTime );
-	msg.WriteDeltaFloat( 0.0f, current.pushVelocity[0], AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
-	msg.WriteDeltaFloat( 0.0f, current.pushVelocity[1], AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
-	msg.WriteDeltaFloat( 0.0f, current.pushVelocity[2], AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
-	msg.WriteDeltaFloat( 0.0f, current.pushVelocity[3], AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
-	msg.WriteDeltaFloat( 0.0f, current.pushVelocity[4], AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
-	msg.WriteDeltaFloat( 0.0f, current.pushVelocity[5], AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
+	AF_PSTATE_SCHEMA( SCHEMA_WRITE, current )	//puncho - P2b.2.5d: from current (Physics_AF.h)
 
 	msg.WriteByte( bodies.Num() );
 
 	for( i = 0; i < bodies.Num(); i++ )
 	{
 		AFBodyPState_t* state = bodies[i]->current;
-		quat = state->worldAxis.ToCQuat();
 
-		msg.WriteFloat( state->worldOrigin[0] );
-		msg.WriteFloat( state->worldOrigin[1] );
-		msg.WriteFloat( state->worldOrigin[2] );
-		msg.WriteFloat( quat.x );
-		msg.WriteFloat( quat.y );
-		msg.WriteFloat( quat.z );
-		msg.WriteDeltaFloat( 0.0f, state->spatialVelocity[0], AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
-		msg.WriteDeltaFloat( 0.0f, state->spatialVelocity[1], AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
-		msg.WriteDeltaFloat( 0.0f, state->spatialVelocity[2], AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
-		msg.WriteDeltaFloat( 0.0f, state->spatialVelocity[3], AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
-		msg.WriteDeltaFloat( 0.0f, state->spatialVelocity[4], AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
-		msg.WriteDeltaFloat( 0.0f, state->spatialVelocity[5], AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
+		AF_BODY_PSTATE_SCHEMA( SCHEMA_WRITE, ( *state ) )	//puncho - P2b.2.5d: from each body's current state (Physics_AF.h)
 		/*		msg.WriteDeltaFloat( 0.0f, state->externalForce[0], AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS );
 				msg.WriteDeltaFloat( 0.0f, state->externalForce[1], AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS );
 				msg.WriteDeltaFloat( 0.0f, state->externalForce[2], AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS );
@@ -9039,17 +9051,8 @@ idPhysics_AF::ReadFromSnapshot
 void idPhysics_AF::ReadFromSnapshot( const idBitMsg& msg )
 {
 	int i, num;
-	idCQuat quat;
 
-	current.atRest = msg.ReadLong();
-	current.noMoveTime = msg.ReadFloat();
-	current.activateTime = msg.ReadFloat();
-	current.pushVelocity[0] = msg.ReadDeltaFloat( 0.0f, AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
-	current.pushVelocity[1] = msg.ReadDeltaFloat( 0.0f, AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
-	current.pushVelocity[2] = msg.ReadDeltaFloat( 0.0f, AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
-	current.pushVelocity[3] = msg.ReadDeltaFloat( 0.0f, AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
-	current.pushVelocity[4] = msg.ReadDeltaFloat( 0.0f, AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
-	current.pushVelocity[5] = msg.ReadDeltaFloat( 0.0f, AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
+	AF_PSTATE_SCHEMA( SCHEMA_READ, current )	//puncho - P2b.2.5d: into current (Physics_AF.h)
 
 	num = msg.ReadByte();
 	assert( num == bodies.Num() );
@@ -9058,18 +9061,7 @@ void idPhysics_AF::ReadFromSnapshot( const idBitMsg& msg )
 	{
 		AFBodyPState_t* state = bodies[i]->current;
 
-		state->worldOrigin[0] = msg.ReadFloat();
-		state->worldOrigin[1] = msg.ReadFloat();
-		state->worldOrigin[2] = msg.ReadFloat();
-		quat.x = msg.ReadFloat();
-		quat.y = msg.ReadFloat();
-		quat.z = msg.ReadFloat();
-		state->spatialVelocity[0] = msg.ReadDeltaFloat( 0.0f, AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
-		state->spatialVelocity[1] = msg.ReadDeltaFloat( 0.0f, AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
-		state->spatialVelocity[2] = msg.ReadDeltaFloat( 0.0f, AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
-		state->spatialVelocity[3] = msg.ReadDeltaFloat( 0.0f, AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
-		state->spatialVelocity[4] = msg.ReadDeltaFloat( 0.0f, AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
-		state->spatialVelocity[5] = msg.ReadDeltaFloat( 0.0f, AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS );
+		AF_BODY_PSTATE_SCHEMA( SCHEMA_READ, ( *state ) )	//puncho - P2b.2.5d: into each body's current state (Physics_AF.h)
 		/*		state->externalForce[0] = msg.ReadDeltaFloat( 0.0f, AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS );
 				state->externalForce[1] = msg.ReadDeltaFloat( 0.0f, AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS );
 				state->externalForce[2] = msg.ReadDeltaFloat( 0.0f, AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS );
@@ -9077,7 +9069,6 @@ void idPhysics_AF::ReadFromSnapshot( const idBitMsg& msg )
 				state->externalForce[4] = msg.ReadDeltaFloat( 0.0f, AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS );
 				state->externalForce[5] = msg.ReadDeltaFloat( 0.0f, AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS );
 		*/
-		state->worldAxis = quat.ToMat3();
 	}
 
 	UpdateClipModels();

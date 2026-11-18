@@ -48,6 +48,13 @@ idInterpreter::idInterpreter()
 	Reset();
 }
 
+//puncho - P2b.7.0: only native-width stack results can hold OP_ADDRESS temporaries.
+// Share the slot test between the state scan and the saved-copy canonicalisation.
+static bool IsAddressSlot( const idVarDef* def )
+{
+	return def != NULL && def->initialized == idVarDef::stackVariable && def->Type() == ev_pointer && def->TypeDef()->Size() == sizeof( intptr_t );
+}
+
 /*
 ================
 idInterpreter::Save
@@ -74,7 +81,74 @@ void idInterpreter::Save( idSaveGame* savefile ) const
 	savefile->WriteInt( maxStackDepth );
 
 	savefile->WriteInt( localstackUsed );
-	savefile->Write( &localstack, localstackUsed );
+	//puncho start - P2b.7.0: OP_ADDRESS leaves native addresses in dead temporaries. Keep live addresses (a yielding
+	// RHS still needs one), and canonicalise only the saved copy. A reused def's type is its last allocation's,
+	// not the suspended statement's (Script_Compiler.cpp:1927): OP_ADDRESS can retype a live numeric result.
+	// Track numeric writes as well as address writes and reads. Execute increments before fetching a statement;
+	// EnterFunction stores instructionPointer + 1 in s, and LeaveFunction restores it through NextInstruction(s).
+	// Thus the executed points are instructionPointer and callStack[i].s - 1 (NextInstruction stores position - 1).
+	byte scratch[LOCALSTACK_SIZE];
+	enum { SLOT_NONE, SLOT_NUMERIC, SLOT_LIVE_ADDRESS, SLOT_DEAD_ADDRESS };
+	byte slotState[LOCALSTACK_SIZE] = {};
+	memcpy( scratch, localstack, localstackUsed );
+	for( int frame = 0; frame <= callStackDepth; frame++ )
+	{
+		const function_t* function = frame < callStackDepth ? callStack[frame].f : currentFunction;
+		if( function == NULL )
+		{
+			continue;
+		}
+		const int stackbase = frame < callStackDepth ? callStack[frame].stackbase : localstackBase;
+		const int executed = frame < callStackDepth ? callStack[frame].s - 1 : instructionPointer;
+		const int end = function->firstStatement + function->numStatements;
+		// The non-pointer stores and compound assignments write b (Script_Compiler.h opcode ranges, Execute).
+		// Other a/b uses consume addresses, but must preserve numbers held across a yielding call.
+		for( int statement = function->firstStatement; statement < end && statement <= executed; statement++ )
+		{
+			const statement_t& st = gameLocal.program.GetStatement( statement );
+			const bool writesB = ( st.op >= OP_STORE_F && st.op < OP_STOREP_F ) || ( st.op >= OP_UMUL_F && st.op <= OP_UOR_F );
+			const idVarDef* operands[3] = { st.a, st.b, st.c };
+			for( int operand = 0; operand < 3; operand++ )
+			{
+				const idVarDef* def = operands[operand];
+				if( !IsAddressSlot( def ) )
+				{
+					continue;
+				}
+				const int offset = stackbase + def->value.stackOffset;
+				assert( offset >= 0 && offset + ( int )sizeof( intptr_t ) <= localstackUsed );
+				if( operand == 2 )
+				{
+					slotState[offset] = st.op == OP_ADDRESS ? SLOT_LIVE_ADDRESS : SLOT_NUMERIC;
+				}
+				else if( operand == 1 && writesB )
+				{
+					slotState[offset] = SLOT_NUMERIC;
+				}
+				else if( slotState[offset] == SLOT_LIVE_ADDRESS )
+				{
+					slotState[offset] = SLOT_DEAD_ADDRESS;
+				}
+			}
+		}
+		for( int statement = function->firstStatement; statement < end; statement++ )
+		{
+			const statement_t& st = gameLocal.program.GetStatement( statement );
+			const idVarDef* def = st.c;
+			if( st.op != OP_ADDRESS || !IsAddressSlot( def ) )
+			{
+				continue;
+			}
+			const int offset = stackbase + def->value.stackOffset;
+			assert( offset >= 0 && offset + ( int )sizeof( intptr_t ) <= localstackUsed );
+			if( slotState[offset] == SLOT_NONE || slotState[offset] == SLOT_DEAD_ADDRESS )
+			{
+				memset( scratch + offset, 0, sizeof( intptr_t ) );
+			}
+		}
+	}
+	savefile->Write( scratch, localstackUsed );
+	//puncho end
 
 	savefile->WriteInt( localstackBase );
 	savefile->WriteInt( maxLocalstackUsed );

@@ -44,6 +44,14 @@ If you have questions concerning this license or the applicable additional terms
 #include <fcntl.h>
 #include <fnmatch.h>
 
+//puncho start - P2b.0.3: the hardware counters of g_passProfile 2 (Sys_PerfCounters*)
+#if defined( __linux__ )
+	#include <linux/perf_event.h>
+	#include <sys/syscall.h>
+	#include <sys/ioctl.h>
+#endif
+//puncho end
+
 // RB begin
 #if defined(__ANDROID__)
 	#include <android/log.h>
@@ -277,6 +285,146 @@ double Sys_GetClockTicks()
 #endif
 // RB end
 }
+
+//puncho start - P2b.0.3 (plans/map-graph/stages/S2b-0-gates-measurements.md, section 6): g_passProfile 2's counters, one
+// perf_event_open group (leader: cache misses, an L2-miss event on Zen; siblings: cycles, instructions) on the calling
+// thread, user space only (kernel.perf_event_paranoid 2 refuses the kernel's share)
+#if defined( __linux__ )
+
+static int	perfCounterFds[ SYS_NUM_PERF_COUNTERS ] = { -1, -1, -1 };
+static bool	perfCounterMultiplexed = false;		// the one line about a multiplexed group was printed since the open
+
+/*
+===============
+Sys_PerfCountersOpen
+===============
+*/
+bool Sys_PerfCountersOpen()
+{
+	if( perfCounterFds[ 0 ] != -1 )
+	{
+		return true;
+	}
+
+	const uint64 events[ SYS_NUM_PERF_COUNTERS ] = { PERF_COUNT_HW_CACHE_MISSES, PERF_COUNT_HW_CPU_CYCLES, PERF_COUNT_HW_INSTRUCTIONS };
+	const char* const eventNames[ SYS_NUM_PERF_COUNTERS ] = { "cache misses", "CPU cycles", "instructions" };
+	for( int i = 0; i < SYS_NUM_PERF_COUNTERS; i++ )
+	{
+		struct perf_event_attr attr;
+		memset( &attr, 0, sizeof( attr ) );
+		attr.size = sizeof( attr );
+		attr.type = PERF_TYPE_HARDWARE;
+		attr.config = events[ i ];
+		attr.exclude_kernel = 1;
+		attr.exclude_hv = 1;
+		if( i == 0 )
+		{
+			// Enable only after all siblings are open so all three counts start together. The two times tell a
+			// multiplexed group (the kernel scaled it) from one that counted all along.
+			attr.disabled = 1;
+			attr.read_format = PERF_FORMAT_GROUP | PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING;
+		}
+
+		const int groupFd = ( i == 0 ) ? -1 : perfCounterFds[ 0 ];
+		perfCounterFds[ i ] = ( int )syscall( __NR_perf_event_open, &attr, 0 /* pid: the calling thread */, -1 /* any cpu */, groupFd, 0 );
+		if( perfCounterFds[ i ] == -1 )
+		{
+			const int error = errno;
+			Sys_PerfCountersClose();
+			Sys_Printf( "Sys_PerfCountersOpen: perf_event_open (%s) failed: errno %d (%s)\n", eventNames[ i ], error, strerror( error ) );
+			return false;
+		}
+	}
+
+	if( ioctl( perfCounterFds[ 0 ], PERF_EVENT_IOC_ENABLE, PERF_IOC_FLAG_GROUP ) == -1 )
+	{
+		const int error = errno;
+		Sys_PerfCountersClose();
+		Sys_Printf( "Sys_PerfCountersOpen: group enable failed: errno %d (%s)\n", error, strerror( error ) );
+		return false;
+	}
+
+	perfCounterMultiplexed = false;
+	return true;
+}
+
+/*
+===============
+Sys_PerfCountersRead
+===============
+*/
+bool Sys_PerfCountersRead( uint64 out[ SYS_NUM_PERF_COUNTERS ] )
+{
+	if( perfCounterFds[ 0 ] == -1 )
+	{
+		return false;
+	}
+
+	struct
+	{
+		uint64		nr;
+		uint64		timeEnabled;
+		uint64		timeRunning;
+		uint64		values[ SYS_NUM_PERF_COUNTERS ];
+	} counters;
+	if( read( perfCounterFds[ 0 ], &counters, sizeof( counters ) ) != sizeof( counters ) || counters.nr != SYS_NUM_PERF_COUNTERS )
+	{
+		return false;
+	}
+	if( counters.timeEnabled != counters.timeRunning )
+	{
+		if( !perfCounterMultiplexed )
+		{
+			perfCounterMultiplexed = true;
+			Sys_Printf( "Sys_PerfCountersRead: the group was multiplexed (running %llu of %llu ns enabled); its reads fail\n",
+						( unsigned long long )counters.timeRunning, ( unsigned long long )counters.timeEnabled );
+		}
+		return false;
+	}
+
+	for( int i = 0; i < SYS_NUM_PERF_COUNTERS; i++ )
+	{
+		out[ i ] = counters.values[ i ];
+	}
+	return true;
+}
+
+/*
+===============
+Sys_PerfCountersClose
+===============
+*/
+void Sys_PerfCountersClose()
+{
+	for( int i = SYS_NUM_PERF_COUNTERS - 1; i >= 0; i-- )
+	{
+		if( perfCounterFds[ i ] != -1 )
+		{
+			close( perfCounterFds[ i ] );
+			perfCounterFds[ i ] = -1;
+		}
+	}
+}
+
+#else
+
+bool Sys_PerfCountersOpen()
+{
+	Sys_Printf( "Sys_PerfCountersOpen: no hardware counters on this platform\n" );
+	return false;
+}
+
+bool Sys_PerfCountersRead( uint64[ SYS_NUM_PERF_COUNTERS ] )
+{
+	return false;
+}
+
+void Sys_PerfCountersClose()
+{
+}
+
+#endif
+//puncho end
 
 /*
 ===============

@@ -49,13 +49,101 @@ If you have questions concerning this license or the applicable additional terms
 
 idBounds	optBounds;
 
-#define	MAX_OPT_VERTEXES	0x10000
+//puncho - R1.4: MAX_OPT_VERTEXES / MAX_OPT_EDGES live in dmap.h; the counts are per-group cursors, reset by AddOriginalEdges
 int			numOptVerts;
 optVertex_t optVerts[MAX_OPT_VERTEXES];
 
-#define	MAX_OPT_EDGES		0x40000
 static	int		numOptEdges;
 static	optEdge_t	optEdges[MAX_OPT_EDGES];
+
+//puncho start - R1.4: one optimizer group's working set; outside a group the hooks count nothing
+static const uint64	optWorkingSetBase = sizeof( optVerts ) + sizeof( optEdges ) + tjunctionHashHeadBytes;
+static const optimizeGroup_t*	optActiveGroup;
+uint64				optWorkingSetLive;
+uint64				optWorkingSetPeak;
+compile_time_assert( MAX_OPT_WORKING_SET <= SIZE_MAX );	// an admitted request always fits size_t
+
+static const char* OptGroupMaterialName( const optimizeGroup_t* opt )
+{
+	return opt != NULL && opt->material != NULL ? opt->material->GetName() : "<unknown>";
+}
+
+static int OptGroupArea( const optimizeGroup_t* opt )
+{
+	return opt != NULL ? opt->areaNum : -1;
+}
+
+/*
+====================
+ResetOptWorkingSet
+====================
+*/
+void ResetOptWorkingSet()
+{
+	optWorkingSetLive = optWorkingSetBase;
+	optWorkingSetPeak = 0;
+	optActiveGroup = NULL;
+}
+
+/*
+====================
+ReserveOptWorkingSet
+====================
+*/
+void ReserveOptWorkingSet( uint64 bytes )
+{
+	if( optActiveGroup == NULL )
+	{
+		return;
+	}
+	// a fixed base past the cap refuses every request instead of wrapping the subtraction
+	if( optWorkingSetLive > MAX_OPT_WORKING_SET || bytes > MAX_OPT_WORKING_SET - optWorkingSetLive )
+	{
+		common->Error( "OPT_WORKING_SET: %llu live, %llu requested, cap %llu bytes; material '%s', area %d; high-water %llu",
+					   ( unsigned long long )optWorkingSetLive, ( unsigned long long )bytes, ( unsigned long long )MAX_OPT_WORKING_SET,
+					   OptGroupMaterialName( optActiveGroup ), OptGroupArea( optActiveGroup ), ( unsigned long long )Max( optWorkingSetPeak, optWorkingSetLive ) );
+		return;
+	}
+	optWorkingSetLive += bytes;
+	optWorkingSetPeak = Max( optWorkingSetPeak, optWorkingSetLive );
+}
+
+/*
+====================
+ReleaseOptWorkingSet
+====================
+*/
+void ReleaseOptWorkingSet( uint64 bytes )
+{
+	if( optActiveGroup == NULL )
+	{
+		return;
+	}
+	if( bytes > optWorkingSetLive - optWorkingSetBase )
+	{
+		common->Error( "OPT_WORKING_SET accounting: %llu live, %llu released, fixed %llu bytes; material '%s', area %d",
+					   ( unsigned long long )optWorkingSetLive, ( unsigned long long )bytes, ( unsigned long long )optWorkingSetBase,
+					   OptGroupMaterialName( optActiveGroup ), OptGroupArea( optActiveGroup ) );
+		return;
+	}
+	optWorkingSetLive -= bytes;
+}
+
+/*
+====================
+OptCountBytes
+====================
+*/
+static uint64 OptCountBytes( uint64 count, uint64 width )
+{
+	if( width != 0 && count > UINT64_MAX / width )
+	{
+		common->Error( "OPT_WORKING_SET: %llu x %llu bytes overflows 64 bits; material '%s', area %d", ( unsigned long long )count, ( unsigned long long )width, OptGroupMaterialName( optActiveGroup ), OptGroupArea( optActiveGroup ) );
+		return 0;
+	}
+	return count * width;
+}
+//puncho end
 
 static bool IsTriangleValid( const optVertex_t* v1, const optVertex_t* v2, const optVertex_t* v3 );
 static bool IsTriangleDegenerate( const optVertex_t* v1, const optVertex_t* v2, const optVertex_t* v3 );
@@ -112,7 +200,9 @@ static optEdge_t*	AllocEdge()
 
 	if( numOptEdges == MAX_OPT_EDGES )
 	{
-		common->Error( "MAX_OPT_EDGES" );
+		common->Error( "MAX_OPT_EDGES: %d allocated, attempted %d (cap %d), material '%s', area %d; high-water %d verts %d edges",
+					   numOptEdges, numOptEdges + 1, MAX_OPT_EDGES, OptGroupMaterialName( optActiveGroup ), OptGroupArea( optActiveGroup ),
+					   Max( dmapMaxGroupVerts, numOptVerts ), Max( dmapMaxGroupEdges, numOptEdges ) );	//puncho - R1.4
 	}
 	e = &optEdges[ numOptEdges ];
 	numOptEdges++;
@@ -236,7 +326,9 @@ static optVertex_t* FindOptVertex( idDrawVert* v, optimizeGroup_t* opt )
 
 	if( numOptVerts >= MAX_OPT_VERTEXES )
 	{
-		common->Error( "MAX_OPT_VERTEXES" );
+		common->Error( "MAX_OPT_VERTEXES: %d allocated, attempted %d (cap %d), material '%s', area %d; high-water %d verts %d edges",
+					   numOptVerts, numOptVerts + 1, MAX_OPT_VERTEXES, OptGroupMaterialName( opt ), OptGroupArea( opt ),
+					   Max( dmapMaxGroupVerts, numOptVerts ), Max( dmapMaxGroupEdges, numOptEdges ) );	//puncho - R1.4: a duplicate at capacity returned from the lookup above
 		return NULL;
 	}
 
@@ -389,7 +481,7 @@ static	optVertex_t* EdgeIntersection( const optVertex_t* p1, const optVertex_t* 
 									   const optVertex_t* l1, const optVertex_t* l2, optimizeGroup_t* opt )
 {
 	float	f;
-	idDrawVert*	v;
+	idDrawVert	v;	//puncho - R1.4
 	idVec3	dir1, dir2, cross1, cross2;
 
 	dir1 = p1->pv - l1->pv;
@@ -407,21 +499,24 @@ static	optVertex_t* EdgeIntersection( const optVertex_t* p1, const optVertex_t* 
 
 	f = cross1[2] / ( cross1[2] - cross2[2] );
 
-	// FIXME: how are we freeing this, since it doesn't belong to a tri?
-	v = ( idDrawVert* )Mem_Alloc( sizeof( *v ), TAG_TOOLS );
-	memset( v, 0, sizeof( *v ) );
+	//puncho start - R1.4: FindOptVertex copies the temporary or returns an existing vertex
+	ReserveOptWorkingSet( sizeof( v ) );
+	memset( &v, 0, sizeof( v ) );
 
-	v->xyz = p1->v.xyz * ( 1.0 - f ) + p2->v.xyz * f;
+	v.xyz = p1->v.xyz * ( 1.0 - f ) + p2->v.xyz * f;
 	idVec3 normal = p1->v.GetNormal() * ( 1.0 - f ) + p2->v.GetNormal() * f;
 	normal.Normalize();
-	v->SetNormal( normal );
+	v.SetNormal( normal );
 
 	idVec2 st;
 	st.x = p1->v.GetTexCoordS() * ( 1.0 - f ) + p2->v.GetTexCoordS() * f;
 	st.y = p1->v.GetTexCoordT() * ( 1.0 - f ) + p2->v.GetTexCoordT() * f;
-	v->SetTexCoord( st );
+	v.SetTexCoord( st );
 
-	return FindOptVertex( v, opt );
+	optVertex_t* vert = FindOptVertex( &v, opt );
+	ReleaseOptWorkingSet( sizeof( v ) );
+	return vert;
+	//puncho end
 }
 
 
@@ -615,8 +710,10 @@ static	void AddInteriorEdges( optIsland_t* island )
 	optVertex_t*	vert, *vert2;
 	int		c_verts;
 	edgeLength_t*	lengths;
-	int				numLengths;
-	int				i;
+	//puncho start - R1.4: pair counts can exceed signed int
+	uint64			numLengths;
+	uint64			i;
+	//puncho end
 
 	DrawVerts( island );
 
@@ -632,7 +729,13 @@ static	void AddInteriorEdges( optIsland_t* island )
 	}
 
 	// allocate space for all the lengths
-	lengths = ( edgeLength_t* )Mem_Alloc( sizeof( *lengths ) * c_verts * c_verts / 2, TAG_TOOLS );
+	//puncho start - R1.4: halve the even factor before multiplying
+	uint64 n = c_verts;
+	uint64 numPairs = ( n & 1 ) ? n * ( ( n - 1 ) / 2 ) : ( n / 2 ) * ( n - 1 );
+	uint64 pairBytes = OptCountBytes( numPairs, sizeof( *lengths ) );
+	ReserveOptWorkingSet( pairBytes );
+	lengths = ( edgeLength_t* )Mem_Alloc( ( size_t )pairBytes, TAG_TOOLS );
+	//puncho end
 	numLengths = 0;
 	for( vert = island->verts ; vert ; vert = vert->islandLink )
 	{
@@ -658,7 +761,12 @@ static	void AddInteriorEdges( optIsland_t* island )
 
 
 	// sort by length, shortest first
-	qsort( lengths, numLengths, sizeof( lengths[0] ), LengthSort );
+	//puncho start - R1.4: a zero-sized allocation may be NULL
+	if( numLengths != 0 )
+	{
+		qsort( lengths, ( size_t )numLengths, sizeof( lengths[0] ), LengthSort );
+	}
+	//puncho end
 
 	// try to create them in that order
 	c_addedEdges = 0;
@@ -670,10 +778,11 @@ static	void AddInteriorEdges( optIsland_t* island )
 		}
 	}
 
-	common->VerbosePrintf( "%6i tested segments\n", numLengths );
+	common->VerbosePrintf( "%6llu tested segments\n", ( unsigned long long )numLengths );	//puncho - R1.4
 	common->VerbosePrintf( "%6i added interior edges\n", c_addedEdges );
 
 	Mem_Free( lengths );
+	ReleaseOptWorkingSet( pairBytes );	//puncho - R1.4
 }
 
 
@@ -908,6 +1017,7 @@ static void FreeOptTriangles( optIsland_t* island )
 	{
 		next = opt->next;
 		Mem_Free( opt );
+		ReleaseOptWorkingSet( sizeof( *opt ) );	//puncho - R1.4
 	}
 
 	island->tris = NULL;
@@ -1162,6 +1272,7 @@ static void CreateOptTri( optVertex_t* first, optEdge_t* e1, optEdge_t* e2, optI
 	}
 
 	// create new triangle
+	ReserveOptWorkingSet( sizeof( *optTri ) );	//puncho - R1.4
 	optTri = ( optTri_t* )Mem_Alloc( sizeof( *optTri ), TAG_TOOLS );
 	optTri->v[0] = first;
 	optTri->v[1] = second;
@@ -1593,6 +1704,7 @@ typedef struct edgeCrossing_s
 } edgeCrossing_t;
 
 static	originalEdges_t*	originalEdges;
+static	uint64				originalEdgesBytes;	//puncho - R1.4
 static	int				numOriginalEdges;
 
 /*
@@ -1665,7 +1777,11 @@ static	void AddOriginalEdges( optimizeGroup_t* opt )
 
 	// allocate space for max possible edges
 	numTris = CountTriList( opt->triList );
-	originalEdges = ( originalEdges_t* )Mem_Alloc( numTris * 3 * sizeof( *originalEdges ), TAG_TOOLS );
+	//puncho start - R1.4: widen before multiplying the edge count
+	originalEdgesBytes = OptCountBytes( ( uint64 )numTris * 3, sizeof( *originalEdges ) );
+	ReserveOptWorkingSet( originalEdgesBytes );
+	originalEdges = ( originalEdges_t* )Mem_Alloc( ( size_t )originalEdgesBytes, TAG_TOOLS );
+	//puncho end
 	numOriginalEdges = 0;
 
 	// add all unique triangle edges
@@ -1705,7 +1821,11 @@ void SplitOriginalEdgesAtCrossings( optimizeGroup_t* opt )
 	dmapGlobals.drawBounds[1][1] += 2;
 
 	// generate crossing points between all the original edges
-	crossings = ( edgeCrossing_t** )Mem_ClearedAlloc( numOriginalEdges * sizeof( *crossings ), TAG_TOOLS );
+	//puncho start - R1.4: reject oversized requests before narrowing to size_t
+	uint64 crossingBytes = OptCountBytes( numOriginalEdges, sizeof( *crossings ) );
+	ReserveOptWorkingSet( crossingBytes );
+	crossings = ( edgeCrossing_t** )Mem_ClearedAlloc( ( size_t )crossingBytes, TAG_TOOLS );
+	//puncho end
 
 	for( i = 0 ; i < numOriginalEdges ; i++ )
 	{
@@ -1751,6 +1871,7 @@ void SplitOriginalEdgesAtCrossings( optimizeGroup_t* opt )
 				// colinear, so add both verts of each edge to opposite
 				if( VertexBetween( v3, v1, v2 ) )
 				{
+					ReserveOptWorkingSet( sizeof( *cross ) );	//puncho - R1.4
 					cross = ( edgeCrossing_t* )Mem_ClearedAlloc( sizeof( *cross ), TAG_TOOLS );
 					cross->ov = v3;
 					cross->next = crossings[i];
@@ -1759,6 +1880,7 @@ void SplitOriginalEdgesAtCrossings( optimizeGroup_t* opt )
 
 				if( VertexBetween( v4, v1, v2 ) )
 				{
+					ReserveOptWorkingSet( sizeof( *cross ) );	//puncho - R1.4
 					cross = ( edgeCrossing_t* )Mem_ClearedAlloc( sizeof( *cross ), TAG_TOOLS );
 					cross->ov = v4;
 					cross->next = crossings[i];
@@ -1767,6 +1889,7 @@ void SplitOriginalEdgesAtCrossings( optimizeGroup_t* opt )
 
 				if( VertexBetween( v1, v3, v4 ) )
 				{
+					ReserveOptWorkingSet( sizeof( *cross ) );	//puncho - R1.4
 					cross = ( edgeCrossing_t* )Mem_ClearedAlloc( sizeof( *cross ), TAG_TOOLS );
 					cross->ov = v1;
 					cross->next = crossings[j];
@@ -1775,6 +1898,7 @@ void SplitOriginalEdgesAtCrossings( optimizeGroup_t* opt )
 
 				if( VertexBetween( v2, v3, v4 ) )
 				{
+					ReserveOptWorkingSet( sizeof( *cross ) );	//puncho - R1.4
 					cross = ( edgeCrossing_t* )Mem_ClearedAlloc( sizeof( *cross ), TAG_TOOLS );
 					cross->ov = v2;
 					cross->next = crossings[j];
@@ -1797,6 +1921,7 @@ void SplitOriginalEdgesAtCrossings( optimizeGroup_t* opt )
 #endif
 			if( newVert != v1 && newVert != v2 )
 			{
+				ReserveOptWorkingSet( sizeof( *cross ) );	//puncho - R1.4
 				cross = ( edgeCrossing_t* )Mem_ClearedAlloc( sizeof( *cross ), TAG_TOOLS );
 				cross->ov = newVert;
 				cross->next = crossings[i];
@@ -1805,6 +1930,7 @@ void SplitOriginalEdgesAtCrossings( optimizeGroup_t* opt )
 
 			if( newVert != v3 && newVert != v4 )
 			{
+				ReserveOptWorkingSet( sizeof( *cross ) );	//puncho - R1.4
 				cross = ( edgeCrossing_t* )Mem_ClearedAlloc( sizeof( *cross ), TAG_TOOLS );
 				cross->ov = newVert;
 				cross->next = crossings[j];
@@ -1829,7 +1955,11 @@ void SplitOriginalEdgesAtCrossings( optimizeGroup_t* opt )
 			numCross++;
 		}
 		numCross += 2;	// account for originals
-		sorted = ( optVertex_t** )Mem_Alloc( numCross * sizeof( *sorted ), TAG_TOOLS );
+		//puncho start - R1.4: reject oversized requests before narrowing to size_t
+		uint64 sortedBytes = OptCountBytes( numCross, sizeof( *sorted ) );
+		ReserveOptWorkingSet( sortedBytes );
+		sorted = ( optVertex_t** )Mem_Alloc( ( size_t )sortedBytes, TAG_TOOLS );
+		//puncho end
 		sorted[0] = originalEdges[i].v1;
 		sorted[1] = originalEdges[i].v2;
 		j = 2;
@@ -1838,6 +1968,7 @@ void SplitOriginalEdgesAtCrossings( optimizeGroup_t* opt )
 			nextCross = cross->next;
 			sorted[j] = cross->ov;
 			Mem_Free( cross );
+			ReleaseOptWorkingSet( sizeof( *cross ) );	//puncho - R1.4: its vertex moved to sorted
 			j++;
 		}
 
@@ -1871,11 +2002,14 @@ void SplitOriginalEdgesAtCrossings( optimizeGroup_t* opt )
 		}
 
 		Mem_Free( sorted );
+		ReleaseOptWorkingSet( sortedBytes );	//puncho - R1.4
 	}
 
 
 	Mem_Free( crossings );
+	ReleaseOptWorkingSet( crossingBytes );	//puncho - R1.4
 	Mem_Free( originalEdges );
+	ReleaseOptWorkingSet( originalEdgesBytes );	//puncho - R1.4
 
 	// check for duplicated edges
 	for( i = 0 ; i < numOptEdges ; i++ )
@@ -2083,6 +2217,15 @@ static	void OptimizeOptList( optimizeGroup_t* opt )
 {
 	optimizeGroup_t*	oldNext;
 
+	//puncho start - R1.4: include input triangles before T-junction allocations
+	if( optActiveGroup != NULL )
+	{
+		common->Error( "OptimizeOptList: group already open, material '%s', area %d", OptGroupMaterialName( optActiveGroup ), OptGroupArea( optActiveGroup ) );
+	}
+	optActiveGroup = opt;
+	ReserveOptWorkingSet( OptCountBytes( ( uint64 )CountTriList( opt->triList ) + ( uint64 )CountTriList( opt->regeneratedTris ), sizeof( mapTri_t ) ) );
+	//puncho end
+
 	// fix the t junctions among this single list
 	// so we can match edges
 	// can we avoid doing this if colinear vertexes break edges?
@@ -2112,6 +2255,19 @@ static	void OptimizeOptList( optimizeGroup_t* opt )
 	FreeTriList( opt->triList );
 	opt->triList = opt->regeneratedTris;
 	opt->regeneratedTris = NULL;
+	//puncho start - R1.4: survivors leave the group without being freed
+	uint64 survivorBytes = OptCountBytes( CountTriList( opt->triList ), sizeof( mapTri_t ) );
+	ReleaseOptWorkingSet( survivorBytes );
+	if( optWorkingSetLive != optWorkingSetBase )
+	{
+		common->Error( "OPT_WORKING_SET accounting: %llu live, %llu released, fixed %llu bytes; material '%s', area %d",
+					   ( unsigned long long )optWorkingSetLive, ( unsigned long long )survivorBytes, ( unsigned long long )optWorkingSetBase,
+					   OptGroupMaterialName( optActiveGroup ), OptGroupArea( optActiveGroup ) );
+	}
+	dmapMaxGroupVerts = Max( dmapMaxGroupVerts, numOptVerts );
+	dmapMaxGroupEdges = Max( dmapMaxGroupEdges, numOptEdges );
+	optActiveGroup = NULL;
+	//puncho end
 }
 
 

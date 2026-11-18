@@ -426,7 +426,9 @@ static void R_AddSingleLight( viewLight_t* vLight )
 		// Calculate the matrix that projects the zero-to-one cube to exactly cover the
 		// light frustum in clip space.
 		idRenderMatrix invProjectMVPMatrix;
-		idRenderMatrix::Multiply( viewDef->worldCullMVP, light->inverseBaseLightProject, invProjectMVPMatrix );
+		//puncho - F-FRONTEND-ND: unjittered, as every visibility decision; Expand() below keeps the rect a pixel
+		// wider than the jittered draw needs
+		idRenderMatrix::Multiply( viewDef->worldCullUnjitteredMVP, light->inverseBaseLightProject, invProjectMVPMatrix );
 
 		// Calculate the projected bounds, either not clipped at all, near clipped, or fully clipped.
 		idBounds projected;
@@ -948,7 +950,7 @@ static void R_AddSingleLight( viewLight_t* vLight )
 
 			// track S ( S2c ): a cacheable caster of a light that draws its static maps is kept even when its
 			// shadow misses the view: the static map must hold it when the camera turns
-			if( !( vLight->shadowFullGather && R_ShadowCacheEntityCacheable( edef ) ) && idRenderMatrix::CullBoundsToMVP( viewDef->worldCullMVP, shadowBounds ) )
+			if( !( vLight->shadowFullGather && R_ShadowCacheEntityCacheable( edef ) ) && idRenderMatrix::CullBoundsToMVP( viewDef->worldCullUnjitteredMVP, shadowBounds ) )	//puncho - F-FRONTEND-ND
 			{
 				continue;
 			}

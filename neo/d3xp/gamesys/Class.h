@@ -162,6 +162,19 @@ template< class C, class R, class A > struct idClassMemberOwner< R ( C::* )( A )
 #define CLASS_OWNS_LEVEL_FUNC( nameofsuperclass, nameofclass, func )	\
 	( !idClassSameType< idClassMemberOwner< decltype( &nameofclass::func ) >::type, idClassMemberOwner< decltype( &nameofsuperclass::func ) >::type >::value )
 //puncho end
+//puncho start - P2b.2.1a: whether a class runs a SharedThink of its own or a C++ base's, not idClass's empty one (the hot
+// table's HOT_SHARED; only idLight overrides it): the same owner test on a function of no arguments
+template< class C, class R > struct idClassMemberOwner< R ( C::* )() >
+{
+	typedef C type;
+};
+template< class C, class R > struct idClassMemberOwner< R ( C::* )() const >
+{
+	typedef C type;
+};
+#define CLASS_SHARED_THINK( nameofclass )	\
+	( !idClassSameType< idClassMemberOwner< decltype( &nameofclass::SharedThink ) >::type, idClass >::value )
+//puncho end
 
 /*
 ================
@@ -180,7 +193,8 @@ incorrect.  Use this on concrete classes only.
 	idTypeInfo nameofclass::Type( #nameofclass, #nameofsuperclass,									\
 		( idEventFunc<idClass> * )nameofclass::eventCallbacks,	nameofclass::CreateInstance, ( void ( idClass::* )() )&nameofclass::Spawn,	\
 		( void ( idClass::* )( idSaveGame * ) const )&nameofclass::Save, ( void ( idClass::* )( idRestoreGame * ) )&nameofclass::Restore,	\
-		CLASS_OWNS_LEVEL_FUNC( nameofsuperclass, nameofclass, Save ), CLASS_OWNS_LEVEL_FUNC( nameofsuperclass, nameofclass, Restore ) );	\
+		CLASS_OWNS_LEVEL_FUNC( nameofsuperclass, nameofclass, Save ), CLASS_OWNS_LEVEL_FUNC( nameofsuperclass, nameofclass, Restore ),	\
+		CLASS_SHARED_THINK( nameofclass ) );	\
 	idClass *nameofclass::CreateInstance() {														\
 		try {																						\
 			nameofclass *ptr = new nameofclass;														\
@@ -200,7 +214,8 @@ idEventFunc<nameofclass> nameofclass::eventCallbacks[] = {
 	idTypeInfo nameofclass::Type( #nameofclass, #nameofsuperclass,									\
 		( idEventFunc<idClass> * )nameofclass::eventCallbacks,	nameofclass::CreateInstance, ( void ( idClass::* )() )&nameofclass::Spawn,	\
 		( void ( idClass::* )( idSaveGame * ) const )&nameofclass::Save, ( void ( idClass::* )( idRestoreGame * ) )&nameofclass::Restore,	\
-		CLASS_OWNS_LEVEL_FUNC( nameofsuperclass, nameofclass, Save ), CLASS_OWNS_LEVEL_FUNC( nameofsuperclass, nameofclass, Restore ) );	\
+		CLASS_OWNS_LEVEL_FUNC( nameofsuperclass, nameofclass, Save ), CLASS_OWNS_LEVEL_FUNC( nameofsuperclass, nameofclass, Restore ),	\
+		CLASS_SHARED_THINK( nameofclass ) );	\
 	idClass *nameofclass::CreateInstance() {													\
 			nameofclass *ptr = new nameofclass;														\
 			ptr->FindUninitializedMemory();															\
@@ -244,7 +259,8 @@ on abstract classes only.
 	idTypeInfo nameofclass::Type( #nameofclass, #nameofsuperclass,									\
 		( idEventFunc<idClass> * )nameofclass::eventCallbacks, nameofclass::CreateInstance, ( void ( idClass::* )() )&nameofclass::Spawn,	\
 		( void ( idClass::* )( idSaveGame * ) const )&nameofclass::Save, ( void ( idClass::* )( idRestoreGame * ) )&nameofclass::Restore,	\
-		CLASS_OWNS_LEVEL_FUNC( nameofsuperclass, nameofclass, Save ), CLASS_OWNS_LEVEL_FUNC( nameofsuperclass, nameofclass, Restore ) );	\
+		CLASS_OWNS_LEVEL_FUNC( nameofsuperclass, nameofclass, Save ), CLASS_OWNS_LEVEL_FUNC( nameofsuperclass, nameofclass, Restore ),	\
+		CLASS_SHARED_THINK( nameofclass ) );	\
 	idClass *nameofclass::CreateInstance() {													\
 		gameLocal.Error( "Cannot instanciate abstract class %s.", #nameofclass );					\
 		return NULL;																				\
@@ -372,6 +388,7 @@ public:
 	void	( idClass::*Restore )( idRestoreGame* savefile );
 	bool						ownSave;			//puncho - OQ-B7: Save is not the type super's (CLASS_OWNS_LEVEL_FUNC)
 	bool						ownRestore;			//puncho - OQ-B7: Restore is not the type super's
+	bool						sharedThink;		//puncho - P2b.2.1a: SharedThink is not idClass's (CLASS_SHARED_THINK)
 
 	idEventFunc<idClass>* 		eventCallbacks;
 	eventCallback_t* 			eventMap;
@@ -383,10 +400,13 @@ public:
 
 	idHierarchy<idTypeInfo>		node;
 
+	const schemaKey_t* 			schemaKeys;			//puncho - P2b.2.3b: this level's list rows (CLASS_SCHEMA_KEYS), NULL for none
+	int							numSchemaKeys;
+
 	idTypeInfo( const char* classname, const char* superclass,
 				idEventFunc<idClass>* eventCallbacks, idClass * ( *CreateInstance )(), void ( idClass::*Spawn )(),
 				void ( idClass::*Save )( idSaveGame* savefile ) const, void	( idClass::*Restore )( idRestoreGame* savefile ),
-				bool ownSave, bool ownRestore );	//puncho - OQ-B7
+				bool ownSave, bool ownRestore, bool sharedThink );	//puncho - OQ-B7, P2b.2.1a
 	~idTypeInfo();
 
 	void						Init();

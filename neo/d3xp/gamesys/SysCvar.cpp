@@ -156,6 +156,19 @@ idCVar ai_profile(					"ai_profile",				"0",			CVAR_GAME | CVAR_INTEGER, "1 = ti
 idCVar g_aiStats(					"g_aiStats",				"0",			CVAR_GAME | CVAR_INTEGER, "1 = AI rows in the com_showFPS 4 window; 2 = plus one aistats: console line per second and a COMBAT_KILL line per death; 3 = plus the five slowest idAI" );
 idCVar ai_profileLog(				"ai_profileLog",			"",				CVAR_GAME, "file name: appends one CSV row per tic to <fs_savepath>/aiprofile/<name>.csv; empty closes the file" );
 //puncho end
+//puncho start - P2b.0.3 (plans/map-graph/stages/S2b-0-gates-measurements.md §6): the entity pass profile in ai_profileLog's
+// appended columns; host-side measurement, not archived, synced or cheat-flagged
+idCVar g_passProfile(				"g_passProfile",			"0",			CVAR_GAME | CVAR_INTEGER, "1 = time RunFrame's entity passes into ai_profileLog's pass columns, one whole tic in g_passProfileEvery entity by entity; 2 = plus L2 misses, cycles and instructions around the whole passes (Linux perf counters; falls back to 1 when they cannot open)", 0, 2 );
+idCVar g_passProfileEvery(			"g_passProfileEvery",		"8",			CVAR_GAME | CVAR_INTEGER, "g_passProfile times one whole tic in this many, so a timed tic's walk, think sum and walk overhead come from the same entities", 1, 1024 );
+//puncho end
+//puncho start - P2b.2.1a (plans/map-graph/stages/S2b-2-entity-tables.md K3, K5, K6): the hot table (d3xp/EntityHot.h);
+// latched once per tic, host-side, neither synced nor archived
+idCVar g_entityTable(				"g_entityTable",			"0",			CVAR_GAME | CVAR_BOOL, "1 = keep the hot table's active mirror in the active list's order; 0 = walk the active list as stock does" );
+idCVar g_entityTableVerify(			"g_entityTableVerify",		"0",			CVAR_GAME | CVAR_BOOL | CVAR_CHEAT, "compare every hot table row with its entity, and the active mirror with the list, at the end of each tic; prints the first 8 differences (listEntityTable's hotMismatch counts them all)" );
+idCVar g_entityPassWalks(			"g_entityPassWalks",		"1",			CVAR_GAME | CVAR_BOOL, "with g_entityTable 1, RunFrame's think walks, RunTimeGroup2 and RunSharedThink walk the hot table's active mirror, in the active list's order; 0 = they walk the active list (bisection)" );	//puncho - P2b.2.2a
+idCVar g_entityPassDormancy(		"g_entityPassDormancy",		"1",			CVAR_GAME | CVAR_BOOL, "with g_entityTable 1, RunEntityThink runs CheckDormant for the dormancy classes (idAI, idFuncSmoke, idPhantomObjects, idMover_Periodic) before their Think and does not call a sleeper's Think; 0 = each Think tests dormancy first, as stock (bisection)" );	//puncho - P2b.2.2b-i
+idCVar ai_thinkPhases(				"ai_thinkPhases",			"0",			CVAR_GAME | CVAR_BOOL | CVAR_CHEAT, "with g_entityTable 1 and its mirror walks, the think walk runs every idAI as one block per tic in entity order, each phase over every monster before the next: dormancy, sense, decide (the pain flags cleared after each monster's own decide), move, present; 0 = each idAI thinks whole at its turn in the walk, as stock" );	//puncho - P2b.2.6
+//puncho end
 //puncho start - ai-combat (plans/ai-combat/00-PLAN.md §2.7): host-side measurement; not archived, synced or cheat-flagged
 idCVar ai_benchSeed(				"ai_benchSeed",				"0",			CVAR_GAME | CVAR_INTEGER, "seed of the game's random number generator at map load in single player; 0 = stock (0); multiplayer keeps the server's seed" );
 //puncho end
@@ -380,8 +393,8 @@ idCVar g_grabberDamping(			"g_grabberDamping",			"0.5",			CVAR_GAME | CVAR_FLOAT
 
 idCVar g_xp_bind_run_once(          "g_xp_bind_run_once",		"0",			CVAR_GAME | CVAR_BOOL | CVAR_ARCHIVE, "Rebind all controls once for D3XP." );
 
-idCVar g_dormantDistance( "g_dormantDistance", "1", CVAR_GAME | CVAR_BOOL, "enable authored distance dormancy" );
-idCVar g_dormantRadiusScale( "g_dormantRadiusScale", "1", CVAR_GAME | CVAR_FLOAT, "scale authored dormancy radius" );
+idCVar g_dormantDistance( "g_dormantDistance", "1", CVAR_GAME | CVAR_BOOL, "enable the distance tier: authored radii, or under g_dormantDistanceFirst every dormancy entity" );
+idCVar g_dormantRadiusScale( "g_dormantRadiusScale", "1", CVAR_GAME | CVAR_FLOAT, "scale the dormancy radius: authored, or under g_dormantDistanceFirst the world's too" );
 idCVar g_dormantWakeBudget( "g_dormantWakeBudget", "4", CVAR_GAME | CVAR_INTEGER, "nonurgent distance wakes per tic; zero unlimited" );
 idCVar g_dormantWakeUrgent( "g_dormantWakeUrgent", "1024", CVAR_GAME | CVAR_FLOAT, "distance for urgent wakes" );
 idCVar g_dormantWakeMaxDelay( "g_dormantWakeMaxDelay", "250", CVAR_GAME | CVAR_INTEGER, "maximum deferred wake delay in game milliseconds" );
@@ -389,6 +402,11 @@ idCVar g_dormantStats( "g_dormantStats", "0", CVAR_GAME | CVAR_BOOL, "collect ke
 idCVar g_showDormancy( "g_showDormancy", "0", CVAR_GAME | CVAR_INTEGER, "1 colored bounds; 2 distance/radius labels" );
 idCVar g_dormantCatchUp( "g_dormantCatchUp", "1", CVAR_GAME | CVAR_BOOL, "run authored catch-up hook after long dormant sleep" );
 idCVar g_dormantCatchUpMinMs( "g_dormantCatchUpMinMs", "5000", CVAR_GAME | CVAR_INTEGER, "minimum dormant duration for catch-up" );
+//puncho start - P2b.2.2b-ii (plans/map-graph/stages/S2b-2-entity-tables.md K7): distance-first dormancy on every map; host-side,
+// neither synced nor archived
+idCVar g_dormantDistanceFirst( "g_dormantDistanceFirst", "1", CVAR_GAME | CVAR_BOOL, "1 = sleep by distance alone, connected or not: dormant_radius, else the world radius" );
+idCVar g_dormantWorldRadius( "g_dormantWorldRadius", "10240", CVAR_GAME | CVAR_FLOAT, "world dormancy radius when the worldspawn sets none (its dormant_radius 0 turns it off); read at map load" );
+//puncho end
 
 // RB: new game mode vars
 idCVar ng_classicFlashlight(		"ng_classicFlashlight",		"0",			CVAR_GAME | CVAR_BOOL | CVAR_ARCHIVE | CVAR_NEW, "Classic flash light weapon" );

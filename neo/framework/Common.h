@@ -31,6 +31,8 @@ If you have questions concerning this license or the applicable additional terms
 #ifndef __COMMON_H__
 #define __COMMON_H__
 
+#include <atomic>
+
 /*
 ==============================================================
 
@@ -75,6 +77,40 @@ enum loadPhase_t
 // the MAP rows of com_showFPS 5 and listMap (idCommon::FormatMapRows)
 const int MAP_STAT_ROWS			= 6;
 const int MAP_STAT_ROW_CHARS	= 256;
+
+//puncho - P2b.0.4b: load and free spans, after the phase rows in loadtimeline/<name>_spans.csv. Inclusive: IMG_* nest in
+// RW_PROC, LIGHTGRID_IMAGES, PROBE_DEFS only outside a level load (inside one, images wait for END_RENDER); FREE_RW nests in
+// RW_PROC (InitFromMap frees the old world), FREE_AAS in AAS_<type> (Init frees the old file). Sum spans that do not nest
+enum loadSpan_t
+{
+	SPAN_RW_PROC,
+	SPAN_LIGHTGRID_FILE,
+	SPAN_LIGHTGRID_IMAGES,
+	SPAN_PROBE_DEFS,
+	SPAN_IMG_GRID,
+	SPAN_IMG_PROBE,
+	SPAN_IMG_GEN,
+	SPAN_IMG_MAT,
+	SPAN_MDL_LOAD,
+	SPAN_AAS_0,			// one per aas_types entry, named AAS_<type> by LoadSpanName; a ninth type has no span
+	SPAN_AAS_1,
+	SPAN_AAS_2,
+	SPAN_AAS_3,
+	SPAN_AAS_4,
+	SPAN_AAS_5,
+	SPAN_AAS_6,
+	SPAN_AAS_7,
+	SPAN_REC_MAPCRC,
+	SPAN_REC_ENTCRC,
+	SPAN_FREE_RW,
+	SPAN_FREE_IMG,
+	SPAN_FREE_STATIC,
+	SPAN_FREE_CM,
+	SPAN_FREE_AAS,
+	SPAN_FREE_ENTS,
+	SPAN_ENTITY_TABLE,	//puncho - P2b.2.1a: the hot table's clears and its restore rebuild (EntityHot.h)
+	LOAD_SPAN_COUNT
+};
 
 bool ValidDiagnosticName( const char* name );
 
@@ -339,6 +375,8 @@ public:
 	virtual						~idCommon() {}
 
 	virtual void				LoadPhase( loadPhase_t phase ) {}
+	virtual void				LoadSpanAdd( loadSpan_t span, uint64 us, int64 readBytes, int64 readUs, int64 imageBytes, int64 pacifierUs ) {}
+	virtual void				LoadSpanName( loadSpan_t span, const char* name ) {}
 	//puncho start - P2b.1.6: com_levelKeep as set, for the game and the sound system (LevelKeepGrace is the load-gated grace)
 	virtual int					GetLevelKeep() const { return 0; }
 	// the MAP rows of com_showFPS 5 and listMap, high[i] true when row i is near a cap; this default writes empty rows,
@@ -522,5 +560,62 @@ public:
 };
 
 extern idCommon* 		common;
+
+//puncho - P2b.0.4b: a load span's scope guard. Off, it costs a test at each end (of loadSpanTiming, then of its copy):
+// no clock, no counter, no call. LoadPhase turns the switch on while a timed load runs (rbdmap never does); then the
+// guard reads the clock and this thread's counters at both ends, so a span holds only its own thread's reads, and adds
+// through LoadSpanAdd. readUs is the time inside leaf reads and idFile_InZip seeks (an InZip read or seek includes its
+// inflate CPU). pacifierUs is the time inside UpdateLevelLoadPacifier less its own reads: the loading screen's frames,
+// which streaming at runtime never draws, so maxStepUs and cpuUs leave it out. The switch and the counters live in
+// framework/File.cpp, which rbdmap compiles, not Common_load.cpp
+extern std::atomic<bool>	loadSpanTiming;
+uint64						FileThreadReadBytes();
+uint64						FileThreadReadUs();
+uint64						LoadThreadPacifierUs();
+
+class idScopedLoadSpan
+{
+public:
+	explicit			idScopedLoadSpan( loadSpan_t span_ ) : span( span_ ), imageBytes( 0 ), on( loadSpanTiming.load( std::memory_order_relaxed ) )
+	{
+		if( on )
+		{
+			startUs = Sys_Microseconds();
+			startReadBytes = FileThreadReadBytes();
+			startReadUs = FileThreadReadUs();
+			startPacifierUs = LoadThreadPacifierUs();
+		}
+	}
+	~idScopedLoadSpan()
+	{
+		End();
+	}
+	bool				IsOn() const
+	{
+		return on;
+	}
+	// adds the span now instead of at scope end (RW_PROC stops before SetupLightGrid); the destructor then adds nothing
+	void				End()
+	{
+		if( on )
+		{
+			// every read and pacifier call this thread timed since the start lies inside [startUs, now] on one monotonic
+			// clock, and the pacifier's excludes its reads, so readUs + pacifierUs <= us
+			on = false;
+			const uint64 now = Sys_Microseconds();
+			common->LoadSpanAdd( span, now - startUs, ( int64 )( FileThreadReadBytes() - startReadBytes ), ( int64 )( FileThreadReadUs() - startReadUs ), imageBytes, ( int64 )( LoadThreadPacifierUs() - startPacifierUs ) );
+		}
+	}
+
+	loadSpan_t			span;			// a caller may pick the kind once IsOn(), as ActuallyLoadImage does
+	int64				imageBytes;		// set by the caller that loads one image: StorageSize, the phase rows' measure
+
+private:
+	bool				on;
+	uint64				startUs;
+	uint64				startReadBytes;
+	uint64				startReadUs;
+	uint64				startPacifierUs;
+};
 
 #endif /* !__COMMON_H__ */

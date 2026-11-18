@@ -858,20 +858,7 @@ idPhysics_Monster::WriteToSnapshot
 */
 void idPhysics_Monster::WriteToSnapshot( idBitMsg& msg ) const
 {
-	msg.WriteFloat( current.origin[0] );
-	msg.WriteFloat( current.origin[1] );
-	msg.WriteFloat( current.origin[2] );
-	msg.WriteFloat( current.velocity[0], MONSTER_VELOCITY_EXPONENT_BITS, MONSTER_VELOCITY_MANTISSA_BITS );
-	msg.WriteFloat( current.velocity[1], MONSTER_VELOCITY_EXPONENT_BITS, MONSTER_VELOCITY_MANTISSA_BITS );
-	msg.WriteFloat( current.velocity[2], MONSTER_VELOCITY_EXPONENT_BITS, MONSTER_VELOCITY_MANTISSA_BITS );
-	msg.WriteDeltaFloat( current.origin[0], current.localOrigin[0] );
-	msg.WriteDeltaFloat( current.origin[1], current.localOrigin[1] );
-	msg.WriteDeltaFloat( current.origin[2], current.localOrigin[2] );
-	msg.WriteDeltaFloat( 0.0f, current.pushVelocity[0], MONSTER_VELOCITY_EXPONENT_BITS, MONSTER_VELOCITY_MANTISSA_BITS );
-	msg.WriteDeltaFloat( 0.0f, current.pushVelocity[1], MONSTER_VELOCITY_EXPONENT_BITS, MONSTER_VELOCITY_MANTISSA_BITS );
-	msg.WriteDeltaFloat( 0.0f, current.pushVelocity[2], MONSTER_VELOCITY_EXPONENT_BITS, MONSTER_VELOCITY_MANTISSA_BITS );
-	msg.WriteLong( current.atRest );
-	msg.WriteBits( current.onGround, 1 );
+	MONSTER_PSTATE_SCHEMA( SCHEMA_WRITE, current )	//puncho - P2b.2.5d: from current (Physics_Monster.h)
 }
 
 /*
@@ -881,18 +868,5 @@ idPhysics_Monster::ReadFromSnapshot
 */
 void idPhysics_Monster::ReadFromSnapshot( const idBitMsg& msg )
 {
-	current.origin[0] = msg.ReadFloat();
-	current.origin[1] = msg.ReadFloat();
-	current.origin[2] = msg.ReadFloat();
-	current.velocity[0] = msg.ReadFloat( MONSTER_VELOCITY_EXPONENT_BITS, MONSTER_VELOCITY_MANTISSA_BITS );
-	current.velocity[1] = msg.ReadFloat( MONSTER_VELOCITY_EXPONENT_BITS, MONSTER_VELOCITY_MANTISSA_BITS );
-	current.velocity[2] = msg.ReadFloat( MONSTER_VELOCITY_EXPONENT_BITS, MONSTER_VELOCITY_MANTISSA_BITS );
-	current.localOrigin[0] = msg.ReadDeltaFloat( current.origin[0] );
-	current.localOrigin[1] = msg.ReadDeltaFloat( current.origin[1] );
-	current.localOrigin[2] = msg.ReadDeltaFloat( current.origin[2] );
-	current.pushVelocity[0] = msg.ReadDeltaFloat( 0.0f, MONSTER_VELOCITY_EXPONENT_BITS, MONSTER_VELOCITY_MANTISSA_BITS );
-	current.pushVelocity[1] = msg.ReadDeltaFloat( 0.0f, MONSTER_VELOCITY_EXPONENT_BITS, MONSTER_VELOCITY_MANTISSA_BITS );
-	current.pushVelocity[2] = msg.ReadDeltaFloat( 0.0f, MONSTER_VELOCITY_EXPONENT_BITS, MONSTER_VELOCITY_MANTISSA_BITS );
-	current.atRest = msg.ReadLong();
-	current.onGround = msg.ReadBits( 1 ) != 0;
+	MONSTER_PSTATE_SCHEMA( SCHEMA_READ, current )	//puncho - P2b.2.5d: into current (Physics_Monster.h)
 }

@@ -33,8 +33,8 @@ struct graphFlag_t
 // lists, beside their structs; MapGraphRecord.cpp and MapGraphDirector.cpp expand them. A list's rows are its fields in
 // byte order; a value or count that does not fit fails the write, and the reader refuses what the hand codec refused
 #define DUNGEON_FLAGDEF_SCHEMA( X, s ) \
-	X( s, name,		STR,	R,	RAW,	63,	SCHEMA_STOCK ) \
-	X( s, index,	U8,		R,	RAW,	0,	SCHEMA_STOCK )
+	X( s, name,		STR,	R,	RAW,	63,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, index,	U8,		R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ )
 //puncho end
 struct graphRule_t
 {
@@ -71,15 +71,15 @@ struct dungeonNode_t
 };
 //puncho start - P2b.1.4
 #define DUNGEON_NODE_SCHEMA( X, s ) \
-	X( s, map,			STR,	R,	RAW,	63,	SCHEMA_STOCK ) \
-	X( s, kindIndex,	U16,	R,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, resetPolicy,	U8,		R,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, resetSeconds,	U32,	R,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, state,		U8,		R,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, visits,		U16,	R,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, depth,		U16,	R,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, geometryCRC,	U32,	R,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, landmarkCRC,	U32,	R,	RAW,	0,	SCHEMA_STOCK )
+	X( s, map,			STR,	R,	RAW,	63,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, kindIndex,	U16,	R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, resetPolicy,	U8,		R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, resetSeconds,	U32,	R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, state,		U8,		R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, visits,		U16,	R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, depth,		U16,	R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, geometryCRC,	U32,	R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, landmarkCRC,	U32,	R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ )
 //puncho end
 struct dungeonLink_t
 {
@@ -91,15 +91,15 @@ struct dungeonLink_t
 };
 //puncho start - P2b.1.4: CondFlag is the clamp, -1 written as 0; the reader's conditionMode 0 fix-up is CheckLink's
 #define DUNGEON_LINK_SCHEMA( X, s ) \
-	X( s, from,				U16,	R,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, fromLandmark,		STR,	R,	RAW,	63,	SCHEMA_STOCK ) \
-	X( s, to,				U16,	R,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, toLandmark,		STR,	R,	RAW,	63,	SCHEMA_STOCK ) \
-	X( s, kind,				U8,		R,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, state,			U8,		R,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, CondFlag,			HAND,	R,	RAW,	1,	SCHEMA_STOCK ) \
-	X( s, conditionMode,	U8,		R,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, condValue,		U16,	R,	RAW,	0,	SCHEMA_STOCK )
+	X( s, from,				U16,	R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, fromLandmark,		STR,	R,	RAW,	63,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, to,				U16,	R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, toLandmark,		STR,	R,	RAW,	63,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, kind,				U8,		R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, state,			U8,		R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, CondFlag,			HAND,	R,	RAW,	1,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, conditionMode,	U8,		R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, condValue,		U16,	R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ )
 //puncho end
 struct dungeonPending_t
 {
@@ -111,12 +111,12 @@ struct dungeonPending_t
 };
 //puncho start - P2b.1.4
 #define DUNGEON_PENDING_SCHEMA( X, s ) \
-	X( s, id,				U32,	R,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, targetNode,		U16,	R,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, targetMap,		STR,	R,	RAW,	63,	SCHEMA_STOCK ) \
-	X( s, targetName,		STR,	R,	RAW,	63,	SCHEMA_STOCK ) \
-	X( s, action,			U8,		R,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, queuedWorldTime,	I64,	R,	RAW,	0,	SCHEMA_STOCK )
+	X( s, id,				U32,	R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, targetNode,		U16,	R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, targetMap,		STR,	R,	RAW,	63,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, targetName,		STR,	R,	RAW,	63,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, action,			U8,		R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, queuedWorldTime,	I64,	R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ )
 //puncho end
 struct dungeonRecipe_t
 {
@@ -132,41 +132,41 @@ static const int DUNGEON_RECIPE_VERSION = 1;		// the recipe's first byte, before
 static const int DUNGEON_RECIPE_MIN_BYTES = 1 + 1 + 8 + 8 + 4 + 2 + 2 + 8 + 1;	// the version, the rows, a name's length
 static const int DUNGEON_RECIPE_MAX_BYTES = DUNGEON_RECIPE_MIN_BYTES + 31;
 #define DUNGEON_RECIPE_SCHEMA( X, s ) \
-	X( s, flags,		U8,		R,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, instanceId,	U64,	R,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, rootSeed,		U64,	R,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, graphCRC,		U32,	R,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, currentNode,	U16,	R,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, nodeVisits,	U16,	R,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, variantFlags,	U64,	R,	RAW,	0,	SCHEMA_STOCK ) \
-	X( s, worldName,	STR,	R,	RAW,	31,	SCHEMA_STOCK )
+	X( s, flags,		U8,		R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, instanceId,	U64,	R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, rootSeed,		U64,	R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, graphCRC,		U32,	R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, currentNode,	U16,	R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, nodeVisits,	U16,	R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, variantFlags,	U64,	R,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, worldName,	STR,	R,	RAW,	31,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ )
 // the dungeon record: an idMapGraphDirector's persistent state. HAND rows: the two literals, the flag values written
 // sparse from their 256 slots, and the two bools
 static const int DUNGEON_RECORD_VERSION = 2;
 static const int DUNGEON_GENERATOR_VERSION = 1;
 #define DUNGEON_RECORD_SCHEMA( X, s ) \
-	X( s, Version,			HAND,	R,	RAW,	2,						SCHEMA_STOCK ) \
-	X( s, instanceId,		U64,	R,	RAW,	0,						SCHEMA_STOCK ) \
-	X( s, rootSeed,			U64,	R,	RAW,	0,						SCHEMA_STOCK ) \
-	X( s, graphName,		STR,	R,	RAW,	63,						SCHEMA_STOCK ) \
-	X( s, graphCRC,			U32,	R,	RAW,	0,						SCHEMA_STOCK ) \
-	X( s, GeneratorVersion,	HAND,	R,	RAW,	2,						SCHEMA_STOCK ) \
-	X( s, createdWorldTime,	I64,	R,	RAW,	0,						SCHEMA_STOCK ) \
-	X( s, parentMap,		STR,	R,	RAW,	63,						SCHEMA_STOCK ) \
-	X( s, parentLandmark,	STR,	R,	RAW,	63,						SCHEMA_STOCK ) \
-	X( s, nodes,			LIST,	R,	RAW,	( Node, 2, 256 ),		SCHEMA_STOCK ) \
-	X( s, links,			LIST,	R,	RAW,	( Link, 2, 1024 ),		SCHEMA_STOCK ) \
-	X( s, FlagValues,		HAND,	R,	RAW,	0,						SCHEMA_STOCK ) \
-	X( s, partyNode,		U16,	R,	RAW,	0,						SCHEMA_STOCK ) \
-	X( s, partyLandmark,	STR,	R,	RAW,	63,						SCHEMA_STOCK ) \
-	X( s, portalNode,		U16,	R,	RAW,	0,						SCHEMA_STOCK ) \
-	X( s, portalLandmark,	STR,	R,	RAW,	63,						SCHEMA_STOCK ) \
-	X( s, pending,			LIST,	R,	RAW,	( Pending, 2, 1024 ),	SCHEMA_STOCK ) \
-	X( s, instanceEndKind,	STR,	R,	RAW,	63,						SCHEMA_STOCK ) \
-	X( s, flagDefinitions,	LIST,	R,	RAW,	( FlagDef, 2, 256 ),	SCHEMA_STOCK ) \
-	X( s, Suspended,		HAND,	R,	RAW,	1,						SCHEMA_STOCK ) \
-	X( s, PortalOpen,		HAND,	R,	RAW,	1,						SCHEMA_STOCK ) \
-	X( s, portalOrigin,		VEC3,	R,	RAW,	0,						SCHEMA_STOCK )
+	X( s, Version,			HAND,	R,	RAW,	2,						SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, instanceId,		U64,	R,	RAW,	0,						SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, rootSeed,			U64,	R,	RAW,	0,						SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, graphName,		STR,	R,	RAW,	63,						SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, graphCRC,			U32,	R,	RAW,	0,						SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, GeneratorVersion,	HAND,	R,	RAW,	2,						SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, createdWorldTime,	I64,	R,	RAW,	0,						SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, parentMap,		STR,	R,	RAW,	63,						SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, parentLandmark,	STR,	R,	RAW,	63,						SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, nodes,			LIST,	R,	RAW,	( Node, 2, 256 ),		SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, links,			LIST,	R,	RAW,	( Link, 2, 1024 ),		SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, FlagValues,		HAND,	R,	RAW,	0,						SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, partyNode,		U16,	R,	RAW,	0,						SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, partyLandmark,	STR,	R,	RAW,	63,						SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, portalNode,		U16,	R,	RAW,	0,						SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, portalLandmark,	STR,	R,	RAW,	63,						SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, pending,			LIST,	R,	RAW,	( Pending, 2, 1024 ),	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, instanceEndKind,	STR,	R,	RAW,	63,						SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, flagDefinitions,	LIST,	R,	RAW,	( FlagDef, 2, 256 ),	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, Suspended,		HAND,	R,	RAW,	1,						SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, PortalOpen,		HAND,	R,	RAW,	1,						SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, portalOrigin,		VEC3,	R,	RAW,	0,						SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ )
 //puncho end
 class idMapGraphDirector
 {

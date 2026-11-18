@@ -51,7 +51,10 @@ If you have questions concerning this license or the applicable additional terms
 // private declarations
 //
 
-#define MAX_BUILD_SIDES		300
+//puncho start - R1.4: every slot in the brush side buffer is usable
+#define BUILD_SIDE_BITS		9
+#define MAX_BUILD_SIDES		( 1 << BUILD_SIDE_BITS )
+//puncho end
 
 static	int		entityPrimitive;		// to track editor brush numbers
 static	int		c_numMapPatches;
@@ -345,6 +348,13 @@ static void ParseBrush( const idMapBrush* mapBrush, int primitiveNum )
 
 	buildBrush->entitynum = dmapGlobals.numEntities - 1;
 	buildBrush->brushnum = entityPrimitive;
+	//puncho start - R1.4: check before copying into the fixed side buffer
+	if( mapBrush->GetNumSides() > MAX_BUILD_SIDES )
+	{
+		common->Error( "ParseBrush: entity %d brush %d has %d sides, MAX_BUILD_SIDES is %d", buildBrush->entitynum, buildBrush->brushnum, mapBrush->GetNumSides(), MAX_BUILD_SIDES );
+		return;
+	}
+	//puncho end
 	buildBrush->numsides = mapBrush->GetNumSides();
 	for( i = 0 ; i < mapBrush->GetNumSides() ; i++ )
 	{

@@ -76,6 +76,7 @@ public:
 	virtual void			Preload( const idPreloadManifest& manifest );
 
 	virtual	void			PrintMemInfo( MemInfo_t* mi );
+	virtual int64			GetResidentBytes( int& count ) const;
 
 private:
 	idList<idRenderModel*, TAG_MODEL>	models;
@@ -425,6 +426,9 @@ idRenderModel* idRenderModelManagerLocal::GetModel( const char* _modelName, bool
 		{
 			if( !model->IsLoaded() )
 			{
+				// a purged model's first reference this load: binary load, else parse
+				idScopedLoadSpan modelSpan( SPAN_MDL_LOAD );
+
 				// reload it if it was purged
 				idStr generatedFileName = "generated/rendermodels/";
 				generatedFileName.AppendPath( canonical );
@@ -533,6 +537,9 @@ idRenderModel* idRenderModelManagerLocal::GetModel( const char* _modelName, bool
 
 	if( model != NULL )
 	{
+		// a model's first reference: binary load, else parse and write the binary (binaryLoadRenderModels is on by default)
+		idScopedLoadSpan modelSpan( SPAN_MDL_LOAD );
+
 		generatedFileName = "generated/rendermodels/";
 		generatedFileName.AppendPath( canonical );
 		generatedFileName.SetFileExtension( va( "b%s", extension.c_str() ) );
@@ -933,9 +940,12 @@ void idRenderModelManagerLocal::BeginLevelLoad()
 	}
 
 #if !defined( DMAP )
-	//puncho - static arena (P2b.1.8): latches r_staticArenaSplit; at split 1 a load that keeps the models above
-	// (LevelKeepGrace() >= 1) frees only segment 1, so the kept models' static handles stay valid; any other load frees both
-	vertexCache.BeginStaticLoad( common->LevelKeepGrace() >= 1 );
+	{
+		idScopedLoadSpan freeSpan( SPAN_FREE_STATIC );
+		//puncho - static arena (P2b.1.8): latches r_staticArenaSplit; at split 1 a load that keeps the models above
+		// (LevelKeepGrace() >= 1) frees only segment 1, so the kept models' static handles stay valid; any other load frees both
+		vertexCache.BeginStaticLoad( common->LevelKeepGrace() >= 1 );
+	}
 #endif
 }
 
@@ -1086,6 +1096,7 @@ void idRenderModelManagerLocal::EndLevelLoad()
 		if( model->IsLevelLoadReferenced() && !model->IsLoaded() && model->IsReloadable() )
 		{
 			loadCount++;
+			idScopedLoadSpan modelSpan( SPAN_MDL_LOAD );
 			model->LoadModel();
 		}
 	}
@@ -1162,16 +1173,8 @@ void idRenderModelManagerLocal::EndLevelLoad()
 	deviceManager->GetDevice()->executeCommandList( commandList );
 #endif
 
-	int resident = 0;
-	int64 bytes = 0;
-	for( int i = 0; i < models.Num(); i++ )
-	{
-		if( models[i]->IsLoaded() )
-		{
-			resident++;
-			bytes += models[i]->Memory();
-		}
-	}
+	int resident;
+	const int64 bytes = GetResidentBytes( resident );
 	common->ReportLevelCache( 1, loadCount, resident, purgeCount, pinnedCount, bytes );
 	// _D3XP added this
 	int	end = Sys_Milliseconds();
@@ -1192,6 +1195,26 @@ void idRenderModelManagerLocal::EndLevelLoad()
 	common->ReportTransitionMetric( TRANSITION_MODEL_BUFFER_US, transitionBufferUs );
 	common->ReportTransitionMetric( TRANSITION_STATIC_UPLOAD_US, transitionStaticUs );
 	common->ReportTransitionMetric( TRANSITION_MODEL_US, Sys_Microseconds() - transitionMetricStart );
+}
+
+/*
+=================
+idRenderModelManagerLocal::GetResidentBytes
+=================
+*/
+int64 idRenderModelManagerLocal::GetResidentBytes( int& count ) const
+{
+	count = 0;
+	int64 bytes = 0;
+	for( int i = 0; i < models.Num(); i++ )
+	{
+		if( models[i]->IsLoaded() )
+		{
+			count++;
+			bytes += models[i]->Memory();
+		}
+	}
+	return bytes;
 }
 
 /*

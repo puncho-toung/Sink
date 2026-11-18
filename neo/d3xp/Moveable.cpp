@@ -53,6 +53,8 @@ EVENT( EV_IsAtRest,					idMoveable::Event_IsAtRest )
 EVENT( EV_EnableDamage,				idMoveable::Event_EnableDamage )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idMoveable, MOVEABLE_SCHEMA )	//puncho - P2b.2.3b: the FGD's rows and the row checks (Schema.h)
+
 
 static const float BOUNCE_SOUND_MIN_VELOCITY	= 80.0f;
 static const float BOUNCE_SOUND_MAX_VELOCITY	= 200.0f;
@@ -102,10 +104,10 @@ void idMoveable::Spawn()
 	idStr clipModelName;
 
 	// check if a clip model is set
-	spawnArgs.GetString( "clipmodel", "", clipModelName );
+	spawnArgs.GetString( "clipmodel", "", clipModelName );	// HAND: a local, the visual model when it is empty
 	if( !clipModelName[0] )
 	{
-		clipModelName = spawnArgs.GetString( "model" );		// use the visual model
+		clipModelName = spawnArgs.GetString( "model" );		// HAND: use the visual model, idEntity's key
 	}
 
 	if( !collisionModelManager->TrmFromModel( clipModelName, trm ) )
@@ -115,38 +117,30 @@ void idMoveable::Spawn()
 	}
 
 	// if the model should be shrinked
-	clipShrink = spawnArgs.GetInt( "clipshrink" );
+	clipShrink = spawnArgs.GetInt( "clipshrink" );	// HAND: a local the trace model takes
 	if( clipShrink != 0 )
 	{
 		trm.Shrink( clipShrink * CM_CLIP_EPSILON );
 	}
 
 	// get rigid body properties
-	spawnArgs.GetFloat( "density", "0.5", density );
+	spawnArgs.GetFloat( "density", "0.5", density );	// HAND: clamped
 	density = idMath::ClampFloat( 0.001f, 1000.0f, density );
-	spawnArgs.GetFloat( "friction", "0.05", friction );
+	spawnArgs.GetFloat( "friction", "0.05", friction );	// HAND: clamped
 	friction = idMath::ClampFloat( 0.0f, 1.0f, friction );
-	spawnArgs.GetFloat( "bouncyness", "0.6", bouncyness );
+	spawnArgs.GetFloat( "bouncyness", "0.6", bouncyness );	// HAND: clamped
 	bouncyness = idMath::ClampFloat( 0.0f, 1.0f, bouncyness );
-	explode = spawnArgs.GetBool( "explode" );
-	unbindOnDeath = spawnArgs.GetBool( "unbindondeath" );
+	//puncho - P2b.2.3b: MOVEABLE_SCHEMA's keyed rows (Moveable.h), read where the first of them, explode, was
+	MOVEABLE_SCHEMA( SCHEMA_SPAWN, ( *this ) )
 
-	fxCollide = spawnArgs.GetString( "fx_collide" );
 	nextCollideFxTime = 0;
 
 	fl.takedamage = true;
-	damage = spawnArgs.GetString( "def_damage", "" );
-	monsterDamage = spawnArgs.GetString( "monster_damage", "" );
 	fl.networkSync = true;
 	attacker = NULL;
-	canDamage = spawnArgs.GetBool( "damageWhenActive" ) ? false : true;
-	minDamageVelocity = spawnArgs.GetFloat( "minDamageVelocity", "300" );	// _D3XP
-	maxDamageVelocity = spawnArgs.GetFloat( "maxDamageVelocity", "700" );	// _D3XP
+	canDamage = spawnArgs.GetBool( "damageWhenActive" ) ? false : true;	// HAND: derived, the key's inverse
 	nextDamageTime = 0;
 	nextSoundTime = 0;
-
-	health = spawnArgs.GetInt( "health", "0" );
-	spawnArgs.GetString( "broken", "", brokenModel );
 
 	if( health )
 	{
@@ -169,12 +163,12 @@ void idMoveable::Spawn()
 	physicsObj.SetClipMask( MASK_SOLID | CONTENTS_BODY | CONTENTS_CORPSE | CONTENTS_MOVEABLECLIP );
 	SetPhysics( &physicsObj );
 
-	if( spawnArgs.GetFloat( "mass", "10", mass ) )
+	if( spawnArgs.GetFloat( "mass", "10", mass ) )	// HAND: applied only when present, after the clip model
 	{
 		physicsObj.SetMass( mass );
 	}
 
-	if( spawnArgs.GetBool( "nodrop" ) )
+	if( spawnArgs.GetBool( "nodrop" ) )	// HAND: tested in place
 	{
 		physicsObj.PutToRest();
 	}
@@ -183,17 +177,15 @@ void idMoveable::Spawn()
 		physicsObj.DropToFloor();
 	}
 
-	if( spawnArgs.GetBool( "noimpact" ) || spawnArgs.GetBool( "notPushable" ) )
+	if( spawnArgs.GetBool( "noimpact" ) || spawnArgs.GetBool( "notPushable" ) )	// HAND: tested in place
 	{
 		physicsObj.DisableImpact();
 	}
 
-	if( spawnArgs.GetBool( "nonsolid" ) )
+	if( spawnArgs.GetBool( "nonsolid" ) )	// HAND: tested in place
 	{
 		BecomeNonSolid();
 	}
-
-	allowStep = spawnArgs.GetBool( "allowStep", "1" );
 
 	PostEventMS( &EV_SetOwnerFromSpawnArgs, 0 );
 }
@@ -524,7 +516,7 @@ idMoveable::Think
 */
 void idMoveable::Think()
 {
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		if( !FollowInitialSplinePath() )
 		{
@@ -824,7 +816,7 @@ idBarrel::Think
 */
 void idBarrel::Think()
 {
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		if( !FollowInitialSplinePath() )
 		{
@@ -899,6 +891,8 @@ EVENT( EV_Respawn,					idExplodingBarrel::Event_Respawn )
 EVENT( EV_Explode,					idExplodingBarrel::Event_Explode )
 EVENT( EV_TriggerTargets,			idExplodingBarrel::Event_TriggerTargets )
 END_CLASS
+
+CLASS_SCHEMA_KEYS( idExplodingBarrel, EXPLODING_BARREL_SCHEMA )	//puncho - P2b.2.5a: the FGD's rows and the row checks (Schema.h)
 
 /*
 ================
@@ -1001,7 +995,9 @@ idExplodingBarrel::Spawn
 */
 void idExplodingBarrel::Spawn()
 {
-	health = spawnArgs.GetInt( "health", "5" );
+	//puncho - P2b.2.5a: the keyed rows (Moveable.h): health, the barrel's default over idMoveable's row, and time, read where
+	// the first of them was
+	EXPLODING_BARREL_SCHEMA( SCHEMA_SPAWN, ( *this ) )
 	fl.takedamage = true;
 	isStable = true;
 	fl.networkSync = true;
@@ -1012,7 +1008,6 @@ void idExplodingBarrel::Spawn()
 	lightDefHandle = -1;
 	lightTime = 0;
 	particleTime = 0;
-	time = spawnArgs.GetFloat( "time" );
 	memset( &particleRenderEntity, 0, sizeof( particleRenderEntity ) );
 	memset( &light, 0, sizeof( light ) );
 }
@@ -1150,7 +1145,7 @@ void idExplodingBarrel::AddParticles( const char* name, bool burn )
 {
 	if( name && *name )
 	{
-		int explicitTimeGroup = timeGroup;
+		int explicitTimeGroup = GetTimeGroup();
 		SetTimeState explicitTS( explicitTimeGroup );
 		if( particleModelDefHandle >= 0 )
 		{

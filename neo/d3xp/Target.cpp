@@ -44,8 +44,42 @@ idTarget
 ===============================================================================
 */
 
+//puncho start - R1.1: non-retail fixture for the per-pass watchdog
+#if !defined( ID_RETAIL )
+const idEventDef EV_StormChain( "<stormChain>", "d" );
+#endif
+//puncho end
+
 CLASS_DECLARATION( idEntity, idTarget )
+//puncho start - R1.1: bind the chain only in non-retail builds
+#if !defined( ID_RETAIL )
+EVENT( EV_StormChain, idTarget::Event_StormChain )
+#endif
+//puncho end
 END_CLASS
+
+//puncho start - R1.1: a running chain owns this slot and its successor until dispatch frees this link
+#if !defined( ID_RETAIL )
+/*
+================
+idTarget::Event_StormChain
+================
+*/
+void idTarget::Event_StormChain( int n )
+{
+	if( n <= 0 )
+	{
+		gameLocal.Error( "eventChain: link count %d, expected 1 or more", n );
+	}
+	if( n > 1 )
+	{
+		PostEventMS( &EV_StormChain, 0, n - 1 );
+		return;
+	}
+	gameLocal.Printf( "eventChain: last link served on the %s queue at %d ms\n", GetTimeGroup() == TIME_GROUP2 ? "fast" : "slow", gameLocal.time );
+}
+#endif
+//puncho end
 
 
 /*
@@ -344,14 +378,14 @@ idTarget_WaitForButton::Event_Activate
 */
 void idTarget_WaitForButton::Event_Activate( idEntity* activator )
 {
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		BecomeInactive( TH_THINK );
 	}
 	else
 	{
 		// always allow during cinematics
-		cinematic = true;
+		SetCinematic( true );	//puncho - P2b.2.1a
 		BecomeActive( TH_THINK );
 	}
 }
@@ -365,7 +399,7 @@ void idTarget_WaitForButton::Think()
 {
 	idPlayer* player;
 
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		player = gameLocal.GetLocalPlayer();
 		if( player != NULL && ( !( player->oldButtons & BUTTON_ATTACK ) ) && ( player->usercmd.buttons & BUTTON_ATTACK ) )
@@ -574,7 +608,7 @@ void idTarget_FadeEntity::Event_Activate( idEntity* activator )
 	}
 
 	// always allow during cinematics
-	cinematic = true;
+	SetCinematic( true );	//puncho - P2b.2.1a
 	BecomeActive( TH_THINK );
 
 	ent = this;
@@ -605,7 +639,7 @@ void idTarget_FadeEntity::Think()
 	idVec4		fadeTo;
 	float		frac;
 
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		GetColor( fadeTo );
 		if( gameLocal.time >= fadeEnd )
@@ -858,7 +892,10 @@ void idTarget_SetModel::Spawn()
 		renderModelManager->FindModel( model );
 
 		// precache .cm files only
-		collisionModelManager->LoadModel( model, true );
+		//puncho start - R1.3: a precache miss is fine; status is deliberately unused because spawn loads the model again
+		cmHandle_t precached;
+		collisionModelManager->LoadModel( model, true, precached );
+		//puncho end
 	}
 }
 
@@ -1067,7 +1104,7 @@ void idTarget_SetInfluence::Spawn()
 	restoreOnTrigger = false;
 
 	// always allow during cinematics
-	cinematic = true;
+	SetCinematic( true );	//puncho - P2b.2.1a
 }
 
 /*
@@ -1386,7 +1423,7 @@ idTarget_SetInfluence::Think
 */
 void idTarget_SetInfluence::Think()
 {
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		idPlayer* player = gameLocal.GetLocalPlayer();
 		player->SetInfluenceFov( fovSetting.GetCurrentValue( gameLocal.time ) );
@@ -1627,7 +1664,7 @@ idTarget_SetFov::Event_Activate
 void idTarget_SetFov::Event_Activate( idEntity* activator )
 {
 	// always allow during cinematics
-	cinematic = true;
+	SetCinematic( true );	//puncho - P2b.2.1a
 
 	idPlayer* player = gameLocal.GetLocalPlayer();
 	fovSetting.Init( gameLocal.time, SEC2MS( spawnArgs.GetFloat( "time" ) ), player ? player->DefaultFov() : g_fov.GetFloat(), spawnArgs.GetFloat( "fov" ) );
@@ -1641,7 +1678,7 @@ idTarget_SetFov::Think
 */
 void idTarget_SetFov::Think()
 {
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		idPlayer* player = gameLocal.GetLocalPlayer();
 		player->SetInfluenceFov( fovSetting.GetCurrentValue( gameLocal.time ) );

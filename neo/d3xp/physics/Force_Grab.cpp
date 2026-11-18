@@ -75,6 +75,8 @@ idForce_Grab::idForce_Grab()
 	damping			= 0.5f;
 	physics			= NULL;
 	id				= 0;
+	goalPosition.Zero();		//puncho - P2b.7.0: deterministic saved goal before the first grab
+	distanceToGoal	= 0.0f;	//puncho - P2b.7.0: no distance measured before the first grab
 }
 
 /*

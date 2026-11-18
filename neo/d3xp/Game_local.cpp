@@ -213,6 +213,7 @@ void idGameLocal::Clear()
 {
 	numDormantSources = 0;
 	dormantWakesRemaining = 0;
+	dormantWorldRadius = 0.0f;	//puncho - P2b.2.2b-ii: LoadMap reads it
 	memset( &mapClipStart, 0, sizeof( mapClipStart ) );
 	mapAllocStart = 0;
 	mapAllocTic = 0;
@@ -233,7 +234,9 @@ void idGameLocal::Clear()
 	firstFreeEntityIndex[1] = ENTITYNUM_FIRST_NON_REPLICATED;
 	num_entities = 0;
 	spawnedEntities.Clear();
+	numSpawnedEntities = 0;	//puncho - P2b.0.3
 	activeEntities.Clear();
+	entityHot.Clear();	//puncho - P2b.2.1a
 	numEntitiesToDeactivate = 0;
 	sortPushers = false;
 	sortTeamMasters = false;
@@ -448,6 +451,7 @@ void idGameLocal::Shutdown()
 		aiProfileFile = NULL;
 	}
 	//puncho end
+	PassProfileShutdown();	//puncho - P2b.0.3: g_passProfile 2's counter group
 
 	aasList.DeleteContents( true );
 	aasNames.Clear();
@@ -522,7 +526,7 @@ bool idGameLocal::SaveGame( idFile* f, idFile* strings, int& storeBytes, int& ob
 	idEntity* ent;
 	idEntity* link;
 
-	int startTimeMs = Sys_Milliseconds();
+	const uint64 startTimeUs = Sys_Microseconds();	//puncho - P2b.2.1a: microseconds, the line keeps its ms
 	if( g_recordSaveGameTrace.GetBool() )
 	{
 		bool result = BeginTraceRecording( "e:\\savegame_trace.pix2" );
@@ -756,8 +760,8 @@ bool idGameLocal::SaveGame( idFile* f, idFile* strings, int& storeBytes, int& ob
 	objectBytes = savegame.GetObjectBytes();
 	//puncho end
 
-	int endTimeMs = Sys_Milliseconds();
-	idLib::Printf( "Save time: %dms\n", ( endTimeMs - startTimeMs ) );
+	const uint64 saveUs = Sys_Microseconds() - startTimeUs;	//puncho - P2b.2.1a
+	idLib::Printf( "Save time: %dms (%llu us)\n", ( int )( saveUs / 1000 ), ( unsigned long long )saveUs );
 
 	if( g_recordSaveGameTrace.GetBool() )
 	{
@@ -1063,6 +1067,21 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	}
 	mapFileName = mapFile->GetName();
 	ReadAISquads();	//puncho - ai-avoidance (WP-A7): before the monsters spawn and look their squad up
+	//puncho start - P2b.2.2b-ii: the world dormancy radius, read before any dormancy test, once per map and again by a load
+	// (InitFromSaveGame runs LoadMap; the radius is never saved): the worldspawn's dormant_radius when the key is set, else
+	// g_dormantWorldRadius; a worldspawn dormant_radius 0 turns the world radius off. A plain map and a worldspace take the
+	// same rule (phase plan C11)
+	const bool hasWorldspawnRadius = mapFile->GetEntity( 0 )->epairs.GetFloat( "dormant_radius", "0", dormantWorldRadius );
+	if( !hasWorldspawnRadius )
+	{
+		dormantWorldRadius = g_dormantWorldRadius.GetFloat();
+	}
+	dormantWorldRadius = Max( 0.0f, dormantWorldRadius );
+	if( g_dormantDistanceFirst.GetBool() )
+	{
+		Printf( "dormancy: distance first, world radius %.0f (%s)\n", dormantWorldRadius, hasWorldspawnRadius ? "worldspawn dormant_radius" : "g_dormantWorldRadius" );
+	}
+	//puncho end
 
 	// map-only helpers (idDeclEntityDef::IsMapOnlyClass) lose their primitives; the geometry CRC was taken at parse
 	for( int i = 1; i < mapFile->GetNumEntities(); i++ )
@@ -1085,6 +1104,7 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	// initialize all entities for this game
 	memset( entities, 0, sizeof( entities ) );
 	ResetEntityBudgets( false );
+	idEvent::ResetMapStats();	//puncho - R1.1: before spawning, reclaim detached slots and set H = A, P = 0
 	memset( spawnIds, -1, sizeof( spawnIds ) );
 	//puncho start - identity (P1-A2)
 	memset( slotGen, 0, sizeof( slotGen ) );
@@ -1094,7 +1114,14 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	memset( hitClaimRefusals, 0, sizeof( hitClaimRefusals ) );	//puncho - P0-m8: counted per map
 
 	spawnedEntities.Clear();
+	numSpawnedEntities = 0;	//puncho - P2b.0.3
 	activeEntities.Clear();
+	//puncho start - P2b.2.1a: the hot table's rows, mirror and switches go with the list (the ENTITY_TABLE span)
+	{
+		idScopedLoadSpan tableSpan( SPAN_ENTITY_TABLE );
+		entityHot.Clear();
+	}
+	//puncho end
 	aimAssistEntities.Clear();
 	numEntitiesToDeactivate = 0;
 	sortTeamMasters = false;
@@ -1185,6 +1212,13 @@ void idGameLocal::LoadMap( const char* mapName, int randseed )
 	// load navigation system for all the different monster sizes
 	for( int i = 0; i < aasNames.Num(); i++ )
 	{
+		//puncho - P2b.0.4b: a span per type; a ninth type gets LOAD_SPAN_COUNT, which LoadSpanAdd and LoadSpanName drop
+		const loadSpan_t aasSpan = i <= SPAN_AAS_7 - SPAN_AAS_0 ? ( loadSpan_t )( SPAN_AAS_0 + i ) : LOAD_SPAN_COUNT;
+		if( loadSpanTiming.load( std::memory_order_relaxed ) )
+		{
+			common->LoadSpanName( aasSpan, va( "AAS_%s", aasNames[ i ].c_str() ) );
+		}
+		idScopedLoadSpan aasScope( aasSpan );
 		aasList[ i ]->Init( idStr( mapFileName ).SetFileExtension( aasNames[ i ] ).c_str(), mapFile->GetGeometryCRC() );
 	}
 
@@ -1698,6 +1732,7 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 		if( ent )
 		{
 			ent->spawnNode.AddToEnd( spawnedEntities );
+			numSpawnedEntities++;	//puncho - P2b.0.3
 		}
 	}
 
@@ -1900,6 +1935,14 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 	savegame.EndTraceScope();	//puncho - stream-trace
 
 	savegame.RestoreObjects();
+	//puncho start - P2b.2.1a: Restore read the think members directly, past the setters: the rows again from the restored
+	// entities (the ENTITY_TABLE span). The list was relinked past the mirror too, which LoadMap's clear switched off;
+	// the first RunFrame's latch rebuilds it
+	{
+		idScopedLoadSpan tableSpan( SPAN_ENTITY_TABLE );
+		entityHot.SyncAll();
+	}
+	//puncho end
 	worldStore.RestoreOrdinals();
 	mapGraphDirector.MapLoaded();
 
@@ -1924,6 +1967,7 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 
 	gamestate = GAMESTATE_ACTIVE;
 	ResetEntityBudgets( true );
+	idEvent::ResetMapStats();	//puncho - R1.1: the restored baseline excludes the load's transient H and P peaks
 
 	Printf( "--------------------------------------\n" );
 
@@ -1937,6 +1981,7 @@ idGameLocal::MapClear
 */
 void idGameLocal::MapClear( bool clearClients )
 {
+	idScopedLoadSpan freeSpan( SPAN_FREE_ENTS );
 	int i;
 
 	for( i = ( clearClients ? 0 : MAX_CLIENTS ); i < MAX_GENTITIES; i++ )
@@ -1996,6 +2041,7 @@ void idGameLocal::MapShutdown()
 	Printf( "--------- Game Map Shutdown ----------\n" );
 
 	gamestate = GAMESTATE_SHUTDOWN;
+	idEvent::CancelQueuedEvents();	//puncho - R1.1: every queued event's owner dies below; a full pool must not refuse their destructors' posts
 
 	//puncho start - ai-harness: the CSV rows of the last second, then a clean census for the next map (the
 	// file stays open: the cvar did not change)
@@ -2234,7 +2280,10 @@ void idGameLocal::CacheDictionaryMedia( const idDict* dict )
 				renderModelManager->FindModel( kv->GetValue() );
 
 				// precache .cm files only
-				collisionModelManager->LoadModel( kv->GetValue(), true );
+				//puncho start - R1.3: a precache miss is fine; status is deliberately unused because spawn loads the model again
+				cmHandle_t precached;
+				collisionModelManager->LoadModel( kv->GetValue(), true, precached );
+				//puncho end
 			}
 		}
 		kv = dict->MatchPrefix( "model", kv );
@@ -2653,7 +2702,24 @@ void idGameLocal::SetupPlayerPVS()
 			if( camera != NULL ) { source = camera; }
 			else { source = player; }
 		}
-		if( numDormantSources < MAX_CLIENTS ) { dormantSources[numDormantSources++] = source->GetPhysics()->GetOrigin(); }
+		//puncho start - P2b.2.2b-ii: distance first measures from the player's body and from its view source, so a remote
+		// camera cannot sleep a monster beside its player; two a player, so dormantSources holds MAX_DORMANT_SOURCES
+		if( g_dormantDistanceFirst.GetBool() )
+		{
+			if( numDormantSources < MAX_DORMANT_SOURCES )
+			{
+				dormantSources[numDormantSources++] = player->GetPhysics()->GetOrigin();
+			}
+			if( source != player && numDormantSources < MAX_DORMANT_SOURCES )
+			{
+				dormantSources[numDormantSources++] = source->GetPhysics()->GetOrigin();
+			}
+		}
+		else if( numDormantSources < MAX_CLIENTS )
+		{
+			dormantSources[numDormantSources++] = source->GetPhysics()->GetOrigin();
+		}
+		//puncho end
 
 
 		if( playerPVS.i == -1 )
@@ -2821,6 +2887,11 @@ void idGameLocal::SortActiveEntityList()
 				ent->activeNode.AddToFront( activeEntities );
 			}
 		}
+		//puncho - P2b.2.1a: inside the body that reordered, never after the call, which runs every tic
+		if( entityHot.activeMaintained )
+		{
+			entityHot.ActiveRebuild();
+		}
 	}
 
 	// if the active entity list needs to be reordered to place pushers at the front
@@ -2872,6 +2943,11 @@ void idGameLocal::SortActiveEntityList()
 				}
 			}
 		}
+		//puncho - P2b.2.1a
+		if( entityHot.activeMaintained )
+		{
+			entityHot.ActiveRebuild();
+		}
 	}
 
 	sortTeamMasters = false;
@@ -2900,16 +2976,36 @@ void idGameLocal::SetInterpolation( const float fraction, const int serverGameMS
 idGameLocal::RunTimeGroup2
 ================
 */
-void idGameLocal::RunTimeGroup2( idUserCmdMgr& userCmdMgr )
+int idGameLocal::RunTimeGroup2( idUserCmdMgr& userCmdMgr )
 {
 	idEntity* ent;
 	int num = 0;
 
 	SelectTimeGroup( true );
 
+	//puncho start - P2b.2.2a: over the active mirror, as RunFrame's think walk (K6); the row's TIME_GROUP2 bit first
+	if( entityHot.walksOn )
+	{
+		for( entityHot.activeCursor = 0; entityHot.activeCursor < entityHot.activeNum; entityHot.activeCursor++ )
+		{
+			const int n = entityHot.activeOrder[ entityHot.activeCursor ];
+			if( n < 0 || ( entityHot.think[ n ].bits & HOT_TIMEGROUP2 ) == 0 )
+			{
+				continue;
+			}
+			RunEntityThink( *entities[ n ], userCmdMgr );
+			num++;
+		}
+		entityHot.activeCursor = -1;
+		entityHot.walkTG2Thinks += num;
+		SelectTimeGroup( false );
+		return num;
+	}
+	//puncho end
+
 	for( ent = activeEntities.Next(); ent != NULL; ent = ent->activeNode.Next() )
 	{
-		if( ent->timeGroup != TIME_GROUP2 )
+		if( ent->GetTimeGroup() != TIME_GROUP2 )
 		{
 			continue;
 		}
@@ -2918,6 +3014,7 @@ void idGameLocal::RunTimeGroup2( idUserCmdMgr& userCmdMgr )
 	}
 
 	SelectTimeGroup( false );
+	return num;	//puncho - P2b.0.3: g_passProfile's nTG2
 }
 
 /*
@@ -2927,6 +3024,14 @@ idGameLocal::RunEntityThink
 */
 void idGameLocal::RunEntityThink( idEntity& ent, idUserCmdMgr& userCmdMgr )
 {
+	//puncho start - P2b.0.3: a level-1 timed walk takes the out-of-line twin; any other think pays this one test
+	if( passTag != PASS_TAG_NONE )
+	{
+		RunEntityThinkTimed( ent, userCmdMgr );
+		return;
+	}
+	//puncho end
+
 	if( ent.entityNumber < MAX_PLAYERS )
 	{
 		// Players may run more than one think per frame in MP,
@@ -2934,12 +3039,247 @@ void idGameLocal::RunEntityThink( idEntity& ent, idUserCmdMgr& userCmdMgr )
 		// Players will always run exactly one think in singleplayer.
 		RunAllUserCmdsForPlayer( userCmdMgr, ent.entityNumber );
 	}
+	//puncho start - P2b.2.2b-i (S2b-2 K7): with the lift latched, a dormancy row's CheckDormant runs here, at the moment
+	// its Think would run it first: a sleeper's Think is not called, and an awake row's Think skips its own test
+	else if( entityHot.dormancyOn && ( entityHot.think[ ent.entityNumber ].bits & HOT_DORMANCY ) != 0 )
+	{
+		if( ent.CheckDormant() )
+		{
+			entityHot.sleepersSkipped++;
+		}
+		else
+		{
+			entityHot.dormancyCheckedFor = ent.entityNumber;
+			ent.Think();
+			entityHot.dormancyCheckedFor = -1;
+		}
+	}
+	//puncho end
 	else
 	{
 		// Non-player entities always run one think.
 		ent.Think();
 	}
 }
+
+//puncho start - P2b.0.3
+/*
+================
+idGameLocal::RunEntityThinkTimed
+
+  RunEntityThink's timed twin, out of line so the untimed one stays the parent's size and inlines into the walks. The
+  TIME_GROUP1 walks' thinks sum to usThinkSum, a sleeper's (dormant on return) to usSleeperThink too; RunTimeGroup2's
+  are taken out of its bracket (usWalkTG2).
+================
+*/
+void idGameLocal::RunEntityThinkTimed( idEntity& ent, idUserCmdMgr& userCmdMgr )
+{
+	const double start = Sys_GetClockTicks();
+	if( ent.entityNumber < MAX_PLAYERS )
+	{
+		RunAllUserCmdsForPlayer( userCmdMgr, ent.entityNumber );
+	}
+	//puncho start - P2b.2.2b-i: RunEntityThink's lifted test, inside the clock pair
+	else if( entityHot.dormancyOn && ( entityHot.think[ ent.entityNumber ].bits & HOT_DORMANCY ) != 0 )
+	{
+		if( ent.CheckDormant() )
+		{
+			entityHot.sleepersSkipped++;
+		}
+		else
+		{
+			entityHot.dormancyCheckedFor = ent.entityNumber;
+			ent.Think();
+			entityHot.dormancyCheckedFor = -1;
+		}
+	}
+	//puncho end
+	else
+	{
+		ent.Think();
+	}
+	const double ticks = Sys_GetClockTicks() - start;
+	if( passTag == PASS_TAG_WALK )
+	{
+		passStats.tThinkSum += ticks;
+		if( ent.fl.isDormant )
+		{
+			passStats.tSleeperThink += ticks;
+			passStats.nSleeperThink++;
+		}
+	}
+	else
+	{
+		passStats.tTG2Thinks += ticks;
+	}
+}
+//puncho end
+
+//puncho start - P2b.2.6 (plans/map-graph/stages/S2b-2-entity-tables.md §8, K10): the group-1 AI phase block
+// the phase order's sort: the low GENTITYNUM_BITS of a packed spawn id are the entity number
+class idSortPhaseOrder : public idSort_Quick< int, idSortPhaseOrder >
+{
+public:
+	int Compare( const int& a, const int& b ) const
+	{
+		return ( a & ( MAX_GENTITIES - 1 ) ) - ( b & ( MAX_GENTITIES - 1 ) );
+	}
+};
+
+/*
+================
+idGameLocal::RunPhaseBlock
+
+  ai_thinkPhases (plans/map-graph/stages/S2b-2-entity-tables.md §8 P2b.2.6, K10): the group-1 mirror walk calls this at
+  its first HOT_PHASED row, and every phased group-1 row from that slot on (the members) thinks here as one block, in
+  entity order: phase 0 the lifted CheckDormant, sampled once (a sleeper stays out for the tic, so a same-tic wake takes
+  effect next tic), then ThinkSense, ThinkDecide (a member's pain flags cleared right after its own decide), ThinkMove and
+  ThinkPresent, each over every awake member before the next. A member whose slot now holds another spawn id, or none,
+  runs no later phase; a replacement thinks whole when the walk meets it. Returns the members, sleepers included.
+================
+*/
+int idGameLocal::RunPhaseBlock()
+{
+	const bool timed = passTag == PASS_TAG_WALK;
+	const double start = timed ? Sys_GetClockTicks() : 0.0;
+
+	// the order. HOT_SKIP rows are MP-E1's and run nothing; no tier is read, since every phase runs every tic here
+	aiPhaseCount = 0;
+	for( int i = entityHot.activeCursor; i < entityHot.activeNum; i++ )
+	{
+		const int n = entityHot.activeOrder[ i ];
+		if( n >= 0 && ( entityHot.think[ n ].bits & ( HOT_PHASED | HOT_SKIP | HOT_TIMEGROUP2 ) ) == HOT_PHASED )
+		{
+			aiPhaseOrder[ aiPhaseCount++ ] = ( spawnIds[ n ] << GENTITYNUM_BITS ) | n;
+		}
+	}
+	idSortPhaseOrder().Sort( aiPhaseOrder, aiPhaseCount );
+
+	// phase 0: fl.isDormant, which only CheckDormant writes, is the sample the four phases read
+	int awake = 0;
+	for( int k = 0; k < aiPhaseCount; k++ )
+	{
+		const int n = aiPhaseOrder[ k ] & ( MAX_GENTITIES - 1 );
+		idEntity* ent = entities[ n ];
+		if( ent == NULL || ( ( spawnIds[ n ] << GENTITYNUM_BITS ) | n ) != aiPhaseOrder[ k ] )
+		{
+			continue;
+		}
+		if( ent->CheckDormant() )
+		{
+			entityHot.sleepersSkipped++;
+			continue;
+		}
+		awake++;
+	}
+	aiStats.phasedMonsters += awake;
+
+	if( ai_think.GetBool() )
+	{
+		const bool profile = ai_profile.GetInteger() != 0;
+		int* const usPhase[ 4 ] = { &aiStats.usPhaseSense, &aiStats.usPhaseDecide, &aiStats.usPhaseMove, &aiStats.usPhasePresent };
+		for( int phase = 0; phase < 4; phase++ )
+		{
+			for( int k = 0; k < aiPhaseCount; k++ )
+			{
+				const int n = aiPhaseOrder[ k ] & ( MAX_GENTITIES - 1 );
+				idEntity* ent = entities[ n ];
+				if( ent == NULL || ( ( spawnIds[ n ] << GENTITYNUM_BITS ) | n ) != aiPhaseOrder[ k ] || ent->fl.isDormant )
+				{
+					continue;
+				}
+				idAI* ai = static_cast< idAI* >( ent );		// the spawn id is the one the order took from a HOT_PHASED row
+
+				// the profile as Think's envelope: the copy before the clock, this AI's share by difference, summed
+				// over its four phases into lastThinkStats
+				aiTicStats_t statsBefore;		// written and read only under profile
+				uint64 usStart = 0;
+				if( profile )
+				{
+					if( phase == 0 )
+					{
+						memset( &ai->lastThinkStats, 0, sizeof( ai->lastThinkStats ) );
+					}
+					statsBefore = aiStats;
+					usStart = Sys_Microseconds();
+				}
+				switch( phase )
+				{
+					case 0:
+						ai->ThinkSense( previousTime, time );
+						break;
+					case 1:
+						ai->ThinkDecide( previousTime, time, true );
+						break;
+					case 2:
+						ai->ThinkMove( previousTime, time, true );
+						break;
+					default:
+						ai->ThinkPresent( previousTime, time );
+						break;
+				}
+				if( profile )
+				{
+					const int us = ( int )( Sys_Microseconds() - usStart );
+					aiStats.usThink += us;
+					*usPhase[ phase ] += us;
+					const int* after = ( const int* )&aiStats;
+					const int* before = ( const int* )&statsBefore;
+					int* sum = ( int* )&ai->lastThinkStats;
+					for( int i = 0; i < AI_TIC_STAT_INTS; i++ )
+					{
+						sum[i] += after[i] - before[i];
+					}
+					if( phase == 3 && ai->lastThinkStats.usThink > aiHudStats.worst.usThink )
+					{
+						aiHudStats.worst = ai->lastThinkStats;
+						idStr::Copynz( aiHudStats.worstName, ai->name.c_str(), sizeof( aiHudStats.worstName ) );
+					}
+				}
+			}
+		}
+	}
+
+	if( timed )
+	{
+		passStats.tThinkSum += Sys_GetClockTicks() - start;
+	}
+	return aiPhaseCount;
+}
+
+/*
+================
+idGameLocal::PhaseMember
+
+  after the block, whether the walk's row took part in it: aiPhaseOrder searched by entity number, then the spawn id, so
+  an entity that reused a member's slot during the block is no member
+================
+*/
+bool idGameLocal::PhaseMember( int entityNumber ) const
+{
+	const int id = ( spawnIds[ entityNumber ] << GENTITYNUM_BITS ) | entityNumber;
+	int lo = 0;
+	int hi = aiPhaseCount - 1;
+	while( lo <= hi )
+	{
+		const int mid = ( lo + hi ) >> 1;
+		const int n = aiPhaseOrder[ mid ] & ( MAX_GENTITIES - 1 );
+		if( n == entityNumber )
+		{
+			return aiPhaseOrder[ mid ] == id;
+		}
+		if( n < entityNumber )
+		{
+			lo = mid + 1;
+		}
+		else
+		{
+			hi = mid - 1;
+		}
+	}
+	return false;
+}
+//puncho end
 
 idCVar g_recordTrace( "g_recordTrace", "0", CVAR_BOOL, "" );
 
@@ -2949,19 +3289,186 @@ idCVar g_recordTrace( "g_recordTrace", "0", CVAR_BOOL, "" );
 idGameLocal::RunSharedThink
 ================
 */
-void idGameLocal::RunSharedThink()
+int idGameLocal::RunSharedThink()
 {
 	idEntity* ent;
+	int num = 0;	//puncho - P2b.0.3: g_passProfile's nShared, the calls made (a SharedThink that activates an entity appends it)
+	//puncho start - P2b.2.2a: over the active mirror (K6), calling only the rows whose class overrides SharedThink
+	// (HOT_SHARED): idClass's is empty, so a row skipped did nothing, and the count is the calls made
+	if( entityHot.walksOn )
+	{
+		for( entityHot.activeCursor = 0; entityHot.activeCursor < entityHot.activeNum; entityHot.activeCursor++ )
+		{
+			const int n = entityHot.activeOrder[ entityHot.activeCursor ];
+			if( n < 0 || ( entityHot.think[ n ].bits & HOT_SHARED ) == 0 )
+			{
+				continue;
+			}
+			entities[ n ]->SharedThink();
+			num++;
+		}
+		entityHot.activeCursor = -1;
+		entityHot.walkSharedCalls += num;
+		return num;
+	}
+	//puncho end
 	for( ent = activeEntities.Next(); ent != NULL; ent = ent->activeNode.Next() )
 	{
 		ent->SharedThink();
+		num++;
 	}
+	return num;
 }
 // jmarshall end
 
 //puncho start - camera-relative WP-CRV: the tic hooks of walkTics (GameVerify.cpp); they return at once unless it is armed
 void GameVerify_BeginTic();
 void GameVerify_EndTic();
+//puncho end
+
+//puncho start - P2b.0.3 (plans/map-graph/stages/S2b-0-gates-measurements.md §6): g_passProfile's state outside the
+// per-tic record. The level is read once per tic into passLevel; the per-entity sites test passTag alone.
+static const int	PASS_CALIBRATION_PAIRS = 100000;	// empty clock pairs timed when the level leaves 0
+static const int	PASS_CSV_COLUMNS = 39;				// the appended ai_profileLog columns
+static int			passLevel = 0;						// g_passProfile as read at the start of this tic
+static float		passOverheadNs = 0.0f;				// mean of one empty Sys_GetClockTicks pair, ns
+static bool			passCountersOn = false;				// level 2's counter group is open
+static uintptr_t	passCountersThread = 0;				// the thread that opened it, the only one it counts
+static uint64		passCounterBase[ SYS_NUM_PERF_COUNTERS ];	// the counters at the last read
+
+/*
+================
+PassLap
+
+  Adds the clock since mark to accum and moves mark to now, so back-to-back passes share one read.
+================
+*/
+static ID_INLINE void PassLap( double& accum, double& mark )
+{
+	const double now = Sys_GetClockTicks();
+	accum += now - mark;
+	mark = now;
+}
+
+/*
+================
+PassCountersLap
+
+  Level 2: reads the counter group, stores its change since the last read as pass's (pass -1 only sets the base),
+  then moves mark past the read, so no clock bracket holds the read's system call. A failed read leaves the tic's
+  level 2 columns blank.
+================
+*/
+static void PassCountersLap( passTicStats_t& ps, int pass, double& mark )
+{
+	if( !passCountersOn )
+	{
+		return;
+	}
+	uint64 now[ SYS_NUM_PERF_COUNTERS ];
+	if( !Sys_PerfCountersRead( now ) )
+	{
+		ps.counted = false;
+		return;
+	}
+	if( pass >= 0 )
+	{
+		for( int i = 0; i < SYS_NUM_PERF_COUNTERS; i++ )
+		{
+			ps.counters[ pass ][ i ] = now[ i ] - passCounterBase[ i ];
+		}
+	}
+	memcpy( passCounterBase, now, sizeof( passCounterBase ) );
+	mark = Sys_GetClockTicks();
+}
+
+/*
+================
+idGameLocal::PassProfileBeginTic
+
+  Reads g_passProfile once for the tic and decides whether the tic is timed: one whole tic in g_passProfileEvery, so
+  a timed tic's walk, think sum and walk overhead come from the same entities, the players' usercmd thinks included;
+  sampled entity by entity, a player's several usercmd thinks against one walk could drive the overhead negative. The
+  phase advances one tic per period ( framenum + framenum / every ), so the samples do not lock onto work the engine
+  runs every so many tics. Leaving level 0 calibrates the bracket: the mean of PASS_CALIBRATION_PAIRS back-to-back
+  clock reads, about 2 ms once, before the tic's first pass. Level 1 times the per-entity sites; level 2 times the whole
+  passes only and reads the counter group around them, so its cycles and instructions hold no per-entity bracket. The
+  group counts the thread that opened it: when the tics move (com_smp, the editors) it is reopened on the new one with
+  one line; when it cannot open, Sys_PerfCountersOpen prints its one line and the level falls back to 1.
+================
+*/
+void idGameLocal::PassProfileBeginTic()
+{
+	passTag = PASS_TAG_NONE;
+	if( passCountersOn && Sys_GetCurrentThreadID() != passCountersThread )
+	{
+		Sys_PerfCountersClose();
+		passCountersOn = Sys_PerfCountersOpen();
+		passCountersThread = Sys_GetCurrentThreadID();
+		Printf( "g_passProfile: the tics moved to thread %llu; the counter group %s\n", ( unsigned long long )passCountersThread,
+				passCountersOn ? "was reopened on it" : "could not reopen, level 1" );
+		if( !passCountersOn )
+		{
+			g_passProfile.SetInteger( 1 );
+			passLevel = 1;
+		}
+	}
+	int level = g_passProfile.GetInteger();
+	if( level != passLevel )
+	{
+		if( passLevel == 0 && level > 0 )
+		{
+			double sum = 0.0;
+			for( int i = 0; i < PASS_CALIBRATION_PAIRS; i++ )
+			{
+				const double start = Sys_GetClockTicks();
+				sum += Sys_GetClockTicks() - start;
+			}
+			passOverheadNs = ( float )( sum / PASS_CALIBRATION_PAIRS * 1.0e9 / Sys_ClockTicksPerSecond() );
+		}
+		if( level == 2 && !passCountersOn )
+		{
+			passCountersOn = Sys_PerfCountersOpen();
+			passCountersThread = Sys_GetCurrentThreadID();
+			if( !passCountersOn )
+			{
+				level = 1;
+				g_passProfile.SetInteger( 1 );
+			}
+		}
+		else if( level < 2 && passCountersOn )
+		{
+			Sys_PerfCountersClose();
+			passCountersOn = false;
+		}
+		passLevel = level;
+	}
+	const int every = Max( 1, g_passProfileEvery.GetInteger() );
+	passTimed = passLevel > 0 && ( ( framenum + framenum / every ) % every ) == 0;
+	if( passTimed )
+	{
+		memset( &passStats, 0, sizeof( passStats ) );
+		passStats.perEntity = ( passLevel == 1 );
+		passStats.counted = passCountersOn;
+	}
+}
+
+/*
+================
+idGameLocal::PassProfileShutdown
+
+  Closes level 2's counter group; the next level change after a restart calibrates and opens again.
+================
+*/
+void idGameLocal::PassProfileShutdown()
+{
+	if( passCountersOn )
+	{
+		Sys_PerfCountersClose();
+		passCountersOn = false;
+	}
+	passLevel = 0;
+}
 //puncho end
 
 /*
@@ -2990,6 +3497,7 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 	float		ms;
 	idTimer		timer_think, timer_events, timer_singlethink;
 	clipStats_t	clipBefore, clipAfter;	//puncho - ai-harness
+	double		passMark = 0.0;			//puncho - P2b.0.3: the clock at the last pass boundary of a timed tic
 
 	idPlayer*	player;
 	const renderView_t* view;
@@ -3099,11 +3607,37 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			GameVerify_BeginTic();
 			//puncho end
 
+			//puncho - P2b.2.1a, P2b.2.2a, P2b.2.2b-i, P2b.2.6: the hot table's switches for this tic, outside the timed passes (EntityPasses.cpp)
+			entityHot.LatchTic( g_entityTable.GetBool(), g_entityTableVerify.GetBool(), g_entityPassWalks.GetBool(), g_entityPassDormancy.GetBool(), ai_thinkPhases.GetBool() );
+
+			//puncho start - P2b.0.3: a timed tic brackets the passes from here to the events
+			PassProfileBeginTic();
+			if( passTimed )
+			{
+				passMark = Sys_GetClockTicks();
+				PassCountersLap( passStats, -1, passMark );
+			}
+			//puncho end
+
 			// create a merged pvs for all players
 			SetupPlayerPVS();
+			//puncho start - P2b.0.3
+			if( passTimed )
+			{
+				PassLap( passStats.tPVS, passMark );
+				PassCountersLap( passStats, PASS_COUNTED_PVS, passMark );
+			}
+			//puncho end
 
 			// sort the active entity list
 			SortActiveEntityList();
+			//puncho start - P2b.0.3
+			if( passTimed )
+			{
+				PassLap( passStats.tSort, passMark );
+				PassCountersLap( passStats, PASS_COUNTED_SORT, passMark );
+			}
+			//puncho end
 
 			//puncho start - ai-harness (00-PLAN.md §2.2, §2.6): the one reset of the live census; snapStats is copied
 			// here rather than read later because ServerWriteSnapshot runs on the main thread between game frames.
@@ -3126,13 +3660,110 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			timer_think.Clear();
 			timer_think.Start();
 
+			//puncho start - P2b.0.3: the think walks alone; on a level-1 tic their thinks run the timed twins
+			if( passTimed )
+			{
+				passMark = Sys_GetClockTicks();
+				PassCountersLap( passStats, -1, passMark );
+				passTag = passStats.perEntity ? PASS_TAG_WALK : PASS_TAG_NONE;
+			}
+			//puncho end
+
 			// let entities think
-			if( g_timeentities.GetFloat() )
+			//puncho start - P2b.2.2a (plans/map-graph/stages/S2b-2-entity-tables.md K6): with g_entityTable and
+			// g_entityPassWalks latched, the three walks below go over the active mirror, in the list's order. The cursor is
+			// entityHot's, since an append inside a think can compact the mirror and move it; activeNum is read again every
+			// step, so an entity a think activates is visited as the list walk visits it; a tombstone is skipped; a row's
+			// bits are read before its entity
+			if( entityHot.walksOn )
+			{
+				num = 0;
+				if( g_timeentities.GetFloat() )
+				{
+					for( entityHot.activeCursor = 0; entityHot.activeCursor < entityHot.activeNum; entityHot.activeCursor++ )
+					{
+						const int n = entityHot.activeOrder[ entityHot.activeCursor ];
+						if( n < 0 )
+						{
+							continue;
+						}
+						ent = entities[ n ];
+						if( g_cinematic.GetBool() && inCinematic && ( entityHot.think[ n ].bits & HOT_CINEMATIC ) == 0 )
+						{
+							ent->GetPhysics()->UpdateTime( time );
+							continue;
+						}
+						timer_singlethink.Clear();
+						timer_singlethink.Start();
+						RunEntityThink( *ent, cmdMgr );
+						timer_singlethink.Stop();
+						ms = timer_singlethink.Milliseconds();
+						if( ms >= g_timeentities.GetFloat() )
+						{
+							Printf( "%d: entity '%s': %.1f ms\n", time, ent->name.c_str(), ms );
+						}
+						num++;
+					}
+				}
+				else if( inCinematic )
+				{
+					for( entityHot.activeCursor = 0; entityHot.activeCursor < entityHot.activeNum; entityHot.activeCursor++ )
+					{
+						const int n = entityHot.activeOrder[ entityHot.activeCursor ];
+						if( n < 0 )
+						{
+							continue;
+						}
+						if( g_cinematic.GetBool() && ( entityHot.think[ n ].bits & HOT_CINEMATIC ) == 0 )
+						{
+							entities[ n ]->GetPhysics()->UpdateTime( time );
+							continue;
+						}
+						RunEntityThink( *entities[ n ], cmdMgr );
+						num++;
+					}
+				}
+				else
+				{
+					bool phaseBlockRan = false;	//puncho - P2b.2.6
+					for( entityHot.activeCursor = 0; entityHot.activeCursor < entityHot.activeNum; entityHot.activeCursor++ )
+					{
+						const int n = entityHot.activeOrder[ entityHot.activeCursor ];
+						if( n < 0 || ( entityHot.think[ n ].bits & HOT_TIMEGROUP2 ) != 0 )
+						{
+							continue;
+						}
+						//puncho start - P2b.2.6: with ai_thinkPhases latched the first phased row runs the phase block for
+						// every phased row and the walk skips them after it; a phased row the block did not take (one that
+						// joined during it, or reused a member's slot) thinks whole; a HOT_SKIP row runs nothing (MP-E1's)
+						if( entityHot.phasesOn && ( entityHot.think[ n ].bits & ( HOT_PHASED | HOT_SKIP ) ) != 0 )
+						{
+							if( !phaseBlockRan )
+							{
+								num += RunPhaseBlock();
+								phaseBlockRan = true;
+								continue;
+							}
+							if( ( entityHot.think[ n ].bits & HOT_SKIP ) != 0 || PhaseMember( n ) )
+							{
+								continue;
+							}
+							aiStats.phaseLateJoins++;
+						}
+						//puncho end
+						RunEntityThink( *entities[ n ], cmdMgr );
+						num++;
+					}
+				}
+				entityHot.activeCursor = -1;
+			}
+			//puncho end
+			else if( g_timeentities.GetFloat() )	//puncho - P2b.2.2a: else the list walks, as stock
 			{
 				num = 0;
 				for( ent = activeEntities.Next(); ent != NULL; ent = ent->activeNode.Next() )
 				{
-					if( g_cinematic.GetBool() && inCinematic && !ent->cinematic )
+					if( g_cinematic.GetBool() && inCinematic && !ent->IsCinematic() )
 					{
 						ent->GetPhysics()->UpdateTime( time );
 						continue;
@@ -3156,7 +3787,7 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 					num = 0;
 					for( ent = activeEntities.Next(); ent != NULL; ent = ent->activeNode.Next() )
 					{
-						if( g_cinematic.GetBool() && !ent->cinematic )
+						if( g_cinematic.GetBool() && !ent->IsCinematic() )
 						{
 							ent->GetPhysics()->UpdateTime( time );
 							continue;
@@ -3170,7 +3801,7 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 					num = 0;
 					for( ent = activeEntities.Next(); ent != NULL; ent = ent->activeNode.Next() )
 					{
-						if( ent->timeGroup != TIME_GROUP1 )
+						if( ent->GetTimeGroup() != TIME_GROUP1 )
 						{
 							continue;
 						}
@@ -3180,10 +3811,34 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 				}
 			}
 
-			RunTimeGroup2( cmdMgr );
+			//puncho start - P2b.0.3
+			if( passTimed )
+			{
+				PassLap( passStats.tThinkWalk, passMark );
+				PassCountersLap( passStats, PASS_COUNTED_WALK, passMark );
+				passStats.numWalk = num;
+				passTag = passStats.perEntity ? PASS_TAG_TG2 : PASS_TAG_NONE;
+			}
+			//puncho end
+			const int numTG2 = RunTimeGroup2( cmdMgr );	//puncho - P2b.0.3: the counts come from the walks, no list is walked to count
+			//puncho start - P2b.0.3
+			if( passTimed )
+			{
+				PassLap( passStats.tTG2, passMark );
+				passStats.nTG2 = numTG2;
+				passTag = PASS_TAG_NONE;
+			}
+			//puncho end
 // jmarshall
-			RunSharedThink();
+			const int numShared = RunSharedThink();	//puncho - P2b.0.3
 // jmarshall end
+			//puncho start - P2b.0.3
+			if( passTimed )
+			{
+				PassLap( passStats.tShared, passMark );
+				passStats.nShared = numShared;
+			}
+			//puncho end
 			//puncho start - ai-avoidance (plans/ai-avoidance/00-PLAN.md §3.3, WP-A5): the neighbour grid from the positions this
 			// tic's physics produced, read by the next tic's thinks; separation needs it, the obstacle gather uses it when there
 			if( ai_neighborGrid.GetBool() || ai_separation.GetBool() )
@@ -3207,6 +3862,12 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 				{
 				}
 			}
+			//puncho start - P2b.0.3
+			if( passTimed )
+			{
+				PassLap( passStats.tPost, passMark );
+			}
+			//puncho end
 
 
 
@@ -3218,15 +3879,26 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 				for( ent = activeEntities.Next(); ent != NULL; ent = next_ent )
 				{
 					next_ent = ent->activeNode.Next();
-					if( !ent->thinkFlags )
+					if( !ent->GetThinkFlags() )
 					{
 						ent->activeNode.Remove();
 						c++;
 					}
 				}
+				//puncho - P2b.2.1a: inside the prune, which runs only on a tic that deactivated
+				if( entityHot.activeMaintained )
+				{
+					entityHot.ActiveRebuild();
+				}
 				//assert( numEntitiesToDeactivate == c );
 				numEntitiesToDeactivate = 0;
 			}
+			//puncho start - P2b.0.3
+			if( passTimed )
+			{
+				PassLap( passStats.tPrune, passMark );
+			}
+			//puncho end
 
 			timer_think.Stop();
 			//puncho start - ai-harness: idClip's share of the think loop
@@ -3240,6 +3912,13 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 			//puncho end
 			timer_events.Clear();
 			timer_events.Start();
+			//puncho start - P2b.0.3
+			if( passTimed )
+			{
+				passMark = Sys_GetClockTicks();
+				PassCountersLap( passStats, -1, passMark );
+			}
+			//puncho end
 
 			// service any pending events
 			idEvent::ServiceEvents();
@@ -3251,8 +3930,24 @@ void idGameLocal::RunFrame( idUserCmdMgr& cmdMgr, gameReturn_t& ret )
 
 			//puncho - P2.4 (bug review 2026-10-28): announces a prefetch prediction a flag changed after the frame's first
 			mapGraphDirector.RunFrame();
+			//puncho start - P2b.0.3
+			if( passTimed )
+			{
+				PassLap( passStats.tEvents, passMark );
+				PassCountersLap( passStats, PASS_COUNTED_EVENTS, passMark );
+			}
+			//puncho end
 
 			timer_events.Stop();
+
+			//puncho start - P2b.2.1a: the tic-end spatial rows for their consumers, then g_entityTableVerify's compare of
+			// every row and the mirror against the entities and the list (EntityPasses.cpp); outside the timed passes
+			entityHot.SpatialPass( num_entities );
+			if( entityHot.verifyOn )
+			{
+				entityHot.Verify();
+			}
+			//puncho end
 
 			//puncho start - camera-relative WP-CRV: the tic's state is final; walkTics prints its pose and queues its capture
 			GameVerify_EndTic();
@@ -3363,7 +4058,17 @@ static const char* const aiProfileCsvHeader =
 	"flowSteps,flowCellsBuilt,flowFieldsOpened,flowPromoted,roleFollowers,"	// ai-avoidance: appended after wallMs; WP-A2/A4 after avoidDropped; WP-A1/A3, WP-A5, WP-A6/A7 after those
 	"attacksMelee,attacksMissile,attacksCharge,projectilesAlive,damageEvents,friendlyDamage,painEvents,deaths,ragdollsActive,"
 	"enemyChanges,enemyLost,noEnemy,canHitTraces,attackPosSearches,coverSearches,usCombatTraces,"	// ai-combat (plans/ai-combat/00-PLAN.md §2.4): appended after roleFollowers
-	"usShooterTokens,shooterCandidates,shooterHolders,shooterGrants,shooterYields,shooterExpired,shooterDenied,shooterTests,shooterSniperAsks,dormTests,dormAsleep,dormClosedOff,dormFar,dormUnseen,dormWakes,dormSleeps,dormDeferred,dormForced,dormViolations,awakeNear2k,awakeNear4k,awakeNear8k,awakeFar,dormCatchUps,aasCacheBytes,aasCacheEvictions,aasTravelSaturated,avoidDue,avoidEnrolled,avoidHits,avoidMisses,avoidUnenrolled\n";	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): appended after usCombatTraces
+	"usShooterTokens,shooterCandidates,shooterHolders,shooterGrants,shooterYields,shooterExpired,shooterDenied,shooterTests,shooterSniperAsks,dormTests,dormAsleep,dormClosedOff,dormFar,dormUnseen,dormWakes,dormSleeps,dormDeferred,dormForced,dormViolations,awakeNear2k,awakeNear4k,awakeNear8k,awakeFar,dormCatchUps,aasCacheBytes,aasCacheEvictions,aasTravelSaturated,avoidDue,avoidEnrolled,avoidHits,avoidMisses,avoidUnenrolled,"	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): appended after usCombatTraces
+	// P2b.0.3 (plans/map-graph/stages/S2b-0-gates-measurements.md §6, the contract's order; stage 2's names frozen): g_passProfile.
+	// The times are gross; gates/p03_summarize.py nets each by k passOverheadNs pairs: usThinkSum and usPassThinkWalk by
+	// ents + nestedClockCalls, usSleeperThink and usPassPresent by 2 n, the other per-entity times by n. The per-entity
+	// columns come from level-1 tics; level 2 leaves them blank and fills l2m*, cyc*, ins*, which then hold no bracket
+	"usPassPVS,usPassSort,usPassThinkWalk,usPassEvents,usPassDormant,nPassDormant,usPassPVSAreas,nPassPVSAreas,usPassPresent,nPassPresent,passOverheadNs,activeEnts,spawnedEnts,"
+	"usThinkSum,usWalkTG2,nTG2,usWalkShared,nShared,usSleeperThink,nSleeperThink,usPassDormantAsleep,nPassDormantAsleep,usPassDormantAwake,nPassDormantAwake,usPresentDef,nPresentDef,usPresentFar,nPresentFar,"
+	"usPassPost,usPassPrune,"
+	"l2mThinkWalk,cycThinkWalk,insThinkWalk,l2mEvents,cycEvents,insEvents,l2mPVS,l2mSort,"
+	"nestedClockCalls,"	// the clock pairs inside the walks' thinks that the summarizer nets the gross times by
+	"usPhaseSense,usPhaseDecide,usPhaseMove,usPhasePresent,phasedMonsters,phaseLateJoins\n";	// P2b.2.6: the phase block, after P2b.0.3's columns
 
 /*
 ================
@@ -3375,6 +4080,11 @@ idGameLocal::ClearAIStats
 void idGameLocal::ClearAIStats()
 {
 	memset( &aiStats, 0, sizeof( aiStats ) );
+	//puncho start - P2b.0.3: the pass record; passLevel and the calibration outlive a map change like the CSV file
+	memset( &passStats, 0, sizeof( passStats ) );
+	passTag = PASS_TAG_NONE;
+	passTimed = false;
+	//puncho end
 	memset( &snapStats, 0, sizeof( snapStats ) );
 	memset( &aiHudStats, 0, sizeof( aiHudStats ) );
 	memset( aiThinkRing, 0, sizeof( aiThinkRing ) );
@@ -3512,9 +4222,9 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 	}
 	if( aiProfileFile != NULL )
 	{
-		char	row[ 2048 ]; //puncho - P0: appended avoidance counts
-		//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): 91 columns since 08; 1024 could truncate a row of wide values into a malformed line
 		char	snap[ 128 ];
+		char	pass[ 768 ];		//puncho - P2b.0.3: the PASS_CSV_COLUMNS appended columns
+		char	row[ 2048 + sizeof( pass ) ];	//puncho - P0: 2048 with the appended avoidance counts; ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): 91 columns since 08; 1024 could truncate a row of wide values into a malformed line; P2b.0.3: plus the pass columns
 		const aiTicStats_t& t = aiStats;
 		const snapStats_t& sn = aiHudStats.snap;
 
@@ -3528,6 +4238,66 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 		{
 			idStr::Copynz( snap, ",,,,,", sizeof( snap ) );
 		}
+		//puncho start - P2b.0.3: the pass columns are blank unless this tic was timed, at level 0 too: a blank reads as not
+		// measured (the AI harness's reader takes it as None) where a 0 would read as a pass that cost nothing. Microseconds
+		// with two decimals: a pass of a few hundred ns is common. Times are gross: each holds its own bracket and the
+		// nested ones, nestedClockCalls counts the pairs the nested sites made inside the walks' thinks, and
+		// gates/p03_summarize.py nets them. Level 1 fills the per-entity columns; level 2 leaves them blank (no per-entity
+		// bracket runs, so its cycles and instructions hold none) and fills the counter columns, blank on a failed read
+		if( passTimed )
+		{
+			const double usPerTick = 1000000.0 / Sys_ClockTicksPerSecond();
+			const passTicStats_t& ps = passStats;
+			char countedCols[ 192 ];
+			if( ps.counted )
+			{
+				idStr::snPrintf( countedCols, sizeof( countedCols ), "%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu",
+								 ( unsigned long long )ps.counters[ PASS_COUNTED_WALK ][ 0 ], ( unsigned long long )ps.counters[ PASS_COUNTED_WALK ][ 1 ],
+								 ( unsigned long long )ps.counters[ PASS_COUNTED_WALK ][ 2 ], ( unsigned long long )ps.counters[ PASS_COUNTED_EVENTS ][ 0 ],
+								 ( unsigned long long )ps.counters[ PASS_COUNTED_EVENTS ][ 1 ], ( unsigned long long )ps.counters[ PASS_COUNTED_EVENTS ][ 2 ],
+								 ( unsigned long long )ps.counters[ PASS_COUNTED_PVS ][ 0 ], ( unsigned long long )ps.counters[ PASS_COUNTED_SORT ][ 0 ] );
+			}
+			else
+			{
+				idStr::Copynz( countedCols, ",,,,,,,", sizeof( countedCols ) );
+			}
+			if( ps.perEntity )
+			{
+				idStr::snPrintf( pass, sizeof( pass ),
+								 "%.2f,%.2f,%.2f,%.2f,%.2f,%d,%.2f,%d,%.2f,%d,%.1f,%d,%d,"
+								 "%.2f,%.2f,%d,%.2f,%d,%.2f,%d,%.2f,%d,%.2f,%d,%.2f,%d,%.2f,%d,"
+								 "%.2f,%.2f,"
+								 "%s,%d",
+								 ps.tPVS * usPerTick, ps.tSort * usPerTick, ps.tThinkWalk * usPerTick, ps.tEvents * usPerTick,
+								 ( ps.tDormantAsleep + ps.tDormantAwake ) * usPerTick, ps.nDormantAsleep + ps.nDormantAwake,
+								 ps.tPVSAreas * usPerTick, ps.nPVSAreas, ps.tPresent * usPerTick, ps.nPresent,
+								 passOverheadNs, ps.numWalk + ps.nTG2, numSpawnedEntities,
+								 ps.tThinkSum * usPerTick, ( ps.tTG2 - ps.tTG2Thinks ) * usPerTick, ps.nTG2, ps.tShared * usPerTick, ps.nShared,
+								 ps.tSleeperThink * usPerTick, ps.nSleeperThink,
+								 ps.tDormantAsleep * usPerTick, ps.nDormantAsleep, ps.tDormantAwake * usPerTick, ps.nDormantAwake,
+								 ps.tPresentDef * usPerTick, ps.nPresentDef, ps.tPresentFar * usPerTick, ps.nPresentFar,
+								 ps.tPost * usPerTick, ps.tPrune * usPerTick, countedCols, ps.nNestedClock );
+			}
+			else
+			{
+				// level 2: the whole passes and the counts the walks return; the per-entity columns blank
+				idStr::snPrintf( pass, sizeof( pass ),
+								 "%.2f,%.2f,%.2f,%.2f,,,,,,,%.1f,%d,%d,"
+								 ",,%d,%.2f,%d,,,,,,,,,,,"
+								 "%.2f,%.2f,"
+								 "%s,",
+								 ps.tPVS * usPerTick, ps.tSort * usPerTick, ps.tThinkWalk * usPerTick, ps.tEvents * usPerTick,
+								 passOverheadNs, ps.numWalk + ps.nTG2, numSpawnedEntities,
+								 ps.nTG2, ps.tShared * usPerTick, ps.nShared,
+								 ps.tPost * usPerTick, ps.tPrune * usPerTick, countedCols );
+			}
+		}
+		else
+		{
+			memset( pass, ',', PASS_CSV_COLUMNS - 1 );
+			pass[ PASS_CSV_COLUMNS - 1 ] = '\0';
+		}
+		//puncho end
 		int64 aasBytes = 0, aasEvictions = 0, aasSaturated = 0;
 		for( int i = 0; i < aasList.Num(); i++ )
 		{
@@ -3551,7 +4321,8 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 										"%d,%d,%d,%d,"
 										"%d,%d,%d,%d,%d,"
 										"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
-										"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%lld,%lld,%lld,%d,%d,%d,%d,%d\n",	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): the shooter tokens
+										"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%lld,%lld,%lld,%d,%d,%d,%d,%d,"	//puncho - ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md): the shooter tokens
+										"%s,%d,%d,%d,%d,%d,%d\n",	//puncho - P2b.0.3: the pass columns; P2b.2.6: the phase block's
 										framenum, time, usTic, numEnts, t.thinks, t.moveTics,
 										t.usThink, t.usPerceive, t.usScript, t.usMove, t.usMovePath, t.usMoveAvoid, t.usMovePhysics, t.usPath, t.usAnimUpdate, t.usAnimCtl,
 										aiHudStats.worst.usThink, aiHudStats.worstName,
@@ -3566,7 +4337,8 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 										t.flowSteps, t.flowCellsBuilt, t.flowFieldsOpened, t.flowPromoted, t.roleFollowers,
 										t.attacksMelee, t.attacksMissile, t.attacksCharge, t.projectilesAlive, t.damageEvents, t.friendlyDamage, t.painEvents, t.deaths, t.ragdollsActive,
 										t.enemyChanges, t.enemyLost, t.noEnemy, t.canHitTraces, t.attackPosSearches, t.coverSearches, t.usCombatTraces,
-										t.usShooterTokens, t.shooterCandidates, t.shooterHolders, t.shooterGrants, t.shooterYields, t.shooterExpired, t.shooterDenied, t.shooterTests, t.shooterSniperAsks, t.dormTests, t.dormAsleep, t.dormClosedOff, t.dormFar, t.dormUnseen, t.dormWakes, t.dormSleeps, t.dormDeferred, t.dormForced, t.dormViolations, t.awakeNear2k, t.awakeNear4k, t.awakeNear8k, t.awakeFar, t.dormCatchUps, ( long long )aasBytes, ( long long )aasEvictions, ( long long )aasSaturated, t.avoidDue, t.avoidEnrolled, t.avoidHits, t.avoidMisses, t.avoidUnenrolled );	//puncho - P0: appended avoidance counts; ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md)
+										t.usShooterTokens, t.shooterCandidates, t.shooterHolders, t.shooterGrants, t.shooterYields, t.shooterExpired, t.shooterDenied, t.shooterTests, t.shooterSniperAsks, t.dormTests, t.dormAsleep, t.dormClosedOff, t.dormFar, t.dormUnseen, t.dormWakes, t.dormSleeps, t.dormDeferred, t.dormForced, t.dormViolations, t.awakeNear2k, t.awakeNear4k, t.awakeNear8k, t.awakeFar, t.dormCatchUps, ( long long )aasBytes, ( long long )aasEvictions, ( long long )aasSaturated, t.avoidDue, t.avoidEnrolled, t.avoidHits, t.avoidMisses, t.avoidUnenrolled,	//puncho - P0: appended avoidance counts; ai-combat (plans/ai-combat/08-PLAN-shooter-tokens.md)
+										pass, t.usPhaseSense, t.usPhaseDecide, t.usPhaseMove, t.usPhasePresent, t.phasedMonsters, t.phaseLateJoins );	//puncho - P2b.0.3, P2b.2.6
 		if( aiProfileLen + len >= ( int )sizeof( aiProfileBuf ) )
 		{
 			FlushAIProfileLog();
@@ -3626,6 +4398,11 @@ void idGameLocal::RunAIStats( int numEnts, int usTic )
 		Printf( "aistats:   shooters cand %.1f held %.1f grants %.2f yields %.2f expired %.2f denied %.1f tests %.1f sniper %.1f | tokens %.3f ms\n",
 				s.shooterCandidates * perTic, s.shooterHolders * perTic, s.shooterGrants * perTic, s.shooterYields * perTic, s.shooterExpired * perTic,
 				s.shooterDenied * perTic, s.shooterTests * perTic, s.shooterSniperAsks * perTic, s.usShooterTokens * toMs );
+		//puncho end
+		//puncho start - P2b.2.6: the phase block, the same per-tic averages; the phases in ms (0 unless ai_thinkPhases ran it)
+		Printf( "aistats:   phases sense %.3f decide %.3f move %.3f present %.3f ms | members %.1f lateJoins %.2f\n",
+				s.usPhaseSense * toMs, s.usPhaseDecide * toMs, s.usPhaseMove * toMs, s.usPhasePresent * toMs,
+				s.phasedMonsters * perTic, s.phaseLateJoins * perTic );
 		//puncho end
 	}
 
@@ -4363,6 +5140,20 @@ int	idGameLocal::NumAAS() const
 
 /*
 ==================
+idGameLocal::GetAASName
+==================
+*/
+const char* idGameLocal::GetAASName( int i ) const
+{
+	if( i < 0 || i >= aasNames.Num() )
+	{
+		return "?";
+	}
+	return aasNames[i].c_str();
+}
+
+/*
+==================
 idGameLocal::GetAAS
 ==================
 */
@@ -4516,7 +5307,7 @@ static idCVar g_budgetDebris( "g_budgetDebris", "0", CVAR_GAME | CVAR_INTEGER, "
 static idCVar g_budgetFx( "g_budgetFx", "0", CVAR_GAME | CVAR_INTEGER, "maximum live transient effects; 0 disables" );
 static idCVar g_budgetItems( "g_budgetItems", "0", CVAR_GAME | CVAR_INTEGER, "refuse new optional dropped items at this cap; existing items persist" );
 static idCVar g_budgetGibs( "g_budgetGibs", "0", CVAR_GAME | CVAR_INTEGER, "maximum live transient gibs; 0 disables" );
-static idCVar g_entityReserve( "g_entityReserve", "64", CVAR_GAME | CVAR_INTEGER, "free entity slots reserved for essential spawns; 0 disables" );
+static idCVar g_entityReserve( "g_entityReserve", "0", CVAR_GAME | CVAR_INTEGER, "free entity slots reserved for essential spawns; 0 disables" );	//puncho - R0 U5: no reserve by default
 static idCVar g_budgetCorpses( "g_budgetCorpses", "0", CVAR_GAME | CVAR_INTEGER, "maximum live corpses, dead monsters and settled corpses, oldest death first, persist_nocap, essential and quest_item kept (in world mode the cap is g_recordCapCorpses); 0 off; a change mid-map leaves the bodies already down as they are: the class fills from new deaths" );	//puncho - P2b.1.10c
 //puncho - P2b.1.10a: listBudgets' and spawn_budget's names, indexed by entityBudget_t
 static const char* const budgetNames[] = { "debris", "fx", "item", "gib", "corpse" };
@@ -5004,7 +5795,9 @@ void idGameLocal::RegisterEntity( idEntity* ent, int forceSpawnId, const idDict&
 	spawnIds[ spawn_entnum ] = gen;
 	//puncho end
 	ent->entityNumber = spawn_entnum;
+	entityHot.RegisterRow( ent );	//puncho - P2b.2.1a: the row from the constructor's members, now the entity has a number
 	ent->spawnNode.AddToEnd( spawnedEntities );
+	numSpawnedEntities++;	//puncho - P2b.0.3
 
 	// Make a copy because TransferKeyValues clears the input parameter.
 	idDict copiedArgs = spawnArgsToCopy;
@@ -5053,6 +5846,7 @@ void idGameLocal::UnregisterEntity( idEntity* ent )
 		LeaveEntityBudget( ent );
 		worldStore.EntityRemoved( ent );
 		ent->spawnNode.Remove();
+		numSpawnedEntities--;	//puncho - P2b.0.3
 		entities[ ent->entityNumber ] = NULL;
 		spawnIds[ ent->entityNumber ] = -1;
 
@@ -5062,6 +5856,7 @@ void idGameLocal::UnregisterEntity( idEntity* ent )
 		{
 			firstFreeEntityIndex[ freeListType ] = worldStore.IsActive() && freeListType == 0 ? Max( mapSpawnCount, ent->entityNumber ) : ent->entityNumber;
 		}
+		entityHot.UnregisterRow( ent->entityNumber );	//puncho - P2b.2.1a
 		ent->entityNumber = ENTITYNUM_NONE;
 	}
 }
@@ -5110,6 +5905,7 @@ idEntity* idGameLocal::SpawnEntityType( const idTypeInfo& classdef, const idDict
 		}
 		obj = classdef.CreateInstance();
 		obj->CallSpawn();
+		entityHot.SyncRow( static_cast<idEntity*>( obj ) );	//puncho - P2b.2.1a: the row as Spawn left the members
 		JoinEntityBudget( static_cast<idEntity*>( obj ), budget );
 	}
 
@@ -5213,6 +6009,7 @@ bool idGameLocal::SpawnEntityDef( const idDict& args, idEntity** ent, bool setDe
 
 		if( obj->IsType( idEntity::Type ) )
 		{
+			entityHot.SyncRow( static_cast<idEntity*>( obj ) );	//puncho - P2b.2.1a: the row as Spawn left the members
 			JoinEntityBudget( static_cast<idEntity*>( obj ), budget );
 			GrowMaxObstacleRadius( static_cast<idEntity*>( obj ) );	//puncho - ai-avoidance (WP-A4)
 		}
@@ -6529,7 +7326,7 @@ void idGameLocal::SetCamera( idCamera* cam )
 			// kill any active monsters that are enemies of the player
 			for( ent = spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
 			{
-				if( ent->cinematic || ent->fl.isDormant )
+				if( ent->IsCinematic() || ent->fl.isDormant )
 				{
 					// only kill entities that aren't needed for cinematics and aren't dormant
 					continue;
@@ -6649,6 +7446,46 @@ bool idGameLocal::CheckInCinematic()
 {
 	return inCinematic;
 }
+
+//puncho start - P2b.2.3b
+/*
+=============
+GetSchemaKeys_r
+
+A class's super first, then its own rows, so the chain's root lists first (idClass::CallSpawnFunc's order).
+=============
+*/
+static void GetSchemaKeys_r( const idTypeInfo* c, idList<const schemaKey_t*>& keys )
+{
+	if( c->super != NULL )
+	{
+		GetSchemaKeys_r( c->super, keys );
+	}
+	for( int i = 0; i < c->numSchemaKeys; i++ )
+	{
+		keys.Append( &c->schemaKeys[i] );
+	}
+}
+
+/*
+=============
+idGameLocal::GetSchemaKeys
+
+The rows CLASS_SCHEMA_KEYS registered on each class of spawnclass's chain, the root first, each class's in list order.
+=============
+*/
+bool idGameLocal::GetSchemaKeys( const char* spawnclass, idList<const schemaKey_t*>& keys ) const
+{
+	keys.SetNum( 0 );
+	const idTypeInfo* type = idClass::GetClass( spawnclass );
+	if( type == NULL )
+	{
+		return false;
+	}
+	GetSchemaKeys_r( type, keys );
+	return true;
+}
+//puncho end
 /*
 ======================
 idGameLocal::SpreadLocations
@@ -7686,7 +8523,7 @@ void idGameLocal::GetMapStats( mapGameStats_t& stats ) const
 	{
 		stats.entities++;
 		stats.corpseLive += ent->IsType( idCorpse::Type ) ? 1 : 0;
-		if( ent->thinkFlags != 0 )
+		if( ent->GetThinkFlags() != 0 )
 		{
 			stats.activeEntities++;
 		}
@@ -7708,6 +8545,12 @@ void idGameLocal::GetMapStats( mapGameStats_t& stats ) const
 	stats.recordCommitUs = worldStore.commitUs;
 	stats.recordApplyUs = worldStore.applyUs;
 	stats.cmModels = collisionModelManager->GetNumModels();
+	stats.cmModelsCap = collisionModelManager->GetMaxModels();	//puncho - R1.3: report the live ordinary capacity, including 0 when cleared
+	//puncho start - R1.1: event pool and completed-pass peaks for the MAP alloc row
+	stats.eventHighWater = idEvent::HighWater();
+	stats.eventCapacity = MAX_EVENTS;
+	stats.eventPassHighWater = idEvent::PassHighWater();
+	//puncho end
 	stats.skipStatics = skipReplicatedStatics;
 	stats.skipStaticsCap = net_maxSkipReplicatedStatics.GetInteger();
 	stats.pvsBytes = pvs.GetMapBytes();

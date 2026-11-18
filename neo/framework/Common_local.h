@@ -497,6 +497,8 @@ public:
 
 	// RB begin
 	virtual void LoadPhase( loadPhase_t phase );
+	virtual void LoadSpanAdd( loadSpan_t span, uint64 us, int64 readBytes, int64 readUs, int64 imageBytes, int64 pacifierUs );
+	virtual void LoadSpanName( loadSpan_t span, const char* name );
 	virtual bool IsSaveGameLoad() const { return mapSpawnData.savegameFile != NULL; }
 	virtual bool IsGameDrivenLoad() const { return mapSpawnData.gameDriven && mapSpawnData.savegameFile == NULL; }
 	virtual void PrefetchMap( const char* name );

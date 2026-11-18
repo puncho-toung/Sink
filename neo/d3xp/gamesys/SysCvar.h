@@ -99,6 +99,17 @@ extern idCVar	ai_profile;
 extern idCVar	g_aiStats;
 extern idCVar	ai_profileLog;
 //puncho end
+//puncho start - P2b.0.3
+extern idCVar	g_passProfile;
+extern idCVar	g_passProfileEvery;
+//puncho end
+//puncho start - P2b.2.1a
+extern idCVar	g_entityTable;
+extern idCVar	g_entityTableVerify;
+extern idCVar	g_entityPassWalks;	//puncho - P2b.2.2a
+extern idCVar	g_entityPassDormancy;	//puncho - P2b.2.2b-i
+extern idCVar	ai_thinkPhases;	//puncho - P2b.2.6
+//puncho end
 //puncho start - ai-combat
 extern idCVar	ai_benchSeed;
 //puncho end
@@ -334,5 +345,9 @@ extern idCVar g_dormantStats;
 extern idCVar g_showDormancy;
 extern idCVar g_dormantCatchUp;
 extern idCVar g_dormantCatchUpMinMs;
+//puncho start - P2b.2.2b-ii
+extern idCVar g_dormantDistanceFirst;
+extern idCVar g_dormantWorldRadius;
+//puncho end
 
 #endif /* !__SYS_CVAR_H__ */

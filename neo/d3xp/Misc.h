@@ -156,7 +156,7 @@ private:
 
 //puncho - P2b.1.2: idDamagable's map record section (Record.h, RECORD_SECTION_DAMAGABLE): broken in play, HAND in Misc.cpp
 #define DAMAGABLE_RECORD_SCHEMA( X, s ) \
-	X( s, Broken,		HAND,	R,	RAW,	1,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA )
+	X( s, Broken,		HAND,	R,	RAW,	1,	BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA,	NOKEY,	NODEF,	NOEDIT,	OBJ )
 
 class idDamagable : public idEntity
 {

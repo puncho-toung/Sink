@@ -163,6 +163,106 @@ void Cmd_ActiveEntityList_f( const idCmdArgs& args )
 	gameLocal.Printf( "...%d active entities\n", count );
 }
 
+//puncho start - P2b.2.1a
+/*
+===================
+Cmd_ListEntityTable_f
+
+listEntityTable [n | cell]: the hot table (d3xp/EntityHot.h): the latched switches, the live rows and their bits, the
+active mirror, the spatial passes, the counters, the BSS bytes and sizeof( idEntity ); with n, that entity number's row;
+with cell, every live row's cell group.
+===================
+*/
+static void Cmd_ListEntityTable_f( const idCmdArgs& args )
+{
+	const idEntityHot& hot = gameLocal.entityHot;
+	//puncho - P2b.2.1b: the cell group, a line per live row, then how many rows still hold the registration values
+	if( args.Argc() > 1 && idStr::Icmp( args.Argv( 1 ), "cell" ) == 0 )
+	{
+		int live = 0;
+		int unplaced = 0;
+		for( int n = 0; n < MAX_GENTITIES; n++ )
+		{
+			const idEntity* ent = gameLocal.entities[ n ];
+			if( ent == NULL )
+			{
+				continue;
+			}
+			const hotCell_t& row = hot.cell[ n ];
+			gameLocal.Printf( "%5d %-24s cell %u home %u ord %d flags %d\n", n, ent->GetName(), row.cellId, row.homeCellId, row.cellOrdinal,
+							  row.cellFlags );
+			live++;
+			if( row.cellId == CELL_ID_NONE && row.homeCellId == CELL_ID_NONE && row.cellOrdinal == CELL_ORDINAL_NONE && row.cellFlags == 0 )
+			{
+				unplaced++;
+			}
+		}
+		gameLocal.Printf( "cell: %d live rows, %d unplaced (cell %u home %u ord %d flags 0)\n", live, unplaced, CELL_ID_NONE, CELL_ID_NONE,
+						  CELL_ORDINAL_NONE );
+		return;
+	}
+	if( args.Argc() > 1 )
+	{
+		const int n = atoi( args.Argv( 1 ) );
+		if( n < 0 || n >= MAX_GENTITIES )
+		{
+			gameLocal.Printf( "listEntityTable: no entity number %s\n", args.Argv( 1 ) );
+			return;
+		}
+		const idEntity* ent = gameLocal.entities[ n ];
+		const hotThink_t& row = hot.think[ n ];
+		const hotSpatial_t& spatial = hot.spatial[ n ];
+		const hotCell_t& cellRow = hot.cell[ n ];	//puncho - P2b.2.1b
+		gameLocal.Printf( "%5d %-24s thinkFlags %02x bits %02x tier %d moved %d active slot %d\n", n, ent != NULL ? ent->GetName() : "(empty)",
+						  row.thinkFlags, row.bits, row.tier, hot.moved[ n ], hot.activeIndex[ n ] );
+		gameLocal.Printf( "      spatial origin ( %s ) bounds ( %s ) ( %s ) tic %d\n", spatial.origin.ToString(), spatial.absBounds[0].ToString(),
+						  spatial.absBounds[1].ToString(), spatial.tic );
+		gameLocal.Printf( "      cell %u home %u ord %d flags %d\n", cellRow.cellId, cellRow.homeCellId, cellRow.cellOrdinal, cellRow.cellFlags );	//puncho - P2b.2.1b
+		return;
+	}
+
+	int live = 0;
+	int thinking = 0;
+	int bits[HOT_BIT_COUNT] = { 0 };
+	for( int n = 0; n < MAX_GENTITIES; n++ )
+	{
+		if( gameLocal.entities[ n ] == NULL )
+		{
+			continue;
+		}
+		live++;
+		thinking += hot.think[ n ].thinkFlags != 0 ? 1 : 0;
+		for( int b = 0; b < HOT_BIT_COUNT; b++ )
+		{
+			bits[b] += ( hot.think[ n ].bits >> b ) & 1;
+		}
+	}
+	int tombstones = 0;
+	for( int i = 0; i < hot.activeNum; i++ )
+	{
+		tombstones += hot.activeOrder[ i ] < 0 ? 1 : 0;
+	}
+	const double ticksPerUs = Sys_ClockTicksPerSecond() * 1e-6;
+	const int bssBytes = sizeof( hot.think ) + sizeof( hot.spatial ) + sizeof( hot.moved ) + sizeof( hot.activeOrder ) + sizeof( hot.activeIndex )
+						 + sizeof( hot.cell );	//puncho - P2b.2.1b
+
+	gameLocal.Printf( "entityTable: g_entityTable %d walks %d dormancy %d phases %d verify %d (latched), mirror %s, %d spatial consumers\n", hot.tableOn, hot.walksOn, hot.dormancyOn, hot.phasesOn, hot.verifyOn,	//puncho - P2b.2.2a, P2b.2.2b-i, P2b.2.6
+					  hot.activeMaintained ? "maintained" : "off", hot.spatialConsumers );
+	gameLocal.Printf( "rows: %d live, %d thinking; dormancy %d shared %d phased %d skip %d cinematic %d timeGroup2 %d\n", live, thinking,
+					  bits[0], bits[1], bits[2], bits[3], bits[4], bits[5] );
+	gameLocal.Printf( "mirror: %d slots, %d live, %d tombstones, cursor %d; activeRebuilds %d, tombstoned %d, compactions %d\n", hot.activeNum,
+					  hot.activeNum - tombstones, tombstones, hot.activeCursor, hot.activeRebuilds, hot.activeTombstones, hot.activeCompactions );
+	gameLocal.Printf( "spatial: %d passes, %d rows, %.2f us a pass, %.1f ns a row; full refresh %d rows, %.1f ns a row\n", hot.spatialPasses,
+					  hot.spatialRows, hot.spatialPasses > 0 ? hot.spatialTicks / ticksPerUs / hot.spatialPasses : 0.0,
+					  hot.spatialRows > 0 ? hot.spatialTicks / ticksPerUs * 1000.0 / hot.spatialRows : 0.0, hot.spatialFullRows,
+					  hot.spatialFullRows > 0 ? hot.spatialFullTicks / ticksPerUs * 1000.0 / hot.spatialFullRows : 0.0 );
+	gameLocal.Printf( "counters: hotMismatch %d droppedWrites %d; walks: %d TG2 thinks, %d SharedThink calls; dormancy: %d sleepers skipped, %d unlifted\n", hot.hotMismatch, hot.droppedWrites,
+					  hot.walkTG2Thinks, hot.walkSharedCalls, hot.sleepersSkipped, hot.dormancyUnlifted );	//puncho - P2b.2.2a, P2b.2.2b-i
+	gameLocal.Printf( "memory: BSS %d bytes (%d a row of %d), entityHot %d bytes, sizeof( idEntity ) %d\n", bssBytes, bssBytes / MAX_GENTITIES,
+					  MAX_GENTITIES, ( int )sizeof( idEntityHot ), ( int )sizeof( idEntity ) );
+}
+//puncho end
+
 /*
 ===================
 Cmd_ListSpawnArgs_f
@@ -186,6 +286,47 @@ void Cmd_ListSpawnArgs_f( const idCmdArgs& args )
 		gameLocal.Printf( "\"%s\"  " S_COLOR_WHITE "\"%s\"\n", kv->GetKey().c_str(), kv->GetValue().c_str() );
 	}
 }
+
+//puncho start - P2b.2.3b
+/*
+===================
+Cmd_ListSchemaKeys_f
+
+listSchemaKeys <class>: the rows of the class's chain that read a spawnArg (idGame::GetSchemaKeys: the root class
+first, each class's in list order), with the key's FGD type, default and editor text.
+===================
+*/
+static void Cmd_ListSchemaKeys_f( const idCmdArgs& args )
+{
+	static const char* const typeNames[] = { "none", "integer", "float", "bool", "string" };
+	verify_array_size( typeNames, SCHEMA_KEY_STRING + 1 );
+
+	if( args.Argc() < 2 )
+	{
+		gameLocal.Printf( "usage: listSchemaKeys <class>\n" );
+		return;
+	}
+	idList<const schemaKey_t*> keys;
+	if( !gameLocal.GetSchemaKeys( args.Argv( 1 ), keys ) )
+	{
+		gameLocal.Printf( "listSchemaKeys: no class %s\n", args.Argv( 1 ) );
+		return;
+	}
+	int keyed = 0;
+	for( int i = 0; i < keys.Num(); i++ )
+	{
+		const schemaKey_t& row = *keys[i];
+		if( row.key == NULL )
+		{
+			continue;
+		}
+		gameLocal.Printf( "%-22s %-22s %-8s %-8s %s\n", row.field, row.key, typeNames[row.type], row.defaultValue != NULL ? va( "\"%s\"", row.defaultValue ) : "NODEF",
+						  row.editor != NULL ? row.editor : "" );
+		keyed++;
+	}
+	gameLocal.Printf( "listSchemaKeys: %s: %d keyed rows of %d\n", args.Argv( 1 ), keyed, keys.Num() );
+}
+//puncho end
 
 /*
 ===================
@@ -361,23 +502,16 @@ void Cmd_KillRagdolls_f( const idCmdArgs& args )
 
 /*
 ==================
-Cmd_Give_f
+GiveToPlayer
 
-Give items to a client
+Give items to a player: give's body over its player, so giveClient shares it (P2b.0.1e); args as give's, the item in argv 1
 ==================
 */
-void Cmd_Give_f( const idCmdArgs& args )
+static void GiveToPlayer( idPlayer* player, const idCmdArgs& args )	//puncho - P2b.0.1e
 {
 	const char* name;
 	int			i;
 	bool		give_all;
-	idPlayer*	player;
-
-	player = gameLocal.GetLocalPlayer();
-	if( !player || !gameLocal.CheatsOk() )
-	{
-		return;
-	}
 
 	name = args.Argv( 1 );
 
@@ -551,6 +685,66 @@ void Cmd_Give_f( const idCmdArgs& args )
 		gameLocal.Printf( "unknown item\n" );
 	}
 }
+
+//puncho start - P2b.0.1e: give on the local player and giveClient on any, one body
+/*
+==================
+Cmd_Give_f
+
+Give items to the local player
+==================
+*/
+void Cmd_Give_f( const idCmdArgs& args )
+{
+	idPlayer* player = gameLocal.GetLocalPlayer();
+	if( !player || !gameLocal.CheatsOk() )
+	{
+		return;
+	}
+	GiveToPlayer( player, args );
+}
+
+#if !defined( ID_RETAIL )
+/*
+==================
+Cmd_GiveClient_f
+
+giveClient <clientNum> <item> ...: give for any player, run on the host (P2b.0.1e, G-STORM). give acts on the local
+player of the process that runs it, and a client's inventory is overwritten by the host's snapshot, so a host arms a
+joiner with this; the weapons line is the host-side read of what it now holds
+==================
+*/
+static void Cmd_GiveClient_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 3 )
+	{
+		gameLocal.Printf( "usage: giveClient <clientNum> <item> ...\n" );
+		return;
+	}
+	if( !gameLocal.CheatsOk( false ) )
+	{
+		return;
+	}
+	const int clientNum = idStr::IsNumeric( args.Argv( 1 ) ) ? atoi( args.Argv( 1 ) ) : -1;
+	idEntity* ent = ( clientNum >= 0 && clientNum < MAX_CLIENTS ) ? gameLocal.entities[ clientNum ] : NULL;
+	if( ent == NULL || !ent->IsType( idPlayer::Type ) || static_cast< idPlayer* >( ent )->health <= 0 )
+	{
+		gameLocal.Printf( "giveClient: no player %s\n", args.Argv( 1 ) );
+		return;
+	}
+	idPlayer* player = static_cast< idPlayer* >( ent );
+
+	// shift by one: the client number lands in argv 0, which the body ignores, and the item in argv 1 as give's does
+	idCmdArgs giveArgs;
+	for( int i = 1; i < args.Argc(); i++ )
+	{
+		giveArgs.AppendArg( args.Argv( i ) );
+	}
+	GiveToPlayer( player, giveArgs );
+	gameLocal.Printf( "giveClient %d %s: weapons 0x%08x health %d\n", clientNum, args.Argv( 2 ), player->inventory.weapons, player->health );
+}
+#endif
+//puncho end
 
 /*
 ==================
@@ -2934,6 +3128,214 @@ static void Cmd_TestSnapTraceCompare_f( const idCmdArgs& args )
 }
 //puncho end
 
+//puncho start - P2b.2.7: the spawn probe (K12), test scaffolding
+#if !defined( ID_RETAIL )
+// nine significant digits tell any two floats apart, so two builds' files compare with cmp
+static void SpawnRead_MoveableMinDamageVelocity( const idEntity* ent, idStr& value )
+{
+	value = va( "%.9g", static_cast<const idMoveable*>( ent )->MinDamageVelocity() );
+}
+
+// P2b.2.3b: the members the idMoveable pilot moves
+static void SpawnRead_MoveableBrokenModel( const idEntity* ent, idStr& value )
+{
+	value = static_cast<const idMoveable*>( ent )->BrokenModel();
+}
+
+static void SpawnRead_MoveableDamage( const idEntity* ent, idStr& value )
+{
+	value = static_cast<const idMoveable*>( ent )->DamageDef();
+}
+
+static void SpawnRead_MoveableMonsterDamage( const idEntity* ent, idStr& value )
+{
+	value = static_cast<const idMoveable*>( ent )->MonsterDamageDef();
+}
+
+static void SpawnRead_MoveableFxCollide( const idEntity* ent, idStr& value )
+{
+	value = static_cast<const idMoveable*>( ent )->FxCollide();
+}
+
+static void SpawnRead_MoveableMaxDamageVelocity( const idEntity* ent, idStr& value )
+{
+	value = va( "%.9g", static_cast<const idMoveable*>( ent )->MaxDamageVelocity() );
+}
+
+static void SpawnRead_MoveableExplode( const idEntity* ent, idStr& value )
+{
+	value = va( "%d", static_cast<const idMoveable*>( ent )->Explodes() ? 1 : 0 );
+}
+
+static void SpawnRead_MoveableUnbindOnDeath( const idEntity* ent, idStr& value )
+{
+	value = va( "%d", static_cast<const idMoveable*>( ent )->UnbindOnDeath() ? 1 : 0 );
+}
+
+static void SpawnRead_MoveableAllowStep( const idEntity* ent, idStr& value )
+{
+	value = va( "%d", static_cast<const idMoveable*>( ent )->AllowStep() ? 1 : 0 );
+}
+
+static void SpawnRead_MoveableHealth( const idEntity* ent, idStr& value )
+{
+	value = va( "%d", ent->health );
+}
+
+// P2b.2.5a: the unsaved members batch a moves, and idItemTeam's nuggetName, an unsaved member its Spawn writes by hand
+// (a pointer into spawnArgs, NULL when the key is empty)
+static void SpawnRead_ItemTeamTeam( const idEntity* ent, idStr& value )
+{
+	value = va( "%d", static_cast<const idItemTeam*>( ent )->team );
+}
+
+static void SpawnRead_ItemTeamNuggetName( const idEntity* ent, idStr& value )
+{
+	const char* nuggetName = static_cast<const idItemTeam*>( ent )->NuggetName();
+	value = ( nuggetName != NULL ) ? nuggetName : "";
+}
+
+static void SpawnRead_MoveableItemRepeatSmoke( const idEntity* ent, idStr& value )
+{
+	value = va( "%d", static_cast<const idMoveableItem*>( ent )->RepeatSmoke() ? 1 : 0 );
+}
+
+// P2b.2.5b: the unsaved members batch b moves: idEntity's dormancy trio (Restore reads it again from spawnArgs), the
+// light styles (not saved) and the CTF flag trigger's team and player (the class has no Save)
+static void SpawnRead_EntityDormantRadius( const idEntity* ent, idStr& value )
+{
+	value = va( "%.9g", ent->dormantRadius );
+}
+
+static void SpawnRead_EntityDormantHysteresis( const idEntity* ent, idStr& value )
+{
+	value = va( "%.9g", ent->dormantHysteresis );
+}
+
+static void SpawnRead_EntityDormantEngagedScale( const idEntity* ent, idStr& value )
+{
+	value = va( "%.9g", ent->dormantEngagedScale );
+}
+
+static void SpawnRead_LightLightStyle( const idEntity* ent, idStr& value )
+{
+	value = va( "%d", static_cast<const idLight*>( ent )->LightStyle() );
+}
+
+static void SpawnRead_LightLightStyleFrameTime( const idEntity* ent, idStr& value )
+{
+	value = va( "%d", static_cast<const idLight*>( ent )->LightStyleFrameTime() );
+}
+
+static void SpawnRead_TriggerFlagTeam( const idEntity* ent, idStr& value )
+{
+	value = va( "%d", static_cast<const idTrigger_Flag*>( ent )->Team() );
+}
+
+static void SpawnRead_TriggerFlagPlayer( const idEntity* ent, idStr& value )
+{
+	value = va( "%d", static_cast<const idTrigger_Flag*>( ent )->Player() ? 1 : 0 );
+}
+
+// P2b.2.5c: the unsaved member batch c moves: idAI's spawnClearMoveables (Spawn's last read)
+static void SpawnRead_AISpawnClearMoveables( const idEntity* ent, idStr& value )
+{
+	value = va( "%d", static_cast<const idAI*>( ent )->SpawnClearMoveables() ? 1 : 0 );
+}
+
+typedef struct spawnReadProbe_s
+{
+	const idTypeInfo* 		type;		// the class whose Spawn writes the member; its subclasses are probed too
+	const char* 			member;
+	void	( *read )( const idEntity* ent, idStr& value );	// called only on an entity of type or a subclass, so it casts unchecked
+} spawnReadProbe_t;
+
+// one row per member a Spawn conversion moves, appended by each batch in a commit before its conversion, so the
+// build the conversion is compared against prints the same rows; a protected member gets a const accessor in its
+// class, as dumpMapState's columns do (Mover.h RecordFloor)
+static const spawnReadProbe_t spawnReadProbe[] =
+{
+	{ &idMoveable::Type,	"minDamageVelocity",	SpawnRead_MoveableMinDamageVelocity },
+	{ &idMoveable::Type,	"brokenModel",			SpawnRead_MoveableBrokenModel },
+	{ &idMoveable::Type,	"damage",				SpawnRead_MoveableDamage },
+	{ &idMoveable::Type,	"monsterDamage",		SpawnRead_MoveableMonsterDamage },
+	{ &idMoveable::Type,	"fxCollide",			SpawnRead_MoveableFxCollide },
+	{ &idMoveable::Type,	"maxDamageVelocity",	SpawnRead_MoveableMaxDamageVelocity },
+	{ &idMoveable::Type,	"explode",				SpawnRead_MoveableExplode },
+	{ &idMoveable::Type,	"unbindOnDeath",		SpawnRead_MoveableUnbindOnDeath },
+	{ &idMoveable::Type,	"allowStep",			SpawnRead_MoveableAllowStep },
+	{ &idMoveable::Type,	"health",				SpawnRead_MoveableHealth },
+	{ &idItemTeam::Type,	"team",					SpawnRead_ItemTeamTeam },
+	{ &idItemTeam::Type,	"nuggetName",			SpawnRead_ItemTeamNuggetName },
+	{ &idMoveableItem::Type,	"repeatSmoke",		SpawnRead_MoveableItemRepeatSmoke },
+	{ &idEntity::Type,		"dormantRadius",		SpawnRead_EntityDormantRadius },
+	{ &idEntity::Type,		"dormantHysteresis",	SpawnRead_EntityDormantHysteresis },
+	{ &idEntity::Type,		"dormantEngagedScale",	SpawnRead_EntityDormantEngagedScale },
+	{ &idLight::Type,		"lightStyle",			SpawnRead_LightLightStyle },
+	{ &idLight::Type,		"lightStyleFrameTime",	SpawnRead_LightLightStyleFrameTime },
+	{ &idTrigger_Flag::Type,	"team",				SpawnRead_TriggerFlagTeam },
+	{ &idTrigger_Flag::Type,	"player",			SpawnRead_TriggerFlagPlayer },
+	{ &idAI::Type,			"spawnClearMoveables",	SpawnRead_AISpawnClearMoveables },
+};
+static const int NUM_SPAWN_READ_PROBES = ARRAY_COUNT( spawnReadProbe );
+
+/*
+==================
+Cmd_TestSpawnRead_f
+
+testSpawnRead <file>: in entity number order, a line "entnum class member value" for every probe row the entity's
+class has. Run by two builds on one map at the same tic (gates-2b/streamtrace/run.sh --fresh), the files are equal
+unless a conversion changed a spawn value.
+==================
+*/
+static void Cmd_TestSpawnRead_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 2 )
+	{
+		gameLocal.Printf( "usage: testSpawnRead <file under fs_savepath>\n" );
+		return;
+	}
+	if( gameLocal.GameState() != GAMESTATE_ACTIVE )
+	{
+		gameLocal.Printf( "testSpawnRead: needs a map running\n" );
+		return;
+	}
+
+	idFile* out = fileSystem->OpenFileWrite( args.Argv( 1 ) );
+	if( out == NULL )
+	{
+		gameLocal.Printf( "testSpawnRead: FAIL: can't write %s\n", args.Argv( 1 ) );
+		return;
+	}
+
+	int lines = 0;
+	idStr value;
+	for( int e = 0; e < gameLocal.num_entities; e++ )
+	{
+		const idEntity* ent = gameLocal.entities[ e ];
+		if( ent == NULL )
+		{
+			continue;
+		}
+		for( int r = 0; r < NUM_SPAWN_READ_PROBES; r++ )
+		{
+			const spawnReadProbe_t& row = spawnReadProbe[ r ];
+			if( !ent->IsType( *row.type ) )
+			{
+				continue;
+			}
+			row.read( ent, value );
+			out->Printf( "%d %s %s %s\n", e, row.type->classname, row.member, value.c_str() );
+			lines++;
+		}
+	}
+
+	gameLocal.Printf( "testSpawnRead: %d lines from %d probe rows to %s\n", lines, NUM_SPAWN_READ_PROBES, out->GetFullPath() );
+	fileSystem->CloseFile( out );
+}
+#endif
+//puncho end
+
 //puncho start - identity (P1-A2)
 /*
 ==================
@@ -3850,6 +4252,37 @@ static void Cmd_ListMap_f( const idCmdArgs& args )
 	{
 		gameLocal.Printf( "%s\n", rows[i] );
 	}
+	//puncho start - P2b.0.2: resident bytes by kind, summed here and never per frame; KB as the rows above
+	{
+		renderMapStats_t r = {};
+		renderMapBytes_t b = {};
+		renderSystem->GetMapStats( r );
+		renderSystem->GetMapBytes( b );
+		int models, samples;
+		const int64 modelBytes = renderModelManager->GetResidentBytes( models );
+		const int64 sampleBytes = soundSystem->GetSampleBytes( samples );
+		char row[1024];
+		int used = idStr::snPrintf( row, sizeof( row ), "MAP bytes gridImg %llu/%d probeImg %llu/%d genImg %llu/%d matImg %llu/%d models %lld/%d samples %lld/%d cm %lld+%lld aas",
+									( unsigned long long )( b.gridImageBytes / 1024 ), b.gridImages, ( unsigned long long )( b.probeImageBytes / 1024 ), b.probeImages,
+									( unsigned long long )( b.generatedImageBytes / 1024 ), b.generatedImages, ( unsigned long long )( b.materialImageBytes / 1024 ), b.materialImages,
+									( long long )( modelBytes / 1024 ), models, ( long long )( sampleBytes < 0 ? -1 : sampleBytes / 1024 ), samples,
+									( long long )( collisionModelManager->GetModelMemory() / 1024 ), ( long long )( collisionModelManager->GetPolygonIdMemory() / 1024 ) );
+		for( int i = 0; i < gameLocal.NumAAS(); i++ )
+		{
+			const idAAS* aas = gameLocal.GetAAS( i );	// NULL when the type's file did not load
+			int cacheBytes = 0, evictions, saturated;
+			if( aas != NULL )
+			{
+				aas->GetRoutingStats( cacheBytes, evictions, saturated );
+			}
+			used += idStr::snPrintf( row + used, sizeof( row ) - used, " %s:%d+%d+%lld", gameLocal.GetAASName( i ), ( aas != NULL ) ? aas->FileBytes() / 1024 : 0,
+									 cacheBytes / 1024, ( long long )( ( aas != NULL ) ? aas->RoutingBytes() / 1024 : 0 ) );
+		}
+		idStr::snPrintf( row + used, sizeof( row ) - used, " pvs %llu itab %llu static %llu+%llu keep %d", ( unsigned long long )( gameLocal.pvs.GetMapBytes() / 1024 ),
+						 ( unsigned long long )( r.interactionBytes / 1024 ), ( unsigned long long )( r.staticVertexBytes / 1024 ), ( unsigned long long )( r.staticIndexBytes / 1024 ), common->LevelKeepGrace() );
+		gameLocal.Printf( "%s\n", row );
+	}
+	//puncho end
 	unsigned int digest;
 	CRC32_InitChecksum( digest );
 	int open = 0;
@@ -3966,6 +4399,44 @@ static void Cmd_CheckPVSAreas_f( const idCmdArgs& args )
 
 static void Cmd_ListDormancy_f( const idCmdArgs& args )
 {
+	//puncho start - P2b.2.2b-ii: a header at either value. Under distance first every dormancy row (HOT_DORMANCY), each with
+	// its route (tier, or area under g_dormantDistance 0 or a radius of 0, where the radius columns mean nothing), its scaled
+	// radius and outer radius and its distance to the nearest source of the last SetupPlayerPVS; at 0, after the header, the
+	// authored rows as before. The radius rule is DoDormantTests' and the scale DormantDistanceTier's, copied: they change
+	// together. SetupPlayerPVS runs only on the host, so a client has no sources to measure from
+	if( common->IsClient() )
+	{
+		gameLocal.Printf( "dormancy: the sources are the host's (SetupPlayerPVS runs only there)\n" );
+		return;
+	}
+	const bool distanceFirst = g_dormantDistanceFirst.GetBool();
+	gameLocal.Printf( "dormancy: distance first %d, world radius %.0f, %d sources\n", distanceFirst ? 1 : 0, gameLocal.dormantWorldRadius,
+					  gameLocal.numDormantSources );
+	if( distanceFirst )
+	{
+		for( int i = 0; i < MAX_GENTITIES; i++ )
+		{
+			const idEntity* entity = gameLocal.entities[i];
+			if( entity == NULL || ( gameLocal.entityHot.think[ i ].bits & HOT_DORMANCY ) == 0 )
+			{
+				continue;
+			}
+			const float effectiveRadius = ( entity->dormantRadius > 0.0f ) ? entity->dormantRadius : gameLocal.dormantWorldRadius;
+			const bool tier = g_dormantDistance.GetBool() && effectiveRadius > 0.0f;
+			const float scale = Max( 0.0f, g_dormantRadiusScale.GetFloat() ) * entity->DormantRadiusScale();
+			const float radius = effectiveRadius * scale;
+			float distanceSqr = idMath::INFINITUM;
+			for( int s = 0; s < gameLocal.numDormantSources; s++ )
+			{
+				distanceSqr = Min( distanceSqr, ( entity->GetPhysics()->GetOrigin() - gameLocal.dormantSources[ s ] ).LengthSqr() );
+			}
+			gameLocal.Printf( "dormant entity %d %s %s radius %.0f outer %.0f distance %.0f asleep %d awakened %d neverDormant %d requested %d deferred %d\n",
+							  i, entity->name.c_str(), tier ? "tier" : "area", radius, radius + entity->dormantHysteresis * scale, idMath::Sqrt( distanceSqr ),
+							  entity->fl.isDormant, entity->fl.hasAwakened, entity->fl.neverDormant, entity->dormantWakeRequested, entity->dormantWakeDeferredAt );
+		}
+		return;
+	}
+	//puncho end
 	for( int i = 0; i < MAX_GENTITIES; i++ )
 	{
 		const idEntity* entity = gameLocal.entities[i];
@@ -4023,6 +4494,386 @@ static int RecordFuzzRandom( idRandom& rng, int limit )
 	return limit > 0 ? ( int )( value % ( uint32 )limit ) : 0;
 }
 
+//puncho start - P2b.2.3a: recordTest mixedlist (K1). One list holding every kind of row a class's list holds once its
+// record rows merge in: an S row and a NOCH row, which the record expanders drop, an R row and an SR row. The test
+// records, saves and sends it as a class does: the record through idRecordOut and idRecordIn (DIFF, WRITE, framing,
+// CHECK, READ) with both R fields changed and then with Value unchanged, the save through idSaveGame and idRestoreGame
+// on memory files, the wire through an idBitMsg, where no row writes a bit
+#define RECORD_TEST_MIXED_SCHEMA( X, s ) \
+	X( s, saved,	INT,	S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, unsent,	INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, Value,	HAND,	R,		RAW,	4,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, Both,		HAND,	SR,		RAW,	0,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ )
+
+static const int RECORD_TEST_MIXED_SECTION = RECORD_SECTION_IDS - 1;	// never stored, so no entry check sees the id
+
+struct recordTestMixed_t
+{
+	enum
+	{
+		RECORD_TEST_MIXED_SCHEMA( SCHEMA_INDEX, _ )
+		MIXED_FIELDS
+	};
+	enum
+	{
+		RECORD_TEST_MIXED_SCHEMA( SCHEMA_RECORD_INDEX, _ )
+		MIXED_RECORD_FIELDS
+	};
+	// SF_ numbers every row, RF_ only the rows with R
+	compile_time_assert( MIXED_FIELDS == 4 && SF_unsent == 1 && SF_Both == 3 );
+	compile_time_assert( MIXED_RECORD_FIELDS == 2 && RF_Value == 0 && RF_Both == 1 );
+
+	int			saved;
+	int			unsent;
+	int			value;
+	int			both;
+
+	void WriteRecord( idRecordOut& rec ) const
+	{
+		rec.BeginSection( RECORD_TEST_MIXED_SECTION, 1 );
+		RECORD_TEST_MIXED_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
+		RECORD_TEST_MIXED_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
+		rec.EndSection();
+	}
+	bool ApplyRecord( idRecordIn& rec )
+	{
+		if( !rec.BeginSection( RECORD_TEST_MIXED_SECTION ) )
+		{
+			return false;
+		}
+		RECORD_TEST_MIXED_SCHEMA( SCHEMA_RECORD_READ, ( *this ) )
+		rec.EndSection();
+		return rec.good;
+	}
+	static bool CheckRecordSection( idRecordIn& rec )
+	{
+		RECORD_TEST_MIXED_SCHEMA( SCHEMA_RECORD_CHECK, recordTestMixed_t )
+		return rec.good;
+	}
+	void Save( idSaveGame* savefile ) const
+	{
+		RECORD_TEST_MIXED_SCHEMA( SCHEMA_SAVE, ( *this ) )
+	}
+	void Restore( idRestoreGame* savefile )
+	{
+		RECORD_TEST_MIXED_SCHEMA( SCHEMA_RESTORE, ( *this ) )
+	}
+	void WriteToSnapshot( idBitMsg& msg ) const
+	{
+		RECORD_TEST_MIXED_SCHEMA( SCHEMA_WRITE, ( *this ) )
+	}
+	void ReadFromSnapshot( const idBitMsg& msg )
+	{
+		RECORD_TEST_MIXED_SCHEMA( SCHEMA_READ, ( *this ) )
+	}
+
+	// Value: four bytes, written when it is not 0, so a recorded 0 fails the check
+	bool RecordValueChanged( const idRecordOut& rec ) const
+	{
+		return value != 0;
+	}
+	void WriteRecordValue( idRecordOut& rec ) const
+	{
+		rec.WriteInt( value );
+	}
+	bool ApplyRecordValue( idRecordIn& rec )
+	{
+		return rec.ReadInt( value );
+	}
+	static bool CheckRecordValue( idRecordIn& rec )
+	{
+		int read;
+		return rec.ReadInt( read ) && read != 0;
+	}
+	// Both: a variable field holding one int, always written; saved as an int
+	bool RecordBothChanged( const idRecordOut& rec ) const
+	{
+		return true;
+	}
+	void WriteRecordBoth( idRecordOut& rec ) const
+	{
+		rec.WriteInt( both );
+	}
+	bool ApplyRecordBoth( idRecordIn& rec )
+	{
+		return rec.ReadInt( both );
+	}
+	static bool CheckRecordBoth( idRecordIn& rec )
+	{
+		int read;
+		return rec.ReadInt( read );
+	}
+	void SaveBoth( idSaveGame* savefile ) const
+	{
+		savefile->WriteInt( both );
+	}
+	void RestoreBoth( idRestoreGame* savefile )
+	{
+		savefile->ReadInt( both );
+	}
+};
+
+static void RecordTestMixedList()
+{
+	static const recordFrame_t frame = { CELL_ID_NONE, vec3_origin, mat3_identity, RECORD_FRAME_MAP };
+	static const idRecordMapArgs noBaseline = { NULL, NULL };
+	static const char* const names[] = { RECORD_TEST_MIXED_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
+	verify_array_size( names, recordTestMixed_t::MIXED_RECORD_FIELDS );
+	int failures = ( idStr::Cmp( names[recordTestMixed_t::RF_Value], "Value" ) != 0 || idStr::Cmp( names[recordTestMixed_t::RF_Both], "Both" ) != 0 ) ? 1 : 0;
+
+	// the record: the section header, Value's four bytes when it changed, Both's length and four bytes
+	const recordTestMixed_t source[2] = { { 11, 22, 33, 44 }, { 11, 22, 0, 44 } };
+	const uint64 masks[2] = { BIT( recordTestMixed_t::RF_Value ) | BIT( recordTestMixed_t::RF_Both ), BIT( recordTestMixed_t::RF_Both ) };
+	const int lengths[2] = { RECORD_SECTION_HEADER_BYTES + 4 + 2 + 4, RECORD_SECTION_HEADER_BYTES + 2 + 4 };
+	int recordBytes[2] = { 0, 0 };
+	for( int i = 0; i < 2; i++ )
+	{
+		idRecordOut out;
+		out.Begin( frame, true, noBaseline, 0, "" );
+		source[i].WriteRecord( out );
+		recordBytes[i] = out.Length();
+		idRecordIn in;
+		int consumed;
+		in.Begin( frame, CELL_ID_NONE, true, "" );
+		bool good = !out.Overflowed() && out.NumSections() == 1 && out.Length() == lengths[i];
+		good = good && in.ReadSections( out.Data(), out.Length(), 1, consumed ) && consumed == lengths[i] && in.SectionMask( 0 ) == masks[i];
+		if( good )
+		{
+			in.BeginSectionAt( 0 );
+			good = recordTestMixed_t::CheckRecordSection( in );
+			in.EndSection();
+			good = good && in.good;
+			in.Rewind();
+			recordTestMixed_t applied = { -1, -1, -1, -1 };
+			good = good && applied.ApplyRecord( in ) && in.Done();
+			good = good && applied.saved == -1 && applied.unsent == -1 && applied.value == ( i == 0 ? 33 : -1 ) && applied.both == 44;
+		}
+		failures += good ? 0 : 1;
+	}
+
+	// the save: saved and Both, eight bytes
+	idFile_Memory saveFile( "recordTestMixed" );
+	idFile_Memory stringFile( "recordTestMixedStrings" );
+	idSaveGame save( &saveFile, &stringFile, BUILD_NUMBER );
+	source[0].Save( &save );
+	const int saveBytes = saveFile.Length();
+	save.Close();	// appends the sound commands and trace models, which this test does not read
+	idFile_Memory readFile( "recordTestMixed", ( const char* )saveFile.GetDataPtr(), saveBytes );	// the const data opens it for reading
+	idRestoreGame restore( &readFile, &stringFile, BUILD_NUMBER );
+	recordTestMixed_t restored = { -1, -1, -1, -1 };
+	restored.Restore( &restore );
+	failures += ( saveBytes != 8 || readFile.Tell() != saveBytes || restored.saved != 11 || restored.unsent != -1 || restored.value != -1 || restored.both != 44 ) ? 1 : 0;
+
+	// the wire: no W row
+	byte buffer[16];
+	idBitMsg msg;
+	msg.InitWrite( buffer, sizeof( buffer ) );
+	source[0].WriteToSnapshot( msg );
+	const int wireBytes = msg.GetSize();
+	msg.BeginReading();
+	restored.ReadFromSnapshot( msg );
+	failures += ( wireBytes != 0 || msg.GetReadCount() != 0 ) ? 1 : 0;
+
+	gameLocal.Printf( "RECORD_TEST %s mixedlist rows=%d recordRows=%d recordBytes=%d,%d saveBytes=%d wireBytes=%d failures=%d\n", failures == 0 ? "PASS" : "FAIL",
+					  recordTestMixed_t::MIXED_FIELDS, recordTestMixed_t::MIXED_RECORD_FIELDS, recordBytes[0], recordBytes[1], saveBytes, wireBytes, failures );
+}
+//puncho end
+
+//puncho start - P2b.2.3b: recordTest valuerows (K1; rev 4, goals-r1 F3). One value R row of each keyable type, with a
+// KEY and a DEFAULT, spawned through SCHEMA_SPAWN and recorded as a class records. A created entry has no baseline and
+// writes every row. An authored entry's def holds a value other than the schema DEFAULT for every key, and its map
+// entity two more: it writes nothing while the values are the spawn's, all six rows once play has changed each (three
+// of them back to their schema DEFAULT), and only FLOAT and STRING when play changed only those. Each leaves (DIFF,
+// WRITE, framing, CHECK) and returns (READ onto a fresh spawn of its baseline, or onto poisoned values for the created
+// entry); last, the check refuses a non-finite float and a bool byte past 1.
+enum recordTestValueEnum_t
+{
+	RECORD_TEST_VALUE_A,
+	RECORD_TEST_VALUE_B,
+	RECORD_TEST_VALUE_C
+};
+
+#define RECORD_TEST_VALUE_SCHEMA( X, s ) \
+	X( s, intValue,		INT,	R,	RAW,	0,	SCHEMA_STOCK,	"test_int",		"5",		NOEDIT,	OBJ ) \
+	X( s, floatValue,	FLOAT,	R,	RAW,	0,	SCHEMA_STOCK,	"test_float",	"0.25",		NOEDIT,	OBJ ) \
+	X( s, boolValue,	BOOL,	R,	RAW,	0,	SCHEMA_STOCK,	"test_bool",	"1",		NOEDIT,	OBJ ) \
+	X( s, vecValue,		VEC3,	R,	RAW,	0,	SCHEMA_STOCK,	"test_vec",		"1 2 3",	NOEDIT,	OBJ ) \
+	X( s, stringValue,	STRING,	R,	RAW,	0,	SCHEMA_STOCK,	"test_string",	"stone",	NOEDIT,	OBJ ) \
+	X( s, enumValue,	ENUM,	R,	RAW,	0,	SCHEMA_STOCK,	"test_enum",	"2",		NOEDIT,	OBJ )
+
+RECORD_TEST_VALUE_SCHEMA( SCHEMA_KEYCHECK, 0 )
+
+struct recordTestValues_t
+{
+	enum
+	{
+		RECORD_TEST_VALUE_SCHEMA( SCHEMA_RECORD_INDEX, _ )
+		VALUE_RECORD_FIELDS
+	};
+
+	int						intValue;
+	float					floatValue;
+	bool					boolValue;
+	idVec3					vecValue;
+	idStr					stringValue;
+	recordTestValueEnum_t	enumValue;
+
+	void Spawn( const idDict& spawnArgs )
+	{
+		RECORD_TEST_VALUE_SCHEMA( SCHEMA_SPAWN, ( *this ) )
+	}
+	void WriteRecord( idRecordOut& rec ) const
+	{
+		rec.BeginSection( RECORD_TEST_MIXED_SECTION, 1 );
+		RECORD_TEST_VALUE_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
+		RECORD_TEST_VALUE_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
+		rec.EndSection();
+	}
+	bool ApplyRecord( idRecordIn& rec )
+	{
+		if( !rec.BeginSection( RECORD_TEST_MIXED_SECTION ) )
+		{
+			return false;
+		}
+		RECORD_TEST_VALUE_SCHEMA( SCHEMA_RECORD_READ, ( *this ) )
+		rec.EndSection();
+		return rec.good;
+	}
+	static bool CheckRecordSection( idRecordIn& rec )
+	{
+		RECORD_TEST_VALUE_SCHEMA( SCHEMA_RECORD_CHECK, recordTestValues_t )
+		return rec.good;
+	}
+	bool Equals( const recordTestValues_t& other ) const
+	{
+		return intValue == other.intValue && floatValue == other.floatValue && boolValue == other.boolValue && vecValue == other.vecValue &&
+			   stringValue == other.stringValue && enumValue == other.enumValue;
+	}
+};
+
+// frames the entry's bytes into in and runs the section's check, as the store does before any apply
+static bool RecordTestValueCheck( const recordFrame_t& frame, const byte* data, int length, bool created, uint64 mask, idRecordIn& in )
+{
+	int consumed;
+	in.Begin( frame, CELL_ID_NONE, created, "" );
+	if( !in.ReadSections( data, length, 1, consumed ) || consumed != length || in.SectionMask( 0 ) != mask )
+	{
+		return false;
+	}
+	in.BeginSectionAt( 0 );
+	const bool good = recordTestValues_t::CheckRecordSection( in );
+	in.EndSection();
+	return good && in.good;
+}
+
+// one leave and return: the entry's bytes are length long with mask set (no section when mask is 0), pass the check,
+// and read onto returned
+static bool RecordTestValueTrip( const recordFrame_t& frame, const recordTestValues_t& left, bool created, const idRecordMapArgs& baseline, uint64 mask, int length,
+								 recordTestValues_t& returned, int& bytes )
+{
+	idRecordOut out;
+	out.Begin( frame, created, baseline, 0, "" );
+	left.WriteRecord( out );
+	bytes = out.Length();
+	if( out.Overflowed() || out.Length() != length || out.NumSections() != ( mask != 0 ? 1 : 0 ) )
+	{
+		return false;
+	}
+	if( mask == 0 )
+	{
+		return true;
+	}
+	idRecordIn in;
+	if( !RecordTestValueCheck( frame, out.Data(), out.Length(), created, mask, in ) )
+	{
+		return false;
+	}
+	in.Rewind();
+	return returned.ApplyRecord( in ) && in.Done();
+}
+
+static void RecordTestValueRows()
+{
+	static const recordFrame_t frame = { CELL_ID_NONE, vec3_origin, mat3_identity, RECORD_FRAME_MAP };
+	static const idRecordMapArgs noBaseline = { NULL, NULL };
+	const uint64 allRows = BIT( recordTestValues_t::VALUE_RECORD_FIELDS ) - 1;
+	int failures = 0;
+
+	// the created entry, spawned from no keys: the schema DEFAULTs, every row written (STRING: a length, then a str)
+	const idDict noArgs;
+	recordTestValues_t created;
+	created.Spawn( noArgs );
+	failures += ( created.intValue == 5 && created.floatValue == 0.25f && created.boolValue && created.vecValue == idVec3( 1.0f, 2.0f, 3.0f ) &&
+				  created.stringValue == "stone" && created.enumValue == RECORD_TEST_VALUE_C ) ? 0 : 1;
+	const int createdLength = RECORD_SECTION_HEADER_BYTES + 4 + 4 + 1 + 12 + ( 2 + 1 + 5 ) + 4;
+	recordTestValues_t returned = { -1, -1.0f, false, idVec3( -1.0f, -1.0f, -1.0f ), "", RECORD_TEST_VALUE_A };
+	int createdBytes = 0;
+	failures += ( RecordTestValueTrip( frame, created, true, noBaseline, allRows, createdLength, returned, createdBytes ) && returned.Equals( created ) ) ? 0 : 1;
+
+	// the authored entry: its spawnArgs are the map entity's epairs over the def's keys, as an entity spawns
+	idDict mapArgs, defArgs;
+	mapArgs.Set( "test_float", "0.5" );
+	mapArgs.Set( "test_string", "granite" );
+	defArgs.Set( "test_int", "8" );
+	defArgs.Set( "test_float", "0.75" );
+	defArgs.Set( "test_bool", "0" );
+	defArgs.Set( "test_vec", "7 8 9" );
+	defArgs.Set( "test_string", "marble" );
+	defArgs.Set( "test_enum", "1" );
+	idDict spawnArgs = mapArgs;
+	spawnArgs.SetDefaults( &defArgs );
+	const idRecordMapArgs baseline = { &mapArgs, &defArgs };
+	recordTestValues_t authored;
+	authored.Spawn( spawnArgs );
+	failures += ( authored.intValue == 8 && authored.floatValue == 0.5f && !authored.boolValue && authored.vecValue == idVec3( 7.0f, 8.0f, 9.0f ) &&
+				  authored.stringValue == "granite" && authored.enumValue == RECORD_TEST_VALUE_B ) ? 0 : 1;
+	int authoredBytes[3] = { -1, -1, -1 };
+	returned.Spawn( spawnArgs );
+	failures += ( RecordTestValueTrip( frame, authored, false, baseline, 0, 0, returned, authoredBytes[0] ) && returned.Equals( authored ) ) ? 0 : 1;
+	authored.intValue = 5;
+	authored.floatValue = 1.5f;
+	authored.boolValue = true;
+	authored.vecValue.z = 10.0f;
+	authored.stringValue = "basalt";
+	authored.enumValue = RECORD_TEST_VALUE_C;
+	returned.Spawn( spawnArgs );
+	failures += ( RecordTestValueTrip( frame, authored, false, baseline, allRows, RECORD_SECTION_HEADER_BYTES + 4 + 4 + 1 + 12 + ( 2 + 1 + 6 ) + 4, returned, authoredBytes[1] ) &&
+				  returned.Equals( authored ) ) ? 0 : 1;
+	// only FLOAT and STRING changed since the spawn: only their two bits
+	authored.Spawn( spawnArgs );
+	authored.floatValue = 1.5f;
+	authored.stringValue = "basalt";
+	const uint64 floatAndString = BIT( recordTestValues_t::RF_floatValue ) | BIT( recordTestValues_t::RF_stringValue );
+	returned.Spawn( spawnArgs );
+	failures += ( RecordTestValueTrip( frame, authored, false, baseline, floatAndString, RECORD_SECTION_HEADER_BYTES + 4 + ( 2 + 1 + 6 ), returned, authoredBytes[2] ) &&
+				  returned.Equals( authored ) ) ? 0 : 1;
+
+	// the check: the created entry with its float made infinite, then with its bool byte 2 (after the section header,
+	// the int's four bytes, the float's four, the bool's one)
+	idRecordOut out;
+	out.Begin( frame, true, noBaseline, 0, "" );
+	created.WriteRecord( out );
+	int refused = 0;
+	if( !out.Overflowed() && out.Length() == createdLength )
+	{
+		static const byte infinity[4] = { 0x00, 0x00, 0x80, 0x7f };
+		const int floatAt = RECORD_SECTION_HEADER_BYTES + 4;
+		byte bytes[createdLength];
+		idRecordIn in;
+		memcpy( bytes, out.Data(), createdLength );
+		memcpy( bytes + floatAt, infinity, sizeof( infinity ) );
+		refused += RecordTestValueCheck( frame, bytes, createdLength, true, allRows, in ) ? 0 : 1;
+		memcpy( bytes, out.Data(), createdLength );
+		bytes[floatAt + 4] = 2;
+		refused += RecordTestValueCheck( frame, bytes, createdLength, true, allRows, in ) ? 0 : 1;
+	}
+	failures += refused == 2 ? 0 : 1;
+
+	gameLocal.Printf( "RECORD_TEST %s valuerows recordRows=%d created=%d authored=%d,%d,%d refused=%d failures=%d\n", failures == 0 ? "PASS" : "FAIL",
+					  recordTestValues_t::VALUE_RECORD_FIELDS, createdBytes, authoredBytes[0], authoredBytes[1], authoredBytes[2], refused, failures );
+}
+//puncho end
+
 static void Cmd_RecordTest_f( const idCmdArgs& args )
 {
 	if( !gameLocal.CheatsOk() || args.Argc() < 2 )
@@ -4056,6 +4907,25 @@ static void Cmd_RecordTest_f( const idCmdArgs& args )
 		mapGraphDirector.TestRecipe( gameLocal.GetMapName() );
 		return;
 	}
+	//puncho start - P2b.2.3a: recordTest mixedlist; its save closes the way a save does, with the map's sound world
+	if( idStr::Icmp( args.Argv( 1 ), "mixedlist" ) == 0 )
+	{
+		if( gameLocal.GameState() != GAMESTATE_ACTIVE )
+		{
+			gameLocal.Printf( "RECORD_TEST FAIL mixedlist needs a map\n" );
+			return;
+		}
+		RecordTestMixedList();
+		return;
+	}
+	//puncho end
+	//puncho start - P2b.2.3b: recordTest valuerows, records and dicts only
+	if( idStr::Icmp( args.Argv( 1 ), "valuerows" ) == 0 )
+	{
+		RecordTestValueRows();
+		return;
+	}
+	//puncho end
 	//puncho start - P2b.1.2: recordTest fuzz <n> <seed>. The current map committed (PrepareSave), then n mutants of the
 	// store's records from idRandom( seed ), each through the reader and the check ApplyCurrentMap runs before any apply
 	// (RecordScanChunk, the record's identity, each entry's check, an authored entry's sections against its entity).
@@ -4676,6 +5546,211 @@ static void Cmd_TransitionTest_f( const idCmdArgs& args )
 void MapGraphCheck_f( const idCmdArgs& args );
 void CorpseFixture_f( const idCmdArgs& args );
 
+//puncho start - R1.1: non-retail event census and incremental pool/pass refusal fixtures
+#if !defined( ID_RETAIL )
+static void Cmd_ListEvents_f( const idCmdArgs& args )
+{
+	idEvent::ListEvents();
+}
+
+static bool ParseEventDecimal( const char* s, int limit, int& out )
+{
+	if( *s == '\0' )
+	{
+		return false;
+	}
+	int n = 0;
+	for( ; *s != '\0'; s++ )
+	{
+		if( *s < '0' || *s > '9' )
+		{
+			return false;
+		}
+		const int d = *s - '0';
+		if( n > limit / 10 || ( n == limit / 10 && d > limit % 10 ) )
+		{
+			return false;
+		}
+		n = n * 10 + d;
+	}
+	out = n;
+	return true;
+}
+
+static bool EventCommandReady( const char* cmd )
+{
+	if( common->IsMultiplayer() || common->IsClient() )
+	{
+		gameLocal.Printf( "%s: authoritative single player only\n", cmd );
+		return false;
+	}
+	if( gameLocal.GameState() != GAMESTATE_ACTIVE || !idEvent::initialized )
+	{
+		gameLocal.Printf( "%s: no active map\n", cmd );
+		return false;
+	}
+	if( !idEvent::Quiescent() )
+	{
+		gameLocal.Printf( "%s: refused while an event frame is open\n", cmd );
+		return false;
+	}
+	return true;
+}
+
+static idEntity* SpawnEventTarget( const char* cmd, bool fast, const idEventDef* ev )
+{
+	idDict args;
+	args.Set( "classname", "eventTarget" );	// no such entityDef: spawn idTarget by type, as testSpawnChurn does
+	idEntity* ent = gameLocal.SpawnEntityType( idTarget::Type, &args );
+	if( ent == NULL )
+	{
+		gameLocal.Printf( "%s: target spawn failed\n", cmd );
+		return NULL;
+	}
+	if( fast )
+	{
+		ent->SetTimeGroup( TIME_GROUP2 );
+	}
+	if( !ent->RespondsTo( *ev ) )
+	{
+		gameLocal.Printf( "%s: target does not respond to '%s'\n", cmd, ev->GetName() );
+		delete ent;
+		return NULL;
+	}
+	// Retain the target for map teardown and save/load; a remove post would change admission.
+	return ent;
+}
+
+static void Cmd_EventStorm_f( const idCmdArgs& args )
+{
+	if( !EventCommandReady( "eventStorm" ) )
+	{
+		return;
+	}
+	if( args.Argc() < 2 )
+	{
+		gameLocal.Printf( "usage: eventStorm <count 0..65536> [delay ms] [fast]\n" );
+		return;
+	}
+	int n;
+	if( !ParseEventDecimal( args.Argv( 1 ), 65536, n ) )
+	{
+		gameLocal.Printf( "eventStorm: count '%s' is not a decimal from 0 to 65536\n", args.Argv( 1 ) );
+		return;
+	}
+	int arg = 2;
+	int ms = 0;
+	bool fast = false;
+	if( arg < args.Argc() && idStr::Icmp( args.Argv( arg ), "fast" ) != 0 )
+	{
+		if( !ParseEventDecimal( args.Argv( arg ), INT_MAX, ms ) )
+		{
+			gameLocal.Printf( "eventStorm: delay '%s' is not a decimal from 0 to 2147483647 ms\n", args.Argv( arg ) );
+			return;
+		}
+		arg++;
+	}
+	if( arg < args.Argc() && idStr::Icmp( args.Argv( arg ), "fast" ) == 0 )
+	{
+		fast = true;
+		arg++;
+	}
+	if( arg != args.Argc() )
+	{
+		gameLocal.Printf( "usage: eventStorm <count 0..65536> [delay ms] [fast]\n" );
+		return;
+	}
+	const int now = gameLocal.GetTimeGroupTime( fast ? TIME_GROUP2 : TIME_GROUP1 );
+	if( ( int64 )now + ms > INT_MAX )
+	{
+		gameLocal.Printf( "eventStorm: %s time %d + delay %d ms passes 2147483647\n", fast ? "fast" : "slow", now, ms );
+		return;
+	}
+	if( n == 0 )
+	{
+		gameLocal.Printf( "eventStorm: posted 0 of 0 to the %s queue, no target (allocated %d)\n", fast ? "fast" : "slow", idEvent::NumAllocated() );
+		return;
+	}
+	idEntity* target = SpawnEventTarget( "eventStorm", fast, &EV_Hide );
+	if( target == NULL )
+	{
+		return;
+	}
+	if( !target->RespondsTo( EV_Show ) )
+	{
+		gameLocal.Printf( "%s: target does not respond to '%s'\n", "eventStorm", EV_Show.GetName() );
+		delete target;
+		return;
+	}
+	const int before = idEvent::NumAllocated();
+	SetTimeState ts( target->GetTimeGroup() );
+	const uint64 start = Sys_Microseconds();
+	uint64 postedAt = start;	// the last admitted post: the refusal's error has unloaded the map before the catch runs
+	int posted = 0;
+	try
+	{
+		for( ; posted < n; posted++ )
+		{
+			target->PostEventMS( ( posted & 1 ) ? &EV_Show : &EV_Hide, ms );
+			postedAt = Sys_Microseconds();
+		}
+	}
+	catch( idException& )
+	{
+		// The partial count is the E - Q oracle; preserve the allocator's refusal and unwind.
+		gameLocal.Printf( "eventStorm: posted %d of %d to the %s queue at +%d ms in %llu us before the refusal (allocated %d before)\n", posted, n, fast ? "fast" : "slow", ms, ( unsigned long long )( postedAt - start ), before );
+		throw;
+	}
+	gameLocal.Printf( "eventStorm: posted %d of %d to the %s queue at +%d ms in %llu us (allocated %d before, %d after)\n", posted, n, fast ? "fast" : "slow", ms, ( unsigned long long )( postedAt - start ), before, idEvent::NumAllocated() );
+}
+
+static void Cmd_EventChain_f( const idCmdArgs& args )
+{
+	if( !EventCommandReady( "eventChain" ) )
+	{
+		return;
+	}
+	if( args.Argc() < 2 )
+	{
+		gameLocal.Printf( "usage: eventChain <count 0..65536> [fast]\n" );
+		return;
+	}
+	int n;
+	if( !ParseEventDecimal( args.Argv( 1 ), 65536, n ) )
+	{
+		gameLocal.Printf( "eventChain: count '%s' is not a decimal from 0 to 65536\n", args.Argv( 1 ) );
+		return;
+	}
+	int arg = 2;
+	bool fast = false;
+	if( arg < args.Argc() && idStr::Icmp( args.Argv( arg ), "fast" ) == 0 )
+	{
+		fast = true;
+		arg++;
+	}
+	if( arg != args.Argc() )
+	{
+		gameLocal.Printf( "usage: eventChain <count 0..65536> [fast]\n" );
+		return;
+	}
+	if( n == 0 )
+	{
+		gameLocal.Printf( "eventChain: posted no chain to the %s queue, no target (allocated %d)\n", fast ? "fast" : "slow", idEvent::NumAllocated() );
+		return;
+	}
+	idEntity* target = SpawnEventTarget( "eventChain", fast, &EV_StormChain );
+	if( target == NULL )
+	{
+		return;
+	}
+	const int before = idEvent::NumAllocated();
+	SetTimeState ts( target->GetTimeGroup() );
+	target->PostEventMS( &EV_StormChain, 0, n );
+	gameLocal.Printf( "eventChain: posted a chain of %d links to the %s queue (allocated %d before, %d after)\n", n, fast ? "fast" : "slow", before, idEvent::NumAllocated() );
+}
+#endif
+//puncho end
+
 void idGameLocal::InitConsoleCommands()
 {
 	cmdSystem->AddCommand( "corpseFixture", CorpseFixture_f, CMD_FL_GAME | CMD_FL_CHEAT, "bounded static corpse render fixture (mg test maps only)" );
@@ -4701,9 +5776,11 @@ void idGameLocal::InitConsoleCommands()
 #endif
 	cmdSystem->AddCommand( "game_memory",			idClass::DisplayInfo_f,		CMD_FL_GAME,				"displays game class info" );
 	cmdSystem->AddCommand( "listClasses",			idClass::ListClasses_f,		CMD_FL_GAME,				"lists game classes" );
+	cmdSystem->AddCommand( "listSchemaKeys",		Cmd_ListSchemaKeys_f,		CMD_FL_GAME,				"listSchemaKeys <class>: the schema rows of the class's chain that read a spawnArg, root first" );	//puncho - P2b.2.3b
 	cmdSystem->AddCommand( "listThreads",			idThread::ListThreads_f,	CMD_FL_GAME | CMD_FL_CHEAT,	"lists script threads" );
 	cmdSystem->AddCommand( "listEntities",			Cmd_EntityList_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"lists game entities" );
 	cmdSystem->AddCommand( "listActiveEntities",	Cmd_ActiveEntityList_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"lists active game entities" );
+	cmdSystem->AddCommand( "listEntityTable",		Cmd_ListEntityTable_f,		CMD_FL_GAME,				"listEntityTable [n | cell]: the hot table's switches, rows, mirror and counters, entity n's row, or every live row's cell group" );	//puncho - P2b.2.1a, P2b.2.1b
 	cmdSystem->AddCommand( "listMonsters",			idAI::List_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"lists monsters" );
 	cmdSystem->AddCommand( "listSpawnArgs",			Cmd_ListSpawnArgs_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"list the spawn args of an entity", idGameLocal::ArgCompletion_EntityName );
 	cmdSystem->AddCommand( "listSpawnIds",			Cmd_ListSpawnIds_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"lists the spawn-id generations of the map's entities, with a digest" );	//puncho - identity (P1-A2)
@@ -4711,14 +5788,24 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "sayTeam",				Cmd_SayTeam_f,				CMD_FL_GAME,				"team text chat" );
 	cmdSystem->AddCommand( "addChatLine",			Cmd_AddChatLine_f,			CMD_FL_GAME,				"internal use - core to game chat lines" );
 	cmdSystem->AddCommand( "give",					Cmd_Give_f,					CMD_FL_GAME | CMD_FL_CHEAT,	"gives one or more items" );
+#if !defined( ID_RETAIL )
+	cmdSystem->AddCommand( "giveClient",			Cmd_GiveClient_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"giveClient <clientNum> <item> ...: give for any player (a host arming a joiner)" );	//puncho - P2b.0.1e
+#endif
 	cmdSystem->AddCommand( "centerview",			Cmd_CenterView_f,			CMD_FL_GAME,				"centers the view" );
 	cmdSystem->AddCommand( "god",					Cmd_God_f,					CMD_FL_GAME | CMD_FL_CHEAT,	"enables god mode" );
 	cmdSystem->AddCommand( "notarget",				Cmd_Notarget_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"disables the player as a target" );
 	cmdSystem->AddCommand( "noclip",				Cmd_Noclip_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"disables collision detection for the player" );
 	cmdSystem->AddCommand( "where",					Cmd_GetViewpos_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"prints the current view position" );
 	cmdSystem->AddCommand( "listBudgets", Cmd_ListBudgets_f, CMD_FL_GAME, "list transient budget counters and entity high water; listBudgets order adds each class's join order" );
+	//puncho start - R1.1: expose the event census and refusal fixtures only in non-retail builds
+#if !defined( ID_RETAIL )
+	cmdSystem->AddCommand( "listEvents", Cmd_ListEvents_f, CMD_FL_GAME, "the event pool census: slow, fast, free, allocated, detached, high water and pass high water" );
+	cmdSystem->AddCommand( "eventStorm", Cmd_EventStorm_f, CMD_FL_GAME | CMD_FL_CHEAT, "eventStorm <count> [ms] [fast]: posts count hide/show events to a new target on one queue, a refusal at the pool's end" );
+	cmdSystem->AddCommand( "eventChain", Cmd_EventChain_f, CMD_FL_GAME | CMD_FL_CHEAT, "eventChain <count> [fast]: a new target's chain of count events, each posting the next at 0 ms" );
+#endif
+	//puncho end
 	cmdSystem->AddCommand( "checkPVSAreas", Cmd_CheckPVSAreas_f, CMD_FL_GAME, "list entities touching more than four PVS areas" );
-	cmdSystem->AddCommand( "listDormancy", Cmd_ListDormancy_f, CMD_FL_GAME, "list authored dormancy entities and wake state" );
+	cmdSystem->AddCommand( "listDormancy", Cmd_ListDormancy_f, CMD_FL_GAME, "list dormancy entities, their radius and wake state: every dormancy row under g_dormantDistanceFirst, else the authored ones" );
 	cmdSystem->AddCommand( "listMapStatics", Cmd_ListMapStatics_f, CMD_FL_GAME, "list static spawn-skip eligibility and retained entity numbers" );
 	cmdSystem->AddCommand( "saveTestView", Cmd_SaveTestView_f, CMD_FL_GAME, "save a single-player view for the next testmap" );
 	cmdSystem->AddCommand( "getviewpos",			Cmd_GetViewpos_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"prints the current view position" );
@@ -4755,6 +5842,9 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "testSaveTraceCompare",	Cmd_TestSaveTraceCompare_f,	CMD_FL_GAME | CMD_FL_CHEAT,	"testSaveTraceCompare <file>: compares the current save trace with one an earlier build wrote" );
 	cmdSystem->AddCommand( "testSnapTraceCompare",	Cmd_TestSnapTraceCompare_f,	CMD_FL_GAME,				"testSnapTraceCompare <host file> <client file>: matches a client's net_snapTrace reads with the host's writes" );
 	//puncho end
+#if !defined( ID_RETAIL )	//puncho - P2b.2.7: the spawn probe is test scaffolding
+	cmdSystem->AddCommand( "testSpawnRead",			Cmd_TestSpawnRead_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"testSpawnRead <file>: writes each probed spawn member of every entity, in entity order, for a compare between builds" );
+#endif
 	cmdSystem->AddCommand( "testSpawnChurn",		Cmd_TestSpawnChurn_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"spawns and deletes entities to test the per-slot spawn-id generation" );	//puncho - identity (P1-A2)
 	//puncho start - gate tools for plans/phase1/02-FIXES.md track F3
 	cmdSystem->AddCommand( "testLaunch",			Cmd_TestLaunch_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"testLaunch <projectileDef> <target> [dmgPower]: launches a projectile at an entity as this peer's weapon would" );

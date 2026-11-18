@@ -482,7 +482,7 @@ EnvironmentProbe::Present
 void EnvironmentProbe::Present()
 {
 	// don't present to the renderer if the entity hasn't changed
-	if( !( thinkFlags & TH_UPDATEVISUALS ) )
+	if( !( GetThinkFlags() & TH_UPDATEVISUALS ) )
 	{
 		return;
 	}
@@ -522,7 +522,7 @@ void EnvironmentProbe::Think()
 {
 	idVec4 color;
 
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		if( fadeEnd > 0 )
 		{

@@ -609,7 +609,7 @@ assumes: color.w is 0 or 1
 */
 void idPlayerView::Fade( idVec4 color, int time )
 {
-	SetTimeState ts( player->timeGroup );
+	SetTimeState ts( player->GetTimeGroup() );
 
 	if( !fadeTime )
 	{
@@ -654,7 +654,7 @@ void idPlayerView::ScreenFade()
 		return;
 	}
 
-	SetTimeState ts( player->timeGroup );
+	SetTimeState ts( player->GetTimeGroup() );
 
 	int msec = fadeTime - gameLocal.realClientTime;
 

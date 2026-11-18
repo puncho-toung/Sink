@@ -738,6 +738,15 @@ protected:
 //
 //===============================================================
 
+//puncho start - P2b.2.5d: the wire sends worldOrigin, worldAxis as an idCQuat and spatialVelocity as deltas on 0.0f in
+// exponent and mantissa bits (the constants are Physics_AF.cpp's); externalForce is not sent. idPhysics_AF's
+// WriteToSnapshot and ReadFromSnapshot expand it over each body's current state, after AF_PSTATE_SCHEMA and the body count
+#define AF_BODY_PSTATE_SCHEMA( X, s ) \
+	X( s, worldOrigin,		VEC3,	W,	RAW,	0,			SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, WorldAxis,		HAND,	W,	FHAND,	AFBodyPState,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, spatialVelocity,	VEC6,	W,	ZDELTA,	( AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS ),	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ )
+//puncho end
+
 typedef struct AFBodyPState_s
 {
 	idVec3					worldOrigin;				// position in world space
@@ -960,6 +969,16 @@ private:
 //	idPhysics_AF
 //
 //===============================================================
+
+//puncho start - P2b.2.5d: the wire sends atRest, noMoveTime and activateTime raw, then pushVelocity as deltas on 0.0f in
+// exponent and mantissa bits (the constants are Physics_AF.cpp's); lastTimeStep is not sent. idPhysics_AF's
+// WriteToSnapshot and ReadFromSnapshot both expand current
+#define AF_PSTATE_SCHEMA( X, s ) \
+	X( s, atRest,			INT,	W,	RAW,	0,			SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, noMoveTime,		FLOAT,	W,	RAW,	0,			SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, activateTime,		FLOAT,	W,	RAW,	0,			SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, pushVelocity,		VEC6,	W,	ZDELTA,	( AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS ),	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ )
+//puncho end
 
 typedef struct AFPState_s
 {

@@ -42,7 +42,19 @@ class idTarget : public idEntity
 {
 public:
 	CLASS_PROTOTYPE( idTarget );
+	//puncho start - R1.1: non-retail chain fixture dispatches one successor per link
+#if !defined( ID_RETAIL )
+private:
+	void				Event_StormChain( int n );
+#endif
+	//puncho end
 };
+
+//puncho start - R1.1: the non-retail console fixture posts the same chain event
+#if !defined( ID_RETAIL )
+extern const idEventDef EV_StormChain;
+#endif
+//puncho end
 
 
 /*

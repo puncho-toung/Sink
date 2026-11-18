@@ -59,6 +59,11 @@ idGrabber::idGrabber
 */
 idGrabber::idGrabber()
 {
+	saveGravity.Zero();		//puncho - P2b.7.0: deterministic saved gravity before the first grab
+	localPlayerPoint.Zero();	//puncho - P2b.7.0: no local grab point before the first grab
+	id = 0;					//puncho - P2b.7.0: deterministic saved ID before the first grab
+	savedContents = 0;		//puncho - P2b.7.0: no saved projectile contents before StartDrag
+	savedClipmask = 0;		//puncho - P2b.7.0: no saved projectile clip mask before StartDrag
 	dragEnt = NULL;
 	owner = NULL;
 	beam = NULL;
@@ -269,7 +274,7 @@ void idGrabber::StartDrag( idEntity* grabEnt, int id )
 	}
 
 	// Move the object to the fast group (helltime)
-	grabEnt->timeGroup = TIME_GROUP2;
+	grabEnt->SetTimeGroup( TIME_GROUP2 );	//puncho - P2b.2.1a
 
 	// Handle specific class types
 	if( grabEnt->IsType( idProjectile::Type ) )
@@ -368,14 +373,14 @@ void idGrabber::StopDrag( bool dropOnly )
 		// If a cinematic has started, allow dropped object to think in cinematics
 		if( gameLocal.inCinematic )
 		{
-			ent->cinematic = true;
+			ent->SetCinematic( true );	//puncho - P2b.2.1a
 		}
 
 		// Restore Gravity
 		ent->GetPhysics()->SetGravity( saveGravity );
 
 		// Move the object back to the slow group (helltime)
-		ent->timeGroup = TIME_GROUP1;
+		ent->SetTimeGroup( TIME_GROUP1 );	//puncho - P2b.2.1a
 
 		if( holdingAF )
 		{

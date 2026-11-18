@@ -130,7 +130,7 @@ bool R_PreciseCullSurface( const drawSurf_t* drawSurf, idBounds& ndcBounds )
 		const idVec3 vXYZ = idDrawVert::GetSkinnedDrawVertPosition( tri->verts[i], joints );
 
 		idPlane eye, clip;
-		R_TransformModelToClip( vXYZ, drawSurf->space->modelViewMatrix, tr.viewDef->projectionMatrix, eye, clip );
+		R_TransformModelToClip( vXYZ, drawSurf->space->modelViewMatrix, tr.viewDef->unjitteredProjectionMatrix, eye, clip );	//puncho - F-FRONTEND-ND
 
 		unsigned int pointFlags = 0;
 		for( int j = 0; j < 3; j++ )

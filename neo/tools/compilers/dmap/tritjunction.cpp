@@ -97,6 +97,7 @@ typedef struct hashVert_s
 static idBounds	hashBounds;
 static idVec3	hashScale;
 static hashVert_t*	hashVerts[HASH_BINS][HASH_BINS][HASH_BINS];
+const int tjunctionHashHeadBytes = sizeof( hashVerts );	//puncho - R1.4
 static int		numHashVerts, numTotalVerts;
 static int		hashIntMins[3], hashIntScale[3];
 
@@ -152,6 +153,7 @@ struct hashVert_s*	GetHashVert( idVec3& v )
 	}
 
 	// create a new one
+	ReserveOptWorkingSet( sizeof( *hv ) );	//puncho - R1.4: counted only inside an optimizer group
 	hv = ( hashVert_t* )Mem_Alloc( sizeof( *hv ), TAG_TOOLS );
 
 	hv->next = hashVerts[block[0]][block[1]][block[2]];
@@ -305,6 +307,7 @@ void FreeTJunctionHash()
 				{
 					next = hv->next;
 					Mem_Free( hv );
+					ReleaseOptWorkingSet( sizeof( *hv ) );	//puncho - R1.4
 				}
 			}
 		}

@@ -262,6 +262,15 @@ public:
 	virtual void			StartPreload( const idStrList& _preload ) = 0;
 	virtual void			StopPreload() = 0;
 	virtual unsigned int	GetReadBytes() const = 0;
+	//puncho - P2b.0.4b: this thread's leaf reads and the microseconds inside them, counted while loadSpanTiming is on
+	virtual uint64			GetThreadReadBytes() const
+	{
+		return FileThreadReadBytes();
+	}
+	virtual uint64			GetReadUs() const
+	{
+		return FileThreadReadUs();
+	}
 	virtual int				ReadFromBGL( idFile* _resourceFile, void* _buffer, int _offset, int _len ) = 0;
 	virtual bool			IsBinaryModel( const idStr& resName ) const = 0;
 	virtual bool			IsSoundSample( const idStr& resName ) const = 0;

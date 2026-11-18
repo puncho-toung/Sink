@@ -1216,6 +1216,7 @@ public:
 	virtual idRenderWorld* 	AllocRenderWorld();
 	virtual void			FreeRenderWorld( idRenderWorld* rw );
 	virtual void			GetMapStats( renderMapStats_t& stats ) const;
+	virtual void			GetMapBytes( renderMapBytes_t& bytes ) const;
 	virtual void			ListMapLightGrids() const;
 	virtual void			BeginLevelLoad();
 	virtual void			EndLevelLoad();
@@ -1906,6 +1907,7 @@ RENDERWORLD_ENVPROBES
 void R_SampleCubeMapHDR( const idVec3& dir, int size, byte* buffers[6], float result[3], float& u, float& v );
 void R_SampleCubeMapHDR16F( const idVec3& dir, int size, halfFloat_t* buffers[6], float result[3], float& u, float& v );
 void R_CubeMapTexelHDR16F( const idVec3& dir, int size, int& axis, int& x, int& y );	//puncho - concurrency TB1c: the texel R_SampleCubeMapHDR16F reads
+void R_BakeImageName( idStr& name );
 
 idVec2 NormalizedOctCoord( int x, int y, const int probeSideLength );
 

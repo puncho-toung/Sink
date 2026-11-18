@@ -94,7 +94,7 @@ void idMultiModelAF::Present()
 	int i;
 
 	// don't present to the renderer if the entity hasn't changed
-	if( !( thinkFlags & TH_UPDATEVISUALS ) )
+	if( !( GetThinkFlags() & TH_UPDATEVISUALS ) )
 	{
 		return;
 	}
@@ -499,7 +499,7 @@ idAfAttachment::Think
 void idAFAttachment::Think()
 {
 	idAnimatedEntity::Think();
-	if( thinkFlags & TH_UPDATEPARTICLES )
+	if( GetThinkFlags() & TH_UPDATEPARTICLES )
 	{
 		UpdateDamageEffects();
 	}
@@ -700,7 +700,7 @@ void idAFEntity_Base::Think()
 {
 	RunPhysics();
 	UpdateAnimation();
-	if( thinkFlags & TH_UPDATEVISUALS )
+	if( GetThinkFlags() & TH_UPDATEVISUALS )
 	{
 		Present();
 		LinkCombat();
@@ -1215,7 +1215,7 @@ void idAFEntity_Gibbable::Present()
 	}
 
 	// don't present to the renderer if the entity hasn't changed
-	if( !( thinkFlags & TH_UPDATEVISUALS ) )
+	if( !( GetThinkFlags() & TH_UPDATEVISUALS ) )
 	{
 		return;
 	}
@@ -2109,7 +2109,7 @@ void idAFEntity_VehicleSimple::Think()
 	idMat3 axis;
 	idRotation wheelRotation, steerRotation;
 
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 
 		if( player )
@@ -2214,7 +2214,7 @@ void idAFEntity_VehicleSimple::Think()
 	}
 
 	UpdateAnimation();
-	if( thinkFlags & TH_UPDATEVISUALS )
+	if( GetThinkFlags() & TH_UPDATEVISUALS )
 	{
 		Present();
 		LinkCombat();
@@ -2338,7 +2338,7 @@ void idAFEntity_VehicleFourWheels::Think()
 	idMat3 axis;
 	idRotation rotation;
 
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 
 		if( player )
@@ -2412,14 +2412,14 @@ void idAFEntity_VehicleFourWheels::Think()
 				numContacts = af.GetPhysics()->GetBodyContactConstraints( wheels[i]->GetClipModel()->GetId(), contacts, 2 );
 				for( int j = 0; j < numContacts; j++ )
 				{
-					gameLocal.smokeParticles->EmitSmoke( dustSmoke, gameLocal.time, gameLocal.random.RandomFloat(), contacts[j]->GetContact().point, contacts[j]->GetContact().normal.ToMat3(), timeGroup /* D3XP */ );
+					gameLocal.smokeParticles->EmitSmoke( dustSmoke, gameLocal.time, gameLocal.random.RandomFloat(), contacts[j]->GetContact().point, contacts[j]->GetContact().normal.ToMat3(), GetTimeGroup() /* D3XP */ );
 				}
 			}
 		}
 	}
 
 	UpdateAnimation();
-	if( thinkFlags & TH_UPDATEVISUALS )
+	if( GetThinkFlags() & TH_UPDATEVISUALS )
 	{
 		Present();
 		LinkCombat();
@@ -2549,7 +2549,7 @@ void idAFEntity_VehicleSixWheels::Think()
 	idMat3 axis;
 	idRotation rotation;
 
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 
 		if( player )
@@ -2631,14 +2631,14 @@ void idAFEntity_VehicleSixWheels::Think()
 				numContacts = af.GetPhysics()->GetBodyContactConstraints( wheels[i]->GetClipModel()->GetId(), contacts, 2 );
 				for( int j = 0; j < numContacts; j++ )
 				{
-					gameLocal.smokeParticles->EmitSmoke( dustSmoke, gameLocal.time, gameLocal.random.RandomFloat(), contacts[j]->GetContact().point, contacts[j]->GetContact().normal.ToMat3(), timeGroup /* D3XP */ );
+					gameLocal.smokeParticles->EmitSmoke( dustSmoke, gameLocal.time, gameLocal.random.RandomFloat(), contacts[j]->GetContact().point, contacts[j]->GetContact().normal.ToMat3(), GetTimeGroup() /* D3XP */ );
 				}
 			}
 		}
 	}
 
 	UpdateAnimation();
-	if( thinkFlags & TH_UPDATEVISUALS )
+	if( GetThinkFlags() & TH_UPDATEVISUALS )
 	{
 		Present();
 		LinkCombat();
@@ -3008,7 +3008,7 @@ void idAFEntity_SteamPipe::Think()
 {
 	idVec3 steamDir;
 
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		steamDir.x = gameLocal.random.CRandomFloat() * steamForce;
 		steamDir.y = gameLocal.random.CRandomFloat() * steamForce;

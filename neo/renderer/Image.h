@@ -400,6 +400,12 @@ public:
 		return defaulted;
 	}
 
+	//puncho - P2b.0.2: GetMapBytes' generated kind
+	bool				IsGenerated() const
+	{
+		return generatorFunction != NULL;
+	}
+
 	static void	GetGeneratedName( idStr& _name, const textureUsage_t& _usage, const cubeFiles_t& _cube );
 
 	// used by callback functions to specify the actual data

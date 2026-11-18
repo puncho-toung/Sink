@@ -489,23 +489,23 @@ ID_INLINE idAFPoseJointMod::idAFPoseJointMod()
 // are in Anim_Blend.cpp); hatches (K8): jointMods owns its elements, joints is a SIMD block sized by numJoints, and
 // each channel's idAnimBlend restores against the restored modelDef
 #define ANIMATOR_SCHEMA( X, s ) \
-	X( s, modelDef,					MODELDEF,	S,	RAW,	0,					SCHEMA_STOCK ) \
-	X( s, entity,					OBJECT,		S,	RAW,	0,					SCHEMA_STOCK ) \
-	X( s, JointMods,				HAND,		S,	RAW,	0,					SCHEMA_STOCK ) \
-	X( s, numJoints,				INT,		S,	RAW,	0,					SCHEMA_STOCK ) \
-	X( s, Joints,					HAND,		S,	RAW,	0,					SCHEMA_STOCK ) \
-	X( s, lastTransformTime,		INT,		S,	RAW,	0,					SCHEMA_STOCK ) \
-	X( s, stoppedAnimatingUpdate,	BOOL,		S,	RAW,	0,					SCHEMA_STOCK ) \
-	X( s, forceUpdate,				BOOL,		S,	RAW,	0,					SCHEMA_STOCK ) \
-	X( s, frameBounds,				BOUNDS,		S,	RAW,	0,					SCHEMA_STOCK ) \
-	X( s, AFPoseBlendWeight,		FLOAT,		S,	RAW,	0,					SCHEMA_STOCK ) \
-	X( s, AFPoseJoints,				LIST,		S,	RAW,	INT,				SCHEMA_STOCK ) \
-	X( s, AFPoseJointMods,			STRUCTLIST,	S,	RAW,	AFPoseJointMod,		SCHEMA_STOCK ) \
-	X( s, AFPoseJointFrame,			STRUCTLIST,	S,	RAW,	JointQuat,			SCHEMA_STOCK ) \
-	X( s, AFPoseBounds,				BOUNDS,		S,	RAW,	0,					SCHEMA_STOCK ) \
-	X( s, AFPoseTime,				INT,		S,	RAW,	0,					SCHEMA_STOCK ) \
-	X( s, removeOriginOffset,		BOOL,		S,	RAW,	0,					SCHEMA_STOCK ) \
-	X( s, Channels,					HAND,		S,	RAW,	0,					SCHEMA_STOCK )
+	X( s, modelDef,					MODELDEF,	S,	RAW,	0,					SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, entity,					OBJECT,		S,	RAW,	0,					SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, JointMods,				HAND,		S,	RAW,	0,					SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, numJoints,				INT,		S,	RAW,	0,					SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, Joints,					HAND,		S,	RAW,	0,					SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, lastTransformTime,		INT,		S,	RAW,	0,					SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, stoppedAnimatingUpdate,	BOOL,		S,	RAW,	0,					SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, forceUpdate,				BOOL,		S,	RAW,	0,					SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, frameBounds,				BOUNDS,		S,	RAW,	0,					SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, AFPoseBlendWeight,		FLOAT,		S,	RAW,	0,					SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, AFPoseJoints,				LIST,		S,	RAW,	INT,				SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, AFPoseJointMods,			STRUCTLIST,	S,	RAW,	AFPoseJointMod,		SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, AFPoseJointFrame,			STRUCTLIST,	S,	RAW,	JointQuat,			SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, AFPoseBounds,				BOUNDS,		S,	RAW,	0,					SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, AFPoseTime,				INT,		S,	RAW,	0,					SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, removeOriginOffset,		BOOL,		S,	RAW,	0,					SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, Channels,					HAND,		S,	RAW,	0,					SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ )
 //puncho end
 
 class idAnimator

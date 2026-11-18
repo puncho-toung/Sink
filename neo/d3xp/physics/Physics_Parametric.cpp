@@ -1179,6 +1179,30 @@ int idPhysics_Parametric::GetAngularEndTime() const
 	}
 }
 
+//puncho start - P2b.2.5d: PARAMETRIC_PSTATE_SCHEMA's HAND row (Physics_Parametric.h), hand-written at its place in the list
+/*
+================
+WriteParametricPState_Axis
+================
+*/
+static void WriteParametricPState_Axis( idBitMsg& msg, const parametricPState_t& s )
+{
+	const idQuat quat = s.axis.ToQuat();
+
+	WriteFloatArray( msg, quat );
+}
+
+/*
+================
+ReadParametricPState_Axis
+================
+*/
+static void ReadParametricPState_Axis( const idBitMsg& msg, physicsInterpolationState_t& s )
+{
+	s.axis = ReadFloatArray< idQuat >( msg );
+}
+//puncho end
+
 /*
 ================
 idPhysics_Parametric::WriteToSnapshot
@@ -1187,10 +1211,7 @@ idPhysics_Parametric::WriteToSnapshot
 void idPhysics_Parametric::WriteToSnapshot( idBitMsg& msg ) const
 {
 
-	const idQuat currentQuat = current.axis.ToQuat();
-
-	WriteFloatArray( msg, current.origin );
-	WriteFloatArray( msg, currentQuat );
+	PARAMETRIC_PSTATE_SCHEMA( SCHEMA_WRITE, current )	//puncho - P2b.2.5d: from current (Physics_Parametric.h)
 }
 
 /*
@@ -1203,8 +1224,7 @@ void idPhysics_Parametric::ReadFromSnapshot( const idBitMsg& msg )
 
 	previous = next;
 
-	next.origin = ReadFloatArray< idVec3 >( msg );
-	next.axis = ReadFloatArray< idQuat >( msg );
+	PARAMETRIC_PSTATE_SCHEMA( SCHEMA_READ, next )	//puncho - P2b.2.5d: into next (Physics_Parametric.h)
 
 	if( self->GetNumSnapshotsReceived() <= 1 )
 	{

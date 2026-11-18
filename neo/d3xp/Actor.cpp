@@ -453,6 +453,8 @@ EVENT( EV_SetWaitState,				idActor::Event_SetWaitState )
 EVENT( EV_GetWaitState,				idActor::Event_GetWaitState )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idActor, ACTOR_SCHEMA )	//puncho - P2b.2.5c: the FGD's rows and the row checks (Schema.h)
+
 /*
 =====================
 idActor::idActor
@@ -565,21 +567,17 @@ void idActor::Spawn()
 	state		= NULL;
 	idealState	= NULL;
 
-	spawnArgs.GetInt( "rank", "0", rank );
-	spawnArgs.GetInt( "team", "0", team );
-	spawnArgs.GetVector( "offsetModel", "0 0 0", modelOffset );
-
-	spawnArgs.GetBool( "use_combat_bbox", "0", use_combat_bbox );
+	//puncho - P2b.2.5c: ACTOR_SCHEMA's keyed rows (Actor.h), read where rank was
+	ACTOR_SCHEMA( SCHEMA_SPAWN, ( *this ) )
 
 	viewAxis = GetPhysics()->GetAxis();
 
-	spawnArgs.GetFloat( "fov", "90", fovDegrees );
+	spawnArgs.GetFloat( "fov", "90", fovDegrees );	// HAND: a local
 	SetFOV( fovDegrees );
 
 	pain_debounce_time	= 0;
 
-	pain_delay		= SEC2MS( spawnArgs.GetFloat( "pain_delay" ) );
-	pain_threshold	= spawnArgs.GetInt( "pain_threshold" );
+	pain_delay		= SEC2MS( spawnArgs.GetFloat( "pain_delay" ) );	// HAND: derived: SEC2MS
 
 	LoadAF();
 
@@ -591,7 +589,7 @@ void idActor::Spawn()
 	animator.SetFrame( ANIMCHANNEL_ALL, animator.GetAnim( IK_ANIM ), 0, 0, 0 );
 
 	// spawn any attachments we might have
-	const idKeyValue* kv = spawnArgs.MatchPrefix( "def_attach", NULL );
+	const idKeyValue* kv = spawnArgs.MatchPrefix( "def_attach", NULL );	// HAND: prefix
 	while( kv )
 	{
 		idDict args;
@@ -613,7 +611,7 @@ void idActor::Spawn()
 		{
 			Attach( ent );
 		}
-		kv = spawnArgs.MatchPrefix( "def_attach", kv );
+		kv = spawnArgs.MatchPrefix( "def_attach", kv );	// HAND: prefix
 	}
 
 	SetupDamageGroups();
@@ -636,7 +634,7 @@ void idActor::Spawn()
 	if( headEnt )
 	{
 		// set up the list of joints to copy to the head
-		for( kv = spawnArgs.MatchPrefix( "copy_joint", NULL ); kv != NULL; kv = spawnArgs.MatchPrefix( "copy_joint", kv ) )
+		for( kv = spawnArgs.MatchPrefix( "copy_joint", NULL ); kv != NULL; kv = spawnArgs.MatchPrefix( "copy_joint", kv ) )	// HAND: prefix
 		{
 			if( kv->GetValue() == "" )
 			{
@@ -683,8 +681,8 @@ void idActor::Spawn()
 	// set up blinking
 	blink_anim = headAnimator->GetAnim( "blink" );
 	blink_time = 0;	// it's ok to blink right away
-	blink_min = SEC2MS( spawnArgs.GetFloat( "blink_min", "0.5" ) );
-	blink_max = SEC2MS( spawnArgs.GetFloat( "blink_max", "8" ) );
+	blink_min = SEC2MS( spawnArgs.GetFloat( "blink_min", "0.5" ) );	// HAND: derived: SEC2MS
+	blink_max = SEC2MS( spawnArgs.GetFloat( "blink_max", "8" ) );	// HAND: derived: SEC2MS
 
 	// set up the head anim if necessary
 	int headAnim = headAnimator->GetAnim( "def_head" );
@@ -700,7 +698,7 @@ void idActor::Spawn()
 		}
 	}
 
-	if( spawnArgs.GetString( "sound_bone", "", jointName ) )
+	if( spawnArgs.GetString( "sound_bone", "", jointName ) )	// HAND: a local
 	{
 		soundJoint = animator.GetJointHandle( jointName );
 		if( soundJoint == INVALID_JOINT )
@@ -708,8 +706,6 @@ void idActor::Spawn()
 			gameLocal.Warning( "idAnimated '%s' at (%s): cannot find joint '%s' for sound playback", name.c_str(), GetPhysics()->GetOrigin().ToString( 0 ), jointName.c_str() );
 		}
 	}
-
-	finalBoss = spawnArgs.GetBool( "finalBoss" );
 
 	FinishSetup();
 }
@@ -2000,7 +1996,7 @@ void idActor::Attach( idEntity* ent )
 	idMat3 newAxis = rotate * axis;
 	ent->SetAxis( newAxis );
 	ent->BindToJoint( this, joint, true );
-	ent->cinematic = cinematic;
+	ent->SetCinematic( IsCinematic() );	//puncho - P2b.2.1a
 }
 
 /*
@@ -2509,7 +2505,7 @@ void idActor::Damage( idEntity* inflictor, idEntity* attacker, const idVec3& dir
 		damageNotByFists = true;
 	}
 
-	SetTimeState ts( timeGroup );
+	SetTimeState ts( GetTimeGroup() );
 
 	// Helltime boss is immune to all projectiles except the helltime killer
 	if( finalBoss && idStr::Icmp( GetEntityDefName(), "monster_hunter_helltime" ) == 0 &&  idStr::Icmp( inflictor->GetEntityDefName(), "projectile_helltime_killer" ) )

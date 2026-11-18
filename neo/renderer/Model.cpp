@@ -46,7 +46,9 @@ idCVar idRenderModelStatic::r_slopNormal( "r_slopNormal", "0.02", CVAR_RENDERER,
 
 static const byte BRM_VERSION_BFG = 108;
 static const byte BRM_VERSION_MOC_DATA = 110;
-static const byte BRM_VERSION = BRM_VERSION_MOC_DATA;
+//puncho - F-PIXEL-ORBS: a cache written before the glTF fill carries garbage vertex colours; 111 rejects it so it rebuilds from source
+static const byte BRM_VERSION_GLTF_FILL = 111;
+static const byte BRM_VERSION = BRM_VERSION_GLTF_FILL;
 
 static const unsigned int BRM_MAGIC_BFG = ( 'B' << 24 ) | ( 'R' << 16 ) | ( 'M' << 8 ) | BRM_VERSION_BFG;
 static const unsigned int BRM_MAGIC = ( 'B' << 24 ) | ( 'R' << 16 ) | ( 'M' << 8 ) | BRM_VERSION;

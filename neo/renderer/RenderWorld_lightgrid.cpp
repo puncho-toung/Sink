@@ -477,6 +477,7 @@ void idRenderWorldLocal::SetupLightGrid()
 
 void idRenderWorldLocal::LoadLightGridImages()
 {
+	idScopedLoadSpan gridSpan( SPAN_LIGHTGRID_IMAGES );
 	idLib::Printf( "----- LoadLightGridImages -----\n" );
 
 	idStrStatic< MAX_OSPATH > baseName = mapName;
@@ -596,6 +597,7 @@ void idRenderWorldLocal::WriteLightGrid( idFile* fp, const LightGrid& lightGrid 
 
 bool idRenderWorldLocal::LoadLightGridFile( const char* name )
 {
+	idScopedLoadSpan gridSpan( SPAN_LIGHTGRID_FILE );
 	idToken token;
 	idLexer* src;
 	const unsigned int mapCRC = LightGridMapCRC( numPortalAreas, portalAreas );
@@ -1997,6 +1999,7 @@ CONSOLE_COMMAND_SHIP( bakeLightGrids, "Bake irradiance/vis light grid data", NUL
 			}
 
 			filename.Format( "env/%s/area%i_lightgrid_amb.exr", baseName.c_str(), a );
+			R_BakeImageName( filename );
 
 			R_WriteEXR( filename.c_str(), irradianceAtlas.Ptr(), 3, atlasWidth, atlasHeight, "fs_basepath" );
 

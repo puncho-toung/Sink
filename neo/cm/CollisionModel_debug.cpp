@@ -368,7 +368,7 @@ void idCollisionModelManagerLocal::DrawModel( cmHandle_t handle, const idVec3& m
 	cm_model_t* model;
 	idVec3 viewPos;
 
-	if( handle < 0 && handle >= numModels )
+	if( !models || handle < 0 || handle >= MAX_CM_MODELS || handle > maxModels || !models[ handle ] )	//puncho - R1.3: reject invalid slots while keeping the trace model drawable
 	{
 		return;
 	}

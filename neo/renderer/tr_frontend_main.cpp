@@ -1005,6 +1005,7 @@ void R_RenderView( viewDef_t* parms )
 
 	// the same products with the absolute view, for everything culled against absolute data
 	// ( bit-identical to worldSpace.mvp / unjitteredMVP at a zero render origin )
+	//puncho - F-FRONTEND-ND: culling takes worldCullUnjitteredMVP; worldCullMVP now serves the NVRHI debug draws only
 	idRenderMatrix worldCullViewRenderMatrix;
 	idRenderMatrix::Transpose( *( idRenderMatrix* )worldCullViewMatrix, worldCullViewRenderMatrix );
 	idRenderMatrix::Multiply( tr.viewDef->projectionRenderMatrix, worldCullViewRenderMatrix, tr.viewDef->worldCullMVP );
@@ -1012,7 +1013,9 @@ void R_RenderView( viewDef_t* parms )
 
 	// the planes of the view frustum are needed for portal visibility culling; they stay
 	// absolute ( the portal flood and the subview cull test absolute windings against them )
-	idRenderMatrix::GetFrustumPlanes( tr.viewDef->frustums[FRUSTUM_PRIMARY], tr.viewDef->worldCullMVP, false, true );
+	//puncho - F-FRONTEND-ND: every visibility decision takes the unjittered matrices; the TAA jitter phase is
+	// tr.frameCount, which differs between processes, so a jittered cull made the visible set differ per process
+	idRenderMatrix::GetFrustumPlanes( tr.viewDef->frustums[FRUSTUM_PRIMARY], tr.viewDef->worldCullUnjitteredMVP, false, true );
 
 	// the DOOM 3 frustum planes point outside the frustum
 	for( int i = 0; i < 6; i++ )

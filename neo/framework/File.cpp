@@ -34,6 +34,29 @@ thread_local bool fileReadContainer;
 static idSysInterlockedInteger fileReadBytes;
 unsigned int FileReadBytes() { return ( unsigned int )fileReadBytes.GetValue(); }
 
+//puncho - P2b.0.4b: the load spans' switch, and this thread's twins of fileReadBytes (which stays process-global for the
+// phase rows) and of the time spent inside reads, plus the time inside the load pacifier. Here because rbdmap compiles
+// this file and never sets the switch; LoadPhase sets it while a timed load runs, and only then is a clock read
+std::atomic<bool> loadSpanTiming;
+static thread_local uint64 fileThreadReadBytes;
+static thread_local uint64 fileThreadReadUs;
+thread_local uint64 loadPacifierUs;		// written by idCommonLocal::UpdateLevelLoadPacifier
+
+uint64 FileThreadReadBytes()
+{
+	return fileThreadReadBytes;
+}
+
+uint64 FileThreadReadUs()
+{
+	return fileThreadReadUs;
+}
+
+uint64 LoadThreadPacifierUs()
+{
+	return loadPacifierUs;
+}
+
 #include "Unzip.h"
 
 #if defined( _WIN32 )
@@ -1606,12 +1629,15 @@ int idFile_Permanent::Read( void* buffer, int len )
 
 	buf = ( byte* )buffer;
 
+	// the leaf of every file read, so the thread twin and its time count here even inside ReadFromBGL
+	const bool timed = loadSpanTiming.load( std::memory_order_relaxed );
 	remaining = len;
 	tries = 0;
 	while( remaining )
 	{
 		block = remaining;
 
+		const uint64 readStart = timed ? Sys_Microseconds() : 0;
 		// RB begin
 #if defined(_WIN32)
 		DWORD bytesRead;
@@ -1624,6 +1650,10 @@ int idFile_Permanent::Read( void* buffer, int len )
 		read = fread( buf, 1, block, o );
 #endif
 		// RB end
+		if( timed )
+		{
+			fileThreadReadUs += Sys_Microseconds() - readStart;
+		}
 
 		if( read == 0 )
 		{
@@ -1644,9 +1674,14 @@ int idFile_Permanent::Read( void* buffer, int len )
 			common->FatalError( "idFile_Permanent::Read: -1 bytes read from %s", name.c_str() );
 		}
 
+		// inside ReadFromBGL fileReadBytes counts at the idFile_InnerResource, not here; the thread twin counts here
 		if( !fileReadContainer && read > 0 )
 		{
 			fileReadBytes.Add( read );
+		}
+		if( timed && read > 0 )
+		{
+			fileThreadReadBytes += read;
 		}
 		remaining -= read;
 		buf += read;
@@ -2026,10 +2061,21 @@ Properly handles partial reads
 */
 int idFile_InZip::Read( void* buffer, int len )
 {
+	// a leaf too (a .resources opened from a .pk4 is read through here), and its time includes the inflate CPU
+	const bool timed = loadSpanTiming.load( std::memory_order_relaxed );
+	const uint64 readStart = timed ? Sys_Microseconds() : 0;
 	int l = unzReadCurrentFile( z, buffer, len );
+	if( timed )
+	{
+		fileThreadReadUs += Sys_Microseconds() - readStart;
+	}
 	if( l > 0 )
 	{
 		fileReadBytes.Add( l );
+		if( timed )
+		{
+			fileThreadReadBytes += l;
+		}
 	}
 	return l;
 }
@@ -2136,16 +2182,27 @@ int idFile_InZip::Seek( long offset, fsOrigin_t origin )
 		// FALLTHROUGH
 		case FS_SEEK_CUR:
 		{
+			//puncho - P2b.0.4b: inflating to skip is read time for the spans; no bytes reach the caller, so none count
+			const bool timed = loadSpanTiming.load( std::memory_order_relaxed );
+			const uint64 seekStart = timed ? Sys_Microseconds() : 0;
 			buf = ( char* ) _alloca16( ZIP_SEEK_BUF_SIZE );
 			for( i = 0; i < ( offset - ZIP_SEEK_BUF_SIZE ); i += ZIP_SEEK_BUF_SIZE )
 			{
 				res = unzReadCurrentFile( z, buf, ZIP_SEEK_BUF_SIZE );
 				if( res < ZIP_SEEK_BUF_SIZE )
 				{
+					if( timed )
+					{
+						fileThreadReadUs += Sys_Microseconds() - seekStart;
+					}
 					return -1;
 				}
 			}
 			res = i + unzReadCurrentFile( z, buf, offset - i );
+			if( timed )
+			{
+				fileThreadReadUs += Sys_Microseconds() - seekStart;
+			}
 			return ( res == offset ) ? 0 : -1;
 		}
 		default:
@@ -2227,6 +2284,8 @@ int idFile_InnerResource::Read( void* buffer, int len )
 		}
 	}
 
+	//puncho - P2b.0.4b: fileReadBytes counts here, at the container; the thread twin and its time count at the leaf that
+	// ReadFromBGL reaches, and a buffered memcpy is no medium read
 	if( read > 0 )
 	{
 		fileReadBytes.Add( read );

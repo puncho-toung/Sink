@@ -284,7 +284,7 @@ void idTestModel::Think()
 	idAngles ang;
 	int	i;
 
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		if( anim && ( gameLocal.testmodel == this ) && ( mode != g_testModelAnimate.GetInteger() ) )
 		{

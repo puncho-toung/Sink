@@ -214,14 +214,20 @@ void R_RenderSingleModel( viewEntity_t* vEntity, int& occluderTris )
 	idRenderMatrix::Transpose( *( idRenderMatrix* )vEntity->modelViewMatrix, viewMat );
 	idRenderMatrix::Multiply( viewDef->projectionRenderMatrix, viewMat, vEntity->mvp );
 	idRenderMatrix::Multiply( viewDef->unjitteredProjectionRenderMatrix, viewMat, vEntity->unjitteredMVP );
+	//puncho start - F-FRONTEND-ND: the surface cull takes the unjittered matrix ( the jitter phase differs between
+	// processes ), with the same depth hacks as the draw ( they move only the z row )
+	idRenderMatrix cullMVP = vEntity->unjitteredMVP;
 	if( renderEntity->weaponDepthHack )
 	{
 		idRenderMatrix::ApplyDepthHack( vEntity->mvp );
+		idRenderMatrix::ApplyDepthHack( cullMVP );
 	}
 	if( renderEntity->modelDepthHack != 0.0f )
 	{
 		idRenderMatrix::ApplyModelDepthHack( vEntity->mvp, renderEntity->modelDepthHack );
+		idRenderMatrix::ApplyModelDepthHack( cullMVP, renderEntity->modelDepthHack );
 	}
+	//puncho end - F-FRONTEND-ND
 
 	// local light and view origins are used to determine if the view is definitely outside
 	// an extruded shadow volume, which means we can skip drawing the end caps.
@@ -382,7 +388,7 @@ void R_RenderSingleModel( viewEntity_t* vEntity, int& occluderTris )
 		// than the entire entity reference bounds
 		// If the entire model wasn't visible, there is no need to check the
 		// individual surfaces.
-		const bool surfaceDirectlyVisible = modelIsVisible && !idRenderMatrix::CullBoundsToMVP( vEntity->mvp, tri->bounds );
+		const bool surfaceDirectlyVisible = modelIsVisible && !idRenderMatrix::CullBoundsToMVP( cullMVP, tri->bounds );	//puncho - F-FRONTEND-ND
 
 		// RB: added check wether GPU skinning is available at all
 		const bool gpuSkinned = ( tri->staticModelWithJoints != NULL && r_useGPUSkinning.GetBool() );

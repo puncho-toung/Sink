@@ -34,6 +34,25 @@ bool idRecordMapArgs::GetBool( const char* key, const char* defaultString ) cons
 	return atoi( GetString( key, defaultString ) ) != 0;
 }
 
+//puncho start - P2b.2.3b
+float idRecordMapArgs::GetFloat( const char* key, const char* defaultString ) const
+{
+	return atof( GetString( key, defaultString ) );
+}
+
+void idRecordMapArgs::GetString( const char* key, const char* defaultString, idStr& out ) const
+{
+	out = GetString( key, defaultString );
+}
+
+// idDict::GetVector's parse: a NULL default is "0 0 0", missing components stay 0
+void idRecordMapArgs::GetVector( const char* key, const char* defaultString, idVec3& out ) const
+{
+	out.Zero();
+	sscanf( GetString( key, defaultString != NULL ? defaultString : "0 0 0" ), "%f %f %f", &out.x, &out.y, &out.z );
+}
+//puncho end
+
 /*
 ================
 idRecordOut
@@ -273,8 +292,8 @@ void idRecordOut::WriteData( const void* bytes, int count )
 	Put( bytes, count );
 }
 
-// WriteUnsigned, WriteCount, WriteString and WriteChunk are the file mode's: an entry's fields write through the calls
-// above, inside their field bounds
+// WriteUnsigned, WriteCount and WriteChunk are the file mode's (they assert it); WriteString serves both: a struct row's
+// STR in a file, a value R row's STRING inside an entry's field (P2b.2.3b)
 void idRecordOut::WriteUnsigned( uint64 value, int bytes )
 {
 	assert( file != NULL );
@@ -305,7 +324,6 @@ void idRecordOut::WriteCount( int count, int bytes, int maxCount )
 
 void idRecordOut::WriteString( const char* value, int bound )
 {
-	assert( file != NULL );
 	assert( bound >= 0 && bound <= 255 );
 	const int count = idStr::Length( value );
 	if( count > bound )
@@ -595,6 +613,44 @@ bool idRecordIn::ReadFiniteFloat( float& value )
 	return true;
 }
 
+//puncho start - P2b.2.3b
+bool idRecordIn::ReadBool( bool& value )
+{
+	byte b;
+	if( !ReadByte( b ) || b > 1 )
+	{
+		return false;
+	}
+	value = ( b != 0 );
+	return true;
+}
+
+bool idRecordIn::CheckBool()
+{
+	bool value;
+	return ReadBool( value );
+}
+
+bool idRecordIn::CheckFiniteFloats( int count )
+{
+	float value;
+	for( int i = 0; i < count; i++ )
+	{
+		if( !ReadFiniteFloat( value ) )
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+bool idRecordIn::CheckString( int bound )
+{
+	idStr value;
+	return ReadString( value, bound );
+}
+//puncho end
+
 bool idRecordIn::Read64( uint64& value )
 {
 	uint32 low, high;
@@ -664,11 +720,11 @@ The section table: per id the list's version, its row count, its check, the clas
 recordDump prints. A list's names come from its own rows (SCHEMA_RECORD_NAME), so the table cannot drift from the list.
 ================
 */
-static const char* const entityRecordNames[] = { ENTITY_RECORD_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
-static const char* const moverBinaryRecordNames[] = { MOVER_BINARY_RECORD_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
+static const char* const entityRecordNames[] = { ENTITY_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
+static const char* const moverBinaryRecordNames[] = { MOVER_BINARY_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
 static const char* const damagableRecordNames[] = { DAMAGABLE_RECORD_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
-static const char* const aiRecordNames[] = { AI_RECORD_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
-static const char* const elevatorRecordNames[] = { ELEVATOR_RECORD_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
+static const char* const aiRecordNames[] = { AI_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
+static const char* const elevatorRecordNames[] = { ELEVATOR_SCHEMA( SCHEMA_RECORD_NAME, _ ) };
 verify_array_size( entityRecordNames, idEntity::ENTITY_RECORD_FIELDS );
 verify_array_size( moverBinaryRecordNames, idMover_Binary::MOVER_BINARY_RECORD_FIELDS );
 verify_array_size( damagableRecordNames, idDamagable::DAMAGABLE_RECORD_FIELDS );

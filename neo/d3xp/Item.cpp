@@ -54,6 +54,8 @@ EVENT( EV_RespawnItem,		idItem::Event_Respawn )
 EVENT( EV_RespawnFx,		idItem::Event_RespawnFx )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idItem, ITEM_SCHEMA )	//puncho - P2b.2.5a: the FGD's rows and the row checks (Schema.h)
+
 
 /*
 ================
@@ -96,18 +98,7 @@ idItem::Save
 */
 void idItem::Save( idSaveGame* savefile ) const
 {
-
-	savefile->WriteVec3( orgOrigin );
-	savefile->WriteBool( spin );
-	savefile->WriteBool( pulse );
-	savefile->WriteBool( canPickUp );
-
-	savefile->WriteMaterial( shellMaterial );
-
-	savefile->WriteBool( inView );
-	savefile->WriteInt( inViewTime );
-	savefile->WriteInt( lastCycle );
-	savefile->WriteInt( lastRenderViewTime );
+	ITEM_SCHEMA( SCHEMA_SAVE, ( *this ) )	//puncho - P2b.2.5a: the list is in Item.h
 }
 
 /*
@@ -117,18 +108,7 @@ idItem::Restore
 */
 void idItem::Restore( idRestoreGame* savefile )
 {
-
-	savefile->ReadVec3( orgOrigin );
-	savefile->ReadBool( spin );
-	savefile->ReadBool( pulse );
-	savefile->ReadBool( canPickUp );
-
-	savefile->ReadMaterial( shellMaterial );
-
-	savefile->ReadBool( inView );
-	savefile->ReadInt( inViewTime );
-	savefile->ReadInt( lastCycle );
-	savefile->ReadInt( lastRenderViewTime );
+	ITEM_SCHEMA( SCHEMA_RESTORE, ( *this ) )	//puncho - P2b.2.5a: the list is in Item.h
 
 	itemShellHandle = -1;
 }
@@ -141,12 +121,12 @@ idItem::UpdateRenderEntity
 bool idItem::UpdateRenderEntity( renderEntity_s* renderEntity, const renderView_t* renderView ) const
 {
 
-	if( lastRenderViewTime == renderView->time[timeGroup] )
+	if( lastRenderViewTime == renderView->time[GetTimeGroup()] )
 	{
 		return false;
 	}
 
-	lastRenderViewTime = renderView->time[timeGroup];
+	lastRenderViewTime = renderView->time[GetTimeGroup()];
 
 	// check for glow highlighting if near the center of the view
 	idVec3 dir = renderEntity->origin - renderView->vieworg;
@@ -154,7 +134,7 @@ bool idItem::UpdateRenderEntity( renderEntity_s* renderEntity, const renderView_
 	float d = dir * renderView->viewaxis[0];
 
 	// two second pulse cycle
-	float cycle = ( renderView->time[timeGroup] - inViewTime ) / 2000.0f;
+	float cycle = ( renderView->time[GetTimeGroup()] - inViewTime ) / 2000.0f;
 
 	if( d > 0.94f )
 	{
@@ -164,7 +144,7 @@ bool idItem::UpdateRenderEntity( renderEntity_s* renderEntity, const renderView_
 			if( cycle > lastCycle )
 			{
 				// restart at the beginning
-				inViewTime = renderView->time[timeGroup];
+				inViewTime = renderView->time[GetTimeGroup()];
 				cycle = 0.0f;
 			}
 		}
@@ -242,7 +222,7 @@ idItem::Think
 */
 void idItem::Think()
 {
-	if( thinkFlags & TH_THINK )
+	if( GetThinkFlags() & TH_THINK )
 	{
 		if( spin )
 		{
@@ -308,18 +288,18 @@ void idItem::Spawn()
 	idEntity* 	ent;
 	float		tsize;
 
-	if( spawnArgs.GetBool( "dropToFloor" ) )
+	if( spawnArgs.GetBool( "dropToFloor" ) )	// HAND: tested in place
 	{
 		PostEventMS( &EV_DropToFloor, 0 );
 	}
 
-	if( spawnArgs.GetFloat( "triggersize", "0", tsize ) )
+	if( spawnArgs.GetFloat( "triggersize", "0", tsize ) )	// HAND: a local, applied only when present
 	{
 		GetPhysics()->GetClipModel()->LoadModel( idTraceModel( idBounds( vec3_origin ).Expand( tsize ) ) );
 		GetPhysics()->GetClipModel()->Link( gameLocal.clip );
 	}
 
-	if( spawnArgs.GetBool( "start_off" ) )
+	if( spawnArgs.GetBool( "start_off" ) )	// HAND: tested in place
 	{
 		GetPhysics()->SetContents( 0 );
 		Hide();
@@ -329,7 +309,7 @@ void idItem::Spawn()
 		GetPhysics()->SetContents( CONTENTS_TRIGGER );
 	}
 
-	giveTo = spawnArgs.GetString( "owner" );
+	giveTo = spawnArgs.GetString( "owner" );	// HAND: a local
 	if( giveTo.Length() )
 	{
 		ent = gameLocal.FindEntity( giveTo );
@@ -344,7 +324,7 @@ void idItem::Spawn()
 	}
 
 	// idItemTeam does not rotate and bob
-	if( spawnArgs.GetBool( "spin" ) || ( common->IsMultiplayer() && !this->IsType( idItemTeam::Type ) ) )
+	if( spawnArgs.GetBool( "spin" ) || ( common->IsMultiplayer() && !this->IsType( idItemTeam::Type ) ) )	// HAND: derived, on in multiplayer too
 	{
 		spin = true;
 		BecomeActive( TH_THINK );
@@ -355,7 +335,7 @@ void idItem::Spawn()
 	pulse = false;
 	orgOrigin = GetPhysics()->GetOrigin();
 
-	canPickUp = !( spawnArgs.GetBool( "triggerFirst" ) || spawnArgs.GetBool( "no_touch" ) );
+	canPickUp = !( spawnArgs.GetBool( "triggerFirst" ) || spawnArgs.GetBool( "no_touch" ) );	// HAND: derived from two keys
 
 	inViewTime = -1000;
 	lastCycle = -1;
@@ -703,6 +683,8 @@ idItemPowerup
 CLASS_DECLARATION( idItem, idItemPowerup )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idItemPowerup, ITEM_POWERUP_SCHEMA )	//puncho - P2b.2.5a: the FGD's rows and the row checks (Schema.h)
+
 /*
 ================
 idItemPowerup::idItemPowerup
@@ -721,8 +703,7 @@ idItemPowerup::Save
 */
 void idItemPowerup::Save( idSaveGame* savefile ) const
 {
-	savefile->WriteInt( time );
-	savefile->WriteInt( type );
+	ITEM_POWERUP_SCHEMA( SCHEMA_SAVE, ( *this ) )	//puncho - P2b.2.5a: the list is in Item.h
 }
 
 /*
@@ -732,8 +713,7 @@ idItemPowerup::Restore
 */
 void idItemPowerup::Restore( idRestoreGame* savefile )
 {
-	savefile->ReadInt( time );
-	savefile->ReadInt( type );
+	ITEM_POWERUP_SCHEMA( SCHEMA_RESTORE, ( *this ) )	//puncho - P2b.2.5a: the list is in Item.h
 }
 
 /*
@@ -743,8 +723,7 @@ idItemPowerup::Spawn
 */
 void idItemPowerup::Spawn()
 {
-	time = spawnArgs.GetInt( "time", "30" );
-	type = spawnArgs.GetInt( "type", "0" );
+	ITEM_POWERUP_SCHEMA( SCHEMA_SPAWN, ( *this ) )	//puncho - P2b.2.5a: time and type, the keyed rows (Item.h)
 }
 
 /*
@@ -785,6 +764,8 @@ EVENT( EV_TakeFlag,    idItemTeam::Event_TakeFlag )
 EVENT( EV_DropFlag,    idItemTeam::Event_DropFlag )
 EVENT( EV_FlagCapture, idItemTeam::Event_FlagCapture )
 END_CLASS
+
+CLASS_SCHEMA_KEYS( idItemTeam, ITEM_TEAM_SCHEMA )	//puncho - P2b.2.5a: the FGD's rows and the row checks (Schema.h)
 
 /*
 ===============
@@ -828,26 +809,26 @@ idItemTeam::Spawn
 */
 void idItemTeam::Spawn()
 {
-	team					= spawnArgs.GetInt( "team" );
+	ITEM_TEAM_SCHEMA( SCHEMA_SPAWN, ( *this ) )	//puncho - P2b.2.5a: team, the keyed row (Item.h)
 	returnOrigin			= GetPhysics()->GetOrigin() + idVec3( 0, 0, 20 );
 	returnAxis				= GetPhysics()->GetAxis();
 
 	BecomeActive( TH_THINK );
 
 	const char* skinName;
-	skinName = spawnArgs.GetString( "skin", "" );
+	skinName = spawnArgs.GetString( "skin", "" );	// HAND: a local, idEntity's key (the flag's idle skin)
 	if( skinName[0] )
 	{
 		skinDefault = declManager->FindSkin( skinName );
 	}
 
-	skinName = spawnArgs.GetString( "skin_carried", "" );
+	skinName = spawnArgs.GetString( "skin_carried", "" );	// HAND: a local
 	if( skinName[0] )
 	{
 		skinCarried = declManager->FindSkin( skinName );
 	}
 
-	nuggetName = spawnArgs.GetString( "nugget_name", "" );
+	nuggetName = spawnArgs.GetString( "nugget_name", "" );	// HAND: a pointer into spawnArgs, NULL when empty
 	if( !nuggetName[0] )
 	{
 		nuggetName = NULL;
@@ -886,7 +867,7 @@ void idItemTeam::Spawn()
 
 	physicsObj.SetContents( 0 );
 	physicsObj.SetClipMask( MASK_SOLID | CONTENTS_MOVEABLECLIP );
-	physicsObj.SetGravity( idVec3( 0, 0, spawnArgs.GetInt( "gravity", "-30" ) ) );
+	physicsObj.SetGravity( idVec3( 0, 0, spawnArgs.GetInt( "gravity", "-30" ) ) );	// HAND: an argument
 }
 
 
@@ -1583,6 +1564,8 @@ EVENT( EV_HideObjective,	idObjective::Event_HideObjective )
 EVENT( EV_GetPlayerPos,		idObjective::Event_GetPlayerPos )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idObjective, OBJECTIVE_SCHEMA )	//puncho - P2b.2.5a: the FGD's rows and the row checks (Schema.h)
+
 /*
 ================
 idObjective::idObjective
@@ -1600,8 +1583,7 @@ idObjective::Save
 */
 void idObjective::Save( idSaveGame* savefile ) const
 {
-	savefile->WriteVec3( playerPos );
-	savefile->WriteMaterial( screenshot );
+	OBJECTIVE_SCHEMA( SCHEMA_SAVE, ( *this ) )	//puncho - P2b.2.5a: the list is in Item.h
 }
 
 /*
@@ -1611,8 +1593,7 @@ idObjective::Restore
 */
 void idObjective::Restore( idRestoreGame* savefile )
 {
-	savefile->ReadVec3( playerPos );
-	savefile->ReadMaterial( screenshot );
+	OBJECTIVE_SCHEMA( SCHEMA_RESTORE, ( *this ) )	//puncho - P2b.2.5a: the list is in Item.h
 }
 
 /*
@@ -1627,7 +1608,7 @@ void idObjective::Spawn()
 	shotName = gameLocal.GetMapName();
 	shotName.StripFileExtension();
 	shotName += "/";
-	shotName += spawnArgs.GetString( "screenshot" );
+	shotName += spawnArgs.GetString( "screenshot" );	// HAND: part of a path
 	shotName.SetFileExtension( ".tga" );
 	screenshot = declManager->FindMaterial( shotName );
 }
@@ -1719,6 +1700,8 @@ void idObjective::Event_HideObjective( idEntity* e )
 CLASS_DECLARATION( idItem, idVideoCDItem )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idVideoCDItem, VIDEO_CD_ITEM_SCHEMA )	//puncho - P2b.2.5a (review): the FGD's rows and the row checks (Schema.h)
+
 /*
 ================
 idVideoCDItem::GiveToPlayer
@@ -1752,6 +1735,8 @@ bool idVideoCDItem::GiveToPlayer( idPlayer* player, unsigned int giveFlags )
 
 CLASS_DECLARATION( idItem, idPDAItem )
 END_CLASS
+
+CLASS_SCHEMA_KEYS( idPDAItem, PDA_ITEM_SCHEMA )	//puncho - P2b.2.5a (review): the FGD's rows and the row checks (Schema.h)
 
 /*
 ================
@@ -1798,6 +1783,8 @@ EVENT( EV_DropToFloor,	idMoveableItem::Event_DropToFloor )
 EVENT( EV_Gib,			idMoveableItem::Event_Gib )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idMoveableItem, MOVEABLE_ITEM_SCHEMA )	//puncho - P2b.2.5a: the FGD's rows and the row checks (Schema.h)
+
 /*
 ================
 idMoveableItem::idMoveableItem
@@ -1832,13 +1819,7 @@ idMoveableItem::Save
 */
 void idMoveableItem::Save( idSaveGame* savefile ) const
 {
-	savefile->WriteStaticObject( physicsObj );
-
-	savefile->WriteClipModel( trigger );
-
-	savefile->WriteParticle( smoke );
-	savefile->WriteInt( smokeTime );
-	savefile->WriteInt( nextSoundTime );
+	MOVEABLE_ITEM_SCHEMA( SCHEMA_SAVE, ( *this ) )	//puncho - P2b.2.5a: the list is in Item.h
 }
 
 /*
@@ -1848,15 +1829,54 @@ idMoveableItem::Restore
 */
 void idMoveableItem::Restore( idRestoreGame* savefile )
 {
-	savefile->ReadStaticObject( physicsObj );
+	//puncho start - P2b.2.5a: the list is in Item.h. The physics pointer is set after it, as idMoveable's Restore does: the
+	// trigger's and the smoke's reads do not use it
+	MOVEABLE_ITEM_SCHEMA( SCHEMA_RESTORE, ( *this ) )
 	RestorePhysics( &physicsObj );
-
-	savefile->ReadClipModel( trigger );
-
-	savefile->ReadParticle( smoke );
-	savefile->ReadInt( smokeTime );
-	savefile->ReadInt( nextSoundTime );
+	//puncho end
 }
+
+//puncho start - P2b.2.5a: MOVEABLE_ITEM_SCHEMA's HAND rows, hand-written at their place in the list (K8)
+/*
+================
+idMoveableItem::SaveTrigger
+================
+*/
+void idMoveableItem::SaveTrigger( idSaveGame* savefile ) const
+{
+	savefile->WriteClipModel( trigger );
+}
+
+/*
+================
+idMoveableItem::RestoreTrigger
+================
+*/
+void idMoveableItem::RestoreTrigger( idRestoreGame* savefile )
+{
+	savefile->ReadClipModel( trigger );
+}
+
+/*
+================
+idMoveableItem::SaveSmoke
+================
+*/
+void idMoveableItem::SaveSmoke( idSaveGame* savefile ) const
+{
+	savefile->WriteParticle( smoke );
+}
+
+/*
+================
+idMoveableItem::RestoreSmoke
+================
+*/
+void idMoveableItem::RestoreSmoke( idRestoreGame* savefile )
+{
+	savefile->ReadParticle( smoke );
+}
+//puncho end
 
 /*
 ================
@@ -1869,19 +1889,19 @@ void idMoveableItem::Spawn()
 	float density, friction, bouncyness, tsize;
 	idStr clipModelName;
 	idBounds bounds;
-	SetTimeState ts( timeGroup );
+	SetTimeState ts( GetTimeGroup() );
 
 	// create a trigger for item pickup
-	spawnArgs.GetFloat( "triggersize", "16.0", tsize );
+	spawnArgs.GetFloat( "triggersize", "16.0", tsize );	// HAND: a local
 	trigger = new( TAG_PHYSICS_CLIP_ENTITY ) idClipModel( idTraceModel( idBounds( vec3_origin ).Expand( tsize ) ) );
 	trigger->Link( gameLocal.clip, this, 0, GetPhysics()->GetOrigin(), GetPhysics()->GetAxis() );
 	trigger->SetContents( CONTENTS_TRIGGER );
 
 	// check if a clip model is set
-	spawnArgs.GetString( "clipmodel", "", clipModelName );
+	spawnArgs.GetString( "clipmodel", "", clipModelName );	// HAND: a local, the visual model when it is empty
 	if( !clipModelName[0] )
 	{
-		clipModelName = spawnArgs.GetString( "model" );		// use the visual model
+		clipModelName = spawnArgs.GetString( "model" );		// HAND: use the visual model, idEntity's key
 	}
 
 	// load the trace model
@@ -1892,17 +1912,17 @@ void idMoveableItem::Spawn()
 	}
 
 	// if the model should be shrinked
-	if( spawnArgs.GetBool( "clipshrink" ) )
+	if( spawnArgs.GetBool( "clipshrink" ) )	// HAND: tested in place
 	{
 		trm.Shrink( CM_CLIP_EPSILON );
 	}
 
 	// get rigid body properties
-	spawnArgs.GetFloat( "density", "0.5", density );
+	spawnArgs.GetFloat( "density", "0.5", density );	// HAND: clamped
 	density = idMath::ClampFloat( 0.001f, 1000.0f, density );
-	spawnArgs.GetFloat( "friction", "0.05", friction );
+	spawnArgs.GetFloat( "friction", "0.05", friction );	// HAND: clamped
 	friction = idMath::ClampFloat( 0.0f, 1.0f, friction );
-	spawnArgs.GetFloat( "bouncyness", "0.6", bouncyness );
+	spawnArgs.GetFloat( "bouncyness", "0.6", bouncyness );	// HAND: clamped
 	bouncyness = idMath::ClampFloat( 0.0f, 1.0f, bouncyness );
 
 	// setup the physics
@@ -1917,7 +1937,7 @@ void idMoveableItem::Spawn()
 	physicsObj.SetClipMask( MASK_SOLID | CONTENTS_MOVEABLECLIP );
 	SetPhysics( &physicsObj );
 
-	if( spawnArgs.GetBool( "nodrop" ) )
+	if( spawnArgs.GetBool( "nodrop" ) )	// HAND: tested in place
 	{
 		physicsObj.PutToRest();
 	}
@@ -1925,7 +1945,7 @@ void idMoveableItem::Spawn()
 	smoke = NULL;
 	smokeTime = 0;
 	nextSoundTime = 0;
-	const char* smokeName = spawnArgs.GetString( "smoke_trail" );
+	const char* smokeName = spawnArgs.GetString( "smoke_trail" );	// HAND: a local
 	if( *smokeName != '\0' )
 	{
 		smoke = static_cast<const idDeclParticle*>( declManager->FindType( DECL_PARTICLE, smokeName ) );
@@ -1933,7 +1953,7 @@ void idMoveableItem::Spawn()
 		BecomeActive( TH_UPDATEPARTICLES );
 	}
 
-	repeatSmoke = spawnArgs.GetBool( "repeatSmoke", "0" );
+	MOVEABLE_ITEM_SCHEMA( SCHEMA_SPAWN, ( *this ) )	//puncho - P2b.2.5a: repeatSmoke, the keyed row (Item.h)
 }
 
 /*
@@ -1946,7 +1966,7 @@ void idMoveableItem::ClientThink( const int curTime, const float fraction, const
 
 	InterpolatePhysicsOnly( fraction );
 
-	if( thinkFlags & TH_PHYSICS )
+	if( GetThinkFlags() & TH_PHYSICS )
 	{
 		// update trigger position
 		trigger->Link( gameLocal.clip, this, 0, GetPhysics()->GetOrigin(), mat3_identity );
@@ -1965,15 +1985,15 @@ void idMoveableItem::Think()
 
 	RunPhysics();
 
-	if( thinkFlags & TH_PHYSICS )
+	if( GetThinkFlags() & TH_PHYSICS )
 	{
 		// update trigger position
 		trigger->Link( gameLocal.clip, this, 0, GetPhysics()->GetOrigin(), mat3_identity );
 	}
 
-	if( thinkFlags & TH_UPDATEPARTICLES )
+	if( GetThinkFlags() & TH_UPDATEPARTICLES )
 	{
-		if( !gameLocal.smokeParticles->EmitSmoke( smoke, smokeTime, gameLocal.random.CRandomFloat(), GetPhysics()->GetOrigin(), GetPhysics()->GetAxis(), timeGroup /*_D3XP*/ ) )
+		if( !gameLocal.smokeParticles->EmitSmoke( smoke, smokeTime, gameLocal.random.CRandomFloat(), GetPhysics()->GetOrigin(), GetPhysics()->GetAxis(), GetTimeGroup() /*_D3XP*/ ) )
 		{
 			if( !repeatSmoke )
 			{
@@ -2220,7 +2240,7 @@ void idMoveableItem::Gib( const idVec3& dir, const char* damageDefName )
 	if( *smokeName != '\0' )
 	{
 		const idDeclParticle* smoke = static_cast<const idDeclParticle*>( declManager->FindType( DECL_PARTICLE, smokeName ) );
-		gameLocal.smokeParticles->EmitSmoke( smoke, gameLocal.time, gameLocal.random.CRandomFloat(), renderEntity.origin, renderEntity.axis, timeGroup /*_D3XP*/ );
+		gameLocal.smokeParticles->EmitSmoke( smoke, gameLocal.time, gameLocal.random.CRandomFloat(), renderEntity.origin, renderEntity.axis, GetTimeGroup() /*_D3XP*/ );
 	}
 	// remove the entity
 	PostEventMS( &EV_Remove, 0 );
@@ -2256,6 +2276,8 @@ void idMoveableItem::Event_Gib( const char* damageDefName )
 
 CLASS_DECLARATION( idMoveableItem, idMoveablePDAItem )
 END_CLASS
+
+CLASS_SCHEMA_KEYS( idMoveablePDAItem, MOVEABLE_PDA_ITEM_SCHEMA )	//puncho - P2b.2.5a (review): the FGD's rows and the row checks (Schema.h)
 
 /*
 ================
@@ -2300,6 +2322,8 @@ bool idMoveablePDAItem::GiveToPlayer( idPlayer* player, unsigned int giveFlags )
 CLASS_DECLARATION( idEntity, idItemRemover )
 EVENT( EV_Activate,		idItemRemover::Event_Trigger )
 END_CLASS
+
+CLASS_SCHEMA_KEYS( idItemRemover, ITEM_REMOVER_SCHEMA )	//puncho - P2b.2.5a (review): the FGD's rows and the row checks (Schema.h)
 
 /*
 ================
@@ -2350,6 +2374,8 @@ EVENT( EV_HideObjective,	idObjectiveComplete::Event_HideObjective )
 EVENT( EV_GetPlayerPos,		idObjectiveComplete::Event_GetPlayerPos )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idObjectiveComplete, OBJECTIVE_COMPLETE_SCHEMA )	//puncho - P2b.2.5a (review): the FGD's rows and the row checks (Schema.h)
+
 /*
 ================
 idObjectiveComplete::idObjectiveComplete
@@ -2367,7 +2393,7 @@ idObjectiveComplete::Save
 */
 void idObjectiveComplete::Save( idSaveGame* savefile ) const
 {
-	savefile->WriteVec3( playerPos );
+	OBJECTIVE_COMPLETE_SCHEMA( SCHEMA_SAVE, ( *this ) )	//puncho - P2b.2.5a: the list is in Item.h
 }
 
 /*
@@ -2377,7 +2403,7 @@ idObjectiveComplete::Restore
 */
 void idObjectiveComplete::Restore( idRestoreGame* savefile )
 {
-	savefile->ReadVec3( playerPos );
+	OBJECTIVE_COMPLETE_SCHEMA( SCHEMA_RESTORE, ( *this ) )	//puncho - P2b.2.5a: the list is in Item.h
 }
 
 /*

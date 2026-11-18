@@ -188,6 +188,8 @@ EVENT( EV_GetGuiParmFloat,		idEntity::Event_GetGuiParmFloat )
 EVENT( EV_GuiNamedEvent,		idEntity::Event_GuiNamedEvent )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idEntity, ENTITY_SCHEMA )	//puncho - P2b.2.5b: the FGD's rows and the row checks (Schema.h)
+
 /*
 ================
 UpdateGuiParms
@@ -614,7 +616,7 @@ void idEntity::Spawn()
 
 	gameLocal.RegisterEntity( this, -1, gameLocal.GetSpawnArgs() );
 
-	spawnArgs.GetString( "classname", NULL, &classname );
+	spawnArgs.GetString( "classname", NULL, &classname );	// HAND: a pointer, the entity def's name
 	const idDeclEntityDef* def = gameLocal.FindEntityDef( classname, false );
 	if( def )
 	{
@@ -628,13 +630,11 @@ void idEntity::Spawn()
 
 	renderEntity.entityNum = entityNumber;
 
-	noGrab = spawnArgs.GetBool( "noGrab", "0" );
-
 	xraySkin = NULL;
 	renderEntity.xrayIndex = 1;
 
 	idStr str;
-	if( spawnArgs.GetString( "skin_xray", "", str ) )
+	if( spawnArgs.GetString( "skin_xray", "", str ) )	// HAND: a local, applied only when present
 	{
 		xraySkin = declManager->FindSkin( str.c_str() );
 	}
@@ -653,7 +653,7 @@ void idEntity::Spawn()
 	refSound.listenerId = entityNumber + 1;
 
 	cameraTarget = NULL;
-	temp = spawnArgs.GetString( "cameraTarget" );
+	temp = spawnArgs.GetString( "cameraTarget" );	// HAND: a local, looked up late (EV_UpdateCameraTarget)
 	if( temp.Length() > 0 )
 	{
 		// update the camera taget
@@ -665,22 +665,27 @@ void idEntity::Spawn()
 		UpdateGuiParms( renderEntity.gui[ i ], &spawnArgs );
 	}
 
-	fl.solidForTeam = spawnArgs.GetBool( "solidForTeam", "0" );
-	fl.neverDormant = spawnArgs.GetBool( "neverDormant", "0" );
-	dormantRadius = Max( 0.0f, spawnArgs.GetFloat( "dormant_radius", "0" ) );
-	dormantHysteresis = Max( 0.0f, spawnArgs.GetFloat( "dormant_hysteresis", "1024" ) );
-	dormantEngagedScale = Max( 0.0f, spawnArgs.GetFloat( "dormant_engagedScale", "2" ) );
+	fl.solidForTeam = spawnArgs.GetBool( "solidForTeam", "0" );	// HAND: fl bitfield
+	fl.neverDormant = spawnArgs.GetBool( "neverDormant", "0" );	// HAND: fl bitfield
+	//puncho start - P2b.2.5b: ENTITY_SCHEMA's keyed rows (Entity.h), noGrab, the dormancy slice and health, read where the
+	// dormancy keys were; the dormancy values are clamped after it, as before
+	ENTITY_SCHEMA( SCHEMA_SPAWN, ( *this ) )
+	dormantRadius = Max( 0.0f, dormantRadius );
+	dormantHysteresis = Max( 0.0f, dormantHysteresis );
+	dormantEngagedScale = Max( 0.0f, dormantEngagedScale );
+	//puncho end
 	dormantWakeDeferredAt = 0;
 	dormantWakeRequested = false;
-	fl.hidden = spawnArgs.GetBool( "hide", "0" );
+	fl.hidden = spawnArgs.GetBool( "hide", "0" );	// HAND: fl bitfield
 	if( fl.hidden )
 	{
 		// make sure we're hidden, since a spawn function might not set it up right
 		PostEventMS( &EV_Hide, 0 );
 	}
-	cinematic = spawnArgs.GetBool( "cinematic", "0" );
+	//puncho - P2b.2.1a
+	SetCinematic( spawnArgs.GetBool( "cinematic", "0" ) );	// HAND: an argument, the setter writes the think column
 
-	networkSync = spawnArgs.FindKey( "networkSync" );
+	networkSync = spawnArgs.FindKey( "networkSync" );	// HAND: a pointer, applied only when present
 	if( networkSync )
 	{
 		fl.networkSync = ( atoi( networkSync->GetValue() ) != 0 );
@@ -698,11 +703,11 @@ void idEntity::Spawn()
 #endif
 
 	// every object will have a unique name
-	temp = spawnArgs.GetString( "name", va( "%s_%s_%d", GetClassname(), spawnArgs.GetString( "classname" ), entityNumber ) );
+	temp = spawnArgs.GetString( "name", va( "%s_%s_%d", GetClassname(), spawnArgs.GetString( "classname" ), entityNumber ) );	// HAND: a local, a computed default
 	SetName( temp );
 
 	// if we have targets, wait until all entities are spawned to get them
-	if( spawnArgs.MatchPrefix( "target" ) || spawnArgs.MatchPrefix( "guiTarget" ) )
+	if( spawnArgs.MatchPrefix( "target" ) || spawnArgs.MatchPrefix( "guiTarget" ) )	// HAND: prefixes
 	{
 		if( gameLocal.GameState() == GAMESTATE_STARTUP )
 		{
@@ -715,14 +720,12 @@ void idEntity::Spawn()
 		}
 	}
 
-	health = spawnArgs.GetInt( "health" );
-
 	InitDefaultPhysics( origin, axis, def );
 
 	SetOrigin( origin );
 	SetAxis( axis );
 
-	temp = spawnArgs.GetString( "model" );
+	temp = spawnArgs.GetString( "model" );	// HAND: a local
 	if( temp.Length() > 0 )
 	{
 		SetModel( temp );
@@ -754,15 +757,15 @@ void idEntity::Spawn()
 	}
 	// RB end
 
-	if( spawnArgs.GetString( "bind", "", temp ) )
+	if( spawnArgs.GetString( "bind", "", temp ) )	// HAND: a local, bound late (EV_SpawnBind)
 	{
 		PostEventMS( &EV_SpawnBind, 0 );
 	}
 
 	// auto-start a sound on the entity
-	if( IsType( idSound::Type ) && spawnArgs.GetBool( "s_transition" ) && spawnArgs.GetBool( "s_global" ) )
+	if( IsType( idSound::Type ) && spawnArgs.GetBool( "s_transition" ) && spawnArgs.GetBool( "s_global" ) )	// HAND: tested in place
 	{
-		refSound.referenceSound = gameSoundWorld->AdoptCarriedEmitter( spawnArgs.GetString( "s_shader" ) );
+		refSound.referenceSound = gameSoundWorld->AdoptCarriedEmitter( spawnArgs.GetString( "s_shader" ) );	// HAND: an argument
 		renderEntity.referenceSound = refSound.referenceSound;
 	}
 	if( refSound.shader && !refSound.waitfortrigger && refSound.referenceSound == NULL )
@@ -771,7 +774,7 @@ void idEntity::Spawn()
 	}
 
 	// setup script object
-	if( ShouldConstructScriptObjectAtSpawn() && spawnArgs.GetString( "scriptobject", NULL, &scriptObjectName ) )
+	if( ShouldConstructScriptObjectAtSpawn() && spawnArgs.GetString( "scriptobject", NULL, &scriptObjectName ) )	// HAND: a pointer
 	{
 		if( !scriptObject.SetType( scriptObjectName ) )
 		{
@@ -782,7 +785,7 @@ void idEntity::Spawn()
 	}
 
 	// determine time group
-	DetermineTimeGroup( spawnArgs.GetBool( "slowmo", "1" ) );
+	DetermineTimeGroup( spawnArgs.GetBool( "slowmo", "1" ) );	// HAND: an argument
 }
 
 /*
@@ -800,6 +803,11 @@ idEntity::~idEntity()
 		BecomeInactive( thinkFlags );
 	}
 	activeNode.Remove();
+	//puncho - P2b.2.1a: the mirror loses the entry with the node, since the slot can be reused before the next rebuild
+	if( gameLocal.entityHot.activeMaintained )
+	{
+		gameLocal.entityHot.ActiveTombstone( entityNumber );
+	}
 
 	Signal( SIG_REMOVED );
 
@@ -1067,9 +1075,12 @@ void idEntity::Restore( idRestoreGame* savefile )
 
 	savefile->ReadInt( thinkFlags );
 	savefile->ReadInt( dormantStart );
-	dormantRadius = Max( 0.0f, spawnArgs.GetFloat( "dormant_radius", "0" ) );
-	dormantHysteresis = Max( 0.0f, spawnArgs.GetFloat( "dormant_hysteresis", "1024" ) );
-	dormantEngagedScale = Max( 0.0f, spawnArgs.GetFloat( "dormant_engagedScale", "2" ) );
+	//puncho start - P2b.2.5b: the dormancy slice (Entity.h), which no save holds: read from spawnArgs and clamped, as Spawn
+	ENTITY_DORMANCY_SCHEMA( SCHEMA_SPAWN, ( *this ) )
+	dormantRadius = Max( 0.0f, dormantRadius );
+	dormantHysteresis = Max( 0.0f, dormantHysteresis );
+	dormantEngagedScale = Max( 0.0f, dormantEngagedScale );
+	//puncho end
 	dormantWakeDeferredAt = 0;
 	dormantWakeRequested = false;
 	//puncho start - dormancy (P2 review)
@@ -1250,7 +1261,8 @@ void idEntity::DormantCatchUp( int elapsedMs )
 
 //puncho start - P2b.1.10d: DoDormantTests in its parts, which run the tests in the order the one function did: never
 // dormant; then, in a player's connected area with the authored distance tier on, the tier; else the area tests (closed
-// off from every player, or the PVS wake). Each part draws g_showDormancy's bounds where the one function did
+// off from every player, or the PVS wake). Each part draws g_showDormancy's bounds where the one function did. Under
+// g_dormantDistanceFirst (P2b.2.2b-ii) the tier runs first, connected or not, by the def's or the world radius
 /*
 ================
 idEntity::DoDormantTests
@@ -1268,10 +1280,25 @@ bool idEntity::DoDormantTests()
 		return false;
 	}
 
+	//puncho start - P2b.2.2b-ii (plans/map-graph/math-2b/S2b-2/core/Dormancy.cpp DormancyEvaluate): distance first, on
+	// every map. The radius is the def's when positive (a NaN takes the world's too), else the world radius LoadMap
+	// read; the tier runs whether or not the area is connected, so a monster behind a closed door inside the radius
+	// stays awake and one past it sleeps in a connected area. g_dormantDistance 0 or a radius of 0 keeps the area test
+	if( g_dormantDistanceFirst.GetBool() )
+	{
+		const float radius = ( dormantRadius > 0.0f ) ? dormantRadius : gameLocal.dormantWorldRadius;
+		if( g_dormantDistance.GetBool() && radius > 0.0f )
+		{
+			return DormantDistanceTier( radius );
+		}
+		return DormantAreaTest( gameLocal.InPlayerConnectedArea( this ) );
+	}
+	//puncho end
+
 	const bool connected = gameLocal.InPlayerConnectedArea( this );
 	if( connected && g_dormantDistance.GetBool() && dormantRadius > 0.0f )
 	{
-		return DormantDistanceTier();
+		return DormantDistanceTier( dormantRadius );
 	}
 	return DormantAreaTest( connected );
 }
@@ -1330,15 +1357,25 @@ bool idEntity::DormantAreaTest( bool connected )
 ================
 idEntity::DormantDistanceTier
 
-The authored distance tier (g_dormantDistance, dormant_radius), in a player's connected area: the distance to the
-nearest dormancy source against the scaled radius, with hysteresis on the way out, a wake budget per tic and the
-deferred and forced wakes.
+The distance tier (g_dormantDistance): the distance to the nearest dormancy source against the scaled radius, with
+hysteresis on the way out, a wake budget per tic and the deferred and forced wakes. effectiveRadius is the authored
+dormant_radius in a player's connected area, or under g_dormantDistanceFirst the def's or the world's anywhere.
 ================
 */
-bool idEntity::DormantDistanceTier()
+bool idEntity::DormantDistanceTier( float effectiveRadius )
 {
+	//puncho - P2b.2.2b-ii: the unseen test made once, here, so a never-woken sleeper out of every player's PVS returns before
+	// the scale, the origin and the distance, for both callers (the 0 path's authored tier and distance first). Ahead of its
+	// unseen return the full path only counts a violation, which needs hasAwakened or a deferral, draws, which needs
+	// g_showDormancy, and resets dormantWakeDeferredAt, already 0. InPlayerPVS runs on exactly the rows it ran on below
+	const bool unseen = !fl.hasAwakened && !dormantWakeRequested && !gameLocal.InPlayerPVS( this );
+	if( unseen && dormantWakeDeferredAt == 0 && g_showDormancy.GetInteger() <= 0 )
+	{
+		gameLocal.aiStats.dormUnseen++;
+		return true;
+	}
 	const float scale = Max( 0.0f, g_dormantRadiusScale.GetFloat() ) * DormantRadiusScale();
-	const float radius = dormantRadius * scale;
+	const float radius = effectiveRadius * scale;
 	const float outerRadius = radius + dormantHysteresis * scale;
 	float distanceSqr = idMath::INFINITUM;
 	for( int i = 0; i < gameLocal.numDormantSources; i++ )
@@ -1401,7 +1438,7 @@ bool idEntity::DormantDistanceTier()
 	}
 	if( !dormantWakeRequested )
 	{
-		if( !fl.hasAwakened && !gameLocal.InPlayerPVS( this ) )
+		if( unseen )	//puncho - P2b.2.2b-ii: was !fl.hasAwakened && !gameLocal.InPlayerPVS( this ), the same rows (above)
 		{
 			gameLocal.aiStats.dormUnseen++;
 			dormantWakeDeferredAt = 0;
@@ -1458,6 +1495,132 @@ void idEntity::DormantDebugDraw( const idVec4& color, float distance, float radi
 }
 //puncho end
 
+//puncho start - P2b.0.3 (plans/map-graph/stages/S2b-0-gates-measurements.md §6): the timed twins of CheckDormant,
+// UpdatePVSAreas() and Present, entered only inside a level-1 TIME_GROUP1 walk (gameLocal.passTag == PASS_TAG_WALK).
+// CheckDormantTimed and UpdatePVSAreasTimed call the untimed site through its own entry with their bit set here, so
+// that body stays the parent's and a site nested in it (UpdatePVSAreas() from CheckDormant's area tests) is still
+// timed. Each clock pair a twin makes is counted in nNestedClock: the thinks holding them are netted by it.
+static int passTwinBusy = 0;
+static const int PASS_TWIN_DORMANT = 1;
+static const int PASS_TWIN_PVSAREAS = 2;
+
+/*
+================
+idEntity::CheckDormantTimed
+
+  CheckDormant timed whole, split by its result (DormantBegin, DormantEnd and the catch-up included).
+================
+*/
+bool idEntity::CheckDormantTimed()
+{
+	passTwinBusy |= PASS_TWIN_DORMANT;
+	const double start = Sys_GetClockTicks();
+	const bool dormant = CheckDormant();
+	const double ticks = Sys_GetClockTicks() - start;
+	passTwinBusy &= ~PASS_TWIN_DORMANT;
+
+	passTicStats_t& ps = gameLocal.passStats;
+	ps.nNestedClock++;
+	if( dormant )
+	{
+		ps.tDormantAsleep += ticks;
+		ps.nDormantAsleep++;
+	}
+	else
+	{
+		ps.tDormantAwake += ticks;
+		ps.nDormantAwake++;
+	}
+	return dormant;
+}
+
+/*
+================
+idEntity::UpdatePVSAreasTimed
+================
+*/
+void idEntity::UpdatePVSAreasTimed()
+{
+	passTwinBusy |= PASS_TWIN_PVSAREAS;
+	const double start = Sys_GetClockTicks();
+	UpdatePVSAreas();
+	const double ticks = Sys_GetClockTicks() - start;
+	passTwinBusy &= ~PASS_TWIN_PVSAREAS;
+
+	passTicStats_t& ps = gameLocal.passStats;
+	ps.tPVSAreas += ticks;
+	ps.nPVSAreas++;
+	ps.nNestedClock++;
+}
+
+/*
+================
+idEntity::PresentTimed
+
+  Present's body past its TH_UPDATEVISUALS test, timed, with the AddEntityDef / UpdateEntityDef call timed apart and
+  apart again for an entity whose render origin is beyond maxVisDist of every player origin (dormantSources are
+  physics origins, not vieworg). A copy, not a call: the renderer call needs its own bracket inside. Keep it Present's.
+================
+*/
+void idEntity::PresentTimed()
+{
+	passTicStats_t& ps = gameLocal.passStats;
+	const double start = Sys_GetClockTicks();
+	BecomeInactive( TH_UPDATEVISUALS );
+
+	// camera target for remote render views
+	if( cameraTarget && gameLocal.InPlayerPVS( this ) )
+	{
+		renderEntity.remoteRenderView = cameraTarget->GetRenderView();
+	}
+
+	// if set to invisible, skip
+	if( !renderEntity.hModel || IsHidden() )
+	{
+		ps.tPresent += Sys_GetClockTicks() - start;
+		ps.nPresent++;
+		ps.nNestedClock++;
+		return;
+	}
+
+	// add to refresh list
+	const double defStart = Sys_GetClockTicks();
+	if( modelDefHandle == -1 )
+	{
+		modelDefHandle = gameRenderWorld->AddEntityDef( &renderEntity );
+	}
+	else
+	{
+		gameRenderWorld->UpdateEntityDef( modelDefHandle, &renderEntity );
+	}
+	const double now = Sys_GetClockTicks();
+
+	ps.tPresent += now - start;
+	ps.nPresent++;
+	ps.tPresentDef += now - defStart;
+	ps.nPresentDef++;
+	ps.nNestedClock += 2;
+	const float maxVisDist = renderEntity.maxVisDist;
+	if( maxVisDist > 0.0f )
+	{
+		bool beyond = true;
+		for( int i = 0; i < gameLocal.numDormantSources; i++ )
+		{
+			if( ( renderEntity.origin - gameLocal.dormantSources[ i ] ).LengthSqr() <= maxVisDist * maxVisDist )
+			{
+				beyond = false;
+				break;
+			}
+		}
+		if( beyond )
+		{
+			ps.tPresentFar += now - defStart;
+			ps.nPresentFar++;
+		}
+	}
+}
+//puncho end
+
 /*
 ================
 idEntity::CheckDormant
@@ -1468,6 +1631,21 @@ off from the player can skip all of their work
 */
 bool idEntity::CheckDormant()
 {
+	//puncho start - P2b.0.3: inside a level-1 timed walk the out-of-line twin times it; otherwise this one test
+	if( gameLocal.passTag == PASS_TAG_WALK && ( passTwinBusy & PASS_TWIN_DORMANT ) == 0 )
+	{
+		return CheckDormantTimed();
+	}
+	//puncho end
+
+	//puncho start - P2b.2.2b-i: with the lift latched, a test from a row without HOT_DORMANCY is one RunEntityThink did
+	// not lift: its class opens its Think with CheckDormant but is missing from idEntityHot::ClassBits
+	if( gameLocal.entityHot.dormancyOn && ( gameLocal.entityHot.think[ entityNumber ].bits & HOT_DORMANCY ) == 0 )
+	{
+		gameLocal.entityHot.dormancyUnlifted++;
+	}
+	//puncho end
+
 	bool dormant;
 
 	const int sleepStart = dormantStart;
@@ -1552,12 +1730,20 @@ void idEntity::BecomeActive( int flags )
 	}
 
 	int oldFlags = thinkFlags;
-	thinkFlags |= flags;
-	if( thinkFlags )
+	//puncho - P2b.2.1a: the test reads a local: the setter's byte store to the column may alias the member, so a test of
+	// thinkFlags after it would load the member again
+	const int newFlags = thinkFlags | flags;
+	SetThinkFlags( newFlags );
+	if( newFlags )
 	{
 		if( !IsActive() )
 		{
 			activeNode.AddToEnd( gameLocal.activeEntities );
+			//puncho - P2b.2.1a: appended in the list's order, so a walk over the mirror meets it as the list walk would
+			if( gameLocal.entityHot.activeMaintained )
+			{
+				gameLocal.entityHot.ActiveAppend( entityNumber );
+			}
 		}
 		else if( !oldFlags )
 		{
@@ -1592,8 +1778,10 @@ void idEntity::BecomeInactive( int flags )
 
 	if( thinkFlags )
 	{
-		thinkFlags &= ~flags;
-		if( !thinkFlags && IsActive() )
+		//puncho - P2b.2.1a: as BecomeActive
+		const int newFlags = thinkFlags & ~flags;
+		SetThinkFlags( newFlags );
+		if( !newFlags && IsActive() )
 		{
 			gameLocal.numEntitiesToDeactivate++;
 		}
@@ -1925,6 +2113,15 @@ idEntity::UpdatePVSAreas
 */
 void idEntity::UpdatePVSAreas()
 {
+	//puncho start - P2b.0.3: inside a level-1 timed walk the out-of-line twin times it (counted there only: it also runs
+	// lazily from any GetPVSAreas, SetupPlayerPVS's and the events' among them); otherwise this one test
+	if( gameLocal.passTag == PASS_TAG_WALK && ( passTwinBusy & PASS_TWIN_PVSAREAS ) == 0 )
+	{
+		UpdatePVSAreasTimed();
+		return;
+	}
+	//puncho end
+
 	int localNumPVSAreas, localPVSAreas[32];
 	idBounds modelAbsBounds;
 	int i;
@@ -2003,6 +2200,7 @@ idEntity::ClearPVSAreas
 void idEntity::ClearPVSAreas()
 {
 	numPVSAreas = -1;
+	gameLocal.entityHot.MarkMoved( entityNumber );	//puncho - P2b.2.1a: the spatial pass refreshes the row (K5)
 }
 
 /*
@@ -2122,6 +2320,14 @@ void idEntity::Present()
 	{
 		return;
 	}
+	//puncho start - P2b.0.3: past the parent's two tests, a present that does work inside a level-1 timed walk takes the
+	// out-of-line twin; otherwise this third test is the whole cost
+	if( gameLocal.passTag == PASS_TAG_WALK )
+	{
+		PresentTimed();
+		return;
+	}
+	//puncho end
 	BecomeInactive( TH_UPDATEVISUALS );
 
 	// camera target for remote render views
@@ -2584,7 +2790,7 @@ void idEntity::FinishBind()
 	JoinTeam( bindMaster );
 
 	// if our bindMaster is enabled during a cinematic, we must be, too
-	cinematic = bindMaster->cinematic;
+	SetCinematic( bindMaster->cinematic );	//puncho - P2b.2.1a
 
 	// make sure the team master is active so that physics get run
 	teamMaster->BecomeActive( TH_PHYSICS );
@@ -6396,7 +6602,7 @@ void idEntity::ReadFromSnapshot_Ex( const idBitMsg&  msg )
 	ReadFromSnapshot( msg );
 }
 
-//puncho start - P2b.1.2: idEntity's map record section (ENTITY_RECORD_SCHEMA, Record.h)
+//puncho start - P2b.1.2: idEntity's map record section (ENTITY_SCHEMA's R rows, Record.h)
 
 /*
 ================
@@ -6440,8 +6646,8 @@ void idEntity::WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const
 {
 	assert( &frame == &rec.Frame() );
 	rec.BeginSection( RECORD_SECTION_ENTITY, RECORD_VERSION_ENTITY );
-	ENTITY_RECORD_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
-	ENTITY_RECORD_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
+	ENTITY_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
+	ENTITY_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
 	rec.EndSection();
 }
 
@@ -6455,7 +6661,7 @@ recordApply_t idEntity::ApplyRecord( idRecordIn& rec, const recordFrame_t& frame
 	assert( &frame == &rec.Frame() );
 	if( rec.BeginSection( RECORD_SECTION_ENTITY ) )
 	{
-		ENTITY_RECORD_SCHEMA( SCHEMA_RECORD_READ, ( *this ) )
+		ENTITY_SCHEMA( SCHEMA_RECORD_READ, ( *this ) )
 		rec.EndSection();
 	}
 	return rec.good ? RECORD_APPLIED : RECORD_INVALID;
@@ -6468,7 +6674,7 @@ idEntity::CheckRecordSection
 */
 bool idEntity::CheckRecordSection( idRecordIn& rec )
 {
-	ENTITY_RECORD_SCHEMA( SCHEMA_RECORD_CHECK, idEntity )
+	ENTITY_SCHEMA( SCHEMA_RECORD_CHECK, idEntity )
 	return rec.good;
 }
 
@@ -6950,11 +7156,11 @@ void idEntity::DetermineTimeGroup( bool slowmo )
 {
 	if( slowmo || common->IsMultiplayer() )
 	{
-		timeGroup = TIME_GROUP1;
+		SetTimeGroup( TIME_GROUP1 );
 	}
 	else
 	{
-		timeGroup = TIME_GROUP2;
+		SetTimeGroup( TIME_GROUP2 );
 	}
 }
 
@@ -7163,7 +7369,7 @@ idAnimatedEntity::UpdateAnimation
 void idAnimatedEntity::UpdateAnimation()
 {
 	// don't do animations if they're not enabled
-	if( !( thinkFlags & TH_ANIMATE ) )
+	if( !( GetThinkFlags() & TH_ANIMATE ) )
 	{
 		return;
 	}
@@ -7357,7 +7563,7 @@ void idAnimatedEntity::AddLocalDamageEffect( jointHandle_t jointNum, const idVec
 	idVec3 origin, dir;
 	idMat3 axis;
 
-	SetTimeState ts( timeGroup );
+	SetTimeState ts( GetTimeGroup() );
 
 	axis = renderEntity.joints[jointNum].ToMat3() * renderEntity.axis;
 	origin = renderEntity.origin + renderEntity.joints[jointNum].ToVec3() * renderEntity.axis;
@@ -7474,7 +7680,7 @@ void idAnimatedEntity::UpdateDamageEffects()
 		axis *= renderEntity.axis;
 		origin = renderEntity.origin + origin * renderEntity.axis;
 		start = origin + de->localOrigin * axis;
-		if( !gameLocal.smokeParticles->EmitSmoke( de->type, de->time, gameLocal.random.CRandomFloat(), start, axis, timeGroup /*_D3XP*/ ) )
+		if( !gameLocal.smokeParticles->EmitSmoke( de->type, de->time, gameLocal.random.CRandomFloat(), start, axis, GetTimeGroup() /*_D3XP*/ ) )
 		{
 			de->time = 0;
 		}

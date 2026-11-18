@@ -42,6 +42,13 @@ If you have questions concerning this license or the applicable additional terms
 ===================================================================================
 */
 
+//puncho start - P2b.2.5d: the wire sends origin and the four floats of axis's idQuat; WriteToSnapshot expands current
+// (parametricPState_t, idMat3 axis), ReadFromSnapshot next (physicsInterpolationState_t, idQuat axis)
+#define PARAMETRIC_PSTATE_SCHEMA( X, s ) \
+	X( s, origin,			VEC3,	W,	RAW,	0,			SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, Axis,				HAND,	W,	FHAND,	ParametricPState,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ )
+//puncho end
+
 typedef struct parametricPState_s
 {
 	int										time;					// physics time

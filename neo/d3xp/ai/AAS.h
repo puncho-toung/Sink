@@ -96,6 +96,10 @@ public:
 	// Print AAS stats.
 	virtual void				Stats() const = 0;
 	virtual void				GetRoutingStats( int& bytes, int& evictions, int& saturated ) const = 0;
+	// The loaded file's bytes ( aasStats' file size ), 0 without a file.
+	virtual int					FileBytes() const = 0;
+	//puncho - P2b.0.2: persistent routing tables, excluding the evictable caches in GetRoutingStats.
+	virtual int64				RoutingBytes() const = 0;
 	// Test from the given origin.
 	virtual void				Test( const idVec3& origin ) = 0;
 	// Get the AAS settings.

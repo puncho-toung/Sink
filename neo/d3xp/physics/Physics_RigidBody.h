@@ -45,6 +45,14 @@ extern const int	RB_VELOCITY_TOTAL_BITS;
 extern const int	RB_VELOCITY_EXPONENT_BITS;
 extern const int	RB_VELOCITY_MANTISSA_BITS;
 
+//puncho start - P2b.2.5d: the wire sends position, orientation as an idCQuat and linearMomentum in exponent and mantissa
+// bits (the constants are Physics_RigidBody.cpp's); WriteToSnapshot expands current.i, ReadFromSnapshot next.i
+#define RIGIDBODY_PSTATE_SCHEMA( X, s ) \
+	X( s, position,			VEC3,	W,	RAW,	0,			SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, Orientation,		HAND,	W,	FHAND,	RigidBodyPState,	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, linearMomentum,	VEC3,	W,	BITS,	( RB_MOMENTUM_EXPONENT_BITS, RB_MOMENTUM_MANTISSA_BITS ),	SCHEMA_STOCK,	NOKEY,	NODEF,	NOEDIT,	OBJ )
+//puncho end
+
 typedef struct rididBodyIState_s
 {
 	idVec3					position;					// position of trace model

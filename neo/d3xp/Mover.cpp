@@ -134,6 +134,8 @@ EVENT( EV_IsMoving,				idMover::Event_IsMoving )
 EVENT( EV_IsRotating,			idMover::Event_IsRotating )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idMover, MOVER_SCHEMA )	//puncho - P2b.2.5a: the FGD's rows and the row checks (Schema.h)
+
 /*
 ================
 idMover::idMover
@@ -352,12 +354,11 @@ void idMover::Spawn()
 	stopRotation	= false;
 	lastCommand		= MOVER_NONE;
 
-	acceltime		= 1000.0f * spawnArgs.GetFloat( "accel_time", "0" );
-	deceltime		= 1000.0f * spawnArgs.GetFloat( "decel_time", "0" );
-	move_time		= 1000.0f * spawnArgs.GetFloat( "move_time", "1" );	// safe default value
-	move_speed		= spawnArgs.GetFloat( "move_speed", "0" );
-
-	spawnArgs.GetFloat( "damage" , "0", damage );
+	acceltime		= 1000.0f * spawnArgs.GetFloat( "accel_time", "0" );	// HAND: scaled to ms
+	deceltime		= 1000.0f * spawnArgs.GetFloat( "decel_time", "0" );	// HAND: scaled to ms
+	move_time		= 1000.0f * spawnArgs.GetFloat( "move_time", "1" );	// HAND: scaled to ms (a safe default value)
+	//puncho - P2b.2.5a: the keyed rows (Mover.h): move_speed, damage and health, read where the first of them was
+	MOVER_SCHEMA( SCHEMA_SPAWN, ( *this ) )
 
 	dest_position = GetPhysics()->GetOrigin();
 	dest_angles = GetPhysics()->GetAxis().ToAngles();
@@ -367,11 +368,11 @@ void idMover::Spawn()
 	physicsObj.SetOrigin( GetPhysics()->GetOrigin() );
 	physicsObj.SetAxis( GetPhysics()->GetAxis() );
 	physicsObj.SetClipMask( MASK_SOLID );
-	if( !spawnArgs.GetBool( "solid", "1" ) )
+	if( !spawnArgs.GetBool( "solid", "1" ) )	// HAND: tested in place
 	{
 		physicsObj.SetContents( 0 );
 	}
-	if( !renderEntity.hModel || !spawnArgs.GetBool( "nopush" ) )
+	if( !renderEntity.hModel || !spawnArgs.GetBool( "nopush" ) )	// HAND: tested in place
 	{
 		physicsObj.SetPusher( 0 );
 	}
@@ -382,7 +383,7 @@ void idMover::Spawn()
 	// see if we are on an areaportal
 	areaPortal = gameRenderWorld->FindPortal( GetPhysics()->GetAbsBounds() );
 
-	if( spawnArgs.MatchPrefix( "guiTarget" ) )
+	if( spawnArgs.MatchPrefix( "guiTarget" ) )	// HAND: a prefix (guiTarget, guiTarget1 ...)
 	{
 		if( gameLocal.GameState() == GAMESTATE_STARTUP )
 		{
@@ -395,7 +396,6 @@ void idMover::Spawn()
 		}
 	}
 
-	health = spawnArgs.GetInt( "health" );
 	if( health )
 	{
 		fl.takedamage = true;
@@ -1806,6 +1806,8 @@ EVENT( EV_Touch,				idElevator::Event_Touch )
 EVENT( EV_SetGuiStates,			idElevator::Event_SetGuiStates )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idElevator, ELEVATOR_SCHEMA )	//puncho - P2b.2.5a: the FGD's rows and the row checks (Schema.h)
+
 /*
 ================
 idElevator::idElevator
@@ -1896,14 +1898,13 @@ void idElevator::Spawn()
 
 	lastFloor = 0;
 	currentFloor = 0;
-	pendingFloor = spawnArgs.GetInt( "floor", "1" );
+	//puncho - P2b.2.5a: the keyed rows (Mover.h): floor into pendingFloor, returnTime and returnFloor, read where the first
+	// of them was
+	ELEVATOR_SCHEMA( SCHEMA_SPAWN, ( *this ) )
 	SetGuiStates( ( pendingFloor == 1 ) ? guiBinaryMoverStates[0] : guiBinaryMoverStates[1] );
 
-	returnTime = spawnArgs.GetFloat( "returnTime" );
-	returnFloor = spawnArgs.GetInt( "returnFloor" );
-
 	len1 = strlen( "floorPos_" );
-	const idKeyValue* kv = spawnArgs.MatchPrefix( "floorPos_", NULL );
+	const idKeyValue* kv = spawnArgs.MatchPrefix( "floorPos_", NULL );	// HAND: a prefix (floorPos_1 ...)
 	while( kv )
 	{
 		str = kv->GetKey().Right( kv->GetKey().Length() - len1 );
@@ -1912,7 +1913,7 @@ void idElevator::Spawn()
 		fi.door = spawnArgs.GetString( va( "floorDoor_%i", fi.floor ) );
 		fi.pos = spawnArgs.GetVector( kv->GetKey() );
 		floorInfo.Append( fi );
-		kv = spawnArgs.MatchPrefix( "floorPos_", kv );
+		kv = spawnArgs.MatchPrefix( "floorPos_", kv );	// HAND: a prefix
 	}
 	lastTouchTime = 0;
 	state = INIT;
@@ -1946,7 +1947,7 @@ void idElevator::Event_Touch( idEntity* other, trace_t* trace )
 
 	lastTouchTime = gameLocal.slow.time;
 
-	if( thinkFlags & TH_PHYSICS )
+	if( GetThinkFlags() & TH_PHYSICS )
 	{
 		return;
 	}
@@ -2428,6 +2429,8 @@ EVENT( EV_Mover_ClosePortal,		idMover_Binary::Event_ClosePortal )
 EVENT( EV_Mover_InitGuiTargets,		idMover_Binary::Event_InitGuiTargets )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idMover_Binary, MOVER_BINARY_SCHEMA )	//puncho - P2b.2.5a: the FGD's rows and the row checks (Schema.h)
+
 /*
 ================
 idMover_Binary::idMover_Binary()
@@ -2644,18 +2647,17 @@ void idMover_Binary::Spawn()
 
 	activateChain = NULL;
 
-	spawnArgs.GetFloat( "wait", "0", wait );
+	//puncho - P2b.2.5a: the keyed rows (Mover.h): wait and updateStatus, read where the first of them was
+	MOVER_BINARY_SCHEMA( SCHEMA_SPAWN, ( *this ) )
 
-	spawnArgs.GetInt( "updateStatus", "0", updateStatus );
-
-	const idKeyValue* kv = spawnArgs.MatchPrefix( "buddy", NULL );
+	const idKeyValue* kv = spawnArgs.MatchPrefix( "buddy", NULL );	// HAND: a prefix (buddy, buddy1 ...)
 	while( kv )
 	{
 		buddies.Append( kv->GetValue() );
-		kv = spawnArgs.MatchPrefix( "buddy", kv );
+		kv = spawnArgs.MatchPrefix( "buddy", kv );	// HAND: a prefix
 	}
 
-	spawnArgs.GetString( "team", "", &temp );
+	spawnArgs.GetString( "team", "", &temp );	// HAND: a local, then the member and the team search
 	team = temp;
 
 	if( !team.Length() )
@@ -2690,11 +2692,11 @@ void idMover_Binary::Spawn()
 	physicsObj.SetOrigin( GetPhysics()->GetOrigin() );
 	physicsObj.SetAxis( GetPhysics()->GetAxis() );
 	physicsObj.SetClipMask( MASK_SOLID );
-	if( !spawnArgs.GetBool( "solid", "1" ) )
+	if( !spawnArgs.GetBool( "solid", "1" ) )	// HAND: tested in place
 	{
 		physicsObj.SetContents( 0 );
 	}
-	if( !spawnArgs.GetBool( "nopush" ) )
+	if( !spawnArgs.GetBool( "nopush" ) )	// HAND: tested in place
 	{
 		physicsObj.SetPusher( 0 );
 	}
@@ -2717,7 +2719,7 @@ void idMover_Binary::Spawn()
 	}
 	moveMaster->refSound.origin = soundOrigin.GetCenter();
 
-	if( spawnArgs.MatchPrefix( "guiTarget" ) )
+	if( spawnArgs.MatchPrefix( "guiTarget" ) )	// HAND: a prefix (guiTarget, guiTarget1 ...)
 	{
 		if( gameLocal.GameState() == GAMESTATE_STARTUP )
 		{
@@ -3607,6 +3609,8 @@ EVENT( EV_Mover_OpenPortal,			idDoor::Event_OpenPortal )
 EVENT( EV_Mover_ClosePortal,		idDoor::Event_ClosePortal )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idDoor, DOOR_SCHEMA )	//puncho - P2b.2.5a: the FGD's rows and the row checks (Schema.h)
+
 /*
 ================
 idDoor::idDoor
@@ -3730,42 +3734,26 @@ void idDoor::Spawn()
 	float		speed;
 
 	// get the direction to move
-	if( !spawnArgs.GetFloat( "movedir", "0", dir ) )
+	if( !spawnArgs.GetFloat( "movedir", "0", dir ) )	// HAND: a local, angle's when absent
 	{
 		// no movedir, so angle defines movement direction and not orientation,
 		// a la oldschool Quake
 		SetAngles( ang_zero );
-		spawnArgs.GetFloat( "angle", "0", dir );
+		spawnArgs.GetFloat( "angle", "0", dir );	// HAND: a local
 	}
 	GetMovedir( dir, movedir );
 
 	// default speed of 400
-	spawnArgs.GetFloat( "speed", "400", speed );
+	spawnArgs.GetFloat( "speed", "400", speed );	// HAND: a local
 
-	// default wait of 2 seconds
-	spawnArgs.GetFloat( "wait", "3", wait );
+	//puncho - P2b.2.5a: DOOR_SCHEMA's keyed rows (Mover.h), wait with the door's default (3) over idMover_Binary's, read
+	// where wait was
+	DOOR_SCHEMA( SCHEMA_SPAWN, ( *this ) )
 
 	// default lip of 8 units
-	spawnArgs.GetFloat( "lip", "8", lip );
+	spawnArgs.GetFloat( "lip", "8", lip );	// HAND: a local
 
-	// by default no damage
-	spawnArgs.GetFloat( "damage", "0", damage );
-
-	// trigger size
-	spawnArgs.GetFloat( "triggersize", "120", triggersize );
-
-	spawnArgs.GetBool( "crusher", "0", crusher );
-	spawnArgs.GetBool( "start_open", "0", start_open );
-	spawnArgs.GetBool( "no_touch", "0", noTouch );
-	spawnArgs.GetBool( "player_only", "0", playerOnly );
-
-	// expects syncLock to be a door that must be closed before this door will open
-	spawnArgs.GetString( "syncLock", "", syncLock );
-
-	spawnArgs.GetString( "buddy", "", buddyStr );
-
-	spawnArgs.GetString( "requires", "", requires );
-	spawnArgs.GetInt( "removeItem", "0", removeItem );
+	spawnArgs.GetBool( "start_open", "0", start_open );	// HAND: a local
 
 	// ever separate piece of a door is considered solid when other team mates push entities
 	fl.solidForTeam = true;
@@ -3788,7 +3776,7 @@ void idDoor::Spawn()
 		PostEventMS( &EV_Door_StartOpen, 1 );
 	}
 
-	if( spawnArgs.GetFloat( "time", "1", time ) )
+	if( spawnArgs.GetFloat( "time", "1", time ) )	// HAND: a local, applied only when present
 	{
 		InitTime( pos1, pos2, time, 0, 0 );
 	}
@@ -3808,8 +3796,8 @@ void idDoor::Spawn()
 			// non touch/shoot doors
 			PostEventMS( &EV_Mover_MatchTeam, 0, moverState, gameLocal.slow.time );
 
-			const char* sndtemp = spawnArgs.GetString( "snd_locked" );
-			if( spawnArgs.GetInt( "locked" ) && sndtemp && *sndtemp )
+			const char* sndtemp = spawnArgs.GetString( "snd_locked" );	// HAND: a local, read late (a master that is not touched)
+			if( spawnArgs.GetInt( "locked" ) && sndtemp && *sndtemp )	// HAND: tested in place
 			{
 				PostEventMS( &EV_Door_SpawnSoundTrigger, 0 );
 			}
@@ -3834,16 +3822,16 @@ void idDoor::Spawn()
 		}
 	}
 
-	int locked = spawnArgs.GetInt( "locked" );
+	int locked = spawnArgs.GetInt( "locked" );	// HAND: a local
 	if( locked )
 	{
 		// make sure all members of the team get locked
 		PostEventMS( &EV_Door_Lock, 0, locked );
 	}
 
-	if( spawnArgs.GetBool( "continuous" ) )
+	if( spawnArgs.GetBool( "continuous" ) )	// HAND: tested in place
 	{
-		PostEventSec( &EV_Activate, spawnArgs.GetFloat( "delay" ), this );
+		PostEventSec( &EV_Activate, spawnArgs.GetFloat( "delay" ), this );	// HAND: an argument
 	}
 
 	// sounds have a habit of stuttering when portals close, so make them unoccluded
@@ -3867,7 +3855,7 @@ void idDoor::ClientThink( const int curTime, const float fraction, const bool pr
 
 	idMover_Binary::ClientThink( curTime, fraction, predict );
 
-	if( thinkFlags & TH_PHYSICS )
+	if( GetThinkFlags() & TH_PHYSICS )
 	{
 		// update trigger position
 		if( GetMasterPosition( masterOrigin, masterAxis ) )
@@ -3896,7 +3884,7 @@ void idDoor::Think()
 
 	idMover_Binary::Think();
 
-	if( thinkFlags & TH_PHYSICS )
+	if( GetThinkFlags() & TH_PHYSICS )
 	{
 		// update trigger position
 		if( GetMasterPosition( masterOrigin, masterAxis ) )
@@ -4701,6 +4689,8 @@ EVENT( EV_TeamBlocked,		idPlat::Event_TeamBlocked )
 EVENT( EV_PartBlocked,		idPlat::Event_PartBlocked )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idPlat, PLAT_SCHEMA )	//puncho - P2b.2.5a: the FGD's rows and the row checks (Schema.h)
+
 /*
 ===============
 idPlat::idPlat
@@ -4765,27 +4755,27 @@ void idPlat::Spawn()
 	float	decel;
 	bool	noTouch;
 
-	spawnArgs.GetFloat( "speed", "100", speed );
-	spawnArgs.GetFloat( "damage", "0", damage );
-	spawnArgs.GetFloat( "wait", "1", wait );
-	spawnArgs.GetFloat( "lip", "8", lip );
-	spawnArgs.GetFloat( "accel_time", "0.25", accel );
-	spawnArgs.GetFloat( "decel_time", "0.25", decel );
+	spawnArgs.GetFloat( "speed", "100", speed );	// HAND: a local
+	//puncho - P2b.2.5a: the keyed rows (Mover.h): damage and wait (the plat's default, 1), read where the first of them was
+	PLAT_SCHEMA( SCHEMA_SPAWN, ( *this ) )
+	spawnArgs.GetFloat( "lip", "8", lip );	// HAND: a local
+	spawnArgs.GetFloat( "accel_time", "0.25", accel );	// HAND: a local
+	spawnArgs.GetFloat( "decel_time", "0.25", decel );	// HAND: a local
 
 	// create second position
-	if( !spawnArgs.GetFloat( "height", "0", height ) )
+	if( !spawnArgs.GetFloat( "height", "0", height ) )	// HAND: a local, the model's height when absent
 	{
 		height = ( GetPhysics()->GetBounds()[1][2] - GetPhysics()->GetBounds()[0][2] ) - lip;
 	}
 
-	spawnArgs.GetBool( "no_touch", "0", noTouch );
+	spawnArgs.GetBool( "no_touch", "0", noTouch );	// HAND: a local
 
 	// pos1 is the rest (bottom) position, pos2 is the top
 	pos2 = GetPhysics()->GetOrigin();
 	pos1 = pos2;
 	pos1[2] -= height;
 
-	if( spawnArgs.GetFloat( "time", "1", time ) )
+	if( spawnArgs.GetFloat( "time", "1", time ) )	// HAND: a local, applied only when present
 	{
 		InitTime( pos1, pos2, time, accel, decel );
 	}
@@ -4818,7 +4808,7 @@ void idPlat::RunPhysics_NoBlocking()
 	bool		moved;
 
 	// don't run physics if not enabled
-	if( !( thinkFlags & TH_PHYSICS ) )
+	if( !( GetThinkFlags() & TH_PHYSICS ) )
 	{
 		// however do update any animation controllers
 		if( UpdateAnimationControllers() )
@@ -4931,7 +4921,7 @@ void idPlat::ClientThink( const int curTime, const float fraction, const bool pr
 
 	Present();
 
-	if ( thinkFlags & TH_PHYSICS ) {
+	if ( GetThinkFlags() & TH_PHYSICS ) {
 		// update trigger position
 		if ( GetMasterPosition( masterOrigin, masterAxis ) ) {
 			if ( trigger ) {
@@ -4954,7 +4944,7 @@ void idPlat::Think()
 
 	idMover_Binary::Think();
 
-	if( thinkFlags & TH_PHYSICS )
+	if( GetThinkFlags() & TH_PHYSICS )
 	{
 		// update trigger position
 		if( GetMasterPosition( masterOrigin, masterAxis ) )
@@ -5109,6 +5099,8 @@ EVENT( EV_TeamBlocked,		idMover_Periodic::Event_TeamBlocked )
 EVENT( EV_PartBlocked,		idMover_Periodic::Event_PartBlocked )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idMover_Periodic, MOVER_PERIODIC_SCHEMA )	//puncho - P2b.2.5a: the FGD's rows and the row checks (Schema.h)
+
 /*
 ===============
 idMover_Periodic::idMover_Periodic
@@ -5127,8 +5119,8 @@ idMover_Periodic::Spawn
 */
 void idMover_Periodic::Spawn()
 {
-	spawnArgs.GetFloat( "damage", "0", damage );
-	if( !spawnArgs.GetBool( "solid", "1" ) )
+	MOVER_PERIODIC_SCHEMA( SCHEMA_SPAWN, ( *this ) )	//puncho - P2b.2.5a: damage, the keyed row (Mover.h)
+	if( !spawnArgs.GetBool( "solid", "1" ) )	// HAND: tested in place
 	{
 		GetPhysics()->SetContents( 0 );
 	}
@@ -5166,7 +5158,7 @@ idMover_Periodic::Think
 void idMover_Periodic::Think()
 {
 	// if we are completely closed off from the player, don't do anything at all
-	if( CheckDormant() )
+	if( gameLocal.entityHot.dormancyCheckedFor != entityNumber && CheckDormant() )	//puncho - P2b.2.2b-i: unless RunEntityThink's lifted test ran it
 	{
 		return;
 	}
@@ -5237,6 +5229,8 @@ CLASS_DECLARATION( idMover_Periodic, idRotater )
 EVENT( EV_Activate,			idRotater::Event_Activate )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idRotater, ROTATER_SCHEMA )	//puncho - P2b.2.5a: the FGD's rows and the row checks (Schema.h)
+
 /*
 ===============
 idRotater::idRotater
@@ -5259,7 +5253,7 @@ void idRotater::Spawn()
 	physicsObj.SetOrigin( GetPhysics()->GetOrigin() );
 	physicsObj.SetAxis( GetPhysics()->GetAxis() );
 	physicsObj.SetClipMask( MASK_SOLID );
-	if( !spawnArgs.GetBool( "nopush" ) )
+	if( !spawnArgs.GetBool( "nopush" ) )	// HAND: tested in place
 	{
 		physicsObj.SetPusher( 0 );
 	}
@@ -5267,7 +5261,7 @@ void idRotater::Spawn()
 	physicsObj.SetAngularExtrapolation( extrapolation_t( EXTRAPOLATION_LINEAR | EXTRAPOLATION_NOSTOP ), gameLocal.slow.time, 0, GetPhysics()->GetAxis().ToAngles(), ang_zero, ang_zero );
 	SetPhysics( &physicsObj );
 
-	if( spawnArgs.GetBool( "start_on" ) )
+	if( spawnArgs.GetBool( "start_on" ) )	// HAND: tested in place
 	{
 		ProcessEvent( &EV_Activate, this );
 	}
@@ -5350,6 +5344,8 @@ idBobber
 CLASS_DECLARATION( idMover_Periodic, idBobber )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idBobber, BOBBER_SCHEMA )	//puncho - P2b.2.5a: the FGD's rows and the row checks (Schema.h)
+
 /*
 ===============
 idBobber::idBobber
@@ -5373,11 +5369,11 @@ void idBobber::Spawn()
 	bool	y_axis;
 	idVec3	delta;
 
-	spawnArgs.GetFloat( "speed", "4", speed );
-	spawnArgs.GetFloat( "height", "32", height );
-	spawnArgs.GetFloat( "phase", "0", phase );
-	spawnArgs.GetBool( "x_axis", "0", x_axis );
-	spawnArgs.GetBool( "y_axis", "0", y_axis );
+	spawnArgs.GetFloat( "speed", "4", speed );	// HAND: a local
+	spawnArgs.GetFloat( "height", "32", height );	// HAND: a local
+	spawnArgs.GetFloat( "phase", "0", phase );	// HAND: a local
+	spawnArgs.GetBool( "x_axis", "0", x_axis );	// HAND: a local
+	spawnArgs.GetBool( "y_axis", "0", y_axis );	// HAND: a local
 
 	// set the axis of bobbing
 	delta = vec3_origin;
@@ -5399,7 +5395,7 @@ void idBobber::Spawn()
 	physicsObj.SetOrigin( GetPhysics()->GetOrigin() );
 	physicsObj.SetAxis( GetPhysics()->GetAxis() );
 	physicsObj.SetClipMask( MASK_SOLID );
-	if( !spawnArgs.GetBool( "nopush" ) )
+	if( !spawnArgs.GetBool( "nopush" ) )	// HAND: tested in place
 	{
 		physicsObj.SetPusher( 0 );
 	}
@@ -5418,6 +5414,8 @@ idPendulum
 
 CLASS_DECLARATION( idMover_Periodic, idPendulum )
 END_CLASS
+
+CLASS_SCHEMA_KEYS( idPendulum, PENDULUM_SCHEMA )	//puncho - P2b.2.5a: the FGD's rows and the row checks (Schema.h)
 
 /*
 ===============
@@ -5440,10 +5438,10 @@ void idPendulum::Spawn()
 	float	length;
 	float	phase;
 
-	spawnArgs.GetFloat( "speed", "30", speed );
-	spawnArgs.GetFloat( "phase", "0", phase );
+	spawnArgs.GetFloat( "speed", "30", speed );	// HAND: a local
+	spawnArgs.GetFloat( "phase", "0", phase );	// HAND: a local
 
-	if( spawnArgs.GetFloat( "freq", "", freq ) )
+	if( spawnArgs.GetFloat( "freq", "", freq ) )	// HAND: a local, from the beam length when absent
 	{
 		if( freq <= 0.0f )
 		{
@@ -5467,7 +5465,7 @@ void idPendulum::Spawn()
 	physicsObj.SetOrigin( GetPhysics()->GetOrigin() );
 	physicsObj.SetAxis( GetPhysics()->GetAxis() );
 	physicsObj.SetClipMask( MASK_SOLID );
-	if( !spawnArgs.GetBool( "nopush" ) )
+	if( !spawnArgs.GetBool( "nopush" ) )	// HAND: tested in place
 	{
 		physicsObj.SetPusher( 0 );
 	}
@@ -5488,6 +5486,8 @@ idBobber
 CLASS_DECLARATION( idMover_Periodic, idRiser )
 EVENT( EV_Activate,				idRiser::Event_Activate )
 END_CLASS
+
+CLASS_SCHEMA_KEYS( idRiser, RISER_SCHEMA )	//puncho - P2b.2.5a: the FGD's rows and the row checks (Schema.h)
 
 /*
 ===============
@@ -5511,11 +5511,11 @@ void idRiser::Spawn()
 	physicsObj.SetAxis( GetPhysics()->GetAxis() );
 
 	physicsObj.SetClipMask( MASK_SOLID );
-	if( !spawnArgs.GetBool( "solid", "1" ) )
+	if( !spawnArgs.GetBool( "solid", "1" ) )	// HAND: tested in place
 	{
 		physicsObj.SetContents( 0 );
 	}
-	if( !spawnArgs.GetBool( "nopush" ) )
+	if( !spawnArgs.GetBool( "nopush" ) )	// HAND: tested in place
 	{
 		physicsObj.SetPusher( 0 );
 	}
@@ -5646,8 +5646,8 @@ void idMover_Binary::WriteRecord( idRecordOut& rec, const recordFrame_t& frame )
 	rec.SkipPose();
 	idEntity::WriteRecord( rec, frame );
 	rec.BeginSection( RECORD_SECTION_MOVER_BINARY, RECORD_VERSION_MOVER_BINARY );
-	MOVER_BINARY_RECORD_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
-	MOVER_BINARY_RECORD_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
+	MOVER_BINARY_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
+	MOVER_BINARY_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
 	rec.EndSection();
 }
 
@@ -5658,14 +5658,14 @@ recordApply_t idMover_Binary::ApplyRecord( idRecordIn& rec, const recordFrame_t&
 	{
 		return result;
 	}
-	MOVER_BINARY_RECORD_SCHEMA( SCHEMA_RECORD_READ, ( *this ) )
+	MOVER_BINARY_SCHEMA( SCHEMA_RECORD_READ, ( *this ) )
 	rec.EndSection();
 	return rec.good ? RECORD_APPLIED : RECORD_INVALID;
 }
 
 bool idMover_Binary::CheckRecordSection( idRecordIn& rec )
 {
-	MOVER_BINARY_RECORD_SCHEMA( SCHEMA_RECORD_CHECK, idMover_Binary )
+	MOVER_BINARY_SCHEMA( SCHEMA_RECORD_CHECK, idMover_Binary )
 	return rec.good;
 }
 
@@ -5717,8 +5717,8 @@ void idElevator::WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) con
 	rec.SkipPose();
 	idMover::WriteRecord( rec, frame );
 	rec.BeginSection( RECORD_SECTION_ELEVATOR, RECORD_VERSION_ELEVATOR );
-	ELEVATOR_RECORD_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
-	ELEVATOR_RECORD_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
+	ELEVATOR_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
+	ELEVATOR_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
 	rec.EndSection();
 }
 
@@ -5737,14 +5737,14 @@ recordApply_t idElevator::ApplyRecord( idRecordIn& rec, const recordFrame_t& fra
 	{
 		return result;
 	}
-	ELEVATOR_RECORD_SCHEMA( SCHEMA_RECORD_READ, ( *this ) )
+	ELEVATOR_SCHEMA( SCHEMA_RECORD_READ, ( *this ) )
 	rec.EndSection();
 	return rec.good ? RECORD_APPLIED : RECORD_INVALID;
 }
 
 bool idElevator::CheckRecordSection( idRecordIn& rec )
 {
-	ELEVATOR_RECORD_SCHEMA( SCHEMA_RECORD_CHECK, idElevator )
+	ELEVATOR_SCHEMA( SCHEMA_RECORD_CHECK, idElevator )
 	return rec.good;
 }
 

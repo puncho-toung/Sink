@@ -42,6 +42,28 @@ extern DeviceManager* deviceManager;
 
 idRenderProgManager renderProgManager;
 
+//puncho start - R1.2: version counts fill whole bit widths like the entity space (1 << BITS)
+// Registration clamps requests to [1 << MIN, 1 << MAX]; Init rounds up to a power of two.
+// Default 32768: the d580 overview and diagonal ran twice without exhaustion at it and at half of it (16384).
+// Skinned layouts keep 1 << RENDER_PARM_SKINNED_BITS as a workload choice; exhaustion stays NVRHI's explicit refusal.
+#define RENDER_PARM_MIN_BITS		10
+#define RENDER_PARM_MAX_BITS		18
+#define RENDER_PARM_SKINNED_BITS	13
+
+idCVar r_renderParmVersions( "r_renderParmVersions", "32768", CVAR_RENDERER | CVAR_INTEGER | CVAR_INIT | CVAR_ARCHIVE | CVAR_NEW, "versions of each non-skinned volatile render-parm buffer; restart", 1 << RENDER_PARM_MIN_BITS, 1 << RENDER_PARM_MAX_BITS );
+
+//puncho - R1 close: a plain table, so static initialisation allocates nothing
+static const bindingLayoutType_t rpSkinnedLayoutTypes[] =
+{
+	BINDING_LAYOUT_DEFAULT_SKINNED, BINDING_LAYOUT_GBUFFER_SKINNED, BINDING_LAYOUT_TEXTURE_SKINNED, BINDING_LAYOUT_DEBUG_SKINNED,
+	BINDING_LAYOUT_CONSTANT_BUFFER_ONLY_SKINNED, BINDING_LAYOUT_AMBIENT_LIGHTING_IBL_SKINNED, BINDING_LAYOUT_DRAW_INTERACTION_SKINNED,
+	BINDING_LAYOUT_DRAW_INTERACTION_SM_SKINNED, BINDING_LAYOUT_FOG_SKINNED, BINDING_LAYOUT_BLENDLIGHT_SKINNED,
+	BINDING_LAYOUT_NORMAL_CUBE_SKINNED, BINDING_LAYOUT_OCTAHEDRON_CUBE_SKINNED,
+	// the skinned layouts of the renderer upgrade: the forward pass ( F2 ) and the fog twins ( X0 )
+	BINDING_LAYOUT_FORWARD_SKINNED, BINDING_LAYOUT_TEXTURE_SKINNED_FOG, BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG
+};
+//puncho end
+
 /*
 ================================================================================================
 idRenderProgManager::idRenderProgManager()
@@ -861,6 +883,17 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 
 	// SRS - allocate static/volatile constant buffers after renderparm buffer sizes are defined for each binding layout type
 	//	   - allocate constant buffers only when needed, i.e. when push constants are not enabled for binding layout type
+	//puncho start - R1.2: buffers keep this capacity until backend reinitialization; later sets affect only the next Init
+	const int requestedVersions = r_renderParmVersions.GetInteger();
+	const int versions = idMath::CeilPowerOfTwo( requestedVersions );
+	assert( idMath::IsPowerOfTwo( versions ) && versions >= ( 1 << RENDER_PARM_MIN_BITS ) && versions <= ( 1 << RENDER_PARM_MAX_BITS ) );
+	common->Printf( "render-parm versions: %d requested, %d effective\n", requestedVersions, versions );
+	const uint64 alignment = deviceManager->GetVolatileConstantBufferAlignment();
+	int volatileCount = 0;
+	uint64 familyBytes = 0;	// aligned bytes of one version of every non-skinned volatile buffer
+	uint64 totalBytes = 0;
+	uint32 skinnedVersions = 0;	//puncho - R1 close: the skinned descs' actual maxVersions, for the bytes line
+	//puncho end
 	for( int i = 0; i < NUM_BINDING_LAYOUTS; i++ )
 	{
 		// X0: a seam layout has no program yet, so it gets no RenderParams buffer ( 8192 versions of
@@ -877,6 +910,20 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 		if( !renderProgManager.layoutTypeAttributes[i].pcEnabled )
 		{
 			nvrhi::BufferDesc constantBufferDesc;
+			//puncho start - R1 close: named layouts select the skinned capacity and accounting
+			bool skinned = false;
+			for( int j = 0; j < ( int )ARRAY_COUNT( rpSkinnedLayoutTypes ); j++ )
+			{
+				if( rpSkinnedLayoutTypes[ j ] == ( bindingLayoutType_t )i )
+				{
+					skinned = true;
+					break;
+				}
+			}
+			// the preflight's stride and versions, which the created desc must repeat
+			int layoutVersions = 0;
+			uint64 stride = 0;
+			//puncho end
 
 			// SRS - allocate static constant buffer for specific binding layouts, otherwise volatile
 			if( layoutTypeAttributes[i].cbStatic )
@@ -887,12 +934,60 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 			}
 			else
 			{
-				constantBufferDesc = nvrhi::utils::CreateVolatileConstantBufferDesc( layoutTypeAttributes[i].rpBufSize, va( "RenderParams_%d", i ), RP_PARM_VERSIONS );
+				//puncho start - R1.2: preflight every version's dynamic offset before allocating versioned storage
+				layoutVersions = skinned ? ( 1 << RENDER_PARM_SKINNED_BITS ) : versions;
+				if( alignment != 0 )
+				{
+					// nvrhi narrows each dynamic offset version * stride to uint32 (vulkan-resource-bindings.cpp:919-922);
+					// uint32 size and alignment below 2^32 and versions below 2^19 keep this uint64 arithmetic exact
+					stride = ( ( uint64 )layoutTypeAttributes[i].rpBufSize + alignment - 1 ) & ~( alignment - 1 );
+					if( ( uint64 )( layoutVersions - 1 ) * stride >= UINT32_MAX )
+					{
+						common->FatalError( "render-parm dynamic offset exceeds uint32" );
+					}
+				}
+				constantBufferDesc = nvrhi::utils::CreateVolatileConstantBufferDesc( layoutTypeAttributes[i].rpBufSize, va( "RenderParams_%d", i ), layoutVersions );
+				//puncho end
 			}
 
 			constantBuffer[i] = device->createBuffer( constantBufferDesc );
+			//puncho start - R1.2: refuse positive-size allocation failures before use; nvrhi's zero-size NULL stays allowed
+			if( constantBuffer[i] == NULL && layoutTypeAttributes[i].rpBufSize > 0 )
+			{
+				common->FatalError( "render-parm buffer allocation failed" );
+			}
+			if( constantBuffer[i] != NULL && !layoutTypeAttributes[i].cbStatic )
+			{
+				const nvrhi::BufferDesc& actual = constantBuffer[i]->getDesc();
+				//puncho start - R1 close: the preflight guarded the engine's stride and versions; nvrhi's desc must be the same
+				if( alignment != 0 && ( actual.byteSize != stride || actual.maxVersions != ( uint32 )layoutVersions ) )
+				{
+					common->FatalError( "render-parm buffer desc differs from preflight" );
+				}
+				//puncho end
+				volatileCount++;
+				totalBytes += actual.byteSize * actual.maxVersions;	// Vulkan's desc holds the aligned stride
+				if( !skinned )
+				{
+					familyBytes += actual.byteSize;
+				}
+				else
+				{
+					skinnedVersions = actual.maxVersions;	//puncho - R1 close
+				}
+			}
+			//puncho end
 		}
 	}
+
+	//puncho start - R1.2: report allocated versioned storage only on APIs that keep it
+	if( alignment != 0 )
+	{
+		common->Printf( "render-parm buffers: %d volatile, %d + %d versions, alignment %u B, %llu B/family-version, %llu B (%.1f MiB)\n",
+						volatileCount, versions, ( int )skinnedVersions, ( unsigned int )alignment, ( unsigned long long )familyBytes,
+						( unsigned long long )totalBytes, ( double )totalBytes / ( 1024.0 * 1024.0 ) );
+	}
+	//puncho end
 
 	// SRS - added support for runtime configuration of push constants
 #define usePushConstants( layoutType ) ( layoutTypeAttributes[layoutType].pcEnabled ? "1" : "0" )

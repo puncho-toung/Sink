@@ -15,6 +15,9 @@ entityDef worldspawn {
 	"editor_var no_stamina" "disables stamina so the player can always run"
 	"editor_var no_Weapons" "only fists and no melee attacks"
 	"editor_var def_player"	"player def to use when spawning this world"
+	"editor_float dormant_radius"	"World dormancy radius, read at map load: under g_dormantDistance 1 and g_dormantDistanceFirst 1 a dormancy entity whose own dormant_radius is 0 sleeps past it, times g_dormantRadiusScale. 0 turns it off, leaving the stock area test; unset, g_dormantWorldRadius (10240) decides."
+	"editor_float maxVisDistScale"	"Scale on the maxVisDist of every entity and light in the map, applied as each spawns or is restored."
+	"editor_float minVisPixelsScale"	"Scale on the minVisPixels of every entity and light in the map, applied as each spawns or is restored."
 
 	"spawnclass"			"idWorldspawn"
 	"gravity"				"1066"

@@ -31,7 +31,7 @@ void CorpseFixture_f( const idCmdArgs& args )
 			if( ent->IsType( idCorpse::Type ) )
 			{
 				corpses++;
-				thinking += ent->thinkFlags != 0 ? 1 : 0;
+				thinking += ent->GetThinkFlags() != 0 ? 1 : 0;
 			}
 		}
 		gameLocal.Printf( "CORPSE_FIXTURE %s count=%d expected=%d ai=%d aiThinks=%d corpseThinking=%d\n", ai == 0 && gameLocal.aiStats.thinks == 0 && corpses == count && thinking == 0 ? "PASS" : "FAIL", corpses, count, ai, gameLocal.aiStats.thinks, thinking );

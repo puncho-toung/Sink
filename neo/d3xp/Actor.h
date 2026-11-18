@@ -109,6 +109,42 @@ typedef struct
 	jointHandle_t			to;
 } copyJoints_t;
 
+//puncho - P2b.2.5c: idActor's spawn rows (K2), Spawn only (Save and Restore stay hand-written): the keyed members Spawn
+// reads through one SCHEMA_SPAWN, and KEYONLY the keys it reads by hand (locals, scaled to ms) or reads late
+// (SetupHead, Show, LoadAF, SetupBody, StartRagdoll, Damage, PlayFootStepSound, Event_*Anim). A key a def documents with an
+// editor_* line is NOEDIT: the def's line reaches the FGD, and a row's text would print again in every root class
+#define ACTOR_SCHEMA( X, s ) \
+	X( s, rank,							INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"rank",							"0",			NOEDIT,	OBJ ) \
+	X( s, team,							INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"team",							"0",			NOEDIT,	OBJ ) \
+	X( s, modelOffset,					VEC3,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"offsetModel",					"0 0 0",		NOEDIT,	OBJ ) \
+	X( s, use_combat_bbox,				BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"use_combat_bbox",				"0",			NOEDIT,	OBJ ) \
+	X( s, pain_threshold,				INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"pain_threshold",				"0",			NOEDIT,	OBJ ) \
+	X( s, finalBoss,					BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"finalBoss",					"0",			"Restricts damage to the Soul Cube for the Cyberdemon and the helltime killer for the Helltime Hunter.",	OBJ ) \
+	X( s, fov,							FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"fov",							"90",			NOEDIT,	KEYONLY ) \
+	X( s, pain_delay,					FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"pain_delay",					"0",			NOEDIT,	KEYONLY ) \
+	X( s, blink_min,					FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"blink_min",					"0.5",			NOEDIT,	KEYONLY ) \
+	X( s, blink_max,					FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"blink_max",					"8",			NOEDIT,	KEYONLY ) \
+	X( s, sound_bone,					STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"sound_bone",					"",				NOEDIT,	KEYONLY ) \
+	X( s, def_head,						STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"def_head",						"",				"Model to use for the separate head attached to head_joint.",	KEYONLY ) \
+	X( s, head_joint,					STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"head_joint",					"",				"Joint to attach the separate head to.",	KEYONLY ) \
+	X( s, skin_head_xray,				STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"skin_head_xray",				"",				"Skin used for the separate head when viewed through x-ray.",	KEYONLY ) \
+	X( s, lights_off,					BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"lights_off",					"0",			"Keep attached lights off when the actor is shown.",	KEYONLY ) \
+	X( s, ragdoll,						STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"ragdoll",						"*unknown*",	NOEDIT,	KEYONLY ) \
+	X( s, bone_leftEye,					STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"bone_leftEye",					"",				NOEDIT,	KEYONLY ) \
+	X( s, bone_rightEye,				STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"bone_rightEye",				"",				NOEDIT,	KEYONLY ) \
+	X( s, eye_height,					FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"eye_height",					"0",			NOEDIT,	KEYONLY ) \
+	X( s, velocityTime,					INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"velocityTime",					"0",			"Milliseconds of animation motion used to initialize ragdoll velocity.",	KEYONLY ) \
+	X( s, ragdoll_slomoStart,			FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"ragdoll_slomoStart",			"-1.6",			NOEDIT,	KEYONLY ) \
+	X( s, ragdoll_slomoEnd,				FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"ragdoll_slomoEnd",				"0.8",			NOEDIT,	KEYONLY ) \
+	X( s, ragdoll_jointFrictionDent,	FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"ragdoll_jointFrictionDent",	"0.1",			NOEDIT,	KEYONLY ) \
+	X( s, ragdoll_jointFrictionStart,	FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"ragdoll_jointFrictionStart",	"0.2",			NOEDIT,	KEYONLY ) \
+	X( s, ragdoll_jointFrictionEnd,		FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"ragdoll_jointFrictionEnd",		"1.2",			NOEDIT,	KEYONLY ) \
+	X( s, ragdoll_contactFrictionDent,	FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"ragdoll_contactFrictionDent",	"0.1",			NOEDIT,	KEYONLY ) \
+	X( s, ragdoll_contactFrictionStart,	FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"ragdoll_contactFrictionStart",	"1.0",			NOEDIT,	KEYONLY ) \
+	X( s, ragdoll_contactFrictionEnd,	FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"ragdoll_contactFrictionEnd",	"2.0",			NOEDIT,	KEYONLY ) \
+	X( s, gib,							BOOL,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"gib",							"0",			"Allow the actor to gib when killed below -20 health by damage that allows gibbing.",	KEYONLY ) \
+	X( s, snd_footstep,					STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"snd_footstep",					"",				"Fallback footstep sound when no sound is set for the surface type.",	KEYONLY )
+
 class idActor : public idAFEntity_Gibbable
 {
 public:

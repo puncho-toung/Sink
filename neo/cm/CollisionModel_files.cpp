@@ -564,11 +564,13 @@ cm_model_t* idCollisionModelManagerLocal::ParseCollisionModel( idLexer* src )
 	cm_model_t* model;
 	idToken token;
 
-	if( numModels >= MAX_SUBMODELS )
+	//puncho start - R1.3: refuse ordinary appends before allocating or storing into the trace slot
+	if( numModels >= CM_MODEL_MAX_NORMAL )
 	{
-		common->Error( "LoadModel: no free slots" );
+		common->Error( "idCollisionModelManagerLocal::ParseCollisionModel: %s: collision model %d refused, %d loaded (CM_MODEL_MAX_NORMAL %d of MAX_CM_MODELS %d)", src->GetFileName(), numModels + 1, numModels, CM_MODEL_MAX_NORMAL, MAX_CM_MODELS );
 		return NULL;
 	}
+	//puncho end
 	model = AllocModel();
 	models[numModels ] = model;
 	numModels++;
@@ -695,21 +697,38 @@ bool idCollisionModelManagerLocal::LoadCollisionModelFile( const char* name, uns
 		file->ReadString( fileVersion );
 		if( fileID == CM_FILEID && fileVersion == CM_FILEVERSION && crc == mapFileCRC && numEntries > 0 )
 		{
-			loaded = true; // DG: moved this up here to prevent segfaults, see below
-			for( int i = 0; i < numEntries; i++ )
+			//puncho start - R1.3: admit the whole cache or none of it, without letting a header count wrap
+			// Check numModels before subtraction; never form numModels + numEntries.
+			// A refused or failed cache rolls back to firstModel and the text below loads in its place.
+			const bool validCount = ( numModels >= 0 && numModels <= CM_MODEL_MAX_NORMAL );
+			if( validCount && numEntries <= CM_MODEL_MAX_NORMAL - numModels )
 			{
-				cm_model_t* model = LoadBinaryModelFromFile( file, currentTimeStamp );
-				// DG: handle the case that loading the binary model fails gracefully
-				//     (otherwise we'll get a segfault when someone wants to use models[numModels])
-				if( model == NULL )
+				loaded = true; // DG: moved this up here to prevent segfaults, see below
+				for( int i = 0; i < numEntries; i++ )
 				{
-					loaded = false;
-					break;
+					if( numModels >= CM_MODEL_MAX_NORMAL )
+					{
+						loaded = false;
+						break;
+					}
+					cm_model_t* model = LoadBinaryModelFromFile( file, currentTimeStamp );
+					// DG: handle the case that loading the binary model fails gracefully
+					//     (otherwise we'll get a segfault when someone wants to use models[numModels])
+					if( model == NULL )
+					{
+						loaded = false;
+						break;
+					}
+					// DG end
+					models[ numModels ] = model;
+					numModels++;
 				}
-				// DG end
-				models[ numModels ] = model;
-				numModels++;
 			}
+			else if( validCount )
+			{
+				common->Warning( "idCollisionModelManagerLocal::LoadCollisionModelFile: %s holds %d models, %d free (CM_MODEL_MAX_NORMAL %d of MAX_CM_MODELS %d): cache refused", generatedFileName.c_str(), numEntries, CM_MODEL_MAX_NORMAL - numModels, CM_MODEL_MAX_NORMAL, MAX_CM_MODELS );
+			}
+			//puncho end
 		}
 	}
 

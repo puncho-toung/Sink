@@ -137,7 +137,7 @@ void idCollisionModelManagerLocal::LoadProcBSP( const char* name )
 
 	if( !src->ReadToken( &token ) || ProcFileVersion( token ) == 0 )
 	{
-		common->Warning( "idCollisionModelManagerLocal::LoadProcBSP: bad id '%s' instead of '%s' or '%s'", token.c_str(), PROC_FILE_ID, PROC_FILE_ID_003 );
+		common->Warning( "idCollisionModelManagerLocal::LoadProcBSP: bad id '%s' instead of '%s', '%s' or '%s'", token.c_str(), PROC_FILE_ID, PROC_FILE_ID_004, PROC_FILE_ID_003 );
 		delete src;
 		return;
 	}
@@ -461,6 +461,7 @@ idCollisionModelManagerLocal::FreeMap
 */
 void idCollisionModelManagerLocal::FreeMap()
 {
+	idScopedLoadSpan freeSpan( SPAN_FREE_CM );
 	int i;
 
 	if( !loaded )
@@ -497,20 +498,22 @@ void idCollisionModelManagerLocal::FreeTrmModelStructure()
 	int i;
 
 	assert( models );
-	if( !models[MAX_SUBMODELS] )
+	//puncho start - R1.3: free the reusable scratch model from its reserved slot
+	if( !models[CM_MODEL_TRACE] )
 	{
 		return;
 	}
 
 	for( i = 0; i < MAX_TRACEMODEL_POLYS; i++ )
 	{
-		FreePolygon( models[MAX_SUBMODELS], trmPolygons[i]->p );
+		FreePolygon( models[CM_MODEL_TRACE], trmPolygons[i]->p );
 	}
-	FreeBrush( models[MAX_SUBMODELS], trmBrushes[0]->b );
+	FreeBrush( models[CM_MODEL_TRACE], trmBrushes[0]->b );
 
-	models[MAX_SUBMODELS]->node->polygons = NULL;
-	models[MAX_SUBMODELS]->node->brushes = NULL;
-	FreeModel( models[MAX_SUBMODELS] );
+	models[CM_MODEL_TRACE]->node->polygons = NULL;
+	models[CM_MODEL_TRACE]->node->brushes = NULL;
+	FreeModel( models[CM_MODEL_TRACE] );
+	//puncho end
 }
 
 
@@ -839,7 +842,7 @@ void idCollisionModelManagerLocal::SetupTrmModelStructure()
 	model = AllocModel();
 
 	assert( models );
-	models[MAX_SUBMODELS] = model;
+	models[CM_MODEL_TRACE] = model;	//puncho - R1.3: reserve the last slot for the reusable scratch model
 	// create node to hold the collision data
 	node = ( cm_node_t* ) AllocNode( model, 1 );
 	node->planeType = -1;
@@ -914,13 +917,13 @@ cmHandle_t idCollisionModelManagerLocal::SetupTrmModel( const idTraceModel& trm,
 		material = trmMaterial;
 	}
 
-	model = models[MAX_SUBMODELS];
+	model = models[CM_MODEL_TRACE];	//puncho - R1.3: reuse the scratch model outside the ordinary handle range
 	model->node->brushes = NULL;
 	model->node->polygons = NULL;
 	// if not a valid trace model
 	if( trm.type == TRM_INVALID || !trm.numPolys )
 	{
-		return TRACE_MODEL_HANDLE;
+		return CM_MODEL_TRACE;	//puncho - R1.3: return the reserved scratch handle even for an empty trace model
 	}
 	// vertices
 	model->numVertices = trm.numVerts;
@@ -982,7 +985,7 @@ cmHandle_t idCollisionModelManagerLocal::SetupTrmModel( const idTraceModel& trm,
 	// convex
 	model->isConvex = trm.isConvex;
 
-	return TRACE_MODEL_HANDLE;
+	return CM_MODEL_TRACE;	//puncho - R1.3: expose the reserved scratch handle to trace callers
 }
 
 /*
@@ -3792,20 +3795,27 @@ cm_model_t* idCollisionModelManagerLocal::LoadBinaryModelFromFile( idFile* file,
 			file->ReadBig( node->planeType );
 			file->ReadBig( node->planeDist );
 			int i = 0;
+			//puncho start - P2b.7.0: the writer walks head to tail. Preserve that order so a cached load encounters
+			// the same contacts and signed edge features as the text model which wrote it.
+			cm_polygonRef_t** polygonTail = &node->polygons;
 			while( file->ReadBig( i ) == sizeof( i ) && ( i >= 0 ) )
 			{
 				cm_polygonRef_t* pref = collisionModelManagerLocal.AllocPolygonReference( model, model->numPolygonRefs );
 				pref->p = polys[i];
-				pref->next = node->polygons;
-				node->polygons = pref;
+				pref->next = NULL;
+				*polygonTail = pref;
+				polygonTail = &pref->next;
 			}
+			cm_brushRef_t** brushTail = &node->brushes;
 			while( file->ReadBig( i ) == sizeof( i ) && ( i >= 0 ) )
 			{
 				cm_brushRef_t* bref = collisionModelManagerLocal.AllocBrushReference( model, model->numBrushRefs );
 				bref->b = brushes[i];
-				bref->next = node->brushes;
-				node->brushes = bref;
+				bref->next = NULL;
+				*brushTail = bref;
+				brushTail = &bref->next;
 			}
+			//puncho end
 			if( node->planeType != -1 )
 			{
 				node->children[0] = collisionModelManagerLocal.AllocNode( model, model->numNodes );
@@ -3821,7 +3831,7 @@ cm_model_t* idCollisionModelManagerLocal::LoadBinaryModelFromFile( idFile* file,
 	local::ReadNodeTree( file, model, model->node, polys, brushes );
 
 	//puncho start - OQ-B4: the writer stores the polygons in NumberPolygons' order, so the file index is the id. The tree
-	// cannot be walked again for them: ReadNodeTree puts each node's references in reverse order
+	// reference lists keep the written order (P2b.7.0); polygon IDs stay in file order.
 	AllocPolygonIds( model, polys.Num() );
 	for( int i = 0; i < polys.Num(); i++ )
 	{
@@ -4445,6 +4455,36 @@ void idCollisionModelManagerLocal::AccumulateModelInfo( cm_model_t* model )
 
 /*
 ================
+idCollisionModelManagerLocal::GetModelMemory
+================
+*/
+int64 idCollisionModelManagerLocal::GetModelMemory() const
+{
+	int64 bytes = 0;
+	for( int i = 0; i < numModels; i++ )
+	{
+		bytes += models[i]->usedMemory;
+	}
+	return bytes;
+}
+
+/*
+================
+idCollisionModelManagerLocal::GetPolygonIdMemory
+================
+*/
+int64 idCollisionModelManagerLocal::GetPolygonIdMemory() const
+{
+	int64 bytes = 0;
+	for( int i = 0; i < numModels; i++ )
+	{
+		bytes += ( int64 )models[i]->maxPolygonIds * sizeof( cm_polygon_t* ) + models[i]->polygonIdHash.Allocated();
+	}
+	return bytes;
+}
+
+/*
+================
 idCollisionModelManagerLocal::ModelInfo
 ================
 */
@@ -4452,22 +4492,24 @@ void idCollisionModelManagerLocal::ModelInfo( cmHandle_t model )
 {
 	cm_model_t modelInfo;
 
-	if( model == -1 )
+	//puncho start - R1.3: keep the aggregate selector separate and validate the table before indexing
+	if( model == CM_MODEL_INFO_ALL )
 	{
 		AccumulateModelInfo( &modelInfo );
 		PrintModelInfo( &modelInfo );
 		return;
 	}
-	if( model < 0 || model > MAX_SUBMODELS || model > maxModels )
+	if( model < 0 || model >= MAX_CM_MODELS || model > maxModels )
 	{
 		common->Printf( "idCollisionModelManagerLocal::ModelInfo: invalid model handle\n" );
 		return;
 	}
-	if( !models[model] )
+	if( !models || !models[model] )
 	{
 		common->Printf( "idCollisionModelManagerLocal::ModelInfo: invalid model\n" );
 		return;
 	}
+	//puncho end
 
 	PrintModelInfo( models[model] );
 }
@@ -4522,17 +4564,21 @@ bool idCollisionModelManagerLocal::BuildModels( const idMapFile* mapFile, bool i
 		for( i = 0; i < mapFile->GetNumEntities(); i++ )
 		{
 			mapEnt = mapFile->GetEntity( i );
-
-			if( numModels >= MAX_SUBMODELS )
+			//puncho start - R1.3: point entities consume no slot; refuse a real model before storing into the trace slot
+			cm_model_t* model = CollisionModelForMapEntity( mapEnt );
+			if( model == NULL )
 			{
-				common->Error( "idCollisionModelManagerLocal::BuildModels: more than %d collision models", MAX_SUBMODELS );
+				continue;
+			}
+			if( numModels >= CM_MODEL_MAX_NORMAL )
+			{
+				FreeModel( model );
+				common->Error( "idCollisionModelManagerLocal::BuildModels: %s: collision model %d refused, %d loaded (CM_MODEL_MAX_NORMAL %d of MAX_CM_MODELS %d)", mapFile->GetName(), numModels + 1, numModels, CM_MODEL_MAX_NORMAL, MAX_CM_MODELS );
 				break;
 			}
-			models[numModels] = CollisionModelForMapEntity( mapEnt );
-			if( models[ numModels] )
-			{
-				numModels++;
-			}
+			models[numModels] = model;
+			numModels++;
+			//puncho end
 		}
 
 		// free the proc bsp which is only used for data optimization
@@ -4599,8 +4645,13 @@ void idCollisionModelManagerLocal::Preload( const char* mapName )
 			const preloadEntry_s& p = manifest.GetPreloadByIndex( i );
 			if( p.resType == PRELOAD_COLLISION )
 			{
-				LoadModel( p.resourceName, false );
-				numLoaded++;
+				//puncho start - R1.3: count only successful loads, including the world's handle 0
+				cmHandle_t handle;
+				if( LoadModel( p.resourceName, false, handle ) )
+				{
+					numLoaded++;
+				}
+				//puncho end
 			}
 		}
 		int	end = Sys_Milliseconds();
@@ -4655,9 +4706,11 @@ bool idCollisionModelManagerLocal::LoadMapChecked( const idMapFile* mapFile, boo
 	Clear();
 
 	// models
-	maxModels = MAX_SUBMODELS;
+	//puncho start - R1.3: allocate the whole table with the final slot excluded from ordinary capacity
+	maxModels = CM_MODEL_MAX_NORMAL;
 	numModels = 0;
-	models = ( cm_model_t** ) Mem_ClearedAlloc( ( maxModels + 1 ) * sizeof( cm_model_t* ), TAG_COLLISION );
+	models = ( cm_model_t** ) Mem_ClearedAlloc( MAX_CM_MODELS * sizeof( cm_model_t* ), TAG_COLLISION );
+	//puncho end
 
 	// setup hash to speed up finding shared vertices and edges
 	SetupHash();
@@ -4691,7 +4744,7 @@ idCollisionModelManagerLocal::GetModelName
 */
 const char* idCollisionModelManagerLocal::GetModelName( cmHandle_t model ) const
 {
-	if( model < 0 || model > MAX_SUBMODELS || model >= numModels || !models[model] )
+	if( model < 0 || model >= MAX_CM_MODELS || model >= numModels || !models[model] )	//puncho - R1.3: bound the table while requiring an ordinary loaded model
 	{
 		common->Printf( "idCollisionModelManagerLocal::GetModelBounds: invalid model handle\n" );
 		return "";
@@ -4707,7 +4760,7 @@ idCollisionModelManagerLocal::GetModelBounds
 bool idCollisionModelManagerLocal::GetModelBounds( cmHandle_t model, idBounds& bounds ) const
 {
 
-	if( model < 0 || model > MAX_SUBMODELS || model >= numModels || !models[model] )
+	if( model < 0 || model >= MAX_CM_MODELS || model >= numModels || !models[model] )	//puncho - R1.3: bound the table while requiring an ordinary loaded model
 	{
 		common->Printf( "idCollisionModelManagerLocal::GetModelBounds: invalid model handle\n" );
 		return false;
@@ -4724,7 +4777,7 @@ idCollisionModelManagerLocal::GetModelContents
 */
 bool idCollisionModelManagerLocal::GetModelContents( cmHandle_t model, int& contents ) const
 {
-	if( model < 0 || model > MAX_SUBMODELS || model >= numModels || !models[model] )
+	if( model < 0 || model >= MAX_CM_MODELS || model >= numModels || !models[model] )	//puncho - R1.3: bound the table while requiring an ordinary loaded model
 	{
 		common->Printf( "idCollisionModelManagerLocal::GetModelContents: invalid model handle\n" );
 		return false;
@@ -4742,7 +4795,7 @@ idCollisionModelManagerLocal::GetModelVertex
 */
 bool idCollisionModelManagerLocal::GetModelVertex( cmHandle_t model, int vertexNum, idVec3& vertex ) const
 {
-	if( model < 0 || model > MAX_SUBMODELS || model >= numModels || !models[model] )
+	if( model < 0 || model >= MAX_CM_MODELS || model >= numModels || !models[model] )	//puncho - R1.3: bound the table while requiring an ordinary loaded model
 	{
 		common->Printf( "idCollisionModelManagerLocal::GetModelVertex: invalid model handle\n" );
 		return false;
@@ -4766,7 +4819,7 @@ idCollisionModelManagerLocal::GetModelEdge
 */
 bool idCollisionModelManagerLocal::GetModelEdge( cmHandle_t model, int edgeNum, idVec3& start, idVec3& end ) const
 {
-	if( model < 0 || model > MAX_SUBMODELS || model >= numModels || !models[model] )
+	if( model < 0 || model >= MAX_CM_MODELS || model >= numModels || !models[model] )	//puncho - R1.3: bound the table while requiring an ordinary loaded model
 	{
 		common->Printf( "idCollisionModelManagerLocal::GetModelEdge: invalid model handle\n" );
 		return false;
@@ -4795,7 +4848,7 @@ bool idCollisionModelManagerLocal::GetModelPolygon( cmHandle_t model, int polygo
 	int i, edgeNum;
 	cm_polygon_t* poly;
 
-	if( model < 0 || model > MAX_SUBMODELS || model >= numModels || !models[model] )
+	if( model < 0 || model >= MAX_CM_MODELS || model >= numModels || !models[model] )	//puncho - R1.3: bound the table while requiring an ordinary loaded model
 	{
 		common->Printf( "idCollisionModelManagerLocal::GetModelPolygon: invalid model handle\n" );
 		return false;
@@ -4825,20 +4878,22 @@ bool idCollisionModelManagerLocal::GetModelPolygon( cmHandle_t model, int polygo
 idCollisionModelManagerLocal::LoadModel
 ==================
 */
-cmHandle_t idCollisionModelManagerLocal::LoadModel( const char* modelName, const bool precache )
+//puncho start - R1.3: separate load status from handle 0 and keep every append below the trace slot
+bool idCollisionModelManagerLocal::LoadModel( const char* modelName, const bool precache, cmHandle_t& outHandle )
 {
 	int handle;
 
 	handle = FindModel( modelName );
 	if( handle >= 0 )
 	{
-		return handle;
+		outHandle = handle;
+		return true;
 	}
 
-	if( numModels >= MAX_SUBMODELS )
+	if( numModels >= CM_MODEL_MAX_NORMAL )
 	{
-		common->Error( "idCollisionModelManagerLocal::LoadModel: no free slots\n" );
-		return 0;
+		common->Error( "idCollisionModelManagerLocal::LoadModel: %s: collision model %d refused, %d loaded (CM_MODEL_MAX_NORMAL %d of MAX_CM_MODELS %d)", modelName, numModels + 1, numModels, CM_MODEL_MAX_NORMAL, MAX_CM_MODELS );
+		return false;
 	}
 
 	idStrStatic< MAX_OSPATH > generatedFileName = "generated/collision/";
@@ -4866,9 +4921,9 @@ cmHandle_t idCollisionModelManagerLocal::LoadModel( const char* modelName, const
 	if( models == NULL )
 	{
 		// raynorpat: best clear this if there are no models ( hit by dmap )
-		maxModels = MAX_SUBMODELS;
+		maxModels = CM_MODEL_MAX_NORMAL;
 		numModels = 0;
-		models = ( cm_model_t** ) Mem_ClearedAlloc( ( maxModels + 1 ) * sizeof( cm_model_t* ), TAG_COLLISION );
+		models = ( cm_model_t** ) Mem_ClearedAlloc( MAX_CM_MODELS * sizeof( cm_model_t* ), TAG_COLLISION );
 	}
 
 	models[ numModels ] = LoadBinaryModel( generatedFileName, sourceTimeStamp );
@@ -4880,7 +4935,8 @@ cmHandle_t idCollisionModelManagerLocal::LoadModel( const char* modelName, const
 			// for resource gathering write this model to the preload file for this map
 			fileSystem->AddCollisionPreload( modelName );
 		}
-		return ( numModels - 1 );
+		outHandle = numModels - 1;
+		return true;
 	}
 
 	// try to load a .cm file
@@ -4891,7 +4947,8 @@ cmHandle_t idCollisionModelManagerLocal::LoadModel( const char* modelName, const
 		{
 			cm_model_t* cm = models[ handle ];
 			WriteBinaryModel( cm, generatedFileName, sourceTimeStamp );
-			return handle;
+			outHandle = handle;
+			return true;
 		}
 		else
 		{
@@ -4902,7 +4959,14 @@ cmHandle_t idCollisionModelManagerLocal::LoadModel( const char* modelName, const
 	// if only precaching .cm files do not waste memory converting render models
 	if( precache )
 	{
-		return 0;
+		return false;
+	}
+
+	// The container may have filled the table without containing the requested name.
+	if( numModels >= CM_MODEL_MAX_NORMAL )
+	{
+		common->Error( "idCollisionModelManagerLocal::LoadModel: %s: collision model %d refused, %d loaded (CM_MODEL_MAX_NORMAL %d of MAX_CM_MODELS %d)", modelName, numModels + 1, numModels, CM_MODEL_MAX_NORMAL, MAX_CM_MODELS );
+		return false;
 	}
 
 	// try to load a .ASE or .LWO model and convert it to a collision model
@@ -4910,11 +4974,13 @@ cmHandle_t idCollisionModelManagerLocal::LoadModel( const char* modelName, const
 	if( models[ numModels ] != NULL )
 	{
 		numModels++;
-		return ( numModels - 1 );
+		outHandle = numModels - 1;
+		return true;
 	}
 
-	return 0;
+	return false;
 }
+//puncho end
 
 /*
 ==================
@@ -5084,8 +5150,7 @@ bool idCollisionModelManagerLocal::TrmFromModel( const char* modelName, idTraceM
 {
 	cmHandle_t handle;
 
-	handle = LoadModel( modelName, false );
-	if( !handle )
+	if( !LoadModel( modelName, false, handle ) )	//puncho - R1.3: a loaded world's handle 0 is a valid conversion source
 	{
 		common->Printf( "idCollisionModelManagerLocal::TrmFromModel: model %s not found.\n", modelName );
 		return false;

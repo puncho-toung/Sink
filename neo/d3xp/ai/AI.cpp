@@ -433,6 +433,7 @@ idAI::idAI()
 	focusAlignTime		= 0;
 
 	memset( &lastThinkStats, 0, sizeof( lastThinkStats ) );	//puncho - ai-harness
+	thinkBranch = AI_THINK_NONE;	//puncho - P2b.2.6
 }
 
 /*
@@ -821,7 +822,7 @@ idAI::Spawn
 */
 void idAI::Spawn()
 {
-	if( worldStore.IsActive() && g_corpses.GetBool() && spawnArgs.GetInt( "persist_lifetime", "-1" ) != 0 )
+	if( worldStore.IsActive() && g_corpses.GetBool() && spawnArgs.GetInt( "persist_lifetime", "-1" ) != 0 )	// HAND: tested in place
 	{
 		spawnArgs.SetFloat( "burnaway", 0.0f );
 	}
@@ -840,32 +841,18 @@ void idAI::Spawn()
 		return;
 	}
 
-	spawnArgs.GetInt(	"team",					"1",		team );
-	spawnArgs.GetInt(	"rank",					"0",		rank );
+	//puncho - P2b.2.5c: AI_SCHEMA's keyed rows (AI.h), read where team was, after the g_monsters early return
+	AI_SCHEMA( SCHEMA_SPAWN, ( *this ) )
 	ReadSquadRole();	//puncho - ai-avoidance (WP-A6/A7): the role from the def and the ai_squad marker
-	spawnArgs.GetInt(	"fly_offset",			"0",		fly_offset );
-	spawnArgs.GetFloat( "fly_speed",			"100",		fly_speed );
-	spawnArgs.GetFloat( "fly_bob_strength",		"50",		fly_bob_strength );
-	spawnArgs.GetFloat( "fly_bob_vert",			"2",		fly_bob_horz );
-	spawnArgs.GetFloat( "fly_bob_horz",			"2.7",		fly_bob_vert );
-	spawnArgs.GetFloat( "fly_seek_scale",		"4",		fly_seek_scale );
-	spawnArgs.GetFloat( "fly_roll_scale",		"90",		fly_roll_scale );
-	spawnArgs.GetFloat( "fly_roll_max",			"60",		fly_roll_max );
-	spawnArgs.GetFloat( "fly_pitch_scale",		"45",		fly_pitch_scale );
-	spawnArgs.GetFloat( "fly_pitch_max",		"30",		fly_pitch_max );
 
-	spawnArgs.GetFloat( "melee_range",			"64",		melee_range );
-	spawnArgs.GetFloat( "projectile_height_to_distance_ratio",	"1", projectile_height_to_distance_ratio );
 	//puncho start - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §B): the test mask of canHitEnemyFromAnim, boxes
 	// by default, non-zero the stock mesh test; the launch aims against meshes either way
 	//puncho - ai-combat (plans/ai-combat/07-REVIEW-c8.md m3): ReadCombatLevers is the one read; a GetBool here read "0.5" as false, the lever as true
 	ReadCombatLevers();	//puncho - ai-combat (plans/ai-combat/07-DESIGN-c8-levers.md §C): the ai_squad marker's fire_near_friends, when the marker sets it, wins over the def key; the accuracy scale likewise
 	//puncho end
 
-	spawnArgs.GetFloat( "turn_rate",			"360",		turnRate );
-
-	spawnArgs.GetBool( "talks",					"0",		talks );
-	if( spawnArgs.GetString( "npc_name", NULL ) != NULL )
+	spawnArgs.GetBool( "talks",					"0",		talks );	// HAND: a local
+	if( spawnArgs.GetString( "npc_name", NULL ) != NULL )	// HAND: tested in place
 	{
 		if( talks )
 		{
@@ -881,20 +868,11 @@ void idAI::Spawn()
 		talk_state = TALK_NEVER;
 	}
 
-	spawnArgs.GetBool( "animate_z",				"0",		disableGravity );
-	spawnArgs.GetBool( "af_push_moveables",		"0",		af_push_moveables );
-	spawnArgs.GetFloat( "kick_force",			"4096",		kickForce );
-	spawnArgs.GetBool( "ignore_obstacles",		"0",		ignore_obstacles );
-	spawnArgs.GetFloat( "blockedRadius",		"-1",		blockedRadius );
-	spawnArgs.GetInt( "blockedMoveTime",		"750",		blockedMoveTime );
-	spawnArgs.GetInt( "blockedAttackTime",		"750",		blockedAttackTime );
-
-	spawnArgs.GetInt(	"num_cinematics",		"0",		num_cinematics );
 	current_cinematic = 0;
 
 	LinkScriptVariables();
 
-	fl.takedamage		= !spawnArgs.GetBool( "noDamage" );
+	fl.takedamage		= !spawnArgs.GetBool( "noDamage" );	// HAND: fl bitfield
 	enemy				= NULL;
 	allowMove			= true;
 	allowHiddenMovement = false;
@@ -904,12 +882,12 @@ void idAI::Spawn()
 	// create combat collision hull for exact collision detection
 	SetCombatModel();
 
-	lookMin	= spawnArgs.GetAngles( "look_min", "-80 -75 0" );
-	lookMax	= spawnArgs.GetAngles( "look_max", "80 75 0" );
+	lookMin	= spawnArgs.GetAngles( "look_min", "-80 -75 0" );	// HAND: idAngles has no schema read
+	lookMax	= spawnArgs.GetAngles( "look_max", "80 75 0" );	// HAND: idAngles has no schema read
 
 	lookJoints.SetGranularity( 1 );
 	lookJointAngles.SetGranularity( 1 );
-	kv = spawnArgs.MatchPrefix( "look_joint", NULL );
+	kv = spawnArgs.MatchPrefix( "look_joint", NULL );	// HAND: prefix
 	while( kv )
 	{
 		jointName = kv->GetKey();
@@ -939,19 +917,15 @@ void idAI::Spawn()
 				lookJointAngles.Append( jointScale );
 			}
 		}
-		kv = spawnArgs.MatchPrefix( "look_joint", kv );
+		kv = spawnArgs.MatchPrefix( "look_joint", kv );	// HAND: prefix
 	}
 
 	// calculate joint positions on attack frames so we can do proper "can hit" tests
 	CalculateAttackOffsets();
 
-	eyeMin				= spawnArgs.GetAngles( "eye_turn_min", "-10 -30 0" );
-	eyeMax				= spawnArgs.GetAngles( "eye_turn_max", "10 30 0" );
-	eyeVerticalOffset	= spawnArgs.GetFloat( "eye_verticle_offset", "5" );
-	eyeHorizontalOffset = spawnArgs.GetFloat( "eye_horizontal_offset", "-8" );
-	eyeFocusRate		= spawnArgs.GetFloat( "eye_focus_rate", "0.5" );
-	headFocusRate		= spawnArgs.GetFloat( "head_focus_rate", "0.1" );
-	focusAlignTime		= SEC2MS( spawnArgs.GetFloat( "focus_align_time", "1" ) );
+	eyeMin				= spawnArgs.GetAngles( "eye_turn_min", "-10 -30 0" );	// HAND: idAngles has no schema read
+	eyeMax				= spawnArgs.GetAngles( "eye_turn_max", "10 30 0" );	// HAND: idAngles has no schema read
+	focusAlignTime		= SEC2MS( spawnArgs.GetFloat( "focus_align_time", "1" ) );	// HAND: derived: SEC2MS
 
 	flashJointWorld = animator.GetJointHandle( "flash" );
 
@@ -959,7 +933,7 @@ void idAI::Spawn()
 	{
 		idAnimator* headAnimator = head.GetEntity()->GetAnimator();
 
-		jointname = spawnArgs.GetString( "bone_focus" );
+		jointname = spawnArgs.GetString( "bone_focus" );	// HAND: a local
 		if( *jointname )
 		{
 			focusJoint = headAnimator->GetJointHandle( jointname );
@@ -971,7 +945,7 @@ void idAI::Spawn()
 	}
 	else
 	{
-		jointname = spawnArgs.GetString( "bone_focus" );
+		jointname = spawnArgs.GetString( "bone_focus" );	// HAND: a local
 		if( *jointname )
 		{
 			focusJoint = animator.GetJointHandle( jointname );
@@ -982,7 +956,7 @@ void idAI::Spawn()
 		}
 	}
 
-	jointname = spawnArgs.GetString( "bone_orientation" );
+	jointname = spawnArgs.GetString( "bone_orientation" );	// HAND: a local
 	if( *jointname )
 	{
 		orientationJoint = animator.GetJointHandle( jointname );
@@ -992,7 +966,7 @@ void idAI::Spawn()
 		}
 	}
 
-	jointname = spawnArgs.GetString( "bone_flytilt" );
+	jointname = spawnArgs.GetString( "bone_flytilt" );	// HAND: a local
 	if( *jointname )
 	{
 		flyTiltJoint = animator.GetJointHandle( jointname );
@@ -1006,9 +980,9 @@ void idAI::Spawn()
 
 	physicsObj.SetSelf( this );
 	physicsObj.SetClipModel( new( TAG_PHYSICS_CLIP_ENTITY ) idClipModel( GetPhysics()->GetClipModel() ), 1.0f );
-	physicsObj.SetMass( spawnArgs.GetFloat( "mass", "100" ) );
+	physicsObj.SetMass( spawnArgs.GetFloat( "mass", "100" ) );	// HAND: an argument
 
-	if( spawnArgs.GetBool( "big_monster" ) )
+	if( spawnArgs.GetBool( "big_monster" ) )	// HAND: tested in place
 	{
 		physicsObj.SetContents( 0 );
 		physicsObj.SetClipMask( MASK_MONSTERSOLID & ~CONTENTS_BODY );
@@ -1036,7 +1010,7 @@ void idAI::Spawn()
 	}
 	else
 	{
-		idVec3 gravity = spawnArgs.GetVector( "gravityDir", "0 0 -1" );
+		idVec3 gravity = spawnArgs.GetVector( "gravityDir", "0 0 -1" );	// HAND: a local
 		gravity *= g_gravity.GetFloat();
 		physicsObj.SetGravity( gravity );
 	}
@@ -1055,7 +1029,7 @@ void idAI::Spawn()
 	projectileDef	= NULL;
 	projectileClipModel	= NULL;
 	idStr projectileName;
-	if( spawnArgs.GetString( "def_projectile", "", projectileName ) && projectileName.Length() )
+	if( spawnArgs.GetString( "def_projectile", "", projectileName ) && projectileName.Length() )	// HAND: a local
 	{
 		projectileDef = gameLocal.FindEntityDefDict( projectileName );
 		CreateProjectile( vec3_origin, viewAxis[ 0 ] );
@@ -1069,10 +1043,9 @@ void idAI::Spawn()
 
 	particles.Clear();
 	restartParticles = true;
-	useBoneAxis = spawnArgs.GetBool( "useBoneAxis" );
 	SpawnParticles( "smokeParticleSystem" );
 
-	if( num_cinematics || spawnArgs.GetBool( "hide" ) || spawnArgs.GetBool( "teleport" ) || spawnArgs.GetBool( "trigger_anim" ) )
+	if( num_cinematics || spawnArgs.GetBool( "hide" ) || spawnArgs.GetBool( "teleport" ) || spawnArgs.GetBool( "trigger_anim" ) )	// HAND: tested in place
 	{
 		fl.takedamage = false;
 		physicsObj.SetContents( 0 );
@@ -1104,9 +1077,6 @@ void idAI::Spawn()
 
 	// init the move variables
 	StopMove( MOVE_STATUS_DONE );
-
-
-	spawnArgs.GetBool( "spawnClearMoveables", "0", spawnClearMoveables );
 }
 
 
@@ -1253,7 +1223,7 @@ idCVar ai_think( "ai_think", "1", CVAR_BOOL, "for testing.." );
 void idAI::Think()
 {
 	// if we are completely closed off from the player, don't do anything at all
-	if( CheckDormant() )
+	if( gameLocal.entityHot.dormancyCheckedFor != entityNumber && CheckDormant() )	//puncho - P2b.2.2b-i: unless RunEntityThink's lifted test ran it
 	{
 		return;
 	}
@@ -1279,176 +1249,15 @@ void idAI::Think()
 		statsBefore = gameLocal.aiStats;
 		usThinkStart = Sys_Microseconds();
 	}
-	gameLocal.aiStats.thinks++;
-	if( minionRole == MINION_ROLE_FOLLOWER )
-	{
-		gameLocal.aiStats.roleFollowers++;	// ai-avoidance (WP-A7): for the overlay row
-	}
 	//puncho end
 
-	if( thinkFlags & TH_THINK )
-	{
-		// clear out the enemy when he dies or is hidden
-		idActor* enemyEnt = enemy.GetEntity();
-		if( enemyEnt )
-		{
-			if( enemyEnt->health <= 0 )
-			{
-				EnemyDead();
-			}
-		}
-		else if( move.moveType != MOVETYPE_DEAD )
-		{
-			gameLocal.aiStats.noEnemy++;	//puncho - ai-combat (plans/ai-combat/00-PLAN.md §2.4): a live thinking monster with no enemy; nothing added on the enemy path
-		}
-
-		current_yaw += deltaViewAngles.yaw;
-		ideal_yaw = idMath::AngleNormalize180( ideal_yaw + deltaViewAngles.yaw );
-		deltaViewAngles.Zero();
-		viewAxis = idAngles( 0, current_yaw, 0 ).ToMat3();
-
-		if( num_cinematics )
-		{
-			if( !IsHidden() && torsoAnim.AnimDone( 0 ) )
-			{
-				PlayCinematic();
-			}
-			//puncho start - ai-harness: Minions::Move::Physics, so the Anim::Controllers reached through RunPhysics stays inside usMovePhysics (00-PLAN.md §2.1, D2)
-			{
-				PROFILE_STATIC_DESC( descPhysics, "Minions::Move::Physics", ::Optick::Category::Physics );
-				idAIProfileScope scopePhysics( gameLocal.aiStats.usMovePhysics, descPhysics );
-				RunPhysics();
-			}
-			//puncho end
-		}
-		else if( !allowHiddenMovement && IsHidden() )
-		{
-			// hidden monsters
-			UpdateAIScript();
-		}
-		else
-		{
-			// clear the ik before we do anything else so the skeleton doesn't get updated twice
-			walkIK.ClearJointMods();
-
-			switch( move.moveType )
-			{
-				case MOVETYPE_DEAD :
-					// dead monsters
-					UpdateAIScript();
-					DeadMove();
-					break;
-
-				case MOVETYPE_FLY :
-					// flying monsters
-					//puncho start - ai-harness: Minions::Decide::Perceive, braced here and not at the function top because
-					// Event_LocateEnemy also calls UpdateEnemyPosition from script, inside Decide::Script (00-PLAN.md §2.1)
-					{
-						PROFILE_STATIC_DESC( descPerceive, "Minions::Decide::Perceive", ::Optick::Category::AI );
-						idAIProfileScope scopePerceive( gameLocal.aiStats.usPerceive, descPerceive );
-						UpdateEnemyPosition();
-					}
-					//puncho end
-					UpdateAIScript();
-					FlyMove();
-					PlayChatter();
-					CheckBlink();
-					break;
-
-				case MOVETYPE_STATIC :
-					// static monsters
-					//puncho start - ai-harness: Minions::Decide::Perceive, braced here and not at the function top because
-					// Event_LocateEnemy also calls UpdateEnemyPosition from script, inside Decide::Script (00-PLAN.md §2.1)
-					{
-						PROFILE_STATIC_DESC( descPerceive, "Minions::Decide::Perceive", ::Optick::Category::AI );
-						idAIProfileScope scopePerceive( gameLocal.aiStats.usPerceive, descPerceive );
-						UpdateEnemyPosition();
-					}
-					//puncho end
-					UpdateAIScript();
-					StaticMove();
-					PlayChatter();
-					CheckBlink();
-					break;
-
-				case MOVETYPE_ANIM :
-					// animation based movement
-					//puncho start - ai-harness: Minions::Decide::Perceive, braced here and not at the function top because
-					// Event_LocateEnemy also calls UpdateEnemyPosition from script, inside Decide::Script (00-PLAN.md §2.1)
-					{
-						PROFILE_STATIC_DESC( descPerceive, "Minions::Decide::Perceive", ::Optick::Category::AI );
-						idAIProfileScope scopePerceive( gameLocal.aiStats.usPerceive, descPerceive );
-						UpdateEnemyPosition();
-					}
-					//puncho end
-					UpdateAIScript();
-					AnimMove();
-					PlayChatter();
-					CheckBlink();
-					break;
-
-				case MOVETYPE_SLIDE :
-					// velocity based movement
-					//puncho start - ai-harness: Minions::Decide::Perceive, braced here and not at the function top because
-					// Event_LocateEnemy also calls UpdateEnemyPosition from script, inside Decide::Script (00-PLAN.md §2.1)
-					{
-						PROFILE_STATIC_DESC( descPerceive, "Minions::Decide::Perceive", ::Optick::Category::AI );
-						idAIProfileScope scopePerceive( gameLocal.aiStats.usPerceive, descPerceive );
-						UpdateEnemyPosition();
-					}
-					//puncho end
-					UpdateAIScript();
-					SlideMove();
-					PlayChatter();
-					CheckBlink();
-					break;
-			}
-		}
-
-		// clear pain flag so that we recieve any damage between now and the next time we run the script
-		AI_PAIN = false;
-		AI_SPECIAL_DAMAGE = 0;
-		AI_PUSHED = false;
-	}
-	else if( thinkFlags & TH_PHYSICS )
-	{
-		//puncho start - ai-harness: Minions::Move::Physics, so the Anim::Controllers reached through RunPhysics stays inside usMovePhysics (00-PLAN.md §2.1, D2)
-		{
-			PROFILE_STATIC_DESC( descPhysics, "Minions::Move::Physics", ::Optick::Category::Physics );
-			idAIProfileScope scopePhysics( gameLocal.aiStats.usMovePhysics, descPhysics );
-			RunPhysics();
-		}
-		//puncho end
-	}
-
-	if( af_push_moveables )
-	{
-		PushWithAF();
-	}
-
-	if( fl.hidden && allowHiddenMovement )
-	{
-		// UpdateAnimation won't call frame commands when hidden, so call them here when we allow hidden movement
-		animator.ServiceAnims( gameLocal.previousTime, gameLocal.time );
-	}
-	/*	this still draws in retail builds.. not sure why.. don't care at this point.
-		if ( !aas && developer.GetBool() && !fl.hidden && !num_cinematics ) {
-			gameRenderWorld->DrawText( "No AAS", physicsObj.GetAbsBounds().GetCenter(), 0.1f, colorWhite, gameLocal.GetLocalPlayer()->viewAngles.ToMat3(), 1, 1 );
-		}
-	*/
-
-	UpdateMuzzleFlash();
-	//puncho start - ai-harness: Anim::Update, braced because idAnimatedEntity::UpdateAnimation is shared (00-PLAN.md §2.1)
-	{
-		PROFILE_STATIC_DESC( descAnimUpdate, "Anim::Update", ::Optick::Category::Animation );
-		idAIProfileScope scopeAnimUpdate( gameLocal.aiStats.usAnimUpdate, descAnimUpdate );
-		UpdateAnimation();
-	}
+	//puncho start - P2b.2.6: the four phases in today's order, the pain flags cleared after the move as stock; under
+	// ai_thinkPhases the phase block runs them instead, each over every member before the next
+	ThinkSense( gameLocal.previousTime, gameLocal.time );
+	ThinkDecide( gameLocal.previousTime, gameLocal.time, false );
+	ThinkMove( gameLocal.previousTime, gameLocal.time, false );
+	ThinkPresent( gameLocal.previousTime, gameLocal.time );
 	//puncho end
-	UpdateParticles();
-	Present();
-	UpdateDamageEffects();
-	LinkCombat();
 
 	//puncho start - ai-harness: this AI's share of the tic by difference, and the worst AI of the tic by usThink;
 	// both only with the timers on, since the g_aiStats 3 list ranks by usThink
@@ -1470,6 +1279,263 @@ void idAI::Think()
 		}
 	}
 	//puncho end
+}
+
+//puncho start - P2b.2.6 (plans/map-graph/stages/S2b-2-entity-tables.md §8, K10): Think's four phases
+/*
+=====================
+idAI::ThinkSense
+
+Choose the branch for this tic, clear the enemy and view state, and perceive before the script runs.
+=====================
+*/
+void idAI::ThinkSense( int previousTime, int time )
+{
+	//puncho start - ai-harness: the think and follower census, inside Think's or the phase block's envelope
+	gameLocal.aiStats.thinks++;
+	if( minionRole == MINION_ROLE_FOLLOWER )
+	{
+		gameLocal.aiStats.roleFollowers++;	// ai-avoidance (WP-A7): for the overlay row
+	}
+	//puncho end
+
+	if( !( GetThinkFlags() & TH_THINK ) )
+	{
+		thinkBranch = ( GetThinkFlags() & TH_PHYSICS ) ? AI_THINK_PHYSICS : AI_THINK_NONE;
+		return;
+	}
+
+	// clear out the enemy when he dies or is hidden
+	idActor* enemyEnt = enemy.GetEntity();
+	if( enemyEnt )
+	{
+		if( enemyEnt->health <= 0 )
+		{
+			EnemyDead();
+		}
+	}
+	else if( move.moveType != MOVETYPE_DEAD )
+	{
+		gameLocal.aiStats.noEnemy++;	//puncho - ai-combat (plans/ai-combat/00-PLAN.md §2.4): a live thinking monster with no enemy; nothing added on the enemy path
+	}
+
+	current_yaw += deltaViewAngles.yaw;
+	ideal_yaw = idMath::AngleNormalize180( ideal_yaw + deltaViewAngles.yaw );
+	deltaViewAngles.Zero();
+	viewAxis = idAngles( 0, current_yaw, 0 ).ToMat3();
+
+	if( num_cinematics )
+	{
+		thinkBranch = AI_THINK_CINEMATIC;
+		return;
+	}
+	else if( !allowHiddenMovement && IsHidden() )
+	{
+		// hidden monsters
+		thinkBranch = AI_THINK_HIDDEN;
+		return;
+	}
+	else
+	{
+		// clear the ik before we do anything else so the skeleton doesn't get updated twice
+		walkIK.ClearJointMods();
+
+		switch( move.moveType )
+		{
+			case MOVETYPE_DEAD :
+				thinkBranch = AI_THINK_DEAD;
+				return;
+
+			case MOVETYPE_FLY :
+				thinkBranch = AI_THINK_FLY;
+				break;
+
+			case MOVETYPE_STATIC :
+				thinkBranch = AI_THINK_STATIC;
+				break;
+
+			case MOVETYPE_ANIM :
+				thinkBranch = AI_THINK_ANIM;
+				break;
+
+			case MOVETYPE_SLIDE :
+				thinkBranch = AI_THINK_SLIDE;
+				break;
+
+			default:
+				thinkBranch = AI_THINK_OTHER;
+				return;
+		}
+	}
+
+	//puncho start - ai-harness: Minions::Decide::Perceive, braced here and not at the function top because
+	// Event_LocateEnemy also calls UpdateEnemyPosition from script, inside Decide::Script (00-PLAN.md §2.1)
+	{
+		PROFILE_STATIC_DESC( descPerceive, "Minions::Decide::Perceive", ::Optick::Category::AI );
+		idAIProfileScope scopePerceive( gameLocal.aiStats.usPerceive, descPerceive );
+		UpdateEnemyPosition();
+	}
+	//puncho end
+}
+
+/*
+=====================
+idAI::ThinkDecide
+
+Run the chosen branch's script; the phase block clears this member's pain before the next member decides.
+=====================
+*/
+void idAI::ThinkDecide( int previousTime, int time, bool phased )
+{
+	switch( thinkBranch )
+	{
+		case AI_THINK_HIDDEN :
+		case AI_THINK_DEAD :
+		case AI_THINK_FLY :
+		case AI_THINK_STATIC :
+		case AI_THINK_ANIM :
+		case AI_THINK_SLIDE :
+			UpdateAIScript();
+			break;
+
+		default:
+			break;	// none, physics, cinematic, other: no script
+	}
+
+	//puncho start - P2b.2.6 (F19): in the phase block this member's pain flags are cleared right after its own script, so
+	// damage a later member's decide or any move deals waits for its next script; Think clears them after the move
+	if( phased && thinkBranch >= AI_THINK_CINEMATIC )
+	{
+		AI_PAIN = false;
+		AI_SPECIAL_DAMAGE = 0;
+		AI_PUSHED = false;
+	}
+	//puncho end
+}
+
+/*
+=====================
+idAI::ThinkMove
+
+Move the chosen branch, then push moveables; a phased monster killed after sense moves as the dead do.
+=====================
+*/
+void idAI::ThinkMove( int previousTime, int time, bool phased )
+{
+	int branch = thinkBranch;
+	//puncho - P2b.2.6: in the phase block a monster another member killed after its sense phase moves as the dead do
+	if( phased && branch > AI_THINK_DEAD && move.moveType == MOVETYPE_DEAD )
+	{
+		branch = AI_THINK_DEAD;
+	}
+	switch( branch )
+	{
+		case AI_THINK_PHYSICS :
+			//puncho start - ai-harness: Minions::Move::Physics, so the Anim::Controllers reached through RunPhysics stays inside usMovePhysics (00-PLAN.md §2.1, D2)
+			{
+				PROFILE_STATIC_DESC( descPhysics, "Minions::Move::Physics", ::Optick::Category::Physics );
+				idAIProfileScope scopePhysics( gameLocal.aiStats.usMovePhysics, descPhysics );
+				RunPhysics();
+			}
+			//puncho end
+			break;
+
+		case AI_THINK_CINEMATIC :
+			if( !IsHidden() && torsoAnim.AnimDone( 0 ) )
+			{
+				PlayCinematic();
+			}
+			//puncho start - ai-harness: Minions::Move::Physics, so the Anim::Controllers reached through RunPhysics stays inside usMovePhysics (00-PLAN.md §2.1, D2)
+			{
+				PROFILE_STATIC_DESC( descPhysics, "Minions::Move::Physics", ::Optick::Category::Physics );
+				idAIProfileScope scopePhysics( gameLocal.aiStats.usMovePhysics, descPhysics );
+				RunPhysics();
+			}
+			//puncho end
+			break;
+
+		case AI_THINK_DEAD :
+			// dead monsters
+			DeadMove();
+			break;
+
+		case AI_THINK_FLY :
+			// flying monsters
+			FlyMove();
+			PlayChatter();
+			CheckBlink();
+			break;
+
+		case AI_THINK_STATIC :
+			// static monsters
+			StaticMove();
+			PlayChatter();
+			CheckBlink();
+			break;
+
+		case AI_THINK_ANIM :
+			// animation based movement
+			AnimMove();
+			PlayChatter();
+			CheckBlink();
+			break;
+
+		case AI_THINK_SLIDE :
+			// velocity based movement
+			SlideMove();
+			PlayChatter();
+			CheckBlink();
+			break;
+
+		default:
+			break;	// none, hidden, other
+	}
+	if( !phased && thinkBranch >= AI_THINK_CINEMATIC )
+	{
+		// clear pain flag so that we recieve any damage between now and the next time we run the script
+		AI_PAIN = false;
+		AI_SPECIAL_DAMAGE = 0;
+		AI_PUSHED = false;
+	}
+
+	if( af_push_moveables )
+	{
+		PushWithAF();
+	}
+}
+
+/*
+=====================
+idAI::ThinkPresent
+
+Service hidden animation, update effects and presentation, and draw the health display.
+=====================
+*/
+void idAI::ThinkPresent( int previousTime, int time )
+{
+	if( fl.hidden && allowHiddenMovement )
+	{
+		// UpdateAnimation won't call frame commands when hidden, so call them here when we allow hidden movement
+		animator.ServiceAnims( previousTime, time );
+	}
+	/*	this still draws in retail builds.. not sure why.. don't care at this point.
+		if ( !aas && developer.GetBool() && !fl.hidden && !num_cinematics ) {
+			gameRenderWorld->DrawText( "No AAS", physicsObj.GetAbsBounds().GetCenter(), 0.1f, colorWhite, gameLocal.GetLocalPlayer()->viewAngles.ToMat3(), 1, 1 );
+		}
+	*/
+
+	UpdateMuzzleFlash();
+	//puncho start - ai-harness: Anim::Update, braced because idAnimatedEntity::UpdateAnimation is shared (00-PLAN.md §2.1)
+	{
+		PROFILE_STATIC_DESC( descAnimUpdate, "Anim::Update", ::Optick::Category::Animation );
+		idAIProfileScope scopeAnimUpdate( gameLocal.aiStats.usAnimUpdate, descAnimUpdate );
+		UpdateAnimation();
+	}
+	//puncho end
+	UpdateParticles();
+	Present();
+	UpdateDamageEffects();
+	LinkCombat();
 
 	if( ai_showHealth.GetBool() )
 	{
@@ -1477,6 +1543,7 @@ void idAI::Think()
 		gameRenderWorld->DrawText( va( "%d", ( int )health ), this->GetEyePosition() + aboveHead, 0.5f, colorWhite, gameLocal.GetLocalPlayer()->viewAngles.ToMat3() );
 	}
 }
+//puncho end
 
 /***********************************************************************
 
@@ -3339,8 +3406,8 @@ void idAI::CaptureAvoidanceStats( bool reset )
 	for( idEntity* ent = gameLocal.activeEntities.Next(); ent != NULL; ent = ent->activeNode.Next() )
 	{
 		// Group 2 has its own unconditional pass, including during a cinematic.
-		if( ( !allGroups && ent->timeGroup != TIME_GROUP1 && ent->timeGroup != TIME_GROUP2 ) ||
-			( cinematicOnly && !ent->cinematic && ent->timeGroup != TIME_GROUP2 ) || !ent->IsType( idAI::Type ) )
+		if( ( !allGroups && ent->GetTimeGroup() != TIME_GROUP1 && ent->GetTimeGroup() != TIME_GROUP2 ) ||
+			( cinematicOnly && !ent->IsCinematic() && ent->GetTimeGroup() != TIME_GROUP2 ) || !ent->IsType( idAI::Type ) )
 		{
 			continue;
 		}
@@ -3348,7 +3415,7 @@ void idAI::CaptureAvoidanceStats( bool reset )
 		// Read-only gates from Think, GetMovePos and AnimMove. moveStatus is not a gate:
 		// GetMovePos resets it to MOVING, including when the preceding plan was blocked.
 		const moveCommand_t command = ai->move.moveCommand;
-		if( !( ai->thinkFlags & TH_THINK ) || ai->num_cinematics || ( !ai->allowHiddenMovement && ai->IsHidden() ) ||
+		if( !( ai->GetThinkFlags() & TH_THINK ) || ai->num_cinematics || ( !ai->allowHiddenMovement && ai->IsHidden() ) ||
 			command < NUM_NONMOVING_COMMANDS || command == MOVE_TO_POSITION_DIRECT ||
 			command == MOVE_SLIDE_TO_POSITION || command == MOVE_WANDER )
 		{
@@ -3361,7 +3428,7 @@ void idAI::CaptureAvoidanceStats( bool reset )
 		}
 		// A blocked-time move may still plan through the wandering fallback. Only test arrival when
 		// GetMovePos would. Group 2 can first think in the ordinary pass, then again at fast time.
-		const bool fastThink = ai->timeGroup == TIME_GROUP2 && ( !allGroups || ( cinematicOnly && !ai->cinematic ) );
+		const bool fastThink = ai->GetTimeGroup() == TIME_GROUP2 && ( !allGroups || ( cinematicOnly && !ai->IsCinematic() ) );
 		const int thinkTime = fastThink ? gameLocal.GetTimeGroupTime( 1 ) : gameLocal.time;
 		if( thinkTime > ai->move.blockTime )
 		{
@@ -4609,7 +4676,7 @@ const idDeclParticle* idAI::SpawnParticlesOnJoint( particleEmitter_t& pe, const 
 			pe.time = gameLocal.time;
 		}
 		pe.particle = static_cast<const idDeclParticle*>( declManager->FindType( DECL_PARTICLE, particleName ) );
-		gameLocal.smokeParticles->EmitSmoke( pe.particle, pe.time, gameLocal.random.CRandomFloat(), origin, axis, timeGroup /*_D3XP*/ );
+		gameLocal.smokeParticles->EmitSmoke( pe.particle, pe.time, gameLocal.random.CRandomFloat(), origin, axis, GetTimeGroup() /*_D3XP*/ );
 	}
 
 	return pe.particle;
@@ -5029,7 +5096,7 @@ void idAI::Activate( idEntity* activator )
 		}
 
 		// update the script in cinematics so that entities don't start anims or show themselves a frame late.
-		if( cinematic )
+		if( IsCinematic() )
 		{
 			UpdateAIScript();
 
@@ -6426,7 +6493,7 @@ idAI::UpdateParticles
 */
 void idAI::UpdateParticles()
 {
-	if( ( thinkFlags & TH_UPDATEPARTICLES ) && !IsHidden() )
+	if( ( GetThinkFlags() & TH_UPDATEPARTICLES ) && !IsHidden() )
 	{
 		idVec3 realVector;
 		idMat3 realAxis;
@@ -6451,7 +6518,7 @@ void idAI::UpdateParticles()
 					realVector = physicsObj.GetOrigin() + ( realVector + modelOffset ) * ( viewAxis * physicsObj.GetGravityAxis() );
 				}
 
-				if( !gameLocal.smokeParticles->EmitSmoke( particles[i].particle, particles[i].time, gameLocal.random.CRandomFloat(), realVector, realAxis, timeGroup /*_D3XP*/ ) )
+				if( !gameLocal.smokeParticles->EmitSmoke( particles[i].particle, particles[i].time, gameLocal.random.CRandomFloat(), realVector, realAxis, GetTimeGroup() /*_D3XP*/ ) )
 				{
 					if( restartParticles )
 					{
@@ -6864,6 +6931,8 @@ EVENT( EV_CombatNode_MarkUsed,				idCombatNode::Event_MarkUsed )
 EVENT( EV_Activate,							idCombatNode::Event_Activate )
 END_CLASS
 
+CLASS_SCHEMA_KEYS( idCombatNode, COMBAT_NODE_SCHEMA )	//puncho - P2b.2.5c: the FGD's rows and the row checks (Schema.h)
+
 /*
 =====================
 idCombatNode::idCombatNode
@@ -6929,11 +6998,9 @@ void idCombatNode::Spawn()
 	float yaw;
 	float height;
 
-	min_dist = spawnArgs.GetFloat( "min" );
-	max_dist = spawnArgs.GetFloat( "max" );
-	height = spawnArgs.GetFloat( "height" );
-	fov = spawnArgs.GetFloat( "fov", "60" );
-	offset = spawnArgs.GetVector( "offset" );
+	COMBAT_NODE_SCHEMA( SCHEMA_SPAWN, ( *this ) )	//puncho - P2b.2.5c: the keyed rows (AI.h), read where min_dist was
+	height = spawnArgs.GetFloat( "height" );	// HAND: a local
+	fov = spawnArgs.GetFloat( "fov", "60" );	// HAND: a local
 
 	const idVec3& org = GetPhysics()->GetOrigin() + offset;
 	min_height = org.z - height * 0.5f;
@@ -6947,8 +7014,6 @@ void idCombatNode::Spawn()
 
 	idAngles rightang( 0.0f, yaw - fov * 0.5f + 90.0f, 0.0f );
 	cone_right = rightang.ToForward();
-
-	disabled = spawnArgs.GetBool( "start_off" );
 }
 
 /*
@@ -7140,7 +7205,7 @@ void idAI::Event_SettleCorpse()
 	Event_PersistCorpse();
 }
 
-//puncho start - P2b.1.2: idAI's map record section (AI_RECORD_SCHEMA): the store's corpse rule. An AI that died in play
+//puncho start - P2b.1.2: idAI's map record section (AI_SCHEMA): the store's corpse rule. An AI that died in play
 // never comes back as an AI with health <= 0: it records as the corpse it leaves, or as REMOVED when it leaves none
 // (corpses off, gibbed, persist_lifetime 0). A departure can precede the settle event, so the pose is taken from the AI
 // itself (idCorpse::WriteActorPose), at the origin the AI stands at.
@@ -7157,8 +7222,8 @@ void idAI::WriteRecord( idRecordOut& rec, const recordFrame_t& frame ) const
 	}
 	idActor::WriteRecord( rec, frame );
 	rec.BeginSection( RECORD_SECTION_AI, RECORD_VERSION_AI );
-	AI_RECORD_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
-	AI_RECORD_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
+	AI_SCHEMA( SCHEMA_RECORD_DIFF, ( *this ) )
+	AI_SCHEMA( SCHEMA_RECORD_WRITE, ( *this ) )
 	rec.EndSection();
 }
 

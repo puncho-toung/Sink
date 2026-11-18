@@ -75,6 +75,65 @@ ID_INLINE void iceLightStyleState_t::Reset()
 
 //class idStaticEntity;
 
+//puncho start - P2b.2.5b: idLight's list (K2). Save and Restore expand the S rows; the render light, the prelight model
+// flag (written false, read and dropped) and the fade colours have no schema type, HAND rows (K8, Save<n> and Restore<n>
+// in Light.cpp); modelTarget and emitterBroken (the last S row, as the emitters wrote it) restore only from saves that have them. Spawn reads the keyed rows through one SCHEMA_SPAWN,
+// health again over idEntity's read; style's getter took the int -1, the same value, and has no FGD line (the exporter
+// writes the light's style choices itself). The KEYONLY rows are the keys Spawn reads by hand (into locals, tested in
+// place) and the keys BecomeBroken and FadeIn read late, named for the key unless the key's member is a row already
+// (modelTargetKey); color drops the key's underscore. The rows after color are the keys
+// idGameEdit::ParseSpawnArgsToRenderLight reads that idEntity's list does not hold, KEYONLY with each read's default
+#define LIGHT_SCHEMA( X, s ) \
+	X( s, RenderLight,			HAND,		S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,			NODEF,	NOEDIT,	OBJ ) \
+	X( s, PrelightModel,		HAND,		S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,			NODEF,	NOEDIT,	OBJ ) \
+	X( s, localLightOrigin,		VEC3,		S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,			NODEF,	NOEDIT,	OBJ ) \
+	X( s, localLightAxis,		MAT3,		S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,			NODEF,	NOEDIT,	OBJ ) \
+	X( s, brokenModel,			STRING,		S,		RAW,	0,	SCHEMA_STOCK,	"broken",		"",		"Model to use when the light is broken (defaults to model name with '_broken' appended to name).",	OBJ ) \
+	X( s, levels,				INT,		S,		RAW,	0,	SCHEMA_STOCK,	"levels",		"1",	"The number of times a light must be triggered until it turns off. Each time it's triggered, it's dimmed to a lower level.",	OBJ ) \
+	X( s, currentLevel,			INT,		S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,			NODEF,	NOEDIT,	OBJ ) \
+	X( s, baseColor,			VEC3,		S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,			NODEF,	NOEDIT,	OBJ ) \
+	X( s, breakOnTrigger,		BOOL,		S,		RAW,	0,	SCHEMA_STOCK,	"break",		"0",	"Break when triggered.",	OBJ ) \
+	X( s, count,				INT,		S,		RAW,	0,	SCHEMA_STOCK,	"count",		"1",	"How many times light must be triggered to toggle.",	OBJ ) \
+	X( s, triggercount,			INT,		S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,			NODEF,	NOEDIT,	OBJ ) \
+	X( s, lightParent,			OBJECT,		S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,			NODEF,	NOEDIT,	OBJ ) \
+	X( s, FadeFrom,				HAND,		S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,			NODEF,	NOEDIT,	OBJ ) \
+	X( s, FadeTo,				HAND,		S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,			NODEF,	NOEDIT,	OBJ ) \
+	X( s, fadeStart,			INT,		S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,			NODEF,	NOEDIT,	OBJ ) \
+	X( s, fadeEnd,				INT,		S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,			NODEF,	NOEDIT,	OBJ ) \
+	X( s, soundWasPlaying,		BOOL,		S,		RAW,	0,	SCHEMA_STOCK,	NOKEY,			NODEF,	NOEDIT,	OBJ ) \
+	X( s, modelTarget,			STRUCT,		S,		RAW,	0,	BUILD_NUMBER_SAVE_VERSION_LIGHT_MODELTARGET_CHANGE,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, emitterBroken,		BOOL,		S,		RAW,	0,	BUILD_NUMBER_SAVE_VERSION_EMITTERS,	NOKEY,	NODEF,	NOEDIT,	OBJ ) \
+	X( s, health,				INT,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"health",		"0",	"Amount of damage to receive before becoming broken. 0 is nonbreakable.",	OBJ ) \
+	X( s, lightStyleFrameTime,	INT,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"ls_frametime",	"100",	"Milliseconds each letter of the light style lasts.",	OBJ ) \
+	X( s, lightStyle,			INT,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"style",		"-1",	NOEDIT,	OBJ ) \
+	X( s, mat_demonic,			STRING,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"mat_demonic",	NODEF,	"Demonic shader to use if in demonic mode.",	KEYONLY ) \
+	X( s, start_off,			BOOL,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"start_off",	"0",	"Causes the light to be off when the level starts.",	KEYONLY ) \
+	X( s, midnight_override,	BOOL,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"midnight_override",	"0",	"The light stays on in a Midnight CTF game.",	KEYONLY ) \
+	X( s, num_styles,			INT,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"num_styles",	"0",	"Number of light_style0.. keys; 0 uses the twelve predefined Quake styles.",	KEYONLY ) \
+	X( s, model,				STRING,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"model",		NODEF,	"Visual model; a breakable light's broken model is named after it.",	KEYONLY ) \
+	X( s, modelTargetKey,		STRING,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"modelTarget",	NODEF,	"Name of the func_static that shows the light's model.",	KEYONLY ) \
+	X( s, nonsolid,				BOOL,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"nonsolid",		"0",	"A breakable light, and its broken model, are not solid.",	KEYONLY ) \
+	X( s, hideModelOnBreak,		BOOL,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"hideModelOnBreak",	"0",	"Hides the model when broken.",	KEYONLY ) \
+	X( s, def_damage,			STRING,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"def_damage",	NODEF,	"Radius damage def to apply when the light breaks.",	KEYONLY ) \
+	X( s, snd_broken,			STRING,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"snd_broken",	"",		"Sound shader to use when broken.",	KEYONLY ) \
+	X( s, mtr_broken,			STRING,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"mtr_broken",	"",		"Material to use when broken.",	KEYONLY ) \
+	X( s, color,				VEC3,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"_color",		"1 1 1",	"Color the light fades in to.",	KEYONLY ) \
+	X( s, light_origin,			VEC3,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"light_origin",	"",		NOEDIT,	KEYONLY ) \
+	X( s, light_target,			VEC3,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"light_target",	"",		NOEDIT,	KEYONLY ) \
+	X( s, light_up,				VEC3,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"light_up",		"",		NOEDIT,	KEYONLY ) \
+	X( s, light_right,			VEC3,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"light_right",	"",		NOEDIT,	KEYONLY ) \
+	X( s, light_start,			VEC3,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"light_start",	"0 0 0",	NOEDIT,	KEYONLY ) \
+	X( s, light_end,			VEC3,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"light_end",	"",		NOEDIT,	KEYONLY ) \
+	X( s, light_center,			VEC3,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"light_center",	"0 0 0",	NOEDIT,	KEYONLY ) \
+	X( s, light_radius,			VEC3,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"light_radius",	"300 300 300",	NOEDIT,	KEYONLY ) \
+	X( s, light,				FLOAT,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"light",		"300",	NOEDIT,	KEYONLY ) \
+	X( s, light_rotation,		STRING,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"light_rotation",	"1 0 0 0 1 0 0 0 1",	NOEDIT,	KEYONLY ) \
+	X( s, light_angles,			VEC3,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"light_angles",	"0 0 0",	NOEDIT,	KEYONLY ) \
+	X( s, nospecular,			BOOL,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"nospecular",	"0",	NOEDIT,	KEYONLY ) \
+	X( s, parallel,				BOOL,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"parallel",		"0",	NOEDIT,	KEYONLY ) \
+	X( s, texture,				STRING,		NOCH,	RAW,	0,	SCHEMA_STOCK,	"texture",		"lights/squarelight1",	NOEDIT,	KEYONLY )
+//puncho end
+
 class idLight : public idEntity
 {
 public:
@@ -136,6 +195,16 @@ public:
 	{
 		return renderLight;
 	}
+	//puncho start - P2b.2.5b: testSpawnRead's rows
+	int				LightStyle() const
+	{
+		return lightStyle;
+	}
+	int				LightStyleFrameTime() const
+	{
+		return lightStyleFrameTime;
+	}
+	//puncho end
 
 	enum
 	{
@@ -194,6 +263,16 @@ private:
 	{
 		return emitterBroken && renderLight.emitter.enabled;
 	}
+	//puncho end
+	//puncho start - P2b.2.5b: LIGHT_SCHEMA's HAND rows (K8)
+	void			SaveRenderLight( idSaveGame* savefile ) const;
+	void			RestoreRenderLight( idRestoreGame* savefile );
+	void			SavePrelightModel( idSaveGame* savefile ) const;
+	void			RestorePrelightModel( idRestoreGame* savefile );
+	void			SaveFadeFrom( idSaveGame* savefile ) const;
+	void			RestoreFadeFrom( idRestoreGame* savefile );
+	void			SaveFadeTo( idSaveGame* savefile ) const;
+	void			RestoreFadeTo( idRestoreGame* savefile );
 	//puncho end
 
 	void			Event_SetShader( const char* shadername );

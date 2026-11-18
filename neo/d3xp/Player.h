@@ -259,6 +259,33 @@ typedef struct
 	idVec3	pos;
 } aasLocation_t;
 
+//puncho - P2b.2.5c: idPlayer's spawn rows (K2), Spawn only (Save and Restore stay hand-written): KEYONLY the keys
+// read by hand in Spawn or late in Init, SpawnToPoint, RestorePersistantInfo (health's "100", over idEntity's "0"),
+// UpdateSkinSetup, GivePowerUp, GivePDA, SelectWeapon, TogglePDA, UpdateDeathSkin, PlayHelltimeStopSound, Kill, Killed,
+// Event_GetPreviousWeapon and GetExpansionType; Spawn moves no member. A key a def documents with an editor_* line is
+// NOEDIT (ACTOR_SCHEMA's rule)
+#define PLAYER_SCHEMA( X, s ) \
+	X( s, mass,					FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"mass",					"100",		NOEDIT,	KEYONLY ) \
+	X( s, cursor,				STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"cursor",				"",			"GUI to use for the local player's cursor.",	KEYONLY ) \
+	X( s, bone_hips,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"bone_hips",			"",			"Name of the player's hip joint.",	KEYONLY ) \
+	X( s, bone_chest,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"bone_chest",			"",			"Name of the player's chest joint.",	KEYONLY ) \
+	X( s, bone_head,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"bone_head",			"",			"Name of the player's head joint.",	KEYONLY ) \
+	X( s, fx_spawn,				STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"fx_spawn",				"",			"Effect to play when the player spawns in multiplayer.",	KEYONLY ) \
+	X( s, health,				INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"health",				"100",		NOEDIT,	KEYONLY ) \
+	X( s, skin_invisibility,	STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"skin_invisibility",	"",			"Skin to use while the invisibility powerup is active.",	KEYONLY ) \
+	X( s, snd_berserk_third,	STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"snd_berserk_third",	"",			"Sound to play when the player receives the berserk powerup.",	KEYONLY ) \
+	X( s, snd_megahealth,		STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"snd_megahealth",		"",			"Sound to play when the player receives the megahealth powerup.",	KEYONLY ) \
+	X( s, snd_helltime_start,	STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"snd_helltime_start",	"",			"Sound to play when helltime starts.",	KEYONLY ) \
+	X( s, snd_helltime_loop,	STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"snd_helltime_loop",	"",			"Looping sound to play during helltime.",	KEYONLY ) \
+	X( s, pda_name,				STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"pda_name",				"personal",	NOEDIT,	KEYONLY ) \
+	X( s, text_infoTitle,		STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"text_infoTitle",		"",			"Title of the tip shown when the player has no PDA.",	KEYONLY ) \
+	X( s, text_noPDA,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"text_noPDA",			"",			"Text of the tip shown when the player has no PDA.",	KEYONLY ) \
+	X( s, deathSkinTime,		INT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"deathSkinTime",		"0",		"Game time in milliseconds after which the dead player's combat contents are cleared.",	KEYONLY ) \
+	X( s, snd_helltime_stop,	STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"snd_helltime_stop",	"",			"Sound to play when helltime stops.",	KEYONLY ) \
+	X( s, respawn_delay,		FLOAT,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"respawn_delay",		"0",		"Minimum delay in seconds before the player may respawn after death.",	KEYONLY ) \
+	X( s, def_weapon0,			STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"def_weapon0",			"",			"Entity def of the weapon in slot 0 (the def_weapon<N> family names the slots); getPreviousWeapon returns it while there is no previous weapon.",	KEYONLY ) \
+	X( s, player_expansion,		STRING,	NOCH,	RAW,	0,	SCHEMA_STOCK,	"player_expansion",		"d3",		"Expansion used by the player: d3, d3xp or d3le.",	KEYONLY )
+
 class idPlayer : public idActor
 {
 public:
