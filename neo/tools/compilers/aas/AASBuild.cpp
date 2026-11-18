@@ -36,11 +36,11 @@ If you have questions concerning this license or the applicable additional terms
 #include "../dmap/CompilerPhase.h" //puncho - TC0
 #include "../../../aas/AASFile_router.h"	//puncho - R2 router
 
-//puncho start - R2 router: an AAS compile also writes the router's files
+//puncho start - R2 router: an AAS compile also bakes the router's lists
 #ifndef _WIN32
 #include <sys/wait.h>	// WEXITSTATUS, for the bake's result
 #endif
-static idCVar aas_routerBake( "aas_routerBake", "1", CVAR_TOOL | CVAR_BOOL, "after an AAS compile, bake the router's walk lists beside each AAS file it wrote (needs the program aasrouterbake in the base path); the router maps are written either way" );
+static idCVar aas_routerBake( "aas_routerBake", "1", CVAR_TOOL | CVAR_BOOL, "after an AAS compile, bake the router's walk lists beside each AAS file it wrote (needs the program aasrouterbake in the base path); 0: a compile writes no router file, and the command routerMap writes the router maps only" );
 static void RemoveRouterFiles( const idStr& aasName );
 static void RouterFilesAfterAAS( const idStr& mapName, const char* aasType );
 //puncho end - R2 router
@@ -1348,7 +1348,7 @@ bool RunAAS( const idCmdArgs& args ) //puncho - TC1: return before command Error
 				break;
 			}
 //puncho end - P2b.3.8, TC1
-			//puncho start - R2 router: the router's files follow each AAS file as soon as it is written, so a
+			//puncho start - R2 router: the router's lists follow each AAS file as soon as it is written, so a
 			// later type that ends the command cannot leave this one without them
 			if( result == AAS_BUILD_OK )
 			{
@@ -1437,7 +1437,7 @@ static bool RunAASDir( const idCmdArgs& args ) //puncho - TC1: return before com
 					succeeded = false;
 					break;
 				}
-				//puncho start - R2 router: the router's files follow each AAS file as soon as it is written
+				//puncho start - R2 router: the router's lists follow each AAS file as soon as it is written
 				if( result == AAS_BUILD_OK )
 				{
 					aas.Shutdown();
@@ -1519,7 +1519,7 @@ static bool RunReach( const idCmdArgs& args ) //puncho - TC1: return before comm
 				succeeded = false;
 				break;
 			}
-			//puncho start - R2 router: the reachabilities changed, so this AAS file's router files are made again
+			//puncho start - R2 router: the reachabilities changed, so this AAS file's router lists are baked again
 			if( result == AAS_BUILD_OK )
 			{
 				aas.Shutdown();
@@ -1648,7 +1648,7 @@ static bool BakeRouterLists( const char* rtgName, const char* listsName )
 	doorsName += ".rtd";
 	if( fileSystem->GetFileLength( doorsName ) >= 0 )
 	{
-		common->Warning( "routerMap: %s is there: the lists of a map with a door list are baked by hand, %s not baked", doorsName.c_str(), listsName );
+		common->Warning( "routerMap: %s is there: the lists of a map with a door list are baked by hand (the command routerMap writes the router map for it), %s not baked", doorsName.c_str(), listsName );
 		return true;
 	}
 
@@ -1717,14 +1717,18 @@ static bool BakeRouterLists( const char* rtgName, const char* listsName )
 ============
 WriteRouterFiles
 
-  For every AAS file the map has (with onlyTypes: for the AAS types it names): the two router maps beside
-  it (<aas file name>.walk.rtg and .fly.rtg), and, with bake, the walk lists the game reads
-  (<aas file name>.walk.nlw4). The fly lists are not baked here: no flying monster has used the router yet,
-  and their bake takes other levels.
+  For every AAS file the map has (with onlyTypes: for the AAS types it names): with bake, the walk lists
+  the game reads (<aas file name>.walk.nlw4). The bake program takes its map from a file, the walk router
+  map (<aas file name>.walk.rtg), and writes a certificate beside the lists.
+  With keepMaps (the command routerMap) both router maps (.walk.rtg and .fly.rtg) are written and stay, and
+  so does the certificate. Without it (after an AAS compile) the lists are the only file that stays: the
+  fly map is not written, and the walk map and the certificate are removed after the bake, however it ended.
+  The fly lists are not baked here: no flying monster has used the router yet, and their bake takes other
+  levels.
   False when a map could not be built or written, a bake failed, or no AAS file was found.
 ============
 */
-static bool WriteRouterFiles( const idStr& mapName, bool bake, const idStrList* onlyTypes )
+static bool WriteRouterFiles( const idStr& mapName, bool bake, bool keepMaps, const idStrList* onlyTypes )
 {
 	static const int masks[2] = { TFL_WALK | TFL_AIR, TFL_WALK | TFL_AIR | TFL_FLY };
 	static const char* labels[2] = { "walk", "fly" };
@@ -1758,7 +1762,9 @@ static bool WriteRouterFiles( const idStr& mapName, bool bake, const idStrList* 
 		else
 		{
 			aasFiles++;
-			for( int p = 0; p < 2; p++ )
+			// after an AAS compile only the walk map is made: the bake reads it
+			const int numMasks = keepMaps ? 2 : 1;
+			for( int p = 0; p < numMasks; p++ )
 			{
 				idAASRouterMap map;
 				idStr error;
@@ -1779,18 +1785,30 @@ static bool WriteRouterFiles( const idStr& mapName, bool bake, const idStrList* 
 				if( !wrote )
 				{
 					common->Warning( "routerMap: cannot write %s", outName.c_str() );
+					if( !keepMaps )
+					{
+						fileSystem->RemoveFile( outName.c_str() );		// what was written of it
+					}
 					succeeded = false;
 					continue;
 				}
 				common->Printf( "routerMap: wrote %s: %d areas, %d reaches\n", outName.c_str(), map.numAreas, map.edges.Num() );
 
+				const idStr listsName = name + "." + labels[p] + ".nlw4";
 				if( bake && p == 0 )
 				{
-					const idStr listsName = name + "." + labels[p] + ".nlw4";
 					if( !BakeRouterLists( outName.c_str(), listsName.c_str() ) )
 					{
 						succeeded = false;
 					}
+				}
+				if( !keepMaps )
+				{
+					// The lists are the only router file an AAS compile leaves. The map was the bake's input
+					// (routerMap writes it again), and the certificate repeats what the bake printed.
+					fileSystem->RemoveFile( outName.c_str() );
+					fileSystem->RemoveFile( va( "%s.certificate.txt", listsName.c_str() ) );
+					common->Printf( "routerMap: removed %s again: only the bake reads it\n", outName.c_str() );
 				}
 			}
 		}
@@ -1811,17 +1829,22 @@ static bool WriteRouterFiles( const idStr& mapName, bool bake, const idStrList* 
 ============
 RouterFilesAfterAAS
 
-  One AAS file was written. Its router maps are made, and its lists are baked unless aas_routerBake is 0.
-  The files made from the file as it was before are gone already: idAASBuild removes them just before it
-  writes (RemoveRouterFiles). A failure here is printed and does not fail the AAS compile: without lists
-  the game routes the stock way.
+  One AAS file was written. Unless aas_routerBake is 0 its walk lists are baked, and they are the only
+  router file that stays beside it (WriteRouterFiles without keepMaps); with aas_routerBake 0 nothing is
+  written. The files made from the file as it was before are gone already: idAASBuild removes them just
+  before it writes (RemoveRouterFiles). A failure here is printed and does not fail the AAS compile: without
+  lists the game routes the stock way.
 ============
 */
 static void RouterFilesAfterAAS( const idStr& mapName, const char* aasType )
 {
+	if( !aas_routerBake.GetBool() )
+	{
+		return;
+	}
 	idStrList onlyType;
 	onlyType.Append( aasType );
-	WriteRouterFiles( mapName, aas_routerBake.GetBool(), &onlyType );
+	WriteRouterFiles( mapName, true, false, &onlyType );
 }
 
 /*
@@ -1829,9 +1852,10 @@ static void RouterFilesAfterAAS( const idStr& mapName, const char* aasType )
 RunRouterMap
 
   rbdmap -nogui routerMap <mapfile>
-  The router's files for a map whose AAS files exist already: WriteRouterFiles for every AAS file, with the
-  bake unless aas_routerBake is 0. An AAS compile (runAAS, runAASDir, runReach, dmap) does the same by
-  itself for the AAS files it wrote.
+  The router's files for a map whose AAS files exist already: for every AAS file both router maps, and,
+  unless aas_routerBake is 0, the walk lists with their certificate (WriteRouterFiles with keepMaps). An
+  AAS compile (runAAS, runAASDir, runReach, dmap) bakes the lists by itself for the AAS files it wrote and
+  leaves only them.
 ============
 */
 bool RunRouterMap( const idCmdArgs& args )
@@ -1856,7 +1880,7 @@ bool RunRouterMap( const idCmdArgs& args )
 		mapName = "maps/" + mapName;
 	}
 
-	const bool succeeded = WriteRouterFiles( mapName, aas_routerBake.GetBool(), NULL );
+	const bool succeeded = WriteRouterFiles( mapName, aas_routerBake.GetBool(), true, NULL );
 
 	common->SetRefreshOnPrint( false );
 	common->PrintWarnings();

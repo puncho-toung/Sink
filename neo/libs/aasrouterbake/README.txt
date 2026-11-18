@@ -5,9 +5,11 @@ What it is
   The game's baked router ( cvar aas_router, neo/d3xp/ai/AAS_router.cpp, neo/libs/aasrouter/ ) reads a lists
   file beside each AAS file: "<aas file>.walk.nlw4". This program makes that file from a router map
   ( "<aas file>.walk.rtg" ), which the map compiler writes. After an AAS compile the map compiler starts
-  this program by itself ( neo/tools/compilers/aas/AASBuild.cpp, BakeRouterLists; cvar aas_routerBake ).
-  It looks for it in the base path under the name aasrouterbake ( aasrouterbake.exe on Windows ); the build
-  copies the program there ( CMakeLists.txt in this folder ).
+  this program by itself ( neo/tools/compilers/aas/AASBuild.cpp, BakeRouterLists; cvar aas_routerBake )
+  and then removes the router map and the certificate again: the lists are the only file a compile leaves.
+  The command "rbdmap -nogui routerMap <map>" writes the router maps of a map's AAS files and keeps them.
+  The map compiler looks for this program in the base path under the name aasrouterbake ( aasrouterbake.exe
+  on Windows ); the build copies the program there ( CMakeLists.txt in this folder ).
 
   By hand:  set RT_MAP=<file.rtg> and OD_DOORS=bridge in the environment, then
             aasrouterbake 2 "128:4:512,256:8:3072,1024:8:0:4096" FB 1 0 <output file>
