@@ -1,0 +1,37 @@
+// Stands in for the header <bits/stdc++.h> of GCC's standard library, which two of the sources in ../../src
+// include. Only a compiler whose library has no such header is given this folder as an include path.
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <bitset>
+#include <cassert>
+#include <chrono>
+#include <cinttypes>
+#include <climits>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <deque>
+#include <fstream>
+#include <functional>
+#include <iomanip>
+#include <iostream>
+#include <limits>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <numeric>
+#include <queue>
+#include <random>
+#include <set>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <thread>
+#include <tuple>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>

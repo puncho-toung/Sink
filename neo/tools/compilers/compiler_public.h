@@ -45,6 +45,7 @@ void Dmap_f( const idCmdArgs& args );
 class idMapFile;
 bool CM_CompileMap( const idMapFile* mapFile );
 bool RunAAS( const idCmdArgs& args );
+bool RunRouterMap( const idCmdArgs& args );	//puncho - R2 router
 
 // AAS file compiler
 void RunAAS_f( const idCmdArgs& args );

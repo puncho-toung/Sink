@@ -33,6 +33,10 @@ If you have questions concerning this license or the applicable additional terms
 #include "../../../aas/AASFile_local.h"
 #include "AASCluster.h"
 
+//puncho start - P2b.3.8
+idCVar aas_fixInvalidPortals( "aas_fixInvalidPortals", "0", CVAR_TOOL | CVAR_BOOL, "remove one-sided cluster portals using the opposite face area" );
+//puncho end - P2b.3.8
+
 
 /*
 ================
@@ -498,7 +502,10 @@ void idAASCluster::RemoveInvalidPortals()
 		{
 			face1Num = file->faceIndex[ file->areas[i].firstFace + j ];
 			face1 = &file->faces[ abs( face1Num ) ];
-			otherAreaNum = face1->areas[ face1Num < 0 ];
+//puncho start - P2b.3.8
+			// StoreFile puts this area on side 0 for a positive face index.
+			otherAreaNum = face1->areas[ aas_fixInvalidPortals.GetBool() ? face1Num > 0 : face1Num < 0 ];
+//puncho end - P2b.3.8
 
 			if( !otherAreaNum )
 			{
@@ -509,7 +516,7 @@ void idAASCluster::RemoveInvalidPortals()
 			{
 				face2Num = file->faceIndex[ file->areas[i].firstFace + k ];
 				face2 = &file->faces[ abs( face2Num ) ];
-				if( otherAreaNum == face2->areas[ face2Num < 0 ] )
+				if( otherAreaNum == face2->areas[ aas_fixInvalidPortals.GetBool() ? face2Num > 0 : face2Num < 0 ] )
 				{
 					break;
 				}
@@ -527,7 +534,9 @@ void idAASCluster::RemoveInvalidPortals()
 
 		if( numOpenAreas <= 1 )
 		{
-			file->areas[i].contents &= AREACONTENTS_CLUSTERPORTAL;
+//puncho start - P2b.3.8
+			file->areas[i].contents &= aas_fixInvalidPortals.GetBool() ? ~AREACONTENTS_CLUSTERPORTAL : AREACONTENTS_CLUSTERPORTAL;
+//puncho end - P2b.3.8
 			numInvalidPortals++;
 		}
 	}

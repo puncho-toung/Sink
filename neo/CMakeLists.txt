@@ -482,6 +482,8 @@ endif()
 # and it is ok to not support it until someone also supports TrenchBroomBFG on macOS
 if(NOT APPLE AND NOT FLATPAK)
 	add_subdirectory(tools/compilers)
+	# the bake program of the AAS router's lists, which the map compiler starts after an AAS compile
+	add_subdirectory(libs/aasrouterbake)
 endif()
 
 file(GLOB NATVIS_SOURCES .natvis)

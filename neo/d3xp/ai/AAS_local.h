@@ -124,6 +124,7 @@ typedef struct aasFlowField_s
 const int MAX_AAS_FLOW_FIELDS = 16;
 //puncho end
 
+class idAASRouter;	//puncho - R2 router (AAS_router.h)
 class idAASLocal : public idAAS
 {
 public:
@@ -167,6 +168,7 @@ public:
 private:
 	idAASFile* 					file;
 	idStr						name;
+	idAASRouter* 				router;					//puncho - R2 router: this file's baked router; NULL without router files or with aas_router 0
 
 private:	// routing data
 	idRoutingCache***			areaCacheIndex;			// for each area in each cluster the travel times to all other areas in the cluster
@@ -234,6 +236,10 @@ private:	// pathing
 	void						ShutdownFlowFields();	// WP-A6
 	void						FlushFlowFields() const;	// WP-A6: with the routing cache, on a kept AAS, at the use count's wrap
 	//puncho end
+	//puncho start - R2 router
+	void						SetupRouter();
+	void						ShutdownRouter();
+	//puncho end - R2 router
 	bool						EdgeSplitPoint( idVec3& split, int edgeNum, const idPlane& plane ) const;
 	bool						FloorEdgeSplitPoint( idVec3& split, int areaNum, const idPlane& splitPlane, const idPlane& frontPlane, bool closest ) const;
 	idVec3						SubSampleWalkPath( int areaNum, const idVec3& origin, const idVec3& start, const idVec3& end, int travelFlags, int& endAreaNum ) const;

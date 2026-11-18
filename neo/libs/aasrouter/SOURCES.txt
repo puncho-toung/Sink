@@ -1,0 +1,8 @@
+made by ../make_core.py from:
+rt_pack.h  from ../exp-active2/native-lists/pack4/nl_pack.h  sha256 09cc2fb86b232d97
+nl_ask.h  from ../exp-active2/native-lists/pack4/nl_ask.h  sha256 9aa03c4a97288933
+nl_walk.h  from ../exp-active2/native-lists/pack4/nl_walk.h  sha256 e54b5cd150c97bf6
+rt_doors.h  from ../exp-active2/native-lists/pack4/outdoor/doors/lastleg/dc_layer.h  sha256 54e6aef9cd7446ed
+dc_walk.h  from ../exp-active2/native-lists/pack4/outdoor/doors/lastleg/dc_walk.h  sha256 5dbab8eb7b09fbcd
+rt_gate.h  from ../exp-active2/native-lists/pack4/outdoor/doors/lastleg/ll_gate.h  sha256 c30840193664d53b
+rt_goaltable.h  from rt_goaltable.h  sha256 a37894a89637de9d
