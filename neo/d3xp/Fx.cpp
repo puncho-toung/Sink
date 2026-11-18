@@ -122,6 +122,7 @@ void idEntityFx::Restore( idRestoreGame* savefile )
 		if( hasObject )
 		{
 			savefile->ReadRenderLight( actions[i].renderLight );
+			actions[i].renderLight.volumetricMode = actions[i].renderLight.noShadows ? 1 : 0;	// as Run made it: the save stream holds no fog key
 			actions[i].lightDefHandle = gameRenderWorld->AddLightDef( &actions[i].renderLight );
 		}
 		else
@@ -493,6 +494,7 @@ void idEntityFx::Run( int time )
 						if( fxaction.noshadows )
 						{
 							useAction->renderLight.noShadows = true;
+							useAction->renderLight.volumetricMode = 1;		// a light the game makes without shadows lights the froxel fog whole ( renderLight_t::volumetricMode )
 						}
 						useAction->lightDefHandle = gameRenderWorld->AddLightDef( &useAction->renderLight );
 					}

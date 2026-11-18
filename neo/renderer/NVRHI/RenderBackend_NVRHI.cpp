@@ -645,7 +645,7 @@ carries the default textures of its own kind, so the forward shader needs only t
 image the two default light shaders share, 1 = the default point light's falloff, 2 = the default projected light's.
 ====================
 */
-nvrhi::ITexture* R_ForwardDefaultLightImage( int which )		// not static: the froxel fog's inject binds the same three ( VolumetricFogPass::CheckInjectSet )
+nvrhi::ITexture* R_ForwardDefaultLightImage( int which )		// declared in RenderBackend.h: the froxel fog's inject binds the same three
 {
 	const idMaterial* shader = ( which == 2 ) ? tr.defaultProjectedLight : tr.defaultPointLight;
 	idImage* image = ( which == 0 ) ? shader->GetStage( 0 )->texture.image : shader->LightFalloffImage();

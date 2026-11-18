@@ -31,6 +31,9 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "RenderCommon.h"
+// ---- TRACK V: the froxel fog's frontend hooks ----
+#include "VolumetricFog.h"
+// ---- END TRACK V ----
 
 #include <sys/DeviceManager.h>
 extern DeviceManager* deviceManager;
@@ -550,6 +553,9 @@ void idRenderWorldLocal::UpdateEntityDef( qhandle_t entityHandle, const renderEn
 				{
 					// only clear the dynamic model and interaction surfaces if they exist
 					c_callbackUpdate++;
+					// ---- TRACK V ( V3 ): the froxel fog hears of a caster that changes in place ----
+					R_VolumetricFogCasterChanged( def );
+					// ---- END TRACK V ----
 					R_ClearEntityDefDynamicModel( def );
 					def->parms = *re;
 					return;
@@ -560,6 +566,9 @@ void idRenderWorldLocal::UpdateEntityDef( qhandle_t entityHandle, const renderEn
 		// X0 ( H5, D67 ): the shadow cache hears of the frees an update or a free of one def makes; it filters the changes
 		// that matter itself. R_FreeDerivedData and R_CheckForEntityDefsUsingModel free without a call: those are epochs ( track S )
 		R_ShadowCacheNotifyEntity( def, re, SC_UPDATE );
+		// ---- TRACK V ( V3 ): the froxel fog hears where a caster stood before it changed ----
+		R_VolumetricFogCasterChanged( def );
+		// ---- END TRACK V ----
 
 		// save any decals if the model is the same, allowing marks to move with entities
 		if( def->parms.hModel == re->hModel )
@@ -630,6 +639,9 @@ void idRenderWorldLocal::FreeEntityDef( qhandle_t entityHandle )
 	}
 
 	R_ShadowCacheNotifyEntity( def, NULL, SC_FREE );
+	// ---- TRACK V ( V3 ): the froxel fog hears where a caster stood before it went ----
+	R_VolumetricFogCasterChanged( def );
+	// ---- END TRACK V ----
 	R_FreeEntityDefDerivedData( def, false, false );
 
 	// if we are playing a demo, these will have been freed

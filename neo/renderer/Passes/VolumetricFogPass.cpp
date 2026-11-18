@@ -34,6 +34,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "VolumetricFogPass.h"
 #include "VolumetricFogPass_cb.h"
+#include "renderer/VolumetricFog.h"		// the take rule and the reach
 
 idCVar r_volumetricFog( "r_volumetricFog", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "froxel fog in the main view: 0 = off ( no fog pass: the engine's picture without it ), 1 = on" );
 static idCVar r_volumetricFogColumnPixels( "r_volumetricFogColumnPixels", "12", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "the side of a froxel column in pixels; the grid follows the render size, and a grid of too many froxels gets wider columns", 4, 64 );
@@ -44,6 +45,11 @@ static idCVar r_volumetricFogAlbedo( "r_volumetricFogAlbedo", "0.9", CVAR_RENDER
 static idCVar r_volumetricFogFurnace( "r_volumetricFogFurnace", "0", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "test: above 0 the fog is the uniform test medium, lit by this radiance from every direction and by nothing else ( cut where the fog is so thick that the half-float volumes cannot hold the in-scatter )", 0.0f, 1000.0f );
 static idCVar r_volumetricFogAnisotropy( "r_volumetricFogAnisotropy", "0.4", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the fog's phase function ( Henyey-Greenstein g ): at 0 a light's fog is as bright from every side, above 0 it is brighter when looking toward the light, below 0 when looking along it", -0.9f, 0.9f );
 static idCVar r_volumetricFogCull( "r_volumetricFogCull", "2", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "how the fog's inject finds the lights of a froxel: 2 = the light lists' tile bits and Z-bins, 1 = every light record behind one sphere test per thread group, 0 = every light record ( the reference ); the three give the same fog, except that 2 leaves a light out behind a wall, where the portals clip the light's scissor", 0, 2 );
+static idCVar r_volumetricFogHistoryWeight( "r_volumetricFogHistoryWeight", "0.9", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the weight of last frame's fog in this frame's ( the history, reprojected and with each light's change added ); 0 = no history", 0.0f, 0.98f );
+static idCVar r_volumetricFogHistoryClipWeight( "r_volumetricFogHistoryClipWeight", "0.4", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the history's weight where it is clipped: near a light that moved, where a caster of a light changed, near a light that is new or whose colour changed much; at most the history's weight", 0.0f, 0.98f );
+static idCVar r_volumetricFogJitter( "r_volumetricFogJitter", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "the inject's sample moves inside the froxel from frame to frame, and the history averages the frames; 0 = the froxel's centre" );
+static idCVar r_volumetricFogSkip( "r_volumetricFogSkip", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "the inject skips the froxels behind the farthest surface of their column and its neighbours: no pixel reads them; 0 = it lights every froxel ( the furnace always does )" );
+static idCVar r_volumetricFogShadows( "r_volumetricFogShadows", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "the fog's inject looks each light's shadow up in the shadow atlas, one comparison per froxel; 0 = no lookup: a light whose row has a place is taken unshadowed, times its fade" );
 static idCVar r_volumetricFogDebug( "r_volumetricFogDebug", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "fog debug view in place of the picture: 1 = the transmittance to each pixel as grey, 2 = the slices as bands over the grid of columns", 0, 2 );
 
 // coefficients are stored times this, which keeps thin, dim fog out of the half floats' subnormal range
@@ -57,7 +63,8 @@ static const float FROXEL_OPACITY_AT_D	= 4.632f;
 // 47,432 ), and the stored in-scatter is cut at the bound
 static const float FROXEL_STORE_MAX		= 60000.0f;
 static const float FROXEL_MIN_FOG_DISTANCE	= 0.1f;
-// a bound on the froxels of one volume ( 8 bytes each: 32 MiB ); a grid past it gets wider columns
+// a bound on the froxels of one volume ( 8 bytes each: 32 MiB a volume; V3 has five such volumes ); a grid past it gets
+// wider columns
 static const int FROXEL_MAX_CELLS		= 4 << 20;
 // the probe's columns: the view's centre, its first column and row ( a corner ), the middle of its left edge
 static const int FROXEL_PROBE_COLUMNS	= 3;
@@ -66,6 +73,19 @@ static const int FROXEL_PROBE_COLUMNS	= 3;
 static const int FROXEL_PROBE_WAIT		= 3;
 // the engine framebuffer of the sky mask: the mask as colour, the view's depth image as depth
 static const char* const FROXEL_SKYMASK_TARGET = "_fogSkyMask";
+
+// V3: the radical inverse of index in base: the Halton sequence of the jitter ( a base per axis )
+static float FroxelHalton( int index, int base )
+{
+	float result = 0.0f;
+	float scale = 1.0f / base;
+	for( int i = index; i > 0; i /= base )
+	{
+		result += ( i % base ) * scale;
+		scale /= base;
+	}
+	return result;
+}
 
 // Set by the console command fogProbe, taken by the next fog view. Console commands run on the main thread, where
 // the backend runs too, so nothing else touches it
@@ -119,6 +139,13 @@ VolumetricFogPass::VolumetricFogPass( nvrhi::IDevice* device, CommonRenderPasses
 	, m_ViewGridWidth( 0 )
 	, m_ViewGridHeight( 0 )
 	, m_SliceStep( 0.0f )
+	, m_ResolvedIndex( 0 )
+	, m_PrevNumRecords( 0 )
+	, m_HistoryValid( false )
+	, m_HistoryFrame( 0 )
+	, m_HistorySliceStep( 0.0f )
+	, m_HistoryMedium( 0.0f )
+	, m_JitterIndex( 0 )
 	, m_ApplyColor( NULL )
 	, m_RenderedView( NULL )
 	, m_SkyMask( NULL )
@@ -138,6 +165,33 @@ VolumetricFogPass::VolumetricFogPass( nvrhi::IDevice* device, CommonRenderPasses
 	, m_ProbeSigmaS( 0.0f )
 {
 	memset( m_InjectSetKey, 0, sizeof( m_InjectSetKey ) );
+	memset( m_HistoryGrid, 0, sizeof( m_HistoryGrid ) );
+	memset( m_PrevFogBits, 0, sizeof( m_PrevFogBits ) );
+	m_HistoryMVP = renderMatrix_identity;
+	m_HistoryOrigin.Zero();
+
+	// V3: last fog view's records, and the indices of the lights that moved: the pass's own, made once
+	nvrhi::BufferDesc recordsDesc;
+	recordsDesc.byteSize = MAX_RECORD_LIGHTS * sizeof( recordLight_t );
+	recordsDesc.structStride = sizeof( recordLight_t );
+	recordsDesc.debugName = "Fog/PrevRecords";
+	recordsDesc.initialState = nvrhi::ResourceStates::ShaderResource;
+	recordsDesc.keepInitialState = true;
+	m_PrevRecords = device->createBuffer( recordsDesc );
+	nvrhi::BufferDesc movedDesc;
+	movedDesc.byteSize = MAX_RECORD_LIGHTS * sizeof( int );
+	movedDesc.structStride = sizeof( int );
+	movedDesc.debugName = "Fog/MovedRecords";
+	movedDesc.initialState = nvrhi::ResourceStates::ShaderResource;
+	movedDesc.keepInitialState = true;
+	m_MovedRecords = device->createBuffer( movedDesc );
+	nvrhi::BufferDesc casterDesc;
+	casterDesc.byteSize = MAX_RECORD_LIGHTS * 2 * FOG_CASTER_BOXES * sizeof( idVec4 );
+	casterDesc.structStride = sizeof( idVec4 );
+	casterDesc.debugName = "Fog/CasterBounds";
+	casterDesc.initialState = nvrhi::ResourceStates::ShaderResource;
+	casterDesc.keepInitialState = true;
+	m_CasterBounds = device->createBuffer( casterDesc );
 
 	nvrhi::BufferDesc constantBufferDesc;
 	constantBufferDesc.byteSize = sizeof( froxelConstants_t );
@@ -149,7 +203,8 @@ VolumetricFogPass::VolumetricFogPass( nvrhi::IDevice* device, CommonRenderPasses
 
 	// the kernels are found here, at the pass's first use ( F17 ): a run with the fog off never loads them
 	InitInject();
-	InitKernel( m_Resolve, "builtin/volumetrics/froxel_resolve", true );
+	InitResolve();
+	InitColumns();
 	InitKernel( m_Integrate, "builtin/volumetrics/froxel_integrate", true );
 
 	const idList<shaderMacro_t> noMacros;
@@ -226,6 +281,70 @@ void VolumetricFogPass::InitKernel( kernel_t& kernel, const char* shaderName, bo
 
 /*
 ========================
+VolumetricFogPass::InitResolve
+
+The resolve ( V3 ): this frame's injected volume, the state the inject wrote and last frame's resolved volume, read
+through a linear sampler, into this frame's resolved volume. Its sets are made with the volumes ( CheckVolumes ), one
+for each turn of the two resolved volumes.
+========================
+*/
+void VolumetricFogPass::InitResolve()
+{
+	const idList<shaderMacro_t> noMacros;
+	m_Resolve.shader = renderProgManager.GetShader( renderProgManager.FindShader( "builtin/volumetrics/froxel_resolve", SHADER_STAGE_COMPUTE, "", noMacros, true, LAYOUT_DRAW_VERT ) );
+
+	nvrhi::BindingLayoutDesc layoutDesc;
+	layoutDesc.visibility = nvrhi::ShaderType::Compute;
+	layoutDesc.bindings =
+	{
+		nvrhi::BindingLayoutItem::VolatileConstantBuffer( 1 ),
+		nvrhi::BindingLayoutItem::Texture_SRV( 0 ),
+		nvrhi::BindingLayoutItem::Texture_SRV( 1 ),
+		nvrhi::BindingLayoutItem::Texture_SRV( 2 ),
+		nvrhi::BindingLayoutItem::Sampler( 0 ),
+		nvrhi::BindingLayoutItem::Texture_UAV( 0 )
+	};
+	m_Resolve.layout = m_Device->createBindingLayout( layoutDesc );
+
+	nvrhi::ComputePipelineDesc pipelineDesc;
+	pipelineDesc.bindingLayouts = { m_Resolve.layout };
+	pipelineDesc.CS = m_Resolve.shader;
+	m_Resolve.pipeline = m_Device->createComputePipeline( pipelineDesc );
+}
+
+/*
+========================
+VolumetricFogPass::InitColumns
+
+The columns ( V3 ): the scene's depth as the apply reads it and the sky mask into the farthest surface of each column
+of the grid. Its set names the engine's depth and the sky mask, whose objects change from frame to frame, and comes
+from the engine's binding cache.
+========================
+*/
+void VolumetricFogPass::InitColumns()
+{
+	const idList<shaderMacro_t> noMacros;
+	m_ColumnsKernel.shader = renderProgManager.GetShader( renderProgManager.FindShader( "builtin/volumetrics/froxel_columns", SHADER_STAGE_COMPUTE, "", noMacros, true, LAYOUT_DRAW_VERT ) );
+
+	nvrhi::BindingLayoutDesc layoutDesc;
+	layoutDesc.visibility = nvrhi::ShaderType::Compute;
+	layoutDesc.bindings =
+	{
+		nvrhi::BindingLayoutItem::VolatileConstantBuffer( 1 ),
+		nvrhi::BindingLayoutItem::Texture_SRV( 0 ),
+		nvrhi::BindingLayoutItem::Texture_SRV( 1 ),
+		nvrhi::BindingLayoutItem::Texture_UAV( 0 )
+	};
+	m_ColumnsKernel.layout = m_Device->createBindingLayout( layoutDesc );
+
+	nvrhi::ComputePipelineDesc pipelineDesc;
+	pipelineDesc.bindingLayouts = { m_ColumnsKernel.layout };
+	pipelineDesc.CS = m_ColumnsKernel.shader;
+	m_ColumnsKernel.pipeline = m_Device->createComputePipeline( pipelineDesc );
+}
+
+/*
+========================
 VolumetricFogPass::InitInject
 
 The inject kernel ( V2 ): its shader, its layout and its pipeline. Besides the constants at b1 and the injected
@@ -252,7 +371,15 @@ void VolumetricFogPass::InitInject()
 		nvrhi::BindingLayoutItem::Texture_SRV( 4 ),
 		nvrhi::BindingLayoutItem::Texture_SRV( 5 ),
 		nvrhi::BindingLayoutItem::Texture_SRV( 6 ),
-		nvrhi::BindingLayoutItem::Sampler( 0 )
+		nvrhi::BindingLayoutItem::Texture_SRV( 7 ),
+		nvrhi::BindingLayoutItem::Sampler( 0 ),
+		nvrhi::BindingLayoutItem::Sampler( 1 ),
+		nvrhi::BindingLayoutItem::Texture_UAV( 1 ),
+		nvrhi::BindingLayoutItem::StructuredBuffer_SRV( 8 ),
+		nvrhi::BindingLayoutItem::StructuredBuffer_SRV( 9 ),
+		nvrhi::BindingLayoutItem::StructuredBuffer_SRV( 10 ),
+		nvrhi::BindingLayoutItem::Texture_SRV( 11 ),
+		nvrhi::BindingLayoutItem::StructuredBuffer_SRV( 12 )
 	};
 	m_Inject.layout = m_Device->createBindingLayout( layoutDesc );
 
@@ -262,33 +389,31 @@ void VolumetricFogPass::InitInject()
 	m_Inject.pipeline = m_Device->createComputePipeline( pipelineDesc );
 }
 
-// The inject's three light images are the forward layouts' ( renderer/NVRHI/RenderBackend_NVRHI.cpp ): 0 = the
-// projection image the two default light shaders share, 1 = the default point light's falloff, 2 = the default
-// projected light's. One function for both passes, so that the fog and the walls cannot read different images
-nvrhi::ITexture* R_ForwardDefaultLightImage( int which );
-
 /*
 ========================
 VolumetricFogPass::CheckInjectSet
 
-The inject's binding set. Besides the pass's own constants and volume it names seven objects of the engine: the
-light lists' four tables ( the backend makes the tile bits again when a view needs more words ) and the three
-light images ( for an image that has not loaded yet the white image stands in, and once it has loaded it is
-another texture ). So the set is made again when one of the seven is another object than the set was made for;
-CheckVolumes drops it with the old volumes. A map load, a resize, vid_restart and reloadImages delete the pass
-with the backend's caches ( ClearCaches ), and the next pass makes its own set. While the set lives it
-holds its seven objects, so none of their addresses can be another object's. Returns false while one of them
-does not exist: the view then gets no fog.
+The inject's binding set. Besides the pass's own constants, volumes and buffers it names nine objects of the engine:
+the light lists' four tables ( the backend makes the tile bits again when a view needs more words ), the three light
+images ( for an image that has not loaded yet the white image stands in, and once it has loaded it is another
+texture ), the shadow atlas ( made again when r_shadowMapAtlasSize changes ) and the list of vanished lights
+( V3 ). So the set is made again when one of the nine is another object than the set was made for; CheckVolumes drops
+it with the old volumes. A map load, a resize and vid_restart delete the pass with the backend's caches ( ClearCaches ),
+and the next pass makes its own set; reloadImages keeps the pass, and the key catches the images it makes again. While
+the set lives it holds its nine objects, so none of their addresses can be another object's. Returns false while one of
+them does not exist: the view then gets no fog.
 ========================
 */
 bool VolumetricFogPass::CheckInjectSet()
 {
-	nvrhi::IResource* key[7] =
+	nvrhi::ITexture* shadowAtlas = ( nvrhi::ITexture* )globalImages->shadowAtlasImage->GetTextureID();
+	nvrhi::IResource* key[9] =
 	{
 		backEnd.recordLightsBuffer.Get(), backEnd.shadowRowsBuffer.Get(), backEnd.zBinsBuffer.Get(), backEnd.tileBitsBuffer.Get(),
-		R_ForwardDefaultLightImage( 0 ), R_ForwardDefaultLightImage( 1 ), R_ForwardDefaultLightImage( 2 )
+		R_ForwardDefaultLightImage( 0 ), R_ForwardDefaultLightImage( 1 ), R_ForwardDefaultLightImage( 2 ), shadowAtlas,
+		backEnd.vanishedPrevBuffer.Get()
 	};
-	for( int i = 0; i < 7; i++ )
+	for( int i = 0; i < 9; i++ )
 	{
 		if( key[i] == NULL )
 		{
@@ -312,7 +437,15 @@ bool VolumetricFogPass::CheckInjectSet()
 		nvrhi::BindingSetItem::Texture_SRV( 4, R_ForwardDefaultLightImage( 0 ) ),
 		nvrhi::BindingSetItem::Texture_SRV( 5, R_ForwardDefaultLightImage( 1 ) ),
 		nvrhi::BindingSetItem::Texture_SRV( 6, R_ForwardDefaultLightImage( 2 ) ),
-		nvrhi::BindingSetItem::Sampler( 0, commonRenderPasses->m_LinearBorderSampler )
+		nvrhi::BindingSetItem::Texture_SRV( 7, shadowAtlas ),
+		nvrhi::BindingSetItem::Sampler( 0, commonRenderPasses->m_LinearBorderSampler ),
+		nvrhi::BindingSetItem::Sampler( 1, commonRenderPasses->m_LinearClampCompareSampler ),
+		nvrhi::BindingSetItem::Texture_UAV( 1, m_State ),
+		nvrhi::BindingSetItem::StructuredBuffer_SRV( 8, m_PrevRecords ),
+		nvrhi::BindingSetItem::StructuredBuffer_SRV( 9, backEnd.vanishedPrevBuffer ),
+		nvrhi::BindingSetItem::StructuredBuffer_SRV( 10, m_MovedRecords ),
+		nvrhi::BindingSetItem::Texture_SRV( 11, m_Columns ),
+		nvrhi::BindingSetItem::StructuredBuffer_SRV( 12, m_CasterBounds )
 	};
 	m_Inject.bindingSet = m_Device->createBindingSet( injectDesc, m_Inject.layout );
 	memcpy( m_InjectSetKey, key, sizeof( key ) );
@@ -357,20 +490,42 @@ bool VolumetricFogPass::CheckVolumes( int gridWidth, int gridHeight, int gridSli
 
 	desc.debugName = "Fog/Injected";
 	m_Injected = m_Device->createTexture( desc );
-	desc.debugName = "Fog/Resolved";
-	m_Resolved = m_Device->createTexture( desc );
+	desc.debugName = "Fog/Resolved0";
+	m_Resolved[0] = m_Device->createTexture( desc );
+	desc.debugName = "Fog/Resolved1";
+	m_Resolved[1] = m_Device->createTexture( desc );
+	desc.debugName = "Fog/State";
+	m_State = m_Device->createTexture( desc );
 	desc.debugName = "Fog/Integrated";
 	m_Integrated = m_Device->createTexture( desc );
-	if( !m_Injected || !m_Resolved || !m_Integrated )
+	m_HistoryValid = false;					// the new volumes hold no fog yet
+	// V3: the columns' farthest surfaces, a texel per column
+	nvrhi::TextureDesc columnsDesc;
+	columnsDesc.dimension = nvrhi::TextureDimension::Texture2D;
+	columnsDesc.width = gridWidth;
+	columnsDesc.height = gridHeight;
+	columnsDesc.format = nvrhi::Format::R32_FLOAT;
+	columnsDesc.isUAV = true;
+	columnsDesc.initialState = nvrhi::ResourceStates::ShaderResource;
+	columnsDesc.keepInitialState = true;
+	columnsDesc.debugName = "Fog/Columns";
+	m_Columns = m_Device->createTexture( columnsDesc );
+	if( !m_Injected || !m_Resolved[0] || !m_Resolved[1] || !m_State || !m_Integrated || !m_Columns )
 	{
 		// The device could not make a volume ( out of memory ): no fog. The kernels' sets let the old volumes go, and
 		// the grid is kept, so that it is not tried again in every view
 		m_Injected = nullptr;
-		m_Resolved = nullptr;
+		m_Resolved[0] = nullptr;
+		m_Resolved[1] = nullptr;
+		m_State = nullptr;
 		m_Integrated = nullptr;
+		m_Columns = nullptr;
 		m_Inject.bindingSet = nullptr;
-		m_Resolve.bindingSet = nullptr;
-		m_Integrate.bindingSet = nullptr;
+		for( int i = 0; i < 2; i++ )
+		{
+			m_ResolveSets[i] = nullptr;
+			m_IntegrateSets[i] = nullptr;
+		}
 		m_GridWidth = gridWidth;
 		m_GridHeight = gridHeight;
 		m_GridSlices = gridSlices;
@@ -380,23 +535,31 @@ bool VolumetricFogPass::CheckVolumes( int gridWidth, int gridHeight, int gridSli
 
 	m_Inject.bindingSet = nullptr;			// it named the old injected volume
 
-	nvrhi::BindingSetDesc resolveDesc;
-	resolveDesc.bindings =
+	// V3: a set of each kernel for each turn of the two resolved volumes: in turn i the resolve writes m_Resolved[ i ]
+	// from the other one, and the integrate reads m_Resolved[ i ]
+	for( int i = 0; i < 2; i++ )
 	{
-		nvrhi::BindingSetItem::ConstantBuffer( 1, m_ConstantBuffer ),
-		nvrhi::BindingSetItem::Texture_SRV( 0, m_Injected ),
-		nvrhi::BindingSetItem::Texture_UAV( 0, m_Resolved )
-	};
-	m_Resolve.bindingSet = m_Device->createBindingSet( resolveDesc, m_Resolve.layout );
+		nvrhi::BindingSetDesc resolveDesc;
+		resolveDesc.bindings =
+		{
+			nvrhi::BindingSetItem::ConstantBuffer( 1, m_ConstantBuffer ),
+			nvrhi::BindingSetItem::Texture_SRV( 0, m_Injected ),
+			nvrhi::BindingSetItem::Texture_SRV( 1, m_State ),
+			nvrhi::BindingSetItem::Texture_SRV( 2, m_Resolved[ 1 - i ] ),
+			nvrhi::BindingSetItem::Sampler( 0, commonRenderPasses->m_LinearClampSampler ),
+			nvrhi::BindingSetItem::Texture_UAV( 0, m_Resolved[ i ] )
+		};
+		m_ResolveSets[i] = m_Device->createBindingSet( resolveDesc, m_Resolve.layout );
 
-	nvrhi::BindingSetDesc integrateDesc;
-	integrateDesc.bindings =
-	{
-		nvrhi::BindingSetItem::ConstantBuffer( 1, m_ConstantBuffer ),
-		nvrhi::BindingSetItem::Texture_SRV( 0, m_Resolved ),
-		nvrhi::BindingSetItem::Texture_UAV( 0, m_Integrated )
-	};
-	m_Integrate.bindingSet = m_Device->createBindingSet( integrateDesc, m_Integrate.layout );
+		nvrhi::BindingSetDesc integrateDesc;
+		integrateDesc.bindings =
+		{
+			nvrhi::BindingSetItem::ConstantBuffer( 1, m_ConstantBuffer ),
+			nvrhi::BindingSetItem::Texture_SRV( 0, m_Resolved[ i ] ),
+			nvrhi::BindingSetItem::Texture_UAV( 0, m_Integrated )
+		};
+		m_IntegrateSets[i] = m_Device->createBindingSet( integrateDesc, m_Integrate.layout );
+	}
 
 	m_ProbeWait = 0;						// a probe under way was of the old volume
 
@@ -637,6 +800,18 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 	constants.viewForward.Set( axis[0].x, axis[0].y, axis[0].z, anisotropy );
 	constants.viewRight.Set( -axis[1].x, -axis[1].y, -axis[1].z, ( float )cullMode );
 	constants.viewUp.Set( axis[2].x, axis[2].y, axis[2].z, FROXEL_STORE_MAX );
+	// The shadows ( V3 ): the legacy pass's two depth bias scales ( a parallel light's, every other light's ), and a
+	// parallel light's cascades: the frontend gives every parallel light the same count of rows, the view's splits
+	float parallelRows = 0.0f;
+	for( int r = 0; r < numRecords; r++ )
+	{
+		if( ( viewDef->recordLights[r].flags & RLF_PARALLEL ) != 0 && llv->rowsOfRecord[r] > 0 )
+		{
+			parallelRows = ( float )llv->rowsOfRecord[r];
+			break;
+		}
+	}
+	constants.shadowParms.Set( r_shadowMapSunDepthBiasScale.GetFloat(), r_shadowMapRegularDepthBiasScale.GetFloat(), parallelRows, r_volumetricFogShadows.GetBool() ? 1.0f : 0.0f );
 	int numTakeable = 0;
 	if( numRecords > 0 )
 	{
@@ -644,7 +819,7 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 		constants.tileParms.Set( ( float )t.parms.tileSize, ( float )t.tilesX, ( float )t.tilesY, ( float )t.wordsPerTile );
 		constants.binParms.Set( t.binScale, ( float )t.parms.numBins, ( float )columnPixels, t.parms.zNear );
 		// The take mask: a bit per record whose light the fog can take at all ( R_FogCanTakeRecord,
-		// renderer/LightLists.h: not a fog light, not one switched off for the fog or of another spectrum, and
+		// renderer/VolumetricFog.h: not a fog light, not one switched off for the fog or of another spectrum, and
 		// ambient, flagged, or with shadow rows ). The kernel reads no record without a bit. Whether a light WITH
 		// rows is taken is the row's to say, per sample ( FroxelRecordLight )
 		compile_time_assert( sizeof( constants.takeMask ) * 8 >= MAX_RECORD_LIGHTS );
@@ -677,11 +852,130 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 			constants.ambient[i].Set( sh.x * ambientScale * band, sh.y * ambientScale * band, sh.z * ambientScale * band, 0.0f );
 		}
 	}
+	// V3: the history. It holds last frame's fog where it was made for this view's grid by the last fog view, in the
+	// frame right before ( the light lists' frame stamps: lightListView_t::prevFrame names the fog-eligible view before
+	// this one ), with no camera cut since ( H10 ). Its view state is the engine's ( H10: the main view's unjittered MVP
+	// and render origin of last frame, which the backend replaces after this pass ), not the pass's own, and it must be
+	// the history's view's: a main view drawn without the fog's records ( clear air, r_volumetricFogDistance 0, with the
+	// forward lists off ) replaces it and leaves the frame stamps as they were
+	const float historyWeight = idMath::ClampFloat( 0.0f, 0.98f, r_volumetricFogHistoryWeight.GetFloat() );
+	const int historyGrid[7] = { gridWidth, gridHeight, columnPixels, gridSlices, furnace ? 1 : 0, viewWidth, viewHeight };
+	const int historyEye = ( viewDef->renderView.viewEyeBuffer == 1 ) ? 1 : 0;
+	const bool historyValid = m_HistoryValid && historyWeight > 0.0f && !backEnd.viewHistoryCut && llv != NULL && llv->prevFrame != 0
+							  && llv->prevFrame == m_HistoryFrame && memcmp( historyGrid, m_HistoryGrid, sizeof( historyGrid ) ) == 0 && m_SliceStep == m_HistorySliceStep
+							  && memcmp( &backEnd.prevMVP[ historyEye ], &m_HistoryMVP, sizeof( m_HistoryMVP ) ) == 0
+							  && memcmp( &backEnd.prevRenderOrigin[ historyEye ], &m_HistoryOrigin, sizeof( m_HistoryOrigin ) ) == 0;
+	// the jitter: one offset in the froxel a frame, for every froxel, Halton 2, 3 and 5 over 8 fog views, less each
+	// axis's mean over the 8, so the history's sample lies at the froxel's centre on average. 8: no longer than the
+	// history's window at its weight of 0.9 ( tools/harness/temporal_harness.py runs this sequence )
+	idVec3 jitter( 0.0f, 0.0f, 0.0f );
+	if( r_volumetricFogJitter.GetBool() && historyValid )			// without a history nothing averages it
+	{
+		idVec3 mean( 0.0f, 0.0f, 0.0f );
+		for( int k = 1; k <= 8; k++ )
+		{
+			mean += idVec3( FroxelHalton( k, 2 ), FroxelHalton( k, 3 ), FroxelHalton( k, 5 ) );
+		}
+		mean *= 1.0f / 8.0f;
+		const int n = m_JitterIndex % 8 + 1;
+		jitter.Set( FroxelHalton( n, 2 ) - mean.x, FroxelHalton( n, 3 ) - mean.y, FroxelHalton( n, 5 ) - mean.z );
+	}
+	m_JitterIndex++;
+	// what the fog takes of each record, and which of its rows have a place in the atlas ( the rows track F made for this
+	// view ): a record whose share of its light jumps with no flag of the light's ( the fog takes it or leaves it, a row
+	// gains or loses its place ) is clipped in its last volume, as a light that moved. For every record of the view,
+	// those the inject reads this frame or not
+	static byte fogBits[ MAX_RECORD_LIGHTS ];
+	int numRows = 0;
+	const shadowRow_t* rows = R_LightListShadowRows( viewDef, numRows );
+	const int bitRecords = ( llv != NULL && viewDef->recordLights != NULL ) ? Min( viewDef->numRecordLights, MAX_RECORD_LIGHTS ) : 0;
+	for( int r = 0; r < bitRecords; r++ )
+	{
+		byte bits = ( ( constants.takeMask[r >> 5] & ( 1u << ( r & 31 ) ) ) != 0 ) ? 0x80 : 0;
+		const int first = viewDef->recordLights[r].shadowRow;
+		const int count = Min( ( int )llv->rowsOfRecord[r], 6 );
+		for( int s = 0; s < count; s++ )
+		{
+			if( first >= 0 && first + s < numRows && rows[first + s].atlasRect.z >= 0.0f )
+			{
+				bits |= ( byte )( 1 << s );
+			}
+		}
+		fogBits[r] = bits;
+	}
+	// the lights that moved, and those whose share jumped, by their index in last frame's records: the inject clips the
+	// history in their last volume
+	int numMoved = 0;
+	if( historyValid )
+	{
+		static int moved[ MAX_RECORD_LIGHTS ];
+		for( int r = 0; r < numRecords; r++ )
+		{
+			const recordLight_t& rec = viewDef->recordLights[r];
+			const int prev = ( int )rec.ids.z;
+			const bool jumped = r < bitRecords && prev >= 0 && prev < MAX_RECORD_LIGHTS && fogBits[r] != m_PrevFogBits[prev];
+			if( ( ( rec.flags & RLF_MOVED_THIS_FRAME ) != 0 || jumped ) && prev >= 0 && prev < m_PrevNumRecords )
+			{
+				moved[ numMoved++ ] = prev;
+			}
+		}
+		if( numMoved > 0 )
+		{
+			commandList->writeBuffer( m_MovedRecords, moved, numMoved * sizeof( int ) );
+		}
+	}
+	// where a caster that changed shadows, by record ( RLF_FOG_CASTERMOVED ), in the relative frame
+	// ( froxelView_t::casterBoxes ): the inject clips the history there
+	if( historyValid && numRecords > 0 && viewDef->froxelView != NULL && viewDef->froxelView->casterBoxes != NULL )
+	{
+		commandList->writeBuffer( m_CasterBounds, viewDef->froxelView->casterBoxes, Min( numRecords, MAX_RECORD_LIGHTS ) * 2 * FOG_CASTER_BOXES * sizeof( idVec4 ) );
+	}
+	constants.sliceParms.w = historyValid ? m_HistoryMedium : 0.0f;
+	// one texel of the shadow atlas ( it is square ): the share keeps a lookup one texel inside its row's tile
+	nvrhi::ITexture* atlas = ( nvrhi::ITexture* )globalImages->shadowAtlasImage->GetTextureID();
+	constants.ambient[0].w = ( atlas != NULL ) ? 1.0f / ( float )atlas->getDesc().width : 0.0f;
+	const idVec3d originDelta = viewDef->renderOrigin - backEnd.prevRenderOrigin[ historyEye ];
+	constants.jitter.Set( jitter.x, jitter.y, jitter.z, historyValid ? 1.0f : 0.0f );
+	constants.historyParms.Set( historyWeight, Min( historyWeight, idMath::ClampFloat( 0.0f, 0.98f, r_volumetricFogHistoryClipWeight.GetFloat() ) ), 0.25f,
+								( historyValid && llv->vanishedPrev != NULL ) ? ( float )Min( llv->numVanishedPrev, MAX_RECORD_LIGHTS ) : 0.0f );
+	// a screen UV to the volume UV of this view's grid ( the grid is the history's when it is valid ): the view's width
+	// over the column side over the volume's columns, and so for the rows
+	constants.historyGrid.Set( ( float )viewWidth / ( float )( columnPixels * m_GridWidth ), ( float )viewHeight / ( float )( columnPixels * m_GridHeight ),
+							   1.0f / ( float )gridSlices, ( float )m_PrevNumRecords );
+	constants.prevOrigin.Set( ( float )originDelta.x, ( float )originDelta.y, ( float )originDelta.z, ( float )numMoved );
+	for( int i = 0; i < 4; i++ )
+	{
+		constants.prevMVP[i].Set( backEnd.prevMVP[ historyEye ][i][0], backEnd.prevMVP[ historyEye ][i][1], backEnd.prevMVP[ historyEye ][i][2], backEnd.prevMVP[ historyEye ][i][3] );
+	}
+	// V3: the skip of the froxels no pixel's lookup reaches. The columns read the depth the apply reads; under the
+	// furnace every slice is filled ( its closed form is printed for every slice )
+	// the depth the apply reads ( R_UseHiZ: the pyramid's mip 0, else the depth image ); no skip without it
+	nvrhi::ITexture* columnsDepth = R_UseHiZ() ? globalImages->hierarchicalZbufferImage->GetTextureHandle().Get() : globalImages->currentDepthImage->GetTextureHandle().Get();
+	const bool skip = r_volumetricFogSkip.GetBool() && !furnace && columnsDepth != NULL;
+	constants.skipParms.Set( skip ? 1.0f : 0.0f, ( float )columnPixels, ( float )viewWidth, ( float )viewHeight );
+	constants.pixelParms.Set( viewDef->projectionMatrix[3 * 4 + 2], viewDef->projectionMatrix[2 * 4 + 2], ( float )viewDef->viewport.x1, ( float )viewDef->viewport.y1 );
 	commandList->writeBuffer( m_ConstantBuffer, &constants, sizeof( constants ) );
 
 	const int groupsX = ( fillWidth + 7 ) / 8;
 	const int groupsY = ( fillHeight + 7 ) / 8;
 	nvrhi::ComputeState state;
+	if( skip )
+	{
+		// V3: one thread group per column, the view's grid and the one more column and row the kernels fill
+		OPTICK_GPU_EVENT( "Fog_Columns" );
+		nvrhi::BindingSetDesc columnsDesc;
+		columnsDesc.bindings =
+		{
+			nvrhi::BindingSetItem::ConstantBuffer( 1, m_ConstantBuffer ),
+			nvrhi::BindingSetItem::Texture_SRV( 0, columnsDepth ),
+			nvrhi::BindingSetItem::Texture_SRV( 1, m_SkyMask ),
+			nvrhi::BindingSetItem::Texture_UAV( 0, m_Columns )
+		};
+		state.pipeline = m_ColumnsKernel.pipeline;
+		state.bindings = { backEnd.bindingCache.GetOrCreateBindingSet( columnsDesc, m_ColumnsKernel.layout ) };
+		commandList->setComputeState( state );
+		commandList->dispatch( fillWidth, fillHeight, 1 );
+	}
 	{
 		OPTICK_GPU_EVENT( "Fog_Inject" );
 		state.pipeline = m_Inject.pipeline;
@@ -689,10 +983,18 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 		commandList->setComputeState( state );
 		commandList->dispatch( groupsX, groupsY, gridSlices );
 	}
+	// V3: this view's records are last frame's for the next fog view ( after the inject, which read the old ones )
+	const int allRecords = ( llv != NULL && viewDef->recordLights != NULL ) ? Min( viewDef->numRecordLights, MAX_RECORD_LIGHTS ) : 0;
+	if( allRecords > 0 )
+	{
+		commandList->copyBuffer( m_PrevRecords, 0, backEnd.recordLightsBuffer, 0, allRecords * sizeof( recordLight_t ) );
+	}
+	// the resolved volumes take turns: this frame's is the one last frame's was not
+	m_ResolvedIndex = 1 - m_ResolvedIndex;
 	{
 		OPTICK_GPU_EVENT( "Fog_Resolve" );
 		state.pipeline = m_Resolve.pipeline;
-		state.bindings = { m_Resolve.bindingSet };
+		state.bindings = { m_ResolveSets[ m_ResolvedIndex ] };
 		commandList->setComputeState( state );
 		commandList->dispatch( groupsX, groupsY, gridSlices );
 	}
@@ -700,10 +1002,20 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 		// one thread per column: it walks the slices from the camera outward
 		OPTICK_GPU_EVENT( "Fog_Integrate" );
 		state.pipeline = m_Integrate.pipeline;
-		state.bindings = { m_Integrate.bindingSet };
+		state.bindings = { m_IntegrateSets[ m_ResolvedIndex ] };
 		commandList->setComputeState( state );
 		commandList->dispatch( groupsX, groupsY, 1 );
 	}
+	// what the next fog view's history is made of
+	m_HistoryValid = true;
+	m_HistoryFrame = ( llv != NULL ) ? llv->viewFrame : 0;
+	memcpy( m_HistoryGrid, historyGrid, sizeof( m_HistoryGrid ) );
+	m_HistorySliceStep = m_SliceStep;
+	m_HistoryMVP = viewDef->worldSpace.unjitteredMVP;
+	m_HistoryOrigin = viewDef->renderOrigin;
+	m_HistoryMedium = constants.medium.w;
+	memcpy( m_PrevFogBits, fogBits, bitRecords );
+	m_PrevNumRecords = allRecords;
 
 	// the probe: the console command asks for one, and it starts when none is under way
 	if( fogProbeRequested && m_ProbeWait == 0 )

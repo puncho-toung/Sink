@@ -3,8 +3,12 @@
 //
 // V2: the medium is still the same everywhere ( the global fog ), and it is lit: by the view's ambient light and by
 // the light records of the view ( renderer/LightLists.h, C1 ), each evaluated at the froxel's sample as the surface
-// shaders evaluate it ( froxel_lights.inc.hlsl ). The sample is the middle of the froxel: its column's centre, half
-// way through its slice in the slice coordinate.
+// shaders evaluate it ( froxel_lights.inc.hlsl ). The sample is the froxel's centre ( its column's centre, half way
+// through its slice in the slice coordinate ) moved by the frame's jitter ( V3: one offset for every froxel, and the
+// history averages the frames ). V3: each light's shadow is looked up at the sample, one comparison against the shadow
+// atlas ( FroxelShadowShare ), and beside what the air scatters and takes the inject writes the state of the history
+// ( u_State: how much light the sample gained or lost since last frame, and whether the resolve clips the history here
+// or does not read it ).
 //
 // A froxel's records are found one of three ways ( r_volumetricFogCull ), which give the same sum but for the cases
 // named under 2, since a record adds exactly zero outside its light's volume and the records are walked in ascending
@@ -21,7 +25,7 @@
 //      the same for every thread of a group, so the branch on it splits no wave
 //   0  every record: the reference
 // In all three the bits pass the take mask first: a bit per record that the pass sets where the fog can take the
-// record's light at all ( R_FogCanTakeRecord, renderer/LightLists.h ). A record without a bit is not read.
+// record's light at all ( R_FogCanTakeRecord, renderer/VolumetricFog.h ). A record without a bit is not read.
 // Under the furnace radiance ( a test input of the pass ) the record count and the ambient lanes are zero, and what is
 // written is the uniform medium alone.
 
@@ -42,6 +46,14 @@ Texture2D						t_PointFalloff		: register( t5 );
 Texture2D						t_ProjectedFalloff	: register( t6 );
 
 SamplerState					s_LightBorder		: register( s0 );	// the light images, black beyond their edge
+Texture2D						t_ShadowAtlas		: register( t7 );	// the shadow atlas ( V3 )
+SamplerComparisonState			s_ShadowCompare		: register( s1 );	// compared, as the forward pass's s_Shadow
+VK_IMAGE_FORMAT( "rgba16f" ) RWTexture3D<float4> u_State : register( u1 );		// V3: the light change and the history's use here
+StructuredBuffer<recordLight_t>	t_PrevRecords		: register( t8 );	// V3: last frame's records, the pass's copy
+StructuredBuffer<int>			t_Vanished			: register( t9 );	// V3: last frame's records whose lights have none now ( vanishedPrev, D82 )
+StructuredBuffer<int>			t_Moved				: register( t10 );	// V3: last frame's records of the lights that moved
+Texture2D<float>				t_Columns			: register( t11 );	// V3: the farthest surface of each column ( froxel_columns.cs.hlsl )
+StructuredBuffer<float4>		t_CasterBounds		: register( t12 );	// V3: by record, the boxes where a caster that changed shadows ( froxelView_t; RLF_FOG_CASTERMOVED )
 // *INDENT-ON*
 
 #include "builtin/volumetrics/froxel_lights.inc.hlsl"
@@ -88,11 +100,28 @@ bool FroxelGroupMisses( uint r, uint2 groupId, float viewDepth )
 	const float3 d = sphere.xyz - froxel.viewOrigin.xyz;
 	// the sphere's centre in the view frame: right, down, forward
 	const float3 centre = float3( dot( d, froxel.viewRight.xyz ), -dot( d, froxel.viewUp.xyz ), dot( d, froxel.viewForward.xyz ) );
-	const float2 first = FroxelColumnLateral( float2( groupId ) * 8.0 + 0.5 ) * viewDepth;
-	const float2 last = FroxelColumnLateral( float2( groupId ) * 8.0 + 7.5 ) * viewDepth;
+	const float2 first = FroxelColumnLateral( float2( groupId ) * 8.0 + 0.5 + froxel.jitter.xy ) * viewDepth;
+	const float2 last = FroxelColumnLateral( float2( groupId ) * 8.0 + 7.5 + froxel.jitter.xy ) * viewDepth;
 	const float2 gap = max( max( first - centre.xy, centre.xy - last ), 0.0 );
 	const float along = centre.z - viewDepth;
 	return ( dot( gap, gap ) + along * along ) * sphere.w > 1.0;
+}
+
+// V3: the last slice a pixel's lookup reads in this froxel's column: the farthest surface of the column and its eight
+// neighbours ( the apply's filter reads the neighbouring columns ), and one slice more ( it reads the two slices round a
+// pixel's depth )
+float FroxelColumnReach( uint2 column )
+{
+	float farthest = 0.0;
+	for( int dy = -1; dy <= 1; dy++ )
+	{
+		for( int dx = -1; dx <= 1; dx++ )
+		{
+			const int2 c = clamp( int2( column ) + int2( dx, dy ), int2( 0, 0 ), int2( froxel.gridSize.xy ) - 1 );
+			farthest = max( farthest, t_Columns.Load( int3( c, 0 ) ) );
+		}
+	}
+	return ceil( FroxelSliceOf( farthest, froxel.sliceParms.x, froxel.sliceParms.y ) - 0.5 ) + 1.0;
 }
 
 [numthreads( 8, 8, 1 )]
@@ -102,27 +131,38 @@ void main( uint3 froxelId : SV_DispatchThreadID, uint3 groupId : SV_GroupID )
 	{
 		return;
 	}
+	// V3: a froxel no pixel's lookup reaches is not lit: it keeps the medium, and its state tells the resolve so
+	if( froxel.skipParms.x > 0.0 && float( froxelId.z ) > FroxelColumnReach( froxelId.xy ) )
+	{
+		u_Injected[ froxelId ] = froxel.medium;
+		u_State[ froxelId ] = float4( 0.0, 0.0, 0.0, 3.0 );
+		return;
+	}
 
 	// the froxel's sample and its three edges
-	const float2 columnCoord = float2( froxelId.xy ) + 0.5;
+	// V3: the sample is moved by the frame's jitter, the same for every froxel ( the group test of way 1 moves with it )
+	const float2 columnCoord = float2( froxelId.xy ) + 0.5 + froxel.jitter.xy;
 	const float2 lateral = FroxelColumnLateral( columnCoord );
 	const float3 ray = froxel.viewForward.xyz + lateral.x * froxel.viewRight.xyz - lateral.y * froxel.viewUp.xyz;
-	const float viewDepth = FroxelSliceFar( float( froxelId.z ) - 0.5 );
+	const float viewDepth = FroxelSliceFar( float( froxelId.z ) - 0.5 + froxel.jitter.z );
 	FROXEL_SAMPLE s;
 	s.position = froxel.viewOrigin.xyz + viewDepth * ray;
 	s.toEye = -normalize( ray );
 	s.stepX = ( viewDepth * froxel.rayParms.x ) * froxel.viewRight.xyz;
 	s.stepY = ( -viewDepth * froxel.rayParms.y ) * froxel.viewUp.xyz;
 	s.stepZ = ( FroxelSliceFar( float( froxelId.z ) ) - FroxelSliceFar( float( froxelId.z ) - 1.0 ) ) * ray;
+	s.viewDepth = viewDepth;
 
 	// what falls through the sample to be scattered toward the camera: the ambient light, then the records
 	float3 light = FroxelAmbient( -s.toEye );
+	float3 change = float3( 0.0, 0.0, 0.0 );		// V3: the light change since last frame, in the same units
+	bool clip = false;
 
 	const uint numRecords = uint( froxel.gridSize.w );
 	if( numRecords > 0 && ( froxel.takeMask[0].x & 1u ) != 0 )
 	{
 		// record 0 is the sun's and is in no bin and no tile word; the mask has no bit for an empty slot
-		light += FroxelRecordLight( 0, s );
+		FroxelAddRecord( 0, s, light, change, clip );
 	}
 	if( numRecords > 1 )
 	{
@@ -185,7 +225,7 @@ void main( uint3 froxelId : SV_DispatchThreadID, uint3 groupId : SV_GroupID )
 					{
 						continue;
 					}
-					light += FroxelRecordLight( r, s );
+					FroxelAddRecord( r, s, light, change, clip );
 				}
 			}
 		}
@@ -196,5 +236,32 @@ void main( uint3 froxelId : SV_DispatchThreadID, uint3 groupId : SV_GroupID )
 	// scaled down as a whole, so that it keeps its colour
 	const float3 inScatter = froxel.medium.rgb + froxel.viewOrigin.w * light;
 	const float largest = max( inScatter.r, max( inScatter.g, inScatter.b ) );
-	u_Injected[ froxelId ] = float4( inScatter * min( 1.0, froxel.viewUp.w / max( largest, 1e-20 ) ), froxel.medium.a );
+	const float storeScale = min( 1.0, froxel.viewUp.w / max( largest, 1e-20 ) );
+	u_Injected[ froxelId ] = float4( inScatter * storeScale, froxel.medium.a );
+
+	// V3: the lights of last frame whose fog the history holds where this frame's records cannot say how it changed,
+	// tested at the froxel's centre in last frame's relative frame: inside the last volume of a light that vanished the
+	// history is not read ( D82: its shadow is gone, so its fog cannot be taken out ), inside the last volume of a light
+	// that moved it is clipped ( no trail )
+	float use = clip ? 1.0 : 0.0;
+	if( froxel.jitter.w > 0.0 )
+	{
+		const float3 centre = FroxelCentre( froxelId ) + froxel.prevOrigin.xyz;
+		for( uint m = 0; m < uint( froxel.prevOrigin.w ); m++ )
+		{
+			if( FroxelInPrevVolume( t_Moved[ m ], centre ) )
+			{
+				use = max( use, 1.0 );
+			}
+		}
+		for( uint v = 0; v < uint( froxel.historyParms.w ); v++ )
+		{
+			if( FroxelInPrevVolume( t_Vanished[ v ], centre ) )
+			{
+				use = 2.0;
+			}
+		}
+	}
+	// the change in the store's units and scale, as the injected value; past the store's bound it is cut
+	u_State[ froxelId ] = float4( clamp( froxel.viewOrigin.w * change * storeScale, -froxel.viewUp.w, froxel.viewUp.w ), use );
 }

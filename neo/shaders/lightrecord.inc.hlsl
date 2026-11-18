@@ -1,8 +1,8 @@
 // lightrecord.inc.hlsl - one light record at one surface point ( track F, package F3 ): what a light loop adds for a
 // pair ( light, surface ). It was part of builtin/lighting/forward.ps.hlsl and is a file of its own so that other
 // passes that walk the light lists can include it ( the translucent pass, the decals ). The froxel inject cannot: a
-// compute stage has none of what this file needs, and shaders/builtin/volumetrics/froxel_lights.inc.hlsl repeats the
-// planes' test, the pick of a point light's face and the emitter's call. Change both. It holds
+// compute stage has none of what this file needs. What both need ( the planes, a point light's face, an emitter
+// pattern's step ) is shaders/lightrecord_core.inc.hlsl's, which both include. It holds
 // the per-light half only. FILLING an LL_SURFACE decides as much of the picture ( both bodies' normals and energy
 // terms, the material, the stage colours, the shadow filter's set-up ) and is still the end of forward.ps.hlsl's
 // main: a second includer has to fill it the same way to light alike.
@@ -19,6 +19,8 @@
 
 #ifndef LIGHTRECORD_INC_HLSL
 #define LIGHTRECORD_INC_HLSL
+
+#include "lightrecord_core.inc.hlsl"
 
 // what a light needs of the pixel, set up once in main and not once per light
 struct LL_SURFACE
@@ -70,7 +72,7 @@ float2 LL_VogelDiskSample( float sampleIndex, float sqrtSamplesCount, float phi 
 // light is on the shadow-map body. shadowRow and flags are the record's; P is the point in the relative frame;
 // toLight the direction itself ( origin - point ), which picks a point light's face; vogelPhi and vogelSqrtSamples
 // are the filter's set-up at the pixel ( LL_SURFACE ). A function of its own so that a pass without a surface can
-// take a light's shadow alone ( not the froxel inject, which cannot include this file and has the face pick again )
+// take a light's shadow alone ( not the froxel inject, which cannot include this file )
 float LL_RecordShadow( int shadowRow, uint flags, float4 P, float3 toLight, float vogelPhi, float vogelSqrtSamples, out bool shadowBody )
 {
 	// the shadow rows: one for a projected light, six for a point light. A row without a place leaves the light
@@ -83,35 +85,7 @@ float LL_RecordShadow( int shadowRow, uint flags, float4 P, float3 toLight, floa
 		uint row = uint( shadowRow );
 		if( ( flags & RLF_POINT ) != 0 )
 		{
-			// interactionSM.ps.hlsl: the face whose axis the direction to the light is largest along, the first on a tie
-			float best = -toLight.x;
-			uint face = 0;
-			if( toLight.x > best )
-			{
-				best = toLight.x;
-				face = 1;
-			}
-			if( -toLight.y > best )
-			{
-				best = -toLight.y;
-				face = 2;
-			}
-			if( toLight.y > best )
-			{
-				best = toLight.y;
-				face = 3;
-			}
-			if( -toLight.z > best )
-			{
-				best = -toLight.z;
-				face = 4;
-			}
-			if( toLight.z > best )
-			{
-				best = toLight.z;
-				face = 5;
-			}
-			row += face;
+			row += LL_PointLightFace( toLight );
 		}
 		const shadowRow_t R = t_ShadowRows[ row ];
 		// The body follows the LIGHT, as the legacy pass binds its program per light: -2 marks a row whose own face
@@ -119,14 +93,9 @@ float LL_RecordShadow( int shadowRow, uint flags, float4 P, float3 toLight, floa
 		shadowBody = ( R.atlasRect.z >= 0.0 || R.atlasRect.z < -1.5 );
 		if( R.atlasRect.z >= 0.0 )
 		{
-			float4 shadowTexcoord;
-			shadowTexcoord.x = dot( P, R.worldToShadow[0] );
-			shadowTexcoord.y = dot( P, R.worldToShadow[1] );
-			shadowTexcoord.z = dot( P, R.worldToShadow[2] );
-			shadowTexcoord.w = dot( P, R.worldToShadow[3] );
-			shadowTexcoord.xyz /= shadowTexcoord.w;
-			const float receiver = shadowTexcoord.z * pc.rpShadowBias.y;
-			const float2 shadowTexcoordAtlas = shadowTexcoord.xy * R.atlasRect.z + R.atlasRect.xy;
+			const float3 shadowCoord = LL_ShadowRowCoord( R, P, pc.rpShadowBias.y );
+			const float receiver = shadowCoord.z;
+			const float2 shadowTexcoordAtlas = shadowCoord.xy;
 			const float numSamples = pc.rpShadowFilter.x;
 			const float stepSize = 1.0 / numSamples;
 			shadow = 0.0;
@@ -153,15 +122,10 @@ float LL_RecordShadow( int shadowRow, uint flags, float4 P, float3 toLight, floa
 float3 LL_EvaluateRecord( uint r, LL_SURFACE s )
 {
 	// the light's texgens at the pixel: projection S, T, Q and the falloff ( the legacy vertex stages' texcoord3 and
-	// texcoord2 ). The four planes are read on their own, in front of the record, so that a pixel outside the
-	// light's volume need read nothing else of it
+	// texcoord2 ). Outside the light's volume the light is exactly zero ( the two loops then add the same terms )
 	const float4 P = float4( s.position, 1.0 );
-	const float projS = dot( P, t_LightRecords[ r ].lightProject[0] );
-	const float projT = dot( P, t_LightRecords[ r ].lightProject[1] );
-	const float projQ = dot( P, t_LightRecords[ r ].lightProject[2] );
-	const float fallS = dot( P, t_LightRecords[ r ].lightProject[3] );
-	// outside the light's volume the light is exactly zero ( the two loops then add the same terms )
-	if( projQ <= 0.0 || projS < 0.0 || projS > projQ || projT < 0.0 || projT > projQ || fallS < 0.0 || fallS > 1.0 )
+	float projS, projT, projQ, fallS;
+	if( !LL_RecordPlanes( r, P, projS, projT, projQ, fallS ) )
 	{
 		return float3( 0.0, 0.0, 0.0 );
 	}
@@ -186,8 +150,8 @@ float3 LL_EvaluateRecord( uint r, LL_SURFACE s )
 		if( EMHasPattern( L.emitter[0], L.emitter[2] ) )			// only a pattern reads the footprint
 		{
 			const float3 emAxis = 2.0 * EMPatternAxisScale( L.emitter[0] );
-			const float3 emDx = float3( dot( s.dPdx, L.lightProject[0].xyz ), dot( s.dPdx, L.lightProject[1].xyz ), dot( s.dPdx, L.lightProject[3].xyz ) ) * emAxis;
-			const float3 emDy = float3( dot( s.dPdy, L.lightProject[0].xyz ), dot( s.dPdy, L.lightProject[1].xyz ), dot( s.dPdy, L.lightProject[3].xyz ) ) * emAxis;
+			const float3 emDx = LL_EmitterPatternStep( L, s.dPdx ) * emAxis;
+			const float3 emDy = LL_EmitterPatternStep( L, s.dPdy ) * emAxis;
 			emFootprint = abs( emDx ) + abs( emDy );
 		}
 		bool emEarlyOut;

@@ -55,7 +55,9 @@ enum
 	RLF_NOSPECULAR			= BIT( 8 ),		// no specular contribution
 	RLF_MOVED_THIS_FRAME	= BIT( 9 ),		// the light moved this frame
 	RLF_FOG_NOSHADOW		= BIT( 10 ),	// V2: the froxel inject takes the light also where it has no placed shadow map ( D80 )
-	RLF_FOG_OFF				= BIT( 11 )		// V2: the froxel inject leaves the light out
+	RLF_FOG_OFF				= BIT( 11 ),	// V2: the froxel inject leaves the light out
+	RLF_FOG_NOCASTER		= BIT( 12 ),	// V3: a light that casts shadows has no caster in the view and a shadow LOD: the froxel inject takes it unshadowed, times its fade ( row 50 )
+	RLF_FOG_CASTERMOVED		= BIT( 13 )		// V3: an entity among the light's casters changed this frame: the froxel fog's history is clipped where it shadows ( the fog's caster boxes )
 };
 
 const int MAX_RECORD_LIGHTS = 1024;
@@ -77,7 +79,7 @@ struct alignas( 16 ) recordLight_t
 	idVec4		spotDir;			// xyz = cone axis ( a direction: the same in the map frame and the relative frame ), w = spot bias ( 1 = omni )
 	int			shadowRow;			// first row of this light's shadow rows; -1 = unshadowed
 	uint32		channelMask;		// bit 0 = default; spectrum lights set bit ( 1 + spectrum )
-	uint32		flags;				// RLF_SUN, RLF_POINT, RLF_PARALLEL, RLF_EMITTER, RLF_DEFAULT_TEXTURES ( D39 ), RLF_CLUSTERED ( may be listed, D40 ), RLF_AMBIENT and RLF_FOGLIGHT ( inject only, D26, D40 ), RLF_NOSPECULAR, RLF_MOVED_THIS_FRAME, RLF_FOG_NOSHADOW and RLF_FOG_OFF ( the inject's, V2 )
+	uint32		flags;				// RLF_SUN, RLF_POINT, RLF_PARALLEL, RLF_EMITTER, RLF_DEFAULT_TEXTURES ( D39 ), RLF_CLUSTERED ( may be listed, D40 ), RLF_AMBIENT and RLF_FOGLIGHT ( inject only, D26, D40 ), RLF_NOSPECULAR, RLF_MOVED_THIS_FRAME, RLF_FOG_NOSHADOW and RLF_FOG_OFF ( the inject's, V2 ), RLF_FOG_NOCASTER and RLF_FOG_CASTERMOVED ( the inject's, V3 )
 	int			uniqueId;			// idRenderLightLocal::uniqueId ( world-monotonic, D44 ), copied by the frontend; the volumetrics history key
 	idVec4		lightProject[4];	// relative planes S, T, Q, falloff: the viewLight_t planes, unchanged ( already relative ) ( hasMatrix lights have no record, D57 )
 	idVec4		emitter[3];			// rpUser0..2 exactly as the interaction pass sets them: viewEmitter_t::parms[0..2], packed once per view by R_AddSingleLight; zero when !RLF_EMITTER //puncho - reconcile: emitter in place of the math light
@@ -106,7 +108,7 @@ cascade; filled by the backend in R_BuildShadowRows after ShadowAtlasPass.
 struct alignas( 16 ) shadowRow_t
 {
 	idVec4		worldToShadow[4];	// parallel and point units: renderMatrix_clipSpaceToWindowSpace x shadowP[s] x shadowV[s]; spot units: shadowP[0] x shadowV[0] ( its P already carries the window-space and clip-to-UV fix-ups, F6 ). This is the legacy per-draw product of RenderBackend.cpp:2087-2093 ( parallel ), :2103-2109 ( point ), :2119-2124 ( spot ) WITHOUT the model matrix the legacy path folds in at :2087/:2103/:2119: interactionSM's texcoord7 is model space, the forward VS writes the world position ( N9, F40 ). ( rev 4.2: 'world' here is the eye-relative frame; the rows are built from vLight->shadowV and shadowP, which already take relative coordinates )
-	idVec4		atlasRect;			// xy = imageAtlasOffset[s] / atlasSize, z = imageSize / atlasSize ( < 0: not placed - the forward loop treats the light as unshadowed, the inject skips it unless its record has RLF_FOG_NOSHADOW, D80 ), w = cascade far distance ( rpCascadeDistances[s] ) for RLF_SUN rows, shadowFadeOut for every other row ( D47 )
+	idVec4		atlasRect;			// xy = imageAtlasOffset[s] / atlasSize, z = imageSize / atlasSize ( < 0: not placed - the forward loop treats the light as unshadowed ), w = cascade far distance ( rpCascadeDistances[s] ) for a parallel light's rows, shadowFadeOut for every other row ( D47 ); w stands on every row, placed or not
 };
 compile_time_assert( sizeof( shadowRow_t ) == 80 );
 assert_offsetof( shadowRow_t, worldToShadow, 0 );		// S82(i)
@@ -396,16 +398,6 @@ enum lightForwardMode_t
 	LIGHT_FORWARD_LEGACY	= 2				// never listed
 };
 
-// renderLight_t::volumetricMode ( the spawnarg "volumetric" ): a designer says whether a light lights the froxel fog.
-// The fog has no shadow of a light without a shadow map, so by default it takes a light only where the shadow is
-// known ( D80 ): where the light's shadow map has a place in the atlas, or where the light has no caster at all
-enum lightVolumetricMode_t
-{
-	LIGHT_VOLUMETRIC_AUTO	= 0,			// only where the light's shadow is known
-	LIGHT_VOLUMETRIC_ALWAYS	= 1,			// also where it has no shadow map ( RLF_FOG_NOSHADOW ): the opt-in of a light that casts no shadows; its fog shines through walls
-	LIGHT_VOLUMETRIC_NEVER	= 2				// the light adds nothing to the fog ( RLF_FOG_OFF )
-};
-
 /*
 ====================
 lightListView_t
@@ -443,34 +435,10 @@ void	R_NumberRecordLights();		// frontend, called from R_RenderView after R_AddL
 void	R_BuildLightLists();		// frontend, after R_AddModels and before R_OptimizeViewLightsList
 int		R_LightListTakePair( const viewDef_t* viewDef, const viewLight_t* vLight, const idMaterial* shader, drawSurf_t* baseDrawSurf, int maxLights );	// H3, on a model job; returns a lightListPair_t
 void	R_LightListFinishSurface( const viewDef_t* viewDef, drawSurf_t* baseDrawSurf );	// H3, after a surface's contacted-light loop, on the job
+bool	R_LightListFogEligible( const viewDef_t* viewDef );									// F1: the views whose records carry the lights' history, the froxel fog's views
+const shadowRow_t* R_LightListShadowRows( const viewDef_t* viewDef, int& numRows );		// backend: the rows R_BuildShadowRows made for the view it draws now
 void	R_LightListDrawParms( const lightListSurface_t& s, float out[4] );	// a draw's lane rpSurfLights ( C18 ), for the backend
 void	R_LightListViewParms( const lightListView_t* llv, float zbinParms[4], float zbinScale[4] );	// the view's two lanes ( C18 ), for the backend
 void	R_LightListInitCommands();	// called once from R_InitCommands
-
-/*
-==========================================================================================
-
-THE FROXEL FOG'S SIDE ( V2 )
-
-The fog's inject reads a view's records, Z-bins and tile bits
-( renderer/Passes/VolumetricFogPass.cpp ). What the frontend and the fog pass share about them.
-
-==========================================================================================
-*/
-
-// How far along the view axis the fog's inject reads a view's light records; 0 where it reads none ( the fog off,
-// air that scatters nothing, the furnace ). Defined beside the fog's cvars, in renderer/Passes/VolumetricFogPass.cpp
-float	R_VolumetricFogRecordReach();
-
-// Whether the fog can take a record's light at all: not a fog light ( a medium: V4 ), not a light switched off for
-// the fog, not a light of another spectrum ( it lights no surface of the default one either ), and a light that
-// needs no shadow ( ambient, or flagged ) or can have a shadow map. hasShadowRows is that last fact as the caller
-// knows it: the frontend from the light's shadow LOD, the backend from the record's rows. Whether a light with
-// rows is taken at a sample is the row's to say ( shaders/builtin/volumetrics/froxel_lights.inc.hlsl )
-ID_INLINE bool R_FogCanTakeRecord( const recordLight_t& rec, bool hasShadowRows )
-{
-	return ( rec.flags & ( RLF_FOGLIGHT | RLF_FOG_OFF ) ) == 0 && ( rec.channelMask & 1u ) != 0
-		   && ( ( rec.flags & ( RLF_AMBIENT | RLF_FOG_NOSHADOW ) ) != 0 || hasShadowRows );
-}
 
 #endif // __LIGHTLISTS_H__

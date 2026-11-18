@@ -154,6 +154,38 @@ void idRenderBackend::LightListReleaseBuffers()
 
 /*
 ====================
+R_LightListShadowRows
+
+The rows R_BuildShadowRows made last, those of the view the backend draws now ( C2, in the backend's own memory; the
+upload is their copy ): numRows of them. The froxel fog's pass reads which have a place
+====================
+*/
+const shadowRow_t* R_LightListShadowRows( const viewDef_t* viewDef, int& numRows )
+{
+	numRows = Min( viewDef->numShadowRows, MAX_RECORD_LIGHTS * 6 );
+	return lightListRows;
+}
+
+/*
+====================
+R_ShadowRowW
+
+A shadow row's w ( C2 ): a parallel light's rows carry the far end of their cascade ( the view's splits, which the
+cascades of every parallel light share, as the legacy pass's rpCascadeDistances ), every other row the light's fade
+to unshadowed on its last shadow LOD ( D47; a parallel light does not fade )
+====================
+*/
+static float R_ShadowRowW( const viewDef_t* viewDef, const viewLight_t* vLight, int s, int count )
+{
+	if( vLight->parallel )
+	{
+		return ( s < count - 1 && s < MAX_FRUSTUMS ) ? viewDef->frustumSplitDistances[s] : viewDef->shadowCascadeFar;
+	}
+	return vLight->shadowFadeOut;
+}
+
+/*
+====================
 idRenderBackend::R_BuildShadowRows
 
 After ShadowAtlasPass, in a view that has records: the shadow rows ( C2 ), then the upload of every table of the
@@ -197,8 +229,18 @@ void idRenderBackend::R_BuildShadowRows( const viewDef_t* viewDef )
 		}
 		const int first = viewDef->recordLights[record].shadowRow;
 		const int count = llv->rowsOfRecord[record];
-		if( first < 0 || first + count > numRows || !R_ViewLightHasShadowMap( vLight ) )
+		if( first < 0 || first + count > numRows )
 		{
+			continue;
+		}
+		if( !R_ViewLightHasShadowMap( vLight ) )
+		{
+			// a light without a map: every row reads "not placed" ( -1 ), and its w is C2's, as on a placed row. The
+			// forward loop reads w only where z >= 0
+			for( int s = 0; s < count; s++ )
+			{
+				lightListRows[first + s].atlasRect.w = R_ShadowRowW( viewDef, vLight, s, count );
+			}
 			continue;
 		}
 		for( int s = 0; s < count; s++ )
@@ -216,12 +258,7 @@ void idRenderBackend::R_BuildShadowRows( const viewDef_t* viewDef )
 			{
 				memcpy( row.worldToShadow, shadowClip[0], sizeof( row.worldToShadow ) );	// a spot map's P carries the window-space step already
 			}
-			// the sun's rows carry the far end of their cascade; every other row the light's fade to unshadowed ( D47 )
-			float w = vLight->shadowFadeOut;
-			if( vLight->isPrimarySun )
-			{
-				w = ( s < count - 1 && s < MAX_FRUSTUMS ) ? viewDef->frustumSplitDistances[s] : viewDef->shadowCascadeFar;
-			}
+			const float w = R_ShadowRowW( viewDef, vLight, s, count );
 			const bool drawn = vLight->parallel ? ( s < atlasCascades ) : ( !vLight->pointLight || atlasSingleSide == -1 || s == atlasSingleSide );
 			const bool placed = atlas && drawn && vLight->ImageAtlasPlaced() && vLight->imageAtlasOffset[s].x != -1 && vLight->imageAtlasOffset[s].y != -1;
 			if( placed )

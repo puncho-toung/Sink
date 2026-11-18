@@ -116,6 +116,14 @@ struct debugPolygon_t
 void RB_SetMVP( const idRenderMatrix& mvp );
 void RB_SetVertexColorParms( stageVertexColor_t svc );
 
+// ---- TRACK F: the forward pass's free functions ----
+// The three default light images of the forward layouts ( renderer/NVRHI/RenderBackend_NVRHI.cpp ): 0 = the
+// projection image the two default light shaders share, 1 = the default point light's falloff, 2 = the default
+// projected light's. The froxel fog's inject binds the same three ( VolumetricFogPass::CheckInjectSet ): one
+// function for both passes, so that the fog and the walls cannot read different images
+nvrhi::ITexture* R_ForwardDefaultLightImage( int which );
+// ---- END TRACK F ----
+
 /*
 ===========================================================================
 

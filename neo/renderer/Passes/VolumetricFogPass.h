@@ -40,7 +40,7 @@ opaque picture with one lookup per pixel at the pixel's depth, before the first 
 
 The inject lights the fog ( V2 ) with the view's ambient light and with the view's light records
 ( renderer/LightLists.h ), which the frontend builds in the fog view while r_volumetricFog is on and the backend
-uploads right before this pass. No shadow is looked up yet ( V3 ): a light is taken where its shadow is known.
+uploads right before this pass. V3: a light's shadow is looked up in the shadow atlas, one comparison per froxel.
 
 The conventions, the same in every kernel and in the apply ( shaders/builtin/volumetrics/froxel_grid.inc.hlsl,
 shaders/froxel_fog.inc.hlsl ):
@@ -86,6 +86,8 @@ private:
 
 	void	InitKernel( kernel_t& kernel, const char* shaderName, bool readsVolume );
 	void	InitInject();
+	void	InitResolve();		// V3: the resolve reads three volumes and a sampler
+	void	InitColumns();		// V3: the columns read the scene's depth and the sky mask
 	bool	CheckVolumes( int gridWidth, int gridHeight, int gridSlices );
 	bool	CheckInjectSet();
 	void	ReleaseVolume();
@@ -109,16 +111,38 @@ private:
 	float							m_SliceStep;		// ln( 1 + farEnd / S ) / slices: the kernels and the fog set get the same number
 
 	nvrhi::TextureHandle			m_Injected;			// sigma_s * L in rgb, sigma_t in a, times the store scale
-	nvrhi::TextureHandle			m_Resolved;			// the same behind the temporal resolve ( V1: a copy )
+	nvrhi::TextureHandle			m_Resolved[2];		// the same behind the temporal resolve: this frame's and last frame's by turns ( V3; m_ResolvedIndex is this frame's )
+	nvrhi::TextureHandle			m_State;			// V3: per froxel the light change since last frame and the history's use there ( the inject writes it, the resolve reads it )
+	nvrhi::TextureHandle			m_Columns;			// V3: per column of the grid the farthest surface its pixels show ( the skip )
 	nvrhi::TextureHandle			m_Integrated;		// in-scatter in rgb, transmittance in a: camera to the slice's far face
 
 	kernel_t						m_Inject;			// its layout is its own ( InitInject ) and its set is made by CheckInjectSet
-	kernel_t						m_Resolve;
-	kernel_t						m_Integrate;
+	kernel_t						m_Resolve;			// V3: its set is one of m_ResolveSets, by turns
+	kernel_t						m_Integrate;		// V3: its set is one of m_IntegrateSets, by turns
+	kernel_t						m_ColumnsKernel;	// V3: the farthest surface of each column; its set comes from the engine's binding cache
+	// V3: the history. The resolved volumes take turns: this frame's is m_Resolved[ m_ResolvedIndex ], last frame's the
+	// other, and set i of each kernel is the one for m_ResolvedIndex i
+	nvrhi::BindingSetHandle			m_ResolveSets[2];
+	nvrhi::BindingSetHandle			m_IntegrateSets[2];
+	int								m_ResolvedIndex;
+	nvrhi::BufferHandle				m_PrevRecords;		// last fog view's light records, copied after its inject: their colours, flags and volumes
+	nvrhi::BufferHandle				m_MovedRecords;		// the indices in m_PrevRecords of this view's lights that moved, or whose share jumped
+	nvrhi::BufferHandle				m_CasterBounds;		// by record, 2 * FOG_CASTER_BOXES float4: where a caster that changed shadows ( froxelView_t::casterBoxes: up to FOG_CASTER_BOXES by record )
+	int								m_PrevNumRecords;
+	bool							m_HistoryValid;		// the other resolved volume holds the last fog view's fog, and m_PrevRecords its records
+	int								m_HistoryFrame;		// that view's frame ( lightListView_t::viewFrame; 0 = it had no records )
+	int								m_HistoryGrid[7];	// and what its fog was made with: the grid's columns and rows, the column side, the slices, the furnace, the view's width and height
+	float							m_HistorySliceStep;
+	idRenderMatrix					m_HistoryMVP;		// and the view's unjittered MVP and render origin: the engine's last-frame
+	idVec3d							m_HistoryOrigin;	// state ( H10 ) for the eye must be these
+	float							m_HistoryMedium;	// and its sigma_t times the store scale: the alpha of its resolved froxels
+	byte							m_PrevFogBits[ MAX_RECORD_LIGHTS ];	// of each of its records: 0x80 the fog took it, bits 0 .. 5 its rows that had a place
+	int								m_JitterIndex;		// the fog views so far: the jitter's place in its sequence
 
-	// what the inject's set was made for besides the pass's own objects: the light lists' four tables and the three
-	// light images, which belong to the engine and can be made again under a living pass
-	nvrhi::IResource*				m_InjectSetKey[7];
+	// what the inject's set was made for besides the pass's own objects: the light lists' four tables, the three
+	// light images, the shadow atlas and the list of vanished lights, which belong to the engine and can be made
+	// again under a living pass
+	nvrhi::IResource*				m_InjectSetKey[9];
 
 	// the apply: one triangle over the view, blended into the view's colour target
 	nvrhi::ShaderHandle				m_ApplyVS;

@@ -651,6 +651,7 @@ void idWeapon::Restore( idRestoreGame* savefile )
 
 	savefile->ReadRenderHandle( nozzleGlowHandle, "idWeapon::nozzleGlowHandle" );	//puncho - saves (P1-m10b)
 	savefile->ReadRenderLight( nozzleGlow );
+	nozzleGlow.volumetricMode = 1;				// as UpdateNozzleFx made it: the save stream holds no fog key
 	if( nozzleGlowHandle >= 0 )
 	{
 		nozzleGlowHandle = gameRenderWorld->AddLightDef( &nozzleGlow );
@@ -720,6 +721,7 @@ void idWeapon::Restore( idRestoreGame* savefile )
 		savefile->ReadJoint( newLight.joint );
 		savefile->ReadRenderHandle( newLight.lightHandle, "idWeapon::weaponLights.lightHandle" );	//puncho - saves (P1-m10b)
 		savefile->ReadRenderLight( newLight.light );
+		newLight.light.volumetricMode = 1;			// as GetWeaponDef made it: the save stream holds no fog key
 		if( newLight.lightHandle >= 0 )
 		{
 			newLight.lightHandle = gameRenderWorld->AddLightDef( &newLight.light );
@@ -1389,6 +1391,7 @@ void idWeapon::GetWeaponDef( const char* objectname, int ammoinclip )
 			newLight.light.lightRadius[0] = newLight.light.lightRadius[1] = newLight.light.lightRadius[2] = radius;
 			newLight.light.pointLight = true;
 			newLight.light.noShadows = true;
+			newLight.light.volumetricMode = 1;		// a light the game makes without shadows lights the froxel fog whole ( renderLight_t::volumetricMode )
 
 			newLight.light.allowLightInViewID = owner->entityNumber + 1;
 
@@ -2209,6 +2212,7 @@ void idWeapon::UpdateNozzleFx()
 		}
 		nozzleGlow.pointLight = true;
 		nozzleGlow.noShadows = true;
+		nozzleGlow.volumetricMode = 1;			// a light the game makes without shadows lights the froxel fog whole ( renderLight_t::volumetricMode )
 		nozzleGlow.lightRadius.x = nozzleGlowRadius;
 		nozzleGlow.lightRadius.y = nozzleGlowRadius;
 		nozzleGlow.lightRadius.z = nozzleGlowRadius;
