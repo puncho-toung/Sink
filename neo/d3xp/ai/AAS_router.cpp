@@ -115,10 +115,10 @@ ReadBlob
   a packed file through the file system; false when it is not there or is no packed file
 ============
 */
-static bool ReadBlob( const char* name, nl::Blob& b )
+static bool ReadBlob( const char* name, nl::Blob& b, ID_TIME_T* time = NULL )	//puncho - R2 router review: time, when given, gets the file's time
 {
 	byte* data = NULL;
-	const int len = fileSystem->ReadFile( name, ( void** )&data, NULL );
+	const int len = fileSystem->ReadFile( name, ( void** )&data, time );
 	if( len <= 0 || data == NULL )
 	{
 		if( data != NULL )
@@ -296,10 +296,24 @@ static idAASRouterProfile* LoadProfile( idAASFile* file, const char* aasFileName
 		g.mutableArea.assign( ( size_t )numAreas, 0 );
 		ReadDoorList( va( "%s.%s.rtd", aasFileName, label ), built, g.mutableArea );
 
-		if( !ReadBlob( listsName.c_str(), p->listsBlob ) )
+		ID_TIME_T listsTime = FILE_NOT_FOUND_TIMESTAMP;
+		if( !ReadBlob( listsName.c_str(), p->listsBlob, &listsTime ) )
 		{
 			throw std::runtime_error( "cannot read the lists file" );
 		}
+		//puncho start - R2 router review: lists are baked from an AAS file, so they are never older than it.
+		// The checks of the load prove that the lists agree with the map, not that they were made from it:
+		// lists of an earlier AAS file can pass them and then deny routes that exist. Older lists are refused.
+		// The test does not catch an AAS file that is the older of the two (put back or copied with its old
+		// time, or found in another layer) beside lists of a later AAS file.
+		// (A time of 0 or less is a file from a .resources container or an unknown time; then nothing is
+		// compared. An entry of a .pk4 has its own time and is compared like a loose file.)
+		const ID_TIME_T aasTime = file->GetFileTime();
+		if( aasTime > 0 && listsTime > 0 && listsTime < aasTime )
+		{
+			throw std::runtime_error( "the lists are older than the AAS file; bake them again (rbdmap routerMap)" );
+		}
+		//puncho end - R2 router review
 		const idStr layerName = va( "%s.%s.nld4", aasFileName, label );
 		const bool hasLayer = fileSystem->GetFileLength( layerName.c_str() ) >= 0;
 		if( hasLayer && !ReadBlob( layerName.c_str(), p->layerBlob ) )

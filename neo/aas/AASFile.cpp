@@ -709,6 +709,7 @@ idAASFileLocal::idAASFileLocal()
 	portals.SetGranularity( AAS_LIST_GRANULARITY );
 	portalIndex.SetGranularity( AAS_INDEX_GRANULARITY );
 	clusters.SetGranularity( AAS_LIST_GRANULARITY );
+	fileTime = 0;	//puncho - R2 router review: no file was read
 }
 
 /*
@@ -726,7 +727,17 @@ idAASFileLocal::~idAASFileLocal()
 		for( reach = areas[i].reach; reach; reach = next )
 		{
 			next = reach->next;
-			delete reach;
+			//puncho start - R2 router review: a special reachability owns a dictionary and idReachability has
+			// no virtual destructor
+			if( ( reach->travelType & TFL_SPECIAL ) != 0 )
+			{
+				delete static_cast<idReachability_Special*>( reach );
+			}
+			else
+			{
+				delete reach;
+			}
+			//puncho end - R2 router review
 		}
 	}
 }
@@ -1097,16 +1108,22 @@ bool idAASFileLocal::ParseReachabilities( idLexer& src, int areaNum )
 	for( j = 0; j < num; j++ )
 	{
 		Reachability_Read( src, &reach );
-		switch( reach.travelType )
+		//puncho start - R2 router review: the kind of object follows the special bit, as the two deletes do
+		// (the destructor and DeleteReachabilities). The dictionary is read where the writer writes one, for
+		// the value TFL_SPECIAL alone, so the file format is as it was.
+		if( ( reach.travelType & TFL_SPECIAL ) != 0 )
 		{
-			case TFL_SPECIAL:
-				newReach = special = new( TAG_AAS ) idReachability_Special();
+			newReach = special = new( TAG_AAS ) idReachability_Special();
+			if( reach.travelType == TFL_SPECIAL )
+			{
 				Reachability_Special_Read( src, special );
-				break;
-			default:
-				newReach = new( TAG_AAS ) idReachability();
-				break;
+			}
 		}
+		else
+		{
+			newReach = new( TAG_AAS ) idReachability();
+		}
+		//puncho end - R2 router review
 		newReach->CopyBase( reach );
 		newReach->fromAreaNum = areaNum;
 		newReach->next = area->reach;
@@ -1317,6 +1334,7 @@ bool idAASFileLocal::Load( const idStr& fileName, unsigned int mapFileCRC )
 	{
 		return false;
 	}
+	fileTime = src.GetFileTime();	//puncho - R2 router review: the time of the file that was read
 
 	if( !src.ExpectTokenString( AAS_FILEID ) )
 	{
@@ -1558,7 +1576,17 @@ void idAASFileLocal::DeleteReachabilities()
 		for( reach = areas[i].reach; reach; reach = nextReach )
 		{
 			nextReach = reach->next;
-			delete reach;
+			//puncho start - R2 router review: a special reachability owns a dictionary and idReachability has
+			// no virtual destructor
+			if( ( reach->travelType & TFL_SPECIAL ) != 0 )
+			{
+				delete static_cast<idReachability_Special*>( reach );
+			}
+			else
+			{
+				delete reach;
+			}
+			//puncho end - R2 router review
 		}
 		areas[i].reach = NULL;
 		areas[i].rev_reach = NULL;

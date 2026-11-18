@@ -315,6 +315,12 @@ public:
 	{
 		return crc;
 	}
+	//puncho start - R2 router review: the time of the file that Load read; 0 when no file was read
+	ID_TIME_T				GetFileTime() const
+	{
+		return fileTime;
+	}
+	//puncho end - R2 router review
 
 	int							GetNumPlanes() const
 	{
@@ -441,6 +447,7 @@ public:
 protected:
 	idStr						name;
 	unsigned int				crc;
+	ID_TIME_T				fileTime;		//puncho - R2 router review: see GetFileTime
 
 	idPlaneSet					planeList;
 	idList<aasVertex_t, TAG_AAS>			vertices;

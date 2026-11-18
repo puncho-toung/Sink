@@ -94,7 +94,21 @@ idAASLocal::Init
 */
 bool idAASLocal::Init( const idStr& mapName, unsigned int mapFileCRC )
 {
+	//puncho start - R2 router review: a held file is kept only while the file on disk has the time of the one
+	// that was loaded (idAASFile::GetFileTime). The geometry CRC does not see a compile that changed entities,
+	// seeds or AAS settings, and the router's lists beside the file are read anew at every map start: they
+	// must meet the file they were baked from. The disk is asked for a held file only: an open before a fresh
+	// load would take the file's bytes out of the prefetch store (com_prefetch), and the load would then read
+	// the disk again.
+	bool keep = false;
 	if( file && mapName.Icmp( file->GetName() ) == 0 && mapFileCRC == file->GetCRC() )
+	{
+		ID_TIME_T diskTime = FILE_NOT_FOUND_TIMESTAMP;
+		fileSystem->ReadFile( mapName, NULL, &diskTime );	// without a buffer: nothing is kept; the time is what is wanted
+		keep = ( diskTime == file->GetFileTime() );
+	}
+	//puncho end - R2 router review
+	if( keep )
 	{
 		common->Printf( "Keeping %s\n", file->GetName() );
 		RemoveAllObstacles();

@@ -1,0 +1,19 @@
+made by make_bake_src.py ( plans/single-map/math/R2/atlas/engine-port ) from the standalone sources under
+plans/single-map/math/R2/atlas/ ; the hash is of the source file as it was read:
+src/reachability.h  from exp-active/search-native/reachability.h  sha256 2cc6b5ad4f6c1c76  include or path lines changed: 0
+src/work.h  from exp-active/search-native/work.h  sha256 138f35ac1be41852  include or path lines changed: 0
+src/nl_bake.cpp  from exp-active2/native-lists/pack4/nl_bake.cpp  sha256 5c13b8ce1e5eafa9  include or path lines changed: 0
+src/nl_core.h  from exp-active2/native-lists/nl_core.h  sha256 a75e059be28eba6a  include or path lines changed: 1
+src/nl_doors.h  from exp-active2/native-lists/nl_doors.h  sha256 1ea0b0363b4f9405  include or path lines changed: 0
+src/nl_ask.h  from exp-active2/native-lists/pack4/nl_ask.h  sha256 9aa03c4a97288933  include or path lines changed: 0
+src/nl_pack.h  from exp-active2/native-lists/pack4/nl_pack.h  sha256 09cc2fb86b232d97  include or path lines changed: 0
+src/nl_walk.h  from exp-active2/native-lists/pack4/nl_walk.h  sha256 e54b5cd150c97bf6  include or path lines changed: 0
+src/od_native.h  from exp-active2/native-lists/pack4/outdoor/od_native.h  sha256 38b6f5e199f762b8  include or path lines changed: 3
+src/fixtures4.h  from exp-overlay4/scratch/fixtures4.h  sha256 3529974850aae4a0  include or path lines changed: 2
+src/input5.h  from exp-overlay6/6E/scratch/input5.h  sha256 27f0ae958c72080f  include or path lines changed: 0
+src/classification.h  from exp-signpost/S3c/classification.h  sha256 93efcb5357c13674  include or path lines changed: 0
+src/native_common.h  from exp-signpost/S3c/native_common.h  sha256 481774334a74b2bb  include or path lines changed: 2
+src/native_metric.h  from exp-signpost/S3c/native_metric.h  sha256 0191731a29b3bc19  include or path lines changed: 0
+src/census.cpp  from exp-signpost/S4a/walk/census.cpp  sha256 50b9cdd727b40312  include or path lines changed: 2
+src/level_data.h  from exp-signpost/S4a/walk/level_data.h  sha256 0d41c56341c889bc  include or path lines changed: 0
+src/rd_native.h  from engine-port/tool/rd_native.h  sha256 43dbe1dac46f408a  include or path lines changed: 1

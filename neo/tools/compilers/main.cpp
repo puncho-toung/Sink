@@ -208,7 +208,7 @@ void Sys_Printf( const char* fmt, ... )
 	msg[ sizeof( msg ) - 1 ] = '\0';
 	va_end( argptr );
 
-	printf( msg );
+	fputs( msg, stdout );	//puncho - R2 router review: the text is finished; it is no format
 	OutputDebugString( msg );
 
 	tuiLog.AddLog( "%s", msg );
@@ -226,7 +226,7 @@ void Sys_VPrintf( const char* fmt, va_list arg )
 	idStr::vsnPrintf( msg, MAXPRINTMSG - 1, fmt, arg );
 	msg[ sizeof( msg ) - 1 ] = '\0';
 
-	printf( msg );
+	fputs( msg, stdout );	//puncho - R2 router review: the text is finished; it is no format
 	OutputDebugString( msg );
 
 	tuiLog.AddLog( "%s", msg );

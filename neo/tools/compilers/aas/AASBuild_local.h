@@ -81,7 +81,8 @@ enum aasBuildResult_t
 {
 	AAS_BUILD_OK,
 	AAS_BUILD_SKIPPED,
-	AAS_BUILD_WRITE_FAILED
+	AAS_BUILD_WRITE_FAILED,
+	AAS_BUILD_UNUSED	//puncho - R2 router: no entity uses the type, no file written (with seeds: the file was removed)
 };
 
 class idAASBuild

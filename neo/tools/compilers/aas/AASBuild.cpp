@@ -36,6 +36,15 @@ If you have questions concerning this license or the applicable additional terms
 #include "../dmap/CompilerPhase.h" //puncho - TC0
 #include "../../../aas/AASFile_router.h"	//puncho - R2 router
 
+//puncho start - R2 router: an AAS compile also writes the router's files
+#ifndef _WIN32
+#include <sys/wait.h>	// WEXITSTATUS, for the bake's result
+#endif
+static idCVar aas_routerBake( "aas_routerBake", "1", CVAR_TOOL | CVAR_BOOL, "after an AAS compile, bake the router's walk lists beside each AAS file it wrote (needs the program aasrouterbake in the base path); the router maps are written either way" );
+static void RemoveRouterFiles( const idStr& aasName );
+static void RouterFilesAfterAAS( const idStr& mapName, const char* aasType );
+//puncho end - R2 router
+
 #define BFL_PATCH		0x1000
 
 //===============================================================
@@ -865,12 +874,13 @@ aasBuildResult_t idAASBuild::Build( const idStr& fileName, const idAASSettings* 
 			// The loader starts at node 1; an empty AAS file is not loadable.
 			name.SetFileExtension( aasSettings->fileExtension );
 			fileSystem->RemoveFile( name );
+			RemoveRouterFiles( name );	//puncho - R2 router: what was made from the removed file goes with it
 			common->Printf( "aas %s: areas 0\n", settings->fileExtension.c_str() );
 		}
 //puncho end - P2b.3.8
 		delete mapFile;
 		common->Printf( "no entities in map that use %s\n", settings->fileExtension.c_str() );
-		return AAS_BUILD_OK;
+		return AAS_BUILD_UNUSED;	//puncho - R2 router: nothing was written (with seeds: the file was removed)
 	}
 
 	name.SetFileExtension( aasSettings->fileExtension );
@@ -1056,6 +1066,7 @@ aasBuildResult_t idAASBuild::Build( const idStr& fileName, const idAASSettings* 
 
 	// write the file
 	name.SetFileExtension( aasSettings->fileExtension );
+	RemoveRouterFiles( name );	//puncho - R2 router: what was made from the old file goes before the file changes
 	//puncho - TC1: propagate checked completion.
 	const bool written = file->Write( name, mapFile->GetGeometryCRC() );
 
@@ -1126,6 +1137,7 @@ aasBuildResult_t idAASBuild::BuildReachability( const idStr& fileName, const idA
 	cluster.Build( file );
 
 	// write the file
+	RemoveRouterFiles( name );	//puncho - R2 router: what was made from the old file goes before the file changes
 	//puncho - TC1
 	const bool written = file->Write( name, mapFile->GetGeometryCRC() );
 
@@ -1326,7 +1338,7 @@ bool RunAAS( const idCmdArgs& args ) //puncho - TC1: return before command Error
 			}
 //puncho start - P2b.3.8, TC1
 			const aasBuildResult_t result = aas.Build( mapName, &settings, useSeeds );
-			if( result == AAS_BUILD_WRITE_FAILED || ( useSeeds && result != AAS_BUILD_OK ) )
+			if( result == AAS_BUILD_WRITE_FAILED || ( useSeeds && result != AAS_BUILD_OK && result != AAS_BUILD_UNUSED ) )	//puncho - R2 router: unused is no failure, as before
 			{
 				if( useSeeds )
 				{
@@ -1336,6 +1348,14 @@ bool RunAAS( const idCmdArgs& args ) //puncho - TC1: return before command Error
 				break;
 			}
 //puncho end - P2b.3.8, TC1
+			//puncho start - R2 router: the router's files follow each AAS file as soon as it is written, so a
+			// later type that ends the command cannot leave this one without them
+			if( result == AAS_BUILD_OK )
+			{
+				aas.Shutdown();		// the builder's own AAS file is not needed any more; the router step loads the file by its name, as the game does
+				RouterFilesAfterAAS( mapName, kv->GetValue().c_str() );
+			}
+			//puncho end - R2 router
 		}
 
 		kv = dict->MatchPrefix( "type", kv );
@@ -1399,6 +1419,7 @@ static bool RunAASDir( const idCmdArgs& args ) //puncho - TC1: return before com
 			common->Printf( "=======================================================\n" );
 		}
 
+		const idStr dirMapName = idStr( "maps/" ) + args.Argv( 1 ) + "/" + mapFiles->GetFile( i );	//puncho - R2 router
 		const idKeyValue* kv = dict->MatchPrefix( "type" );
 		while( kv != NULL )
 		{
@@ -1410,11 +1431,19 @@ static bool RunAASDir( const idCmdArgs& args ) //puncho - TC1: return before com
 			else
 			{
 				settings.FromDict( kv->GetValue(), settingsDict );
-				if( aas.Build( idStr( "maps/" ) + args.Argv( 1 ) + "/" + mapFiles->GetFile( i ), &settings ) == AAS_BUILD_WRITE_FAILED ) //puncho - TC1
+				const aasBuildResult_t result = aas.Build( dirMapName, &settings ); //puncho - TC1
+				if( result == AAS_BUILD_WRITE_FAILED )
 				{
 					succeeded = false;
 					break;
 				}
+				//puncho start - R2 router: the router's files follow each AAS file as soon as it is written
+				if( result == AAS_BUILD_OK )
+				{
+					aas.Shutdown();
+					RouterFilesAfterAAS( dirMapName, kv->GetValue().c_str() );
+				}
+				//puncho end - R2 router
 			}
 
 			kv = dict->MatchPrefix( "type", kv );
@@ -1452,6 +1481,7 @@ static bool RunReach( const idCmdArgs& args ) //puncho - TC1: return before comm
 	int i;
 	idAASBuild aas;
 	idAASSettings settings;
+	idStr reachMapName;		//puncho - R2 router
 
 	if( args.Argc() <= 1 )
 	{
@@ -1482,11 +1512,20 @@ static bool RunReach( const idCmdArgs& args ) //puncho - TC1: return before comm
 		{
 			settings.FromDict( kv->GetValue(), settingsDict );
 			i = ParseOptions( args, settings );
-			if( aas.BuildReachability( idStr( "maps/" ) + args.Argv( i ), &settings ) == AAS_BUILD_WRITE_FAILED ) //puncho - TC1
+			reachMapName = idStr( "maps/" ) + args.Argv( i );	//puncho - R2 router
+			const aasBuildResult_t result = aas.BuildReachability( reachMapName, &settings ); //puncho - TC1
+			if( result == AAS_BUILD_WRITE_FAILED )
 			{
 				succeeded = false;
 				break;
 			}
+			//puncho start - R2 router: the reachabilities changed, so this AAS file's router files are made again
+			if( result == AAS_BUILD_OK )
+			{
+				aas.Shutdown();
+				RouterFilesAfterAAS( reachMapName, kv->GetValue().c_str() );
+			}
+			//puncho end - R2 router
 		}
 
 		kv = dict->MatchPrefix( "type", kv );
@@ -1513,49 +1552,201 @@ void RunReach_f( const idCmdArgs& args )
 //puncho start - R2 router
 /*
 ============
-RunRouterMap
+RemoveRouterLists
 
-  rbdmap -nogui routerMap <mapfile>
-  Writes, for every AAS file the map has, the two router maps the bake tool reads, beside the AAS file:
-  <aas file name>.walk.rtg and <aas file name>.fly.rtg. False when a map could not be built or written,
-  and when the map has no AAS file at all.
+  removes a lists file and the certificate the bake writes beside it, through the file system (every path the
+  engine can write, in the base path and in the save path); says nothing when they are not there, and warns
+  when the lists are still there afterwards
 ============
 */
-bool RunRouterMap( const idCmdArgs& args )
+static void RemoveRouterLists( const char* listsName )
+{
+	fileSystem->RemoveFile( listsName );
+	fileSystem->RemoveFile( va( "%s.certificate.txt", listsName ) );
+	if( fileSystem->GetFileLength( listsName ) >= 0 )
+	{
+		common->Warning( "routerMap: cannot remove %s (the game refuses lists that are older than their AAS file)", listsName );
+	}
+}
+
+/*
+============
+RemoveRouterFiles
+
+  An AAS file was rewritten or removed: everything that was made from the old one goes, for both masks: the
+  lists with their certificate, the door layer and the router map. The door list (<aas file>.walk.rtd) is
+  written by hand and stays; it names areas of the old file, so it is pointed out.
+============
+*/
+static void RemoveRouterFiles( const idStr& aasName )
+{
+	static const char* labels[2] = { "walk", "fly" };
+	for( int p = 0; p < 2; p++ )
+	{
+		const idStr stem = aasName + "." + labels[p];
+		RemoveRouterLists( ( stem + ".nlw4" ).c_str() );
+		fileSystem->RemoveFile( ( stem + ".nld4" ).c_str() );
+		if( fileSystem->GetFileLength( ( stem + ".nld4" ).c_str() ) >= 0 )
+		{
+			// the game refuses a door layer that was not baked with the lists beside it, so this costs the map
+			// its router, not its routes
+			common->Warning( "routerMap: cannot remove %s.nld4: the game would find the door layer of another AAS file", stem.c_str() );
+		}
+		fileSystem->RemoveFile( ( stem + ".rtg" ).c_str() );
+		if( fileSystem->GetFileLength( ( stem + ".rtd" ).c_str() ) >= 0 )
+		{
+			common->Warning( "routerMap: %s.rtd was written for the AAS file as it was before this compile; check its area numbers", stem.c_str() );
+		}
+	}
+}
+
+/*
+============
+BakeRouterLists
+
+  Runs the bake program on one router map and has it write the lists file the game reads. The bake is the
+  standalone program the router was proven with (its sources are in neo/libs/aasrouterbake, and its build
+  copies it to the root of the tree); it is looked for as "aasrouterbake" in the base path. It proves every
+  ordered pair of areas, so its time grows
+  with the square of the map: about a second at 10,000 areas, ten to twenty at the 32,767 areas an AAS file
+  can hold.
+  Lists that are there go before the bake starts, and whatever a failed bake left goes too: the game must
+  never read lists that do not belong to the AAS file beside them.
+  False when a bake was started and did not leave lists, and when a path holds a character the shell could
+  take amiss (nothing is started then, and lists that are there stay). A missing bake program and a map with
+  a door list are said and are no failure: nothing is baked and lists that are there stay.
+============
+*/
+static bool BakeRouterLists( const char* rtgName, const char* listsName )
+{
+	// the levels the lists were tested with (walk)
+	static const char* levels = "128:4:512,256:8:3072,1024:8:0:4096";
+#ifdef _WIN32
+	static const char* toolName = "aasrouterbake.exe";
+	static const char* unsafe = "\"%!";		// cmd: a quote ends the quoting; percent and exclamation signs can be expanded inside it
+	static const char* unsafeWords = "a double quote, a percent sign or an exclamation mark";
+#else
+	static const char* toolName = "aasrouterbake";
+	static const char* unsafe = "'";		// sh: the paths are in single quotes
+	static const char* unsafeWords = "a single quote";
+#endif
+	idStr tool = cvarSystem->GetCVarString( "fs_basepath" );
+	tool.AppendPath( toolName );
+	FILE* test = fopen( tool.c_str(), "rb" );
+	if( test == NULL )
+	{
+		common->Printf( "routerMap: no bake program %s: %s not baked\n", tool.c_str(), listsName );
+		return true;
+	}
+	fclose( test );
+
+	// A map with a door list (<aas file>.walk.rtd, written by hand; the game reads it beside the AAS file)
+	// needs lists that were baked with that list, and a door layer for its wide doors. That bake is still done
+	// by hand: the bake program and the game do not read a door list the same way.
+	idStr doorsName = rtgName;
+	doorsName.StripFileExtension();
+	doorsName += ".rtd";
+	if( fileSystem->GetFileLength( doorsName ) >= 0 )
+	{
+		common->Warning( "routerMap: %s is there: the lists of a map with a door list are baked by hand, %s not baked", doorsName.c_str(), listsName );
+		return true;
+	}
+
+	const idStr rtgOS = fileSystem->RelativePathToOSPath( rtgName, "fs_basepath" );
+	const idStr outOS = fileSystem->RelativePathToOSPath( listsName, "fs_basepath" );
+	// the command goes through the shell: a path that could end the quoting is refused
+	if( strpbrk( tool.c_str(), unsafe ) != NULL || strpbrk( outOS.c_str(), unsafe ) != NULL )
+	{
+		common->Warning( "routerMap: a path holds %s: %s not baked", unsafeWords, listsName );
+		return false;
+	}
+
+	// The bake takes its map from the environment. Everything else it would read there is taken out, so that
+	// nothing left in the environment by a bake run by hand changes this one.
+	idStr command;
+#ifdef _WIN32
+	_putenv_s( "RT_MAP", rtgOS.c_str() );
+	_putenv_s( "OD_DOORS", "bridge" );
+	_putenv_s( "RT_DOORS", "" );		// an empty value takes the variable out of the environment
+	_putenv_s( "RT_FLY", "" );
+	_putenv_s( "OD_WAYPOINTS", "" );
+	// the outer pair of quotes is cmd's own; inside it every path is quoted
+	command = va( "\"\"%s\" 2 \"%s\" FB 1 0 \"%s\"\"", tool.c_str(), levels, outOS.c_str() );
+#else
+	setenv( "RT_MAP", rtgOS.c_str(), 1 );
+	setenv( "OD_DOORS", "bridge", 1 );
+	unsetenv( "RT_DOORS" );
+	unsetenv( "RT_FLY" );
+	unsetenv( "OD_WAYPOINTS" );
+	command = va( "'%s' 2 '%s' FB 1 0 '%s'", tool.c_str(), levels, outOS.c_str() );
+#endif
+	RemoveRouterLists( listsName );
+	common->Printf( "routerMap: baking %s\n", listsName );
+	fflush( NULL );		// what this program has printed goes out before the bake prints
+	int result = system( command.c_str() );
+#ifndef _WIN32
+	if( result != -1 && WIFEXITED( result ) )
+	{
+		result = WEXITSTATUS( result );		// sh hands back a wait status
+	}
+#endif
+	if( result == 0 && fileSystem->GetFileLength( listsName ) < 0 )
+	{
+		RemoveRouterLists( listsName );		// the certificate, when the bake left one
+		common->Warning( "routerMap: the bake ended without an error and left no %s", listsName );
+		return false;
+	}
+	if( result != 0 )
+	{
+		RemoveRouterLists( listsName );
+		if( result == -1 )
+		{
+			common->Warning( "routerMap: the bake program could not be started: %s not baked", listsName );
+		}
+		else
+		{
+			common->Warning( "routerMap: the bake of %s failed (%d)", listsName, result );
+		}
+		return false;
+	}
+	common->Printf( "routerMap: baked %s\n", listsName );
+	return true;
+}
+
+/*
+============
+WriteRouterFiles
+
+  For every AAS file the map has (with onlyTypes: for the AAS types it names): the two router maps beside
+  it (<aas file name>.walk.rtg and .fly.rtg), and, with bake, the walk lists the game reads
+  (<aas file name>.walk.nlw4). The fly lists are not baked here: no flying monster has used the router yet,
+  and their bake takes other levels.
+  False when a map could not be built or written, a bake failed, or no AAS file was found.
+============
+*/
+static bool WriteRouterFiles( const idStr& mapName, bool bake, const idStrList* onlyTypes )
 {
 	static const int masks[2] = { TFL_WALK | TFL_AIR, TFL_WALK | TFL_AIR | TFL_FLY };
 	static const char* labels[2] = { "walk", "fly" };
 	bool succeeded = true;
-	int written = 0;
-	idStr mapName;
-
-	if( args.Argc() <= 1 )
-	{
-		common->Printf( "routerMap <mapfile>\n" );
-		return true;
-	}
-
-	common->ClearWarnings( "writing router maps" );
-
-	common->SetRefreshOnPrint( true );
+	int aasFiles = 0;
 
 	const idDict* dict = FindEntityDefDict( "aas_types", false );
 	if( !dict )
 	{
-		common->Error( "Unable to find entityDef for 'aas_types'" );
-	}
-
-	// the map's name as runAAS takes it
-	mapName = args.Argv( 1 );
-	mapName.BackSlashesToSlashes();
-	if( mapName.Icmpn( "maps/", 4 ) != 0 )
-	{
-		mapName = "maps/" + mapName;
+		common->Warning( "routerMap: unable to find entityDef for 'aas_types'" );
+		return false;
 	}
 
 	const idKeyValue* kv = dict->MatchPrefix( "type" );
 	while( kv != NULL )
 	{
+		if( onlyTypes != NULL && onlyTypes->Find( kv->GetValue() ) == NULL )
+		{
+			kv = dict->MatchPrefix( "type", kv );
+			continue;
+		}
+
 		idStr name = mapName;
 		name.SetFileExtension( kv->GetValue().c_str() );
 
@@ -1566,6 +1757,7 @@ bool RunRouterMap( const idCmdArgs& args )
 		}
 		else
 		{
+			aasFiles++;
 			for( int p = 0; p < 2; p++ )
 			{
 				idAASRouterMap map;
@@ -1579,19 +1771,26 @@ bool RunRouterMap( const idCmdArgs& args )
 
 				idStr outName = name + "." + labels[p] + ".rtg";
 				idFile* f = fileSystem->OpenFileWrite( outName, "fs_basepath" );
-				if( !f || !map.Write( f ) )
-				{
-					common->Warning( "routerMap: cannot write %s", outName.c_str() );
-					succeeded = false;
-				}
-				else
-				{
-					common->Printf( "routerMap: wrote %s: %d areas, %d reaches\n", outName.c_str(), map.numAreas, map.edges.Num() );
-					written++;
-				}
+				const bool wrote = ( f != NULL && map.Write( f ) );
 				if( f )
 				{
 					fileSystem->CloseFile( f );
+				}
+				if( !wrote )
+				{
+					common->Warning( "routerMap: cannot write %s", outName.c_str() );
+					succeeded = false;
+					continue;
+				}
+				common->Printf( "routerMap: wrote %s: %d areas, %d reaches\n", outName.c_str(), map.numAreas, map.edges.Num() );
+
+				if( bake && p == 0 )
+				{
+					const idStr listsName = name + "." + labels[p] + ".nlw4";
+					if( !BakeRouterLists( outName.c_str(), listsName.c_str() ) )
+					{
+						succeeded = false;
+					}
 				}
 			}
 		}
@@ -1600,11 +1799,64 @@ bool RunRouterMap( const idCmdArgs& args )
 		kv = dict->MatchPrefix( "type", kv );
 	}
 
-	if( written == 0 )
+	if( aasFiles == 0 )
 	{
 		common->Warning( "routerMap: %s has no AAS file", mapName.c_str() );
 		succeeded = false;
 	}
+	return succeeded;
+}
+
+/*
+============
+RouterFilesAfterAAS
+
+  One AAS file was written. Its router maps are made, and its lists are baked unless aas_routerBake is 0.
+  The files made from the file as it was before are gone already: idAASBuild removes them just before it
+  writes (RemoveRouterFiles). A failure here is printed and does not fail the AAS compile: without lists
+  the game routes the stock way.
+============
+*/
+static void RouterFilesAfterAAS( const idStr& mapName, const char* aasType )
+{
+	idStrList onlyType;
+	onlyType.Append( aasType );
+	WriteRouterFiles( mapName, aas_routerBake.GetBool(), &onlyType );
+}
+
+/*
+============
+RunRouterMap
+
+  rbdmap -nogui routerMap <mapfile>
+  The router's files for a map whose AAS files exist already: WriteRouterFiles for every AAS file, with the
+  bake unless aas_routerBake is 0. An AAS compile (runAAS, runAASDir, runReach, dmap) does the same by
+  itself for the AAS files it wrote.
+============
+*/
+bool RunRouterMap( const idCmdArgs& args )
+{
+	idStr mapName;
+
+	if( args.Argc() <= 1 )
+	{
+		common->Printf( "routerMap <mapfile>\n" );
+		return true;
+	}
+
+	common->ClearWarnings( "writing router maps" );
+
+	common->SetRefreshOnPrint( true );
+
+	// the map's name as runAAS takes it
+	mapName = args.Argv( 1 );
+	mapName.BackSlashesToSlashes();
+	if( mapName.Icmpn( "maps/", 4 ) != 0 )
+	{
+		mapName = "maps/" + mapName;
+	}
+
+	const bool succeeded = WriteRouterFiles( mapName, aas_routerBake.GetBool(), NULL );
 
 	common->SetRefreshOnPrint( false );
 	common->PrintWarnings();
