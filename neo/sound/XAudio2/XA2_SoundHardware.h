@@ -145,6 +145,19 @@ public:
 		return true;
 	}
 	void			PrintReverbVoices() const;
+	//puncho - SB3-T (DR-209): paid only by listAcoustics
+	bool			GetActiveVoiceCounts( uint32& sourceVoices, uint32& submixVoices ) const
+	{
+		if( pXAudio2 == NULL )
+		{
+			return false;
+		}
+		XAUDIO2_PERFORMANCE_DATA data;
+		pXAudio2->GetPerformanceData( &data );
+		sourceVoices = data.ActiveSourceVoiceCount;
+		submixVoices = data.ActiveSubmixVoiceCount;
+		return true;
+	}
 	void			BeginReverbMap( idSoundReverb* owner );			// R-SB4-5's hardware part; sets reverbOwner
 	void			EndReverbMap( bool soundCarried );				// R-SB4-26's hardware part
 	void			DetachReverb( const idSoundReverb* owner );		// R-SB4-31's hardware part

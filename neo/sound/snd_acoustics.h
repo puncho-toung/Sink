@@ -4,6 +4,14 @@
 
 #include "snd_acousticfile.h"
 
+//puncho start - SB3-T (R-SB3-16, R-SB3-17, R-SB3-31): developer tools, off by default
+extern idCVar s_acousticsShow;
+extern idCVar s_acousticsLog;
+void ListAcoustics_f( const idCmdArgs& args );
+void AcousticsLog_Frame();
+void AcousticsLog_Close();
+//puncho end
+
 /*
 ===============================================================================
 
@@ -71,7 +79,7 @@ private:
 	sndPortalEdge_t* edges;  sndPortalArea_t* areaEdges;  uint8* states;  uint8* doorUse;
 	int    numEdges, numPortals, maxAreaEdges, maxAreaEdgesArea;
 	bool   statesChanged, armed;
-	void*  mesh;                        // .sndmesh for bit 16 drawing, NULL until asked
+	void*  mesh;                        //puncho - SB3-T (OP8-6): .sndmesh for bit 16, NULL until asked; refusal holds &acousticsMeshRefused, never freed
 	idStrStatic< MAX_OSPATH > mapName;
 };
 

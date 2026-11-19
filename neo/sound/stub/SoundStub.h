@@ -142,6 +142,11 @@ public:
 		return false;
 	}
 	void			PrintReverbVoices() const {}
+	//puncho - SB3-T (DR-209): XAudio2's counts are unavailable
+	bool			GetActiveVoiceCounts( uint32& /* sourceVoices */, uint32& /* submixVoices */ ) const
+	{
+		return false;
+	}
 	void			BeginReverbMap( idSoundReverb* owner ) {}
 	void			EndReverbMap( bool soundCarried ) {}
 	void			DetachReverb( const idSoundReverb* owner ) {}

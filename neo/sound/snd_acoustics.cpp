@@ -20,7 +20,765 @@
 // R-SB3-10: read once per load (and by ListenerPass on a gated frame); not network-synced, nothing saved
 idCVar s_acoustics( "s_acoustics", "1", CVAR_INTEGER | CVAR_ARCHIVE, "baked room acoustics: 0 off, 1 on, 2 on and every off line but 's_acoustics 0' a warning; read at map load", 0, 2, idCmdSystem::ArgCompletion_Integer<0, 2> );
 
+//puncho - SB3-T: neither tool is archived or network-synced (R-SB3-16, R-SB3-18)
+idCVar s_acousticsShow( "s_acousticsShow", "0", CVAR_INTEGER, "draw baked acoustics: 1 probes, 2 cells, 4 zones, 8 doors, 16 plugs" );
+idCVar s_acousticsLog( "s_acousticsLog", "", 0, "write acousticslog/<plain name>.csv under fs_savepath; empty closes the log" );
+
 static const int SND_ACOUSTICS_READ_CHUNK = 1024 * 1024;	// step 6 reads the block in 1 MB pieces, the pacifier between
+
+//puncho start - SB3-T (R-SB3-18, R-SB3-31, DR-209, DR-210, DR-211): main-thread diagnostic log
+static const int ACOUSTICS_LOG_BUFFER_SIZE = 64 * 1024;
+static char* acousticsLogBuffer = NULL;
+static int acousticsLogUsed = 0;
+static uint64 acousticsLogFrame = 0;	// DR-211: next F row's number, used only while the file is open
+static uint64 acousticsLogLastFlushUs = 0;
+static char acousticsLogName[128];
+
+// No pointer to a channel, voice or bake survives L1. The world pointer is compared only, never dereferenced.
+struct acousticsLogWorld_t
+{
+	const idSoundWorldLocal*	world;
+	float					dtMs;
+	float					pos[3];
+	int						ms;
+	int						gate;
+	int						cutReasons;
+	int						held;
+	int						area;
+	bool					updated;
+	bool					portalStatesChanged;	//puncho - SB3-T (TL8-1): this L1's flag, consumed with its F row
+};
+static acousticsLogWorld_t acousticsLogSnapshot = {};
+
+static const char acousticsLogHeaders[] =
+	"F,frame,ms,worldUpdated,dtMs,gate,cutReasons,held,lx,ly,lz,area,r_tickMs,r_dtMs,r_cut,r_held,r_area,r_areasVisited,r_cellsRead,r_probesWeighted,r_weightSum,r_floorWeight,r_target0,r_target1,r_target2,r_target3,r_target4,r_smoothed0,r_smoothed1,r_smoothed2,r_smoothed3,r_smoothed4,r_zone,r_candidate,r_dwellMs,r_pendingZone,r_fadeProgress,r_draining,r_voicesWithBus,portalStatesChanged\n"
+	"S,frame,submix,state,bus,return,enabled,WetDryMix,ReflectionsDelay,ReverbDelay,RearDelay,SideDelay,PositionLeft,PositionRight,PositionMatrixLeft,PositionMatrixRight,EarlyDiffusion,LateDiffusion,LowEQGain,LowEQCutoff,HighEQGain,HighEQCutoff,RoomFilterFreq,RoomFilterMain,RoomFilterHF,ReflectionsGain,ReverbGain,DecayTime,Density,RoomSize,DisableLateField\n"
+	"V,frame,emitter,channel,shader,attenTgt,attenDb,occTgt,occ,held,volumeDb,gain,offTx,offTy,offTz,offX,offY,offZ,portalLossDb,portalOcclusion,routes,occFlags,loss0,loss1,loss2,reverbSend\n";
+
+// A full buffer costs one Write, without a per-row file flush. Clearing used before the Write also prevents a
+// short write from being retried by Close and duplicating the prefix the file may already have accepted.
+static bool AcousticsLog_WriteBuffer()
+{
+	if( acousticsLogUsed == 0 )
+	{
+		return true;
+	}
+	const int bytes = acousticsLogUsed;
+	acousticsLogUsed = 0;
+	if( soundSystemLocal.acousticsLog->Write( acousticsLogBuffer, bytes ) != bytes )
+	{
+		idLib::Warning( "s_acousticsLog: writing acousticslog/%s.csv failed; the log is off", acousticsLogName );
+		s_acousticsLog.SetString( "" );
+		return false;
+	}
+	return true;
+}
+
+void AcousticsLog_Close()
+{
+	if( soundSystemLocal.acousticsLog == NULL && acousticsLogBuffer == NULL )	//puncho - SB3-T (OP8-2 (a))
+	{
+		return;
+	}
+	if( soundSystemLocal.acousticsLog != NULL )
+	{
+		AcousticsLog_WriteBuffer();
+		soundSystemLocal.acousticsLog->Flush();
+		fileSystem->CloseFile( soundSystemLocal.acousticsLog );
+		soundSystemLocal.acousticsLog = NULL;
+	}
+	Mem_Free( acousticsLogBuffer );
+	acousticsLogBuffer = NULL;
+	acousticsLogUsed = 0;
+	acousticsLogFrame = 0;
+	acousticsLogLastFlushUs = 0;
+	acousticsLogName[0] = '\0';
+	memset( &acousticsLogSnapshot, 0, sizeof( acousticsLogSnapshot ) );
+	soundSystemLocal.acousticsLogWorld = NULL;
+}
+
+static bool AcousticsLog_AppendRow( const char* row, int bytes )
+{
+	assert( bytes >= 0 && bytes <= ACOUSTICS_LOG_BUFFER_SIZE );
+	if( bytes > ACOUSTICS_LOG_BUFFER_SIZE - acousticsLogUsed )
+	{
+		if( !AcousticsLog_WriteBuffer() )
+		{
+			AcousticsLog_Close();
+			return false;
+		}
+	}
+	memcpy( acousticsLogBuffer + acousticsLogUsed, row, bytes );
+	acousticsLogUsed += bytes;
+	return true;
+}
+
+//puncho - SB3-T (OP8-1): keep the list's count out of Update's hardware-loop register allocation
+void idSoundWorldLocal::AcousticsLog_World( const idStaticList< idActiveChannel, MAX_HARDWARE_VOICES >& channels, int currentTime ) const
+{
+	// Render owns opening, switching and closing. A cvar edit before this update must not append orphan V rows to
+	// the old file; the first Render with the new name will publish the world for the following update (D-8).
+	if( soundSystemLocal.acousticsLog == NULL || soundSystemLocal.acousticsGameWorld != this
+			|| idStr::Cmp( s_acousticsLog.GetString(), acousticsLogName ) != 0 )
+	{
+		return;
+	}
+	acousticsLogSnapshot.world = this;
+	acousticsLogSnapshot.ms = currentTime;
+	acousticsLogSnapshot.dtMs = updateDtMs;
+	acousticsLogSnapshot.cutReasons = listenerCutReasons;
+	acousticsLogSnapshot.gate = acoustics == NULL ? 0 : ( acoustics->IsArmed() ? 2 : 1 );
+	acousticsLogSnapshot.portalStatesChanged = acousticsLogSnapshot.gate == 2 && acoustics->PortalStatesChanged();	//puncho - SB3-T (TL8-1)
+	for( int k = 0; k < 3; k++ )
+	{
+		acousticsLogSnapshot.pos[k] = listener.pos[k];
+	}
+	if( acousticsLogSnapshot.gate == 2 )
+	{
+		acousticsLogSnapshot.held = listenerAreaHeld ? 1 : 0;
+		acousticsLogSnapshot.area = listener.area;
+	}
+	acousticsLogSnapshot.updated = true;
+
+	// A canonical decl name is shorter than MAX_STRING_CHARS (DeclManager's canonicalName). Even doubling every
+	// quote leaves room for all 25 separators and the round-trip float spellings in this fixed 4 KB row.
+	char row[4096];
+	for( int i = 0; i < channels.Num(); i++ )
+	{
+		const idSoundChannel* chan = channels[i].channel;
+		const idSoundEmitterLocal* emitter = chan->emitter;
+		const idSoundWorldLocal* world = emitter->soundWorld;
+		const char* shader = chan->soundShader->GetName();
+		if( idStr::Length( shader ) >= MAX_STRING_CHARS )
+		{
+			idLib::Warning( "s_acousticsLog: shader name exceeds the decl name bound; the log is off" );
+			s_acousticsLog.SetString( "" );
+			AcousticsLog_Close();
+			return;
+		}
+		// DR-211: Render appends the F row with this same number, then advances it.
+		int bytes = idStr::snPrintf( row, sizeof( row ), "V,%llu,%d,%d,\"", ( unsigned long long )acousticsLogFrame, emitter->index, chan->logicalChannel );
+		for( const char* p = shader; *p != '\0'; p++ )
+		{
+			if( *p == '"' )
+			{
+				row[bytes++] = '"';
+			}
+			row[bytes++] = *p;
+		}
+		row[bytes++] = '"';
+		const char* held = acousticsLogSnapshot.gate == 2 ? ( world->listenerAreaHeld ? "1" : "0" ) : "";
+		bytes += idStr::snPrintf( row + bytes, ( int )sizeof( row ) - bytes, ",%.9g,%.9g,%.9g,%.9g,%s,%.9g,",
+								 chan->excessTargetDB, chan->excessDB.value, chan->occTarget, chan->occlusion.value, held, chan->volumeDB );
+		if( chan->hardwareVoice != NULL )
+		{
+			bytes += idStr::snPrintf( row + bytes, ( int )sizeof( row ) - bytes, "%.9g", chan->hardwareVoice->GetGain() );
+		}
+		// DR-211: the same target and tests as E6's UpdateHardware, including its zero for omni channels.
+		const bool global = ( chan->parms.soundShaderFlags & SSF_GLOBAL ) != 0;
+		const bool omni = ( chan->parms.soundShaderFlags & SSF_OMNIDIRECTIONAL ) != 0;
+		const bool emitterIsListener = emitter->emitterId == world->listener.id;
+		const bool occluded = !global && !emitterIsListener && ( chan->parms.soundShaderFlags & SSF_NO_OCCLUSION ) == 0;
+		const idVec3 target = ( occluded && !omni ) ? ( emitter->spatializedOrigin - emitter->origin ) : vec3_zero;
+		bytes += idStr::snPrintf( row + bytes, ( int )sizeof( row ) - bytes, ",%.9g,%.9g,%.9g", target.x, target.y, target.z );
+		bytes += idStr::snPrintf( row + bytes, ( int )sizeof( row ) - bytes, ",%.9g,%.9g,%.9g,%.9g,%.9g",
+								 chan->panOffset[0].value, chan->panOffset[1].value, chan->panOffset[2].value,
+								 emitter->portalLossDb, emitter->portalOcclusion );
+		sndOccLogVoice_t record;
+		// D-51 / DR-209: this emitter record repeats on every channel, including global and SSF_NO_OCCLUSION.
+		if( world->occlusion != NULL && world->occlusion->GetLogVoice( emitter, record ) )
+		{
+			bytes += idStr::snPrintf( row + bytes, ( int )sizeof( row ) - bytes, ",%u,%u,%.9g,%.9g,%.9g",
+									 ( unsigned int )record.numRoutes, ( unsigned int )record.flags, record.lossDb[0], record.lossDb[1], record.lossDb[2] );
+		}
+		else
+		{
+			memcpy( row + bytes, ",,,,,", 5 );
+			bytes += 5;
+		}
+		row[bytes++] = ',';
+		if( chan->hardwareVoice != NULL )
+		{
+			bytes += idStr::snPrintf( row + bytes, ( int )sizeof( row ) - bytes, "%.9g", chan->hardwareVoice->GetReverbSend() );
+		}
+		row[bytes++] = '\n';
+		if( !AcousticsLog_AppendRow( row, bytes ) )
+		{
+			return;
+		}
+	}
+}
+
+void AcousticsLog_Frame()
+{
+	const char* name = s_acousticsLog.GetString();
+	if( name[0] == '\0' )
+	{
+		AcousticsLog_Close();
+		return;
+	}
+	if( soundSystemLocal.acousticsLog != NULL && idStr::Cmp( name, acousticsLogName ) != 0 )
+	{
+		AcousticsLog_Close();
+		// A failed final write clears the cvar and may invalidate the previous string pointer.
+		name = s_acousticsLog.GetString();
+		if( name[0] == '\0' )
+		{
+			return;
+		}
+	}
+	const uint64 nowUs = Sys_Microseconds();
+	if( soundSystemLocal.acousticsLog == NULL )
+	{
+		if( !ValidDiagnosticName( name ) )
+		{
+			idLib::Warning( "s_acousticsLog requires a plain name" );
+			s_acousticsLog.SetString( "" );
+			AcousticsLog_Close();
+			return;
+		}
+		char path[160];
+		idStr::snPrintf( path, sizeof( path ), "acousticslog/%s.csv", name );
+		//puncho - SB3-T (DR-212 item 1): Windows OpenFileAppend opens with OPEN_ALWAYS, but does not seek to EOF.
+		soundSystemLocal.acousticsLog = fileSystem->OpenFileAppend( path, false, "fs_savepath" );
+		if( soundSystemLocal.acousticsLog == NULL )
+		{
+			idLib::Warning( "s_acousticsLog: could not open %s", path );
+			s_acousticsLog.SetString( "" );
+			AcousticsLog_Close();
+			return;
+		}
+		if( soundSystemLocal.acousticsLog->Seek( 0, FS_SEEK_END ) != 0 )
+		{
+			idLib::Warning( "s_acousticsLog: could not seek to the end of %s", path );
+			s_acousticsLog.SetString( "" );
+			AcousticsLog_Close();
+			return;
+		}
+		acousticsLogBuffer = ( char* )Mem_Alloc( ACOUSTICS_LOG_BUFFER_SIZE, TAG_AUDIO );
+		if( acousticsLogBuffer == NULL )
+		{
+			idLib::Warning( "s_acousticsLog: could not allocate the 64 KB buffer" );
+			s_acousticsLog.SetString( "" );
+			AcousticsLog_Close();
+			return;
+		}
+		idStr::Copynz( acousticsLogName, name, sizeof( acousticsLogName ) );
+		acousticsLogFrame = 0;
+		acousticsLogLastFlushUs = nowUs;
+		//puncho - SB3-T (TL8-4): every open starts a new header block before frame numbering restarts at 0.
+		AcousticsLog_AppendRow( acousticsLogHeaders, ( int )sizeof( acousticsLogHeaders ) - 1 );
+	}
+
+	// D-8: only Render publishes the world. The destructor's NULL also invalidates a snapshot if an address is
+	// reused before the next Render. No stale world pointer is dereferenced here.
+	if( soundSystemLocal.acousticsLogWorld != soundSystemLocal.acousticsGameWorld )
+	{
+		memset( &acousticsLogSnapshot, 0, sizeof( acousticsLogSnapshot ) );
+	}
+	soundSystemLocal.acousticsLogWorld = soundSystemLocal.acousticsGameWorld;
+	const idSoundWorldLocal* world = soundSystemLocal.acousticsLogWorld;
+	const idSoundAcoustics* acoustics = world != NULL ? world->acoustics : NULL;
+	const int gate = acoustics == NULL ? 0 : ( acoustics->IsArmed() ? 2 : 1 );
+	char row[512];
+	int bytes;
+	// DR-211: ms is the last L1's emitter time, retained with the other stashed values when no update ran.
+	// Recheck the live gate to mask area/held after an unload; paused rows keep the snapshot with worldUpdated 0.
+	if( world != NULL && acousticsLogSnapshot.world == world )
+	{
+		char area[16] = "";
+		const char* held = "";
+		if( gate == 2 && acousticsLogSnapshot.gate == 2 )
+		{
+			idStr::snPrintf( area, sizeof( area ), "%d", acousticsLogSnapshot.area );
+			held = acousticsLogSnapshot.held ? "1" : "0";
+		}
+		bytes = idStr::snPrintf( row, sizeof( row ), "F,%llu,%d,%d,%.9g,%d,%d,%s,%.9g,%.9g,%.9g,%s",
+							   ( unsigned long long )acousticsLogFrame, acousticsLogSnapshot.ms,
+							   acousticsLogSnapshot.updated ? 1 : 0, acousticsLogSnapshot.dtMs, gate, acousticsLogSnapshot.cutReasons, held,
+							   acousticsLogSnapshot.pos[0], acousticsLogSnapshot.pos[1], acousticsLogSnapshot.pos[2], area );
+	}
+	else
+	{
+		// The opening Render (or a newly selected world) has not seen L1 yet; there is no world snapshot to invent.
+		bytes = idStr::snPrintf( row, sizeof( row ), "F,%llu,,0,,%d,,,,,,", ( unsigned long long )acousticsLogFrame, gate );
+	}
+	// STAND-IN SB4-Z / DR-209: exactly 27 empty reverbLogFrame_t columns, tickMs through voicesWithBus. submix[]
+	// belongs to the S rows, whose condition and values are also unavailable until SB4-Z. No S row is emitted yet.
+	for( int c = 0; c < 27; c++ )
+	{
+		row[bytes++] = ',';
+	}
+	//puncho - SB3-T (TL8-1): no new portal-change event on opening, paused or otherwise unupdated rows.
+	bytes += idStr::snPrintf( row + bytes, ( int )sizeof( row ) - bytes, ",%d\n",
+							 world != NULL && acousticsLogSnapshot.world == world && acousticsLogSnapshot.updated && acousticsLogSnapshot.portalStatesChanged ? 1 : 0 );
+	if( !AcousticsLog_AppendRow( row, bytes ) )
+	{
+		return;
+	}
+	acousticsLogFrame++;
+	acousticsLogSnapshot.updated = false;
+	if( nowUs - acousticsLogLastFlushUs >= 1000000 )
+	{
+		if( !AcousticsLog_WriteBuffer() )
+		{
+			AcousticsLog_Close();
+			return;
+		}
+		soundSystemLocal.acousticsLog->Flush();
+		acousticsLogLastFlushUs = nowUs;
+	}
+}
+//puncho end
+
+//puncho start - SB3-T (R-SB3-17): command and the s_showVoices marker, no per-frame work while off
+const char* idSoundWorldLocal::AcousticsState() const
+{
+	// The stored line also names the map. Keep the loader's complete stale-record explanation.
+	const char* state = strstr( acousticsLine, " off (" );
+	if( state == NULL )
+	{
+		state = strstr( acousticsLine, " on (" );
+	}
+	return ( state != NULL ) ? state + 1 : "off (no map)";
+}
+
+static void SndAcoustics_PrintReverb( const sndReverb_t& r )
+{
+	common->Printf( " decayTime %.6g %.6g %.6g earlyDb %.6g lateDb %.6g preDelay %.6g lateDelay %.6g roomSize %.6g\n",
+					r.decayTime[0], r.decayTime[1], r.decayTime[2], r.earlyDb, r.lateDb, r.preDelay, r.lateDelay, r.roomSize );
+}
+
+void idSoundWorldLocal::ListAcoustics( const idCmdArgs& args ) const
+{
+	common->Printf( "%s\n", acousticsLine[0] != '\0' ? acousticsLine : "acoustics: off (no map)" );
+	if( acoustics == NULL )
+	{
+		return;
+	}
+	const idSoundAcoustics& a = *acoustics;
+	const sndFileHeader_t& h = a.GetHeader();
+	common->Printf( "armed %d file %s.sndbake step1Bytes %u length %llu\n", a.IsArmed() ? 1 : 0, a.GetMapName(), h.step1Bytes,
+					( unsigned long long )SND_HEADER_SIZE + h.payloadSize );
+	common->Printf( "magic 0x%08x version %u compileId 0x%016llx mapGeometryCRC 0x%08x\n", h.magic, h.version,
+					( unsigned long long )h.compileId, h.mapGeometryCRC );
+	common->Printf( "bakerRevision 0x%08x toolVersion 0x%08x numBands %u entityKeysCRC 0x%08x materialHash 0x%08x inputHash 0x%016llx\n",
+					h.bakerRevision, h.toolVersion, h.numBands, h.entityKeysCRC, h.materialHash, ( unsigned long long )h.inputHash );
+	const sndSettings_t& s = h.settings;
+	common->Printf( "settings probeSpacing %d probeSpacingZ %d probeClearance %d sealDoorways %d staticTriBudget %d preset %d\n",
+					s.probeSpacing, s.probeSpacingZ, s.probeClearance, s.sealDoorways, s.staticTriBudget, s.preset );
+	common->Printf( "settings rays %d bounces %d duration %.6g ambisonicOrder %d diffuseSamples %d irradianceMinDistance %.6g\n",
+					s.rays, s.bounces, s.duration, s.ambisonicOrder, s.diffuseSamples, s.irradianceMinDistance );
+	common->Printf( "payloadSize %u payloadCRC 0x%08x numSections %u\n", h.payloadSize, h.payloadCRC, h.numSections );
+	const sndSection_t* sections = ( const sndSection_t* )( a.block + SND_HEADER_SIZE );
+	for( uint32 i = 0; i < h.numSections; i++ )
+	{
+		common->Printf( "section 0x%x offset %u size %u count %u\n", sections[i].id, sections[i].offset, sections[i].size, sections[i].count );
+	}
+	common->Printf( "areas %d cells %d probes %d zones %d doors %d strings %d bytes\n",
+					a.NumAreas(), a.NumCells(), a.NumProbes(), a.NumZones(), a.NumDoors(), a.doorStringBytes );
+	common->Printf( "graph areas %d portals %d edges %d MaxAreaEdges %d area %d\n",
+					a.NumAreas(), a.NumPortals(), a.NumEdges(), a.MaxAreaEdges(), a.MaxAreaEdgesArea() );
+	// DR-209: the states, like the log frame, belong to SB4-Z.
+	common->Printf( "effect and drain states come with SB4-Z\n" );
+	const bool areas = idStr::Icmp( args.Argv( 1 ), "areas" ) == 0;
+	const bool zones = idStr::Icmp( args.Argv( 1 ), "zones" ) == 0;
+	const bool doors = idStr::Icmp( args.Argv( 1 ), "doors" ) == 0;
+	const bool portals = idStr::Icmp( args.Argv( 1 ), "portals" ) == 0;
+	for( int d = 0; d < a.NumDoors(); d++ )
+	{
+		const sndBakeDoor_t& door = a.GetDoors()[d];
+		const sndDoorUse_t use = a.GetDoorUse( d );
+		common->Printf( "door %d %s %s", d, a.GetDoorName( d ),
+						use == SND_DOOR_USED ? "USED" : ( use == SND_DOOR_MISMATCH ? "MISMATCH" : "SHADOWED" ) );
+		if( doors )
+		{
+			common->Printf( " portal %d areas %d %d lossDb %.6g %.6g %.6g", door.portal, door.area0, door.area1,
+							door.lossDb[0], door.lossDb[1], door.lossDb[2] );
+		}
+		common->Printf( "\n" );
+	}
+	if( areas )
+	{
+		for( int i = 0; i < a.NumAreas(); i++ )
+		{
+			const sndBakeArea_t& area = a.GetAreas()[i];
+			common->Printf( "area %d zone %d cellMin %d %d %d dims %d %d %d firstCell %d firstProbe %d probeCount %d firstEdge %d numEdges %d",
+							i, area.zone, area.cellMin[0], area.cellMin[1], area.cellMin[2], area.dims[0], area.dims[1], area.dims[2],
+							area.firstCell, area.firstProbe, area.probeCount, a.GetAreaEdges()[i].firstEdge, a.GetAreaEdges()[i].numEdges );
+			SndAcoustics_PrintReverb( area.defaultReverb );
+		}
+	}
+	if( zones )
+	{
+		for( int z = 0; z < a.NumZones(); z++ )
+		{
+			common->Printf( "zone %d", z );
+			SndAcoustics_PrintReverb( a.GetZones()[z] );
+		}
+	}
+	if( portals )
+	{
+		for( int i = 0; i < a.NumAreas(); i++ )
+		{
+			const sndPortalArea_t& area = a.GetAreaEdges()[i];
+			for( int e = area.firstEdge; e < area.firstEdge + area.numEdges; e++ )
+			{
+				const sndPortalEdge_t& edge = a.GetEdges()[e];
+				common->Printf( "edge %d area %d otherArea %d portal %d door %d state 0x%x points %d center %.6g %.6g %.6g\n",
+								e, i, edge.otherArea, edge.portal, edge.door, ( unsigned int )a.GetPortalStates()[edge.portal],
+								edge.w->GetNumPoints(), edge.center.x, edge.center.y, edge.center.z );
+			}
+		}
+	}
+}
+
+void ListAcoustics_f( const idCmdArgs& args )
+{
+	//puncho - SB3-T (TL8-2): usage and hardware counts belong to the command, with or without a loaded bake/world.
+	if( args.Argc() > 2 || ( args.Argc() == 2 && idStr::Icmp( args.Argv( 1 ), "areas" ) != 0
+			&& idStr::Icmp( args.Argv( 1 ), "zones" ) != 0 && idStr::Icmp( args.Argv( 1 ), "doors" ) != 0
+			&& idStr::Icmp( args.Argv( 1 ), "portals" ) != 0 ) )
+	{
+		common->Printf( "usage: listAcoustics [areas|zones|doors|portals]\n" );
+	}
+	const idSoundWorldLocal* world = soundSystemLocal.acousticsGameWorld;
+	if( world != NULL )
+	{
+		world->ListAcoustics( args );
+	}
+	else
+	{
+		common->Printf( "acoustics: off (no map)\n" );
+	}
+	uint32 sourceVoices, submixVoices;
+	if( soundSystemLocal.hardware.GetActiveVoiceCounts( sourceVoices, submixVoices ) )
+	{
+		common->Printf( "ActiveSourceVoiceCount %u ActiveSubmixVoiceCount %u\n", sourceVoices, submixVoices );
+	}
+	else
+	{
+		common->Printf( "ActiveSourceVoiceCount unavailable ActiveSubmixVoiceCount unavailable\n" );
+	}
+	soundSystemLocal.hardware.PrintReverbVoices();
+}
+//puncho end
+
+//puncho start - SB3-T (R-SB3-16): one lazy mesh cache per bake, and shared drawing budgets per renderer frame
+struct sndAcousticsMesh_t
+{
+	int numVerts;
+	int numTris;
+	int triOffset;
+	int triMatOffset;
+	// vertices immediately follow, then triangles and their material/plug flags
+};
+static sndAcousticsMesh_t acousticsMeshRefused = {};
+static int acousticsDrawFrame = -1;
+static int acousticsDrawBoxes = 0;
+static int acousticsDrawTexts = 0;
+
+// The directory and read scratch belong only to the first bit 16 draw, never Update's stack (D-46).
+static sndAcousticsMesh_t* SndAcoustics_ReadMesh( const idSoundAcoustics& acoustics )
+{
+	idStrStatic< MAX_OSPATH > path = acoustics.GetMapName();
+	path += ".sndmesh";
+	idFile* file = fileSystem->OpenFileRead( path );
+	sndAcousticsMesh_t* mesh = NULL;
+	const char* refused = "open";
+	do
+	{
+		if( file == NULL )
+		{
+			break;
+		}
+		sndFileHeader_t header;
+		refused = "magic";
+		if( file->Read( &header, SND_HEADER_SIZE ) != SND_HEADER_SIZE || header.magic != SND_MAGIC_MESH )
+		{
+			break;
+		}
+		refused = "version";
+		if( header.version != SND_FORMAT_VERSION )
+		{
+			break;
+		}
+		refused = "compileId";
+		if( header.compileId != acoustics.GetCompileId() )
+		{
+			break;
+		}
+		refused = "sections";
+		const int length = file->Length();
+		if( header.numSections == 0 || header.numSections > SND_MAX_SECTIONS
+				|| ( uint64 )SND_HEADER_SIZE + header.payloadSize != ( uint64 )length )
+		{
+			break;
+		}
+		sndSection_t sections[SND_MAX_SECTIONS];
+		const int dirBytes = ( int )header.numSections * SND_SECTION_SIZE;
+		if( file->Read( sections, dirBytes ) != dirBytes )
+		{
+			break;
+		}
+		const sndSection_t* verts = NULL;
+		const sndSection_t* tris = NULL;
+		const sndSection_t* triMat = NULL;
+		uint64 end = SND_HEADER_SIZE + dirBytes;
+		bool valid = true;
+		for( uint32 i = 0; i < header.numSections; i++ )
+		{
+			const sndSection_t& section = sections[i];
+			if( section.offset < end || ( section.offset % 16 ) != 0
+					|| ( uint64 )section.offset + section.size > ( uint64 )length
+					|| ( i > 0 && section.id <= sections[i - 1].id ) )
+			{
+				valid = false;
+				break;
+			}
+			end = ( uint64 )section.offset + section.size;
+			if( section.id == MSH_VERTS )
+			{
+				verts = &section;
+			}
+			if( section.id == MSH_TRIS )
+			{
+				tris = &section;
+			}
+			if( section.id == MSH_TRIMAT )
+			{
+				triMat = &section;
+			}
+		}
+		if( !valid || verts == NULL || tris == NULL || triMat == NULL
+				|| ( uint64 )verts->size != ( uint64 )verts->count * SND_SIZE_MESH_VERT
+				|| ( uint64 )tris->size != ( uint64 )tris->count * SND_SIZE_MESH_TRI
+				|| ( uint64 )triMat->size != ( uint64 )triMat->count * SND_SIZE_MESH_TRIMAT || triMat->count != tris->count )
+		{
+			break;
+		}
+		// Non-overlapping sections inside an int-sized file; their sum plus this 16 B header fits an int too.
+		const int bytes = ( int )sizeof( sndAcousticsMesh_t ) + ( int )verts->size + ( int )tris->size + ( int )triMat->size;
+		mesh = ( sndAcousticsMesh_t* )Mem_Alloc16( bytes, TAG_AUDIO );
+		refused = "memory";
+		if( mesh == NULL )
+		{
+			break;
+		}
+		mesh->numVerts = ( int )verts->count;
+		mesh->numTris = ( int )tris->count;
+		mesh->triOffset = ( int )sizeof( sndAcousticsMesh_t ) + ( int )verts->size;
+		mesh->triMatOffset = mesh->triOffset + ( int )tris->size;
+		refused = "read";
+		if( file->Seek( ( long )verts->offset, FS_SEEK_SET ) != 0 || file->Read( mesh + 1, ( int )verts->size ) != ( int )verts->size
+				|| file->Seek( ( long )tris->offset, FS_SEEK_SET ) != 0 || file->Read( ( byte* )mesh + mesh->triOffset, ( int )tris->size ) != ( int )tris->size
+				|| file->Seek( ( long )triMat->offset, FS_SEEK_SET ) != 0 || file->Read( ( byte* )mesh + mesh->triMatOffset, ( int )triMat->size ) != ( int )triMat->size )
+		{
+			break;
+		}
+		refused = "vertices";
+		if( !SndFloatsFinite( mesh + 1, ( int )verts->size ) )
+		{
+			break;
+		}
+		const sndMeshTri_t* triangles = ( const sndMeshTri_t* )( ( const byte* )mesh + mesh->triOffset );
+		refused = "indices";
+		for( int t = 0; t < mesh->numTris; t++ )
+		{
+			for( int v = 0; v < 3; v++ )
+			{
+				if( triangles[t].v[v] >= verts->count )
+				{
+					valid = false;
+				}
+			}
+		}
+		if( !valid )
+		{
+			break;
+		}
+		refused = NULL;
+	}
+	while( false );
+	if( file != NULL )
+	{
+		fileSystem->CloseFile( file );
+	}
+	if( refused != NULL )
+	{
+		Mem_Free16( mesh );
+		common->Warning( "s_acousticsShow: refused %s (%s)", path.c_str(), refused );
+		return &acousticsMeshRefused;	// no retry or repeated warning until a new bake object
+	}
+	return mesh;
+}
+
+void idSoundWorldLocal::DrawAcoustics( int show )
+{
+	if( renderWorld == NULL )
+	{
+		return;
+	}
+	idSoundAcoustics* const gate = acoustics;	//puncho - SB3-T (OP8-1): ListenerPass returned this member at W2
+	char text[64];	//puncho - SB3-T (OP8-5): fixed scratch for the integer labels; va() returns an allocating idStr
+	const int frame = renderSystem->GetFrameCount();
+	if( acousticsDrawFrame != frame )
+	{
+		acousticsDrawFrame = frame;
+		acousticsDrawBoxes = 0;
+		acousticsDrawTexts = 0;
+	}
+	// Read on the first request even when another bit has already spent the drawing budget.
+	if( ( show & 16 ) != 0 && gate->mesh == NULL )
+	{
+		gate->mesh = SndAcoustics_ReadMesh( *gate );
+	}
+	const float rangeSqr = 2048.0f * 2048.0f;
+	const int lifetime = 20;
+	const idVec3 spacing( ( float )gate->GetSettings().probeSpacing, ( float )gate->GetSettings().probeSpacing,
+							 ( float )gate->GetSettings().probeSpacingZ );
+	if( ( show & 1 ) != 0 )
+	{
+		const idBounds box( idVec3( -3.0f ), idVec3( 3.0f ) );
+		for( int p = 0; p < gate->NumProbes() && acousticsDrawBoxes < 512; p++ )
+		{
+			const sndBakeProbe_t& probe = gate->GetProbes()[p];
+			const idVec3 pos( probe.position[0], probe.position[1], probe.position[2] );
+			if( ( pos - listener.pos ).LengthSqr() > rangeSqr )
+			{
+				continue;
+			}
+			renderWorld->DebugBounds( colorCyan, box, pos, lifetime );
+			acousticsDrawBoxes++;
+			if( acousticsDrawTexts < 64 )
+			{
+				idStr::snPrintf( text, sizeof( text ), "probe %d area %d", p, probe.area );
+				renderWorld->DrawText( text, pos, 0.1f, colorCyan, listener.axis, 1, lifetime );
+				acousticsDrawTexts++;
+			}
+		}
+	}
+	if( ( show & 2 ) != 0 )
+	{
+		for( int a = 0; a < gate->NumAreas() && acousticsDrawBoxes < 512; a++ )
+		{
+			const sndBakeArea_t& area = gate->GetAreas()[a];
+			const int cells = area.dims[0] * area.dims[1] * area.dims[2];
+			for( int c = 0; c < cells && acousticsDrawBoxes < 512; c++ )
+			{
+				const int coord[3] = { c % area.dims[0], ( c / area.dims[0] ) % area.dims[1], c / ( area.dims[0] * area.dims[1] ) };
+				idBounds box;
+				for( int k = 0; k < 3; k++ )
+				{
+					box[0][k] = ( float )( ( int64 )area.cellMin[k] + coord[k] ) * spacing[k];
+					box[1][k] = box[0][k] + spacing[k];
+				}
+				const idVec3 pos = box.GetCenter();
+				if( ( pos - listener.pos ).LengthSqr() > rangeSqr )
+				{
+					continue;
+				}
+				renderWorld->DebugBounds( colorYellow, box, vec3_origin, lifetime );
+				acousticsDrawBoxes++;
+				if( acousticsDrawTexts < 64 )
+				{
+					idStr::snPrintf( text, sizeof( text ), "cell %d probe %d", area.firstCell + c, gate->GetCells()[area.firstCell + c] );
+					renderWorld->DrawText( text, pos, 0.1f, colorYellow, listener.axis, 1, lifetime );
+					acousticsDrawTexts++;
+				}
+			}
+		}
+	}
+	if( ( show & 4 ) != 0 )
+	{
+		// A zone is a set of areas. Draw each area's baked lattice extent in its zone's colour; no SB4 weights yet.
+		for( int a = 0; a < gate->NumAreas() && acousticsDrawBoxes < 512; a++ )
+		{
+			const sndBakeArea_t& area = gate->GetAreas()[a];
+			if( area.probeCount == 0 )
+			{
+				continue;
+			}
+			idBounds box;
+			for( int k = 0; k < 3; k++ )
+			{
+				box[0][k] = ( float )area.cellMin[k] * spacing[k];
+				box[1][k] = ( float )( ( int64 )area.cellMin[k] + area.dims[k] ) * spacing[k];
+			}
+			const idVec3 pos = box.GetCenter();
+			if( ( pos - listener.pos ).LengthSqr() > rangeSqr )
+			{
+				continue;
+			}
+			const idVec4& color = idStr::ColorForIndex( 1 + area.zone % 7 );
+			renderWorld->DebugBounds( color, box, vec3_origin, lifetime );
+			acousticsDrawBoxes++;
+			if( acousticsDrawTexts < 64 )
+			{
+				idStr::snPrintf( text, sizeof( text ), "zone %d area %d", area.zone, a );
+				renderWorld->DrawText( text, pos, 0.1f, color, listener.axis, 1, lifetime );
+				acousticsDrawTexts++;
+			}
+		}
+	}
+	if( ( show & 8 ) != 0 )
+	{
+		for( int e = 0; e < gate->NumEdges() && acousticsDrawBoxes < 512; e++ )
+		{
+			const sndPortalEdge_t& edge = gate->GetEdges()[e];
+			// The used door's area0 draws one of the two reciprocal windings.
+			if( edge.door < 0 || gate->GetDoorUse( edge.door ) != SND_DOOR_USED
+					|| edge.otherArea != gate->GetDoors()[edge.door].area1 || ( edge.center - listener.pos ).LengthSqr() > rangeSqr )
+			{
+				continue;
+			}
+			const bool shut = ( gate->GetPortalStates()[edge.portal] & ( PS_BLOCK_VIEW | PS_BLOCK_AIR ) ) != 0;
+			const idVec4& color = shut ? colorRed : colorGreen;
+			// Debug lines use the renderer's fixed pool; copying a debug polygon can allocate a winding.
+			for( int p = 0; p < edge.w->GetNumPoints(); p++ )
+			{
+				renderWorld->DebugLine( color, ( *edge.w )[p].ToVec3(), ( *edge.w )[( p + 1 ) % edge.w->GetNumPoints()].ToVec3(), lifetime );
+			}
+			acousticsDrawBoxes++;
+			if( acousticsDrawTexts < 64 )
+			{
+				renderWorld->DrawText( gate->GetDoorName( edge.door ), edge.center, 0.1f, color, listener.axis, 1, lifetime );
+				acousticsDrawTexts++;
+			}
+		}
+	}
+	if( ( show & 16 ) != 0 && gate->mesh != &acousticsMeshRefused )
+	{
+		const sndAcousticsMesh_t* mesh = ( const sndAcousticsMesh_t* )gate->mesh;
+		const sndMeshVert_t* verts = ( const sndMeshVert_t* )( mesh + 1 );
+		const sndMeshTri_t* tris = ( const sndMeshTri_t* )( ( const byte* )mesh + mesh->triOffset );
+		const sndMeshTriMat_t* triMat = ( const sndMeshTriMat_t* )( ( const byte* )mesh + mesh->triMatOffset );
+		for( int t = 0; t < mesh->numTris && acousticsDrawBoxes < 512; t++ )
+		{
+			if( ( triMat[t].flags & SND_TRI_PLUG ) == 0 )
+			{
+				continue;
+			}
+			idVec3 points[3];
+			for( int v = 0; v < 3; v++ )
+			{
+				const sndMeshVert_t& vert = verts[tris[t].v[v]];
+				points[v].Set( vert.xyz[0], vert.xyz[1], vert.xyz[2] );
+			}
+			const idVec3 pos = ( points[0] + points[1] + points[2] ) * ( 1.0f / 3.0f );
+			if( ( pos - listener.pos ).LengthSqr() > rangeSqr )
+			{
+				continue;
+			}
+			for( int v = 0; v < 3; v++ )
+			{
+				renderWorld->DebugLine( colorMagenta, points[v], points[( v + 1 ) % 3], lifetime );
+			}
+			acousticsDrawBoxes++;
+		}
+	}
+}
+//puncho end
 
 /*
 ========================
@@ -894,8 +1652,11 @@ destructor. The callers run their hooks first.
 */
 void idSoundWorldLocal::DeleteAcoustics( idSoundAcoustics* it )
 {
-	// nothing fills mesh yet; the lane that reads the .sndmesh into it frees it here
-	assert( it->mesh == NULL );
+	//puncho - SB3-T (D-37): the one teardown covers unload, destructor and failed load; refusal holds no allocation
+	if( it->mesh != &acousticsMeshRefused )
+	{
+		Mem_Free16( it->mesh );
+	}
 	Mem_Free16( it->graph );
 	Mem_Free16( it->block );
 	delete it;

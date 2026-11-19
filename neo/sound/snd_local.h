@@ -363,6 +363,27 @@ public:
 // This is probably excessive...
 const int MAX_CHANNELS_PER_EMITTER = 16;
 
+//puncho start - SB3-T (DR-210): moved unchanged from snd_world.cpp for the out-of-line L1 reader
+/*
+========================
+idActiveChannel
+========================
+*/
+class idActiveChannel
+{
+public:
+	idActiveChannel() :
+		channel( NULL ),
+		sortKey( 0 ) {}
+	idActiveChannel( idSoundChannel* channel_, int sortKey_ ) :
+		channel( channel_ ),
+		sortKey( sortKey_ ) {}
+
+	idSoundChannel* 	channel;
+	int					sortKey;
+};
+//puncho end
+
 /*
 ===================================================================================
 
@@ -407,6 +428,12 @@ private:
 public:
 	idSoundAcoustics*		acoustics;						// read by SB4's and SA3's gated lines
 	char					acousticsLine[128];				// the last console line of the load or free
+	//puncho start - SB3-T: out-of-line tools keep their locals out of Update's inlined body (D-46)
+	void					DrawAcoustics( int show );	//puncho - SB3-T (OP8-1): read the gate out of line
+	void					ListAcoustics( const idCmdArgs& args ) const;
+	const char*				AcousticsState() const;
+	void					AcousticsLog_World( const idStaticList< idActiveChannel, MAX_HARDWARE_VOICES >& channels, int currentTime ) const;	//puncho - SB3-T (OP8-1)
+	//puncho end
 private:
 	static void				DeleteAcoustics( idSoundAcoustics* it );	// the one teardown of the object (L3-3)
 	// SB3-W (W4-3): what a load in progress holds, reachable from the world so that an Error inside the load leaks

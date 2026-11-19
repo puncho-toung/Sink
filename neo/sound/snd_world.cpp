@@ -253,6 +253,10 @@ idSoundWorldLocal::~idSoundWorldLocal()
 	{
 		soundSystemLocal.acousticsGameWorld = NULL;
 	}
+	if( soundSystemLocal.acousticsLogWorld == this )	//puncho - SB3-T (D-37): the log never follows a deleted world
+	{
+		soundSystemLocal.acousticsLogWorld = NULL;
+	}
 	//puncho end
 
 	if( soundSystemLocal.currentSoundWorld == this )
@@ -422,25 +426,6 @@ void idSoundWorldLocal::ListenerCut( int reasons )
 		cutPending |= reasons;
 	}
 }
-
-/*
-========================
-idActiveChannel
-========================
-*/
-class idActiveChannel
-{
-public:
-	idActiveChannel() :
-		channel( NULL ),
-		sortKey( 0 ) {}
-	idActiveChannel( idSoundChannel* channel_, int sortKey_ ) :
-		channel( channel_ ),
-		sortKey( sortKey_ ) {}
-
-	idSoundChannel* 	channel;
-	int					sortKey;
-};
 
 /*
 ========================
@@ -753,15 +738,17 @@ ID_FORCE_INLINE void idSoundWorldLocal::UpdateBody( idSoundAcoustics* gate, bool
 	if( showVoices )
 	{
 #if !defined(USE_OPENAL) && defined(_MSC_VER) //puncho - R-E6-15, R-E6-18: XAudio2's queued buffers over its embedded contexts; created and destroyed source voices
-		showVoiceTable.Format( "currentCushionDB: %5.1f  freeVoices: %i zombieVoices: %i buffers:%i/%i voicesCreated: %i voicesDestroyed: %i\n", currentCushionDB,
+		showVoiceTable.Format( "currentCushionDB: %5.1f  freeVoices: %i zombieVoices: %i buffers:%i/%i voicesCreated: %i voicesDestroyed: %i\nacoustics: %s", currentCushionDB, //puncho - SB3-T (D-7, TL8-3, DR-213)
 							   soundSystemLocal.hardware.GetNumFreeVoices(), soundSystemLocal.hardware.GetNumZombieVoices(),
 							   soundSystemLocal.hardware.GetNumQueuedBuffers(), soundSystemLocal.hardware.GetNumBufferContexts(),
-							   soundSystemLocal.hardware.GetNumVoicesCreated(), soundSystemLocal.hardware.GetNumVoicesDestroyed() );
+							   soundSystemLocal.hardware.GetNumVoicesCreated(), soundSystemLocal.hardware.GetNumVoicesDestroyed(), AcousticsState() );
 #else
-		showVoiceTable.Format( "currentCushionDB: %5.1f  freeVoices: %i zombieVoices: %i buffers:%i/%i\n", currentCushionDB,
+		showVoiceTable.Format( "currentCushionDB: %5.1f  freeVoices: %i zombieVoices: %i buffers:%i/%i\nacoustics: %s", currentCushionDB, //puncho - SB3-T (D-7, TL8-3, DR-213)
 							   soundSystemLocal.hardware.GetNumFreeVoices(), soundSystemLocal.hardware.GetNumZombieVoices(),
-							   soundSystemLocal.activeStreamBufferContexts.Num(), soundSystemLocal.freeStreamBufferContexts.Num() );
+							   soundSystemLocal.activeStreamBufferContexts.Num(), soundSystemLocal.freeStreamBufferContexts.Num(), AcousticsState() );
 #endif
+		//puncho - SB3-T (DR-213): keep the suffix out of Format's outgoing argument area; no new Update local.
+		showVoiceTable += acoustics != NULL ? ( acoustics->IsArmed() ? ", armed\n" : ", not armed\n" ) : "\n";
 	}
 	for( int i = 0; i < activeEmitterChannels.Num(); i++ )
 	{
@@ -812,9 +799,17 @@ ID_FORCE_INLINE void idSoundWorldLocal::UpdateBody( idSoundAcoustics* gate, bool
 	// W2: SB3-T
 	if( gated )
 	{
+		if( s_acousticsShow.GetInteger() != 0 )	//puncho - SB3-T (D-46): no local in the inlined body
+		{
+			DrawAcoustics( s_acousticsShow.GetInteger() );	//puncho - SB3-T (OP8-1): no gate pointer kept for W2
+		}
 	}
 
 	// L1: SB3-T, both arms
+	if( logRows )	//puncho - SB3-T (D-46, DR-210): the row scratch stays out of Update's stack
+	{
+		AcousticsLog_World( activeEmitterChannels, currentTime );	//puncho - SB3-T (OP8-1, DR-211): no local or count argument
+	}
 }
 
 /*

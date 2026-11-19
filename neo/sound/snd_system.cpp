@@ -30,6 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "snd_local.h"
+#include "snd_acoustics.h"	//puncho - SB3-T: the command and Render's log hook
 
 idCVar s_noSound( "s_noSound", "0", CVAR_BOOL, "returns NULL for all sounds loaded and does not update the sound rendering" );
 
@@ -354,6 +355,7 @@ void idSoundSystemLocal::Init()
 	cmdSystem->AddCommand( "testSound", TestSound_f, 0, "tests a sound", idCmdSystem::ArgCompletion_SoundName );
 	cmdSystem->AddCommand( "s_restart", RestartSound_f, 0, "restart sound system" );
 	cmdSystem->AddCommand( "listSamples", ListSamples_f, 0, "lists all loaded sound samples" );
+	cmdSystem->AddCommand( "listAcoustics", ListAcoustics_f, 0, "lists baked acoustics [areas|zones|doors|portals]" );	//puncho - SB3-T (R-SB3-17)
 	cmdSystem->AddCommand( "s_smoothSelfTest", SmoothSelfTest_f, CMD_FL_SYSTEM, "pure checks of the sound smoother, the listener cut and the voice rules, pass or fail" );	//puncho - R-E6-25
 
 	idLib::Printf( "sound system initialized.\n" );
@@ -413,6 +415,7 @@ idSoundSystemLocal::Shutdown
 void idSoundSystemLocal::Shutdown()
 {
 	SmoothLog_Close();	//puncho - R-E6-24
+	AcousticsLog_Close();	//puncho - SB3-T (DR-210): the log survives Restart, but not Shutdown
 	hardware.Shutdown();
 	FreeStreamBuffers();
 	samples.DeleteContents( true );
@@ -539,6 +542,11 @@ void idSoundSystemLocal::Render()
 	if( !s_noSound.GetBool() )
 	{
 		hardware.Update();
+	}
+
+	if( s_acousticsLog.GetString()[0] != '\0' || acousticsLog != NULL )	//puncho - SB3-T (R-SB3-31): paused and draining too
+	{
+		AcousticsLog_Frame();
 	}
 
 	// The sound system doesn't use game time or anything like that because the sounds are decoded in real time.
