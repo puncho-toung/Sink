@@ -239,18 +239,11 @@ void AcousticsLog_Frame()
 		}
 		char path[160];
 		idStr::snPrintf( path, sizeof( path ), "acousticslog/%s.csv", name );
-		//puncho - SB3-T (DR-212 item 1): Windows OpenFileAppend opens with OPEN_ALWAYS, but does not seek to EOF.
+		//puncho - DR-216: OpenFileAppend now appends on every platform.
 		soundSystemLocal.acousticsLog = fileSystem->OpenFileAppend( path, false, "fs_savepath" );
 		if( soundSystemLocal.acousticsLog == NULL )
 		{
 			idLib::Warning( "s_acousticsLog: could not open %s", path );
-			s_acousticsLog.SetString( "" );
-			AcousticsLog_Close();
-			return;
-		}
-		if( soundSystemLocal.acousticsLog->Seek( 0, FS_SEEK_END ) != 0 )
-		{
-			idLib::Warning( "s_acousticsLog: could not seek to the end of %s", path );
 			s_acousticsLog.SetString( "" );
 			AcousticsLog_Close();
 			return;
