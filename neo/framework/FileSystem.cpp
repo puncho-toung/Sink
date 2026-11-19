@@ -5241,6 +5241,13 @@ idFile* idFileSystemLocal::OpenFileAppend( const char* relativePath, bool sync, 
 	f->handleSync = sync;
 	f->fileSize = DirectFileLength( f->o );
 
+	//puncho - DR-216: Windows append handles start at byte zero.
+	if( f->Seek( 0, FS_SEEK_END ) != 0 )
+	{
+		delete f;
+		return NULL;
+	}
+
 	if( layerNames.Num() > 1 )	//puncho - MP-A5 (K21): the write target now holds the file
 	{
 		AddLayerPath( writeLayer, relativePath );
