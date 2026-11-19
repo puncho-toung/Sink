@@ -1,0 +1,339 @@
+diff --git a/src/core/api_baking.cpp b/src/core/api_baking.cpp
+index 8f49aed..33ee80d 100644
+--- a/src/core/api_baking.cpp
++++ b/src/core/api_baking.cpp
+@@ -39,6 +39,9 @@ void CContext::bakeReflections(IPLReflectionsBakeParams* params,
+                                IPLProgressCallback progressCallback,
+                                void* userData)
+ {
++    // D3-Sink local patch 0002: no record from an earlier bake survives this call, also on the early returns
++    ReflectionBaker::sLastProbeStats.reset();
++
+     if (!params || !params->scene || !params->probeBatch)
+         return;
+ 
+@@ -128,13 +131,23 @@ void CContext::cancelBakePaths()
+ // D3-Sink local patches
+ // --------------------------------------------------------------------------------------------------------------------
+ 
+-// One bit per local patch (0001 = bit 0). A patch change that changes bake output changes this value and the
+-// engine's matching constant together.
+-static const IPLuint32 kLocalPatchLevel = 0x1u;
++// One bit per local patch (0001 = bit 0, 0002 = bit 1). A patch change that changes bake output changes this value
++// and the engine's matching constant together.
++static const IPLuint32 kLocalPatchLevel = 0x1u | 0x2u;
+ 
+ // the level names one layout: three bands. A build with octave bands would bake another energy field.
+ static_assert(IPL_NUM_BANDS == 3 && Bands::kNumBands == 3, "iplLocalPatchLevel is valid for three bands only");
+ 
++static_assert(sizeof(IPLBakeProbeStats) == 64, "IPLBakeProbeStats is 64 bytes");
++static_assert(sizeof(ReflectionStats) == sizeof(IPLBakeProbeStats), "ReflectionStats mirrors IPLBakeProbeStats");
++static_assert(offsetof(IPLBakeProbeStats, segmentMm) == 8 && offsetof(ReflectionStats, segmentMm) == 8, "layout");
++static_assert(offsetof(IPLBakeProbeStats, firstEscapeKey) == 16 && offsetof(ReflectionStats, firstEscapeKey) == 16, "layout");
++static_assert(offsetof(IPLBakeProbeStats, escapeOrigin) == 24 && offsetof(ReflectionStats, escapeOrigin) == 24, "layout");
++static_assert(offsetof(IPLBakeProbeStats, escapeDirection) == 36 && offsetof(ReflectionStats, escapeDirection) == 36, "layout");
++static_assert(offsetof(IPLBakeProbeStats, ceilingPathMm) == 48 && offsetof(ReflectionStats, ceilingPathMm) == 48, "layout");
++static_assert(offsetof(IPLBakeProbeStats, ceilingRays) == 56 && offsetof(ReflectionStats, ceilingRays) == 56, "layout");
++static_assert(offsetof(IPLBakeProbeStats, reserved0) == 60 && offsetof(ReflectionStats, reserved0) == 60, "layout");
++
+ extern "C" {
+ 
+ IPLAPI IPLuint32 IPLCALL iplLocalPatchLevel(void)
+@@ -146,6 +159,14 @@ IPLAPI IPLuint32 IPLCALL iplLocalPatchLevel(void)
+ #endif
+ }
+ 
++IPLAPI void IPLCALL iplReflectionsBakerGetLastProbeStats(IPLBakeProbeStats* out)
++{
++    if (out)
++    {
++        memcpy(out, &ReflectionBaker::sLastProbeStats, sizeof(*out));
++    }
++}
++
+ #if defined(IPL_LOCAL_MEASURE)
+ IPLAPI void IPLCALL iplLocalSetBakeSeed(IPLuint64 seed)
+ {
+diff --git a/src/core/phonon.h b/src/core/phonon.h
+index 3f03da3..4c15404 100644
+--- a/src/core/phonon.h
++++ b/src/core/phonon.h
+@@ -3623,6 +3623,29 @@ IPLAPI void IPLCALL iplReflectionsBakerCancelBake(IPLContext context);
+ */
+ IPLAPI IPLuint32 IPLCALL iplLocalPatchLevel(void);
+ 
++/** D3-Sink local patch 0002: statistics of one probe of a reverb bake (the default scene type only). 64 bytes, no
++    implicit padding. Steam Audio's space; distances in metres and millimetres.
++*/
++typedef struct {
++    IPLuint32 escapedRays;      /**< Ray paths whose cast hit nothing (once per ray). */
++    IPLuint32 segments;         /**< Casts that hit, at bounce 1 and later: wall-to-wall segments. */
++    IPLuint64 segmentMm;        /**< Sum of those segments' lengths, each rounded to a millimetre. */
++    IPLuint64 firstEscapeKey;   /**< Smallest ray index * 256 + bounce of an escape; all ones: no ray escaped. */
++    IPLVector3 escapeOrigin;    /**< Origin of that escaping ray. */
++    IPLVector3 escapeDirection; /**< Direction of that escaping ray. */
++    IPLuint64 ceilingPathMm;    /**< Shortest path length, in mm, at a hit in the last allowed bounce of a ray with
++                                     a band above 10^-3.5; all ones: no ray hit the ceiling. */
++    IPLuint32 ceilingRays;      /**< Rays that hit in the last allowed bounce with a band above 10^-3.5. */
++    IPLuint32 reserved0;        /**< 0. */
++} IPLBakeProbeStats;
++
++/** D3-Sink local patch 0002: copies the statistics of the probe just finished. Valid inside the progress callback of
++    iplReflectionsBakerBake for the probe that callback reports; the next probe overwrites them. Before the first
++    probe of a bake (and before any bake), and for a simulator that keeps no statistics, it returns the "no record"
++    state: every count 0, \c firstEscapeKey and \c ceilingPathMm all ones, origin and direction 0.
++*/
++IPLAPI void IPLCALL iplReflectionsBakerGetLastProbeStats(IPLBakeProbeStats* out);
++
+ #if defined(IPL_LOCAL_MEASURE)
+ /** Measurement build only: replaces the fixed bake seed for the bakes that follow. */
+ IPLAPI void IPLCALL iplLocalSetBakeSeed(IPLuint64 seed);
+diff --git a/src/core/reflection_baker.cpp b/src/core/reflection_baker.cpp
+index da08c20..47a5302 100644
+--- a/src/core/reflection_baker.cpp
++++ b/src/core/reflection_baker.cpp
+@@ -30,6 +30,7 @@ namespace ipl {
+ 
+ std::atomic<bool> ReflectionBaker::sCancel(false);
+ std::atomic<bool> ReflectionBaker::sBakeInProgress(false);
++ReflectionStats ReflectionBaker::sLastProbeStats = [] { ReflectionStats stats; stats.reset(); return stats; }();
+ 
+ void ReflectionBaker::bake(const IScene& scene,
+                            IReflectionSimulator& simulator,
+@@ -58,6 +59,8 @@ void ReflectionBaker::bake(const IScene& scene,
+ 
+     sBakeInProgress = true;
+ 
++    sLastProbeStats.reset();
++
+     if (sceneType != SceneType::RadeonRays && identifier.variation != BakedDataVariation::StaticListener)
+     {
+         bakeBatchSize = 1;
+@@ -158,6 +161,8 @@ void ReflectionBaker::bake(const IScene& scene,
+ 
+             threadPool.process(jobGraph);
+ 
++            simulator.lastProbeStats(sLastProbeStats);
++
+ #if defined(IPL_USES_OPENCL)
+             if (sceneType == SceneType::RadeonRays)
+             {
+diff --git a/src/core/reflection_baker.h b/src/core/reflection_baker.h
+index 30a09b2..d1b18ec 100644
+--- a/src/core/reflection_baker.h
++++ b/src/core/reflection_baker.h
+@@ -54,6 +54,11 @@ public:
+ 
+     static void cancel();
+ 
++    // D3-Sink local patch 0002: the statistics of the probe just simulated; copied after each probe's simulation,
++    // before its result is stored and the progress callback runs; the "no record" state (ReflectionStats::reset)
++    // before any probe of a bake.
++    static ReflectionStats sLastProbeStats;
++
+ private:
+     static std::atomic<bool> sCancel;
+     static std::atomic<bool> sBakeInProgress;
+diff --git a/src/core/reflection_simulator.cpp b/src/core/reflection_simulator.cpp
+index 899a2c9..7ddf4ad 100644
+--- a/src/core/reflection_simulator.cpp
++++ b/src/core/reflection_simulator.cpp
+@@ -85,7 +85,10 @@ ReflectionSimulator::ReflectionSimulator(int maxNumRays,
+     , mThreadState(numThreads)
+     , mNumJobs(0)
+     , mJobEnergyFields(((maxNumRays + kRayBatchSize - 1) / kRayBatchSize) * maxNumSources)
++    , mJobStats((maxNumRays + kRayBatchSize - 1) / kRayBatchSize)
+ {
++    mLastStats.reset();
++
+     Sampling::generateSphereSamples(maxNumRays, mListenerSamples.data());
+     Sampling::generateHemisphereSamples(numDiffuseSamples, mDiffuseSamples.data());
+ 
+@@ -396,6 +399,12 @@ void ReflectionSimulator::simulateJob(const IScene& scene,
+         mJobEnergyFields[jobIndex * mMaxNumSources + k]->reset();
+     }
+ 
++    auto& stats = mJobStats[jobIndex];
++    stats.reset();
++
++    // a ray whose largest band is at or below this cannot move the fit window (patch 0002)
++    const auto kCeilingEnergy = 3.16227766e-4f; // 10^-3.5
++
+     for (auto i = start; i < end; ++i)
+     {
+         Ray ray{ listener.origin, mListenerSamples[i] };
+@@ -413,7 +422,50 @@ void ReflectionSimulator::simulateJob(const IScene& scene,
+         {
+             Hit hit;
+             Vector3f hitPoint;
+-            if (!trace(scene, ray, j, accumDistance, hit, hitPoint))
++            auto traced = trace(scene, ray, j, accumDistance, hit, hitPoint);
++
++            // statistics on either result of trace (patch 0002)
++            if (!hit.isValid())
++            {
++                // the path ends here, so once per ray
++                stats.escapedRays += 1;
++
++                auto key = static_cast<uint64_t>(i) * 256 + static_cast<uint64_t>(j);
++                if (key < stats.firstEscapeKey)
++                {
++                    stats.firstEscapeKey = key;
++                    for (auto c = 0; c < 3; ++c)
++                    {
++                        stats.escapeOrigin[c] = ray.origin[c];
++                        stats.escapeDirection[c] = ray.direction[c];
++                    }
++                }
++            }
++            else if (j >= 1)
++            {
++                // a real wall-to-wall segment, also when trace refused it for the duration or a sphere
++                stats.segments += 1;
++                stats.segmentMm += static_cast<uint64_t>(floorf(hit.distance * 1000.0f + 0.5f));
++            }
++
++            if (traced && j == mNumBounces - 1)
++            {
++                // accumEnergy as bounce left it after the earlier hits; no bounce follows this last hit
++                auto maxEnergy = accumEnergy[0];
++                for (auto band = 1; band < Bands::kNumBands; ++band)
++                {
++                    maxEnergy = std::max(maxEnergy, accumEnergy[band]);
++                }
++
++                if (maxEnergy > kCeilingEnergy)
++                {
++                    stats.ceilingRays += 1;
++                    auto pathMm = static_cast<uint64_t>(floorf((accumDistance + hit.distance) * 1000.0f + 0.5f));
++                    stats.ceilingPathMm = std::min(stats.ceilingPathMm, pathMm);
++                }
++            }
++
++            if (!traced)
+                 break;
+ 
+             if (cancel)
+@@ -473,12 +525,40 @@ void ReflectionSimulator::finalizeJob(EnergyField* const* energyFields,
+         }
+     }
+ 
++    // the statistics: integer sums and the minimum of unique keys, in job order (patch 0002)
++    ReflectionStats total;
++    total.reset();
++    for (auto j = 0; j < mNumJobs; ++j)
++    {
++        const auto& stats = mJobStats[j];
++        total.escapedRays += stats.escapedRays;
++        total.segments += stats.segments;
++        total.segmentMm += stats.segmentMm;
++        total.ceilingRays += stats.ceilingRays;
++        total.ceilingPathMm = std::min(total.ceilingPathMm, stats.ceilingPathMm);
++        if (stats.firstEscapeKey < total.firstEscapeKey)
++        {
++            total.firstEscapeKey = stats.firstEscapeKey;
++            for (auto c = 0; c < 3; ++c)
++            {
++                total.escapeOrigin[c] = stats.escapeOrigin[c];
++                total.escapeDirection[c] = stats.escapeDirection[c];
++            }
++        }
++    }
++    mLastStats = total;
++
+ #if defined(IPL_LOCAL_MEASURE)
+     sLocalFinalizeNanoseconds = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+         std::chrono::steady_clock::now() - measureStart).count());
+ #endif
+ }
+ 
++void ReflectionSimulator::lastProbeStats(ReflectionStats& stats) const
++{
++    stats = mLastStats;
++}
++
+ bool ReflectionSimulator::trace(const IScene& scene,
+                                 const Ray& ray,
+                                 int bounce,
+diff --git a/src/core/reflection_simulator.h b/src/core/reflection_simulator.h
+index 4efe1ac..aa1918b 100644
+--- a/src/core/reflection_simulator.h
++++ b/src/core/reflection_simulator.h
+@@ -24,6 +24,43 @@
+ 
+ namespace ipl {
+ 
++// --------------------------------------------------------------------------------------------------------------------
++// ReflectionStats
++// --------------------------------------------------------------------------------------------------------------------
++
++// D3-Sink local patch 0002: statistics of one energy simulation (one probe of a reverb bake), with the layout of
++// IPLBakeProbeStats in phonon.h. Distances in millimetres of the scene's units (metres).
++struct ReflectionStats
++{
++    uint32_t escapedRays;           // ray paths whose cast hit nothing
++    uint32_t segments;              // wall-to-wall segments (casts that hit, at bounce 1 and later)
++    uint64_t segmentMm;             // the sum of their lengths, each rounded to a millimetre
++    uint64_t firstEscapeKey;        // smallest (ray index * 256 + bounce) of an escape; all ones: none
++    float escapeOrigin[3];          // that escape's ray
++    float escapeDirection[3];
++    uint64_t ceilingPathMm;         // shortest path at the last allowed bounce with energy left; all ones: none
++    uint32_t ceilingRays;           // rays that reached the last allowed bounce with energy left
++    uint32_t reserved0;
++
++    void reset()
++    {
++        escapedRays = 0;
++        segments = 0;
++        segmentMm = 0;
++        firstEscapeKey = ~0ull;
++        for (auto i = 0; i < 3; ++i)
++        {
++            escapeOrigin[i] = 0.0f;
++            escapeDirection[i] = 0.0f;
++        }
++        ceilingPathMm = ~0ull;
++        ceilingRays = 0;
++        reserved0 = 0;
++    }
++};
++
++static_assert(sizeof(ReflectionStats) == 64, "ReflectionStats must match IPLBakeProbeStats");
++
+ // --------------------------------------------------------------------------------------------------------------------
+ // IReflectionSimulator
+ // --------------------------------------------------------------------------------------------------------------------
+@@ -37,6 +74,13 @@ public:
+     virtual ~IReflectionSimulator()
+     {}
+ 
++    // D3-Sink local patch 0002: the statistics of the last energy simulation. A simulator that keeps none returns
++    // the "no record" state (ReflectionStats::reset).
++    virtual void lastProbeStats(ReflectionStats& stats) const
++    {
++        stats.reset();
++    }
++
+     // Simulates reflections from multiple sources to a single receiver, storing the results in a single RGBA image.
+     // This is useful for debugging and visualization.
+     virtual void simulate(const IScene& scene,
+@@ -153,6 +197,8 @@ public:
+                           float irradianceMinDistance,
+                           vector<Ray>& escapedRays) override;
+ 
++    virtual void lastProbeStats(ReflectionStats& stats) const override;
++
+ private:
+     static const int kRayBatchSize;
+ 
+@@ -191,6 +237,10 @@ private:
+     int mNumJobs;
+     Array<unique_ptr<EnergyField>> mJobEnergyFields;
+ 
++    // D3-Sink local patch 0002: one statistics record per job, reset with its energy fields, reduced by finalizeJob.
++    Array<ReflectionStats> mJobStats;
++    ReflectionStats mLastStats;
++
+     void simulateJob(const IScene& scene,
+                      Array<float, 2>& image,
+                      int start,

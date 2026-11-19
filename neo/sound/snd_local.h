@@ -77,6 +77,29 @@ ID_INLINE_EXTERN float LinearToDB( float linear )
 	return ( linear > 0.0f ) ? ( idMath::Log( linear ) * ( 6.0f / 0.693147181f ) ) : -999.0f;
 }
 
+//puncho - SA3-E (DR-193): shared unchanged with the route reference curve
+/*
+========================
+SoundDistanceDB
+
+//puncho - R-E6-9: Att( d ), the distance term UpdateVolume always used: 0 inside minDistance, the squared falloff
+between, -120 dB at or beyond maxDistance; never below -120. Distances in meters, as the emitter keeps them
+========================
+*/
+ID_INLINE float SoundDistanceDB( const float distance, const float minDistance, const float maxDistance )
+{
+	if( distance >= maxDistance )
+	{
+		return -120.0f;
+	}
+	if( ( distance > minDistance ) && ( maxDistance > minDistance ) )
+	{
+		const float f = ( distance - minDistance ) / ( maxDistance - minDistance );
+		return Max( -120.0f, LinearToDB( Square( 1.0f - f ) ) );
+	}
+	return 0.0f;
+}
+
 // demo sound commands
 typedef enum
 {
@@ -175,6 +198,15 @@ struct AudioDevice
 #include "XAudio2/XA2_SoundVoice.h"
 #include "XAudio2/XA2_SoundHardware.h"
 
+//puncho - R-E6-39: the rate the mastering voice is created at, so the input rate of every voice's destination and the
+// rate XAudio2 runs each voice's filter at (XA2_SoundHardware.cpp's mastering voice, XA2_SoundVoice.cpp)
+const int SND_MIX_SAMPLE_RATE = 44100;
+
+//puncho - R-E6-39, DR-201: the one-pole coefficient for a cutoff at filterRate, the input rate of the voice's
+// destination (SND_MIX_SAMPLE_RATE), never the sample's rate; open (XAUDIO2_MAX_FILTER_FREQUENCY) when
+// cutoff >= 100,000 Hz. Pure; the voice on both threads and s_smoothSelfTest call it. In XA2_SoundVoice.cpp.
+float SoundFilterFrequency( float cutoffHz, float filterRate );
+
 #else // not _MSC_VER => MinGW, GCC, ...
 // just a stub for now
 #include "stub/SoundStub.h"
@@ -240,6 +272,29 @@ public:
 	float	GetVolume( int soundTime ) const;
 };
 
+//puncho - R-E6-1, R-E6-2: one value moving toward a target by a fraction alpha per update, a step bounded by maxStep.
+// The world fills one parameter set per kind and its alpha once per update (R-E6-3); Step never reads tauMs.
+const float SMOOTH_NO_CAP = -1.0f;
+
+struct soundSmoothParms_t
+{
+	float	tauMs;		// time constant; read only by the caller's Alpha( dtMs, tauMs ), never by Step
+	float	maxStep;	// largest move of one Step, in the value's unit; < 0 (SMOOTH_NO_CAP): no cap; 0: no move
+	float	arrive;		// |target - value| <= arrive after a Step sets value = target; >= 0
+};
+
+class idSoundSmooth
+{
+public:
+	float			value;
+	bool			valid;		// false: the next Step snaps; all zero = not valid
+
+	void			Invalidate();
+	void			Snap( float target );
+	float			Step( float target, float alpha, const soundSmoothParms_t& p, bool snap );
+	static float	Alpha( float dtMs, float tauMs );	// 1 when tauMs <= 0; 0 when dtMs <= 0; else 1 - exp( -dtMs / tauMs )
+};
+
 /*
 ================================================
 idSoundChannel
@@ -255,6 +310,17 @@ public:
 
 	void	UpdateVolume( int currentTime );
 	void	UpdateHardware( float volumeAdd, int currentTime );
+	//puncho - SB3-K (R-SB3-22, R-SB3-24): the entry points above call the bodies below < false >, today's code; the
+	// ...Gated ones call them < true >. The emitter body calls the UpdateVolume pair and the world body the UpdateHardware
+	// pair, each by its own arm. Defined in snd_emitter.cpp
+	void	UpdateVolumeGated( int currentTime );
+	void	UpdateHardwareGated( float volumeAdd, int currentTime );
+private:
+	template< bool gated >
+	ID_FORCE_INLINE void	UpdateVolumeBody( int currentTime );
+	template< bool gated >
+	ID_FORCE_INLINE void	UpdateHardwareBody( float volumeAdd, int currentTime );
+public:
 
 	// returns true if this channel is marked as looping
 	bool	IsLooping() const;
@@ -279,6 +345,15 @@ public:
 	// and reallocated when it comes back in range
 	idSoundVoice* 			hardwareVoice;
 
+	//puncho - R-E6-9, R-E6-11, R-E6-12, R-E6-42: written every update for every channel that reaches them; SB3's log reads
+	// them. excessDB glides the occlusion excess over the straight distance term; panOffset glides the portal displacement
+	// (spatializedOrigin - origin); occlusion glides the low-pass toward occTarget. Pitch is not smoothed. 48 bytes.
+	float					excessTargetDB;
+	float					occTarget;
+	idSoundSmooth			excessDB;
+	idSoundSmooth			occlusion;
+	idSoundSmooth			panOffset[3];
+
 	// only allocated by the soundWorld block allocator
 	idSoundChannel();
 	~idSoundChannel();
@@ -288,6 +363,27 @@ public:
 // This is probably excessive...
 const int MAX_CHANNELS_PER_EMITTER = 16;
 
+//puncho start - SB3-T (DR-210): moved unchanged from snd_world.cpp for the out-of-line L1 reader
+/*
+========================
+idActiveChannel
+========================
+*/
+class idActiveChannel
+{
+public:
+	idActiveChannel() :
+		channel( NULL ),
+		sortKey( 0 ) {}
+	idActiveChannel( idSoundChannel* channel_, int sortKey_ ) :
+		channel( channel_ ),
+		sortKey( sortKey_ ) {}
+
+	idSoundChannel* 	channel;
+	int					sortKey;
+};
+//puncho end
+
 /*
 ===================================================================================
 
@@ -295,6 +391,10 @@ idSoundWorldLocal
 
 ===================================================================================
 */
+
+class idSoundAcoustics;		//puncho - SB3: snd_acoustics.h
+class idSoundOcclusion;		//puncho - SA3-E (R-SA3-23): only a baked world owns one
+#include "snd_reverb.h"			//puncho - SB4-L (D-48): idSoundReverb, the world's member reverb; after idSoundSmooth
 
 class idSoundWorldLocal : public idSoundWorld
 {
@@ -317,6 +417,36 @@ public:
 	char transitionShaders[4][256];
 	int transitionExpire[4];
 
+	//puncho start - SB3 (R-SB3-1, R-SB3-21, R-SB3-30): the map's baked acoustics, in snd_acoustics.cpp. acoustics is
+	// set only when every check of the load passed; NULL is today's sound. Nothing here is saved or sent.
+	virtual void			LoadMapAcoustics( const char* mapName, unsigned int mapGeometryCRC, const idMapFile* mapFile );
+	virtual void			FreeMapAcoustics();
+	idSoundAcoustics*		ListenerPass( idSoundAcoustics* current );		// SB3-K: the gate of this update, or NULL
+private:
+	template< bool gated >
+	ID_FORCE_INLINE void	UpdateBody( idSoundAcoustics* gate, bool logRows );	// SB3-K: Update's body, one per arm
+public:
+	idSoundAcoustics*		acoustics;						// read by SB4's and SA3's gated lines
+	char					acousticsLine[128];				// the last console line of the load or free
+	//puncho start - SB3-T: out-of-line tools keep their locals out of Update's inlined body (D-46)
+	void					DrawAcoustics( int show );	//puncho - SB3-T (OP8-1): read the gate out of line
+	void					ListAcoustics( const idCmdArgs& args ) const;
+	const char*				AcousticsState() const;
+	void					AcousticsLog_World( const idStaticList< idActiveChannel, MAX_HARDWARE_VOICES >& channels, int currentTime ) const;	//puncho - SB3-T (OP8-1)
+	//puncho end
+private:
+	static void				DeleteAcoustics( idSoundAcoustics* it );	// the one teardown of the object (L3-3)
+	// SB3-W (W4-3): what a load in progress holds, reachable from the world so that an Error inside the load leaks
+	// nothing up to step 9; NULL outside LoadMapAcoustics. ReleaseAcousticsLoad is their one release. The cover ends
+	// at step 9's graph allocation: from there to the publish at step 13 the graph and the object are held by the
+	// load's locals only, so nothing in that window may raise an Error, the hooks of steps 11 and 12 included (D-40)
+	void					ReleaseAcousticsLoad();
+	idFile*					acousticsLoadFile;				// the open .sndbake
+	byte*					acousticsLoadBlock;				// the step 1 block until step 10 hands it to the object
+	byte*					acousticsLoadScratch;			// step 8's buffer
+public:
+	//puncho end
+
 	// stop all playing sounds
 	virtual void			StopAllSounds();
 
@@ -331,6 +461,7 @@ public:
 
 	// where is the camera
 	virtual void			PlaceListener( const idVec3& origin, const idMat3& axis, const int listenerId );
+	virtual void			ListenerCut( int reasons );		//puncho - R-E6-6
 
 	// fade all sounds in the world with a given shader soundClass
 	// to is in Db, over is in seconds
@@ -396,6 +527,46 @@ public:
 	float					slowmoSpeed;
 	bool					enviroSuitActive;
 
+	//puncho - R-E6-5, R-E6-6: the listener cut. ListenerCut ORs into cutPending (into cutHeld while cutOnNextPlace
+	// is set, so a respawn raised inside a load lands in the load's own cut); the top of Update moves cutPending into
+	// listenerCut / listenerCutReasons for exactly one update. Nothing here is saved or sent.
+	// R-E6-19: a listener in a wall keeps its last valid area for a moment instead of silencing every emitter.
+	// Ints, then the bools together, so no padding gap opens between them.
+	int						listenerCutReasons;
+	int						cutPending;
+	int						cutHeld;
+	int						lastValidListenerArea;	// -1 = none since the last clear, restore or cut
+	int						areaHeldTime;			// GetSoundTime() when the hold began
+	bool					listenerCut;
+	bool					cutOnNextPlace;
+	bool					lastListenerPosValid;
+	bool					listenerAreaHeld;		// listener.area is lastValidListenerArea, not PointInArea's -1
+	idVec3					lastListenerPos;		// units, for R-E6-8's distance net
+	idSoundFade				areaFade;				// to DB_SILENCE after s_smoothAreaHoldMs held, back to 0 in an area
+
+	//puncho - R-E6-3, R-E6-14, R-E6-38: filled once at the top of Update for every channel's steps: the measured time,
+	// the three parameter sets and their alphas, and whether this update's steps snap (a cut, s_smooth 0). R-E6-24: the
+	// s_smoothLog file for this update's rows. Nothing here is saved or sent.
+	uint64					smoothLastUpdateUs;		// Sys_Microseconds() of the last update; 0 = none yet
+	idFile* 				smoothLog;				// NULL while s_smoothLog is empty
+	soundSmoothParms_t		gainParms;				// excessDB (R-E6-9)
+	soundSmoothParms_t		panParms;				// panOffset (R-E6-11)
+	soundSmoothParms_t		filterParms;			// occlusion (R-E6-12)
+	float					updateDtMs;				// ms since the last update, [0, s_smoothMaxDtMs]; 0 on the first
+	float					gainAlpha;
+	float					panAlpha;
+	float					filterAlpha;
+	float					cutRampLeftMs;			// R-E6-38: ms left of the cut ramp; 0 while s_smoothCutRampMs is 0
+	bool					smoothSnap;				// listenerCut (unless ramped) or s_smooth 0
+	bool					smoothStepsSkipped;		// V3S-1: the last update ran no emitter's gain step (area -1, muted, not playing)
+
+	idSoundOcclusion*		occlusion;				//puncho - SA3-E (C-SB89d): NULL without a bake; nothing saved
+
+	//puncho - SB4-L (R-SB4-1, D-48): the reverb of this world, whose hooks LoadMapAcoustics and FreeMapAcoustics call and
+	// whose Update is W1's one line. Public: SB3-T's log reads it from the sound system. Last, so no member before it
+	// moves; zeroed by Init in the constructor (C-SB6m). Nothing here is saved or sent
+	idSoundReverb			reverb;
+
 public:
 	struct soundPortalTrace_t
 	{
@@ -406,6 +577,16 @@ public:
 	void			ResolveOrigin( const int stackDepth, const soundPortalTrace_t* prevStack, const int soundArea, const float dist, const idVec3& soundOrigin, idSoundEmitterLocal* def );
 };
 
+
+//puncho - R-E6-20: the offsets an emitter whose origin is in no area retries, in order: distance outer (8, 16, 32 units),
+// then +z, -z, +x, -x, +y, -y; the first one in an area wins. Defined in snd_emitter.cpp; holds no state.
+const int SOUND_SOLID_RETRIES = 18;
+extern const idVec3 soundSolidRetryOffsets[ SOUND_SOLID_RETRIES ];
+
+//puncho - R-E6-24: closes the s_smoothLog file if one is open; safe with none. idSoundSystemLocal::Shutdown calls it.
+// In snd_world.cpp
+void SmoothLog_Close();
+void SmoothLog_WriteFailed();	// the log stops on a failed row: a console line, s_smoothLog cleared, the file closed
 
 /*
 ================================================
@@ -444,6 +625,13 @@ public:
 	void			OverrideParms( const soundShaderParms_t* base, const soundShaderParms_t* over, soundShaderParms_t* out );
 
 	void			Update( int currentTime );
+	//puncho - SB3-K (R-SB3-22, R-SB3-24): Update calls the body below < false >, today's code; UpdateGated calls it
+	// < true >. The world body calls one of the two by its own arm. Defined in snd_emitter.cpp
+	void			UpdateGated( int currentTime );
+private:
+	template< bool gated >
+	ID_FORCE_INLINE void	UpdateBody( int currentTime );
+public:
 	void			OnReloadSound( const idDecl* decl );
 
 	//----------------------------------------------
@@ -466,6 +654,16 @@ public:
 	float		directDistance;
 	float		spatializedDistance;
 	idVec3		spatializedOrigin;
+
+	//puncho - R-E6-20: every retry around origin missed; plays as today until origin moves more than 1 unit from solidOrigin
+	bool		inSolid;
+	bool		noPath;		//puncho - R-E6-11 (V3R-4): this update's portal walk found no way to the listener; in inSolid's padding
+	idVec3		solidOrigin;
+
+	//puncho - SA3-E (R-SA3-19): E1 targets only, no smoothing or saved state; C-SB89b, 8 B of members,
+	// 16 B per emitter allocated because the block allocator rounds to 16-byte slots (DR-195).
+	float		portalLossDb;
+	float		portalOcclusion;
 
 	// sound emitters are only allocated by the soundWorld block allocator
 	idSoundEmitterLocal();
@@ -607,10 +805,17 @@ public:
 	idStaticList< bufferContext_t, MAX_SOUND_BUFFERS > bufferContexts;
 
 	idSoundWorldLocal* 			currentSoundWorld;
+	//puncho start - SB3 (D-8): the acoustics log. acousticsGameWorld is the world LoadMapAcoustics was last called on
+	// (cleared in that world's destructor); acousticsLog and acousticsLogWorld are SB3-T's and NULL while the log is off
+	idFile*						acousticsLog;
+	idSoundWorldLocal*			acousticsGameWorld;
+	idSoundWorldLocal*			acousticsLogWorld;
+	//puncho end
 	idStaticList<idSoundWorldLocal*, 32>	soundWorlds;
 
 	idList<idSoundSample*, TAG_AUDIO>		samples;
 	idHashIndex					sampleHash;
+	idSoundSample*				defaultSample = NULL;	//puncho - DR-175: read once at Init, so a voice's swap to the noise never reads a file
 
 	idSoundHardware				hardware;
 
@@ -622,11 +827,15 @@ public:
 	bool						needsRestart;
 
 	bool						insideLevelLoad;
+	bool						levelSeen = false;	//puncho - R-E6-23 (DR-150): true after the first EndLevelLoad following engine startup
 
 	//-------------------------
 
 	idSoundSystemLocal() :
 		currentSoundWorld( NULL ),
+		acousticsLog( NULL ),			//puncho - SB3 (D-8)
+		acousticsGameWorld( NULL ),
+		acousticsLogWorld( NULL ),
 		soundTime( 0 ),
 		muted( false ),
 		musicMuted( false ),

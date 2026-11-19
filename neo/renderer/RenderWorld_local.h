@@ -239,6 +239,7 @@ public:
 	virtual	int				NumPortalsInArea( int areaNum );
 	virtual exitPortal_t	GetPortal( int areaNum, int portalNum );
 	virtual	idBounds		AreaBounds( int areaNum ) const; // RB
+	virtual uint64			GetMapCompileId() const;	//puncho - SB1b (R-SB1b-31), RenderWorld_load.cpp
 
 	virtual	guiPoint_t		GuiTrace( qhandle_t entityHandle, const idVec3 start, const idVec3 end ) const;
 	virtual bool			ModelTrace( modelTrace_t& trace, qhandle_t entityHandle, const idVec3& start, const idVec3& end, const float radius ) const;

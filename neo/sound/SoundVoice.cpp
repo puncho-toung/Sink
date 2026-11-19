@@ -30,6 +30,8 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "snd_local.h"
 
+#define SND_CONSTANT_POWER_PAN 0	//puncho - R-E6-26: enable only on the owner's word
+
 idCVar s_subFraction( "s_subFraction", "0.5", CVAR_ARCHIVE | CVAR_FLOAT, "Amount of each sound to send to the LFE channel" );
 
 idVec2 idSoundVoice_Base::speakerPositions[idWaveFile::CHANNEL_INDEX_MAX];
@@ -154,7 +156,11 @@ void idSoundVoice_Base::InitSurround( int outputChannels, int channelMask )
 	}
 	if( omniChannels > 0.0f )
 	{
+#if SND_CONSTANT_POWER_PAN //puncho - R-E6-26
+		omniLevel = 1.0f / idMath::Sqrt( omniChannels );
+#else
 		omniLevel = 1.0f / omniChannels;
+#endif
 	}
 	else
 	{
@@ -259,8 +265,13 @@ void idSoundVoice_Base::CalculateSurround( int srcChannels, float pLevelMatrix[ 
 			float distB = ( speakerPositions[speakerB] - p2 ).Length();
 			float distCinv = 1.0f / ( distA + distB );
 			float volumes[MAX_CHANNELS_PER_VOICE] = { 0 };
+#if SND_CONSTANT_POWER_PAN //puncho - R-E6-26
+			volumes[channelA] = idMath::Sqrt( distB * distCinv );
+			volumes[channelB] = idMath::Sqrt( distA * distCinv );
+#else
 			volumes[channelA] = ( distB * distCinv );
 			volumes[channelB] = ( distA * distCinv );
+#endif
 			for( int i = 0; i < dstChannels; i++ )
 			{
 				pLevelMatrix[MATINDEX( 0, i )] = ( volumes[i] * spatialize ) + omni;

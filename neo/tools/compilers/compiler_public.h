@@ -41,6 +41,9 @@ extern idCVar		dmap_verbose;
 
 // map processing (also see SuperOptimizeOccluders in tr_local.h)
 void Dmap_f( const idCmdArgs& args );
+void PhononInfo_f( const idCmdArgs& args );	//puncho - SB0: loads phonon.dll, times load/context/unload, unloads (acoustic_phonon.cpp)
+void AcousticEstimateSelfTest_f( const idCmdArgs& args );	//puncho - SB2-E: the estimator and zoning on synthetic histograms (acoustic_estimate.cpp)
+void BakeAcoustics_f( const idCmdArgs& args );	//puncho - SB2-I: bakeAcoustics [fast] <map>, Stage B of the acoustic bake (acoustic_bake.cpp)
 //puncho - TC1: checked compile entry points return after releasing owned data.
 class idMapFile;
 bool CM_CompileMap( const idMapFile* mapFile );

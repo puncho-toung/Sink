@@ -73,6 +73,7 @@ public:
 	virtual void				AddForce( idEntity* ent, int id, const idVec3& point, const idVec3& force );
 	virtual void				AddDamageEffect( const trace_t& collision, const idVec3& velocity, const char* damageDefName );
 	virtual void				Killed( idEntity* inflictor, idEntity* attacker, int damage, const idVec3& dir, int location );
+	virtual bool				GetPhysicsToSoundTransform( idVec3& origin, idMat3& axis );	//puncho - R-E6-34: keeps the identity axis
 
 	void						ProjectDecal( const idVec3& point, const idVec3& dir, const int time, const char* damageDefName );
 	bool						IsBroken() const;

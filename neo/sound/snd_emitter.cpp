@@ -32,6 +32,11 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "snd_local.h"
+#include "snd_occlusion.h"	//puncho - SA3-E (DR-193): E1
+
+#if defined( _MSC_VER )	// #pragma warning is MSVC specific; not on _DEBUG: RelWithDebInfo defines it (/MDd) and inlines (/Ob1)
+	#pragma warning( 1 : 4714 )	//puncho - SB3-K (K5-1, R-SB3-24): a force-inlined body left out of line is a defect; report it
+#endif
 
 idCVar s_singleEmitter( "s_singleEmitter", "0", CVAR_INTEGER, "mute all sounds but this emitter" );
 idCVar s_showStartSound( "s_showStartSound", "0", CVAR_BOOL, "print a message every time a sound starts/stops" );
@@ -40,6 +45,14 @@ idCVar s_centerFractionVO( "s_centerFractionVO", "0.75", CVAR_FLOAT, "Portion of
 
 extern idCVar s_playDefaultSound;
 extern idCVar s_noSound;
+
+//puncho - R-E6-20: declared in snd_local.h; nearest first, so the area found is the one the speaker sits against
+const idVec3 soundSolidRetryOffsets[ SOUND_SOLID_RETRIES ] =
+{
+	idVec3( 0.0f, 0.0f, 8.0f ), idVec3( 0.0f, 0.0f, -8.0f ), idVec3( 8.0f, 0.0f, 0.0f ), idVec3( -8.0f, 0.0f, 0.0f ), idVec3( 0.0f, 8.0f, 0.0f ), idVec3( 0.0f, -8.0f, 0.0f ),
+	idVec3( 0.0f, 0.0f, 16.0f ), idVec3( 0.0f, 0.0f, -16.0f ), idVec3( 16.0f, 0.0f, 0.0f ), idVec3( -16.0f, 0.0f, 0.0f ), idVec3( 0.0f, 16.0f, 0.0f ), idVec3( 0.0f, -16.0f, 0.0f ),
+	idVec3( 0.0f, 0.0f, 32.0f ), idVec3( 0.0f, 0.0f, -32.0f ), idVec3( 32.0f, 0.0f, 0.0f ), idVec3( -32.0f, 0.0f, 0.0f ), idVec3( 0.0f, 32.0f, 0.0f ), idVec3( 0.0f, -32.0f, 0.0f )
+};
 
 /*
 ================================================================================================
@@ -123,6 +136,83 @@ float idSoundFade::GetVolume( const int soundTime ) const
 }
 
 /*
+================================================================================================
+
+	idSoundSmooth
+
+================================================================================================
+*/
+
+/*
+========================
+idSoundSmooth::Invalidate
+========================
+*/
+void idSoundSmooth::Invalidate()
+{
+	valid = false;
+}
+
+/*
+========================
+idSoundSmooth::Snap
+========================
+*/
+void idSoundSmooth::Snap( float target )
+{
+	value = target;
+	valid = true;
+}
+
+/*
+========================
+idSoundSmooth::Step
+
+//puncho - R-E6-2, in this order: snap; the fraction alpha of the gap; the cap; the move; the arrival. With alpha 1 and
+maxStep = D * dtMs / R it is R-E6-36's linear ramp: the whole gap cut to maxStep, so the value moves exactly maxStep
+========================
+*/
+float idSoundSmooth::Step( float target, float alpha, const soundSmoothParms_t& p, bool snap )
+{
+	if( !valid || snap )
+	{
+		Snap( target );
+		return value;
+	}
+	float delta = ( target - value ) * alpha;
+	if( p.maxStep >= 0.0f )
+	{
+		delta = idMath::ClampFloat( -p.maxStep, p.maxStep, delta );
+	}
+	value += delta;
+	if( idMath::Fabs( target - value ) <= p.arrive )
+	{
+		value = target;
+	}
+	return value;
+}
+
+/*
+========================
+idSoundSmooth::Alpha
+
+//puncho - R-E6-2: once per world update per parameter set, never per value
+========================
+*/
+float idSoundSmooth::Alpha( float dtMs, float tauMs )
+{
+	if( tauMs <= 0.0f )
+	{
+		return 1.0f;
+	}
+	if( dtMs <= 0.0f )
+	{
+		return 0.0f;
+	}
+	return 1.0f - idMath::Exp( -dtMs / tauMs );
+}
+
+/*
 ========================
 idSoundChannel::idSoundChannel
 ========================
@@ -144,6 +234,13 @@ idSoundChannel::idSoundChannel()
 
 	volumeDB = DB_SILENCE;
 	currentAmplitude = 0.0f;
+
+	//puncho - R-E6-42: all zero, so every smoother snaps on its first step
+	excessTargetDB = 0.0f;
+	occTarget = 0.0f;
+	memset( &excessDB, 0, sizeof( excessDB ) );
+	memset( &occlusion, 0, sizeof( occlusion ) );
+	memset( panOffset, 0, sizeof( panOffset ) );
 }
 
 /*
@@ -214,10 +311,13 @@ bool idSoundChannel::CheckForCompletion( int currentTime )
 
 /*
 ========================
-idSoundChannel::UpdateVolume
+idSoundChannel::UpdateVolumeBody
+
+//puncho - SB3-K (R-SB3-22, R-SB3-24): today's UpdateVolume, one instantiation per arm; the place V1 is SA3's
 ========================
 */
-void idSoundChannel::UpdateVolume( int currentTime )
+template< bool gated >
+ID_FORCE_INLINE void idSoundChannel::UpdateVolumeBody( int currentTime )
 {
 	idSoundWorldLocal* soundWorld = emitter->soundWorld;
 
@@ -262,32 +362,80 @@ void idSoundChannel::UpdateVolume( int currentTime )
 	}
 
 	// volume fading
-	float newVolumeDB = parms.volume;
-	newVolumeDB += volumeFade.GetVolume( currentTime );
-	newVolumeDB += soundWorld->volumeFade.GetVolume( currentTime );
-	newVolumeDB += soundWorld->pauseFade.GetVolume( currentTime );
+	float fadeDB = parms.volume;
+	fadeDB += volumeFade.GetVolume( currentTime );
+	fadeDB += soundWorld->volumeFade.GetVolume( currentTime );
+	fadeDB += soundWorld->pauseFade.GetVolume( currentTime );
+	const float areaDB = soundWorld->areaFade.GetVolume( currentTime );	//puncho - R-E6-19: the listener held outside every area
+	fadeDB += areaDB;
 	if( parms.soundClass >= 0 && parms.soundClass < SOUND_MAX_CLASSES )
 	{
-		newVolumeDB += soundWorld->soundClassFade[parms.soundClass].GetVolume( currentTime );
+		fadeDB += soundWorld->soundClassFade[parms.soundClass].GetVolume( currentTime );
 	}
 
 	bool global = ( parms.soundShaderFlags & SSF_GLOBAL ) != 0;
 
-	// attenuation
+	//puncho - R-E6-9: only the occlusion excess is smoothed. The straight distance term follows a moving source at once;
+	// the excess the portal walk adds over it glides at a bounded rate, so a door glides and an open room has no lag.
+	// (a) the straight term; (b) the excess target; then the place V1; (d) the clamp; (e) the step; (f) the sum
+	const bool occluded = !global && !emitterIsListener && ( parms.soundShaderFlags & SSF_NO_OCCLUSION ) == 0;
+	float straightDB = 0.0f;
 	if( !global && !emitterIsListener )
 	{
-		float distance = ( parms.soundShaderFlags & SSF_NO_OCCLUSION ) == 0 ? emitter->spatializedDistance : emitter->directDistance;
-		float mindist = parms.minDistance;
-		float maxdist = parms.maxDistance;
-		if( distance >= maxdist )
+		straightDB = SoundDistanceDB( emitter->directDistance, parms.minDistance, parms.maxDistance );
+	}
+	excessTargetDB = 0.0f;
+	if( occluded && emitter->spatializedDistance != emitter->directDistance )	// equal in the listener's area: excess 0 (V3-12)
+	{
+		excessTargetDB = SoundDistanceDB( emitter->spatializedDistance, parms.minDistance, parms.maxDistance ) - straightDB;
+	}
+	// V1: SA3
+	if( gated )
+	{
+		if( occluded )
 		{
-			newVolumeDB = DB_SILENCE;
+			excessTargetDB -= emitter->portalLossDb;	//puncho - SA3-E (R-SA3-20): before E6's clamp, floor and step
 		}
-		else if( ( distance > mindist ) && ( maxdist > mindist ) )
+	}
+	excessTargetDB = idMath::ClampFloat( -120.0f, 0.0f, excessTargetDB );
+	// R-E6-4 as amended for the gain (V3-4): the excess snaps only on its first step and on a cut (or s_smooth 0), never
+	// for want of a voice, so a sound a shut door silenced rises at the cap when the door opens. Below the floor, the
+	// excess at which the channel is exactly silent, nothing is heard, so a falling excess waits there and rises from it.
+	// A channel silent last update whose target is still at or below the floor has no audible excess: its excess is the
+	// floor itself, with no step and no cap, so a fade-in or a quick approach cannot outrun the glide (V3-4, round 3).
+	// "Silent last update" is read as no voice at entry: emitter Update resets volumeDB before this runs, and the world
+	// loop muted the channel last update when its volumeDB was at or below DB_SILENCE (or gave it no voice)
+	const bool excessSnap = soundWorld->smoothSnap || !excessDB.valid;
+	const float floorDB = Min( DB_SILENCE - fadeDB - straightDB, 0.0f );
+	if( !excessSnap && hardwareVoice == NULL && excessTargetDB <= floorDB )
+	{
+		excessDB.value = floorDB;
+	}
+	else
+	{
+		if( !excessSnap && hardwareVoice == NULL )
 		{
-			float f = ( distance - mindist ) / ( maxdist - mindist );
-			newVolumeDB += LinearToDB( Square( 1.0f - f ) );
+			// V3R-3: a silent channel has nothing to glide down from (its stored excess may be an old floor far above
+			// the target); a rise still starts from the floor
+			excessDB.value = Min( excessDB.value, excessTargetDB );
 		}
+		excessDB.Step( excessTargetDB, soundWorld->gainAlpha, soundWorld->gainParms, excessSnap );
+		if( !excessSnap && excessDB.value < floorDB )
+		{
+			excessDB.value = floorDB;
+		}
+	}
+	float newVolumeDB = fadeDB + straightDB + excessDB.value;
+	if( !excessSnap && excessDB.value <= floorDB )
+	{
+		newVolumeDB = Min( newVolumeDB, DB_SILENCE );	// exactly silent, not a rounding above it
+	}
+
+	// out of range by the straight distance; an occluded channel keeps its voice while its excess glides (R-E6-10).
+	// R-E6-19 (V3-11): once areaFade has reached silence the channel is silent, whatever its other fades add
+	if( ( !global && !emitterIsListener && emitter->directDistance >= parms.maxDistance ) || areaDB <= DB_SILENCE )
+	{
+		newVolumeDB = DB_SILENCE;
 	}
 
 	if( soundSystemLocal.musicMuted && ( parms.soundShaderFlags & SSF_MUSIC ) != 0 )
@@ -298,30 +446,48 @@ void idSoundChannel::UpdateVolume( int currentTime )
 	// store the new volume on the channel
 	volumeDB = newVolumeDB;
 
-	// keep track of the maximum volume
-	float currentVolumeDB = newVolumeDB;
+	// the voice's amplitude, for the shake (R-E6-27: the unread currentVolumeDB is gone)
 	if( hardwareVoice != NULL )
 	{
-		float amplitude = hardwareVoice->GetAmplitude();
-		if( amplitude <= 0.0f )
-		{
-			currentVolumeDB = DB_SILENCE;
-		}
-		else
-		{
-			currentVolumeDB += LinearToDB( amplitude );
-		}
-		currentAmplitude = amplitude;
+		currentAmplitude = hardwareVoice->GetAmplitude();
 	}
 }
 
 /*
 ========================
-idSoundChannel::UpdateHardware
+idSoundChannel::UpdateVolume
 ========================
 */
-void idSoundChannel::UpdateHardware( float volumeAdd, int currentTime )
+void idSoundChannel::UpdateVolume( int currentTime )
 {
+	UpdateVolumeBody< false >( currentTime );
+}
+
+/*
+========================
+idSoundChannel::UpdateVolumeGated
+
+//puncho - SB3-K (R-SB3-22): the baked map's entry point
+========================
+*/
+void idSoundChannel::UpdateVolumeGated( int currentTime )
+{
+	UpdateVolumeBody< true >( currentTime );
+}
+
+/*
+========================
+idSoundChannel::UpdateHardwareBody
+
+//puncho - SB3-K (R-SB3-22, R-SB3-24): today's UpdateHardware, one instantiation per arm; the place H1 is SA3's and SB4's
+========================
+*/
+template< bool gated >
+ID_FORCE_INLINE void idSoundChannel::UpdateHardwareBody( float volumeAdd, int currentTime )
+{
+	//puncho - R-E6-4: tested before the allocation below; a fresh voice starts at its targets (a shot behind a shut door
+	// starts muffled, panned from the portal)
+	const bool firstUpdate = ( hardwareVoice == NULL );
 	idSoundWorldLocal* soundWorld = emitter->soundWorld;
 
 	if( soundWorld == NULL )
@@ -363,6 +529,42 @@ void idSoundChannel::UpdateHardware( float volumeAdd, int currentTime )
 			return;
 		}
 
+		//puncho start - DR-175: a sample missing (a default) or not loaded when its voice starts plays the noise, named once,
+		// instead of a square wave or silence. Here, not at StartSound: a sound started in a level load holds a sample that
+		// EndLevelLoad reads before its voice starts. The sample tests come first: a real sound reads no cvar
+		idSoundSample* const noise = soundSystemLocal.defaultSample;
+		const bool leadinFails = ( leadinSample != noise && ( !leadinSample->IsLoaded() || leadinSample->IsDefault() ) );
+		const bool loopingFails = ( loopingSample != NULL && loopingSample != noise && ( !loopingSample->IsLoaded() || loopingSample->IsDefault() ) );
+		if( ( leadinFails || loopingFails ) && !soundSystemLocal.insideLevelLoad && s_playDefaultSound.GetBool() )
+		{
+			//puncho - DR-175 (DR-177): unread but level-load referenced is a sample the load queued (EndLevelLoad's reads, which a
+			// carry load renders between): no voice this update, so a later one starts it with its real sample, unswapped
+			if( ( leadinFails && !leadinSample->IsLoaded() && leadinSample->GetLevelLoadReferenced() ) || ( loopingFails && !loopingSample->IsLoaded() && loopingSample->GetLevelLoadReferenced() ) )
+			{
+				return;
+			}
+			//puncho - DR-175 (DR-178): idLib::Warning prints without developer 1, as the XAudio2 warning this replaces did
+			if( loopingFails && loopingSample != leadinSample )	// a looping shader's one sample is both: name it once
+			{
+				idLib::Warning( "sound sample '%s' %s, playing '%s'", loopingSample->GetName(), loopingSample->IsLoaded() ? "missing" : "not loaded", noise->GetName() );
+			}
+			if( loopingFails )
+			{
+				loopingSample = noise;
+			}
+			if( leadinFails )
+			{
+				idLib::Warning( "sound sample '%s' %s, playing '%s'", leadinSample->GetName(), leadinSample->IsLoaded() ? "missing" : "not loaded", noise->GetName() );
+				leadinSample = noise;
+				// StartSound's end came from the old length; endTime 0 is its mark of a channel that loops forever
+				if( endTime > 0 )
+				{
+					endTime = startTime + leadinSample->LengthInMsec() + 100;
+				}
+			}
+		}
+		//puncho end
+
 		hardwareVoice = soundSystemLocal.AllocateVoice( leadinSample, loopingSample );
 
 		if( hardwareVoice == NULL )
@@ -374,13 +576,34 @@ void idSoundChannel::UpdateHardware( float volumeAdd, int currentTime )
 		startOffset = currentTime - startTime;
 	}
 
+	//puncho - R-E6-11: the portal displacement glides, not the position: a moving source has no lag, a jump between a
+	// portal and the origin glides, a head turn is not smoothed. A channel that is not occluded (global, the listener's,
+	// SSF_NO_OCCLUSION) pans from its true origin, as its gain already does (E-SA-3)
+	const bool snap = soundWorld->smoothSnap || firstUpdate;
+	const bool occluded = !global && !emitterIsListener && ( parms.soundShaderFlags & SSF_NO_OCCLUSION ) == 0;
+	const idVec3 offsetTarget = ( occluded && !omni ) ? ( emitter->spatializedOrigin - emitter->origin ) : vec3_zero;	// omni: 0 by rule (V3R-7)
+	idVec3 offset( vec3_zero );
 	if( omni || global || emitterIsListener )
 	{
+		// placed at the listener whatever the offset: no step (V3-12)
 		hardwareVoice->SetPosition( vec3_zero );
 	}
 	else
 	{
-		hardwareVoice->SetPosition( ( emitter->spatializedOrigin - soundWorld->listener.pos ) * soundWorld->listener.axis.Transpose() );
+		// V3-2, V3R-4: no path this update, as the emitter update recorded it (noPath). The voice is kept while its excess
+		// glides down, so its offset holds instead of swinging to the true origin
+		if( emitter->noPath && !snap && panOffset[0].valid )
+		{
+			offset.Set( panOffset[0].value, panOffset[1].value, panOffset[2].value );
+		}
+		else
+		{
+			for( int k = 0; k < 3; k++ )
+			{
+				offset[k] = panOffset[k].Step( offsetTarget[k], soundWorld->panAlpha, soundWorld->panParms, snap );
+			}
+		}
+		hardwareVoice->SetPosition( ( emitter->origin + offset - soundWorld->listener.pos ) * soundWorld->listener.axis.Transpose() );
 	}
 	if( parms.soundShaderFlags & SSF_VO )
 	{
@@ -397,14 +620,25 @@ void idSoundChannel::UpdateHardware( float volumeAdd, int currentTime )
 	hardwareVoice->SetInnerRadius( parms.minDistance * METERS_TO_DOOM );
 	hardwareVoice->SetPitch( soundWorld->slowmoSpeed * idMath::ClampFloat( 0.2f, 5.0f, timescale.GetFloat() ) );
 
-	if( soundWorld->enviroSuitActive )
+	//puncho - R-E6-12, the place H1, one run: the target (0.5 with the enviro suit, else 0), a later lane's line, the
+	// step, the set. XAudio2 never ramps a filter change, so the low-pass glides here
+	occTarget = soundWorld->enviroSuitActive ? 0.5f : 0.0f;
+	//puncho - H1: SA3 takes Max( occTarget, portalOcclusion ) for occluded channels under if ( gated ) below
+	// H1: SA3, then SB4
+	if( gated )
 	{
-		hardwareVoice->SetOcclusion( 0.5f );
+		if( occluded )
+		{
+			occTarget = Max( occTarget, emitter->portalOcclusion );	//puncho - SA3-E (R-SA3-20): E6 owns the filter step
+		}
+		//puncho - R-SB4-5 (SB4-C): the send commits with the start; a voice that does not list the bus returns at once
+		if( issueStart )
+		{
+			hardwareVoice->SetReverbSend( global ? 0.0f : s_acousticReverbSend.GetFloat() );
+		}
 	}
-	else
-	{
-		hardwareVoice->SetOcclusion( 0.0f );
-	}
+	occlusion.Step( occTarget, soundWorld->filterAlpha, soundWorld->filterParms, snap );
+	hardwareVoice->SetOcclusion( occlusion.value );
 
 	if( issueStart )
 	{
@@ -414,6 +648,44 @@ void idSoundChannel::UpdateHardware( float volumeAdd, int currentTime )
 	{
 		hardwareVoice->Update();
 	}
+
+	//puncho - R-E6-24: E6's own s_smoothLog row, after the voice update; SB3's acoustic V row is written at L1, not here.
+	// The world opened the file for this update or left smoothLog NULL
+	if( soundWorld->smoothLog != NULL )
+	{
+		extern idCVar s_volume_dB;
+		const float masterDB = soundSystemLocal.muted ? DB_SILENCE : s_volume_dB.GetFloat();	//puncho - R-E6-24: the master has no ramp
+		const int written = soundWorld->smoothLog->Printf( "%d,%.3f,%d,%.2f,%d,%d,%.3f,%.3f,%.3f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.4f,%.4f,%d,%d\n",
+							currentTime, soundWorld->updateDtMs, soundWorld->listenerCutReasons, masterDB, emitter->index, logicalChannel,
+							excessTargetDB, excessDB.value, volumeDB, offsetTarget.x, offsetTarget.y, offsetTarget.z, offset.x, offset.y, offset.z,
+							occTarget, occlusion.value, soundWorld->listenerAreaHeld ? 1 : 0, soundWorld->listener.area );
+		if( written <= 0 )
+		{
+			SmoothLog_WriteFailed();	// clears s_smoothLog and every world's smoothLog
+		}
+	}
+}
+
+/*
+========================
+idSoundChannel::UpdateHardware
+========================
+*/
+void idSoundChannel::UpdateHardware( float volumeAdd, int currentTime )
+{
+	UpdateHardwareBody< false >( volumeAdd, currentTime );
+}
+
+/*
+========================
+idSoundChannel::UpdateHardwareGated
+
+//puncho - SB3-K (R-SB3-22): the baked map's entry point
+========================
+*/
+void idSoundChannel::UpdateHardwareGated( float volumeAdd, int currentTime )
+{
+	UpdateHardwareBody< true >( volumeAdd, currentTime );
 }
 
 /*
@@ -465,6 +737,11 @@ void idSoundEmitterLocal::Init( int i, idSoundWorldLocal* sw )
 	lastValidPortalArea = -1;
 	spatializedDistance = 0.0f;
 	spatializedOrigin.Zero();
+	portalLossDb = 0.0f;		//puncho - SA3-E (R-SA3-19): Reset calls Init too
+	portalOcclusion = 0.0f;
+	inSolid = false;			//puncho - R-E6-20
+	noPath = false;				//puncho - V3R-4
+	solidOrigin.Zero();
 
 	memset( &parms, 0, sizeof( parms ) );
 }
@@ -567,10 +844,13 @@ bool idSoundEmitterLocal::CheckForCompletion( int currentTime )
 
 /*
 ========================
-idSoundEmitterLocal::Update
+idSoundEmitterLocal::UpdateBody
+
+//puncho - SB3-K (R-SB3-22, R-SB3-24): today's Update, one instantiation per arm; the place E1 is SA3's
 ========================
 */
-void idSoundEmitterLocal::Update( int currentTime )
+template< bool gated >
+ID_FORCE_INLINE void idSoundEmitterLocal::UpdateBody( int currentTime )
 {
 	if( channels.Num() == 0 )
 	{
@@ -581,6 +861,7 @@ void idSoundEmitterLocal::Update( int currentTime )
 
 	spatializedDistance = directDistance;
 	spatializedOrigin = origin;
+	noPath = false;	//puncho - V3R-4: true only when the walk below runs and finds no way
 
 	// Initialize all channels to silence
 	for( int i = 0; i < channels.Num(); i++ )
@@ -626,36 +907,102 @@ void idSoundEmitterLocal::Update( int currentTime )
 		// too far away to possibly hear it
 		return;
 	}
-	if( useOcclusion && s_useOcclusion.GetBool() )
+	//puncho - R-E6-20: the area block. soundInArea stays -1 for an emitter that does not use occlusion, so the resolve
+	// below runs exactly when it did before. A speaker a little inside a wall is placed in the nearest area found around
+	// its own origin (never from the listener, so a new map and a loaded save agree); one that finds none plays as today.
+	int soundInArea = -1;
+	if( useOcclusion && s_useOcclusion.GetBool() && soundWorld->renderWorld != NULL )
 	{
-		// work out virtual origin and distance, which may be from a portal instead of the actual origin
-		if( soundWorld->renderWorld != NULL )
+		soundInArea = soundWorld->renderWorld->PointInArea( origin );
+		if( soundInArea == -1 )
 		{
-			// we have a valid renderWorld
-			int soundInArea = soundWorld->renderWorld->PointInArea( origin );
-			if( soundInArea == -1 )
+			soundInArea = lastValidPortalArea;
+		}
+		else
+		{
+			lastValidPortalArea = soundInArea;
+			inSolid = false;
+		}
+		if( soundInArea == -1 && ( !inSolid || ( origin - solidOrigin ).LengthSqr() > 1.0f ) )
+		{
+			for( int i = 0; i < SOUND_SOLID_RETRIES; i++ )
 			{
-				soundInArea = lastValidPortalArea;
+				soundInArea = soundWorld->renderWorld->PointInArea( origin + soundSolidRetryOffsets[i] );
+				if( soundInArea != -1 )
+				{
+					break;
+				}
+			}
+			if( soundInArea != -1 )
+			{
+				lastValidPortalArea = soundInArea;
+				inSolid = false;
 			}
 			else
 			{
-				lastValidPortalArea = soundInArea;
+				if( !inSolid )
+				{
+					const idSoundShader* shader = channels[0]->soundShader;
+					common->DWarning( "sound emitter %d at (%s) is in solid, no area within 32 units; plays direct: %s", index, origin.ToString( 0 ), ( shader != NULL ) ? shader->GetName() : "<no shader>" );
+				}
+				inSolid = true;
+				solidOrigin = origin;
 			}
-			if( soundInArea != -1 && soundInArea != soundWorld->listener.area )
-			{
-				spatializedDistance = maxDistance * METERS_TO_DOOM;
-				soundWorld->ResolveOrigin( 0, NULL, soundInArea, 0.0f, origin, this );
-				spatializedDistance *= DOOM_TO_METERS;
-			}
+		}
+	}
+
+	// E1: SA3
+	if( gated )
+	{
+		soundWorld->occlusion->ResolveEmitter( *this, soundInArea, maxDistance );	//puncho - SA3-E (R-SA3-12 to R-SA3-15)
+	}
+	else
+	{
+		// work out virtual origin and distance, which may be from a portal instead of the actual origin
+		if( soundInArea != -1 && soundInArea != soundWorld->listener.area )
+		{
+			spatializedDistance = maxDistance * METERS_TO_DOOM;
+			soundWorld->ResolveOrigin( 0, NULL, soundInArea, 0.0f, origin, this );
+			noPath = ( spatializedDistance >= maxDistance * METERS_TO_DOOM );	//puncho - V3R-4: ResolveOrigin lowers it only on a path
+			spatializedDistance *= DOOM_TO_METERS;
 		}
 	}
 
 	for( int j = 0; j < channels.Num(); j++ )
 	{
-		channels[j]->UpdateVolume( currentTime );
+		if( gated )
+		{
+			channels[j]->UpdateVolumeGated( currentTime );
+		}
+		else
+		{
+			channels[j]->UpdateVolume( currentTime );
+		}
 	}
 
 	return;
+}
+
+/*
+========================
+idSoundEmitterLocal::Update
+========================
+*/
+void idSoundEmitterLocal::Update( int currentTime )
+{
+	UpdateBody< false >( currentTime );
+}
+
+/*
+========================
+idSoundEmitterLocal::UpdateGated
+
+//puncho - SB3-K (R-SB3-22): the baked map's entry point
+========================
+*/
+void idSoundEmitterLocal::UpdateGated( int currentTime )
+{
+	UpdateBody< true >( currentTime );
 }
 
 /*

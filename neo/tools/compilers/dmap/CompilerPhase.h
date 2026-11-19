@@ -21,6 +21,11 @@ enum compilerPhase_t
 	DP_AAS_CLUSTER,
 	DP_AAS_OPTIMIZE,
 	DP_AAS_WRITE,
+	//puncho - SB1a (R-SB1a-6): the acoustic slots; SB1a-M times the mesh, SB1b the probes and the write, SB2 the bake
+	DP_ACOUSTIC_MESH,
+	DP_ACOUSTIC_PROBES,
+	DP_ACOUSTIC_WRITE,
+	DP_ACOUSTIC_BAKE,
 	DP_COUNT
 };
 

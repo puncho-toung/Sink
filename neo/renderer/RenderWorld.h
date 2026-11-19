@@ -484,6 +484,11 @@ public:
 	// RB: returns the AABB of a BSP area
 	virtual	idBounds		AreaBounds( int areaNum ) const = 0;
 
+	//puncho - SB1b (R-SB1b-31): the structure id of the loaded world's tree and portals, computed on every call
+	// from what the .proc or .bproc load stored (nothing cached); equals the .sndmesh compileId dmap wrote for
+	// the same compile. 0 for an empty world, a failed load or a ClearWorld. Called once per load of a baked map
+	virtual uint64			GetMapCompileId() const = 0;
+
 	//-------------- Tracing  -----------------
 
 	// Checks a ray trace against any gui surfaces in an entity, returning the

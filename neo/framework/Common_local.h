@@ -135,6 +135,8 @@ struct frameTiming_t
 	uint64	startRenderTime;
 	uint64	finishRenderTime;
 	uint64  finishSyncTime_EndFrame;
+	uint64	startSoundTime;		//puncho - R-E6-31: around soundSystem->Render(), so sound is its own row, not Sync
+	uint64	finishSoundTime;
 };
 
 #define	MAX_PRINT_MSG_SIZE	4096

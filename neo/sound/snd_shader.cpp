@@ -397,7 +397,16 @@ bool idSoundShader::ParseShader( idLexer& src )
 			// add to the wav list
 			if( s_maxSamples.GetInteger() == 0 || ( s_maxSamples.GetInteger() > 0 && entries.Num() < s_maxSamples.GetInteger() ) )
 			{
-				entries.Append( soundSystemLocal.LoadSample( token.c_str() ) );
+				idSoundSample* sample = soundSystemLocal.LoadSample( token.c_str() );
+				//puncho - P5-4 (DR-166): a shader FindType parses outside a level load is never purged, so a sample it names
+				// must outlive the next BeginLevelLoad even when LoadSample found it already loaded as the level's. The sound
+				// system's flag stands in for the decl manager's only because its level load lies inside the decl manager's
+				// wherever a decl can be parsed, so this pin may be wider than that permanence but never narrower
+				if( !soundSystemLocal.insideLevelLoad )
+				{
+					sample->SetNeverPurge();
+				}
+				entries.Append( sample );
 			}
 		}
 		else

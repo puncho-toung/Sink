@@ -33,6 +33,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "dmap.h"
 #include "dress.h"
 #include "CompilerPhase.h" //puncho - TC0
+#include "acoustic.h" //puncho - SB1a
 
 idCVar dmap_verbose( "dmap_verbose", "0", CVAR_BOOL | CVAR_SYSTEM | CVAR_NEW, "dmap developer mode" );
 // the .proc indexes are 16 bit (triIndex_t), so the default is the hard limit; lower values only
@@ -50,7 +51,9 @@ int dmapMaxGroupEdges;
 //puncho end
 static const char* dmapPhaseNames[] = { "load", "facebsp", "portals", "filter", "flood", "fillOutside", "clipSides", "floodAreas", "putPrimitives", "dressPre", "prelight", "optimize", "dressPost", "tjunc", "dressPostTj", "write", "cm",
 	//puncho - TC0: keep the existing columns above in their original order.
-	"writeSurfaces", "writeFormat", "writeFile", "cmBuild", "cmWrite", "aasLoad", "aasBrushes", "aasExpand", "aasBsp", "aasSubdivide", "aasStore", "aasReach", "aasCluster", "aasOptimize", "aasWrite" };
+	"writeSurfaces", "writeFormat", "writeFile", "cmBuild", "cmWrite", "aasLoad", "aasBrushes", "aasExpand", "aasBsp", "aasSubdivide", "aasStore", "aasReach", "aasCluster", "aasOptimize", "aasWrite",
+	"acousticMesh", "acousticProbes", "acousticWrite", "acousticBake" //puncho - SB1a (R-SB1a-6)
+};
 static int dmapPhaseMS[sizeof( dmapPhaseNames ) / sizeof( dmapPhaseNames[0] )];
 static_assert( sizeof( dmapPhaseNames ) / sizeof( dmapPhaseNames[0] ) == DP_COUNT, "compiler phase names must match slots" ); //puncho - TC0
 
@@ -72,6 +75,85 @@ static void DmapPhaseEnd( int phase, int started )
 		dmapPhaseMS[phase] += Sys_Milliseconds() - started;
 	}
 }
+
+//puncho start - SB1a (SEAMS D-23): the acoustic files outside dmap.cpp time their DP_ACOUSTIC_* slots through this
+void AcousticPhaseEnd( int slot, int startMs )
+{
+	DmapPhaseEnd( slot, startMs );
+}
+
+// R-SB1a-7: tool cvars, never written to any output
+idCVar dmap_acousticVerbose( "dmap_acousticVerbose", "0", CVAR_TOOL | CVAR_BOOL, "print every acoustic Stage A line" );
+idCVar dmap_acousticDump( "dmap_acousticDump", "0", CVAR_TOOL | CVAR_BOOL, "write maps/<map>_acoustic.obj, the acoustic mesh and its door plugs" );
+
+// R-SB1a-1: the acoustic mode, file-statics reset at the top of each Dmap run; OFF wins over MESH
+enum dmapAcousticMode_t
+{
+	DMAP_ACOUSTIC_FULL,		// Stage A, then the bake in the engine
+	DMAP_ACOUSTIC_MESH,		// noAcousticBake: Stage A only
+	DMAP_ACOUSTIC_OFF		// noAcoustic: no Stage A, the old acoustic files deleted
+};
+static dmapAcousticMode_t	dmapAcousticMode = DMAP_ACOUSTIC_FULL;
+bool						dmapAcousticFast = false;	// SB1b-P reads it for the .sndmesh header (acoustic.h)
+
+/*
+============
+AcousticReadMeshSettings
+
+R-SB1a-7: the worldspawn keys of Stage A. Returns the number of warnings it printed.
+============
+*/
+int AcousticReadMeshSettings( const idDict& worldspawn, acousticMeshSettings_t& settings )
+{
+	int warnings = 0;
+
+	settings.sealDoorways = 1;
+	const char* seal = worldspawn.GetString( "acoustic_sealDoorways", "1" );
+	if( !idStr::Cmp( seal, "0" ) )
+	{
+		settings.sealDoorways = 0;
+	}
+	else if( idStr::Cmp( seal, "1" ) )
+	{
+		common->Warning( "acoustics: acoustic_sealDoorways '%s' is not 0 or 1, using 1", seal );
+		warnings++;
+	}
+
+	// a decimal integer, an optional sign and digits; atoi would read anything else as 0, which is in range and
+	// would leave every model static out without a word. Ten digits saturate, so the clamp below warns of them
+	const char* budgetText = worldspawn.GetString( "acoustic_staticTriBudget", "1024" );
+	const char* digit = budgetText + ( ( budgetText[0] == '-' || budgetText[0] == '+' ) ? 1 : 0 );
+	int budget = 0;
+	bool decimal = ( digit[0] != '\0' );
+	for( ; *digit != '\0'; digit++ )
+	{
+		if( *digit < '0' || *digit > '9' )
+		{
+			decimal = false;
+			break;
+		}
+		budget = ( budget >= 100000000 ) ? 1000000000 : budget * 10 + ( *digit - '0' );
+	}
+	if( !decimal )
+	{
+		common->Warning( "acoustics: acoustic_staticTriBudget '%s' is not a decimal integer, using 1024", budgetText );
+		warnings++;
+		budget = 1024;
+	}
+	else if( budgetText[0] == '-' )
+	{
+		budget = -budget;
+	}
+	settings.staticTriBudget = idMath::ClampInt( 0, 65536, budget );
+	if( settings.staticTriBudget != budget )
+	{
+		common->Warning( "acoustics: acoustic_staticTriBudget %i is outside 0..65536, using %i", budget, settings.staticTriBudget );
+		warnings++;
+	}
+
+	return warnings;
+}
+//puncho end
 
 
 /*
@@ -315,6 +397,10 @@ void DmapHelp()
 		"blockSize <x> <y> <z>  = cut BSP along these dimensions or disable with 0 0 0\n"
 		"obj                    = export BSP render surfaces as .obj file\n"
 		"debug                  = export BSP portals and other details as .obj files\n"
+		//puncho - SB1a (R-SB1a-6)
+		"noAcoustic             = no acoustic files: deletes the map's old .sndmesh, .sndmanifest and .sndbake\n"
+		"noAcousticBake         = write the acoustic mesh and manifest, skip the bake\n"
+		"acousticFast           = bake the acoustics with the fast settings\n"
 		""
 	);
 }
@@ -392,6 +478,8 @@ bool Dmap( const idCmdArgs& args ) //puncho - TC1: command errors follow cleanup
 	bool		failed = false; //puncho - TC1
 	bool		noCM = false;
 	bool		noAAS = false;
+	bool		acousticRan = false;	//puncho - SB1a (R-SB1a-4): Stage A was called this compile
+	bool		acousticFailed = false;	//puncho - SB1a (R-SB1a-4): its own flag, so .cm and AAS are still built
 
 //puncho start - P2b.3.8
 #if defined( DMAP )
@@ -420,6 +508,8 @@ bool Dmap( const idCmdArgs& args ) //puncho - TC1: command errors follow cleanup
 #endif
 //puncho end - R2 router
 	ResetDmapGlobals();
+	dmapAcousticMode = DMAP_ACOUSTIC_FULL;	//puncho - SB1a (R-SB1a-1)
+	dmapAcousticFast = false;
 
 	if( args.Argc() < 2 )
 	{
@@ -569,6 +659,26 @@ bool Dmap( const idCmdArgs& args ) //puncho - TC1: command errors follow cleanup
 			noAAS = true;
 			common->Printf( "noAAS = true\n" );
 		}
+		//puncho start - SB1a (R-SB1a-1): OFF wins whatever the order
+		else if( !idStr::Icmp( s, "noAcoustic" ) )
+		{
+			common->Printf( "noAcoustic = true\n" );
+			dmapAcousticMode = DMAP_ACOUSTIC_OFF;
+		}
+		else if( !idStr::Icmp( s, "noAcousticBake" ) )
+		{
+			common->Printf( "noAcousticBake = true\n" );
+			if( dmapAcousticMode != DMAP_ACOUSTIC_OFF )
+			{
+				dmapAcousticMode = DMAP_ACOUSTIC_MESH;
+			}
+		}
+		else if( !idStr::Icmp( s, "acousticFast" ) )
+		{
+			common->Printf( "acousticFast = true\n" );
+			dmapAcousticFast = true;
+		}
+		//puncho end
 		else
 		{
 			break;
@@ -581,6 +691,12 @@ bool Dmap( const idCmdArgs& args ) //puncho - TC1: command errors follow cleanup
 	}
 
 	passedName = args.Argv( i );		// may have an extension
+	//puncho - SB1a (R-SB1a-2, E-SB2-1): the loop takes the first unknown token as the map, so a misspelt option
+	// before the map would otherwise compile a map of that name and drop the real one silently
+	if( i + 1 < args.Argc() )
+	{
+		common->Error( "dmap: unexpected '%s' after the map name '%s': options go before the map name", args.Argv( i + 1 ), args.Argv( i ) );
+	}
 	passedName.BackSlashesToSlashes();
 	if( passedName.Icmpn( "maps/", 4 ) != 0 )
 	{
@@ -624,6 +740,12 @@ bool Dmap( const idCmdArgs& args ) //puncho - TC1: command errors follow cleanup
 	idStr::snPrintf( path, sizeof( path ), "%s.cm", dmapGlobals.mapFileBase );
 	fileSystem->RemoveFile( path );
 
+	//puncho - SB1a (R-SB1a-5): noAcoustic leaves no acoustic file behind; a region compile touches none
+	if( dmapAcousticMode == DMAP_ACOUSTIC_OFF && !region )
+	{
+		AcousticDeleteOutputs( dmapGlobals.mapFileBase );
+	}
+
 	//
 	// start from scratch
 	//
@@ -640,7 +762,10 @@ bool Dmap( const idCmdArgs& args ) //puncho - TC1: command errors follow cleanup
 	int phaseStart = Sys_Milliseconds();
 	if( !LoadDMapFile( passedName ) )
 	{
-		return true; //puncho - TC1: keep the original warning-and-return for an input failure
+		//puncho - SB1a (R-SB1a-2): say what was taken for the map name; LoadDMapFile freed its idMapFile and
+		// allocated nothing else before it failed
+		common->Warning( "dmap: cannot read '%s' (a misspelt option is read as the map name)", passedName.c_str() );
+		return true; //puncho - TC1: keep the original warning-and-return for an input failure (SB1a's E-SB2-1 had made it a failure; joined with v0001.5 the compile line's result stands)
 	}
 
 	DmapPhaseEnd( 0, phaseStart );
@@ -655,6 +780,41 @@ bool Dmap( const idCmdArgs& args ) //puncho - TC1: command errors follow cleanup
 	{
 		leaked = true;
 	}
+
+	//puncho start - SB1a (R-SB1a-4): Stage A reads the trees, hulls, primitives and interAreaPortals, so it runs before
+	// the dmapOnly strip and FreeDMapFile; its failure is its own flag, so .cm and AAS are still built
+	if( !leaked && !failed && !region && dmapAcousticMode != DMAP_ACOUSTIC_OFF )
+	{
+		if( dmapGlobals.noFlood )
+		{
+			common->Printf( "acoustics: Stage A skipped (noFlood)\n" );
+		}
+		else
+		{
+			// dmap merged every mounted layer's _extra_ents patch; a bake must match the base layer (rank 0) alone
+			const idList<mapPatchEntity_t>& patches = dmapGlobals.dmapFile->GetPatchEntities();
+			const mapPatchEntity_t* layerPatch = NULL;
+			for( int p = 0; p < patches.Num(); p++ )
+			{
+				if( patches[p].result != MAP_PATCH_SKIPPED && patches[p].layer != 0 )
+				{
+					layerPatch = &patches[p];
+					break;
+				}
+			}
+			if( layerPatch != NULL )
+			{
+				AcousticDeleteOutputs( dmapGlobals.mapFileBase );
+				common->Printf( "acoustics: skipped (patch %s line %i from layer %i; a bake must match the base layer)\n", layerPatch->file.c_str(), layerPatch->line, layerPatch->layer );
+			}
+			else
+			{
+				acousticRan = true;
+				acousticFailed = !AcousticStageA();
+			}
+		}
+	}
+	//puncho end
 
 	// the dress passes all ran inside ProcessModels and were the last readers of the map
 	// primitives of dmapOnly helpers: strip them now, while uEntities still says which entities
@@ -703,8 +863,31 @@ bool Dmap( const idCmdArgs& args ) //puncho - TC1: command errors follow cleanup
 		if( !failed && !noAAS && !region )
 		{
 			// create AAS files
+			//puncho - the whole command line, as before SB1a (R-SB1a-3): dmap's aasTypes option (P2b.3.8) reaches RunAAS
+			// only through it. RunAAS takes its map from the last token, and SB1a's check above (R-SB1a-2) refuses
+			// anything after the map name, so the last token is the map
 			failed = !RunAAS( args ); //puncho - TC1
 		}
+
+		//puncho start - SB1a (R-SB1a-5): Stage B, only when Stage A ran and held this compile
+		if( !failed && !region && acousticRan && !acousticFailed )
+		{
+			if( dmapAcousticMode == DMAP_ACOUSTIC_MESH )
+			{
+				common->Printf( "acoustics: bake skipped (noAcousticBake)\n" );
+			}
+			else
+			{
+#if !defined( DMAP ) && defined( USE_STEAMAUDIO_BAKE )
+				failed = !BakeAcoustics( passedName.c_str(), dmapAcousticFast );
+#elif !defined( DMAP )
+				common->Printf( "acoustics: bake skipped (built without the acoustic bake)\n" );	//puncho - SB2-I (I4-12a): maps still compile
+#else
+				common->Printf( "acoustics: bake skipped in rbdmap\n" );
+#endif
+			}
+		}
+		//puncho end
 
 		if( dmap_phaseTimes.GetBool() )
 		{
@@ -718,7 +901,7 @@ bool Dmap( const idCmdArgs& args ) //puncho - TC1: command errors follow cleanup
 			common->Printf( "optimize: working set %llu live, %llu peak, cap %llu bytes\n", ( unsigned long long )optWorkingSetLive, ( unsigned long long )optWorkingSetPeak, ( unsigned long long )MAX_OPT_WORKING_SET );
 			//puncho end
 		}
-		common->DmapPacifierFilename( passedName, failed ? "Failed due to errors. Quit program." : "Done" );
+		common->DmapPacifierFilename( passedName, ( failed || acousticFailed ) ? "Failed due to errors. Quit program." : "Done" ); //puncho - SB1a
 	}
 	else
 	{
@@ -732,7 +915,7 @@ bool Dmap( const idCmdArgs& args ) //puncho - TC1: command errors follow cleanup
 
 	// clear the map plane list
 	dmapGlobals.mapPlanes.Clear();
-	return !failed; //puncho - TC1
+	return !failed && !acousticFailed; //puncho - TC1, SB1a (R-SB1a-4)
 }
 
 /*

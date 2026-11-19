@@ -344,7 +344,9 @@ float idConsoleLocal::DrawFPS( float y )
 
 	// SRS - Frame sync time represents swap buffer synchronization + other frame time spent outside of game thread and renderer backend
 	const int64 gameThreadWaitTime = int64( commonLocal.mainFrameTiming.finishSyncTime_EndFrame ) - int64( commonLocal.mainFrameTiming.finishRenderTime );
-	const int64 frameSyncTime = int64( commonLocal.frameTiming.finishSyncTime ) - int64( commonLocal.mainFrameTiming.startRenderTime + rendererBackEndTime ) - gameThreadWaitTime;
+	//puncho - R-E6-31: the last frame's soundSystem->Render() falls inside the Sync window; show it as its own row and count it as CPU busy
+	const int64 frameSoundTime = int64( commonLocal.mainFrameTiming.finishSoundTime ) - int64( commonLocal.mainFrameTiming.startSoundTime );
+	const int64 frameSyncTime = int64( commonLocal.frameTiming.finishSyncTime ) - int64( commonLocal.mainFrameTiming.startRenderTime + rendererBackEndTime ) - gameThreadWaitTime - frameSoundTime;
 
 	// SRS - GPU idle time is simply the difference between measured frame-over-frame time and GPU busy time (directly from GPU timers)
 	const int64 rendererGPUIdleTime = frameBusyTime + frameIdleTime - rendererGPUTime;
@@ -353,9 +355,9 @@ float idConsoleLocal::DrawFPS( float y )
 #if defined(__APPLE__) && defined( USE_MoltenVK )
 	const int64 rendererMvkEncodeTime = commonLocal.GetRendererMvkEncodeMicroseconds();
 	const int64 rendererQueueSubmitTime = int64( commonLocal.mainFrameTiming.finishRenderTime - commonLocal.mainFrameTiming.startRenderTime ) - int64( rendererBackEndTime );
-	const int64 rendererCPUBusyTime = int64( commonLocal.mainFrameTiming.finishSyncTime_EndFrame - commonLocal.mainFrameTiming.startGameTime ) + Min( Max( int64( 0 ), rendererMvkEncodeTime - rendererQueueSubmitTime - gameThreadWaitTime ), frameSyncTime - rendererQueueSubmitTime );
+	const int64 rendererCPUBusyTime = int64( commonLocal.mainFrameTiming.finishSyncTime_EndFrame - commonLocal.mainFrameTiming.startGameTime ) + Min( Max( int64( 0 ), rendererMvkEncodeTime - rendererQueueSubmitTime - gameThreadWaitTime ), frameSyncTime - rendererQueueSubmitTime ) + frameSoundTime; //puncho - R-E6-31
 #else
-	const int64 rendererCPUBusyTime = int64( commonLocal.mainFrameTiming.finishSyncTime_EndFrame - commonLocal.mainFrameTiming.startGameTime );
+	const int64 rendererCPUBusyTime = int64( commonLocal.mainFrameTiming.finishSyncTime_EndFrame - commonLocal.mainFrameTiming.startGameTime ) + frameSoundTime; //puncho - R-E6-31
 #endif
 
 	// SRS - Save current CPU and GPU usage factors in ring buffer to calculate smoothed averages for future frames
@@ -368,6 +370,9 @@ float idConsoleLocal::DrawFPS( float y )
 		// start smaller
 		int32 statsWindowWidth = com_showFPS.GetInteger() >= 5 ? 850 : 320;
 		int32 statsWindowHeight = 370 + 80 + ( com_showFPS.GetInteger() >= 5 ? 120 : 0 );		//puncho - reconcile: +40 for the Int(tex)/Int(emit) rows; X0: +80 for the four new GPU rows
+#if defined(__APPLE__) && defined( USE_MoltenVK )
+		statsWindowHeight += 20;		//puncho - R-E6-31: the Sound row has a line of its own on this branch
+#endif
 		// Each track adds its own row count to statsWindowHeight here.
 		// ---- TRACK S: extra stats rows ----
 		if( commonLocal.stats_frontend.c_shadowCacheCells > 0 )
@@ -708,9 +713,11 @@ float idConsoleLocal::DrawFPS( float y )
 		// SRS - For more recent versions of MoltenVK with enhanced performance statistics (v1.2.6 and later), display the Vulkan to Metal encoding thread time on macOS
 		ImGui::TextColored( rendererMvkEncodeTime > maxTime || rendererGPUInteractionsTime > maxTime ? colorRed : colorWhite,	"Encode:  %5lld us   Interactions: %5llu us", rendererMvkEncodeTime, rendererGPUInteractionsTime );
 		ImGui::TextColored( rendererGPUShaderPassesTime > maxTime ? colorRed : colorWhite,	"Sync:    %5lld us   Shader Pass:  %5llu us", frameSyncTime, rendererGPUShaderPassesTime );
+		ImGui::TextColored( frameSoundTime > maxTime ? colorRed : colorWhite,				"Sound:   %5lld us", frameSoundTime );	//puncho - R-E6-31
 #else
 		ImGui::TextColored( rendererGPUInteractionsTime > maxTime ? colorRed : colorWhite,	"Sync:    %5lld us   Interactions: %5llu us", frameSyncTime, rendererGPUInteractionsTime );
-		ImGui::TextColored( rendererGPUShaderPassesTime > maxTime ? colorRed : colorWhite,	"                    Shader Pass:  %5llu us", rendererGPUShaderPassesTime );
+		//puncho - R-E6-31: the Sound row takes the empty CPU cell of the Shader Pass line, so the window keeps its height
+		ImGui::TextColored( frameSoundTime > maxTime || rendererGPUShaderPassesTime > maxTime ? colorRed : colorWhite,	"Sound:   %5lld us   Shader Pass:  %5llu us", frameSoundTime, rendererGPUShaderPassesTime );
 #endif
 		ImGui::TextColored( rendererGPU_TAATime > maxTime ? colorRed : colorWhite,			"                    TAA:          %5llu us", rendererGPU_TAATime );
 		ImGui::TextColored( rendererGPUPostProcessingTime > maxTime ? colorRed : colorWhite, "                    PostFX:       %5llu us", rendererGPUPostProcessingTime );

@@ -645,6 +645,7 @@ public:
 	int						cinematicSkipTime;		// don't allow skipping cinemetics until this time has passed so player doesn't skip out accidently from a firefight
 	int						cinematicStopTime;		// cinematics have several camera changes, so keep track of when we stop them so that we don't reset cinematicSkipTime unnecessarily
 	int						cinematicMaxSkipTime;	// time to end cinematic when skipping.  there's a possibility of an infinite loop if the map isn't set up right.
+	int						listenerCutPending;		//puncho - R-E6-7: listenerCutReason_t bits latched until the listener's next view build; not saved or sent
 	bool					inCinematic;			// game is playing cinematic (player controls frozen)
 	bool					skipCinematic;
 

@@ -92,6 +92,20 @@ const float MIN_BOB_SPEED = 5.0f;
 // Special team used for spectators that we ONLY store on lobby.  The local team property on player remains as 0 or 1.
 const float LOBBY_SPECTATE_TEAM_FOR_VOICE_CHAT = 2;
 
+/*
+===============
+PlayerFeedsListener
+
+puncho - R-E6-7: true when this player's view feeds the sound listener: the local player, or the player the local
+spectator follows (the draw renders that player's view, MultiplayerGame.cpp's Draw)
+===============
+*/
+static bool PlayerFeedsListener( const idPlayer* player )
+{
+	const idPlayer* local = gameLocal.GetLocalPlayer();
+	return local == player || ( local != NULL && local->spectating && local->spectator == player->entityNumber );
+}
+
 const idEventDef EV_Player_GetButtons( "getButtons", NULL, 'd' );
 const idEventDef EV_Player_GetMove( "getMove", NULL, 'v' );
 const idEventDef EV_Player_GetViewAngles( "getViewAngles", NULL, 'v' );
@@ -3279,6 +3293,13 @@ void idPlayer::Respawn_Shared()
 {
 	respawn_netEvent.Set();
 
+	//puncho - R-E6-7: host (SpawnToPoint, before its Think) and client (ReadFromSnapshot, before the client's think);
+	// inside a load the forward lands in cutHeld and so in the load's own cut (R-E6-6)
+	if( PlayerFeedsListener( this ) )
+	{
+		gameLocal.listenerCutPending |= LCUT_RESPAWN;
+	}
+
 	serverOverridePositionTime = gameLocal.GetServerGameTimeMs();
 
 	// Remove the hud respawn message.
@@ -6274,6 +6295,17 @@ void idPlayer::SpectateFreeFly( bool force )
 	player = gameLocal.GetClientByNum( spectator );
 	if( force || gameLocal.time > lastSpectateChange )
 	{
+		//puncho - R-E6-7: this runs after this spectator's view build. Back to free flight from following another player
+		// shows at this frame's draw (the source becomes this player's view): cut now. Both branches below move this
+		// player's origin, which shows one tic later: latch that jump too.
+		if( PlayerFeedsListener( this ) )
+		{
+			if( spectator != entityNumber )
+			{
+				gameSoundWorld->ListenerCut( LCUT_CAMERA );
+			}
+			gameLocal.listenerCutPending |= LCUT_CAMERA;
+		}
 		spectator = entityNumber;
 		if( player != NULL && player != this && !player->spectating && !player->IsInTeleport() )
 		{
@@ -6360,6 +6392,13 @@ void idPlayer::SpectateCycle()
 			player = gameLocal.GetClientByNum( spectator );
 		}
 		lastSpectateChange = gameLocal.time + 500;
+
+		//puncho - R-E6-7: the view moves to another player (the cycle can land on the same one: no cut). This runs after
+		// the views are built and this frame's draw already shows the new player, so the cut goes straight to the sound world
+		if( spectator != latchedSpectator && PlayerFeedsListener( this ) )
+		{
+			gameSoundWorld->ListenerCut( LCUT_CAMERA );
+		}
 	}
 }
 
@@ -7658,6 +7697,12 @@ idPlayer::Spectate
 */
 void idPlayer::Spectate( bool spectate, bool force )
 {
+	//puncho - R-E6-7: into or out of spectating
+	if( PlayerFeedsListener( this ) )
+	{
+		gameLocal.listenerCutPending |= LCUT_CAMERA;
+	}
+
 	spectating = spectate;
 
 	if( spectating )
@@ -10311,6 +10356,12 @@ void idPlayer::Teleport( const idVec3& origin, const idAngles& angles, idEntity*
 {
 	idVec3 org;
 
+	//puncho - R-E6-7: the listener jumps with the view; latched until the view that shows the new place
+	if( PlayerFeedsListener( this ) )
+	{
+		gameLocal.listenerCutPending |= LCUT_TELEPORT;
+	}
+
 	if( weapon.GetEntity() )
 	{
 		weapon.GetEntity()->LowerWeapon();
@@ -10369,6 +10420,12 @@ idPlayer::SetPrivateCameraView
 */
 void idPlayer::SetPrivateCameraView( idCamera* camView )
 {
+	//puncho - R-E6-7: into or out of a private camera (Init calls this with NULL on every load and respawn: no change, no cut)
+	if( camView != privateCameraView && PlayerFeedsListener( this ) )
+	{
+		gameLocal.listenerCutPending |= LCUT_CAMERA;
+	}
+
 	privateCameraView = camView;
 	if( camView )
 	{
@@ -10831,6 +10888,14 @@ void idPlayer::CalculateRenderView()
 {
 	int i;
 	float range;
+
+	//puncho - R-E6-7: hand the latched cut to the sound world with the view that shows the jump, so PlaceListener
+	// and the cut arrive in the same sound update
+	if( gameLocal.listenerCutPending != 0 && PlayerFeedsListener( this ) )
+	{
+		gameSoundWorld->ListenerCut( gameLocal.listenerCutPending );
+		gameLocal.listenerCutPending = 0;
+	}
 
 	if( !renderView )
 	{
@@ -11975,6 +12040,7 @@ void idPlayer::ReadFromSnapshot( const idBitMsg& msg )
 	bool	newHitToggle;
 
 	oldHealth = health;
+	const int oldSpectator = spectator;	//puncho - R-E6-7
 
 	physicsObj.ReadFromSnapshot( msg );
 	ReadBindFromSnapshot( msg );
@@ -12026,6 +12092,12 @@ void idPlayer::ReadFromSnapshot( const idBitMsg& msg )
 	const bool snapshotSpectating = msg.ReadBool();
 
 	// no msg reading below this
+
+	//puncho - R-E6-7: a client's spectate target arrives here; snapshots are read before this frame's client think
+	if( spectator != oldSpectator && PlayerFeedsListener( this ) )
+	{
+		gameLocal.listenerCutPending |= LCUT_CAMERA;
+	}
 
 	// Update remote remote player state.
 	if( !IsLocallyControlled() )

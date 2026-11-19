@@ -120,8 +120,10 @@ void Write1DMatrix( idFile* f, int x, float* m )
 }
 
 //puncho - R0 S1: node planes at full precision. WriteFloat snaps a component within 0.001 of an integer
-// to it, which tilts a near-axial plane; nine significant digits bring back every float bit for bit
-static void WritePlane( idFile* f, const idPlane& plane )
+// to it, which tilts a near-axial plane; nine significant digits bring back every float bit for bit.
+// Not static: the acoustic probes (acoustic_probes.cpp, R-SB1b-26) write a node plane with it, to hold the
+// plane as the game will read it; declared in acoustic.h beside Write1DMatrix
+void WritePlane( idFile* f, const idPlane& plane )
 {
 	f->WriteFloatString( "( %.9g %.9g %.9g %.9g ) ", plane[0], plane[1], plane[2], plane[3] );
 }
@@ -689,6 +691,7 @@ WriteNode_r
 
 ===============
 */
+//puncho - SB1b: this walk and its child numbers are mirrored by AcousticStructureId (acoustic_structure.cpp) and idRenderWorldLocal::GetMapCompileId; change them with it
 static void WriteNode_r( node_t* node, idFile* procFile )
 {
 	int		child[2];
@@ -918,6 +921,7 @@ static void WriteOutputPortals( uEntity_t* e, idFile* procFile )
 	{
 		iap = &interAreaPortals[i];
 
+		//puncho - SB1b: this winding choice is mirrored by AcousticStructureId (acoustic_structure.cpp) and AcousticMesh_PortalWinding (acoustic_mesh.cpp); change them with it
 		// RB: support new area portals
 		if( iap->side )
 		{
