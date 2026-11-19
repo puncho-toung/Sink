@@ -439,12 +439,30 @@ private:
 	// S3a: the serial of the static map last drawn at each place of the cache images ( R_ShadowCacheSlot ),
 	// 0 = none; only the backend writes it ( D74 )
 	unsigned int					shadowCacheBuilt[4096 + 5];
+	// S5: r_shadowCacheDebug's marks: the places of the cache images this backend drew into ( ShadowCacheDrawStaticMaps ), in
+	// the image's own texels, kept for the panels' fading; written only while the cvar is on
+	struct shadowCacheMark_t
+	{
+		int		frame;		// shadowCacheDebugFrame when it was drawn
+		short	target;		// -1 the cache atlas, 0..4 a cascade map
+		short	kind;		// what drew it ( shadowCacheDebugKind_t in ShadowCache.cpp )
+		short	x0;
+		short	y0;
+		short	x1;
+		short	y1;
+	};
+	static const int				SHADOWCACHE_NUM_MARKS = 2048;	// a power of two: a sun that scrolls makes about 32 marks a view
+	shadowCacheMark_t				shadowCacheMarks[SHADOWCACHE_NUM_MARKS];
+	unsigned int					shadowCacheNumMarks;			// marks ever made: mark n is at index n & ( SHADOWCACHE_NUM_MARKS - 1 )
+	int								shadowCacheDebugFrame;			// main views r_shadowCacheDebug drew, the marks' clock
+	bool							shadowCacheDebugWasOn;			// r_shadowCacheDebug was on at the last static maps' pass
 public:
 	// S3a: the frontend reads these ( R_ShadowCachePublish takes the miss count, the ring of missed serials and, S4,
 	// the count of heals ); the rest of the cache stays the backend's
 	unsigned int					shadowCacheMisses;				// S3a: copies that found no map, or another one, where the frontend expected one; R_ShadowCachePublish hands the count to the frontend
 	unsigned int					shadowCacheHeals;				// S4: scrolls drawn as a whole window because the build they expected was not in the map; R_ShadowCachePublish hands the count to the frontend's log
 	unsigned int					shadowCacheMissed[128];			// S3a: the serials of the last 128 missed copies: miss n is at index n & 127 ( a point light that misses takes six ); the frontend's copy is checked against this width by a static_assert in ShadowCache.cpp
+	void							ShadowCacheDebugDraw();			// S5: r_shadowCacheDebug's panels, drawn with the debug tools ( R_ShadowCacheDebugTools calls it )
 private:
 
 	void				ShadowCacheCopyDraw( nvrhi::IFramebuffer* target, int targetKind, nvrhi::ITexture* source, const struct shadowCacheCopyConstants_t& constants, const struct shadowCacheRect_t* clearRect = NULL );

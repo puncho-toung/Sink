@@ -372,7 +372,7 @@ float idConsoleLocal::DrawFPS( float y )
 		// ---- TRACK S: extra stats rows ----
 		if( commonLocal.stats_frontend.c_shadowCacheCells > 0 )
 		{
-			statsWindowHeight += 20;		// S3b: the shadow cache's capacity line
+			statsWindowHeight += 60;		// S3b: the shadow cache's capacity line; S5: its two decision lines
 		}
 		// ---- END TRACK S ----
 		// ---- TRACK F: extra stats rows ----
@@ -736,6 +736,17 @@ float idConsoleLocal::DrawFPS( float y )
 								commonLocal.stats_frontend.c_shadowCacheUnits, commonLocal.stats_frontend.c_shadowCacheLightsBuilt,
 								commonLocal.stats_frontend.c_shadowCacheLightsWaiting, commonLocal.stats_frontend.c_shadowCacheEvicted,
 								commonLocal.stats_frontend.c_shadowCacheCellsUsed, commonLocal.stats_frontend.c_shadowCacheCells );
+			// S5: the units by what the cache did with them ( reuse + patch + build = the units above ) and the units drawn
+			// without it; then the static casters drawn into static maps, the changes since the last frame, the lights whose
+			// history of changes ran out, the budget used and the budget. Two lines: one does not fit the stats window
+			const ImVec4& decisionColor = ( commonLocal.stats_frontend.c_shadowCacheUnitsRebuilt > 0 || commonLocal.stats_frontend.c_shadowCacheLost > 0 ) ? colorYellow : colorLtGrey;
+			ImGui::TextColored( decisionColor, "SHADOWCACHE: reuse:%i patch:%i build:%i uncached:%i",
+								commonLocal.stats_frontend.c_shadowCacheUnitsReused, commonLocal.stats_frontend.c_shadowCacheUnitsPatched,
+								commonLocal.stats_frontend.c_shadowCacheUnitsRebuilt, commonLocal.stats_frontend.c_shadowCacheUnitsUncached );
+			ImGui::TextColored( decisionColor, "SHADOWCACHE: casters:%i changes:%i lost:%i budget:%i/%i",
+								commonLocal.stats_frontend.c_shadowCacheCastersDrawn, commonLocal.stats_frontend.c_shadowCacheChanges,
+								commonLocal.stats_frontend.c_shadowCacheLost, commonLocal.stats_frontend.c_shadowCacheBudgetUsed,
+								commonLocal.stats_frontend.c_shadowCacheBudget );
 		}
 		// ---- END TRACK S ----
 		// ---- TRACK F: HUD rows ----

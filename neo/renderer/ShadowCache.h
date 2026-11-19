@@ -44,7 +44,9 @@ draws the static maps and composites each unit through the cache; S3a fills the 
 notify hooks and the publish and gives local lights records, so with r_shadowCacheReuse 1
 a static map is drawn once and kept until something in it changes; S4 keeps the sun's
 cascade maps in toroidal storage, so a window that moves by whole texels draws only the
-strips it gained; the debug overlay is still a no-op; the calls are in R_RenderView,
+strips it gained; S5 repairs a cascade map where a static caster moved or was removed
+and draws the casters that came to rest on top of it, and fills the debug overlay
+( r_shadowCacheDebug: where the cache maps' texels came from ); the calls are in R_RenderView,
 SwapCommandBuffers_FinishRendering, RenderWorld.cpp and DBG_RenderDebugTools.
 Included from RenderCommon.h, so it sees the complete idRenderEntityLocal /
 idRenderLightLocal / renderEntity_t / renderLight_t.
@@ -94,7 +96,8 @@ struct shadowCacheView_t
 enum shadowCasterBits_t
 {
 	SCB_SIDE_MASK	= 0x3F,		// bits 0..5: the sides ( cube faces of a point light, cascades of the sun ) the surface's bounds can reach
-	SCB_STATIC		= 0x40		// S2c: the surface belongs to its unit's static map
+	SCB_STATIC		= 0x40,		// S2c: the surface belongs to its unit's static map
+	SCB_ADDED		= 0x80		// S5: in an op's stripBits only: the surface joined the static maps this frame ( SCOP_ADD )
 };
 
 // S2b: the constants of the copy draw, laid out as shaders/shadow_cache_copy.cb.h declares them ( 32 bytes )
@@ -119,8 +122,12 @@ static_assert( sizeof( shadowCacheCopyConstants_t ) == 32, "laid out as shaders/
 enum shadowCacheOpFlags_t
 {
 	SCOP_REBUILD	= 1,	// clear the unit's region of its cache image and draw its static casters into it, before any copy
-	SCOP_SCROLL		= 2		// S4: a cascade whose window moved by whole texels: clear and draw only the strips the window gained, on
-							// top of the build baseSerial ( the whole window instead when that build is not in the map ), before any copy
+	SCOP_SCROLL		= 2,	// S4: a cascade whose window moved by whole texels: clear and draw only the strips the window gained, on
+							// top of the build baseSerial ( the whole window instead when that build is not in the map ), before any copy.
+							// S5: the same for the rectangles that moved or removed static casters' old bounds cover, moved or not
+	SCOP_ADD		= 4		// S5: with SCOP_SCROLL: then draw the casters that joined the static maps this frame ( SCB_ADDED ) over the
+							// whole window without a clear: a depth map keeps the nearest depth, so the map then holds what it would
+							// hold drawn again with them
 };
 
 // S4: a half-open rectangle of texels, x0 <= x < x1 and y0 <= y < y1: in a cascade window's logical texels, or in its
@@ -143,6 +150,9 @@ struct shadowCacheToroidalRect_t
 	int					viewportY;
 };
 
+// S5: the rectangles of one cascade's op: a strip byte has a bit for each, beside SCB_STATIC and SCB_ADDED
+#define SHADOWCACHE_MAX_RECTS		6
+
 // S2c: one cached unit of this view ( a spot light's map, a face of a point light, a cascade of the
 // primary sun ): where its static map lives. Decided by the frontend, executed by the backend ( D36 ).
 // A light's ops are contiguous, one per side in side order; viewLight_t::shadowOp is the index of the
@@ -160,13 +170,15 @@ struct shadowCacheOp_t
 	// S4: the primary sun's cascades are kept in toroidal storage ( 08 section 6 ): the window's logical texel ( x, y )
 	// lives at physical texel ( ( x + wrap[0] ) & ( size - 1 ), ( y + wrap[1] ) & ( size - 1 ) ) of its cascade map. Frame
 	// memory is zero-filled, so a unit that is not a cascade has no wrap, no strips and no strip bits
-	unsigned int		baseSerial;		// SCOP_SCROLL: the build the strips are drawn on top of
+	unsigned int		baseSerial;		// SCOP_SCROLL: the build the rectangles are drawn on top of
 	short				wrap[2];		// ( 0, 0 ) for every other unit, and for a cascade map drawn in full since its window last moved
-	int					numRects;		// SCOP_SCROLL: the strips, 1 or 2 ( R_ShadowCacheExposedRects )
-	shadowCacheRect_t	rects[2];		// SCOP_SCROLL: the strips, in the window's logical texels: what the window gained
+	int					numRects;		// SCOP_SCROLL: the rectangles cleared and drawn again, 0 to SHADOWCACHE_MAX_RECTS: the strips the
+										// window gained ( R_ShadowCacheExposedRects ), S5 merged with the repairs ( R_ShadowCacheAddRect )
+	shadowCacheRect_t	rects[SHADOWCACHE_MAX_RECTS];	// SCOP_SCROLL: the rectangles, in the window's logical texels; they do not overlap
+	int					repairs;		// S5: bit r = rects[r] is not one of the strips: it holds a repair ( r_shadowCacheDebug's colours )
 	const byte*			stripBits;		// SCOP_SCROLL: one byte per caster of the light's chain, bit r = a static caster of this cascade
-										// whose bounds reach rects[r] ( R_ShadowCacheCasterBits ), with SCB_STATIC beside any bit r;
-										// NULL = no caster in the chain
+										// whose bounds reach rects[r] ( R_ShadowCacheCasterBits ), SCB_ADDED = one that joined the maps
+										// this frame ( SCOP_ADD ), with SCB_STATIC beside any such bit; NULL = no caster in the chain
 };
 
 // S3a: the backend's built stamp for the place this unit's static map starts at: its cell of the cache
@@ -191,6 +203,7 @@ extern idCVar r_shadowCacheReuse;
 extern idCVar r_shadowCacheStaticFrames;
 extern idCVar r_shadowCacheBudget;
 extern idCVar r_shadowCacheFlush;
+extern idCVar r_shadowCacheDebug;		// S5: read by the backend's debug overlay
 
 void	R_ShadowCacheParallelMatrices( const shadowCacheView_t& scv, const shadowCacheCascade_t& cascade,
 									   idRenderMatrix& lightViewRenderMatrix, idRenderMatrix& lightProjectionRenderMatrix );
@@ -207,7 +220,7 @@ void	R_ShadowCacheNotifyLight( const idRenderLightLocal* light, const renderLigh
 // R_CheckForEntityDefsUsingModel ): every static map is built again
 void	R_ShadowCacheInvalidateAll();
 
-void	R_ShadowCacheDebugTools( nvrhi::ICommandList* commandList, const viewDef_t* viewDef );	// track S's debug overlay, called from DBG_RenderDebugTools
+void	R_ShadowCacheDebugTools( nvrhi::ICommandList* commandList, const viewDef_t* viewDef );	// track S's debug overlay, called from DBG_RenderDebugTools ( S5: r_shadowCacheDebug )
 
 // C3: the one test of "this view light has a shadow map to sample". The body is track S's and lives in
 // this header so that it inlines at its call sites in the backend ( once per interaction draw ).

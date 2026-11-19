@@ -3328,6 +3328,9 @@ idRenderBackend::idRenderBackend()
 	shadowCacheMisses = 0;
 	shadowCacheHeals = 0;
 	memset( shadowCacheMissed, 0, sizeof( shadowCacheMissed ) );
+	shadowCacheNumMarks = 0;		// S5
+	shadowCacheDebugFrame = 0;
+	shadowCacheDebugWasOn = false;
 	// ---- END TRACK S ----
 	// ---- TRACK F: light lists ( the handles construct themselves empty ) ----
 	lightListTileBitsWords = 0;
