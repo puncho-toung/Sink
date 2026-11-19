@@ -43,6 +43,7 @@ idCVar r_shadowCacheReuse( "r_shadowCacheReuse", "1", CVAR_RENDERER | CVAR_BOOL 
 idCVar r_shadowCacheStaticFrames( "r_shadowCacheStaticFrames", "300", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "frames an entity must go unchanged before its shadow is drawn into a static shadow map", 1, 100000 );
 idCVar r_shadowCacheBudget( "r_shadowCacheBudget", "10000", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "what the static shadow maps built in one frame for lights that wait for them may cost: per side of a light, 100 plus the cells of cache atlas ( 128 x 128 texels ) times the casters drawn into them, so a point light at 256 with 35 casters costs 1440; the first build of a frame is never refused; maps a change made stale are rebuilt at once and do not count", 1, 100000000 );
 idCVar r_shadowCacheFlush( "r_shadowCacheFlush", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "set to 1 to throw every cached shadow map and its place away once; the engine sets it back to 0" );
+idCVar r_shadowCacheDebug( "r_shadowCacheDebug", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "S5: where the shadow cache's texels came from: 1 = the primary sun's cascade maps as stored, in panels at the bottom of the screen ( their depth in red; on D3D12 a grey panel ), the places drawn in the last views coloured ( blue a build in full, yellow a strip, green a repair, a magenta frame an addition, cyan a heal; a white cross at the window's first texel ), 2 = also the cache atlas of the local lights while r_shadowCache is 2 ( this frame's reused maps framed green )", 0, 2 );
 
 extern idCVar r_useAreasConnectedForShadowCulling;		// tr_frontend_addlights.cpp
 extern idCVar r_forceShadowMapsOnAlphaTestedSurfaces;	// tr_frontend_addmodels.cpp
@@ -303,6 +304,113 @@ static int R_ShadowCacheToroidalRects( int wrapX, int wrapY, int res, const shad
 		}
 	}
 	return num;
+}
+
+/*
+==========================================================================================
+
+S5: repairs of the cascades ( 08 section 7 )
+
+A static caster that moves, changes or is removed leaves its old depth in every cascade map it was
+drawn into, and depth cannot be un-drawn. The decide pass clears the texels its OLD bounds can have
+covered, in the window the map holds after this frame's move ( the backend repairs the map as this
+frame's copy reads it ), and draws again every static caster that reaches them: the strip rule, with
+the same rectangles and bits as the strips. A caster that comes to rest is added without a clear.
+
+==========================================================================================
+*/
+
+// The texels of a window that a box in its light view ( lo..hi along the view's x and y ) can have written: columns from 'left'
+// along x, rows DOWN from 'top' along y, 'texelX' and 'texelY' the size of a texel, two texels wider on every side ( as the strip
+// rule ) and one more on the far side for the half-open edge, clipped to the window's res texels. False when it misses the window.
+// The bounds' own texels already hold every texel a caster inside them can write; the margin is against float rounding of the
+// light-view boxes ( at most 0.27 texel at 120,000 units from the origin, about 0.01 at a cascade 0 texel: O1-7 ).
+static bool R_ShadowCacheTexelRect( const double lo[2], const double hi[2], double left, double top, double texelX, double texelY, int res, shadowCacheRect_t& out )
+{
+	const double x0 = floor( ( lo[0] - left ) / texelX ) - 2.0;
+	const double x1 = floor( ( hi[0] - left ) / texelX ) + 3.0;
+	const double y0 = floor( ( top - hi[1] ) / texelY ) - 2.0;
+	const double y1 = floor( ( top - lo[1] ) / texelY ) + 3.0;
+	// clamped before the conversion: a box far outside the window gives numbers no int holds
+	out.x0 = ( int )Min( Max( x0, 0.0 ), ( double )res );
+	out.x1 = ( int )Min( Max( x1, 0.0 ), ( double )res );
+	out.y0 = ( int )Min( Max( y0, 0.0 ), ( double )res );
+	out.y1 = ( int )Min( Max( y1, 0.0 ), ( double )res );
+	return out.x0 < out.x1 && out.y0 < out.y1;
+}
+
+// The texels of cascade 'c' that a caster inside the absolute world bounds 'b' can have written, in the window's logical texels
+// ( R_ShadowCacheTexelRect ). The light view sits at scv.sunViewOrigin, relative to the render origin; its x runs along -axis[1]
+// and its y along axis[2] ( idRenderMatrix::CreateViewMatrix, as R_ShadowCacheCasterBits has it ). In double: the bounds are absolute.
+static bool R_ShadowCacheFootprint( const shadowCacheView_t& scv, const shadowCacheCascade_t& c, const idVec3d& renderOrigin, const idBounds& b, shadowCacheRect_t& out )
+{
+	double lo[2] = { 1e300, 1e300 };
+	double hi[2] = { -1e300, -1e300 };
+	for( int j = 0; j < 8; j++ )
+	{
+		const double p[3] =
+		{
+			( double )b[j & 1].x - renderOrigin.x - ( double )scv.sunViewOrigin.x,
+			( double )b[( j >> 1 ) & 1].y - renderOrigin.y - ( double )scv.sunViewOrigin.y,
+			( double )b[( j >> 2 ) & 1].z - renderOrigin.z - ( double )scv.sunViewOrigin.z
+		};
+		const double v[2] =
+		{
+			-( p[0] * ( double )scv.sunAxis[1].x + p[1] * ( double )scv.sunAxis[1].y + p[2] * ( double )scv.sunAxis[1].z ),
+			p[0] * ( double )scv.sunAxis[2].x + p[1] * ( double )scv.sunAxis[2].y + p[2] * ( double )scv.sunAxis[2].z
+		};
+		for( int k = 0; k < 2; k++ )
+		{
+			lo[k] = Min( lo[k], v[k] );
+			hi[k] = Max( hi[k], v[k] );
+		}
+	}
+	return R_ShadowCacheTexelRect( lo, hi, c.left, c.top, ( c.right - c.left ) / ( double )c.res, ( c.top - c.bottom ) / ( double )c.res, c.res, out );
+}
+
+// Adds rectangle 'r' to a cascade's list of rectangles to clear and draw again ( at most 'max' ) and keeps them apart: a rectangle
+// that overlaps one of the list is merged with it into their bounding rectangle, which may then overlap another, and so on; when the
+// list is full, 'r' is merged with the one whose bounding rectangle with it grows least. The rectangles cover every texel the
+// separate ones did. Returns the new count.
+static int R_ShadowCacheAddRect( shadowCacheRect_t* rects, int num, int max, shadowCacheRect_t r )
+{
+	assert( max > 0 && num <= max );
+	for( ;; )
+	{
+		int hit = -1;
+		for( int i = 0; i < num && hit < 0; i++ )
+		{
+			if( r.x0 < rects[i].x1 && rects[i].x0 < r.x1 && r.y0 < rects[i].y1 && rects[i].y0 < r.y1 )
+			{
+				hit = i;
+			}
+		}
+		if( hit < 0 && num == max )
+		{
+			int64 best = 0;
+			for( int i = 0; i < num; i++ )
+			{
+				const int64 grow = ( int64 )( Max( r.x1, rects[i].x1 ) - Min( r.x0, rects[i].x0 ) ) * ( Max( r.y1, rects[i].y1 ) - Min( r.y0, rects[i].y0 ) )
+								   - ( int64 )( rects[i].x1 - rects[i].x0 ) * ( rects[i].y1 - rects[i].y0 );
+				if( hit < 0 || grow < best )
+				{
+					hit = i;
+					best = grow;
+				}
+			}
+		}
+		if( hit < 0 )
+		{
+			rects[num++] = r;
+			return num;
+		}
+		// the two become one, taken out of the list: it is added again by the next round, which looks for overlaps anew
+		r.x0 = Min( r.x0, rects[hit].x0 );
+		r.y0 = Min( r.y0, rects[hit].y0 );
+		r.x1 = Max( r.x1, rects[hit].x1 );
+		r.y1 = Max( r.y1, rects[hit].y1 );
+		rects[hit] = rects[--num];
+	}
 }
 
 // What the decide pass keeps between frames for the primary sun. Frontend-owned ( D36 ): read and
@@ -656,9 +764,10 @@ struct shadowCacheLightRec_t
 // S3a: the primary sun's static maps, one per cascade. WHICH entities they hold is decided for the
 // light, not per cascade ( heldThrough ): the caster bits carry one static bit per surface for all cascades,
 // so every cascade map must hold the same entities. A cascade whose window moved is drawn again with that
-// membership ( S4: only the strips its window gained, while it moved by less than a map, R_ShadowCacheEmitOps );
-// when the membership itself must be brought up to date ( an unseen change touches the light,
-// an entity turned static ), all cascades are drawn again.
+// membership ( S4: only the strips its window gained, while it moved by less than a map, R_ShadowCacheEmitOps ).
+// S5: an unseen change that touches the light is repaired where its old bounds reach, and the entities that
+// turned static join the membership drawn on top of the maps; all cascades are drawn again only when the
+// history of changes has run out, the epoch changed, or a map was lost.
 struct shadowCacheSunCascadeRec_t
 {
 	int64			originX;		// the window the map was drawn with ( shadowCacheCascade_t ); not compared on a clamped axis
@@ -677,7 +786,7 @@ struct shadowCacheSunCascadeRec_t
 struct shadowCacheSunRec_t
 {
 	int							uniqueId;		// the sun light's idRenderLightLocal::uniqueId; 0 = none
-	int							heldThrough;	// tr.frameCount of the decide pass that last drew every cascade: which entities the maps hold
+	int							heldThrough;	// tr.frameCount of the decide pass that last drew every cascade ( S5: or added the entities that turned static ): which entities the maps hold
 	int							changesSeen;	// shadowCacheState.changes.total when a decide pass last looked
 	int							epoch;			// shadowCacheState.epoch the membership was set under
 	int							wantSince;		// tr.frameCount since which an entity that turned static waits to be drawn into the maps; 0 = none
@@ -685,13 +794,18 @@ struct shadowCacheSunRec_t
 	int							pick;			// S4 ( D43 ): the size the engine picked for the cascades when the sun was last a cache candidate
 	int							pickFrame;		// S4: tr.frameCount of the decide pass that first saw that pick: maps of another size are built again only when it has held ( SHADOWCACHE_PICK_HOLD_FRAMES )
 	int							lastUsedFrame;	// S4: tr.frameCount of the last decide pass that had the sun as a cache candidate: a sun that comes back after an absence as long as the hold has served it
+	int							addedFrom;		// S5: the membership stamp before the entities that turned static joined it ( heldThrough until then ), and
+	int							addedFrame;		// the decide pass that let them join: that pass's R_ShadowCacheCasterBits marks them ( SCB_ADDED )
 	bool						valid;			// every cascade holds a usable map and the membership stands
+	int							gatherAskedFrame;	// S5: tr.frameCount of a decide pass that had a map to draw and no chain gathered in full: the next frame's light job, and only it, gathers in full
 	// the main view the windows were last placed for: while the view is the same, so are the windows, and
 	// the light job need not gather in full
 	idVec3						viewOrigin;
 	idMat3						viewAxis;
 	float						fovX;
 	float						fovY;
+	idVec3						gridX;			// S5: the grid's axes in the world ( -sunAxis[1], -sunAxis[2] ), for the light job's look at
+	idVec3						gridY;			// the windows ( R_ShadowCacheSunWindowsKept )
 	shadowCacheSunCascadeRec_t	cascades[SHADOWCACHE_MAX_CASCADES];
 };
 
@@ -720,16 +834,24 @@ struct shadowCacheState_t
 	int							sunReused;		// the sun's cascades of this view that kept their map
 	int							sunRebuilt;		// the sun's cascades of this view drawn again
 	int							sunScrolled;	// S4: the sun's cascades of this view that kept their map and drew the strips their window gained
+	int							sunRepaired;	// S5: the sun's cascades of this view that cleared and drew again what moved or removed casters left
+	int							sunAdded;		// S5: the sun's cascades of this view that drew the casters that came to rest on top of their map
 	unsigned int				healsPublished;	// S4: written by R_ShadowCachePublish: scrolls the backend drew as a whole window ( the build they expected was not in the map )
 	int							totalRebuilt;
 	int							totalRepaired;
 	int							totalSunRebuilt;	// S4: the sun's cascades drawn in full since the map began
 	int							totalSunScrolled;	// S4: the sun's cascades that drew only the strips their window gained, since the map began
+	int							totalSunRepaired;	// S5: the sun's cascades repaired, since the map began
+	int							totalSunAdded;		// S5: the sun's cascades that drew casters that came to rest, since the map began
+	int							totalSunLost;		// S5: the sun's builds in full of every cascade because the history of changes had run out, since the map began
+	int							totalSunGathers;	// S5: the decide passes that had the sun as a cache candidate with its chain gathered in full, since the map began
 	int							totalEvicted;
 	int							evicted;		// S3b: records that gave their place up in this view's decide pass
 	int							turns;			// S3b: lights given a turn for the next frame
 	int							costBuilt;		// S3b: what this view's budgeted builds cost ( R_ShadowCacheCost )
 	int							cellsUsed;		// S3b: cells of the cache atlas inside a record's place
+	int							lost;			// S5: lights of this view ( the sun among them ) whose history of changes had run out
+	int							changesShown;	// S5: changes.total when the last main view's counters were written
 	shadowCacheChanges_t		changes;
 	unsigned short				cellOwner[SHADOWCACHE_MAX_CELLS];	// the cache atlas, by Z-order cell: the index + 1 of the record whose map covers the cell, 0 = free
 	shadowCacheLightRec_t		recs[SHADOWCACHE_MAX_LIGHTS];
@@ -1120,9 +1242,99 @@ static bool R_ShadowCacheWantsGather( const idRenderLightLocal* light )
 	return false;
 }
 
+/*
+=====================
+R_ShadowCacheSunWindowsKept
+
+S5 ( row 78 ( a ) ): read only, from the light job. Would every cascade of the sun keep its map's window this frame, so
+that nothing is drawn for a move and the chain need not hold every static caster? This frame's slices, as
+R_ShadowCacheSunWindows will place them, against the windows of the cascade maps ( R_ShadowCacheKeepWindow's test ), at
+the records' size and texel. False whenever it cannot tell. A wrong yes costs one frame: the decide pass then finds a
+window to move without a chain gathered in full, draws the sun without the cache, and asks the next frame's light job
+for a full gather ( gatherAskedFrame ).
+=====================
+*/
+static bool R_ShadowCacheSunWindowsKept( const viewDef_t* viewDef )
+{
+	const shadowCacheSunRec_t& sun = shadowCacheState.sun;
+	const renderView_t& renderView = viewDef->renderView;
+	if( shadowCacheSun.world != viewDef->renderWorld )
+	{
+		return false;		// the reference field of view belongs to another world
+	}
+	const double tanX = tan( ( double )renderView.fov_x * ( double )idMath::PI / 360.0 );
+	const double tanY = tan( ( double )renderView.fov_y * ( double )idMath::PI / 360.0 );
+	if( !( tanX > 0.0 && tanX < 100.0 && tanY > 0.0 && tanY < 100.0 ) )
+	{
+		return false;
+	}
+	// the reference the decide pass will size the windows with: it only grows ( D46 )
+	const double refTanX = Max( shadowCacheSun.refTanX, tanX );
+	const double refTanY = Max( shadowCacheSun.refTanY, tanY );
+
+	int numCascades = 1;
+	while( numCascades < SHADOWCACHE_MAX_CASCADES && viewDef->frustumSplitDistances[numCascades - 1] != idMath::INFINITUM )
+	{
+		numCascades++;
+	}
+	if( numCascades != sun.numCascades )
+	{
+		return false;
+	}
+	shadowLightFrame_t frame;
+	memset( &frame, 0, sizeof( frame ) );
+	frame.gridX = sun.gridX;		// R_ShadowCacheSliceExtent reads only the grid's axes
+	frame.gridY = sun.gridY;
+	const int marginTexels = Max( SHADOWCACHE_MARGIN_TEXELS, ( int )ceil( r_shadowMapJitterScale.GetFloat() + 1.0f ) );
+	const int keep = marginTexels + SHADOWCACHE_KEEP_SLACK;
+	float zNear = renderView.cramZNear ? ( r_znear.GetFloat() * 0.25f ) : r_znear.GetFloat();
+	for( int i = 0; i < numCascades; i++ )
+	{
+		const shadowCacheSunCascadeRec_t& crec = sun.cascades[i];
+		const float zFar = ( i < numCascades - 1 ) ? viewDef->frustumSplitDistances[i] : viewDef->shadowCascadeFar;
+		if( !crec.valid )
+		{
+			return false;
+		}
+		shadowCacheSlice_t refSlice;
+		refSlice.zNear = zNear;
+		refSlice.zFar = zFar;
+		refSlice.tanLeft = -refTanX;
+		refSlice.tanRight = refTanX;
+		refSlice.tanBottom = -refTanY;
+		refSlice.tanTop = refTanY;
+		if( R_ShadowCacheTexelWorld( R_ShadowCacheSliceDiameter( refSlice ), crec.res, marginTexels ) != crec.texelWorld )
+		{
+			return false;		// another grid: the maps are drawn in full
+		}
+		shadowCacheSlice_t slice = refSlice;
+		slice.tanLeft = -tanX;
+		slice.tanRight = tanX;
+		slice.tanBottom = -tanY;
+		slice.tanTop = tanY;
+		double lo[2];
+		double hi[2];
+		R_ShadowCacheSliceExtent( frame, slice, renderView.vieworg, renderView.viewaxis, lo, hi );
+		// R_ShadowCacheKeepWindow's test, on the axes the map does not clamp
+		const int64 x0 = ( int64 )floor( lo[0] / crec.texelWorld ) - keep;
+		const int64 x1 = ( int64 )floor( hi[0] / crec.texelWorld ) + keep;
+		const int64 y0 = ( int64 )floor( lo[1] / crec.texelWorld ) - keep;
+		const int64 y1 = ( int64 )floor( hi[1] / crec.texelWorld ) + keep;
+		if( ( !crec.clampedX && ( x0 < crec.originX || x1 >= crec.originX + crec.res ) ) || ( !crec.clampedY && ( y0 < crec.originY || y1 >= crec.originY + crec.res ) ) )
+		{
+			return false;		// the window would move
+		}
+		// the next cascade begins half a percent inside this one, as R_ShadowCacheSunWindows has it
+		zNear = zFar - ( zFar * 0.005f );
+	}
+	return true;
+}
+
 // Read only, called from the light jobs: must the sun's chain hold every cacheable caster this frame? Yes
-// when the membership must be brought up to date, and whenever the main view is not the one the windows
-// were last placed for: a window may then have moved, and a moved cascade is drawn again.
+// when the membership must be brought up to date ( S5: a change to repair, entities that turned static to
+// add ), when the last decide pass asked for it ( S5 ), and when a window would
+// move ( S5: in a view that is not the one the windows were last placed for, R_ShadowCacheSunWindowsKept ): a
+// moved cascade is drawn again.
 static bool R_ShadowCacheSunWantsGather( const viewDef_t* viewDef, const idRenderLightLocal* light )
 {
 	if( light->transitionInteractionPending )
@@ -1132,12 +1344,19 @@ static bool R_ShadowCacheSunWantsGather( const viewDef_t* viewDef, const idRende
 	const shadowCacheState_t& s = shadowCacheState;
 	const shadowCacheSunRec_t& sun = s.sun;
 	if( s.world == NULL || light->world != s.world || sun.uniqueId != light->uniqueId || !sun.valid
-			|| sun.epoch != s.epoch || sun.changesSeen != s.changes.total || sun.wantSince != 0 )
+			|| sun.epoch != s.epoch || sun.changesSeen != s.changes.total || sun.wantSince != 0
+			|| ( sun.gatherAskedFrame != 0 && sun.gatherAskedFrame == tr.frameCount - 1 ) )
 	{
 		return true;
 	}
 	const renderView_t& rv = viewDef->renderView;
-	return rv.vieworg != sun.viewOrigin || rv.viewaxis != sun.viewAxis || rv.fov_x != sun.fovX || rv.fov_y != sun.fovY;
+	if( rv.vieworg == sun.viewOrigin && rv.viewaxis == sun.viewAxis && rv.fov_x == sun.fovX && rv.fov_y == sun.fovY )
+	{
+		return false;		// the view the windows were last placed for: they stand
+	}
+	// S5 ( row 78 ( a ) ): another view. S4c keeps a window while its slice fits, so most such frames draw nothing:
+	// gather in full only when a window would move
+	return !R_ShadowCacheSunWindowsKept( viewDef );
 }
 
 // The backend found no map, or another one, where an op expected build serial ( the frame that drew it was
@@ -1194,8 +1413,13 @@ static void R_ShadowCacheBeginView( const viewDef_t* viewDef )
 		s.totalRepaired = 0;
 		s.totalSunRebuilt = 0;
 		s.totalSunScrolled = 0;
+		s.totalSunRepaired = 0;
+		s.totalSunAdded = 0;
+		s.totalSunLost = 0;
+		s.totalSunGathers = 0;
 		s.totalEvicted = 0;
 		s.changes.total = 0;
+		s.changesShown = 0;
 		s.atlasCells = 0;
 		s.cellsUsed = 0;
 		memset( s.cellOwner, 0, sizeof( s.cellOwner ) );
@@ -1278,6 +1502,9 @@ static void R_ShadowCacheBeginView( const viewDef_t* viewDef )
 	s.sunReused = 0;
 	s.sunRebuilt = 0;
 	s.sunScrolled = 0;
+	s.sunRepaired = 0;
+	s.sunAdded = 0;
+	s.lost = 0;
 	s.evicted = 0;
 	s.turns = 0;
 	s.costBuilt = 0;
@@ -1304,6 +1531,8 @@ struct shadowCachePlanStats_t
 	int		uncachedLights;		// lights the cache atlas had no room for
 	int		staticSides;		// ( surface, side ) pairs drawn into static maps; the skipped surfaces above are not counted
 	int		activeSides;		// ( surface, side ) pairs drawn on top, into the atlas
+	int		staticDrawn;		// S5: static casters drawn into static maps this frame: once per side built in full, and per rectangle
+								// and addition of a patched cascade ( the backend's heals not counted )
 };
 
 static shadowCachePlanStats_t shadowCachePlan;
@@ -1691,7 +1920,8 @@ R_ShadowCacheEmitOps
 Gives every cached unit of this view its place in the cache and emits its op ( D74 ). The sun
 keeps one map per cascade, drawn again when its window moved or its membership must be brought
 up to date ( S4: in toroidal storage, so a window that moved by less than a map draws only the
-strips it gained ). A local light is drawn through the cache when its record's maps are usable or may be
+strips it gained; S5: a change is repaired where it reaches, and entities that turned static are
+drawn on top ). A local light is drawn through the cache when its record's maps are usable or may be
 built this frame ( S3a ): the place stays with the record; a light whose maps cannot be built is
 drawn uncached. S3b: a place is blocks of the cell map, one per side ( R_ShadowCachePlace ),
 and when the atlas is full the records worth least give theirs up ( D77 ); the budget rations
@@ -1805,6 +2035,10 @@ static void R_ShadowCacheEmitOps( viewDef_t* viewDef )
 		// the changes this record has not seen: one whose old bounds touch the light makes its maps stale
 		int begin, end;
 		bool touched = !R_ShadowCacheChangesSince( s.changes, rec->changesSeen, begin, end );
+		if( touched && rec->valid && rec->epoch == s.epoch && rec->size != 0 )
+		{
+			s.lost++;		// S5: what changed is not known: the maps are drawn again ( a record without maps lost nothing )
+		}
 		for( int n = begin; n < end && !touched; n++ )
 		{
 			touched = light->globalLightBounds.IntersectsBounds( s.changes.oldBounds[n & ( SHADOWCACHE_MAX_CHANGES - 1 )] );
@@ -1957,6 +2191,10 @@ static void R_ShadowCacheEmitOps( viewDef_t* viewDef )
 		// between two sizes ( the atlas plan near its capacity, r_shadowMapLodBias ) costs no build
 		const bool wasRecent = sun.lastUsedFrame > tr.frameCount - SHADOWCACHE_PICK_HOLD_FRAMES;		// a cache candidate within the hold
 		sun.lastUsedFrame = tr.frameCount;
+		if( vLight->shadowFullGather )
+		{
+			s.totalSunGathers++;		// S5: for r_shadowCacheLog
+		}
 		if( sun.pick != size )
 		{
 			sun.pick = size;
@@ -1965,19 +2203,19 @@ static void R_ShadowCacheEmitOps( viewDef_t* viewDef )
 			sun.pickFrame = wasRecent ? tr.frameCount : tr.frameCount - SHADOWCACHE_PICK_HOLD_FRAMES;
 		}
 
-		// the membership: must every cascade be drawn again?
+		// the membership: must every cascade be drawn again? S5: not for a change. Each unseen change whose old bounds touch
+		// the light is repaired, below, in every cascade its bounds reach; only a history that has run out ( what changed is
+		// not known ) draws every cascade again. The changes count as seen only once this frame's ops are emitted: a frame
+		// that cannot draw leaves them for the next
 		int begin, end;
-		bool touched = !R_ShadowCacheChangesSince( s.changes, sun.changesSeen, begin, end );
-		for( int n = begin; n < end && !touched; n++ )
-		{
-			touched = light->globalLightBounds.IntersectsBounds( s.changes.oldBounds[n & ( SHADOWCACHE_MAX_CHANGES - 1 )] );
-		}
-		sun.changesSeen = end;
-		if( touched )
-		{
-			sun.valid = false;		// latched: the light job reads it
-		}
-		const bool all = !reuse || !sun.valid || sun.epoch != s.epoch || sun.wantSince != 0 || sun.numCascades != sides;
+		const bool lost = !R_ShadowCacheChangesSince( s.changes, sun.changesSeen, begin, end );
+		// A door needs no more than its footprint: a parallel light has no area ( R_CreateLightRefs sets its areaNum to -1 ),
+		// so the connected-area culls of R_AddSingleLight never apply to the sun, and a portal that opens or closes
+		// changes no caster of its chain ( a local light's record keeps a door signature for that, the sun needs none )
+		const bool all = !reuse || lost || !sun.valid || sun.epoch != s.epoch || sun.numCascades != sides;
+		// S5: entities that turned static since the membership was set ( R_ShadowCacheCasterBits saw them wait ) join it
+		// this frame and are drawn on top of every map that is not drawn in full ( SCOP_ADD )
+		const bool adds = !all && sun.wantSince != 0;
 
 		// S4 ( D43 ): good maps of another size wait while the pick has yet to hold. The sun is drawn without the
 		// cache meanwhile and keeps its maps and its stored view: should the pick come back to their size, they
@@ -1987,13 +2225,12 @@ static void R_ShadowCacheEmitOps( viewDef_t* viewDef )
 			continue;
 		}
 
-		// S4: what each cascade needs: its map as it is, the strips its window gained, or a build in full
-		enum { SUN_REUSE, SUN_SCROLL, SUN_REBUILD };
+		// S4: what each cascade needs: its map as it is, the strips its window gained, or a build in full. S5: a patch is a
+		// map kept, moved or not, with the strips its window gained, its repairs and the entities that turned static
+		enum { SUN_REUSE, SUN_PATCH, SUN_REBUILD };
 		int need[SHADOWCACHE_MAX_CASCADES];
 		int scrollX[SHADOWCACHE_MAX_CASCADES];
 		int scrollY[SHADOWCACHE_MAX_CASCADES];
-		bool anyDraw = false;
-		bool anyRebuild = false;
 		for( int i = 0; i < sides; i++ )
 		{
 			const shadowCacheCascade_t& c = scv->cascades[i];
@@ -2021,38 +2258,114 @@ static void R_ShadowCacheEmitOps( viewDef_t* viewDef )
 			}
 			else
 			{
-				need[i] = SUN_SCROLL;
+				need[i] = SUN_PATCH;
 				scrollX[i] = ( int )dx;
 				scrollY[i] = ( int )dy;
 			}
+		}
+
+		// S5: the rectangles each patched cascade clears and draws again: the strips its window gained, then the repairs. A
+		// change whose old bounds touch the light is repaired in every cascade that is not drawn in full and that its bounds
+		// reach, in this frame's window ( after the move: the backend repairs the map as this frame's copy reads it ); every
+		// static caster that reaches a rectangle is drawn into it again ( the strip rule, R_ShadowCacheCasterBits ). Merged
+		// where they overlap, at most SHADOWCACHE_MAX_RECTS a cascade; a cascade they would cover more than half of is drawn
+		// in full instead, as a scroll is
+		shadowCacheRect_t rects[SHADOWCACHE_MAX_CASCADES][SHADOWCACHE_MAX_RECTS];
+		int numRects[SHADOWCACHE_MAX_CASCADES];
+		bool repaired[SHADOWCACHE_MAX_CASCADES];
+		shadowCacheRect_t strips[SHADOWCACHE_MAX_CASCADES][2];		// S5: the strips alone, for the ops' repairs bits
+		int numStrips[SHADOWCACHE_MAX_CASCADES];
+		for( int i = 0; i < sides; i++ )
+		{
+			numRects[i] = ( need[i] == SUN_PATCH ) ? R_ShadowCacheExposedRects( scrollX[i], scrollY[i], scv->cascades[i].res, rects[i] ) : 0;
+			repaired[i] = false;
+			numStrips[i] = numRects[i];
+			for( int r = 0; r < numRects[i]; r++ )
+			{
+				strips[i][r] = rects[i][r];
+			}
+		}
+		for( int n = begin; n < end && !all; n++ )
+		{
+			const idBounds& oldBounds = s.changes.oldBounds[n & ( SHADOWCACHE_MAX_CHANGES - 1 )];
+			if( !light->globalLightBounds.IntersectsBounds( oldBounds ) )
+			{
+				continue;
+			}
+			for( int i = 0; i < sides; i++ )
+			{
+				shadowCacheRect_t r;
+				if( need[i] != SUN_REBUILD && R_ShadowCacheFootprint( *scv, scv->cascades[i], viewDef->renderOrigin, oldBounds, r ) )
+				{
+					numRects[i] = R_ShadowCacheAddRect( rects[i], numRects[i], SHADOWCACHE_MAX_RECTS, r );
+					repaired[i] = true;
+				}
+			}
+		}
+		bool anyDraw = false;
+		for( int i = 0; i < sides; i++ )
+		{
+			if( need[i] != SUN_REBUILD )
+			{
+				int64 area = 0;
+				for( int r = 0; r < numRects[i]; r++ )
+				{
+					area += ( int64 )( rects[i][r].x1 - rects[i][r].x0 ) * ( rects[i][r].y1 - rects[i][r].y0 );
+				}
+				const int64 res = scv->cascades[i].res;
+				if( 2 * area > res * res )
+				{
+					need[i] = SUN_REBUILD;		// more than half the map: one build in full costs less
+				}
+				else if( need[i] == SUN_REUSE && ( numRects[i] > 0 || adds ) )
+				{
+					need[i] = SUN_PATCH;		// kept in place: its repairs, or the entities that turned static
+				}
+			}
 			anyDraw = anyDraw || need[i] != SUN_REUSE;
-			anyRebuild = anyRebuild || need[i] == SUN_REBUILD;
 		}
 		if( anyDraw && !vLight->shadowFullGather )
 		{
-			// the chain does not hold every static caster, so no map can be drawn or scrolled this frame: the sun
-			// is drawn without the cache ( S1's path ). The stored view is left alone, so the next frame's light job
-			// sees another view and gathers in full. A map that must be built in full is no longer valid ( the light
-			// job gathers for that as well ); a map that only scrolls keeps its place on the grid and draws its
-			// strips in the next frame
-			if( anyRebuild )
-			{
-				sun.valid = false;
-			}
+			// the chain does not hold every static caster, so no map can be drawn this frame: the sun is drawn without the
+			// cache ( S1's path ). Nothing counts as done: the changes stay unseen, the entities that turned static still
+			// wait, the cascades' records stay, and the next frame's light job gathers in full because it is asked to
+			// ( S5; until S5 a map to be built in full was marked invalid for that, which would now draw every cascade
+			// again for one repair grown past half a map )
+			// the ask holds for the next frame only ( the local lights' lastUsedFrame rule ): a sun that then leaves the
+			// cache, waits in the hold or keeps an unusable view stops asking; one that still has a map to draw asks again
+			sun.gatherAskedFrame = tr.frameCount;
 			continue;
 		}
+		sun.gatherAskedFrame = 0;
+		sun.changesSeen = end;
 		if( all )
 		{
 			sun.heldThrough = tr.frameCount;
 			sun.epoch = s.epoch;
 			sun.wantSince = 0;
 			sun.numCascades = sides;
+			if( lost && sun.valid )		// sun.valid is still the old record's here: a sun without maps lost nothing
+			{
+				s.totalSunLost++;
+				s.lost++;
+			}
+		}
+		else if( adds )
+		{
+			// S5: the membership grows to every entity that is static now. R_ShadowCacheCasterBits tells the casters that join
+			// it ( in the maps by the new stamp, not by the old one ) and marks them in each patched cascade's strip bits
+			sun.addedFrom = sun.heldThrough;
+			sun.addedFrame = tr.frameCount;
+			sun.heldThrough = tr.frameCount;
+			sun.wantSince = 0;
 		}
 		sun.valid = true;
 		sun.viewOrigin = viewDef->renderView.vieworg;
 		sun.viewAxis = viewDef->renderView.viewaxis;
 		sun.fovX = viewDef->renderView.fov_x;
 		sun.fovY = viewDef->renderView.fov_y;
+		sun.gridX = -scv->sunAxis[1];		// S5: as R_ShadowCacheLightFrame has them
+		sun.gridY = -scv->sunAxis[2];
 
 		vLight->shadowOp = numEmitted + 1;
 		for( int i = 0; i < sides; i++ )
@@ -2077,18 +2390,45 @@ static void R_ShadowCacheEmitOps( viewDef_t* viewDef )
 				s.sunRebuilt++;
 				s.totalSunRebuilt++;
 			}
-			else if( need[i] == SUN_SCROLL )
+			else if( need[i] == SUN_PATCH )
 			{
-				// S4: the strips the window gained, drawn on top of the map's last build ( the backend checks that it
-				// is there, and draws the whole window when it is not )
+				// S4: the strips the window gained, S5: and the repairs, cleared and drawn on top of the map's last build ( the
+				// backend checks that it is there, and draws the whole window when it is not ); S5: then the entities that
+				// turned static, on top of the whole window
 				op.baseSerial = crec.serial;
-				op.numRects = R_ShadowCacheExposedRects( scrollX[i], scrollY[i], c.res, op.rects );
+				op.numRects = numRects[i];
+				for( int r = 0; r < numRects[i]; r++ )
+				{
+					op.rects[r] = rects[i][r];
+					// S5: a rectangle that is not one of the strips holds a repair ( merged into a strip or not ): for the
+					// debug view's colours only
+					bool strip = false;
+					for( int k = 0; k < numStrips[i]; k++ )
+					{
+						strip = strip || ( rects[i][r].x0 == strips[i][k].x0 && rects[i][r].y0 == strips[i][k].y0
+										   && rects[i][r].x1 == strips[i][k].x1 && rects[i][r].y1 == strips[i][k].y1 );
+					}
+					op.repairs |= strip ? 0 : ( 1 << r );
+				}
 				crec.originX = c.originX;
 				crec.originY = c.originY;
 				crec.serial = ++s.nextSerial;
-				op.flags = SCOP_SCROLL;
-				s.sunScrolled++;
-				s.totalSunScrolled++;
+				op.flags = ( short )( SCOP_SCROLL | ( adds ? SCOP_ADD : 0 ) );
+				if( scrollX[i] != 0 || scrollY[i] != 0 )
+				{
+					s.sunScrolled++;
+					s.totalSunScrolled++;
+				}
+				if( repaired[i] )
+				{
+					s.sunRepaired++;
+					s.totalSunRepaired++;
+				}
+				if( adds )
+				{
+					s.sunAdded++;
+					s.totalSunAdded++;
+				}
 			}
 			else
 			{
@@ -2256,7 +2596,10 @@ marks the record as wanting an update.
 S4: for each cascade of the sun that scrolls this frame, one more byte per surface ( the op's
 stripBits ): bit r = a static caster of the cascade whose box reaches the op's strip r, two
 texels wider on every side as the cascade's own test is ( the strip rule, 01 section 5: every
-static that overlaps the strip, not only those new to the window ).
+static that overlaps the strip, not only those new to the window ). S5: the same for the repairs,
+the other rectangles of a patched cascade's op; and with SCOP_ADD, SCB_ADDED marks the casters
+of entities that join the sun's maps this frame ( in them by the new membership stamp, not by
+the old one ), drawn on top of the whole window.
 =====================
 */
 static void R_ShadowCacheCasterBits( viewDef_t* viewDef, viewLight_t* vLight )
@@ -2318,12 +2661,18 @@ static void R_ShadowCacheCasterBits( viewDef_t* viewDef, viewLight_t* vLight )
 
 	// does the backend draw a static map of this light this frame? ( any of its ops is a rebuild, or S4 a scroll )
 	bool rebuilds = false;
+	byte builtSides = 0;		// S5: the sides drawn in full, for the HUD's count of static casters drawn
 	// S4: the strips of the sun's cascades that scroll this frame, in the sun's light view: x0, x1, y0, y1, two texels
 	// wider on every side, as the cascade's own test below is. Columns run along the light view's x from 'left'; rows
-	// run DOWN its y from 'top'
+	// run DOWN its y from 'top'. S5: every rectangle of a patched cascade's op, strips and repairs
 	byte* stripBits[SHADOWCACHE_MAX_CASCADES] = {};
 	int stripRects[SHADOWCACHE_MAX_CASCADES] = {};
-	double stripBox[SHADOWCACHE_MAX_CASCADES][2][4];
+	double stripBox[SHADOWCACHE_MAX_CASCADES][SHADOWCACHE_MAX_RECTS][4];
+	// S5: the casters that join the sun's maps this frame ( R_ShadowCacheEmitOps moved the membership stamp and kept the old
+	// one ): in the maps by the new stamp and not by the old; marked SCB_ADDED for each cascade whose op adds
+	const bool sunAdds = sun && byRecord && shadowCacheState.sun.addedFrame == tr.frameCount;
+	const int addedFrom = shadowCacheState.sun.addedFrom;
+	bool stripAdds[SHADOWCACHE_MAX_CASCADES] = {};
 	if( cached )
 	{
 		shadowCacheOp_t* ops = &viewDef->shadowOps[vLight->shadowOp - 1];
@@ -2331,10 +2680,16 @@ static void R_ShadowCacheCasterBits( viewDef_t* viewDef, viewLight_t* vLight )
 		for( int i = 0; i < numSides; i++ )
 		{
 			rebuilds = rebuilds || ( ops[i].flags & ( SCOP_REBUILD | SCOP_SCROLL ) ) != 0;
+			if( ( ops[i].flags & SCOP_REBUILD ) != 0 )
+			{
+				builtSides |= ( byte )( 1 << i );
+			}
 			if( sun && ( ops[i].flags & SCOP_SCROLL ) != 0 && i < scv->numCascades )
 			{
 				stripBits[i] = ( byte* )R_FrameAlloc( numSurfs );		// zero-filled: a surface that reaches no strip
 				stripRects[i] = ops[i].numRects;
+				stripAdds[i] = sunAdds && ( ops[i].flags & SCOP_ADD ) != 0;
+				assert( ops[i].numRects >= 0 && ops[i].numRects <= SHADOWCACHE_MAX_RECTS );
 				ops[i].stripBits = stripBits[i];
 				const shadowCacheCascade_t& cascade = scv->cascades[i];
 				const double texelX = ( cascade.right - cascade.left ) / ( double )cascade.res;
@@ -2353,6 +2708,7 @@ static void R_ShadowCacheCasterBits( viewDef_t* viewDef, viewLight_t* vLight )
 
 	bool waits = false;				// a caster turned static after the maps were built: they want an update
 	bool lastSpaceWaits = false;
+	bool lastSpaceAdded = false;	// S5: its entity joins the sun's maps this frame
 	int index = 0;
 	for( const drawSurf_t* surf = vLight->globalShadows; surf != NULL; surf = surf->nextOnLight, index++ )
 	{
@@ -2370,12 +2726,14 @@ static void R_ShadowCacheCasterBits( viewDef_t* viewDef, viewLight_t* vLight )
 			lastSpace = surf->space;
 			lastSpaceCacheable = cached && def != NULL && R_ShadowCacheEntityCacheable( def );
 			lastSpaceWaits = false;
+			lastSpaceAdded = false;
 			if( lastSpaceCacheable && byRecord )
 			{
 				// in the maps: unchanged for the static interval when the maps were last built
 				const int lastChanged = R_ShadowCacheLastChanged( def );
 				lastSpaceCacheable = R_ShadowCacheInUnit( lastChanged, staticFrames, heldThrough );
 				lastSpaceWaits = !lastSpaceCacheable && R_ShadowCacheIsStatic( tr.frameCount, lastChanged, staticFrames );
+				lastSpaceAdded = sunAdds && lastSpaceCacheable && !R_ShadowCacheInUnit( lastChanged, staticFrames, addedFrom );
 			}
 		}
 		const bool isStatic = lastSpaceCacheable && surf->material != NULL && R_ShadowCacheSurfaceCacheable( surf->material );
@@ -2472,7 +2830,8 @@ static void R_ShadowCacheCasterBits( viewDef_t* viewDef, viewLight_t* vLight )
 		}
 		bits[index] = reach;
 
-		// S4: a static caster of a scrolling cascade is drawn into each of its strips that its box reaches
+		// S4: a static caster of a scrolling cascade is drawn into each of its strips that its box reaches. S5: and into each
+		// repair; one whose entity joins the maps this frame is also drawn over the whole window ( SCB_ADDED )
 		if( sun && isStatic )
 		{
 			for( int c = 0; c < scv->numCascades; c++ )
@@ -2490,9 +2849,27 @@ static void R_ShadowCacheCasterBits( viewDef_t* viewDef, viewLight_t* vLight )
 						strips |= ( byte )( 1 << r );
 					}
 				}
+				if( lastSpaceAdded && stripAdds[c] )
+				{
+					strips |= ( byte )SCB_ADDED;
+				}
 				// with SCB_STATIC, as the pass's masks ask: a caster past the end of the chain's bits, which the pass reads
 				// as SCB_SIDE_MASK ( no static bit ), then reaches no strip, as it reaches no static map in a build in full
 				stripBits[c][index] = ( strips != 0 ) ? ( byte )( SCB_STATIC | strips ) : 0;
+				// S5: one draw per rectangle it reaches and one for an addition
+				for( int k = 0; k < 8; k++ )
+				{
+					shadowCachePlan.staticDrawn += ( k != 6 && ( ( strips >> k ) & 1 ) != 0 ) ? 1 : 0;
+				}
+			}
+		}
+		if( isStatic )
+		{
+			// S5: the sides it is drawn into in full ( reach's static bit is not a side: the mask removes it )
+			const byte built = ( byte )( reach & builtSides & SCB_SIDE_MASK );
+			for( int k = 0; k < 6; k++ )
+			{
+				shadowCachePlan.staticDrawn += ( built >> k ) & 1;
 			}
 		}
 
@@ -2619,6 +2996,52 @@ void R_ShadowCacheDecide()
 	tr.pc.c_shadowCacheCellsUsed = shadowCacheState.cellsUsed;
 	tr.pc.c_shadowCacheCells = shadowCacheState.atlasCells;
 
+	// S5: the HUD's decision line. Each cached unit of the view by its op, and the units of the lights drawn without the cache
+	// ( N15: counted for the main view; reused + patched + rebuilt = the cached units above )
+	int unitsReused = 0;
+	int unitsPatched = 0;
+	int unitsRebuilt = 0;
+	int unitsUncached = 0;
+	for( const viewLight_t* vLight = viewDef->viewLights; vLight != NULL; vLight = vLight->next )
+	{
+		if( !R_ShadowCacheLightHasUnits( vLight ) )
+		{
+			continue;
+		}
+		const int sides = R_ShadowCacheNumSides( vLight, viewDef->shadowSkipSet );
+		if( vLight->shadowOp == 0 )
+		{
+			unitsUncached += sides;
+			continue;
+		}
+		const shadowCacheOp_t* ops = &viewDef->shadowOps[vLight->shadowOp - 1];
+		for( int i = 0; i < sides; i++ )
+		{
+			if( ( ops[i].flags & SCOP_REBUILD ) != 0 )
+			{
+				unitsRebuilt++;
+			}
+			else if( ( ops[i].flags & SCOP_SCROLL ) != 0 )
+			{
+				unitsPatched++;
+			}
+			else
+			{
+				unitsReused++;
+			}
+		}
+	}
+	tr.pc.c_shadowCacheUnitsReused = unitsReused;
+	tr.pc.c_shadowCacheUnitsPatched = unitsPatched;
+	tr.pc.c_shadowCacheUnitsRebuilt = unitsRebuilt;
+	tr.pc.c_shadowCacheUnitsUncached = unitsUncached;
+	tr.pc.c_shadowCacheCastersDrawn = shadowCachePlan.staticDrawn;
+	tr.pc.c_shadowCacheChanges = shadowCacheState.changes.total - shadowCacheState.changesShown;
+	tr.pc.c_shadowCacheLost = shadowCacheState.lost;
+	tr.pc.c_shadowCacheBudgetUsed = shadowCacheState.costBuilt;
+	tr.pc.c_shadowCacheBudget = r_shadowCacheBudget.GetInteger();
+	shadowCacheState.changesShown = shadowCacheState.changes.total;
+
 	if( r_shadowCacheLog.GetBool() && ( tr.frameCount & 63 ) == 0 )
 	{
 		common->Printf( "shadowCache: frame %d plan demoted %d dropped %d casters %d sides %d of %d ops %d uncached %d static %d active %d\n",
@@ -2632,6 +3055,10 @@ void R_ShadowCacheDecide()
 						shadowCacheState.totalSunRebuilt, shadowCacheState.totalSunScrolled );
 		common->Printf( "shadowCache: frame %d places evicted %d turns %d cost %d cells %d of %d\n",
 						tr.frameCount, shadowCacheState.evicted, shadowCacheState.turns, shadowCacheState.costBuilt, shadowCacheState.cellsUsed, shadowCacheState.atlasCells );
+		// S5: the sun's repairs and additions; the totals since the map began
+		common->Printf( "shadowCache: frame %d sun repaired %d added %d gather asked %d | totals sun repaired %d added %d lost %d gathers %d\n",
+						tr.frameCount, shadowCacheState.sunRepaired, shadowCacheState.sunAdded, ( int )( shadowCacheState.sun.gatherAskedFrame == tr.frameCount ),
+						shadowCacheState.totalSunRepaired, shadowCacheState.totalSunAdded, shadowCacheState.totalSunLost, shadowCacheState.totalSunGathers );
 	}
 }
 
@@ -2743,9 +3170,14 @@ void R_ShadowCacheInvalidateAll()
 	shadowCacheState.epoch++;
 }
 
-// The shadow cache's debug-tools overlay; X0 lands it as a no-op and track S fills the body.
+// The shadow cache's debug-tools overlay; X0 lands it as a no-op and track S fills the body. S5: r_shadowCacheDebug, drawn by
+// the backend's member, which holds the marks ( this runs on the backend's thread, inside its debug tools )
 void R_ShadowCacheDebugTools( nvrhi::ICommandList* commandList, const viewDef_t* viewDef )
 {
+	if( r_shadowCacheDebug.GetInteger() > 0 )
+	{
+		backEnd.ShadowCacheDebugDraw();
+	}
 }
 
 /*
@@ -2923,6 +3355,226 @@ void idRenderBackend::ShadowCacheCopyDraw( nvrhi::IFramebuffer* target, int targ
 	}
 }
 
+// S5: what drew a place of a cache image ( idRenderBackend::shadowCacheMark_t::kind ), and its colour in r_shadowCacheDebug
+enum shadowCacheDebugKind_t
+{
+	SCDM_BUILT,			// a build in full: blue
+	SCDM_STRIP,			// a strip a cascade window gained: yellow
+	SCDM_REPAIR,		// a rectangle that holds a repair: green
+	SCDM_ADDED,			// casters drawn on top of the whole map: a magenta frame inside the panel's edge
+	SCDM_HEALED,		// a scroll drawn as a whole window: cyan
+	SCDM_NUM_KINDS
+};
+
+#define SHADOWCACHE_DEBUG_FADE		120		// S5: main views a mark stays on r_shadowCacheDebug's panels, fading
+
+/*
+=============
+idRenderBackend::ShadowCacheDebugDraw
+
+r_shadowCacheDebug ( S5; 08 section 11: "show where texels came from" ). The main view's cache maps as the cache stores
+them, in panels along the bottom of the screen: 1 the primary sun's cascade maps, at the size this view's ops have them,
+2 also the cache atlas of the local lights, whole. Over them the marks of the last SHADOWCACHE_DEBUG_FADE main views,
+fading: the places ShadowCacheDrawStaticMaps drew into, coloured by what drew them ( shadowCacheDebugKind_t ); a white
+cross where a cascade window's logical texel 0 lies in its map ( toroidal storage, S4 ); this frame's reused units of the
+atlas framed green. A screenshot draws a fresh frame, whose ops mostly reuse: the fading marks show what came before.
+Called from R_ShadowCacheDebugTools inside the debug tools; sets its own state, as they do.
+=============
+*/
+void idRenderBackend::ShadowCacheDebugDraw()
+{
+	const int mode = r_shadowCacheDebug.GetInteger();
+	if( mode <= 0 || viewDef == NULL || !viewDef->isMainView || viewDef->isSubview || renderSystem->GetWidth() <= 0 || renderSystem->GetHeight() <= 0 )
+	{
+		return;
+	}
+
+	struct panel_t
+	{
+		idImage*	image;
+		int			target;		// as a mark's: -1 the cache atlas, 0..4 a cascade map
+		int			res;		// the texels the panel shows, from the image's corner ( 0, 0 )
+		float		x;			// the panel on the screen, in 0..1 with y down
+		float		y;
+		float		w;
+		float		h;
+		int			wrap[2];	// a cascade map's logical texel 0; -1 = none
+	};
+	panel_t panels[SHADOWCACHE_MAX_CASCADES + 1];
+	int numPanels = 0;
+	const float aspect = ( float )renderSystem->GetHeight() / ( float )renderSystem->GetWidth();		// panels square in pixels
+
+	// the sun's cascade maps, at the size this view's ops have them
+	for( const viewLight_t* vLight = viewDef->viewLights; vLight != NULL; vLight = vLight->next )
+	{
+		if( !vLight->isPrimarySun || !vLight->parallel || vLight->shadowOp == 0 )
+		{
+			continue;
+		}
+		const shadowCacheOp_t* ops = &viewDef->shadowOps[vLight->shadowOp - 1];
+		const int numCascades = Min( viewDef->shadowSkipSet.shadowMapSplits + 1, ( int )SHADOWCACHE_MAX_CASCADES );
+		for( int i = 0; i < numCascades; i++ )
+		{
+			if( ops[i].target < 0 || ops[i].target >= SHADOWCACHE_MAX_CASCADES || ops[i].size <= 0 )
+			{
+				continue;
+			}
+			panel_t& p = panels[numPanels++];
+			p.image = globalImages->shadowCacheCascadeImage[ops[i].target];
+			p.target = ops[i].target;
+			p.res = ops[i].size;
+			p.h = 0.19f;
+			p.w = p.h * aspect;
+			p.x = 0.01f + ( float )i * ( p.w + 0.005f );
+			p.y = 0.8f;
+			p.wrap[0] = ops[i].wrap[0];
+			p.wrap[1] = ops[i].wrap[1];
+		}
+		break;
+	}
+	// 2: the cache atlas, whole
+	if( mode >= 2 && r_shadowCache.GetInteger() >= 2 && globalImages->shadowCacheAtlasImage->IsLoaded() )		// below 2 the atlas is stale
+	{
+		panel_t& p = panels[numPanels++];
+		p.image = globalImages->shadowCacheAtlasImage;
+		p.target = -1;
+		p.res = p.image->GetUploadWidth();
+		p.h = 0.36f;
+		p.w = p.h * aspect;
+		p.x = 0.99f - p.w;
+		p.y = 0.63f;
+		p.wrap[0] = -1;
+		p.wrap[1] = -1;
+	}
+
+	// the unit quad ( testImageSurface: x, y and s, t in 0..1 ) over x..x + w, y..y + h of the screen ( 0..1, y down ), with the
+	// texture coordinates s0..s1, t0..t1
+	auto quad = [this]( float x, float y, float w, float h, float s0, float t0, float s1, float t1 )
+	{
+		float texS[4] = { s1 - s0, 0.0f, 0.0f, s0 };
+		float texT[4] = { 0.0f, t1 - t0, 0.0f, t0 };
+		renderProgManager.SetRenderParm( RENDERPARM_TEXTUREMATRIX_S, texS );
+		renderProgManager.SetRenderParm( RENDERPARM_TEXTUREMATRIX_T, texT );
+		const idRenderMatrix mvp(
+			2.0f * w, 0.0f, 0.0f, 2.0f * x - 1.0f,
+			0.0f, -2.0f * h, 0.0f, 1.0f - 2.0f * y,
+			0.0f, 0.0f, 0.0f, 0.5f,
+			0.0f, 0.0f, 0.0f, 1.0f );
+		RB_SetMVP( mvp );
+		DrawElementsWithCounters( &testImageSurface );
+	};
+	// a frame two pixels wide just inside x..x + w, y..y + h
+	const float lineX = 2.0f / ( float )renderSystem->GetWidth();
+	const float lineY = 2.0f / ( float )renderSystem->GetHeight();
+	auto frame = [&quad, lineX, lineY]( float x, float y, float w, float h )
+	{
+		quad( x, y, w, lineY, 0.0f, 0.0f, 0.0f, 0.0f );
+		quad( x, y + h - lineY, w, lineY, 0.0f, 0.0f, 0.0f, 0.0f );
+		quad( x, y, lineX, h, 0.0f, 0.0f, 0.0f, 0.0f );
+		quad( x + w - lineX, y, lineX, h, 0.0f, 0.0f, 0.0f, 0.0f );
+	};
+
+	renderProgManager.SetRenderParm( RENDERPARM_ALPHA_TEST, vec4_zero.ToFloatPtr() );
+	float texGenEnabled[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+	renderProgManager.SetRenderParm( RENDERPARM_TEXGEN_0_ENABLED, texGenEnabled );
+	RB_SetVertexColorParms( SVC_IGNORE );
+
+	// the maps as the cache stores them. A depth image samples as ( depth, 0, 0 ): far is bright red. Drawn at half
+	// strength so that the marks over them stand out. Only on Vulkan: a depth image carries a comparison sampler, which a
+	// plain Sample may not use on D3D12 ( O2-1 ); there a panel is grey and the marks are drawn over it
+	const bool sampleMaps = deviceManager->GetGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN;
+	GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO | GLS_DEPTHMASK | GLS_DEPTHFUNC_ALWAYS | GLS_CULL_TWOSIDED );
+	for( int n = 0; n < numPanels; n++ )
+	{
+		const panel_t& p = panels[n];
+		if( p.image == NULL || !p.image->IsLoaded() || p.res <= 0 )
+		{
+			continue;
+		}
+		if( !sampleMaps )
+		{
+			renderProgManager.BindShader_Color();
+			GL_Color( 0.15f, 0.15f, 0.15f, 1.0f );
+			quad( p.x, p.y, p.w, p.h, 0.0f, 0.0f, 0.0f, 0.0f );
+			continue;
+		}
+		GL_Color( 0.5f, 0.5f, 0.5f, 1.0f );
+		const float side = ( float )p.image->GetUploadWidth();
+		GL_SelectTexture( 0 );
+		p.image->Bind();
+		renderProgManager.BindShader_TextureVertexColor();
+		quad( p.x, p.y, p.w, p.h, 0.0f, 0.0f, ( float )p.res / side, ( float )p.res / side );
+	}
+
+	// over them, the marks, fading; this frame's reused units of the atlas; a cascade's first texel
+	GL_State( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA | GLS_DEPTHMASK | GLS_DEPTHFUNC_ALWAYS | GLS_CULL_TWOSIDED );
+	renderProgManager.BindShader_Color();
+	static const float colors[SCDM_NUM_KINDS][3] =
+	{
+		{ 0.2f, 0.4f, 1.0f },		// SCDM_BUILT
+		{ 1.0f, 0.9f, 0.1f },		// SCDM_STRIP
+		{ 0.15f, 1.0f, 0.25f },		// SCDM_REPAIR ( not red: the maps are red )
+		{ 1.0f, 0.2f, 1.0f },		// SCDM_ADDED
+		{ 0.1f, 1.0f, 1.0f }		// SCDM_HEALED
+	};
+	const unsigned int first = ( shadowCacheNumMarks > ( unsigned int )SHADOWCACHE_NUM_MARKS ) ? shadowCacheNumMarks - SHADOWCACHE_NUM_MARKS : 0;
+	for( int n = 0; n < numPanels; n++ )
+	{
+		const panel_t& p = panels[n];
+		if( p.res <= 0 )
+		{
+			continue;
+		}
+		const float sx = p.w / ( float )p.res;
+		const float sy = p.h / ( float )p.res;
+		for( unsigned int k = first; k < shadowCacheNumMarks; k++ )
+		{
+			const shadowCacheMark_t& m = shadowCacheMarks[k & ( SHADOWCACHE_NUM_MARKS - 1 )];
+			const int age = shadowCacheDebugFrame - m.frame;
+			if( m.target != p.target || age < 0 || age >= SHADOWCACHE_DEBUG_FADE || m.kind < 0 || m.kind >= SCDM_NUM_KINDS )
+			{
+				continue;
+			}
+			GL_Color( colors[m.kind][0], colors[m.kind][1], colors[m.kind][2], 0.5f * ( 1.0f - ( float )age / ( float )SHADOWCACHE_DEBUG_FADE ) );
+			const float x = p.x + ( float )m.x0 * sx;
+			const float y = p.y + ( float )m.y0 * sy;
+			const float w = ( float )( m.x1 - m.x0 ) * sx;
+			const float h = ( float )( m.y1 - m.y0 ) * sy;
+			if( m.kind == SCDM_ADDED )
+			{
+				// an addition covers the whole window: its frame is drawn two lines inside the panel's edge
+				frame( x + 2.0f * lineX, y + 2.0f * lineY, w - 4.0f * lineX, h - 4.0f * lineY );
+			}
+			else
+			{
+				quad( x, y, w, h, 0.0f, 0.0f, 0.0f, 0.0f );
+			}
+		}
+		if( p.target < 0 )
+		{
+			// this frame's reused units of the cache atlas
+			GL_Color( 0.2f, 1.0f, 0.3f, 0.8f );
+			for( int i = 0; i < viewDef->numShadowOps; i++ )
+			{
+				const shadowCacheOp_t& op = viewDef->shadowOps[i];
+				if( op.target == -1 && ( op.flags & ( SCOP_REBUILD | SCOP_SCROLL ) ) == 0 )
+				{
+					frame( p.x + ( float )op.x * sx, p.y + ( float )op.y * sy, ( float )op.size * sx, ( float )op.size * sy );
+				}
+			}
+		}
+		else if( p.wrap[0] >= 0 && p.wrap[1] >= 0 )
+		{
+			// where the window's logical texel 0 lies: the seams of toroidal storage
+			GL_Color( 1.0f, 1.0f, 1.0f, 0.7f );
+			quad( p.x + ( float )p.wrap[0] * sx, p.y, lineX, p.h, 0.0f, 0.0f, 0.0f, 0.0f );
+			quad( p.x, p.y + ( float )p.wrap[1] * sy, p.w, lineY, 0.0f, 0.0f, 0.0f, 0.0f );
+		}
+	}
+
+	shadowCacheDebugFrame++;		// the marks' clock: one tick per main view drawn with the view on
+}
+
 /*
 =============
 idRenderBackend::ShadowCacheDrawStaticMaps
@@ -2934,10 +3586,35 @@ drawn is stamped with the op's serial ( D74 ), the stamp the copy pass checks. R
 MRB_SHADOW_CACHE, before the atlas block opens ( D70 ); every rebuild of the view precedes every copy.
 S4: an op flagged SCOP_SCROLL clears and draws only the strips its cascade's window gained, in toroidal
 storage, on top of the build it names; when that build is not in the map, the whole window instead.
+S5: its rectangles are the strips and the repairs; with SCOP_ADD the casters that joined the static
+maps this frame are then drawn over the whole window, without a clear. With r_shadowCacheDebug on,
+every place drawn into is marked for the debug view.
 =============
 */
 void idRenderBackend::ShadowCacheDrawStaticMaps()
 {
+	// S5: r_shadowCacheDebug's marks, in the cache image's own texels
+	const bool debugMarks = r_shadowCacheDebug.GetInteger() > 0;
+	if( debugMarks && !shadowCacheDebugWasOn )
+	{
+		shadowCacheNumMarks = 0;		// marks made before the view went off would look fresh: their clock stood still
+	}
+	shadowCacheDebugWasOn = debugMarks;
+	auto mark = [this, debugMarks]( int target, int kind, int x0, int y0, int x1, int y1 )
+	{
+		if( debugMarks )
+		{
+			shadowCacheMark_t& m = shadowCacheMarks[shadowCacheNumMarks++ & ( SHADOWCACHE_NUM_MARKS - 1 )];
+			m.frame = shadowCacheDebugFrame;
+			m.target = ( short )target;
+			m.kind = ( short )kind;
+			m.x0 = ( short )x0;
+			m.y0 = ( short )y0;
+			m.x1 = ( short )x1;
+			m.y1 = ( short )y1;
+		}
+	};
+
 	// S3a: a view whose units are all reused has nothing to draw here, and opens no block
 	bool anyRebuild = false;
 	for( int i = 0; i < viewDef->numShadowOps && !anyRebuild; i++ )
@@ -2988,34 +3665,45 @@ void idRenderBackend::ShadowCacheDrawStaticMaps()
 
 			if( ( op.flags & SCOP_SCROLL ) != 0 )
 			{
-				// S4: a cascade whose window moved by whole texels. Its strips are cleared and drawn, each in the 1, 2
-				// or 4 pieces it occupies in toroidal storage, on top of the build the frontend names. When that build
-				// is not in the map ( a frame that drew it was never executed, or the images were lost ) the whole
-				// window is drawn instead, from the same chain: a frame that scrolls has gathered in full ( the heal )
-				shadowCacheRect_t rects[2];
+				// S4: a cascade whose window moved by whole texels. Its strips are cleared and drawn, each in the 1, 2 or 4 pieces
+				// it occupies in toroidal storage, on top of the build the frontend names. When that build is not in the map ( a
+				// frame that drew it was never executed, or the images were lost ) the whole window is drawn instead, from the same
+				// chain: a frame that scrolls has gathered in full ( the heal ). S5: the op's rectangles are its strips and its
+				// repairs, up to SHADOWCACHE_MAX_RECTS, all cleared before any is drawn; then, with SCOP_ADD, the casters that
+				// joined the static maps this frame are drawn over the whole window without a clear: a depth map keeps the
+				// nearest depth, so the map then holds what it would drawn again with them. The heal draws them with the rest
+				shadowCacheRect_t rects[SHADOWCACHE_MAX_RECTS];
+				int masks[SHADOWCACHE_MAX_RECTS];
 				int numRects = op.numRects;
 				const byte* bits = op.stripBits;
-				int masks[2] = { SCB_STATIC | 1, SCB_STATIC | 2 };		// a strip bit and the static bit ( R_ShadowCacheCasterBits )
-				if( op.baseSerial == 0 || shadowCacheBuilt[R_ShadowCacheSlot( op )] != op.baseSerial )
+				const bool heal = op.baseSerial == 0 || shadowCacheBuilt[R_ShadowCacheSlot( op )] != op.baseSerial;
+				if( heal )
 				{
 					rects[0] = { 0, 0, op.size, op.size };
+					masks[0] = bit | SCB_STATIC;
 					numRects = 1;
 					bits = vLight->shadowCasterBits;
-					masks[0] = bit | SCB_STATIC;
 					shadowCacheHeals++;
 				}
 				else
 				{
-					rects[0] = op.rects[0];
-					rects[1] = op.rects[1];
+					assert( numRects >= 0 && numRects <= SHADOWCACHE_MAX_RECTS );
+					numRects = Min( Max( numRects, 0 ), SHADOWCACHE_MAX_RECTS );
+					for( int r = 0; r < numRects; r++ )
+					{
+						rects[r] = op.rects[r];
+						masks[r] = SCB_STATIC | ( 1 << r );		// a rectangle's bit and the static bit ( R_ShadowCacheCasterBits )
+					}
 				}
-				shadowCacheToroidalRect_t pieces[2][4];
-				int numPieces[2] = { 0, 0 };
+				shadowCacheToroidalRect_t pieces[SHADOWCACHE_MAX_RECTS][4];
+				int numPieces[SHADOWCACHE_MAX_RECTS];
 				for( int r = 0; r < numRects; r++ )
 				{
 					numPieces[r] = R_ShadowCacheToroidalRects( op.wrap[0], op.wrap[1], op.size, rects[r], pieces[r] );
 					for( int p = 0; p < numPieces[r]; p++ )
 					{
+						const shadowCacheRect_t& ph = pieces[r][p].physical;
+						mark( op.target, heal ? SCDM_HEALED : ( ( ( op.repairs >> r ) & 1 ) ? SCDM_REPAIR : SCDM_STRIP ), ph.x0, ph.y0, ph.x1, ph.y1 );
 						// the piece back to the far depth ( res 0: a clear, as below )
 						shadowCacheCopyConstants_t constants;
 						memset( &constants, 0, sizeof( constants ) );
@@ -3024,12 +3712,25 @@ void idRenderBackend::ShadowCacheDrawStaticMaps()
 				}
 				ResetGraphicsStateCache();
 
-				// the static casters that reach each strip; with no caster in the chain the strips stay clear
+				// the static casters that reach each rectangle; with no caster in the chain the rectangles stay clear
 				for( int r = 0; r < numRects && bits != NULL; r++ )
 				{
 					for( int p = 0; p < numPieces[r]; p++ )
 					{
 						ShadowMapPassFast( vLight->globalShadows, vLight, i, false, bits, masks[r], masks[r], &op, target, &pieces[r][p] );
+					}
+				}
+
+				// S5: the casters that joined the static maps this frame, on top of the whole window
+				if( !heal && ( op.flags & SCOP_ADD ) != 0 && bits != NULL )
+				{
+					mark( op.target, SCDM_ADDED, 0, 0, op.size, op.size );
+					const shadowCacheRect_t whole = { 0, 0, op.size, op.size };
+					shadowCacheToroidalRect_t wholePieces[4];
+					const int numWhole = R_ShadowCacheToroidalRects( op.wrap[0], op.wrap[1], op.size, whole, wholePieces );
+					for( int p = 0; p < numWhole; p++ )
+					{
+						ShadowMapPassFast( vLight->globalShadows, vLight, i, false, bits, SCB_STATIC | SCB_ADDED, SCB_STATIC | SCB_ADDED, &op, target, &wholePieces[p] );
 					}
 				}
 
@@ -3049,6 +3750,7 @@ void idRenderBackend::ShadowCacheDrawStaticMaps()
 
 			// the static casters that reach this side
 			ShadowMapPassFast( vLight->globalShadows, vLight, spot ? -1 : i, false, vLight->shadowCasterBits, bit | SCB_STATIC, bit | SCB_STATIC, &op, target );
+			mark( op.target, SCDM_BUILT, op.x, op.y, op.x + op.size, op.y + op.size );
 
 			shadowCacheBuilt[R_ShadowCacheSlot( op )] = op.serial;		// D74: only the backend knows that the map was drawn
 		}

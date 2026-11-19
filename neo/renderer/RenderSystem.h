@@ -202,6 +202,16 @@ struct performanceCounters_t
 	int		c_shadowCacheEvicted;		// records that gave their place in the cache atlas up this frame
 	int		c_shadowCacheCellsUsed;		// cells ( 128 x 128 texels ) of the cache atlas in use
 	int		c_shadowCacheCells;			// cells of the cache atlas; 0 = the cache did not run this frame
+	// S5: the main view's cached units by what the cache did with them: reused + patched + rebuilt = c_shadowCacheUnits
+	int		c_shadowCacheUnitsReused;	// copied as they were
+	int		c_shadowCacheUnitsPatched;	// the sun's cascades that drew only strips, repairs or additions on top of their map
+	int		c_shadowCacheUnitsRebuilt;	// drawn in full: first builds, rebuilds, the repairs of local lights
+	int		c_shadowCacheUnitsUncached;	// the units of the view's shadowed lights drawn without the cache
+	int		c_shadowCacheCastersDrawn;	// static casters drawn into static maps: once per side built in full and per rectangle or addition of a patch ( not per toroidal piece; heals not counted )
+	int		c_shadowCacheChanges;		// changes to static entities recorded since the last main view's decide pass
+	int		c_shadowCacheLost;			// lights whose history of changes had run out: their maps are drawn in full
+	int		c_shadowCacheBudgetUsed;	// what this view's budgeted builds cost, in r_shadowCacheBudget's units
+	int		c_shadowCacheBudget;		// r_shadowCacheBudget at the decide pass
 	// ---- END TRACK S ----
 	// ---- TRACK F: light lists ----
 	// N15: each track says per counter whether it counts the main view only or sums over the frame's views
