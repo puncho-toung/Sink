@@ -49,6 +49,7 @@ struct LL_SURFACE
 	float3	vertexColor;
 	float	vogelPhi;				// the rotation of the shadow filter's disk at this pixel
 	float	vogelSqrtSamples;		// the square root of the filter's sample count
+	float	viewDepth;				// F4: the distance along the view axis ( the vertex stage's clip w ), which picks the sun's cascade
 };
 
 // interactionSM.ps.hlsl's VogelDiskSample with the square root of the sample count coming in formed
@@ -70,20 +71,39 @@ float2 LL_VogelDiskSample( float sampleIndex, float sqrtSamplesCount, float phi 
 // One record's shadow at a point: the legacy pass's lookup of the atlas ( interactionSM.ps.hlsl's atlas branch ) from
 // the record's rows. Returns the lit share, 1 where the light is unshadowed at the point; shadowBody says whether the
 // light is on the shadow-map body. shadowRow and flags are the record's; P is the point in the relative frame;
-// toLight the direction itself ( origin - point ), which picks a point light's face; vogelPhi and vogelSqrtSamples
-// are the filter's set-up at the pixel ( LL_SURFACE ). A function of its own so that a pass without a surface can
-// take a light's shadow alone ( not the froxel inject, which cannot include this file )
-float LL_RecordShadow( int shadowRow, uint flags, float4 P, float3 toLight, float vogelPhi, float vogelSqrtSamples, out bool shadowBody )
+// toLight the direction itself ( origin - point ), which picks a point light's face; viewDepth the point's distance
+// along the view axis, which picks the sun's cascade; vogelPhi and vogelSqrtSamples are the filter's set-up at the
+// pixel ( LL_SURFACE ). A function of its own so that a pass without a surface can take a light's shadow alone ( not
+// the froxel inject, which cannot include this file )
+float LL_RecordShadow( int shadowRow, uint flags, float4 P, float3 toLight, float viewDepth, float vogelPhi, float vogelSqrtSamples, out bool shadowBody )
 {
-	// the shadow rows: one for a projected light, six for a point light. A row without a place leaves the light
-	// unshadowed there; a light none of whose maps has a place is on the plain body, as the legacy pass binds the
-	// plain program then
+	// the shadow rows: one for a projected light, six for a point light, one per cascade for the sun. A row without a
+	// place leaves the light unshadowed there; a light none of whose maps has a place is on the plain body, as the
+	// legacy pass binds the plain program then
 	float shadow = 1.0;
 	shadowBody = false;
 	if( shadowRow >= 0 )
 	{
 		uint row = uint( shadowRow );
-		if( ( flags & RLF_POINT ) != 0 )
+		const bool parallel = ( flags & RLF_PARALLEL ) != 0;
+		bool beyondCascades = false;
+		if( parallel )
+		{
+			// F4: the sun, the one parallel light the lists hold ( record 0 ). interactionSM.ps.hlsl's LIGHT_PARALLEL
+			// select: the first cascade whose far end lies beyond the point, else the last; past the last one's far end
+			// the light is unshadowed, on the shadow-map body. A sun's row holds its cascade's far end in w ( C2; the
+			// last row the view's shadowCascadeFar ), and rpShadowBias.z is the count of its rows. Tested before the
+			// point light's face: a parallel light is a point light too in this engine
+			const uint cascades = uint( pc.rpShadowBias.z );
+			uint c = 0;
+			while( c + 1 < cascades && viewDepth >= t_ShadowRows[ row + c ].atlasRect.w )
+			{
+				c++;
+			}
+			row += c;
+			beyondCascades = viewDepth > t_ShadowRows[ row ].atlasRect.w;		// only the last cascade can be passed
+		}
+		else if( ( flags & RLF_POINT ) != 0 )
 		{
 			row += LL_PointLightFace( toLight );
 		}
@@ -91,9 +111,10 @@ float LL_RecordShadow( int shadowRow, uint flags, float4 P, float3 toLight, floa
 		// The body follows the LIGHT, as the legacy pass binds its program per light: -2 marks a row whose own face
 		// or cascade was not drawn while the light's maps have places. The shadow-map body then, unshadowed
 		shadowBody = ( R.atlasRect.z >= 0.0 || R.atlasRect.z < -1.5 );
-		if( R.atlasRect.z >= 0.0 )
+		if( R.atlasRect.z >= 0.0 && !beyondCascades )
 		{
-			const float3 shadowCoord = LL_ShadowRowCoord( R, P, pc.rpShadowBias.y );
+			// the receiver's depth times the legacy pass's bias scale, the sun's or every other light's
+			const float3 shadowCoord = LL_ShadowRowCoord( R, P, parallel ? pc.rpShadowBias.x : pc.rpShadowBias.y );
 			const float receiver = shadowCoord.z;
 			const float2 shadowTexcoordAtlas = shadowCoord.xy;
 			const float numSamples = pc.rpShadowFilter.x;
@@ -105,7 +126,9 @@ float LL_RecordShadow( int shadowRow, uint flags, float4 P, float3 toLight, floa
 				shadow += t_ShadowAtlas.SampleCmpLevelZero( s_Shadow, shadowTexcoordAtlas + jitter * pc.rpShadowFilter.y, receiver );
 			}
 			shadow *= stepSize;
-			shadow = saturate( max( shadow, R.atlasRect.w ) );		// the fade of a light on its last shadow LOD
+			// the fade of a light on its last shadow LOD: a row's w, but a sun's rows hold their cascade's far end
+			// there, and the sun's fade comes in rpShadowBias.w ( the legacy pass's rpJitterTexScale.z )
+			shadow = saturate( max( shadow, parallel ? pc.rpShadowBias.w : R.atlasRect.w ) );
 		}
 	}
 	return shadow;
@@ -174,7 +197,7 @@ float3 LL_EvaluateRecord( uint r, LL_SURFACE s )
 
 	// the light's shadow at the pixel and, with it, the body the light is on ( LL_RecordShadow )
 	bool shadowBody;
-	const float shadow = LL_RecordShadow( L.shadowRow, L.flags, P, toLight, s.vogelPhi, s.vogelSqrtSamples, shadowBody );
+	const float shadow = LL_RecordShadow( L.shadowRow, L.flags, P, toLight, s.viewDepth, s.vogelPhi, s.vogelSqrtSamples, shadowBody );
 
 	// the body's normal; the shadow-map body bends it towards the vertex normal near the horizon, for ldotN only
 	const float3 n = shadowBody ? s.nShadowed : s.nPlain;
@@ -248,7 +271,9 @@ float3 LL_EvaluateRecord( uint r, LL_SURFACE s )
 	// A light with nospecular: the legacy pass skips the surface's specular stage for it, draws the interaction with
 	// the black image as its specular map and so, that image's usage not being a PBR one, with the program that is
 	// NOT PBR, whose diffuse colour is the base colour with no metal share taken out. Kept, so that the two passes
-	// light alike ( on a material that is not PBR the two colours are the same )
+	// light alike ( on a material that is not PBR the two colours are the same ). Only on the legacy pass's slow path,
+	// the default ( r_skipInteractionFastPath 1 ): its fast path keeps the PBR image and program and zeroes the
+	// specular modifier, so there a metallic PBR material is brighter here by 1 / ( 1 - metal ) ( review O1-2 of F4 )
 	const float3 diffuseColor = ( ( L.flags & RLF_NOSPECULAR ) != 0 ) ? s.diffuseNoSpecular : s.diffuseColor;
 	const float3 diffuseLight = diffuseColor * ldotN * diffuseModifier;
 

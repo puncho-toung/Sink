@@ -86,7 +86,7 @@ struct renderParmSet9_t
 	float4 rpZBinParms;			// F: tile size, tiles X, words per tile, bin count
 	float4 rpZBinScale;			// F: scale, near, far, 0
 	float4 rpRecordCounts;		// F: records, rows, sun present, vanished count
-	float4 rpShadowBias;		// S: sun bias scale, regular bias scale, splits, 0
+	float4 rpShadowBias;		// S: sun bias scale, regular bias scale; F4: the sun's rows ( its cascades ), the sun's fade
 	float4 rpShadowFilter;		// S: sample count, texel step ( jitter scale / atlas size ), noise scale, frame index
 	float4 rpForwardView;		// F: x, y = the view's top-left pixel in the target, z = 1 / r_lightScale, w = 1: the light loop adds nothing
 };

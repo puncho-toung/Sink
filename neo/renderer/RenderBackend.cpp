@@ -1706,7 +1706,18 @@ void idRenderBackend::DrawSingleInteraction( drawInteraction_t* din, bool useFas
 	if( forwardSurf )
 	{
 		const bool pbr = ( specUsage == TD_SPECULAR_PBR_RMAO || specUsage == TD_SPECULAR_PBR_RMAOD );
-		renderProgManager.BindShader_Forward( din->surf->jointCache != 0, pbr, din->surf->area != NULL && r_useLightGrid.GetBool() );
+		if( forwardTranslucent )
+		{
+			// F4 ( D50, C6 ): the listed glass, its lights alone, in the second state: tested against the opaque depth
+			// ( LESS ), added to what lies behind ( ONE, ONE ), no depth write, as RenderInteractions draws a translucent
+			// chain. Set here, after the ambient pass's loop has set its own
+			renderProgManager.BindShader_ForwardTranslucent( din->surf->jointCache != 0, pbr );
+			GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHMASK | GLS_DEPTHFUNC_LESS | GLS_STENCIL_FUNC_ALWAYS );
+		}
+		else
+		{
+			renderProgManager.BindShader_Forward( din->surf->jointCache != 0, pbr, din->surf->area != NULL && r_useLightGrid.GetBool() );
+		}
 	}
 	// ---- END TRACK F ----
 
@@ -2336,6 +2347,22 @@ AMBIENT PASS RENDERING
 =========================================================================================
 */
 
+// ---- TRACK F ( F4 ): the surfaces ForwardPass( translucent ) draws ----
+/*
+==================
+R_ForwardTranslucentSurf
+
+A view surface that ForwardPass( translucent ) draws: translucent, of sort SS_FAR or above, and listing lights ( the
+frontend lists a translucent surface's lights only then, R_LightListTakePair ). The same test of the list as
+DrawSingleInteraction's, after the material's, whose fields the loop reads anyway
+==================
+*/
+static bool R_ForwardTranslucentSurf( const drawSurf_t* surf )
+{
+	return surf->material->Coverage() == MC_TRANSLUCENT && surf->material->GetSort() >= SS_FAR && surf->lightList != NULL && surf->lightList->run != NULL;
+}
+// ---- END TRACK F ----
+
 /*
 ==================
 idRenderBackend::AmbientPass
@@ -2368,9 +2395,10 @@ void idRenderBackend::AmbientPass( const drawSurf_t* const* drawSurfs, int numDr
 
 	// track F ( F2 ): in a view with light lists this pass is the forward pass ( the lit surfaces' ambient term and
 	// their listed lights in one draw ), timed as such: the HUD's Forward row
-	const renderLogMainBlock_t litBlock = ( viewDef->listsBuilt && ( viewDef->renderView.rdflags & RDF_IRRADIANCE ) == 0 ) ? MRB_FORWARD_PASS : MRB_AMBIENT_PASS;
+	// F4: and when ForwardPass( translucent ) draws the listed glass through this loop, a block of its own ( D70 )
+	const renderLogMainBlock_t litBlock = forwardTranslucent ? MRB_FORWARD_TRANSLUCENT : ( ( viewDef->listsBuilt && ( viewDef->renderView.rdflags & RDF_IRRADIANCE ) == 0 ) ? MRB_FORWARD_PASS : MRB_AMBIENT_PASS );
 	renderLog.OpenMainBlock( fillGbuffer ? MRB_FILL_GEOMETRY_BUFFER : litBlock );
-	renderLog.OpenBlock( fillGbuffer ? "Fill_GeometryBuffer" : "Render_AmbientPass", colorBlue );
+	renderLog.OpenBlock( fillGbuffer ? "Fill_GeometryBuffer" : ( forwardTranslucent ? "Render_ForwardTranslucent" : "Render_AmbientPass" ), colorBlue );
 
 	// make sure rpWindowCoord is set even without post processing surfaces in the view
 	int x = viewDef->viewport.x1;
@@ -2392,7 +2420,7 @@ void idRenderBackend::AmbientPass( const drawSurf_t* const* drawSurfs, int numDr
 	}
 
 	// RB: TODO remove this
-	if( !fillGbuffer && r_useSSAO.GetBool() && r_ssaoDebug.GetBool() )
+	if( !fillGbuffer && r_useSSAO.GetBool() && r_ssaoDebug.GetBool() && !forwardTranslucent )		// F4: the glass's call draws no debug quad
 	{
 		GL_State( GLS_DEPTHMASK | GLS_DEPTHFUNC_ALWAYS | GLS_CULL_TWOSIDED );
 
@@ -2510,9 +2538,16 @@ void idRenderBackend::AmbientPass( const drawSurf_t* const* drawSurfs, int numDr
 		const drawSurf_t* drawSurf = drawSurfs[i];
 		const idMaterial* surfaceMaterial = drawSurf->material;
 
+		// ---- TRACK F ( F4 ): ForwardPass( translucent ) draws the listed glass and nothing else ----
+		if( forwardTranslucent && !R_ForwardTranslucentSurf( drawSurf ) )
+		{
+			continue;
+		}
+		// ---- END TRACK F ----
+
 		// translucent surfaces don't put anything in the depth buffer and don't
 		// test against it, which makes them fail the mirror clip plane operation
-		if( surfaceMaterial->Coverage() == MC_TRANSLUCENT )
+		if( surfaceMaterial->Coverage() == MC_TRANSLUCENT && !forwardTranslucent )
 		{
 			continue;
 		}
@@ -2824,24 +2859,52 @@ void idRenderBackend::AmbientPass( const drawSurf_t* const* drawSurfs, int numDr
 ==================
 idRenderBackend::ForwardPass
 
-X0 seam ( H1, D37 ): the lit opaque pass and, from F4 on, the lit translucent pass. The translucent call draws
-nothing yet. It opens no main block.
+X0 seam ( H1, D37 ): the lit opaque pass and, from F4 on, the lit translucent pass. It opens no main block: the
+ambient pass's loop does.
 
 F2: the opaque call is the ambient pass's loop, in which a surface that lists lights is drawn by the forward
 program instead of the ambient program ( DrawSingleInteraction ). Here, once per view, what that program needs
 beyond the ambient pass's own parms and images: the view's lanes and the two image units the ambient pass
 never binds. A view without lists ( viewDef->listsBuilt false ) is the ambient pass as it was.
+
+F4 ( D50, D83, C6 ): the translucent call, after the fog apply and the legacy pass's translucent chains, is the same
+loop in a mode of its own ( forwardTranslucent ): it draws only the view surfaces that are translucent, of sort
+SS_FAR or above, and list lights, with the translucent program, in the second state and in the block
+MRB_FORWARD_TRANSLUCENT. A view that lists no such surface returns before any of it and opens no block. An
+RDF_NOAMBIENT view lists nothing ( C5 ), so its glass keeps the legacy pass's light.
 ==================
 */
 void idRenderBackend::ForwardPass( const drawSurf_t* const* drawSurfs, int numDrawSurfs, bool translucent )
 {
-	if( translucent )
-	{
-		return;
-	}
-
 	// ---- TRACK F ( F2 ): the forward program's lanes and images of this view ----
 	const lightListView_t* llv = viewDef->lightListView;
+	int glassFirst = 0;
+	if( translucent )
+	{
+		// F4: only a view with lists has listed glass; the legacy pass's switches hold for the forward glass too
+		if( !viewDef->listsBuilt || llv == NULL || r_skipInteractions.GetBool() || r_skipTranslucent.GetBool() )
+		{
+			return;
+		}
+		// the glass sorts last: R_SortDrawSurfs orders the view's surfaces by drawSurf_t::sort, the material's sort for
+		// every 3D surface, so only the tail of sort SS_FAR and above is scanned, and only it goes to the loop
+		glassFirst = numDrawSurfs;
+		while( glassFirst > 0 && drawSurfs[glassFirst - 1]->sort >= SS_FAR )
+		{
+			glassFirst--;
+		}
+		bool anyGlass = false;
+		for( int i = glassFirst; i < numDrawSurfs && !anyGlass; i++ )
+		{
+			anyGlass = R_ForwardTranslucentSurf( drawSurfs[i] );
+		}
+		if( !anyGlass )
+		{
+			return;
+		}
+		// the legacy pass's translucent chains, drawn just before, left their last light's scissor behind
+		ResetViewportAndScissorToDefaultCamera( viewDef );
+	}
 	if( viewDef->listsBuilt && llv != NULL )
 	{
 		float zbinParms[4];
@@ -2857,8 +2920,21 @@ void idRenderBackend::ForwardPass( const drawSurf_t* const* drawSurfs, int numDr
 		// the shadow lookup's constants, each as RenderInteractions sets its own for an atlas light: the bias scales
 		// ( rpScreenCorrectionFactor.w there ), the sample count ( rpJitterTexScale.w ), the texel step ( 1 / atlas
 		// size times the jitter scale: rpScreenCorrectionFactor.z x rpJitterTexScale.x ), the noise scale and the
-		// frame index ( rpJitterTexOffset.x and .w )
-		const float shadowBias[4] = { r_shadowMapSunDepthBiasScale.GetFloat(), r_shadowMapRegularDepthBiasScale.GetFloat(), ( float )r_shadowMapSplits.GetInteger(), 0.0f };
+		// frame index ( rpJitterTexOffset.x and .w ). F4: then the sun's rows, as many as the frontend gave record 0
+		// ( its cascades: frame data, not r_shadowMapSplits, which may have changed since ), and the sun's fade to
+		// unshadowed on its last shadow LOD ( rpJitterTexScale.z there ), which its rows cannot carry: a sun's row holds
+		// its cascade's far end in w ( C2 )
+		float sunFade = 0.0f;
+		for( const viewLight_t* vLight = viewDef->viewLights; vLight != NULL; vLight = vLight->next )
+		{
+			if( vLight->recordNumber == 0 )
+			{
+				sunFade = vLight->shadowFadeOut;
+				break;
+			}
+		}
+		const float sunRows = ( llv->tables.numRecords > 0 ) ? ( float )llv->rowsOfRecord[0] : 0.0f;
+		const float shadowBias[4] = { r_shadowMapSunDepthBiasScale.GetFloat(), r_shadowMapRegularDepthBiasScale.GetFloat(), sunRows, sunFade };
 		renderProgManager.SetUniformValue( RENDERPARM_SHADOWBIAS, shadowBias );
 		const float shadowFilter[4] = { ( float )r_shadowMapSamples.GetInteger(), ( 1.0f / r_shadowMapAtlasSize.GetInteger() ) * r_shadowMapJitterScale.GetFloat(),
 										1.0f / globalImages->blueNoiseImage256->GetUploadWidth(), r_shadowMapRandomizeJitter.GetBool() ? ( float )( tr.frameCount % 64 ) : 0.0f
@@ -2872,7 +2948,9 @@ void idRenderBackend::ForwardPass( const drawSurf_t* const* drawSurfs, int numDr
 	}
 	// ---- END TRACK F ----
 
-	AmbientPass( drawSurfs, numDrawSurfs, false );
+	forwardTranslucent = translucent;			// F4: the glass's call takes only the listed glass ( AmbientPass, DrawSingleInteraction )
+	AmbientPass( drawSurfs + glassFirst, numDrawSurfs - glassFirst, false );
+	forwardTranslucent = false;
 }
 
 // RB end
@@ -6967,6 +7045,8 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 			DrawTranslucentInteractions( _viewDef );
 			renderLog.CloseMainBlock( MRB_DRAW_INTERACTIONS_TRANSLUCENT );
 		}
+		// F4 ( D70 b ): the forward glass draws after this pair, so the pair is followed by a reset of its own
+		ResetGraphicsStateCache();
 		//puncho - reconcile: account for the renderer upgrade pass.
 		if( concurrencyStats )
 		{
@@ -6974,10 +7054,11 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 		}
 		{
 			OPTICK_GPU_EVENT( "Render_ForwardTranslucent" );
-			// probe bakes keep the ambient pass ( D6 ); F4 must also decide what an RDF_NOAMBIENT view draws here
+			// probe bakes keep the ambient pass ( D6 ); an RDF_NOAMBIENT view lists nothing ( C5 ), so ForwardPass draws
+			// nothing there and its glass keeps the legacy light drawn above ( F4 )
 			if( !( _viewDef->renderView.rdflags & RDF_IRRADIANCE ) )
 			{
-				ForwardPass( drawSurfs, numDrawSurfs, true );		// draws nothing until F4, which opens MRB_FORWARD_TRANSLUCENT
+				ForwardPass( drawSurfs, numDrawSurfs, true );		// F4: the listed glass, in MRB_FORWARD_TRANSLUCENT
 			}
 		}
 		ResetGraphicsStateCache();

@@ -1091,8 +1091,8 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 		{ BUILTIN_DEBUG_DEPTH, "builtin/debug/depth", "", { { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_POST_PROCESS_FINAL2 ) } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_POST_PROCESS_FINAL2 },
 		// ---- TRACK F: builtins[] rows ( keep the enum order ) ----
 		// the forward program ( F2 ). No USE_PUSH_CONSTANTS key: the forward layouts always take the constant buffer
-		// ( D51 ). USE_WAVE_OPS: the row the device check above picked ( F3 ). USE_TRANSLUCENT 0: the other half
-		// of that axis is F4's
+		// ( D51 ). USE_WAVE_OPS: the row the device check above picked ( F3 ). USE_TRANSLUCENT 0: the opaque program;
+		// the rows with 1 follow these eight ( F4 )
 		{ BUILTIN_FORWARD, "builtin/lighting/forward", "", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "0" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
 		{ BUILTIN_FORWARD_SKINNED, "builtin/lighting/forward", "_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "0" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
 		{ BUILTIN_FORWARD_PBR, "builtin/lighting/forward", "_PBR", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "0" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
@@ -1101,6 +1101,12 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 		{ BUILTIN_FORWARD_LIGHTGRID_SKINNED, "builtin/lighting/forward", "_lightgrid_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "1" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "0" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
 		{ BUILTIN_FORWARD_LIGHTGRID_PBR, "builtin/lighting/forward", "_lightgrid_PBR", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "1" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "0" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
 		{ BUILTIN_FORWARD_LIGHTGRID_PBR_SKINNED, "builtin/lighting/forward", "_lightgrid_PBR_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "1" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "0" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
+		// F4: the lit translucent program, USE_TRANSLUCENT 1. USE_LIGHTGRID 0: it draws no ambient term, so no row needs
+		// the light grid's half
+		{ BUILTIN_FORWARD_TRANSLUCENT, "builtin/lighting/forward", "_translucent", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
+		{ BUILTIN_FORWARD_TRANSLUCENT_SKINNED, "builtin/lighting/forward", "_translucent_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
+		{ BUILTIN_FORWARD_TRANSLUCENT_PBR, "builtin/lighting/forward", "_translucent_PBR", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
+		{ BUILTIN_FORWARD_TRANSLUCENT_PBR_SKINNED, "builtin/lighting/forward", "_translucent_PBR_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
 		// ---- END TRACK F ----
 		// ---- TRACK V: builtins[] rows ( keep the enum order ) ----
 		// ---- END TRACK V ----

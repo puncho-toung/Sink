@@ -704,7 +704,7 @@ no model job has run ) and R_BuildLightLists after R_AddModels. Until the forwar
 */
 
 idCVar r_useForwardLists( "r_useForwardLists", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "build the light records, Z-bins and tile bits of the hybrid forward pass in the main view ( needs r_useShadowAtlas )" );
-idCVar r_forwardLightKinds( "r_forwardLightKinds", "3", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "light kinds that may be listed: 1 = emitters, 2 = default-texture lights, 4 = the primary sun ( not listed yet: the bit is ignored )" );
+idCVar r_forwardLightKinds( "r_forwardLightKinds", "3", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "light kinds that may be listed: 1 = emitters, 2 = default-texture lights, 4 = the primary sun ( with the default textures; an emitter sun stays legacy )" );
 idCVar r_zbinTileSize( "r_zbinTileSize", "16", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "pixels per Z-bin tile side", 8, 64 );
 idCVar r_zbinCount( "r_zbinCount", "8192", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "Z-bins per view", 1, LL_MAX_BINS );
 idCVar r_zbinFar( "r_zbinFar", "16384", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "view distance the Z-bins cover; beyond it, the last bin" );
@@ -717,7 +717,7 @@ idCVar r_lightListLog( "r_lightListLog", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_N
 idCVar r_lightListStrict( "r_lightListStrict", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "a full table of the light lists ( record cap, pool ) or an unknown forward tag is a FatalError instead of a warning ( developer machines )" );
 idCVar r_lightListCapture( "r_lightListCapture", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "copy the next listing view's builder input for lightListBench and lightListDump, then clear" );
 idCVar r_forwardMaterials( "r_forwardMaterials", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "1 = every material the forward pass can draw ( one bump, one diffuse and at most one specular stage, no texture matrix, no vertex colour ) lists its lights, with or without the forward keyword" );
-idCVar r_showLightDiff( "r_showLightDiff", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "1 = twin mode: a listed pair also keeps its lit surface, so the legacy pass lights it and the forward pass adds no light ( the legacy image, with the lists built beside it ); 2 = the difference view: the lit passes are drawn twice, forward and legacy, the screen shows their difference times r_lightDiffScale and the HUD its mean and maximum", 0, 2 );
+idCVar r_showLightDiff( "r_showLightDiff", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "1 = twin mode: a listed pair also keeps its lit surface, so the legacy pass lights it and the forward pass adds no light ( the legacy image, with the lists built beside it ); 2 = the difference view: the lit passes are drawn twice, forward and legacy, the screen shows their difference times r_lightDiffScale and the HUD its mean and maximum; lit translucents are drawn after the fog apply and are in neither picture", 0, 2 );
 
 static bool lightListSaidNoAtlas = false;		// the console says once that the lists need the shadow atlas
 static int lightListWarned = 0;					// R_LightListLoud: the kinds of warning this map has had
@@ -782,8 +782,19 @@ static uint32 R_LightListRecordFlags( const viewLight_t* vLight, bool emitterDeb
 	defaults = defaults && !emitter;
 	flags |= ( emitter ? RLF_EMITTER : 0 ) | ( defaults ? RLF_DEFAULT_TEXTURES : 0 );
 
-	const int kinds = r_forwardLightKinds.GetInteger() & 3;						// bit 4, the primary sun, is F4's: the forward shader has no cascades yet
-	bool listable = oneStage && ( ( emitter && ( kinds & 1 ) != 0 ) || ( defaults && ( kinds & 2 ) != 0 ) );
+	// F4: bit 4 lists the primary sun ( D42, D73: the only parallel light ever listed, through record 0 ). The bit is
+	// the sun's own: a sun with the default textures is not listed under bit 2. An emitter sun stays on the legacy
+	// path ( the owner's row 32: it would shade through EMEvaluate with the sun's planes, which nothing has gated )
+	const int kinds = r_forwardLightKinds.GetInteger() & 7;
+	bool listable;
+	if( vLight->parallel )
+	{
+		listable = oneStage && defaults && vLight->isPrimarySun && ( kinds & 4 ) != 0;
+	}
+	else
+	{
+		listable = oneStage && ( ( emitter && ( kinds & 1 ) != 0 ) || ( defaults && ( kinds & 2 ) != 0 ) );
+	}
 	switch( vLight->lightDef->parms.forwardMode )
 	{
 		case LIGHT_FORWARD_AUTO:
@@ -806,9 +817,9 @@ static uint32 R_LightListRecordFlags( const viewLight_t* vLight, bool emitterDeb
 		listable = false;
 	}
 	//puncho end
-	if( vLight->parallel && ( !vLight->isPrimarySun || ( kinds & 4 ) == 0 ) )
+	if( vLight->parallel && ( !vLight->isPrimarySun || emitter ) )
 	{
-		listable = false;														// D42: only the primary sun, through record 0, from F4
+		listable = false;														// D42: only the primary sun, through record 0; row 32: never an emitter sun
 	}
 	return flags | ( listable ? RLF_CLUSTERED : 0 );
 }
@@ -1230,6 +1241,9 @@ bounds the run. The job reads the view's tables, final since the first hook, and
 The forward pass draws a surface once, with one bump, one diffuse and one specular image and no texture matrix or
 vertex colour: the materials the engine keeps fast-path images for ( idMaterial::SetFastPathImages; the property,
 not the cvar r_skipInteractionFastPath ). Every other material keeps the legacy pass, whatever its keyword says.
+F4: a translucent surface too when its sort is SS_FAR or above: ForwardPass( translucent ) draws it after the fog
+apply ( D50, D83 ). A lit decal ( translucent below SS_FAR ) keeps the legacy pass, which lights it before the apply,
+under the blended decals that may lie over it ( the owner's decision of 2026-11-12, D83 as amended ).
 ====================
 */
 int R_LightListTakePair( const viewDef_t* viewDef, const viewLight_t* vLight, const idMaterial* shader, drawSurf_t* baseDrawSurf, int maxLights )
@@ -1244,9 +1258,13 @@ int R_LightListTakePair( const viewDef_t* viewDef, const viewLight_t* vLight, co
 	{
 		return LL_PAIR_LEGACY;													// no record, a fog-only record, or a sun that is not listed
 	}
-	if( !( llv->allMaterials || shader->TestMaterialFlag( MF_FORWARD ) ) || shader->GetFastPathBumpImage() == NULL || shader->Coverage() == MC_TRANSLUCENT )
+	if( !( llv->allMaterials || shader->TestMaterialFlag( MF_FORWARD ) ) || shader->GetFastPathBumpImage() == NULL )
 	{
-		return LL_PAIR_LEGACY;													// the forward pass does not draw it ( F4 lifts the coverage test )
+		return LL_PAIR_LEGACY;													// the forward pass does not draw it
+	}
+	if( shader->Coverage() == MC_TRANSLUCENT && shader->GetSort() < SS_FAR )
+	{
+		return LL_PAIR_LEGACY;													// F4: a lit decal, lit before the fog apply
 	}
 	lightListSurface_t* s = baseDrawSurf->lightList;
 	if( s == NULL )

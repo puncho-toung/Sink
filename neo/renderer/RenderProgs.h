@@ -221,7 +221,7 @@ enum renderParm_t
 	RENDERPARM_ZBINPARMS,		// rpZBinParms: tile size, tiles X, words per tile, bin count ( set 9 )
 	RENDERPARM_ZBINSCALE,		// rpZBinScale: scale, near, far, 0 ( set 9 )
 	RENDERPARM_RECORDCOUNTS,	// rpRecordCounts: records, rows, sun present, vanished count ( set 9 )
-	RENDERPARM_SHADOWBIAS,		// rpShadowBias: sun bias scale, regular bias scale, splits, 0 ( set 9 )
+	RENDERPARM_SHADOWBIAS,		// rpShadowBias: sun bias scale, regular bias scale, the sun's rows, the sun's fade ( F4 ) ( set 9 )
 	RENDERPARM_SHADOWFILTER,	// rpShadowFilter: sample count, texel step, noise scale, frame index ( set 9 )
 	// ---- TRACK F: render parms ----
 	RENDERPARM_FORWARDVIEW,		// rpForwardView: x, y = the view's top-left pixel in the target, z = 1 / r_lightScale, w = 1: the loop adds no light ( the difference view's twin mode ) ( set 9 )
@@ -591,6 +591,12 @@ enum
 	BUILTIN_FORWARD_LIGHTGRID_SKINNED,
 	BUILTIN_FORWARD_LIGHTGRID_PBR,
 	BUILTIN_FORWARD_LIGHTGRID_PBR_SKINNED,
+	// F4: the lit translucent program ( USE_TRANSLUCENT 1; no light grid: it draws no ambient term ). The order is
+	// BindShader_ForwardTranslucent's: + 1 skinned, + 2 PBR
+	BUILTIN_FORWARD_TRANSLUCENT,
+	BUILTIN_FORWARD_TRANSLUCENT_SKINNED,
+	BUILTIN_FORWARD_TRANSLUCENT_PBR,
+	BUILTIN_FORWARD_TRANSLUCENT_PBR_SKINNED,
 	// ---- END TRACK F ----
 	// ---- TRACK V: builtin shaders ----
 	// ---- END TRACK V ----
@@ -1183,6 +1189,13 @@ public:
 	void	BindShader_Forward( bool skinned, bool pbr, bool lightGrid )
 	{
 		BindShader_Builtin( BUILTIN_FORWARD + ( lightGrid ? 4 : 0 ) + ( pbr ? 2 : 0 ) + ( skinned ? 1 : 0 ) );
+	}
+	// F4: the program ForwardPass( translucent ) draws a listed translucent surface with: its lights alone, times the
+	// fog's transmittance to the surface
+	compile_time_assert( BUILTIN_FORWARD_TRANSLUCENT_PBR_SKINNED == BUILTIN_FORWARD_TRANSLUCENT + 3 );
+	void	BindShader_ForwardTranslucent( bool skinned, bool pbr )
+	{
+		BindShader_Builtin( BUILTIN_FORWARD_TRANSLUCENT + ( pbr ? 2 : 0 ) + ( skinned ? 1 : 0 ) );
 	}
 	// ---- END TRACK F ----
 	// ---- TRACK V: BindShader helpers ----

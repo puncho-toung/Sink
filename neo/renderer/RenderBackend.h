@@ -490,6 +490,7 @@ private:
 	nvrhi::ITexture*				lightListHeatmapColor;						// the texture that target was made for; valid while the target exists
 	void							LightDiffPass( const drawSurf_t* const* drawSurfs, int numDrawSurfs );	// F2: the difference view ( r_showLightDiff 2 ), after DrawInteractions
 	bool							lightDiffPassA;								// F2: true while LightDiffPass draws the forward picture: the loop lights and the legacy pass leaves the twins out
+	bool							forwardTranslucent;							// F4: true while ForwardPass( translucent ) draws the listed glass through AmbientPass's loop
 	bool							lightDiffHasReadout;						// F2: a reduced picture of the present size has been read
 	nvrhi::TextureHandle			lightDiffImageA;							// the forward picture of the view's lit passes
 	nvrhi::TextureHandle			lightDiffImageB;							// the legacy picture

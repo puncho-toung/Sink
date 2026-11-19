@@ -3336,6 +3336,7 @@ idRenderBackend::idRenderBackend()
 	lightListTileBitsWords = 0;
 	lightListHeatmapColor = NULL;
 	lightDiffPassA = false;
+	forwardTranslucent = false;
 	lightDiffHasReadout = false;
 	lightDiffShowColor = NULL;
 	lightDiffFrame = 0;
