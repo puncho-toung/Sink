@@ -125,7 +125,11 @@ idBufferObject::idBufferObject
 idBufferObject::idBufferObject()
 {
 	size = 0;
-	offsetInOtherBuffer = OWNS_BUFFER_FLAG;
+	//puncho start - static index (2R R3.2): the flags are bools; an object without a buffer is an owner that is not mapped
+	offsetInOtherBuffer = 0;
+	mapped = false;
+	ownsBuffer = true;
+	//puncho end
 	usage = BU_STATIC;
 
 	bufferHandle.Reset();
@@ -138,6 +142,91 @@ idBufferObject::idBufferObject()
 	allocationInfo = {};
 #endif
 }
+
+//puncho start - static index (2R R3.2)
+#if !defined( ID_RETAIL )
+// testStaticAllocFail's count: the n-th AllocBufferObject from now returns false. It is not a member of idVertexCache, whose
+// Init must not disarm it: in autoexec.cfg the command runs before the back end makes its buffers
+static int bufferAllocFailCountdown = 0;
+
+CONSOLE_COMMAND( testStaticAllocFail, "test only: the n-th buffer object allocation from now is refused (n from 1; default 1)", NULL )
+{
+	long long n = 1;
+	if( args.Argc() > 1 )
+	{
+		const char* text = args.Argv( 1 );
+		char* end = NULL;
+		n = strtoll( text, &end, 10 );
+		if( end == text || *end != '\0' )
+		{
+			n = 0;
+		}
+	}
+	if( n < 1 || n > INT_MAX )
+	{
+		idLib::Printf( "usage: testStaticAllocFail [n], n from 1 to %d; the pending count stays %d\n", INT_MAX, bufferAllocFailCountdown );
+		return;
+	}
+	bufferAllocFailCountdown = ( int )n;
+	idLib::Printf( "testStaticAllocFail: buffer object allocation %d from now is refused\n", bufferAllocFailCountdown );
+}
+#endif
+
+/*
+========================
+idBufferObject::TestAllocFail
+
+Called by the three AllocBufferObject before they make anything: true for the allocation testStaticAllocFail chose, which
+then returns false as it does when the device refuses the buffer. Main thread and back end start only.
+========================
+*/
+bool idBufferObject::TestAllocFail()
+{
+#if !defined( ID_RETAIL )
+	if( bufferAllocFailCountdown > 0 && --bufferAllocFailCountdown == 0 )
+	{
+		return true;
+	}
+#endif
+	return false;
+}
+
+/*
+========================
+idBufferObject::TakeBufferFrom
+
+Moves other's buffer into this object and leaves other empty: afterwards this object owns the buffer and frees it once, and
+other frees nothing. Refused, with neither object changed, unless this object is empty (no buffer, no reference, not
+mapped) and other owns a buffer that is not mapped. The caller answers for the GPU's side: nothing may still be recording
+into, or drawing from, the buffer under other's name. The three kinds call it through their typed TakeFrom; its first
+caller is the growth of a static set (2R R3.3).
+========================
+*/
+bool idBufferObject::TakeBufferFrom( idBufferObject& other )
+{
+	if( this == &other || bufferHandle || !ownsBuffer || mapped || !other.bufferHandle || !other.ownsBuffer || other.mapped )
+	{
+		return false;
+	}
+
+	size = other.size;
+	offsetInOtherBuffer = other.offsetInOtherBuffer;
+	usage = other.usage;
+	inputLayout = other.inputLayout;
+	bufferHandle = other.bufferHandle;
+	buffer = other.buffer;
+	debugName = other.debugName;
+#if defined( USE_AMD_ALLOCATOR )
+	vkBuffer = other.vkBuffer;
+	allocation = other.allocation;
+	allocationInfo = other.allocationInfo;
+#endif
+
+	other.inputLayout.Reset();
+	other.SetEmpty();
+	return true;
+}
+//puncho end
 
 /*
 ================================================================================================
@@ -169,8 +258,9 @@ void idVertexBuffer::Reference( const idVertexBuffer& other )
 	assert( other.GetSize() > 0 );
 
 	FreeBufferObject();
-	size = other.GetSize();					// this strips the MAPPED_FLAG
-	offsetInOtherBuffer = other.GetOffset();	// this strips the OWNS_BUFFER_FLAG
+	size = other.GetSize();
+	offsetInOtherBuffer = other.GetOffset();
+	ownsBuffer = false;		//puncho - static index (2R R3.2): the flag is a bool; before, GetOffset left bit 31 clear here
 	usage = other.usage;
 	bufferHandle = other.bufferHandle;
 
@@ -185,17 +275,18 @@ void idVertexBuffer::Reference( const idVertexBuffer& other )
 idVertexBuffer::Reference
 ========================
 */
-void idVertexBuffer::Reference( const idVertexBuffer& other, int refOffset, int refSize )
+void idVertexBuffer::Reference( const idVertexBuffer& other, int64 refOffset, int refSize )
 {
 	assert( IsMapped() == false );
 	//assert( other.IsMapped() == false );	// this happens when building idTriangles while at the same time setting up idDrawVerts
 	assert( refOffset >= 0 );
 	assert( refSize >= 0 );
-	assert( refOffset + refSize <= other.GetSize() );
+	assert( refOffset <= other.GetSize() && refSize <= other.GetSize() - refOffset );	//puncho - static index (2R R3.2): int64, and no sum that could wrap
 
 	FreeBufferObject();
 	size = refSize;
 	offsetInOtherBuffer = other.GetOffset() + refOffset;
+	ownsBuffer = false;		//puncho - static index (2R R3.2): the flag is a bool; before, an offset below 2 GiB left bit 31 clear
 	usage = other.usage;
 	bufferHandle = other.bufferHandle;
 
@@ -235,8 +326,9 @@ void idIndexBuffer::Reference( const idIndexBuffer& other )
 	assert( other.GetSize() > 0 );
 
 	FreeBufferObject();
-	size = other.GetSize();					// this strips the MAPPED_FLAG
-	offsetInOtherBuffer = other.GetOffset();	// this strips the OWNS_BUFFER_FLAG
+	size = other.GetSize();
+	offsetInOtherBuffer = other.GetOffset();
+	ownsBuffer = false;		//puncho - static index (2R R3.2): the flag is a bool; before, GetOffset left bit 31 clear here
 	usage = other.usage;
 	bufferHandle = other.bufferHandle;
 
@@ -251,17 +343,18 @@ void idIndexBuffer::Reference( const idIndexBuffer& other )
 idIndexBuffer::Reference
 ========================
 */
-void idIndexBuffer::Reference( const idIndexBuffer& other, int refOffset, int refSize )
+void idIndexBuffer::Reference( const idIndexBuffer& other, int64 refOffset, int refSize )
 {
 	assert( IsMapped() == false );
 	//assert( other.IsMapped() == false );	// this happens when building idTriangles while at the same time setting up triIndex_t
 	assert( refOffset >= 0 );
 	assert( refSize >= 0 );
-	assert( refOffset + refSize <= other.GetSize() );
+	assert( refOffset <= other.GetSize() && refSize <= other.GetSize() - refOffset );	//puncho - static index (2R R3.2): int64, and no sum that could wrap
 
 	FreeBufferObject();
 	size = refSize;
 	offsetInOtherBuffer = other.GetOffset() + refOffset;
+	ownsBuffer = false;		//puncho - static index (2R R3.2): the flag is a bool; before, an offset below 2 GiB left bit 31 clear
 	usage = other.usage;
 	bufferHandle = other.bufferHandle;
 
@@ -301,8 +394,9 @@ void idUniformBuffer::Reference( const idUniformBuffer& other )
 	assert( other.GetSize() > 0 );
 
 	FreeBufferObject();
-	size = other.GetSize();					// this strips the MAPPED_FLAG
-	offsetInOtherBuffer = other.GetOffset();	// this strips the OWNS_BUFFER_FLAG
+	size = other.GetSize();
+	offsetInOtherBuffer = other.GetOffset();
+	ownsBuffer = false;		//puncho - static index (2R R3.2): the flag is a bool; before, GetOffset left bit 31 clear here
 	usage = other.usage;
 	bufferHandle = other.bufferHandle;
 
@@ -317,17 +411,18 @@ void idUniformBuffer::Reference( const idUniformBuffer& other )
 idUniformBuffer::Reference
 ========================
 */
-void idUniformBuffer::Reference( const idUniformBuffer& other, int refOffset, int refSize )
+void idUniformBuffer::Reference( const idUniformBuffer& other, int64 refOffset, int refSize )
 {
 	assert( IsMapped() == false );
 	assert( other.IsMapped() == false );
 	assert( refOffset >= 0 );
 	assert( refSize >= 0 );
-	assert( refOffset + refSize <= other.GetSize() );
+	assert( refOffset <= other.GetSize() && refSize <= other.GetSize() - refOffset );	//puncho - static index (2R R3.2): int64, and no sum that could wrap
 
 	FreeBufferObject();
 	size = refSize;
 	offsetInOtherBuffer = other.GetOffset() + refOffset;
+	ownsBuffer = false;		//puncho - static index (2R R3.2): the flag is a bool; before, an offset below 2 GiB left bit 31 clear
 	usage = other.usage;
 	bufferHandle = other.bufferHandle;
 

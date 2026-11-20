@@ -178,20 +178,30 @@ idVertexBuffer::idVertexBuffer()
 idVertexBuffer::AllocBufferObject
 ========================
 */
-bool idVertexBuffer::AllocBufferObject( const void* data, int allocSize, bufferUsageType_t _usage, nvrhi::ICommandList* commandList )
+bool idVertexBuffer::AllocBufferObject( const void* data, int64 allocSize, bufferUsageType_t _usage, nvrhi::ICommandList* commandList )
 {
 	assert( !bufferHandle );
 	assert_16_byte_aligned( data );
 
-	if( allocSize <= 0 )
+	//puncho start - static index (2R R3.2): the size is an int64, rounded in 64 bits, and it is stored only once the buffer
+	// exists, so a refused allocation leaves this object empty. Initial data goes through Update, whose length is an int
+	int64 alignedSize = 0;
+	int64 numBytes = 0;
+	if( allocSize <= 0 || !RoundUpBytes( allocSize, VERTEX_CACHE_ALIGN, alignedSize ) || !RoundUpBytes( alignedSize, 16, numBytes ) || ( data != NULL && allocSize > INT_MAX - 15 ) )
 	{
-		idLib::Error( "idVertexBuffer::AllocBufferObject: allocSize = %i", allocSize );
+		idLib::Error( "idVertexBuffer::AllocBufferObject: allocSize = %lld", ( long long )allocSize );
+	}
+	// an object that still holds a buffer or a reference lets go of it first, so that a refused allocation leaves the object
+	// empty whoever refuses it. Only the assert above guarded that: in a release build a buffer allocated over a Reference
+	// was never freed, and one allocated over a buffer lost the old one
+	FreeBufferObject();
+	if( TestAllocFail() )
+	{
+		return false;
 	}
 
-	size = ALIGN( allocSize, VERTEX_CACHE_ALIGN );
 	usage = _usage;
-
-	const int numBytes = GetAllocedSize();
+	//puncho end
 
 	nvrhi::BufferDesc vertexBufferDesc;
 	vertexBufferDesc.byteSize = numBytes;
@@ -228,10 +238,26 @@ bool idVertexBuffer::AllocBufferObject( const void* data, int allocSize, bufferU
 			allocCreateInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
 		}
 
+		//puncho start - static index (2R R3.2): a refusal is reported, and nothing of a refused buffer stays in this object
 		VkResult result = vmaCreateBuffer( m_VmaAllocator, &bufferCreateInfo, &allocCreateInfo, &vkBuffer, &allocation, &allocationInfo );
-		assert( result == VK_SUCCESS );
+		if( result != VK_SUCCESS )
+		{
+			vkBuffer = VK_NULL_HANDLE;
+			allocation = NULL;
+			allocationInfo = {};
+			return false;
+		}
 
 		bufferHandle = deviceManager->GetDevice()->createHandleForNativeBuffer( nvrhi::ObjectTypes::VK_Buffer, vkBuffer, vertexBufferDesc );
+		if( !bufferHandle )
+		{
+			vmaDestroyBuffer( m_VmaAllocator, vkBuffer, allocation );
+			vkBuffer = VK_NULL_HANDLE;
+			allocation = NULL;
+			allocationInfo = {};
+			return false;
+		}
+		//puncho end
 	}
 	else
 #endif
@@ -243,16 +269,17 @@ bool idVertexBuffer::AllocBufferObject( const void* data, int allocSize, bufferU
 	{
 		return false;
 	}
+	size = alignedSize;	//puncho - static index (2R R3.2): stored with the buffer
 
 	if( r_showBuffers.GetBool() )
 	{
-		idLib::Printf( "vertex buffer alloc %p, api %p (%i bytes)\n", this, bufferHandle.Get(), GetSize() );
+		idLib::Printf( "vertex buffer alloc %p, api %p (%lld bytes)\n", this, bufferHandle.Get(), ( long long )GetSize() );	//puncho - static index (2R R3.2): int64
 	}
 
 	// copy the data
 	if( data )
 	{
-		Update( data, allocSize, 0, true, commandList );
+		Update( data, ( int )allocSize, 0, true, commandList );	//puncho - static index (2R R3.2): with data at most INT_MAX - 15 bytes (tested above)
 	}
 
 	return true;
@@ -284,13 +311,13 @@ void idVertexBuffer::FreeBufferObject()
 
 	if( r_showBuffers.GetBool() )
 	{
-		idLib::Printf( "vertex buffer free %p, api %p (%i bytes)\n", this, bufferHandle.Get(), GetSize() );
+		idLib::Printf( "vertex buffer free %p, api %p (%lld bytes)\n", this, bufferHandle.Get(), ( long long )GetSize() );	//puncho - static index (2R R3.2): int64
 	}
 
 	bufferHandle.Reset();
 
 #if defined( USE_AMD_ALLOCATOR )
-	if( m_VmaAllocator && r_vmaAllocateBufferMemory.GetBool() )
+	if( m_VmaAllocator && allocation != NULL )	//puncho - static index (2R R3.2): by what this object holds (it was the cvar's value at this moment)
 	{
 		vmaDestroyBuffer( m_VmaAllocator, vkBuffer, allocation );
 	}
@@ -304,25 +331,30 @@ void idVertexBuffer::FreeBufferObject()
 idVertexBuffer::Update
 ========================
 */
-void idVertexBuffer::Update( const void* data, int updateSize, int offset, bool initialUpdate, nvrhi::ICommandList* commandList ) const
+void idVertexBuffer::Update( const void* data, int updateSize, int64 offset, bool initialUpdate, nvrhi::ICommandList* commandList ) const
 {
 	assert( bufferHandle );
 	assert_16_byte_aligned( data );
 	assert( ( GetOffset() & 15 ) == 0 );
 	assert( ( offset & VERTEX_CACHE_ALIGN - 1 ) == 0 );
 
-	const int numBytes = ( updateSize + 15 ) & ~15;
-
-	if( offset + numBytes > GetSize() )
+	//puncho start - static index (2R R3.2): the length is rounded and the span tested in 64 bits (idBufferObject::UpdateSpan)
+	int64 numBytes = 0;
+	if( !UpdateSpan( updateSize, offset, numBytes ) )
 	{
-		idLib::FatalError( "idVertexBuffer::Update: size overrun, %i + %i > %i\n", offset, numBytes, GetSize() );
+		idLib::FatalError( "idVertexBuffer::Update: size overrun, %lld + %lld > %lld\n", ( long long )offset, ( long long )numBytes, ( long long )GetSize() );
 	}
+	if( numBytes == 0 )
+	{
+		return;
+	}
+	//puncho end
 
 	if( usage == BU_DYNAMIC )
 	{
 		assert( IsMapped() );
 
-		CopyBuffer( ( byte* )buffer + offset, ( const byte* )data, numBytes );
+		CopyBuffer( ( byte* )buffer + offset, ( const byte* )data, ( int )numBytes );	//puncho - static index (2R R3.2): at most INT_MAX (UpdateSpan)
 	}
 	else
 	{
@@ -408,14 +440,9 @@ idVertexBuffer::ClearWithoutFreeing
 */
 void idVertexBuffer::ClearWithoutFreeing()
 {
-	size = 0;
-	offsetInOtherBuffer = OWNS_BUFFER_FLAG;
-	bufferHandle.Reset();
-
-#if defined( USE_AMD_ALLOCATOR )
-	allocation = NULL;
-	allocationInfo = {};
-#endif
+	//puncho - static index (2R R3.2): the one definition of the empty state (BufferObject.h). Beside what this function
+	// cleared before, it clears the mapped pointer and the native Vulkan handle
+	SetEmpty();
 }
 
 /*
@@ -443,20 +470,30 @@ idIndexBuffer::idIndexBuffer()
 idIndexBuffer::AllocBufferObject
 ========================
 */
-bool idIndexBuffer::AllocBufferObject( const void* data, int allocSize, bufferUsageType_t _usage, nvrhi::ICommandList* commandList )
+bool idIndexBuffer::AllocBufferObject( const void* data, int64 allocSize, bufferUsageType_t _usage, nvrhi::ICommandList* commandList )
 {
 	assert( !bufferHandle );
 	assert_16_byte_aligned( data );
 
-	if( allocSize <= 0 )
+	//puncho start - static index (2R R3.2): the size is an int64, rounded in 64 bits, and it is stored only once the buffer
+	// exists, so a refused allocation leaves this object empty. Initial data goes through Update, whose length is an int
+	int64 alignedSize = 0;
+	int64 numBytes = 0;
+	if( allocSize <= 0 || !RoundUpBytes( allocSize, INDEX_CACHE_ALIGN, alignedSize ) || !RoundUpBytes( alignedSize, 16, numBytes ) || ( data != NULL && allocSize > INT_MAX - 15 ) )
 	{
-		idLib::Error( "idIndexBuffer::AllocBufferObject: allocSize = %i", allocSize );
+		idLib::Error( "idIndexBuffer::AllocBufferObject: allocSize = %lld", ( long long )allocSize );
+	}
+	// an object that still holds a buffer or a reference lets go of it first, so that a refused allocation leaves the object
+	// empty whoever refuses it. Only the assert above guarded that: in a release build a buffer allocated over a Reference
+	// was never freed, and one allocated over a buffer lost the old one
+	FreeBufferObject();
+	if( TestAllocFail() )
+	{
+		return false;
 	}
 
-	size = ALIGN( allocSize, INDEX_CACHE_ALIGN );
 	usage = _usage;
-
-	const int numBytes = GetAllocedSize();
+	//puncho end
 
 	nvrhi::BufferDesc indexBufferDesc;
 	indexBufferDesc.byteSize = numBytes;
@@ -496,10 +533,26 @@ bool idIndexBuffer::AllocBufferObject( const void* data, int allocSize, bufferUs
 			allocCreateInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
 		}
 
+		//puncho start - static index (2R R3.2): a refusal is reported, and nothing of a refused buffer stays in this object
 		VkResult result = vmaCreateBuffer( m_VmaAllocator, &bufferCreateInfo, &allocCreateInfo, &vkBuffer, &allocation, &allocationInfo );
-		assert( result == VK_SUCCESS );
+		if( result != VK_SUCCESS )
+		{
+			vkBuffer = VK_NULL_HANDLE;
+			allocation = NULL;
+			allocationInfo = {};
+			return false;
+		}
 
 		bufferHandle = deviceManager->GetDevice()->createHandleForNativeBuffer( nvrhi::ObjectTypes::VK_Buffer, vkBuffer, indexBufferDesc );
+		if( !bufferHandle )
+		{
+			vmaDestroyBuffer( m_VmaAllocator, vkBuffer, allocation );
+			vkBuffer = VK_NULL_HANDLE;
+			allocation = NULL;
+			allocationInfo = {};
+			return false;
+		}
+		//puncho end
 	}
 	else
 #endif
@@ -511,15 +564,16 @@ bool idIndexBuffer::AllocBufferObject( const void* data, int allocSize, bufferUs
 	{
 		return false;
 	}
+	size = alignedSize;	//puncho - static index (2R R3.2): stored with the buffer
 
 	if( r_showBuffers.GetBool() )
 	{
-		idLib::Printf( "index buffer alloc %p, api %p (%i bytes)\n", this, bufferHandle.Get(), GetSize() );
+		idLib::Printf( "index buffer alloc %p, api %p (%lld bytes)\n", this, bufferHandle.Get(), ( long long )GetSize() );	//puncho - static index (2R R3.2): int64
 	}
 
 	if( data )
 	{
-		Update( data, allocSize, 0, true, commandList );
+		Update( data, ( int )allocSize, 0, true, commandList );	//puncho - static index (2R R3.2): with data at most INT_MAX - 15 bytes (tested above)
 	}
 
 	return true;
@@ -551,13 +605,13 @@ void idIndexBuffer::FreeBufferObject()
 
 	if( r_showBuffers.GetBool() )
 	{
-		idLib::Printf( "index buffer free %p, api %p (%i bytes)\n", this, bufferHandle.Get(), GetSize() );
+		idLib::Printf( "index buffer free %p, api %p (%lld bytes)\n", this, bufferHandle.Get(), ( long long )GetSize() );	//puncho - static index (2R R3.2): int64
 	}
 
 	bufferHandle.Reset();
 
 #if defined( USE_AMD_ALLOCATOR )
-	if( m_VmaAllocator && r_vmaAllocateBufferMemory.GetBool() )
+	if( m_VmaAllocator && allocation != NULL )	//puncho - static index (2R R3.2): by what this object holds (it was the cvar's value at this moment)
 	{
 		vmaDestroyBuffer( m_VmaAllocator, vkBuffer, allocation );
 	}
@@ -571,25 +625,30 @@ void idIndexBuffer::FreeBufferObject()
 idIndexBuffer::Update
 ========================
 */
-void idIndexBuffer::Update( const void* data, int updateSize, int offset, bool initialUpdate, nvrhi::ICommandList* commandList ) const
+void idIndexBuffer::Update( const void* data, int updateSize, int64 offset, bool initialUpdate, nvrhi::ICommandList* commandList ) const
 {
 	assert( bufferHandle );
 	assert_16_byte_aligned( data );
 	assert( ( GetOffset() & 15 ) == 0 );
 	assert( ( offset & INDEX_CACHE_ALIGN - 1 ) == 0 );
 
-	const int numBytes = ( updateSize + 15 ) & ~15;
-
-	if( offset + numBytes > GetSize() )
+	//puncho start - static index (2R R3.2): the length is rounded and the span tested in 64 bits (idBufferObject::UpdateSpan)
+	int64 numBytes = 0;
+	if( !UpdateSpan( updateSize, offset, numBytes ) )
 	{
-		idLib::FatalError( "idIndexBuffer::Update: size overrun, %i + %i > %i\n", offset, numBytes, GetSize() );
+		idLib::FatalError( "idIndexBuffer::Update: size overrun, %lld + %lld > %lld\n", ( long long )offset, ( long long )numBytes, ( long long )GetSize() );
 	}
+	if( numBytes == 0 )
+	{
+		return;
+	}
+	//puncho end
 
 	if( usage == BU_DYNAMIC )
 	{
 		assert( IsMapped() );
 
-		CopyBuffer( ( byte* )buffer + offset, ( const byte* )data, numBytes );
+		CopyBuffer( ( byte* )buffer + offset, ( const byte* )data, ( int )numBytes );	//puncho - static index (2R R3.2): at most INT_MAX (UpdateSpan)
 	}
 	else
 	{
@@ -676,14 +735,9 @@ idIndexBuffer::ClearWithoutFreeing
 */
 void idIndexBuffer::ClearWithoutFreeing()
 {
-	size = 0;
-	offsetInOtherBuffer = OWNS_BUFFER_FLAG;
-	bufferHandle.Reset();
-
-#if defined( USE_AMD_ALLOCATOR )
-	allocation = NULL;
-	allocationInfo = {};
-#endif
+	//puncho - static index (2R R3.2): the one definition of the empty state (BufferObject.h). Beside what this function
+	// cleared before, it clears the mapped pointer and the native Vulkan handle
+	SetEmpty();
 }
 
 /*
@@ -711,20 +765,30 @@ idUniformBuffer::idUniformBuffer()
 idUniformBuffer::AllocBufferObject
 ========================
 */
-bool idUniformBuffer::AllocBufferObject( const void* data, int allocSize, bufferUsageType_t allocatedUsage, nvrhi::ICommandList* commandList )
+bool idUniformBuffer::AllocBufferObject( const void* data, int64 allocSize, bufferUsageType_t allocatedUsage, nvrhi::ICommandList* commandList )
 {
 	assert( !bufferHandle );
 	assert_16_byte_aligned( data );
 
-	if( allocSize <= 0 )
+	//puncho start - static index (2R R3.2): the size is an int64, rounded in 64 bits, and it is stored only once the buffer
+	// exists, so a refused allocation leaves this object empty. Initial data goes through Update, whose length is an int
+	int64 alignedSize = 0;
+	int64 numBytes = 0;
+	if( allocSize <= 0 || !RoundUpBytes( allocSize, vertexCache.uniformBufferOffsetAlignment, alignedSize ) || !RoundUpBytes( alignedSize, 16, numBytes ) || ( data != NULL && allocSize > INT_MAX - 15 ) )
 	{
-		idLib::Error( "idUniformBuffer::AllocBufferObject: allocSize = %i", allocSize );
+		idLib::Error( "idUniformBuffer::AllocBufferObject: allocSize = %lld", ( long long )allocSize );
+	}
+	// an object that still holds a buffer or a reference lets go of it first, so that a refused allocation leaves the object
+	// empty whoever refuses it. Only the assert above guarded that: in a release build a buffer allocated over a Reference
+	// was never freed, and one allocated over a buffer lost the old one
+	FreeBufferObject();
+	if( TestAllocFail() )
+	{
+		return false;
 	}
 
-	size = ALIGN( allocSize, vertexCache.uniformBufferOffsetAlignment );
 	usage = allocatedUsage;
-
-	const int numBytes = GetAllocedSize();
+	//puncho end
 
 	// This buffer is a shader resource as opposed to a constant buffer due to
 	// constant buffers not being able to be sub-ranged.
@@ -763,10 +827,26 @@ bool idUniformBuffer::AllocBufferObject( const void* data, int allocSize, buffer
 			allocCreateInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
 		}
 
+		//puncho start - static index (2R R3.2): a refusal is reported, and nothing of a refused buffer stays in this object
 		VkResult result = vmaCreateBuffer( m_VmaAllocator, &bufferCreateInfo, &allocCreateInfo, &vkBuffer, &allocation, &allocationInfo );
-		assert( result == VK_SUCCESS );
+		if( result != VK_SUCCESS )
+		{
+			vkBuffer = VK_NULL_HANDLE;
+			allocation = NULL;
+			allocationInfo = {};
+			return false;
+		}
 
 		bufferHandle = deviceManager->GetDevice()->createHandleForNativeBuffer( nvrhi::ObjectTypes::VK_Buffer, vkBuffer, bufferDesc );
+		if( !bufferHandle )
+		{
+			vmaDestroyBuffer( m_VmaAllocator, vkBuffer, allocation );
+			vkBuffer = VK_NULL_HANDLE;
+			allocation = NULL;
+			allocationInfo = {};
+			return false;
+		}
+		//puncho end
 	}
 	else
 #endif
@@ -778,16 +858,17 @@ bool idUniformBuffer::AllocBufferObject( const void* data, int allocSize, buffer
 	{
 		return false;
 	}
+	size = alignedSize;	//puncho - static index (2R R3.2): stored with the buffer
 
 	if( r_showBuffers.GetBool() )
 	{
-		idLib::Printf( "uniform buffer alloc %p, api %p (%i bytes)\n", this, bufferHandle.Get(), GetSize() );
+		idLib::Printf( "uniform buffer alloc %p, api %p (%lld bytes)\n", this, bufferHandle.Get(), ( long long )GetSize() );	//puncho - static index (2R R3.2): int64
 	}
 
 	// copy the data
 	if( data )
 	{
-		Update( data, allocSize, 0, true, commandList );
+		Update( data, ( int )allocSize, 0, true, commandList );	//puncho - static index (2R R3.2): with data at most INT_MAX - 15 bytes (tested above)
 	}
 
 	return true;
@@ -819,13 +900,13 @@ void idUniformBuffer::FreeBufferObject()
 
 	if( r_showBuffers.GetBool() )
 	{
-		idLib::Printf( "uniform buffer free %p, api %p (%i bytes)\n", this, bufferHandle.Get(), GetSize() );
+		idLib::Printf( "uniform buffer free %p, api %p (%lld bytes)\n", this, bufferHandle.Get(), ( long long )GetSize() );	//puncho - static index (2R R3.2): int64
 	}
 
 	bufferHandle.Reset();
 
 #if defined( USE_AMD_ALLOCATOR )
-	if( m_VmaAllocator && r_vmaAllocateBufferMemory.GetBool() )
+	if( m_VmaAllocator && allocation != NULL )	//puncho - static index (2R R3.2): by what this object holds (it was the cvar's value at this moment)
 	{
 		vmaDestroyBuffer( m_VmaAllocator, vkBuffer, allocation );
 	}
@@ -839,25 +920,30 @@ void idUniformBuffer::FreeBufferObject()
 idUniformBuffer::Update
 ========================
 */
-void idUniformBuffer::Update( const void* data, int updateSize, int offset, bool initialUpdate, nvrhi::ICommandList* commandList ) const
+void idUniformBuffer::Update( const void* data, int updateSize, int64 offset, bool initialUpdate, nvrhi::ICommandList* commandList ) const
 {
 	assert( bufferHandle );
 	assert_16_byte_aligned( data );
 	assert( ( GetOffset() & 15 ) == 0 );
 	assert( ( offset & vertexCache.uniformBufferOffsetAlignment - 1 ) == 0 );
 
-	const int numBytes = ( updateSize + 15 ) & ~15;
-
-	if( offset + numBytes > GetSize() )
+	//puncho start - static index (2R R3.2): the length is rounded and the span tested in 64 bits (idBufferObject::UpdateSpan)
+	int64 numBytes = 0;
+	if( !UpdateSpan( updateSize, offset, numBytes ) )
 	{
-		idLib::FatalError( "idUniformBuffer::Update: size overrun, %i + %i > %i\n", offset, numBytes, GetSize() );
+		idLib::FatalError( "idUniformBuffer::Update: size overrun, %lld + %lld > %lld\n", ( long long )offset, ( long long )numBytes, ( long long )GetSize() );
 	}
+	if( numBytes == 0 )
+	{
+		return;
+	}
+	//puncho end
 
 	if( usage == BU_DYNAMIC )
 	{
 		assert( IsMapped() );
 
-		CopyBuffer( ( byte* )buffer + offset, ( const byte* )data, numBytes );
+		CopyBuffer( ( byte* )buffer + offset, ( const byte* )data, ( int )numBytes );	//puncho - static index (2R R3.2): at most INT_MAX (UpdateSpan)
 	}
 	else
 	{
@@ -943,12 +1029,7 @@ idUniformBuffer::ClearWithoutFreeing
 */
 void idUniformBuffer::ClearWithoutFreeing()
 {
-	size = 0;
-	offsetInOtherBuffer = OWNS_BUFFER_FLAG;
-	bufferHandle.Reset();
-
-#if defined( USE_AMD_ALLOCATOR )
-	allocation = NULL;
-	allocationInfo = {};
-#endif
+	//puncho - static index (2R R3.2): the one definition of the empty state (BufferObject.h). Beside what this function
+	// cleared before, it clears the mapped pointer and the native Vulkan handle
+	SetEmpty();
 }

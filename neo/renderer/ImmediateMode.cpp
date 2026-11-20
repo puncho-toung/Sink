@@ -92,8 +92,18 @@ int fhImmediateMode::DrawCallVertexSize()
 void fhImmediateMode::InitBuffers( nvrhi::ICommandList* commandList )
 {
 	commandList->open();
-	vertexBuffer.AllocBufferObject( nullptr, c_drawVertsCapacity * sizeof( idDrawVert ), bufferUsageType_t::BU_STATIC, commandList );
-	indexBuffer.AllocBufferObject( nullptr, c_drawIndexesCapacity * sizeof( triIndex_t ), bufferUsageType_t::BU_STATIC, commandList );
+	//puncho start - static index (2R R3.2): a refused buffer ends the start with a message, as the vertex cache's buffers do
+	if( !vertexBuffer.AllocBufferObject( nullptr, c_drawVertsCapacity * sizeof( idDrawVert ), bufferUsageType_t::BU_STATIC, commandList ) )
+	{
+		// the text stays under 80 characters: the Windows error box shows no more (seen in the game run)
+		idLib::FatalError( "fhImmediateMode::InitBuffers: vertex buffer of %lld bytes refused", ( long long )( c_drawVertsCapacity * sizeof( idDrawVert ) ) );
+	}
+	if( !indexBuffer.AllocBufferObject( nullptr, c_drawIndexesCapacity * sizeof( triIndex_t ), bufferUsageType_t::BU_STATIC, commandList ) )
+	{
+		vertexBuffer.FreeBufferObject();	// what this function made goes before the message, as in the vertex cache's start
+		idLib::FatalError( "fhImmediateMode::InitBuffers: index buffer of %lld bytes refused", ( long long )( c_drawIndexesCapacity * sizeof( triIndex_t ) ) );
+	}
+	//puncho end
 	commandList->close();
 	deviceManager->GetDevice()->executeCommandList( commandList );
 }

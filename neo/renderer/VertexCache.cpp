@@ -144,17 +144,36 @@ static void UnmapGeoBufferSet( geoBufferSet_t& gbs )
 AllocGeoBufferSet
 ==============
 */
-static void AllocGeoBufferSet( geoBufferSet_t& gbs, const int vertexBytes, const int indexBytes, const int jointBytes, bufferUsageType_t usage, nvrhi::ICommandList* commandList )
+//puncho start - static index (2R R3.2): int64 sizes, and a refused buffer is reported. False when the device refuses one of
+// the set's buffers: the ones made before it are freed again, and failedKind and failedBytes name the refused one
+static bool AllocGeoBufferSet( geoBufferSet_t& gbs, const int64 vertexBytes, const int64 indexBytes, const int64 jointBytes, bufferUsageType_t usage, nvrhi::ICommandList* commandList, const char*& failedKind, int64& failedBytes )
 {
-	gbs.vertexBuffer.AllocBufferObject( NULL, vertexBytes, usage, commandList );
-	gbs.indexBuffer.AllocBufferObject( NULL, indexBytes, usage, commandList );
-	if( jointBytes > 0 )
+	if( !gbs.vertexBuffer.AllocBufferObject( NULL, vertexBytes, usage, commandList ) )
 	{
-		gbs.jointBuffer.AllocBufferObject( NULL, jointBytes, usage, commandList );
+		failedKind = "vertex";
+		failedBytes = vertexBytes;
+		return false;
+	}
+	if( !gbs.indexBuffer.AllocBufferObject( NULL, indexBytes, usage, commandList ) )
+	{
+		gbs.vertexBuffer.FreeBufferObject();
+		failedKind = "index";
+		failedBytes = indexBytes;
+		return false;
+	}
+	if( jointBytes > 0 && !gbs.jointBuffer.AllocBufferObject( NULL, jointBytes, usage, commandList ) )
+	{
+		gbs.indexBuffer.FreeBufferObject();
+		gbs.vertexBuffer.FreeBufferObject();
+		failedKind = "joint";
+		failedBytes = jointBytes;
+		return false;
 	}
 
 	ClearGeoBufferSet( gbs );
+	return true;
 }
+//puncho end
 
 /*
 ==============
@@ -175,15 +194,29 @@ void idVertexCache::Init( int _uniformBufferOffsetAlignment, nvrhi::ICommandList
 	nvrhi::CommandListParameters parms;
 	parms.setQueueType( nvrhi::CommandQueue::Copy );
 
+	//puncho start - static index (2R R3.2): a refused buffer ends the start with a message that names it. Before, the
+	// result was ignored and the first use of the missing buffer failed
+	const char* failedKind = "";
+	int64 failedBytes = 0;
 	for( int i = 0; i < NUM_FRAME_DATA; i++ )
 	{
-		AllocGeoBufferSet( frameData[i], VERTCACHE_VERTEX_MEMORY_PER_FRAME, VERTCACHE_INDEX_MEMORY_PER_FRAME, VERTCACHE_JOINT_MEMORY_PER_FRAME, BU_DYNAMIC, commandList );
+		if( !AllocGeoBufferSet( frameData[i], VERTCACHE_VERTEX_MEMORY_PER_FRAME, VERTCACHE_INDEX_MEMORY_PER_FRAME, VERTCACHE_JOINT_MEMORY_PER_FRAME, BU_DYNAMIC, commandList, failedKind, failedBytes ) )
+		{
+			Shutdown();
+			// the text stays under 80 characters with any size: the Windows error box shows no more (seen in the game run)
+			idLib::FatalError( "idVertexCache::Init: frame set %d: %s buffer of %lld bytes refused", i, failedKind, ( long long )failedBytes );
+		}
 	}
 #if 1
-	AllocGeoBufferSet( staticData, STATIC_VERTEX_MEMORY, STATIC_INDEX_MEMORY, 0, BU_STATIC, commandList );
+	if( !AllocGeoBufferSet( staticData, STATIC_VERTEX_MEMORY, STATIC_INDEX_MEMORY, 0, BU_STATIC, commandList, failedKind, failedBytes ) )
 #else
-	AllocGeoBufferSet( staticData, STATIC_VERTEX_MEMORY, STATIC_INDEX_MEMORY, 0, BU_DYNAMIC, commandList );
+	if( !AllocGeoBufferSet( staticData, STATIC_VERTEX_MEMORY, STATIC_INDEX_MEMORY, 0, BU_DYNAMIC, commandList, failedKind, failedBytes ) )
 #endif
+	{
+		Shutdown();
+		idLib::FatalError( "idVertexCache::Init: static set: %s buffer of %lld bytes refused", failedKind, ( long long )failedBytes );
+	}
+	//puncho end
 
 	//puncho start - static arena (P2b.1.8): split 0 until the first level load latches r_staticArenaSplit; generation 0
 	// everywhere, so no handle is valid before its segment's first free
@@ -559,7 +592,7 @@ vertCacheHandle_t idVertexCache::AllocStaticArena( const void* data, int bytes, 
 		// kept and printed at split 1 only, as before: split 0's use is not in it
 		set.high[ segment ] = Max( set.high[ segment ], StaticSegmentBytes( type, segment ) );
 	}
-	const int64 offset = ( int64 )unitOffset << STATIC_OFFSET_UNIT_BITS;	// bytes; the buffer objects take an int until R3.2
+	const int64 offset = ( int64 )unitOffset << STATIC_OFFSET_UNIT_BITS;	// bytes; Update takes an int64 offset since R3.2
 	//puncho end
 	if( type == CACHE_INDEX )
 	{
@@ -848,7 +881,7 @@ idVertexCache::GetVertexBuffer
 bool idVertexCache::GetVertexBuffer( vertCacheHandle_t handle, idVertexBuffer* vb )
 {
 	const int isStatic = handle & VERTCACHE_STATIC;
-	//puncho - static index (2R R3.1): the decoders; a static offset comes back in bytes (Reference takes an int until R3.2)
+	//puncho - static index (2R R3.1): the decoders; a static offset comes back in bytes (Reference takes an int64 since R3.2)
 	const int size = CacheSizeBytes( handle );
 	const int64 offset = CacheOffsetBytes( handle );
 	const uint64 frameNum = ( int )( handle >> VERTCACHE_FRAME_SHIFT ) & VERTCACHE_FRAME_MASK;
@@ -875,7 +908,7 @@ idVertexCache::GetIndexBuffer
 bool idVertexCache::GetIndexBuffer( vertCacheHandle_t handle, idIndexBuffer* ib )
 {
 	const int isStatic = handle & VERTCACHE_STATIC;
-	//puncho - static index (2R R3.1): the decoders; a static offset comes back in bytes (Reference takes an int until R3.2)
+	//puncho - static index (2R R3.1): the decoders; a static offset comes back in bytes (Reference takes an int64 since R3.2)
 	const int size = CacheSizeBytes( handle );
 	const int64 offset = CacheOffsetBytes( handle );
 	const uint64 frameNum = ( int )( handle >> VERTCACHE_FRAME_SHIFT ) & VERTCACHE_FRAME_MASK;
