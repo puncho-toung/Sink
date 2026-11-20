@@ -47,10 +47,31 @@ static idCVar r_volumetricFogAnisotropy( "r_volumetricFogAnisotropy", "0.4", CVA
 static idCVar r_volumetricFogCull( "r_volumetricFogCull", "2", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "how the fog's inject finds the lights of a froxel: 2 = the light lists' tile bits and Z-bins, 1 = every light record behind one sphere test per thread group, 0 = every light record ( the reference ); the three give the same fog, except that 2 leaves a light out behind a wall, where the portals clip the light's scissor", 0, 2 );
 static idCVar r_volumetricFogHistoryWeight( "r_volumetricFogHistoryWeight", "0.9", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the weight of last frame's fog in this frame's ( the history, reprojected and with each light's change added ); 0 = no history", 0.0f, 0.98f );
 static idCVar r_volumetricFogHistoryClipWeight( "r_volumetricFogHistoryClipWeight", "0.4", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the history's weight where it is clipped: near a light that moved, where a caster of a light changed, near a light that is new or whose colour changed much; at most the history's weight", 0.0f, 0.98f );
-static idCVar r_volumetricFogJitter( "r_volumetricFogJitter", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "the inject's sample moves inside the froxel from frame to frame, and the history averages the frames; 0 = the froxel's centre" );
+static idCVar r_volumetricFogJitter( "r_volumetricFogJitter", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "the inject's sample of the lights moves inside the froxel from frame to frame, and the history averages the frames ( the media are taken at the centre ); 0 = the froxel's centre" );
 static idCVar r_volumetricFogSkip( "r_volumetricFogSkip", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "the inject skips the froxels behind the farthest surface of their column and its neighbours: no pixel reads them; 0 = it lights every froxel ( the furnace always does )" );
 static idCVar r_volumetricFogShadows( "r_volumetricFogShadows", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "the fog's inject looks each light's shadow up in the shadow atlas, one comparison per froxel; 0 = no lookup: a light whose row has a place is taken unshadowed, times its fade" );
 static idCVar r_volumetricFogDebug( "r_volumetricFogDebug", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "fog debug view in place of the picture: 1 = the transmittance to each pixel as grey, 2 = the slices as bands over the grid of columns", 0, 2 );
+// V4: the media ( the base of track M ). The map's worldspawn sets the height fog's cvars from its keys at every spawn and
+// restore ( d3xp/WorldSpawn.cpp ), each to its default where the key is absent
+static idCVar r_volumetricFogMedia( "r_volumetricFogMedia", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "the fog's media pass and its medium per froxel ( V4 ): the height fog, the dust, the fog lights and the test box; 0 = the global fog alone, as V3 drew it" );
+static idCVar r_volumetricFogHeightDistance( "r_volumetricFogHeightDistance", "0", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the height fog's distance D in units at full density ( sigma_t = 5.54 / D: 1/255 of the light is left after D ); 0 = no height fog. The worldspawn's key fog_height_distance", 0.0f, 1000000.0f );
+static idCVar r_volumetricFogHeight( "r_volumetricFogHeight", "0", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the height fog's base, a height of the map: the fog is full below it and thins above it. The worldspawn's key fog_height" );
+static idCVar r_volumetricFogHeightFalloff( "r_volumetricFogHeightFalloff", "256", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the height in units over which the height fog thins to 1 / e above its base. The worldspawn's key fog_height_falloff", 1.0f, 1000000.0f );
+static idCVar r_volumetricFogHeightAlbedo( "r_volumetricFogHeightAlbedo", "0.9", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the height fog's scattering albedo. The worldspawn's key fog_height_albedo", 0.0f, 1.0f );
+static idCVar r_volumetricFogDustDistance( "r_volumetricFogDustDistance", "0", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the dust's distance D in units where its noise is full ( sigma_t = 5.54 / D ); 0 = no dust. The worldspawn's key fog_dust_distance", 0.0f, 1000000.0f );
+static idCVar r_volumetricFogDustAlbedo( "r_volumetricFogDustAlbedo", "0.9", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the dust's scattering albedo. The worldspawn's key fog_dust_albedo", 0.0f, 1.0f );
+static idCVar r_volumetricFogDustScale( "r_volumetricFogDustScale", "256", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the size in units of the dust's largest lumps: its noise's base cell, rounded so that a whole number of cells spans 1024 units ( the dust is fixed to the map ). The worldspawn's key fog_dust_scale", 8.0f, 1024.0f );
+static idCVar r_volumetricFogDustWind( "r_volumetricFogDustWind", "16 0 0", CVAR_RENDERER | CVAR_NEW, "the dust's drift in map units per second of game time, \"x y z\". The worldspawn's key fog_dust_wind" );
+// V4e: what the dust costs scales with its noise's kind and octaves, on every froxel the inject fills. Measured at 1920 x 1080
+// on an AMD Radeon 8060S ( RUN v4-2026-11-20, timing v4t2 ): fBm 4 octaves about 400 us of GPU, with the erode about 700,
+// Worley 4 octaves about 1,300, Perlin-Worley with the erode about 2,000. The defaults are fBm, 3 octaves, no erode
+static idCVar r_volumetricFogDustNoise( "r_volumetricFogDustNoise", "1", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "the dust's noise: 1 = fBm ( soft lumps; the cheapest ), 2 = Worley ( round billows; about three times fBm's cost ), 3 = Perlin-Worley ( puffy lumps with soft insides; about four times ). The worldspawn's key fog_dust_noise", 1, 3 );
+static idCVar r_volumetricFogDustOctaves( "r_volumetricFogDustOctaves", "3", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "the octaves of the dust's noise, from its size down by halves; each costs as much as the first ( far froxels run fewer ). The worldspawn's key fog_dust_octaves", 1, 8 );
+static idCVar r_volumetricFogDustErode( "r_volumetricFogDustErode", "0", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "how much a finer fBm at a quarter of the dust's size eats its thin parts ( noise slot 2's erode, at most 3 octaves ); 0 = none. The worldspawn's key fog_dust_erode", 0.0f, 1.0f );
+static idCVar r_volumetricFogDustWarp( "r_volumetricFogDustWarp", "0", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "how far in units a curl field bends the dust's noise ( noise slot 1's warp, the noise in slot 2 and no erode ); 0 = none. The worldspawn's key fog_dust_warp", 0.0f, 1024.0f );
+static idCVar r_volumetricFogLights( "r_volumetricFogLights", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "Doom 3 fog lights as media in the froxel fog ( V4, D29 ); the fog pass still draws them until V5: compare with r_skipFogLights 1" );
+static idCVar r_volumetricFogLightRate( "r_volumetricFogLightRate", "2.3", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "a fog light's sigma_t times its fog distance D in the froxel fog: 2.3 fits the picture the fog pass draws ( the sRGB decode of its table ) over the screen and is its centre column's minimax ( 2.72 the centre's least squares ), 4.632 is its table's rate, 5.54 leaves 1/255 at D ( D21 )", 0.1f, 20.0f );
+static idCVar r_volumetricFogTestBox( "r_volumetricFogTestBox", "", CVAR_RENDERER | CVAR_NEW, "test: a box of fog, \"x y z  hx hy hz  D  vx vy vz\" in map units: its centre, its half extents, its distance D ( albedo 1 ) and a velocity per second of game time ( optional ); empty = none" );
 
 // coefficients are stored times this, which keeps thin, dim fog out of the half floats' subnormal range
 static const float FROXEL_STORE_SCALE	= 1024.0f;
@@ -63,7 +84,14 @@ static const float FROXEL_OPACITY_AT_D	= 4.632f;
 // 47,432 ), and the stored in-scatter is cut at the bound
 static const float FROXEL_STORE_MAX		= 60000.0f;
 static const float FROXEL_MIN_FOG_DISTANCE	= 0.1f;
-// a bound on the froxels of one volume ( 8 bytes each: 32 MiB a volume; V3 has five such volumes ); a grid past it gets
+// V4: sigma_t * D of the media of the media pass ( the height fog, the dust, the test box; track M's volumes ): 1/255 of the
+// light is left after D, the fog lights' rule ( D21, section 6 row 89 ). The global fog keeps V1's FROXEL_OPACITY_AT_D
+static const float FOG_MEDIA_OPACITY_AT_D	= 5.54f;
+// V4: a fog light's density rises from 0 at its fog plane to full this many units below it: the fog pass's enter ramp,
+// 8 texels of its enter image ( RAMP_RANGE ) at FOG_SCALE 0.001 and FOG_ENTER_SIZE 64 texels a unit of the scale
+static const float FROXEL_FOGLIGHT_RAMP	= 125.0f;
+// a bound on the froxels of one volume ( 8 bytes each: 32 MiB a volume; V3 has five such volumes, V4 six and two marks of
+// 1 byte a froxel ); a grid past it gets
 // wider columns
 static const int FROXEL_MAX_CELLS		= 4 << 20;
 // the probe's columns: the view's centre, its first column and row ( a corner ), the middle of its left edge
@@ -100,12 +128,86 @@ CONSOLE_COMMAND( fogProbe, "prints three columns of the integrated fog volume be
 	}
 }
 
-// Whether a froxel can hold a medium at all: the global fog has a distance, or a debug view wants the pass. In clear
-// air the pass does nothing in a view: no sky mask, no kernels, no apply. A medium of another kind than the global
-// fog must be asked here too
-static bool FroxelHasMedium()
+// V4: the test box ( r_volumetricFogTestBox ): its centre and velocity in map units, its half extents and its distance.
+// False where the cvar is empty or does not hold seven numbers, or a size or the distance is not above 0
+static bool FroxelTestBox( idVec3& origin, idVec3& halfSize, float& distance, idVec3& velocity )
 {
-	return r_volumetricFogDistance.GetFloat() > 0.0f || r_volumetricFogDebug.GetInteger() != 0;
+	const char* parms = r_volumetricFogTestBox.GetString();
+	if( parms[0] == '\0' )
+	{
+		return false;
+	}
+	velocity.Zero();
+	const int n = sscanf( parms, "%f %f %f %f %f %f %f %f %f %f", &origin.x, &origin.y, &origin.z, &halfSize.x, &halfSize.y, &halfSize.z, &distance,
+						 &velocity.x, &velocity.y, &velocity.z );
+	if( n < 10 )
+	{
+		velocity.Zero();
+	}
+	return n >= 7 && halfSize.x > 0.0f && halfSize.y > 0.0f && halfSize.z > 0.0f && distance > 0.0f;
+}
+
+// V4: whether the media pass has a medium besides the global fog: the height fog, the dust or the test box, on V4's path
+// ( r_volumetricFogMedia ); and whether one of them scatters light, so that the fog reads the view's records also where
+// the global fog scatters nothing
+static bool FroxelHasMediaPass()
+{
+	idVec3 origin, halfSize, velocity;
+	float distance;
+	return r_volumetricFogMedia.GetBool() && ( r_volumetricFogHeightDistance.GetFloat() > 0.0f || r_volumetricFogDustDistance.GetFloat() > 0.0f
+			|| FroxelTestBox( origin, halfSize, distance, velocity ) );
+}
+
+static bool FroxelMediaScatter()
+{
+	// the test box is asked only whether it is set: this runs on the game thread for each changed entity ( review O2-6 )
+	return r_volumetricFogMedia.GetBool() && ( ( r_volumetricFogHeightDistance.GetFloat() > 0.0f && r_volumetricFogHeightAlbedo.GetFloat() > 0.0f )
+			|| ( r_volumetricFogDustDistance.GetFloat() > 0.0f && r_volumetricFogDustAlbedo.GetFloat() > 0.0f ) || r_volumetricFogTestBox.GetString()[0] != '\0' );
+}
+
+/*
+========================
+R_VolumetricFogTakesFogLights
+
+V4: whether the fog's inject takes the fog lights as media ( r_volumetricFogLights, on V4's path ). The fog pass still
+draws them ( D29 ) until V5 swaps it off for them.
+========================
+*/
+bool R_VolumetricFogTakesFogLights()
+{
+	return r_volumetricFogMedia.GetBool() && r_volumetricFogLights.GetBool();
+}
+
+// V4: whether the global fog or a medium of the media pass scatters light ( the frontend's question, R_VolumetricFogMarkLights )
+bool R_VolumetricFogMediaScatter()
+{
+	return ( r_volumetricFogDistance.GetFloat() > 0.0f && r_volumetricFogAlbedo.GetFloat() > 0.0f ) || FroxelMediaScatter();
+}
+
+// V4: whether the view holds a fog light the inject takes ( record 0, the sun's slot, is never one: review O1-8 )
+static bool FroxelViewHasFogLight( const viewDef_t* viewDef )
+{
+	if( !R_VolumetricFogTakesFogLights() || viewDef->recordLights == NULL || viewDef->lightListView == NULL )
+	{
+		return false;
+	}
+	const int numRecords = Min( viewDef->numRecordLights, MAX_RECORD_LIGHTS );
+	for( int r = 1; r < numRecords; r++ )
+	{
+		if( R_FogCanTakeFogLight( viewDef->recordLights[r] ) )
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+// Whether a froxel can hold a medium at all: the global fog has a distance, a medium of the media pass exists or the view
+// holds a fog light the inject takes ( V4 ), or a debug view wants the pass. In clear air the pass does nothing in a view:
+// no sky mask, no kernels, no apply
+static bool FroxelHasMedium( const viewDef_t* viewDef )
+{
+	return r_volumetricFogDistance.GetFloat() > 0.0f || FroxelHasMediaPass() || FroxelViewHasFogLight( viewDef ) || r_volumetricFogDebug.GetInteger() != 0;
 }
 
 /*
@@ -113,7 +215,7 @@ static bool FroxelHasMedium()
 R_VolumetricFogRecordReach
 
 How far along the view axis the fog's inject reads a view's light records: the fog's far end; 0 where it reads
-none, because the fog is off, the air is clear or scatters nothing ( an albedo of 0 ), or the furnace is on ( the
+none, because the fog is off, the air is clear or scatters nothing ( an albedo of 0; V4: in every medium ), or the furnace is on ( the
 uniform test medium, lit by nothing else ). The frontend asks before it builds a view's records for the fog alone and before it keeps a light alive for
 the fog ( R_NumberRecordLights ), so both sides go by one rule. They read the cvars a frame apart: the pass copes
 with a view that has no records, and records that nobody reads cost one frame's work.
@@ -121,8 +223,8 @@ with a view that has no records, and records that nobody reads cost one frame's 
 */
 float R_VolumetricFogRecordReach()
 {
-	if( !r_volumetricFog.GetBool() || r_volumetricFogDistance.GetFloat() <= 0.0f || r_volumetricFogAlbedo.GetFloat() <= 0.0f
-			|| r_volumetricFogFurnace.GetFloat() > 0.0f )
+	const bool globalScatters = r_volumetricFogDistance.GetFloat() > 0.0f && r_volumetricFogAlbedo.GetFloat() > 0.0f;
+	if( !r_volumetricFog.GetBool() || !( globalScatters || FroxelMediaScatter() || R_VolumetricFogTakesFogLights() ) || r_volumetricFogFurnace.GetFloat() > 0.0f )
 	{
 		return 0.0f;
 	}
@@ -139,6 +241,8 @@ VolumetricFogPass::VolumetricFogPass( nvrhi::IDevice* device, CommonRenderPasses
 	, m_ViewGridWidth( 0 )
 	, m_ViewGridHeight( 0 )
 	, m_SliceStep( 0.0f )
+	, m_NumMedia( 0 )
+	, m_PrevBoxValid( false )
 	, m_ResolvedIndex( 0 )
 	, m_PrevNumRecords( 0 )
 	, m_HistoryValid( false )
@@ -163,6 +267,12 @@ VolumetricFogPass::VolumetricFogPass( nvrhi::IDevice* device, CommonRenderPasses
 	, m_ProbeTakeable( 0 )
 	, m_ProbeCull( 0 )
 	, m_ProbeSigmaS( 0.0f )
+	, m_ProbeMedia( false )
+	, m_ProbeMediaClosed( false )
+	, m_ProbeFurnace( 0.0f )
+	, m_ProbeNumMedia( 0 )
+	, m_ProbeSkip( false )
+	, m_ProbeHistory( false )
 {
 	memset( m_InjectSetKey, 0, sizeof( m_InjectSetKey ) );
 	memset( m_HistoryGrid, 0, sizeof( m_HistoryGrid ) );
@@ -193,6 +303,26 @@ VolumetricFogPass::VolumetricFogPass( nvrhi::IDevice* device, CommonRenderPasses
 	casterDesc.keepInitialState = true;
 	m_CasterBounds = device->createBuffer( casterDesc );
 
+	// V4: the view's media and the boxes where a medium moved, the pass's own, written in every fog view that has media
+	nvrhi::BufferDesc mediaDesc;
+	mediaDesc.byteSize = FOG_MEDIA_MAX * sizeof( fogMedium_t );
+	mediaDesc.structStride = sizeof( fogMedium_t );
+	mediaDesc.debugName = "Fog/MediaList";
+	mediaDesc.initialState = nvrhi::ResourceStates::ShaderResource;
+	mediaDesc.keepInitialState = true;
+	m_MediaList = device->createBuffer( mediaDesc );
+	nvrhi::BufferDesc mediaMovedDesc;
+	mediaMovedDesc.byteSize = 4 * FOG_MEDIA_MAX * sizeof( idVec4 );
+	mediaMovedDesc.structStride = sizeof( idVec4 );
+	mediaMovedDesc.debugName = "Fog/MediaMoved";
+	mediaMovedDesc.initialState = nvrhi::ResourceStates::ShaderResource;
+	mediaMovedDesc.keepInitialState = true;
+	m_MediaMoved = device->createBuffer( mediaMovedDesc );
+	memset( m_MediaCopy, 0, sizeof( m_MediaCopy ) );
+	memset( m_ProbeMedium, 0, sizeof( m_ProbeMedium ) );
+	memset( m_ProbeMediaList, 0, sizeof( m_ProbeMediaList ) );
+	memset( m_ProbeSample, 0, sizeof( m_ProbeSample ) );
+
 	nvrhi::BufferDesc constantBufferDesc;
 	constantBufferDesc.byteSize = sizeof( froxelConstants_t );
 	constantBufferDesc.debugName = "FroxelConstants";
@@ -205,6 +335,7 @@ VolumetricFogPass::VolumetricFogPass( nvrhi::IDevice* device, CommonRenderPasses
 	InitInject();
 	InitResolve();
 	InitColumns();
+	InitMedia();
 	InitKernel( m_Integrate, "builtin/volumetrics/froxel_integrate", true );
 
 	const idList<shaderMacro_t> noMacros;
@@ -302,7 +433,9 @@ void VolumetricFogPass::InitResolve()
 		nvrhi::BindingLayoutItem::Texture_SRV( 1 ),
 		nvrhi::BindingLayoutItem::Texture_SRV( 2 ),
 		nvrhi::BindingLayoutItem::Sampler( 0 ),
-		nvrhi::BindingLayoutItem::Texture_UAV( 0 )
+		nvrhi::BindingLayoutItem::Texture_UAV( 0 ),
+		nvrhi::BindingLayoutItem::Texture_SRV( 3 ),		// V4: last frame's marks
+		nvrhi::BindingLayoutItem::Texture_UAV( 1 )		// V4: this frame's
 	};
 	m_Resolve.layout = m_Device->createBindingLayout( layoutDesc );
 
@@ -345,6 +478,34 @@ void VolumetricFogPass::InitColumns()
 
 /*
 ========================
+VolumetricFogPass::InitMedia
+
+The media pass ( V4 ): the media list at t0 and the columns' farthest surfaces at t1 into the media volume at u0, with
+the constants at b1. Its set names the pass's own objects alone and is made with the volumes ( CheckVolumes ).
+========================
+*/
+void VolumetricFogPass::InitMedia()
+{
+	const idList<shaderMacro_t> noMacros;
+	m_MediaKernel.shader = renderProgManager.GetShader( renderProgManager.FindShader( "builtin/volumetrics/froxel_media", SHADER_STAGE_COMPUTE, "", noMacros, true, LAYOUT_DRAW_VERT ) );
+	nvrhi::BindingLayoutDesc layoutDesc;
+	layoutDesc.visibility = nvrhi::ShaderType::Compute;
+	layoutDesc.bindings =
+	{
+		nvrhi::BindingLayoutItem::VolatileConstantBuffer( 1 ),
+		nvrhi::BindingLayoutItem::StructuredBuffer_SRV( 0 ),
+		nvrhi::BindingLayoutItem::Texture_SRV( 1 ),
+		nvrhi::BindingLayoutItem::Texture_UAV( 0 )
+	};
+	m_MediaKernel.layout = m_Device->createBindingLayout( layoutDesc );
+	nvrhi::ComputePipelineDesc pipelineDesc;
+	pipelineDesc.bindingLayouts = { m_MediaKernel.layout };
+	pipelineDesc.CS = m_MediaKernel.shader;
+	m_MediaKernel.pipeline = m_Device->createComputePipeline( pipelineDesc );
+}
+
+/*
+========================
 VolumetricFogPass::InitInject
 
 The inject kernel ( V2 ): its shader, its layout and its pipeline. Besides the constants at b1 and the injected
@@ -379,7 +540,9 @@ void VolumetricFogPass::InitInject()
 		nvrhi::BindingLayoutItem::StructuredBuffer_SRV( 9 ),
 		nvrhi::BindingLayoutItem::StructuredBuffer_SRV( 10 ),
 		nvrhi::BindingLayoutItem::Texture_SRV( 11 ),
-		nvrhi::BindingLayoutItem::StructuredBuffer_SRV( 12 )
+		nvrhi::BindingLayoutItem::StructuredBuffer_SRV( 12 ),
+		nvrhi::BindingLayoutItem::Texture_SRV( 13 ),			// V4: the media volume
+		nvrhi::BindingLayoutItem::StructuredBuffer_SRV( 14 )	// V4: the boxes where a medium moved
 	};
 	m_Inject.layout = m_Device->createBindingLayout( layoutDesc );
 
@@ -445,7 +608,9 @@ bool VolumetricFogPass::CheckInjectSet()
 		nvrhi::BindingSetItem::StructuredBuffer_SRV( 9, backEnd.vanishedPrevBuffer ),
 		nvrhi::BindingSetItem::StructuredBuffer_SRV( 10, m_MovedRecords ),
 		nvrhi::BindingSetItem::Texture_SRV( 11, m_Columns ),
-		nvrhi::BindingSetItem::StructuredBuffer_SRV( 12, m_CasterBounds )
+		nvrhi::BindingSetItem::StructuredBuffer_SRV( 12, m_CasterBounds ),
+		nvrhi::BindingSetItem::Texture_SRV( 13, m_Media ),
+		nvrhi::BindingSetItem::StructuredBuffer_SRV( 14, m_MediaMoved )
 	};
 	m_Inject.bindingSet = m_Device->createBindingSet( injectDesc, m_Inject.layout );
 	memcpy( m_InjectSetKey, key, sizeof( key ) );
@@ -498,6 +663,16 @@ bool VolumetricFogPass::CheckVolumes( int gridWidth, int gridHeight, int gridSli
 	m_State = m_Device->createTexture( desc );
 	desc.debugName = "Fog/Integrated";
 	m_Integrated = m_Device->createTexture( desc );
+	// V4: the media pass's sum ( 8 bytes a froxel, like the others ), and the skip's two marks, one byte a froxel each ( row 93 ):
+	// R8_UNORM's linear filtering is required on every device, R32_FLOAT's is not ( review O2-9 ), and the validation layer
+	// accepts the storage ( RUN v4-2026-11-20, the break x_v4r8; consultant CN1-1 had read the feature table wrong )
+	desc.debugName = "Fog/Media";
+	m_Media = m_Device->createTexture( desc );
+	desc.format = nvrhi::Format::R8_UNORM;
+	desc.debugName = "Fog/Mark0";
+	m_Mark[0] = m_Device->createTexture( desc );
+	desc.debugName = "Fog/Mark1";
+	m_Mark[1] = m_Device->createTexture( desc );
 	m_HistoryValid = false;					// the new volumes hold no fog yet
 	// V3: the columns' farthest surfaces, a texel per column
 	nvrhi::TextureDesc columnsDesc;
@@ -510,7 +685,7 @@ bool VolumetricFogPass::CheckVolumes( int gridWidth, int gridHeight, int gridSli
 	columnsDesc.keepInitialState = true;
 	columnsDesc.debugName = "Fog/Columns";
 	m_Columns = m_Device->createTexture( columnsDesc );
-	if( !m_Injected || !m_Resolved[0] || !m_Resolved[1] || !m_State || !m_Integrated || !m_Columns )
+	if( !m_Injected || !m_Resolved[0] || !m_Resolved[1] || !m_State || !m_Integrated || !m_Columns || !m_Media || !m_Mark[0] || !m_Mark[1] )
 	{
 		// The device could not make a volume ( out of memory ): no fog. The kernels' sets let the old volumes go, and
 		// the grid is kept, so that it is not tried again in every view
@@ -520,6 +695,10 @@ bool VolumetricFogPass::CheckVolumes( int gridWidth, int gridHeight, int gridSli
 		m_State = nullptr;
 		m_Integrated = nullptr;
 		m_Columns = nullptr;
+		m_Media = nullptr;
+		m_Mark[0] = nullptr;
+		m_Mark[1] = nullptr;
+		m_MediaKernel.bindingSet = nullptr;
 		m_Inject.bindingSet = nullptr;
 		for( int i = 0; i < 2; i++ )
 		{
@@ -547,7 +726,9 @@ bool VolumetricFogPass::CheckVolumes( int gridWidth, int gridHeight, int gridSli
 			nvrhi::BindingSetItem::Texture_SRV( 1, m_State ),
 			nvrhi::BindingSetItem::Texture_SRV( 2, m_Resolved[ 1 - i ] ),
 			nvrhi::BindingSetItem::Sampler( 0, commonRenderPasses->m_LinearClampSampler ),
-			nvrhi::BindingSetItem::Texture_UAV( 0, m_Resolved[ i ] )
+			nvrhi::BindingSetItem::Texture_UAV( 0, m_Resolved[ i ] ),
+			nvrhi::BindingSetItem::Texture_SRV( 3, m_Mark[ 1 - i ] ),
+			nvrhi::BindingSetItem::Texture_UAV( 1, m_Mark[ i ] )
 		};
 		m_ResolveSets[i] = m_Device->createBindingSet( resolveDesc, m_Resolve.layout );
 
@@ -561,6 +742,16 @@ bool VolumetricFogPass::CheckVolumes( int gridWidth, int gridHeight, int gridSli
 		m_IntegrateSets[i] = m_Device->createBindingSet( integrateDesc, m_Integrate.layout );
 	}
 
+	// V4: the media pass's set: the media list, the columns and the media volume, all the pass's own
+	nvrhi::BindingSetDesc mediaSetDesc;
+	mediaSetDesc.bindings =
+	{
+		nvrhi::BindingSetItem::ConstantBuffer( 1, m_ConstantBuffer ),
+		nvrhi::BindingSetItem::StructuredBuffer_SRV( 0, m_MediaList ),
+		nvrhi::BindingSetItem::Texture_SRV( 1, m_Columns ),
+		nvrhi::BindingSetItem::Texture_UAV( 0, m_Media )
+	};
+	m_MediaKernel.bindingSet = m_Device->createBindingSet( mediaSetDesc, m_MediaKernel.layout );
 	m_ProbeWait = 0;						// a probe under way was of the old volume
 
 	m_GridWidth = gridWidth;
@@ -586,7 +777,7 @@ void VolumetricFogPass::DrawSkyMask( nvrhi::ICommandList* commandList, const vie
 	m_SkyMask = NULL;
 	m_SkyMaskView = NULL;
 
-	if( !FroxelHasMedium() )
+	if( !FroxelHasMedium( viewDef ) )
 	{
 		return;					// clear air: the pass does nothing in this view
 	}
@@ -704,12 +895,12 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 	}
 
 	// clear air: no medium in any froxel, so the kernels and the apply have nothing to do and the view stays unfogged
-	if( !FroxelHasMedium() )
+	if( !FroxelHasMedium( viewDef ) )
 	{
 		if( fogProbeRequested )
 		{
 			fogProbeRequested = false;
-			common->Printf( "fogprobe: the air is clear ( r_volumetricFogDistance 0 ), there is nothing to read\n" );
+			common->Printf( "fogprobe: the air is clear ( no global fog, no medium, no fog light taken ), there is nothing to read\n" );
 		}
 		return;
 	}
@@ -735,7 +926,13 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 	// debug view in clear air ) reads none
 	const bool furnace = r_volumetricFogFurnace.GetFloat() > 0.0f;
 	const lightListView_t* llv = viewDef->lightListView;
-	const int numRecords = ( !furnace && sigmaS > 0.0f && llv != NULL && viewDef->recordLights != NULL ) ? viewDef->numRecordLights : 0;
+	// V4: the fog lights are taken as media on V4's path ( r_volumetricFogLights ), never under the furnace
+	const bool takeFogLights = !furnace && R_VolumetricFogTakesFogLights();
+	// V4: the lights only where something scatters them ( review O1-2 ): the global fog, a medium of the media pass, a fog light
+	// with an albedo above 0
+	const bool takeLights = sigmaS > 0.0f || FroxelMediaScatter() || ( takeFogLights && viewDef->recordLights != NULL
+							  && R_FogLightsScatter( viewDef->recordLights, Min( viewDef->numRecordLights, MAX_RECORD_LIGHTS ) ) );
+	const int numRecords = ( !furnace && ( sigmaS > 0.0f || FroxelMediaScatter() || takeFogLights ) && llv != NULL && viewDef->recordLights != NULL ) ? viewDef->numRecordLights : 0;
 	const int cullMode = idMath::ClampInt( 0, 2, r_volumetricFogCull.GetInteger() );
 	const float anisotropy = idMath::ClampFloat( -0.9f, 0.9f, r_volumetricFogAnisotropy.GetFloat() );
 
@@ -819,7 +1016,8 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 		constants.tileParms.Set( ( float )t.parms.tileSize, ( float )t.tilesX, ( float )t.tilesY, ( float )t.wordsPerTile );
 		constants.binParms.Set( t.binScale, ( float )t.parms.numBins, ( float )columnPixels, t.parms.zNear );
 		// The take mask: a bit per record whose light the fog can take at all ( R_FogCanTakeRecord,
-		// renderer/VolumetricFog.h: not a fog light, not one switched off for the fog or of another spectrum, and
+		// renderer/VolumetricFog.h: not a fog light ( V4: a fog light where the inject takes them, R_FogCanTakeFogLight ),
+		// not one switched off for the fog or of another spectrum, and
 		// ambient, flagged, or with shadow rows ). The kernel reads no record without a bit. Whether a light WITH
 		// rows is taken is the row's to say, per sample ( FroxelRecordLight )
 		compile_time_assert( sizeof( constants.takeMask ) * 8 >= MAX_RECORD_LIGHTS );
@@ -827,7 +1025,9 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 		for( int r = 0; r < maskRecords; r++ )
 		{
 			const recordLight_t& rec = viewDef->recordLights[r];
-			if( R_FogCanTakeRecord( rec, rec.shadowRow >= 0 ) )
+			// V4: a fog light in the sun's slot ( record 0: the world's sun is its largest parallel light, a fog light too ) gets
+			// no bit: the inject's sun path would add it as a light ( review QR3-1 )
+			if( ( takeLights && R_FogCanTakeRecord( rec, rec.shadowRow >= 0 ) ) || ( takeFogLights && r > 0 && R_FogCanTakeFogLight( rec ) ) )
 			{
 				constants.takeMask[r >> 5] |= 1u << ( r & 31 );
 				numTakeable++;
@@ -859,7 +1059,11 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 	// the history's view's: a main view drawn without the fog's records ( clear air, r_volumetricFogDistance 0, with the
 	// forward lists off ) replaces it and leaves the frame stamps as they were
 	const float historyWeight = idMath::ClampFloat( 0.0f, 0.98f, r_volumetricFogHistoryWeight.GetFloat() );
-	const int historyGrid[7] = { gridWidth, gridHeight, columnPixels, gridSlices, furnace ? 1 : 0, viewWidth, viewHeight };
+	// V4: a flip of r_volumetricFogMedia cuts the history too: the two paths mark the skipped froxels in two ways
+	// ( review O2-2: only where the view has a medium besides the global fog, or takes fog lights: a map with the global fog
+	// alone runs V3's path and pays nothing for the marks; both terms are the map's or the cvars', so views do not flip )
+	const bool mediaPath = r_volumetricFogMedia.GetBool() && ( FroxelHasMediaPass() || takeFogLights );
+	const int historyGrid[8] = { gridWidth, gridHeight, columnPixels, gridSlices, furnace ? 1 : 0, viewWidth, viewHeight, mediaPath ? 1 : 0 };
 	const int historyEye = ( viewDef->renderView.viewEyeBuffer == 1 ) ? 1 : 0;
 	const bool historyValid = m_HistoryValid && historyWeight > 0.0f && !backEnd.viewHistoryCut && llv != NULL && llv->prevFrame != 0
 							  && llv->prevFrame == m_HistoryFrame && memcmp( historyGrid, m_HistoryGrid, sizeof( historyGrid ) ) == 0 && m_SliceStep == m_HistorySliceStep
@@ -954,6 +1158,14 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 	const bool skip = r_volumetricFogSkip.GetBool() && !furnace && columnsDepth != NULL;
 	constants.skipParms.Set( skip ? 1.0f : 0.0f, ( float )columnPixels, ( float )viewWidth, ( float )viewHeight );
 	constants.pixelParms.Set( viewDef->projectionMatrix[3 * 4 + 2], viewDef->projectionMatrix[2 * 4 + 2], ( float )viewDef->viewport.x1, ( float )viewDef->viewport.y1 );
+	// V4: the media. On V4's path the view's media besides the global fog go into the media list, and the media pass sums
+	// them with the global fog into the media volume, which the inject reads; where the view has none the pass is not
+	// issued and the inject reads the constant as V3 did. The resolve takes the history's medium per froxel on V4's path
+	// whatever the view holds
+	int numMovedBoxes = 0;
+	m_NumMedia = mediaPath ? BuildMedia( commandList, viewDef, numMovedBoxes ) : 0;
+	constants.mediaParms.Set( ( m_NumMedia > 0 ) ? 1.0f : 0.0f, furnace ? r_volumetricFogFurnace.GetFloat() : 0.0f, mediaPath ? 1.0f : 0.0f, ( float )m_NumMedia );
+	constants.mediaParms2.Set( ( float )numMovedBoxes, r_volumetricFogLightRate.GetFloat() * FROXEL_STORE_SCALE, 1.0f / FROXEL_FOGLIGHT_RAMP, takeFogLights ? 1.0f : 0.0f );
 	commandList->writeBuffer( m_ConstantBuffer, &constants, sizeof( constants ) );
 
 	const int groupsX = ( fillWidth + 7 ) / 8;
@@ -975,6 +1187,15 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 		state.bindings = { backEnd.bindingCache.GetOrCreateBindingSet( columnsDesc, m_ColumnsKernel.layout ) };
 		commandList->setComputeState( state );
 		commandList->dispatch( fillWidth, fillHeight, 1 );
+	}
+	if( m_NumMedia > 0 )
+	{
+		// V4: the media pass, before the inject that reads its volume; the same froxels as the inject
+		OPTICK_GPU_EVENT( "Fog_Media" );
+		state.pipeline = m_MediaKernel.pipeline;
+		state.bindings = { m_MediaKernel.bindingSet };
+		commandList->setComputeState( state );
+		commandList->dispatch( groupsX, groupsY, gridSlices );
 	}
 	{
 		OPTICK_GPU_EVENT( "Fog_Inject" );
@@ -1037,11 +1258,344 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 		m_ProbeTakeable = numTakeable;
 		m_ProbeCull = cullMode;
 		m_ProbeSigmaS = sigmaS;
+		m_ProbeRenderOrigin = viewDef->renderOrigin;
+		m_ProbeHistory = historyValid;
+		ProbeMedia( constants );
 		ProbeCopy( commandList );
 		m_ProbeWait = FROXEL_PROBE_WAIT;
 	}
 
 	m_RenderedView = viewDef;
+}
+
+/*
+========================
+VolumetricFogPass::BuildMedia
+
+V4: the view's media besides the global fog, into the media list ( fogMedium_t, at most FOG_MEDIA_MAX ): the height fog,
+the dust and the test box, each with sigma_s and sigma_t at full density times the store scale. A place of the map goes into the
+view's relative frame on the CPU in double, so a medium fixed to the map keeps its place far from the origin. Also the
+boxes where a medium moved, came or went since the last fog view ( m_MediaMoved: its last and its present bounds, in this
+view's relative frame; an empty box where it had or has none ), where the inject clips the history in the froxels inside
+one of the two and not the other. Returns the media in the list.
+========================
+*/
+static void FroxelMediumClear( fogMedium_t& m, float sigmaT, float albedo )
+{
+	memset( &m, 0, sizeof( m ) );
+	const float t = sigmaT * FROXEL_STORE_SCALE;
+	const float s = t * idMath::ClampFloat( 0.0f, 1.0f, albedo );
+	m.sigma.Set( s, s, s, t );
+	// the identity frame: the medium's coordinates are the relative frame's
+	m.frame[0].Set( 1.0f, 0.0f, 0.0f, 0.0f );
+	m.frame[1].Set( 0.0f, 1.0f, 0.0f, 0.0f );
+	m.frame[2].Set( 0.0f, 0.0f, 1.0f, 0.0f );
+}
+
+int VolumetricFogPass::BuildMedia( nvrhi::ICommandList* commandList, const viewDef_t* viewDef, int& numMovedBoxes )
+{
+	numMovedBoxes = 0;
+	int count = 0;
+
+	// the height fog: full below its base, thinning to 1 / e every falloff above it
+	const float heightDistance = r_volumetricFogHeightDistance.GetFloat();
+	if( heightDistance > 0.0f )
+	{
+		fogMedium_t& m = m_MediaCopy[ count++ ];
+		FroxelMediumClear( m, FOG_MEDIA_OPACITY_AT_D / Max( heightDistance, FROXEL_MIN_FOG_DISTANCE ), r_volumetricFogHeightAlbedo.GetFloat() );
+		const double base = ( double )r_volumetricFogHeight.GetFloat() - viewDef->renderOrigin.z;
+		m.shape.Set( ( float )FOG_SHAPE_HEIGHT, ( float )base, 1.0f / Max( r_volumetricFogHeightFalloff.GetFloat(), 1.0f ), 0.0f );
+	}
+
+	// V4c: the dust, an unbounded medium of noise ( section 6 row 85 ) fixed to the map and drifting with its wind. Its noise reads
+	// the relative frame's point plus an offset: the render origin's place in the map less the wind's drift, wrapped to
+	// 1024 units in double. Every octave's cell divides 1024 and the lattice repeats every 1024 units, so the field is the
+	// map's own wherever the view is
+	const float dustDistance = r_volumetricFogDustDistance.GetFloat();
+	if( dustDistance > 0.0f )
+	{
+		fogMedium_t& m = m_MediaCopy[ count++ ];
+		FroxelMediumClear( m, FOG_MEDIA_OPACITY_AT_D / Max( dustDistance, FROXEL_MIN_FOG_DISTANCE ), r_volumetricFogDustAlbedo.GetFloat() );
+		// the base cell: 1024 over a whole number of cells, at least 8 units
+		const int cells = idMath::ClampInt( 1, 128, idMath::Ftoi( 1024.0f / Max( r_volumetricFogDustScale.GetFloat(), 8.0f ) + 0.5f ) );
+		const float frequency = ( float )cells / 1024.0f;
+		idVec3 wind( 0.0f, 0.0f, 0.0f );
+		sscanf( r_volumetricFogDustWind.GetString(), "%f %f %f", &wind.x, &wind.y, &wind.z );
+		const double seconds = viewDef->renderView.time[0] * 0.001;
+		const double origin[3] = { viewDef->renderOrigin.x, viewDef->renderOrigin.y, viewDef->renderOrigin.z };
+		float offset[3];
+		for( int i = 0; i < 3; i++ )
+		{
+			double wrapped = fmod( origin[i] - ( double )wind[i] * seconds, 1024.0 );
+			if( wrapped < 0.0 )
+			{
+				wrapped += 1024.0;
+			}
+			offset[i] = ( float )wrapped;
+		}
+		// the slots, three lanes each: type, op, octaves, metric; frequency, gain, strength, bias; jitter, tile. With a warp,
+		// slot 1 bends the points slot 2's noise reads; else slot 1 is the noise and slot 2 erodes it with a finer fBm
+		const float warp = r_volumetricFogDustWarp.GetFloat();
+		const float erode = r_volumetricFogDustErode.GetFloat();
+		const float noise = ( float )idMath::ClampInt( FOG_NOISE_FBM, FOG_NOISE_PERLINWORLEY, r_volumetricFogDustNoise.GetInteger() );
+		int slots = 0;
+		if( warp > 0.0f )
+		{
+			m.slot[0].Set( ( float )FOG_NOISE_CURL, ( float )FOG_OP_WARP, 2.0f, 0.0f );
+			m.slot[1].Set( frequency, 0.5f, warp, 0.0f );
+			m.slot[2].Set( 1.0f, ( float )cells, 0.0f, 0.0f );
+			slots = 1;
+		}
+		const int octaves = idMath::ClampInt( 1, 8, r_volumetricFogDustOctaves.GetInteger() );
+		m.slot[ 3 * slots ].Set( noise, ( float )FOG_OP_MULTIPLY, ( float )octaves, 0.0f );
+		m.slot[ 3 * slots + 1 ].Set( frequency, 0.5f, 1.0f, 0.0f );
+		m.slot[ 3 * slots + 2 ].Set( 1.0f, ( float )cells, 0.0f, 0.0f );
+		slots++;
+		if( slots < 2 && erode > 0.0f )
+		{
+			m.slot[3].Set( ( float )FOG_NOISE_FBM, ( float )FOG_OP_ERODE, ( float )Min( octaves, 3 ), 0.0f );
+			m.slot[4].Set( frequency * 4.0f, 0.5f, erode, 0.0f );
+			m.slot[5].Set( 1.0f, ( float )( cells * 4 ), 0.0f, 0.0f );
+			slots++;
+		}
+		m.noiseOffset.Set( offset[0], offset[1], offset[2], ( float )slots );
+	}
+
+	// the test box: world-aligned, its centre moving with the view's game time
+	idVec3 boxOrigin, boxHalf, boxVelocity;
+	float boxDistance = 0.0f;
+	const bool boxNow = FroxelTestBox( boxOrigin, boxHalf, boxDistance, boxVelocity );
+	idVec3d boxMins, boxMaxs;
+	if( boxNow )
+	{
+		const double seconds = viewDef->renderView.time[0] * 0.001;
+		const idVec3d centre( boxOrigin.x + boxVelocity.x * seconds, boxOrigin.y + boxVelocity.y * seconds, boxOrigin.z + boxVelocity.z * seconds );
+		boxMins = centre - idVec3d( boxHalf );
+		boxMaxs = centre + idVec3d( boxHalf );
+		const idVec3 relative = ( centre - viewDef->renderOrigin ).ToVec3();
+		fogMedium_t& m = m_MediaCopy[ count++ ];
+		FroxelMediumClear( m, FOG_MEDIA_OPACITY_AT_D / Max( boxDistance, FROXEL_MIN_FOG_DISTANCE ), 1.0f );
+		m.sphere.Set( relative.x, relative.y, relative.z, 1.0f / boxHalf.LengthSqr() );
+		m.shape.Set( ( float )FOG_SHAPE_BOX, boxHalf.x, boxHalf.y, boxHalf.z );
+		for( int i = 0; i < 3; i++ )
+		{
+			m.frame[i].w = -relative[i];
+		}
+	}
+
+	// the box moved, came or went: its last and its present bounds in this view's relative frame, an empty box ( min above
+	// max ) where it had or has none
+	const bool boxMoved = ( boxNow != m_PrevBoxValid ) || ( boxNow && ( !( boxMins - m_PrevBoxMins ).IsZero() || !( boxMaxs - m_PrevBoxMaxs ).IsZero() ) );
+	if( boxMoved )
+	{
+		idVec4 boxes[4];
+		for( int i = 0; i < 4; i++ )
+		{
+			const float side = ( i & 1 ) ? -idMath::INFINITUM : idMath::INFINITUM;
+			boxes[i].Set( side, side, side, 0.0f );
+		}
+		if( m_PrevBoxValid )
+		{
+			const idVec3 mins = ( m_PrevBoxMins - viewDef->renderOrigin ).ToVec3();
+			const idVec3 maxs = ( m_PrevBoxMaxs - viewDef->renderOrigin ).ToVec3();
+			boxes[0].Set( mins.x, mins.y, mins.z, 0.0f );
+			boxes[1].Set( maxs.x, maxs.y, maxs.z, 0.0f );
+		}
+		if( boxNow )
+		{
+			const idVec3 mins = ( boxMins - viewDef->renderOrigin ).ToVec3();
+			const idVec3 maxs = ( boxMaxs - viewDef->renderOrigin ).ToVec3();
+			boxes[2].Set( mins.x, mins.y, mins.z, 0.0f );
+			boxes[3].Set( maxs.x, maxs.y, maxs.z, 0.0f );
+		}
+		commandList->writeBuffer( m_MediaMoved, boxes, sizeof( boxes ) );
+		numMovedBoxes = 1;
+	}
+	m_PrevBoxValid = boxNow;
+	m_PrevBoxMins = boxMins;
+	m_PrevBoxMaxs = boxMaxs;
+
+	if( count > 0 )
+	{
+		commandList->writeBuffer( m_MediaList, m_MediaCopy, count * sizeof( fogMedium_t ) );
+	}
+	return count;
+}
+
+/*
+========================
+VolumetricFogPass::ProbeMedia
+
+V4: at the start of a probe whose view ran the media pass, the medium of each slice of the probe's three columns as the
+media pass finds it at the froxel's centre ( V4g, review F1-1 ), worked out on the CPU from
+the media list: the global fog's constant plus each medium's density times its sigma, without the group test, which only
+leaves out media of density 0, and without the skip ( a froxel the inject skips holds the global fog alone: the closed form
+is not checked then ). A medium with noise slots has no closed form here, nor has a view that takes fog lights ( the inject
+adds them; V4g, review F1-11 ): the probe then prints the media volume alone.
+The list and its count are kept for the read, which comes some fog views later.
+========================
+*/
+void VolumetricFogPass::ProbeMedia( const froxelConstants_t& constants )
+{
+	m_ProbeMedia = m_NumMedia > 0;
+	m_ProbeFurnace = constants.mediaParms.y;
+	m_ProbeMediaClosed = true;
+	m_ProbeSkip = constants.skipParms.x > 0.0f;
+	m_ProbeNumMedia = m_NumMedia;
+	memcpy( m_ProbeMediaList, m_MediaCopy, m_NumMedia * sizeof( fogMedium_t ) );
+	if( !m_ProbeMedia )
+	{
+		return;
+	}
+	for( int i = 0; i < m_NumMedia; i++ )
+	{
+		if( m_ProbeMediaList[i].noiseOffset.w > 0.5f )
+		{
+			m_ProbeMediaClosed = false;
+		}
+	}
+	if( constants.mediaParms2.w > 0.0f )
+	{
+		m_ProbeMediaClosed = false;		// V4g: the fog lights the inject takes are not in the media list ( review F1-11 )
+	}
+	const idVec3 eye( constants.viewOrigin.x, constants.viewOrigin.y, constants.viewOrigin.z );
+	const idVec3 forward( constants.viewForward.x, constants.viewForward.y, constants.viewForward.z );
+	const idVec3 right( constants.viewRight.x, constants.viewRight.y, constants.viewRight.z );
+	const idVec3 up( constants.viewUp.x, constants.viewUp.y, constants.viewUp.z );
+	const int slices = Min( m_ProbeSlices, 256 );
+	for( int c = 0; c < FROXEL_PROBE_COLUMNS; c++ )
+	{
+		const float lateralX = ( m_ProbeColumn[c][0] + 0.5f ) * constants.rayParms.x - constants.rayParms.z;
+		const float lateralY = ( m_ProbeColumn[c][1] + 0.5f ) * constants.rayParms.y - constants.rayParms.w;
+		const idVec3 ray = forward + lateralX * right - lateralY * up;
+		for( int k = 0; k < slices; k++ )
+		{
+			const float viewDepth = FROXEL_SLICE_BIAS * ( idMath::Exp( ( k + 0.5f ) * m_SliceStep ) - 1.0f );
+			const idVec3 p = eye + viewDepth * ray;
+			idVec4 medium( constants.viewOrigin.w, constants.viewOrigin.w, constants.viewOrigin.w, constants.medium.w );
+			for( int i = 0; i < m_ProbeNumMedia; i++ )
+			{
+				const fogMedium_t& m = m_ProbeMediaList[i];
+				const idVec3 q( m.frame[0].ToVec3() * p + m.frame[0].w, m.frame[1].ToVec3() * p + m.frame[1].w, m.frame[2].ToVec3() * p + m.frame[2].w );
+				float density = 1.0f;
+				if( ( int )m.shape.x == FOG_SHAPE_HEIGHT )
+				{
+					density = idMath::Exp( -Max( q.z - m.shape.y, 0.0f ) * m.shape.z );
+				}
+				else if( ( int )m.shape.x == FOG_SHAPE_BOX )
+				{
+					density = ( idMath::Fabs( q.x ) <= m.shape.y && idMath::Fabs( q.y ) <= m.shape.z && idMath::Fabs( q.z ) <= m.shape.w ) ? 1.0f : 0.0f;
+				}
+				medium += m.sigma * density;
+			}
+			// the media pass's store bound: a sum past it is scaled down whole ( review QR2-2 )
+			const float largest = Max( medium.w, Max( medium.x, Max( medium.y, medium.z ) ) );
+			medium *= Min( 1.0f, constants.viewUp.w / Max( largest, 1e-20f ) );
+			// per unit, as the integrate reads it
+			m_ProbeMedium[c][k] = medium * ( 1.0f / FROXEL_STORE_SCALE );
+			if( c == 0 )
+			{
+				m_ProbeSample[k] = p;
+			}
+		}
+	}
+}
+
+/*
+========================
+VolumetricFogPass::ProbeReadMedia
+
+V4: ProbeRead's columns where the probe's view ran the media pass. The closed form is worked out slab by slab from the
+medium ProbeMedia found at each slice's sample, as the integrate does it ( a slab of constant medium: transmittance
+exp( -tau ), in-scatter sigma_s * L / sigma_t * ( 1 - exp( -tau ) ) times the transmittance in front of it ), in double;
+under the furnace L is its radiance, and a lit fog has no closed form for its in-scatter. Beside it the media volume's
+sigma_t against the CPU's, the media pass's own check.
+========================
+*/
+void VolumetricFogPass::ProbeReadMedia( const byte* data, size_t rowPitch )
+{
+	const double step = m_ProbeSliceStep;
+	size_t mediaPitch = 0;
+	const byte* media = ( const byte* )m_Device->mapStagingTexture( m_ProbeMediaStaging, nvrhi::TextureSlice(), nvrhi::CpuAccessMode::Read, &mediaPitch );
+	common->Printf( "fogprobe: %d slices, far end %.1f, the media pass ran with %d media%s%s%s\n", m_ProbeSlices, FROXEL_SLICE_BIAS * ( exp( m_ProbeSlices * step ) - 1.0 ), m_ProbeNumMedia,
+					m_ProbeMediaClosed ? "" : " ( noise or fog lights: no closed form, the media volume is printed )", m_ProbeLit ? " ( lit: the in-scatter has no closed form )" : "",
+					m_ProbeSkip ? " ( the skip was on: the slices past a column's reach are not checked )" : "" );
+	const bool closed = m_ProbeMediaClosed && !m_ProbeSkip;
+	const int slices = Min( m_ProbeSlices, 256 );
+	// V4c: a medium with noise has no closed form here: its lanes and the centre column's samples are printed, so that a
+	// reference of the noise can be checked against the media volume's centre column offline. The samples and the render
+	// origin are printed for every media probe, so that the media can be checked from their places in the map, apart from
+	// the media list this pass built ( review QR4 )
+	common->Printf( "fogprobe: render origin %.4f %.4f %.4f\n", m_ProbeRenderOrigin.x, m_ProbeRenderOrigin.y, m_ProbeRenderOrigin.z );
+	{
+		for( int i = 0; i < m_ProbeNumMedia; i++ )
+		{
+			const fogMedium_t& m = m_ProbeMediaList[i];
+			common->Printf( "fogprobe: medium %d sigma %.6g %.6g shape %g %.6g %.6g %.6g noise offset %.6f %.6f %.6f slots %g\n", i, m.sigma.x, m.sigma.w,
+							m.shape.x, m.shape.y, m.shape.z, m.shape.w, m.noiseOffset.x, m.noiseOffset.y, m.noiseOffset.z, m.noiseOffset.w );
+			for( int s = 0; s < 6; s++ )
+			{
+				common->Printf( "fogprobe: medium %d slot lane %d %.9g %.9g %.9g %.9g\n", i, s, m.slot[s].x, m.slot[s].y, m.slot[s].z, m.slot[s].w );
+			}
+		}
+		for( int k = 0; k < slices; k++ )
+		{
+			common->Printf( "fogprobe: sample %d %.5f %.5f %.5f width %.6f\n", k, m_ProbeSample[k].x, m_ProbeSample[k].y, m_ProbeSample[k].z,
+							( float )( FROXEL_SLICE_BIAS * ( exp( ( k + 0.5 ) * step ) - 1.0 ) * Max( m_ProbeRayParms.x, m_ProbeRayParms.y ) ) );
+		}
+	}
+	for( int c = 0; c < FROXEL_PROBE_COLUMNS; c++ )
+	{
+		const halfFloat_t* row = ( const halfFloat_t* )( data + c * rowPitch );
+		const halfFloat_t* mediaRow = ( media != NULL ) ? ( const halfFloat_t* )( media + c * mediaPitch ) : NULL;
+		const double lateralX = ( m_ProbeColumn[c][0] + 0.5 ) * m_ProbeRayParms.x - m_ProbeRayParms.z;
+		const double lateralY = ( m_ProbeColumn[c][1] + 0.5 ) * m_ProbeRayParms.y - m_ProbeRayParms.w;
+		const double rayLength = sqrt( 1.0 + lateralX * lateralX + lateralY * lateralY );
+		double transmittance = 1.0;
+		double inScatter = 0.0;
+		double nearFace = 0.0;
+		double maxErrorT = 0.0;
+		double maxErrorS = 0.0;
+		double maxErrorMedium = 0.0;
+		for( int k = 0; k < slices; k++ )
+		{
+			const double farFace = FROXEL_SLICE_BIAS * ( exp( ( k + 1 ) * step ) - 1.0 );
+			const double slab = ( farFace - nearFace ) * rayLength;
+			nearFace = farFace;
+			const double sigmaT = Max( m_ProbeMedium[c][k].w, 0.0f );
+			const double sigmaS = m_ProbeMedium[c][k].x;
+			const double tau = sigmaT * slab;
+			const double slabT = exp( -tau );
+			const double weight = ( tau > 1e-6 ) ? ( 1.0 - slabT ) / sigmaT : slab;
+			inScatter += transmittance * sigmaS * m_ProbeFurnace * weight;
+			transmittance *= slabT;
+			const double gotS = F16toF32( row[k * 4 + 0] );
+			const double gotT = F16toF32( row[k * 4 + 3] );
+			const double gotMedium = ( mediaRow != NULL ) ? F16toF32( mediaRow[k * 4 + 3] ) / FROXEL_STORE_SCALE : 0.0;
+			if( closed )
+			{
+				maxErrorT = Max( maxErrorT, fabs( gotT - transmittance ) );
+				maxErrorS = Max( maxErrorS, fabs( gotS - inScatter ) );
+				maxErrorMedium = Max( maxErrorMedium, fabs( gotMedium - sigmaT ) / Max( sigmaT, 1e-6 ) );
+			}
+			// every slice of the centre column, so that tools/media_ref.py sees every sample ( a box between the printed slices
+			// was not checked at all )
+			if( k < 2 || ( ( k + 1 ) & k ) == 0 || k == slices - 1 || c == 0 )
+			{
+				common->Printf( "fogprobe:   column %d,%d slice %2d far %8.2f  sigma_t %.6f ( CPU %.6f )  T %.5f ( closed form %.5f )  in-scatter %.5f ( %.5f )\n",
+								m_ProbeColumn[c][0], m_ProbeColumn[c][1], k, farFace, gotMedium, sigmaT, gotT, transmittance, gotS, m_ProbeLit ? 0.0 : inScatter );
+			}
+		}
+		if( closed )
+		{
+			common->Printf( "fogprobe: column %d,%d ray length %.5f: largest error of T %.6f, of the in-scatter %.6f%s, of sigma_t %.5f of itself\n",
+							m_ProbeColumn[c][0], m_ProbeColumn[c][1], rayLength, maxErrorT, maxErrorS, m_ProbeLit ? " ( lit: not a check )" : "", maxErrorMedium );
+		}
+	}
+	if( media != NULL )
+	{
+		m_Device->unmapStagingTexture( m_ProbeMediaStaging );
+	}
 }
 
 /*
@@ -1105,6 +1659,32 @@ void VolumetricFogPass::ProbeCopy( nvrhi::ICommandList* commandList )
 									  m_Integrated, nvrhi::TextureSlice().setOrigin( m_ProbeColumn[c][0], m_ProbeColumn[c][1], k ).setSize( 1, 1, 1 ) );
 		}
 	}
+	// V4: the media volume's same three columns, where the media pass ran
+	if( m_ProbeMedia )
+	{
+		if( !m_ProbeMediaStrip || ( int )m_ProbeMediaStrip->getDesc().width != m_ProbeSlices )
+		{
+			nvrhi::TextureDesc desc = m_ProbeStrip->getDesc();
+			desc.debugName = "Fog/ProbeMediaStrip";
+			m_ProbeMediaStrip = m_Device->createTexture( desc );
+			nvrhi::TextureDesc stagingDesc;
+			stagingDesc.dimension = nvrhi::TextureDimension::Texture3D;
+			stagingDesc.width = m_ProbeSlices;
+			stagingDesc.height = FROXEL_PROBE_COLUMNS;
+			stagingDesc.depth = 1;
+			stagingDesc.format = nvrhi::Format::RGBA16_FLOAT;
+			stagingDesc.debugName = "Fog/ProbeMediaStaging";
+			m_ProbeMediaStaging = m_Device->createStagingTexture( stagingDesc, nvrhi::CpuAccessMode::Read );
+		}
+		for( int c = 0; c < FROXEL_PROBE_COLUMNS; c++ )
+		{
+			for( int k = 0; k < m_ProbeSlices; k++ )
+			{
+				commandList->copyTexture( m_ProbeMediaStrip, nvrhi::TextureSlice().setOrigin( k, c, 0 ).setSize( 1, 1, 1 ),
+										  m_Media, nvrhi::TextureSlice().setOrigin( m_ProbeColumn[c][0], m_ProbeColumn[c][1], k ).setSize( 1, 1, 1 ) );
+			}
+		}
+	}
 	m_ProbeStaged = false;
 	m_ProbeHasPixel = false;
 }
@@ -1130,6 +1710,10 @@ void VolumetricFogPass::ProbeStage( nvrhi::ICommandList* commandList, nvrhi::ITe
 		m_ProbeHasPixel = true;
 	}
 	commandList->copyTexture( m_ProbeStaging, nvrhi::TextureSlice(), m_ProbeStrip, nvrhi::TextureSlice() );
+	if( m_ProbeMedia )
+	{
+		commandList->copyTexture( m_ProbeMediaStaging, nvrhi::TextureSlice(), m_ProbeMediaStrip, nvrhi::TextureSlice() );
+	}
 	m_ProbeStaged = true;
 }
 
@@ -1161,56 +1745,68 @@ void VolumetricFogPass::ProbeRead()
 		common->Printf( "fogprobe: the read-back failed\n" );
 		return;
 	}
+	// whether the probe's view read the history or cut it ( a camera cut, another grid, a flip of r_volumetricFogMedia: the
+	// gate's check of the cut, which the probe's values cannot show in a still view )
+	common->Printf( "fogprobe: the history was %s\n", m_ProbeHistory ? "read" : "cut" );
 
 	const double step = m_ProbeSliceStep;
-	common->Printf( "fogprobe: %d slices, far end %.1f, sigma_t %.6g, sigma_s * L %.6g\n", m_ProbeSlices,
-					FROXEL_SLICE_BIAS * ( exp( m_ProbeSlices * step ) - 1.0 ), m_ProbeSigmaT, m_ProbeSource );
-	if( m_ProbeLit )
+	if( m_ProbeMedia )
 	{
-		common->Printf( "fogprobe: lit by the ambient light and %d light records, %d of which the fog can take ( r_volumetricFogCull %d ), sigma_s %.6g; the in-scatter has no closed form\n", m_ProbeRecords, m_ProbeTakeable, m_ProbeCull, m_ProbeSigmaS );
+		// V4: the media pass ran: the closed form is worked out slab by slab from the medium the CPU finds at each slice's
+		// sample ( ProbeMedia ), and the media volume is printed beside it
+		ProbeReadMedia( data, rowPitch );
 	}
-	for( int c = 0; c < FROXEL_PROBE_COLUMNS; c++ )
+	else
 	{
-		const halfFloat_t* row = ( const halfFloat_t* )( data + c * rowPitch );
-		const double lateralX = ( m_ProbeColumn[c][0] + 0.5 ) * m_ProbeRayParms.x - m_ProbeRayParms.z;
-		const double lateralY = ( m_ProbeColumn[c][1] + 0.5 ) * m_ProbeRayParms.y - m_ProbeRayParms.w;
-		const double rayLength = sqrt( 1.0 + lateralX * lateralX + lateralY * lateralY );
-
-		double maxErrorT = 0.0;
-		double maxErrorS = 0.0;
-		for( int k = 0; k < m_ProbeSlices; k++ )
-		{
-			const double farFace = FROXEL_SLICE_BIAS * ( exp( ( k + 1 ) * step ) - 1.0 );
-			const double length = farFace * rayLength;
-			const double wantT = exp( -m_ProbeSigmaT * length );
-			const double wantS = ( m_ProbeSigmaT > 0.0f ) ? m_ProbeSource / m_ProbeSigmaT * ( 1.0 - wantT ) : m_ProbeSource * length;
-			const double gotS = F16toF32( row[k * 4 + 0] );
-			const double gotT = F16toF32( row[k * 4 + 3] );
-			maxErrorT = Max( maxErrorT, fabs( gotT - wantT ) );
-			maxErrorS = Max( maxErrorS, fabs( gotS - wantS ) );
-			if( m_ProbeLit )
-			{
-				if( c == 0 || k < 2 || ( ( k + 1 ) & k ) == 0 || k == m_ProbeSlices - 1 )
-				{
-					common->Printf( "fogprobe:   column %d,%d slice %2d far %8.2f  T %.5f ( closed form %.5f )  lit in-scatter %.6f %.6f %.6f\n",
-									m_ProbeColumn[c][0], m_ProbeColumn[c][1], k, farFace, gotT, wantT, gotS, F16toF32( row[k * 4 + 1] ), F16toF32( row[k * 4 + 2] ) );
-				}
-			}
-			else if( k < 2 || ( ( k + 1 ) & k ) == 0 || k == m_ProbeSlices - 1 )
-			{
-				common->Printf( "fogprobe:   column %d,%d slice %2d far %8.2f  T %.5f ( closed form %.5f )  in-scatter %.5f ( %.5f )\n",
-								m_ProbeColumn[c][0], m_ProbeColumn[c][1], k, farFace, gotT, wantT, gotS, wantS );
-			}
-		}
+		common->Printf( "fogprobe: %d slices, far end %.1f, sigma_t %.6g, sigma_s * L %.6g\n", m_ProbeSlices,
+						FROXEL_SLICE_BIAS * ( exp( m_ProbeSlices * step ) - 1.0 ), m_ProbeSigmaT, m_ProbeSource );
 		if( m_ProbeLit )
 		{
-			common->Printf( "fogprobe: column %d,%d ray length %.5f: largest error of T %.6f\n",
-							m_ProbeColumn[c][0], m_ProbeColumn[c][1], rayLength, maxErrorT );
+			common->Printf( "fogprobe: lit by the ambient light and %d light records, %d of which the fog can take ( r_volumetricFogCull %d ), sigma_s %.6g; the in-scatter has no closed form\n", m_ProbeRecords, m_ProbeTakeable, m_ProbeCull, m_ProbeSigmaS );
 		}
-		else
+		for( int c = 0; c < FROXEL_PROBE_COLUMNS; c++ )
 		{
-			common->Printf( "fogprobe: column %d,%d ray length %.5f: largest error of T %.6f, of the in-scatter %.6f\n",
-							m_ProbeColumn[c][0], m_ProbeColumn[c][1], rayLength, maxErrorT, maxErrorS );
+			const halfFloat_t* row = ( const halfFloat_t* )( data + c * rowPitch );
+			const double lateralX = ( m_ProbeColumn[c][0] + 0.5 ) * m_ProbeRayParms.x - m_ProbeRayParms.z;
+			const double lateralY = ( m_ProbeColumn[c][1] + 0.5 ) * m_ProbeRayParms.y - m_ProbeRayParms.w;
+			const double rayLength = sqrt( 1.0 + lateralX * lateralX + lateralY * lateralY );
+
+			double maxErrorT = 0.0;
+			double maxErrorS = 0.0;
+			for( int k = 0; k < m_ProbeSlices; k++ )
+			{
+				const double farFace = FROXEL_SLICE_BIAS * ( exp( ( k + 1 ) * step ) - 1.0 );
+				const double length = farFace * rayLength;
+				const double wantT = exp( -m_ProbeSigmaT * length );
+				const double wantS = ( m_ProbeSigmaT > 0.0f ) ? m_ProbeSource / m_ProbeSigmaT * ( 1.0 - wantT ) : m_ProbeSource * length;
+				const double gotS = F16toF32( row[k * 4 + 0] );
+				const double gotT = F16toF32( row[k * 4 + 3] );
+				maxErrorT = Max( maxErrorT, fabs( gotT - wantT ) );
+				maxErrorS = Max( maxErrorS, fabs( gotS - wantS ) );
+				if( m_ProbeLit )
+				{
+					if( c == 0 || k < 2 || ( ( k + 1 ) & k ) == 0 || k == m_ProbeSlices - 1 )
+					{
+						common->Printf( "fogprobe:   column %d,%d slice %2d far %8.2f  T %.5f ( closed form %.5f )  lit in-scatter %.6f %.6f %.6f\n",
+										m_ProbeColumn[c][0], m_ProbeColumn[c][1], k, farFace, gotT, wantT, gotS, F16toF32( row[k * 4 + 1] ), F16toF32( row[k * 4 + 2] ) );
+					}
+				}
+				else if( k < 2 || ( ( k + 1 ) & k ) == 0 || k == m_ProbeSlices - 1 )
+				{
+					common->Printf( "fogprobe:   column %d,%d slice %2d far %8.2f  T %.5f ( closed form %.5f )  in-scatter %.5f ( %.5f )\n",
+									m_ProbeColumn[c][0], m_ProbeColumn[c][1], k, farFace, gotT, wantT, gotS, wantS );
+				}
+			}
+			if( m_ProbeLit )
+			{
+				common->Printf( "fogprobe: column %d,%d ray length %.5f: largest error of T %.6f\n",
+								m_ProbeColumn[c][0], m_ProbeColumn[c][1], rayLength, maxErrorT );
+			}
+			else
+			{
+				common->Printf( "fogprobe: column %d,%d ray length %.5f: largest error of T %.6f, of the in-scatter %.6f\n",
+								m_ProbeColumn[c][0], m_ProbeColumn[c][1], rayLength, maxErrorT, maxErrorS );
+			}
 		}
 	}
 	m_Device->unmapStagingTexture( m_ProbeStaging );

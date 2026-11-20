@@ -62,6 +62,43 @@ static bool			fogChangedOverflow = false;	// more casters changed this frame tha
 
 /*
 ====================
+R_VolumetricFogMapKeys
+
+V4: the froxel fog's media of a map. The worldspawn's keys set the fog's cvars ( renderer/Passes/VolumetricFogPass.cpp )
+at every spawn and restore of the worldspawn ( d3xp/WorldSpawn.cpp ), each to the cvar's default where the key is absent,
+as the key "gravity" sets g_gravity: a map without the keys has none of these media, and a value typed in the console
+holds until the next map is spawned or restored.
+====================
+*/
+void R_VolumetricFogMapKeys( const idDict& worldspawnArgs )
+{
+	static const char* const keys[][2] =
+	{
+		{ "fog_height_distance",	"r_volumetricFogHeightDistance" },
+		{ "fog_height",			"r_volumetricFogHeight" },
+		{ "fog_height_falloff",	"r_volumetricFogHeightFalloff" },
+		{ "fog_height_albedo",	"r_volumetricFogHeightAlbedo" },
+		{ "fog_dust_distance",	"r_volumetricFogDustDistance" },
+		{ "fog_dust_albedo",		"r_volumetricFogDustAlbedo" },
+		{ "fog_dust_scale",		"r_volumetricFogDustScale" },
+		{ "fog_dust_wind",		"r_volumetricFogDustWind" },
+		{ "fog_dust_noise",		"r_volumetricFogDustNoise" },
+		{ "fog_dust_octaves",	"r_volumetricFogDustOctaves" },
+		{ "fog_dust_erode",		"r_volumetricFogDustErode" },
+		{ "fog_dust_warp",		"r_volumetricFogDustWarp" }
+	};
+	for( int i = 0; i < ( int )( sizeof( keys ) / sizeof( keys[0] ) ); i++ )
+	{
+		idCVar* cvar = cvarSystem->Find( keys[i][1] );
+		if( cvar != NULL )
+		{
+			cvar->SetString( worldspawnArgs.GetString( keys[i][0], cvar->GetDefaultString() ) );
+		}
+	}
+}
+
+/*
+====================
 R_VolumetricFogBeginView
 
 The fog's switch ( D40 ), at the start of R_NumberRecordLights, for every view: how far along the view axis the fog's
@@ -113,6 +150,39 @@ uint32 R_VolumetricFogRecordFlags( const viewLight_t* vLight, uint32 recordFlags
 
 /*
 ====================
+R_VolumetricFogLightRecord
+
+V4: what a fog light's record carries for the froxel fog beyond the fog pass's colour and distance ( D81 ), set by
+R_LightListFlattenRecord after it filled the record. ids.w: the scattering albedo, the light's spawnarg "fog_albedo"
+( renderLight_t::fogAlbedo ), 0 by default, so that the fog only darkens and shines with its colour as the fog pass draws
+it. The emitter lanes, which a fog light never uses ( a fog light is never RLF_EMITTER, and the record was cleared ):
+emitter[0] the fog plane the fog pass fogs from, vLight->fogPlane ( unit length, relative to the view's render origin,
+negative inside; a projected light's planes do not give it, consultant CN4-1 ), and emitter[1].x the share of the fog
+the stage colour's alpha leaves where it is not a distance: the fog pass draws with the alpha clamped to 0 .. 1 as its
+colour's alpha ( GL_Color ), so an alpha of at most 1 scales the fog's opacity and an alpha above 1 ( the distance ) does
+not ( CN4-2 ). Nothing for any other record: its ids.w stays 0.
+====================
+*/
+void R_VolumetricFogLightRecord( const viewLight_t* vLight, uint32 recordFlags, recordLight_t& rec )
+{
+	if( ( recordFlags & RLF_FOGLIGHT ) == 0 )
+	{
+		return;
+	}
+	rec.ids.w = idMath::ClampFloat( 0.0f, 1.0f, vLight->lightDef->parms.fogAlbedo );
+	rec.emitter[0] = vLight->fogPlane.ToVec4();
+	float share = 1.0f;
+	const idMaterial* shader = vLight->lightShader;
+	if( shader->GetNumStages() > 0 )
+	{
+		const float alpha = vLight->shaderRegisters[ shader->GetStage( 0 )->color.registers[3] ];
+		share = ( alpha <= 1.0f ) ? idMath::ClampFloat( 0.0f, 1.0f, alpha ) : 1.0f;
+	}
+	rec.emitter[1].Set( share, 0.0f, 0.0f, 0.0f );
+}
+
+/*
+====================
 R_VolumetricFogMarkLights
 
 A light the inject can take counts as lit ( R_ViewLightIsLit ), so one whose surfaces are all out of sight keeps its
@@ -125,6 +195,9 @@ while the fog reads the view's records; a view light the fog does not mark keeps
 void R_VolumetricFogMarkLights( lightListView_t* llv, const recordLight_t* records, float fogReach )
 {
 	const lightListTables_t& t = llv->tables;
+	const bool fogLights = R_VolumetricFogTakesFogLights();		// V4: a fog light the inject takes is in sight as a medium
+	// V4: a light only where something scatters it ( review O1-2; the pass's take mask goes by the same rule )
+	const bool lights = R_VolumetricFogMediaScatter() || ( fogLights && R_FogLightsScatter( records, t.numRecords ) );
 	for( int r = 0; r < t.numRecords; r++ )
 	{
 		const int input = t.lightOfRecord[r];
@@ -133,7 +206,8 @@ void R_VolumetricFogMarkLights( lightListView_t* llv, const recordLight_t* recor
 			continue;														// the empty sun slot
 		}
 		viewLight_t* vLight = llv->lightOfInput[input];
-		vLight->fogRelevant = llv->lights[input].zMin < fogReach && R_FogCanTakeRecord( records[r], vLight->shadowLOD != -1 );
+		vLight->fogRelevant = llv->lights[input].zMin < fogReach && ( ( lights && R_FogCanTakeRecord( records[r], vLight->shadowLOD != -1 ) )
+							  || ( fogLights && r > 0 && R_FogCanTakeFogLight( records[r] ) ) );
 	}
 }
 
@@ -272,9 +346,11 @@ uint32 R_VolumetricFogShadowFlags( viewDef_t* viewDef, int record, int numRecord
 	{
 		return RLF_FOG_NOCASTER;
 	}
-	if( !R_LightListFogEligible( viewDef ) || R_VolumetricFogRecordReach() <= 0.0f )
+	// V4g: nor for a light the fog does not take ( review F1-7: fogRelevant is R_VolumetricFogMarkLights' answer, the take
+	// rule of review O1-2: a light only where something scatters it )
+	if( !R_LightListFogEligible( viewDef ) || R_VolumetricFogRecordReach() <= 0.0f || !vLight->fogRelevant )
 	{
-		return 0;			// the fog does not run in this view, or reads no records: no history to clip
+		return 0;			// the fog does not run in this view, reads no records, or does not take this light: no history to clip
 	}
 	// V3: a caster that changed this frame ( an entity that moved or animated, or went ) changes the light's shadow,
 	// which the history cannot follow by the light's colour. The inject clips the history where that caster shadows:

@@ -70,6 +70,30 @@ ID_INLINE bool R_FogCanTakeRecord( const recordLight_t& rec, bool hasShadowRows 
 		   && ( ( rec.flags & ( RLF_AMBIENT | RLF_FOG_NOSHADOW ) ) != 0 || hasShadowRows );
 }
 
+// V4: a fog light's record ( RLF_FOGLIGHT, read the fog pass's way, D81 ) that the inject can take as a medium: not
+// switched off for the fog and of the default spectrum. The inject takes them only while R_VolumetricFogTakesFogLights
+// says so ( r_volumetricFogLights on V4's path, defined beside the fog's cvars )
+ID_INLINE bool R_FogCanTakeFogLight( const recordLight_t& rec )
+{
+	return ( rec.flags & RLF_FOGLIGHT ) != 0 && ( rec.flags & RLF_FOG_OFF ) == 0 && ( rec.channelMask & 1u ) != 0;
+}
+bool	R_VolumetricFogTakesFogLights();
+bool	R_VolumetricFogMediaScatter();		// V4: the global fog or a medium of the media pass scatters light ( defined beside the fog's cvars )
+// V4: whether a fog light the inject takes scatters light ( its albedo, ids.w, above 0 ). Where nothing scatters, the lights
+// are not taken at all: a fog light at albedo 0 only darkens and shines ( review O1-2 ). Record 0, the sun's slot, is never a
+// fog light the inject takes ( review QR3-1 )
+ID_INLINE bool R_FogLightsScatter( const recordLight_t* records, int numRecords )
+{
+	for( int r = 1; r < numRecords; r++ )
+	{
+		if( R_FogCanTakeFogLight( records[r] ) && records[r].ids.w > 0.0f )
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 // The fog's own data of a view ( viewDef_t::froxelView, X0's seam: frame memory, NULL until a hook needs it ). The
 // caster boxes: where a caster of a record's light that changed this frame shadows, up to FOG_CASTER_BOXES boxes by
 // record ( the casters past them merge into the box they grow least ), in the relative frame. Box i of record r is
@@ -85,6 +109,7 @@ struct froxelView_t
 // The hooks, in the order the light lists' frontend calls them ( tr_frontend_volumetricfog.cpp )
 float	R_VolumetricFogBeginView( const viewDef_t* viewDef );									// R_NumberRecordLights: the fog's switch; returns the reach, 0 = the fog reads no records in this view
 uint32	R_VolumetricFogRecordFlags( const viewLight_t* vLight, uint32 recordFlags );			// R_LightListFlattenRecord: the fog's bits of a record
+void	R_VolumetricFogLightRecord( const viewLight_t* vLight, uint32 recordFlags, recordLight_t& rec );	// R_LightListFlattenRecord, V4: a fog light's albedo ( ids.w ), its fog plane and its alpha's share ( the emitter lanes )
 void	R_VolumetricFogMarkLights( lightListView_t* llv, const recordLight_t* records, float fogReach );	// R_NumberRecordLights: viewLight_t::fogRelevant
 uint32	R_VolumetricFogShadowFlags( viewDef_t* viewDef, int record, int numRecords, const viewLight_t* vLight );	// R_BuildLightLists: the fog's shadow bits of a record, once the chains are final; fills froxelView_t::casterBoxes
 void	R_VolumetricFogCasterChanged( const idRenderEntityLocal* def );						// idRenderWorldLocal::UpdateEntityDef, FreeEntityDef: where a caster stood before it changed or went

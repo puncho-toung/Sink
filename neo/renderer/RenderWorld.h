@@ -223,6 +223,7 @@ typedef struct renderLight_s
 	bool					primarySun;			// spawnarg "primarySun": this parallel light is the map's sun ( D42, D73 )
 	byte					forwardMode;		// spawnarg "forward": 0 = default, 1 = force the light list, 2 = force legacy
 	byte					volumetricMode;		// spawnarg "volumetric": 0 = default ( the froxel fog takes the light where its shadow is known ), 1 = also where it has no shadow map, 2 = never
+	float					fogAlbedo;			// spawnarg "fog_albedo" ( V4 ): a fog light's scattering albedo in the froxel fog, 0 to 1; 0 = its fog only darkens and shines with its colour, as the fog pass draws it
 	idVec3					lightRadius;		// xyz radius for point lights
 	idVec3					lightCenter;		// offset the lighting direction for shading and
 	// shadows, relative to origin

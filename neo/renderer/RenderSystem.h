@@ -561,4 +561,9 @@ void R_LightProjectionMatrix( const idVec3& origin, const idPlane& rearPlane, id
 // used by the view shot taker
 void R_ScreenshotFilename( int& lastNumber, const char* base, idStr& fileName );
 
+// ---- TRACK V ( V4 ): the froxel fog's media of a map from its worldspawn's keys; the game calls it at every spawn and
+// restore of the worldspawn ( renderer/tr_frontend_volumetricfog.cpp ) ----
+void R_VolumetricFogMapKeys( const idDict& worldspawnArgs );
+// ---- END TRACK V ----
+
 #endif /* !__RENDERER_H__ */

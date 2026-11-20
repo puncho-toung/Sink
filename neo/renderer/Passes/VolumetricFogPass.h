@@ -29,6 +29,8 @@ If you have questions concerning this license or the applicable additional terms
 #ifndef RENDERER_PASSES_VOLUMETRICFOGPASS_H_
 #define RENDERER_PASSES_VOLUMETRICFOGPASS_H_
 
+#include "VolumetricFogPass_cb.h"		// V4: the media list's entry ( fogMedium_t ) and the kernels' constants
+
 /*
 ================================
 
@@ -88,12 +90,16 @@ private:
 	void	InitInject();
 	void	InitResolve();		// V3: the resolve reads three volumes and a sampler
 	void	InitColumns();		// V3: the columns read the scene's depth and the sky mask
+	void	InitMedia();		// V4: the media pass reads the media list and the columns
+	int		BuildMedia( nvrhi::ICommandList* commandList, const viewDef_t* viewDef, int& numMovedBoxes );	// V4: the view's media list
+	void	ProbeMedia( const froxelConstants_t& constants );				// V4: the media of the probe's columns, on the CPU
 	bool	CheckVolumes( int gridWidth, int gridHeight, int gridSlices );
 	bool	CheckInjectSet();
 	void	ReleaseVolume();
 	void	ProbeCopy( nvrhi::ICommandList* commandList );
 	void	ProbeStage( nvrhi::ICommandList* commandList, nvrhi::ITexture* color, const viewDef_t* viewDef );
 	void	ProbeRead();
+	void	ProbeReadMedia( const byte* data, size_t rowPitch );	// V4: ProbeRead's columns where the media pass ran
 
 	nvrhi::DeviceHandle				m_Device;
 	CommonRenderPasses*				commonRenderPasses;
@@ -115,11 +121,21 @@ private:
 	nvrhi::TextureHandle			m_State;			// V3: per froxel the light change since last frame and the history's use there ( the inject writes it, the resolve reads it )
 	nvrhi::TextureHandle			m_Columns;			// V3: per column of the grid the farthest surface its pixels show ( the skip )
 	nvrhi::TextureHandle			m_Integrated;		// in-scatter in rgb, transmittance in a: camera to the slice's far face
+	nvrhi::TextureHandle			m_Media;			// V4: sigma_s in rgb, sigma_t in a, times the store scale: the media pass's sum, which the inject reads
+	nvrhi::TextureHandle			m_Mark[2];			// V4: 1 where the inject skipped the froxel, in step with m_Resolved ( the resolve writes mark i in turn i, reads the other )
 
 	kernel_t						m_Inject;			// its layout is its own ( InitInject ) and its set is made by CheckInjectSet
 	kernel_t						m_Resolve;			// V3: its set is one of m_ResolveSets, by turns
 	kernel_t						m_Integrate;		// V3: its set is one of m_IntegrateSets, by turns
 	kernel_t						m_ColumnsKernel;	// V3: the farthest surface of each column; its set comes from the engine's binding cache
+	kernel_t						m_MediaKernel;		// V4: the media pass; its set is made with the volumes
+	nvrhi::BufferHandle				m_MediaList;		// V4: the view's media, fogMedium_t[ FOG_MEDIA_MAX ]
+	nvrhi::BufferHandle				m_MediaMoved;		// V4: by medium that moved, came or went, its last and its present bounds: 4 * FOG_MEDIA_MAX float4 ( min, max, min, max )
+	fogMedium_t						m_MediaCopy[ FOG_MEDIA_MAX ];	// V4: what the list holds this view, for the probe
+	int								m_NumMedia;
+	bool							m_PrevBoxValid;		// V4: the test box of the last fog view, in map units: the inject clips the history where it moved
+	idVec3d							m_PrevBoxMins;
+	idVec3d							m_PrevBoxMaxs;
 	// V3: the history. The resolved volumes take turns: this frame's is m_Resolved[ m_ResolvedIndex ], last frame's the
 	// other, and set i of each kernel is the one for m_ResolvedIndex i
 	nvrhi::BindingSetHandle			m_ResolveSets[2];
@@ -131,7 +147,7 @@ private:
 	int								m_PrevNumRecords;
 	bool							m_HistoryValid;		// the other resolved volume holds the last fog view's fog, and m_PrevRecords its records
 	int								m_HistoryFrame;		// that view's frame ( lightListView_t::viewFrame; 0 = it had no records )
-	int								m_HistoryGrid[7];	// and what its fog was made with: the grid's columns and rows, the column side, the slices, the furnace, the view's width and height
+	int								m_HistoryGrid[8];	// and what its fog was made with: the grid's columns and rows, the column side, the slices, the furnace, the view's width and height, V4's path
 	float							m_HistorySliceStep;
 	idRenderMatrix					m_HistoryMVP;		// and the view's unjittered MVP and render origin: the engine's last-frame
 	idVec3d							m_HistoryOrigin;	// state ( H10 ) for the eye must be these
@@ -180,6 +196,19 @@ private:
 	int								m_ProbeTakeable;	// and how many of them the fog could take ( the take mask's bits )
 	int								m_ProbeCull;		// and how it found them
 	float							m_ProbeSigmaS;		// the lit fog's sigma_s ( m_ProbeSource is the furnace's share and 0 then )
+	// V4: the probe of the media: the media volume's three columns, and the medium the CPU finds at the same samples
+	nvrhi::TextureHandle			m_ProbeMediaStrip;
+	nvrhi::StagingTextureHandle		m_ProbeMediaStaging;
+	bool							m_ProbeMedia;		// the media pass ran in the probe's view
+	bool							m_ProbeMediaClosed;	// and its media have a closed form here ( no noise slot )
+	float							m_ProbeFurnace;		// the furnace radiance of the probe's view
+	idVec4							m_ProbeMedium[3][256];	// by column and slice: sigma_s ( rgb ) and sigma_t per unit at the sample
+	idVec3							m_ProbeSample[256];		// V4c: the centre column's samples in the relative frame, printed for every media probe ( review QR4 )
+	idVec3d							m_ProbeRenderOrigin;	// the probe's view's render origin: a sample plus it is the sample's place in the map
+	bool							m_ProbeHistory;		// the probe's view read the history ( false: it was cut )
+	fogMedium_t						m_ProbeMediaList[ FOG_MEDIA_MAX ];	// the media list of the probe's view, and its count: the list of the view it reads in is another
+	int								m_ProbeNumMedia;
+	bool							m_ProbeSkip;		// the skip was on: past a column's reach the GPU holds the global fog alone, and there is no closed form
 };
 
 #endif // RENDERER_PASSES_VOLUMETRICFOGPASS_H_

@@ -954,6 +954,9 @@ static void R_LightListFlattenRecord( const viewLight_t* vLight, uint32 flags, i
 		//puncho end
 	}
 	rec.ids.Set( ( float )importanceRank, ( float )stageNum, -1.0f, 0.0f );
+	// ---- TRACK V ( V4 ): a fog light's albedo, fog plane and alpha ( renderer/VolumetricFog.h, D81 ) ----
+	R_VolumetricFogLightRecord( vLight, flags, rec );
+	// ---- END TRACK V ----
 }
 
 /*

@@ -20,7 +20,13 @@ Texture3D<float4> t_State : register( t1 );		// rgb = the light change, a = 1: c
 Texture3D<float4> t_History : register( t2 );		// last frame's resolved volume
 SamplerState s_History : register( s0 );			// linear, clamped
 VK_IMAGE_FORMAT( "rgba16f" ) RWTexture3D<float4> u_Resolved : register( u0 );
+Texture3D<float> t_PrevMark : register( t3 );		// V4: last frame's marks: 1 where the inject skipped the froxel, in step with t_History
+VK_IMAGE_FORMAT( "r8" ) RWTexture3D<float> u_Mark : register( u1 );		// V4: this frame's
 // *INDENT-ON*
+
+// V4: on V4's path a history read is not used where last frame's sigma_t there ( times the store scale ) was below this:
+// in clear air the history's light per unit of medium is not known
+static const float FROXEL_HISTORY_MIN_SIGMA = 1e-4;
 
 [numthreads( 8, 8, 1 )]
 void main( uint3 froxelId : SV_DispatchThreadID )
@@ -34,11 +40,18 @@ void main( uint3 froxelId : SV_DispatchThreadID )
 	const float4 injected = t_Injected[ froxelId ];
 	float4 resolved = injected;
 	const float4 state = t_State[ froxelId ];
-	// a skipped froxel ( state 3 ): no pixel reads it now, and the mark ( alpha minus this frame's sigma_t, which the
-	// integrate reads as clear air ) tells a later history read how much of it fell on a skipped froxel
+	// a skipped froxel ( state 3 ): no pixel reads it now, and a mark tells a later history read how much of it fell on a
+	// skipped froxel. On V3's path the mark is the alpha, minus this frame's sigma_t, which the integrate reads as clear air
+	// V4: on V4's path ( r_volumetricFogMedia ) the mark goes into the mark volume instead and the skipped froxel holds
+	// clear air: the medium is no longer one number that the sign of alpha could stand for
+	const bool mediaPath = froxel.mediaParms.z > 0.0;
+	if( mediaPath )
+	{
+		u_Mark[ froxelId ] = ( state.a > 2.5 ) ? 1.0 : 0.0;
+	}
 	if( state.a > 2.5 )
 	{
-		u_Resolved[ froxelId ] = float4( 0.0, 0.0, 0.0, -injected.a );
+		u_Resolved[ froxelId ] = mediaPath ? float4( 0.0, 0.0, 0.0, 0.0 ) : float4( 0.0, 0.0, 0.0, -injected.a );
 		return;
 	}
 	if( froxel.jitter.w > 0.0 && state.a < 1.5 )
@@ -62,18 +75,37 @@ void main( uint3 froxelId : SV_DispatchThreadID )
 				t_History.GetDimensions( size.x, size.y, size.z );
 				const float3 texel = uvw * float3( size ) - 0.5;
 				const float3 nearest = clamp( round( texel ), float3( 0.0, 0.0, 0.0 ), float3( size ) - 1.0 );
-				float4 history = all( abs( texel - nearest ) < 1e-3 ) ? t_History.Load( int4( int3( nearest ), 0 ) ) : t_History.SampleLevel( s_History, uvw, 0.0 );
+				const bool exact = all( abs( texel - nearest ) < 1e-3 );
+				float4 history = exact ? t_History.Load( int4( int3( nearest ), 0 ) ) : t_History.SampleLevel( s_History, uvw, 0.0 );
 				// a history read that touched skipped froxels mixes their marks in: a mark's alpha is minus last frame's
 				// sigma_t and every other texel's plus it ( a uniform medium: sliceParms.w ), so the read's alpha gives
 				// the share of its weight on froxels that were not skipped, ( sigma_t + a ) / ( 2 sigma_t ), and their
 				// in-scatter is the read's over that share. A read that is more mark than fog is not used
 				const float prevSigma = froxel.sliceParms.w;
-				const float fogShare = ( prevSigma > 0.0 ) ? ( prevSigma + history.a ) / ( 2.0 * prevSigma ) : 0.0;
+				float fogShare = ( prevSigma > 0.0 ) ? ( prevSigma + history.a ) / ( 2.0 * prevSigma ) : 0.0;
+				// V4: on V4's path the share of the read's weight on froxels that were not skipped is one less last frame's
+				// marks read through the same filter. A skipped froxel holds clear air, so the read's in-scatter and its sigma_t
+				// are diluted by the same share, and their quotient is last frame's in-scatter per unit of its medium: times this
+				// frame's sigma_t it is that light in this frame's medium, whatever the medium did between the frames ( drifted,
+				// thickened, gained a fog light ). Where the history's medium was clear air its light is not known
+				if( mediaPath )
+				{
+					const float mark = exact ? t_PrevMark.Load( int4( int3( nearest ), 0 ) ) : t_PrevMark.SampleLevel( s_History, uvw, 0.0 );
+					fogShare = ( history.a > FROXEL_HISTORY_MIN_SIGMA ) ? 1.0 - mark : 0.0;
+				}
 				if( all( abs( history ) < 1e30 ) && fogShare >= 0.5 )
 				{
 					// the history's in-scatter is of last frame's medium: it goes with sigma_s, sigma_t times the albedo,
 					// so this frame's is it times the ratio of the sigma_t
-					history.rgb = history.rgb / min( fogShare, 1.0 ) * ( injected.a / prevSigma ) + state.rgb;
+					// V4: V3's path keeps V3's statement ( review O1-9 )
+					if( mediaPath )
+					{
+						history.rgb = history.rgb * ( injected.a / history.a ) + state.rgb;
+					}
+					else
+					{
+						history.rgb = history.rgb / min( fogShare, 1.0 ) * ( injected.a / prevSigma ) + state.rgb;
+					}
 					float weight = froxel.historyParms.x;
 					if( state.a > 0.5 )
 					{

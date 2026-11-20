@@ -70,6 +70,9 @@ void idWorldspawn::Spawn()
 	gameLocal.world = this;
 
 	g_gravity.SetFloat( spawnArgs.GetFloat( "gravity", va( "%f", DEFAULT_GRAVITY ) ) );
+	// ---- TRACK V ( V4 ) ----
+	R_VolumetricFogMapKeys( spawnArgs );		// the froxel fog's media of the map ( renderer/RenderSystem.h )
+	// ---- END TRACK V ----
 
 	// RB: start some background music Quake style
 	SetMusicTrack();
@@ -131,6 +134,9 @@ void idWorldspawn::Restore( idRestoreGame* savefile )
 	assert( gameLocal.world == this );
 
 	g_gravity.SetFloat( spawnArgs.GetFloat( "gravity", va( "%f", DEFAULT_GRAVITY ) ) );
+	// ---- TRACK V ( V4 ) ----
+	R_VolumetricFogMapKeys( spawnArgs );		// the froxel fog's media of the map ( renderer/RenderSystem.h )
+	// ---- END TRACK V ----
 
 	// RB: start some background music Quake style
 	SetMusicTrack();
