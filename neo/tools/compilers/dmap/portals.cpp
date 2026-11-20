@@ -583,13 +583,29 @@ int		c_floodedleafs;
 
 /*
 =============
-FloodPortals_r
+FloodPortals
+
+  //puncho - R2 larger maps: this was FloodPortals_r, which called itself once for every leaf the flood entered, as
+  deep as the flood's longest chain of leafs. The 64k open map (om64k_split_hull, 37,745 world brushes) overflowed
+  the 1 MB stack of the Windows build 15,963 calls deep. It is the same walk as a loop over a stack of frames: the
+  same leafs in the same order with the same dist values, which the leak file follows down to the occupant
 =============
 */
-void FloodPortals_r( node_t* node, int dist )
+//puncho start - R2 larger maps
+typedef struct floodPortalsFrame_s
 {
+	node_t*		node;		// the leaf this frame floods from
+	uPortal_t*	p;			// its next portal to look through
+	int			dist;		// its distance from the occupant, as FloodPortals_r passed it
+} floodPortalsFrame_t;
+
+void FloodPortals( node_t* node, int dist )
+{
+	idList<floodPortalsFrame_t>	frames;
+	floodPortalsFrame_t			frame;
 	uPortal_t*	p;
-	int			s;
+	node_t*		other;
+	int			s, nextDist;
 
 	if( node->occupied )
 	{
@@ -604,12 +620,51 @@ void FloodPortals_r( node_t* node, int dist )
 	c_floodedleafs++;
 	node->occupied = dist;
 
-	for( p = node->portals; p; p = p->next[s] )
+	frames.Resize( 1024 );
+	frame.node = node;
+	frame.p = node->portals;
+	frame.dist = dist;
+	frames.Append( frame );
+
+	while( frames.Num() > 0 )
 	{
-		s = ( p->nodes[1] == node );
-		FloodPortals_r( p->nodes[!s], dist + 1 );
+		floodPortalsFrame_t& top = frames[frames.Num() - 1];
+		p = top.p;
+		if( p == NULL )
+		{
+			// every portal of this leaf is done: back to the leaf it was entered from
+			frames.SetNum( frames.Num() - 1 );
+			continue;
+		}
+		s = ( p->nodes[1] == top.node );
+		top.p = p->next[s];		// where FloodPortals_r went on after its call returned
+		other = p->nodes[!s];
+		nextDist = top.dist + 1;
+
+		// what FloodPortals_r did when it was entered for the leaf behind the portal
+		if( other->occupied )
+		{
+			continue;
+		}
+		if( other->opaque )
+		{
+			continue;
+		}
+		c_floodedleafs++;
+		other->occupied = nextDist;
+
+		// the list's own growth step would copy the stack every few frames; top is not used below this line
+		if( frames.Num() == frames.NumAllocated() )
+		{
+			frames.Resize( frames.NumAllocated() * 2 );
+		}
+		frame.node = other;
+		frame.p = other->portals;
+		frame.dist = nextDist;
+		frames.Append( frame );
 	}
 }
+//puncho end - R2 larger maps
 
 /*
 =============
@@ -644,7 +699,7 @@ bool PlaceOccupant( node_t* headnode, idVec3 origin, uEntity_t* occupant )
 	}
 	node->occupant = occupant;
 
-	FloodPortals_r( node, 1 );
+	FloodPortals( node, 1 );	//puncho - R2 larger maps: was FloodPortals_r
 
 	return true;
 }
@@ -892,12 +947,20 @@ static bool	FindTrianglesForPortal( uPortal_t* p, idList<mapTri_t*>& tris )
 
 /*
 =============
-FloodAreas_r
+FloodAreaLeafs
+
+  //puncho - R2 larger maps: this was FloodAreas_r, which called itself once for every leaf of an area, as deep as
+  the area's longest chain of leafs, like FloodPortals_r above. It is the same walk as a loop over a stack of
+  frames: the same leafs in the same order, the same tests of every portal in the same order
 =============
 */
-void FloodAreas_r( node_t* node )
+//puncho start - R2 larger maps
+void FloodAreaLeafs( node_t* node )
 {
+	idList<floodPortalsFrame_t>	frames;
+	floodPortalsFrame_t			frame;
 	uPortal_t*	p;
+	node_t*		other;
 	int			s;
 
 	if( node->area != -1 )
@@ -912,11 +975,24 @@ void FloodAreas_r( node_t* node )
 	c_areaFloods++;
 	node->area = c_areas;
 
-	for( p = node->portals; p; p = p->next[s] )
-	{
-		node_t*	other;
+	frames.Resize( 1024 );
+	frame.node = node;
+	frame.p = node->portals;
+	frame.dist = 0;		// this flood has no distance
+	frames.Append( frame );
 
-		s = ( p->nodes[1] == node );
+	while( frames.Num() > 0 )
+	{
+		floodPortalsFrame_t& top = frames[frames.Num() - 1];
+		p = top.p;
+		if( p == NULL )
+		{
+			// every portal of this leaf is done: back to the leaf it was entered from
+			frames.SetNum( frames.Num() - 1 );
+			continue;
+		}
+		s = ( p->nodes[1] == top.node );
+		top.p = p->next[s];		// where FloodAreas_r went on after its call returned
 		other = p->nodes[!s];
 
 		if( !Portal_Passable( p ) )
@@ -936,9 +1012,30 @@ void FloodAreas_r( node_t* node )
 			continue;
 		}
 
-		FloodAreas_r( other );
+		// what FloodAreas_r did when it was entered for the leaf behind the portal
+		if( other->area != -1 )
+		{
+			continue;		// already got it
+		}
+		if( other->opaque )
+		{
+			continue;
+		}
+		c_areaFloods++;
+		other->area = c_areas;
+
+		// the list's own growth step would copy the stack every few frames; top is not used below this line
+		if( frames.Num() == frames.NumAllocated() )
+		{
+			frames.Resize( frames.NumAllocated() * 2 );
+		}
+		frame.node = other;
+		frame.p = other->portals;
+		frame.dist = 0;
+		frames.Append( frame );
 	}
 }
+//puncho end - R2 larger maps
 
 /*
 =============
@@ -968,7 +1065,7 @@ void FindAreas_r( node_t* node )
 	}
 
 	c_areaFloods = 0;
-	FloodAreas_r( node );
+	FloodAreaLeafs( node );	//puncho - R2 larger maps: was FloodAreas_r
 	common->VerbosePrintf( "area %i has %i leafs\n", c_areas, c_areaFloods );
 	c_areas++;
 }

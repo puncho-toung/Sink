@@ -702,16 +702,20 @@ int idAASLocal::GetWallEdges( int areaNum, const idBounds& bounds, int travelFla
 	const aasFace_t* face1, *face2;
 	idReachability* reach;
 
-	if( !file )
+	if( !file || areaNum < 0 || areaNum >= file->GetNumAreas() )	//puncho - R2 scale guards: an area number outside the file wrote outside the work arrays (FlowFieldExit has the same test)
 	{
 		return 0;
 	}
 
 	numEdges = 0;
 
-	areasVisited = ( byte* ) _alloca16( file->GetNumAreas() );
-	memset( areasVisited, 0, file->GetNumAreas() * sizeof( byte ) );
-	areaQueue = ( int* ) _alloca16( file->GetNumAreas() * sizeof( int ) );
+	//puncho start - R2 scale guards: the object's work arrays (SetupWallCache), not the stack, where 5 bytes an
+	// area overflowed near 200,000 areas. The visited marks are all zero between queries: a query clears the
+	// marks it set before it returns (both returns below), so its cost follows its box and not the map; the
+	// clear of every mark at each query was 11 microseconds at 650,000 areas
+	areasVisited = wallAreasVisited;
+	areaQueue = wallAreaQueue;
+	//puncho end - R2 scale guards
 
 	queueStart = -1;
 	queueEnd = 0;
@@ -804,6 +808,13 @@ int idAASLocal::GetWallEdges( int areaNum, const idBounds& bounds, int travelFla
 				edges[numEdges++] = edge1Num;
 				if( numEdges >= maxEdges )
 				{
+					//puncho start - R2 scale guards: the marks this query set, as at the function's end
+					areasVisited[areaNum] = false;
+					for( i = 0; i < queueEnd; i++ )
+					{
+						areasVisited[areaQueue[i]] = false;
+					}
+					//puncho end - R2 scale guards
 					return numEdges;
 				}
 			}
@@ -823,6 +834,13 @@ int idAASLocal::GetWallEdges( int areaNum, const idBounds& bounds, int travelFla
 			}
 		}
 	}
+	//puncho start - R2 scale guards: every mark this query set goes, so the next query finds them all zero
+	areasVisited[areaNum] = false;	// the start area: its queue slot was overwritten by the first push
+	for( i = 0; i < queueEnd; i++ )
+	{
+		areasVisited[areaQueue[i]] = false;
+	}
+	//puncho end - R2 scale guards
 	return numEdges;
 }
 
@@ -840,7 +858,16 @@ void idAASLocal::SetupWallCache()
 	areaWalls = ( aasAreaWalls_t* ) Mem_ClearedAlloc( file->GetNumAreas() * sizeof( aasAreaWalls_t ), TAG_AAS );
 	wallEdgeStamp = ( int* ) Mem_ClearedAlloc( 2 * file->GetNumEdges() * sizeof( int ), TAG_AAS );
 	wallQueryStamp = 0;
-	wallQuads.SetGranularity( 256 );
+	//puncho start - R2 scale guards: the wall queries' work arrays, for as long as the file is loaded, the marks
+	// all zero. One entry at least, so that a file without areas does not leave them NULL
+	const int numWork = Max( 1, file->GetNumAreas() );
+	wallAreasVisited = ( byte* ) Mem_ClearedAlloc( numWork * sizeof( byte ), TAG_AAS );
+	wallAreaQueue = ( int* ) Mem_ClearedAlloc( numWork * sizeof( int ), TAG_AAS );
+	// the pool of quads is copied whenever it grows. It grew by 256 quads: a map of 80,225 areas copied it 346
+	// times, 758 MB in all, and one of 650,000 areas would copy it thousands of times; by a quarter of the areas
+	// it grows a few times a map
+	wallQuads.SetGranularity( Max( 256, file->GetNumAreas() / 4 ) );
+	//puncho end - R2 scale guards
 }
 
 /*
@@ -854,6 +881,12 @@ void idAASLocal::ShutdownWallCache()
 	areaWalls = NULL;
 	Mem_Free( wallEdgeStamp );
 	wallEdgeStamp = NULL;
+	//puncho start - R2 scale guards
+	Mem_Free( wallAreasVisited );
+	wallAreasVisited = NULL;
+	Mem_Free( wallAreaQueue );
+	wallAreaQueue = NULL;
+	//puncho end - R2 scale guards
 	wallQuads.Clear();
 }
 
@@ -1036,7 +1069,7 @@ int idAASLocal::GetWallQuads( int areaNum, const idBounds& bounds, int travelFla
 	const aasArea_t* area;
 	idReachability* reach;
 
-	if( !file )
+	if( !file || areaNum < 0 || areaNum >= file->GetNumAreas() )	//puncho - R2 scale guards: as in GetWallEdges
 	{
 		return 0;
 	}
@@ -1050,9 +1083,10 @@ int idAASLocal::GetWallQuads( int areaNum, const idBounds& bounds, int travelFla
 
 	numQuads = 0;
 
-	areasVisited = ( byte* ) _alloca16( file->GetNumAreas() );
-	memset( areasVisited, 0, file->GetNumAreas() * sizeof( byte ) );
-	areaQueue = ( int* ) _alloca16( file->GetNumAreas() * sizeof( int ) );
+	//puncho start - R2 scale guards: the object's work arrays, as in GetWallEdges; the marks are all zero here
+	areasVisited = wallAreasVisited;
+	areaQueue = wallAreaQueue;
+	//puncho end - R2 scale guards
 
 	queueStart = -1;
 	queueEnd = 0;
@@ -1100,6 +1134,13 @@ int idAASLocal::GetWallQuads( int areaNum, const idBounds& bounds, int travelFla
 			}
 		}
 	}
+	//puncho start - R2 scale guards: every mark this query set goes, as in GetWallEdges
+	areasVisited[areaNum] = false;	// the start area: its queue slot was overwritten by the first push
+	for( i = 0; i < queueEnd; i++ )
+	{
+		areasVisited[areaQueue[i]] = false;
+	}
+	//puncho end - R2 scale guards
 	return numQuads;
 }
 //puncho end

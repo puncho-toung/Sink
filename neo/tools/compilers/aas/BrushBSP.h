@@ -283,7 +283,7 @@ private:
 	void					MakeNodePortal( idBrushBSPNode* node );
 	void					SplitNodePortals( idBrushBSPNode* node );
 	void					MakeTreePortals_r( idBrushBSPNode* node );
-	void					FloodThroughPortals_r( idBrushBSPNode* node, int contents, int depth );
+	void					FloodThroughPortals( idBrushBSPNode* node, int contents, int depth );	//puncho - R2 widening: was FloodThroughPortals_r; it no longer calls itself
 	bool					FloodFromOrigin( const idVec3& origin, int contents );
 	bool					FloodFromEntities( const idMapFile* mapFile, int contents, const idStrList& classNames );
 	void					RemoveOutside_r( idBrushBSPNode* node, int contents );
@@ -294,7 +294,7 @@ private:
 	void					UpdateTreeAfterMerge_r( idBrushBSPNode* node, const idBounds& bounds, idBrushBSPNode* oldNode, idBrushBSPNode* newNode );
 	void					RemoveLeafNodeColinearPoints( idBrushBSPNode* node );
 	void					RemoveColinearPoints_r( idBrushBSPNode* node, int skipContents );
-	void					MeltFlood_r( idBrushBSPNode* node, int skipContents, idBounds& bounds, idVectorSet<idVec3, 3>& vertexList );
+	void					MeltFlood( idBrushBSPNode* node, int skipContents, idBounds& bounds, idVectorSet<idVec3, 3>& vertexList );	//puncho - R2 widening: was MeltFlood_r; it no longer calls itself
 	void					MeltLeafNodePortals( idBrushBSPNode* node, int skipContents, idVectorSet<idVec3, 3>& vertexList );
 	void					MeltPortals_r( idBrushBSPNode* node, int skipContents, idVectorSet<idVec3, 3>& vertexList );
 };

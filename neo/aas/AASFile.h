@@ -84,7 +84,11 @@ If you have questions concerning this license or the applicable additional terms
 // bits for different bboxes
 #define AREACONTENTS_BBOX_BIT		24
 
-#define MAX_REACH_PER_AREA			256
+//puncho start - R2 widening: the reachabilities leaving one area. idReachability::number and the routing cache's
+// selector (d3xp/ai/AAS_local.h, idRoutingCache::reachabilities) are 16 bits wide; the cap fills AAS_REACH_BITS of them
+#define AAS_REACH_BITS				10
+#define MAX_REACH_PER_AREA			( 1 << AAS_REACH_BITS )
+//puncho end - R2 widening
 #define LEDGE_TRAVELTIME_PANALTY	250		//puncho - R2 router: moved here from d3xp/ai/AAS_routing.cpp; the router map (AASFile_router.cpp) charges the same
 #define MAX_AAS_TREE_DEPTH			128
 
@@ -95,13 +99,13 @@ class idReachability
 {
 public:
 	int							travelType;			// type of travel required to get to the area
-	short						toAreaNum;			// number of the reachable area
-	short						fromAreaNum;		// number of area the reachability starts
+	int							toAreaNum;			// number of the reachable area	//puncho - R2 widening: was short
+	int							fromAreaNum;		// number of area the reachability starts	//puncho - R2 widening: was short
 	idVec3						start;				// start point of inter area movement
 	idVec3						end;				// end point of inter area movement
 	int							edgeNum;			// edge crossed by this reachability
 	unsigned short				travelTime;			// travel time of the inter area movement
-	byte						number;				// reachability number within the fromAreaNum (must be < 256)
+	unsigned short				number;				// reachability number within the fromAreaNum (must be < MAX_REACH_PER_AREA)	//puncho - R2 widening: was byte
 	byte						disableCount;		// number of times this reachability has been disabled
 	idReachability* 			next;				// next reachability in list
 	idReachability* 			rev_next;			// next reachability in reversed list
@@ -155,11 +159,11 @@ typedef struct aasEdge_s
 // area boundary face
 typedef struct aasFace_s
 {
-	unsigned short				planeNum;			// number of the plane this face is on
+	int							planeNum;			// number of the plane this face is on	//puncho - R2 widening: was unsigned short
 	unsigned short				flags;				// face flags
 	int							numEdges;			// number of edges in the boundary of the face
 	int							firstEdge;			// first edge in the edge index
-	short						areas[2];			// area at the front and back of this face
+	int							areas[2];			// area at the front and back of this face	//puncho - R2 widening: was short
 } aasFace_t;
 
 // area with a boundary of faces
@@ -171,8 +175,8 @@ typedef struct aasArea_s
 	idVec3						center;				// center of the area an AI can move towards
 	unsigned short				flags;				// several area flags
 	unsigned short				contents;			// contents of the area
-	short						cluster;			// cluster the area belongs to, if negative it's a portal
-	short						clusterAreaNum;		// number of the area in the cluster
+	int							cluster;			// cluster the area belongs to, if negative it's a portal	//puncho - R2 widening: was short
+	int							clusterAreaNum;		// number of the area in the cluster	//puncho - R2 widening: was short
 	int							travelFlags;		// travel flags for traveling through this area
 	idReachability* 			reach;				// reachabilities that start from this area
 	idReachability* 			rev_reach;			// reachabilities that lead to this area
@@ -181,16 +185,16 @@ typedef struct aasArea_s
 // nodes of the bsp tree
 typedef struct aasNode_s
 {
-	unsigned short				planeNum;			// number of the plane that splits the subspace at this node
+	int							planeNum;			// number of the plane that splits the subspace at this node	//puncho - R2 widening: was unsigned short
 	int							children[2];		// child nodes, zero is solid, negative is -(area number)
 } aasNode_t;
 
 // cluster portal
 typedef struct aasPortal_s
 {
-	short						areaNum;			// number of the area that is the actual portal
-	short						clusters[2];		// number of cluster at the front and back of the portal
-	short						clusterAreaNum[2];	// number of this portal area in the front and back cluster
+	int							areaNum;			// number of the area that is the actual portal	//puncho - R2 widening: was short
+	int							clusters[2];		// number of cluster at the front and back of the portal	//puncho - R2 widening: was short
+	int							clusterAreaNum[2];	// number of this portal area in the front and back cluster	//puncho - R2 widening: was short
 	unsigned short				maxAreaTravelTime;	// maximum travel time through the portal area
 } aasPortal_t;
 

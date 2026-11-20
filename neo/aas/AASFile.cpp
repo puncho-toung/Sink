@@ -1189,6 +1189,21 @@ bool idAASFileLocal::ParseAreas( idLexer& src )
 		return false;
 	}
 
+	//puncho start - R2 widening: a reachability's target is used as an index by LinkReversedReachability and
+	// by the routing; a number outside the file's areas is refused here
+	for( i = 0; i < areas.Num(); i++ )
+	{
+		for( const idReachability* reach = areas[i].reach; reach; reach = reach->next )
+		{
+			if( reach->toAreaNum < 0 || reach->toAreaNum >= areas.Num() )
+			{
+				src.Error( "idAASFileLocal::ParseAreas: area %d has a reachability to area %d, the file has %d areas", i, reach->toAreaNum, areas.Num() );
+				return false;
+			}
+		}
+	}
+	//puncho end - R2 widening
+
 	LinkReversedReachability();
 
 	return true;
@@ -1544,7 +1559,8 @@ idAASFileLocal::ReportRoutingEfficiency
 */
 void idAASFileLocal::ReportRoutingEfficiency() const
 {
-	int numReachableAreas, total, i, n;
+	int numReachableAreas, i, n;
+	long long total;	//puncho - R2 widening: was int; one cluster of 46,341 areas squares past an int
 
 	numReachableAreas = 0;
 	total = 0;
@@ -1552,13 +1568,13 @@ void idAASFileLocal::ReportRoutingEfficiency() const
 	{
 		n = clusters[i].numReachableAreas;
 		numReachableAreas += n;
-		total += n * n;
+		total += ( long long )n * n;
 	}
-	total += numReachableAreas * portals.Num();
+	total += ( long long )numReachableAreas * portals.Num();
 
 	common->Printf( "%6d reachable areas\n", numReachableAreas );
 	common->Printf( "%6d reachabilities\n", NumReachabilities() );
-	common->Printf( "%6d KB max routing cache\n", ( total * 3 ) >> 10 );
+	common->Printf( "%6lld KB max routing cache\n", ( total * 4 ) >> 10 );	//puncho - R2 widening: an entry is a 16-bit time and a 16-bit selector (was 3 bytes)
 }
 
 /*

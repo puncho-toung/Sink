@@ -2166,6 +2166,120 @@ static void Cmd_AASStats_f( const idCmdArgs& args )
 	}
 }
 
+//puncho start - R2 widening: a route written out hop by hop (plans/single-map/R2-aas-widening.md, package R2.1)
+/*
+==================
+Cmd_AASRoute_f
+
+  aasRoute <from area> <to area> [travel flags]
+
+  Asks the AAS file that aas_test selects for a route one area at a time, as a monster does: the first ask
+  from the area's centre, every later one from the point where the route entered the area. Prints every hop:
+  the area left, the position of the reachability taken among those leaving that area
+  (idReachability::number, the routing cache's selector), the area entered and the travel time the ask gave.
+  The travel flags are a number; the default is walking, TFL_WALK | TFL_AIR. An area without floor faces,
+  open air for one, has its "centre" near the world origin (AreaReachableGoal); asked from there at every
+  hop the stock routing can send the route round two areas for ever.
+==================
+*/
+static void Cmd_AASRoute_f( const idCmdArgs& args )
+{
+	const int maxHops = 4096;
+	const int numRecent = 32;
+	int aasNum, areaNum, goalAreaNum, travelFlags, travelTime, firstTime, hops, maxNumber, i;
+	const idReachability* recent[numRecent];	// the reachabilities taken last: taking one of them again is a loop
+	idReachability* reach;
+
+	if( !gameLocal.CheatsOk() )
+	{
+		return;
+	}
+
+	if( args.Argc() < 3 )
+	{
+		gameLocal.Printf( "usage: aasRoute <from area> <to area> [travel flags]\n" );
+		return;
+	}
+
+	aasNum = aas_test.GetInteger();
+	idAAS* aas = gameLocal.GetAAS( aasNum );
+	if( !aas )
+	{
+		gameLocal.Printf( "No aas #%d loaded\n", aasNum );
+		return;
+	}
+
+	areaNum = atoi( args.Argv( 1 ) );
+	goalAreaNum = atoi( args.Argv( 2 ) );
+	travelFlags = ( args.Argc() > 3 ) ? atoi( args.Argv( 3 ) ) : ( TFL_WALK | TFL_AIR );
+
+	// the first ask is from no point at all: RouteToGoalArea checks both numbers against the file, and only
+	// after it has answered is an area's centre read
+	travelTime = 0;
+	reach = NULL;
+	if( areaNum == goalAreaNum || !aas->RouteToGoalArea( areaNum, vec3_origin, goalAreaNum, travelFlags, travelTime, &reach ) || reach == NULL )
+	{
+		gameLocal.Printf( "aasRoute: no route from area %d to area %d with travel flags %d\n", areaNum, goalAreaNum, travelFlags );
+		return;
+	}
+
+	firstTime = 0;
+	maxNumber = 0;
+	for( i = 0; i < numRecent; i++ )
+	{
+		recent[i] = NULL;
+	}
+	for( hops = 0; hops < maxHops && areaNum != goalAreaNum; hops++ )
+	{
+		// hop 0 from the area's centre; every later hop from where the route entered the area (reach is still the
+		// reachability of the hop before)
+		const idVec3 askFrom = ( hops == 0 ) ? aas->AreaCenter( areaNum ) : reach->end;
+		if( !aas->RouteToGoalArea( areaNum, askFrom, goalAreaNum, travelFlags, travelTime, &reach ) || reach == NULL )
+		{
+			gameLocal.Printf( "aasRoute: no route from area %d after %d hops\n", areaNum, hops );
+			return;
+		}
+		if( hops == 0 )
+		{
+			firstTime = travelTime;
+		}
+		if( reach->number > maxNumber )
+		{
+			maxNumber = reach->number;
+		}
+		gameLocal.Printf( "aasRoute: hop %d: area %d, reachability %d of the area, travel type %d, to area %d, time %d\n", hops, areaNum, reach->number, reach->travelType, reach->toAreaNum, travelTime );
+
+		// every ask after the first is made from the end of the reachability taken before it, so what follows a
+		// reachability is always the same: a route that takes one a second time goes round for ever (seen with the
+		// stock routing on a 40,316-area map) and is not followed to maxHops. Coming back into an area by another
+		// reachability is no loop
+		for( i = 0; i < numRecent; i++ )
+		{
+			if( recent[i] == reach )
+			{
+				break;
+			}
+		}
+		if( i < numRecent )
+		{
+			gameLocal.Printf( "aasRoute: a loop: the reachability from area %d to area %d is taken a second time, stopped after %d hops\n", areaNum, reach->toAreaNum, hops + 1 );
+			return;
+		}
+		recent[hops % numRecent] = reach;
+		areaNum = reach->toAreaNum;
+	}
+
+	if( areaNum == goalAreaNum )
+	{
+		gameLocal.Printf( "aasRoute: arrived at area %d after %d hops, time %d at the first ask, highest reachability position %d\n", goalAreaNum, hops, firstTime, maxNumber );
+	}
+	else
+	{
+		gameLocal.Printf( "aasRoute: not arrived after %d hops, at area %d\n", hops, areaNum );
+	}
+}
+//puncho end - R2 widening
+
 /*
 ==================
 Cmd_TestDamage_f
@@ -5872,6 +5986,7 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "reloadanims",			Cmd_ReloadAnims_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"reloads animations" );
 	cmdSystem->AddCommand( "listAnims",				Cmd_ListAnims_f,			CMD_FL_GAME,				"lists all animations" );
 	cmdSystem->AddCommand( "aasStats",				Cmd_AASStats_f,				CMD_FL_GAME,				"shows AAS stats" );
+	cmdSystem->AddCommand( "aasRoute",				Cmd_AASRoute_f,				CMD_FL_GAME,				"prints the route between two AAS areas hop by hop: aasRoute <from> <to> [travel flags]" );	//puncho - R2 widening
 	cmdSystem->AddCommand( "testDamage",			Cmd_TestDamage_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"tests a damage def", idCmdSystem::ArgCompletion_Decl<DECL_ENTITYDEF> );
 	cmdSystem->AddCommand( "weaponSplat",			Cmd_WeaponSplat_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"projects a blood splat on the player weapon" );
 	cmdSystem->AddCommand( "saveSelected",			Cmd_SaveSelected_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"saves the selected entity to the .map file" );

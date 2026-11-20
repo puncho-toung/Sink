@@ -54,7 +54,7 @@ private:
 	idRoutingCache* 			time_next;				// next in time based list
 	idRoutingCache* 			time_prev;				// previous in time based list
 	unsigned short				startTravelTime;		// travel time to start with
-	unsigned char* 				reachabilities;			// reachabilities used for routing
+	unsigned short* 			reachabilities;			// reachabilities used for routing	//puncho - R2 widening: was unsigned char; one idReachability::number per area
 	unsigned short* 			travelTimes;			// travel time for every area
 };
 
@@ -182,12 +182,17 @@ private:	// routing data
 	unsigned short* 			goalAreaTravelTimes;	// travel times to goal areas
 	unsigned short* 			areaTravelTimes;		// travel times through the areas
 	int							numAreaTravelTimes;		// number of area travel times
+	//puncho start - R2 widening: the start area's travel times in UpdateAreaRoutingCache were a stack array of
+	// MAX_REACH_PER_AREA zeros, read past its end by an area with more reachabilities entering it
+	unsigned short* 			zeroAreaTravelTimes;	// maxInReach zeros, never written after CalculateAreaTravelTimes
+	int							maxInReach;				// the most reachabilities entering one area, at least 1 while routing is set up
+	//puncho end - R2 widening
 	mutable idRoutingCache* 	cacheListStart;			// start of list with cache sorted from oldest to newest
 	mutable idRoutingCache* 	cacheListEnd;			// end of list with cache sorted from oldest to newest
 	mutable int					cacheEvictions;
 	mutable int					travelSaturated;
 	unsigned short				ClampTravelTime( int value, bool saturate ) const;
-	mutable int					totalCacheMemory;		// total cache memory used
+	mutable long long			totalCacheMemory;		// total cache memory used //puncho - R2 scale guards: was int; one route query builds an area cache of the large cluster for every portal it floods (UpdatePortalRoutingCache), more than 2 GB at the target size, before the next query evicts
 	idList<idRoutingObstacle*, TAG_AAS>	obstacleList;			// list with obstacles
 
 private:	// wall quads per area (ai-avoidance WP-A2), filled from const queries like the routing cache
@@ -195,6 +200,11 @@ private:	// wall quads per area (ai-avoidance WP-A2), filled from const queries 
 	mutable idList<aasCachedWallQuad_t, TAG_AAS>	wallQuads;	// the pool the areas index into
 	mutable int* 				wallEdgeStamp;			// per signed edge (2 * numEdges), the query that last listed it
 	mutable int					wallQueryStamp;			// the current query
+	//puncho start - R2 scale guards: the two work arrays of GetWallEdges and GetWallQuads. Every call took them
+	// from the stack, 5 bytes an area: 401 KB of the 1 MB game stack at 80,225 areas, an overflow near 200,000
+	mutable byte* 				wallAreasVisited;		// one per area, all zero between wall queries: a query clears the marks it set before it returns
+	mutable int* 				wallAreaQueue;			// one per area, the areas a wall query has still to visit
+	//puncho end - R2 scale guards
 
 private:	// flow fields per goal area (ai-avoidance WP-A6), filled from const queries like the routing cache they index
 	mutable aasFlowField_t		flowFields[MAX_AAS_FLOW_FIELDS];

@@ -1082,6 +1082,22 @@ bool idAASReach::Build( const idMapFile* mapFile, idAASFileLocal* file )
 
 	file->LinkReversedReachability();
 
+	//puncho start - R2 widening: the game refuses a file with an area over the cap (d3xp/ai/AAS_routing.cpp,
+	// CalculateAreaTravelTimes). The file is written all the same; every such area is named here
+	for( i = 1; i < file->areas.Num(); i++ )
+	{
+		int numAreaReach = 0;
+		for( const idReachability* areaReach = file->areas[i].reach; areaReach; areaReach = areaReach->next )
+		{
+			numAreaReach++;
+		}
+		if( numAreaReach > MAX_REACH_PER_AREA )
+		{
+			common->Warning( "area %d has %d reachabilities, MAX_REACH_PER_AREA is %d: the game will not load this AAS file", i, numAreaReach, MAX_REACH_PER_AREA );
+		}
+	}
+	//puncho end - R2 widening
+
 	common->Printf( "\r%6d reachabilities\n", numReachabilities );
 
 	return true;

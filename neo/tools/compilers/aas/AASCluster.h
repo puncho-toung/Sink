@@ -50,7 +50,7 @@ private:
 
 private:
 	bool					UpdatePortal( int areaNum, int clusterNum );
-	bool					FloodClusterAreas_r( int areaNum, int clusterNum );
+	bool					FloodClusterAreas( int areaNum, int clusterNum );	//puncho - R2 widening: was FloodClusterAreas_r; it no longer calls itself
 	void					RemoveAreaClusterNumbers();
 	void					NumberClusterAreas( int clusterNum );
 	bool					FindClusters();

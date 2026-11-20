@@ -102,88 +102,137 @@ bool idAASCluster::UpdatePortal( int areaNum, int clusterNum )
 
 /*
 ================
-idAASCluster::FloodClusterAreas_r
+idAASCluster::FloodClusterAreas
+
+//puncho - R2 widening: this was FloodClusterAreas_r, which called itself once per area. One cluster of an
+outdoor map holds nearly every area, and at 10,102 areas in one cluster the calls did not fit the 1 MB stack
+of a Windows build. The same walk with its frames in an array: the areas are entered, and the portals
+updated, in the order the calls did it, so the file written is the same. An area gets its cluster number
+once, so there are never more frames than areas.
 ================
 */
-bool idAASCluster::FloodClusterAreas_r( int areaNum, int clusterNum )
+typedef struct aasFloodFrame_s
+{
+	int						areaNum;		// the area this frame floods from
+	int						nextFace;		// the next of its faces to look at
+	idReachability* 		reach;			// the next reachability leaving it
+	idReachability* 		revReach;		// the next reachability entering it
+} aasFloodFrame_t;
+
+bool idAASCluster::FloodClusterAreas( int areaNum, int clusterNum )
 {
 	aasArea_t* area;
 	aasFace_t* face;
-	int faceNum, i;
-	idReachability* reach;
+	int faceNum, nextAreaNum, numFrames, maxFrames;
+	bool enter, result;
+	aasFloodFrame_t* frames, *frame;
+	idList<aasFloodFrame_t> frameList;	// owns the frames, so they are freed also when common->Error throws (runAAS in the game)
 
-	area = &file->areas[areaNum];
+	maxFrames = file->areas.Num();
+	frameList.SetNum( maxFrames );
+	frames = frameList.Ptr();
+	numFrames = 0;
+	result = true;
+	nextAreaNum = areaNum;
+	enter = true;
 
-	// if the area is already part of a cluster
-	if( area->cluster > 0 )
+	while( true )
 	{
-		if( area->cluster == clusterNum )
+		if( enter )
 		{
-			return true;
-		}
-		// there's a reachability going from one cluster to another only in one direction
-		common->Error( "cluster %d touched cluster %d at area %d\r\n", clusterNum, file->areas[areaNum].cluster, areaNum );
-		return false;
-	}
+			// what one call did before it went on to the neighbours
+			enter = false;
+			area = &file->areas[nextAreaNum];
 
-	// if this area is a cluster portal
-	if( area->contents & AREACONTENTS_CLUSTERPORTAL )
-	{
-		return UpdatePortal( areaNum, clusterNum );
-	}
-
-	// set the area cluster number
-	area->cluster = clusterNum;
-
-	if( !noFaceFlood )
-	{
-		// use area faces to flood into adjacent areas
-		for( i = 0; i < area->numFaces; i++ )
-		{
-			faceNum = abs( file->faceIndex[area->firstFace + i] );
-			face = &file->faces[faceNum];
-			if( face->areas[0] == areaNum )
+			// if the area is already part of a cluster
+			if( area->cluster > 0 )
 			{
-				if( face->areas[1] )
+				if( area->cluster != clusterNum )
 				{
-					if( !FloodClusterAreas_r( face->areas[1], clusterNum ) )
-					{
-						return false;
-					}
+					// there's a reachability going from one cluster to another only in one direction
+					common->Error( "cluster %d touched cluster %d at area %d\r\n", clusterNum, area->cluster, nextAreaNum );
+					result = false;
+					break;
+				}
+			}
+			// if this area is a cluster portal
+			else if( area->contents & AREACONTENTS_CLUSTERPORTAL )
+			{
+				if( !UpdatePortal( nextAreaNum, clusterNum ) )
+				{
+					result = false;
+					break;
 				}
 			}
 			else
 			{
-				if( face->areas[0] )
+				// set the area cluster number
+				area->cluster = clusterNum;
+
+				if( numFrames >= maxFrames )
 				{
-					if( !FloodClusterAreas_r( face->areas[0], clusterNum ) )
-					{
-						return false;
-					}
+					common->Error( "idAASCluster::FloodClusterAreas: more frames than areas at area %d", nextAreaNum );
+					result = false;
+					break;
 				}
+				frame = &frames[numFrames++];
+				frame->areaNum = nextAreaNum;
+				frame->nextFace = 0;
+				frame->reach = area->reach;
+				frame->revReach = area->rev_reach;
 			}
 		}
-	}
 
-	// use the reachabilities to flood into other areas
-	for( reach = file->areas[areaNum].reach; reach; reach = reach->next )
-	{
-		if( !FloodClusterAreas_r( reach->toAreaNum, clusterNum ) )
+		if( numFrames == 0 )
 		{
-			return false;
+			break;
+		}
+
+		// the next neighbour of the newest frame, in the order of the calls: faces, reachabilities, reversed reachabilities
+		frame = &frames[numFrames - 1];
+		area = &file->areas[frame->areaNum];
+
+		if( !noFaceFlood && frame->nextFace < area->numFaces )
+		{
+			// use area faces to flood into adjacent areas
+			faceNum = abs( file->faceIndex[area->firstFace + frame->nextFace] );
+			frame->nextFace++;
+			face = &file->faces[faceNum];
+			if( face->areas[0] == frame->areaNum )
+			{
+				nextAreaNum = face->areas[1];
+			}
+			else
+			{
+				nextAreaNum = face->areas[0];
+			}
+			if( nextAreaNum )
+			{
+				enter = true;
+			}
+		}
+		else if( frame->reach )
+		{
+			// use the reachabilities to flood into other areas
+			nextAreaNum = frame->reach->toAreaNum;
+			frame->reach = frame->reach->next;
+			enter = true;
+		}
+		else if( frame->revReach )
+		{
+			// use the reversed reachabilities to flood into other areas
+			nextAreaNum = frame->revReach->fromAreaNum;
+			frame->revReach = frame->revReach->rev_next;
+			enter = true;
+		}
+		else
+		{
+			// the call for this area would return true here
+			numFrames--;
 		}
 	}
 
-	// use the reversed reachabilities to flood into other areas
-	for( reach = file->areas[areaNum].rev_reach; reach; reach = reach->rev_next )
-	{
-		if( !FloodClusterAreas_r( reach->fromAreaNum, clusterNum ) )
-		{
-			return false;
-		}
-	}
-
-	return true;
+	return result;
 }
 
 /*
@@ -338,7 +387,7 @@ bool idAASCluster::FindClusters()
 		file->clusters.Append( cluster );
 
 		// flood the areas in this cluster
-		if( !FloodClusterAreas_r( i, clusterNum ) )
+		if( !FloodClusterAreas( i, clusterNum ) )	//puncho - R2 widening
 		{
 			return false;
 		}

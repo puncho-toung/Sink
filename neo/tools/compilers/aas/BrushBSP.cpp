@@ -487,28 +487,123 @@ int idBrushBSPNode::PlaneSide( const idPlane& plane, float epsilon ) const
 	return SIDE_BACK;
 }
 
+//puncho start - R2 widening: the floods of this file through the portals of leaf nodes (RemoveFlagFlood,
+// FloodThroughPortals, MeltFlood) called themselves once per leaf node. On open ground one flood passes through
+// nearly every leaf node, and the calls did not fit the 1 MB stack of a Windows build (measured: "[Melt Portals]"
+// was the last line of the AAS compile of a 10,159-area tile). They are loops now; the node each call was working
+// on and the next of its portals are kept here. The nodes are visited in the order the calls visited them.
+typedef struct brushBSPFloodFrame_s
+{
+	idBrushBSPNode* 		node;			// the node a call was working on
+	idBrushBSPPortal* 		portal;			// the next of its portals to look at
+	int						depth;			// FloodThroughPortals: the depth the node was given
+} brushBSPFloodFrame_t;
+
+class idBrushBSPFloodStack
+{
+public:
+	idBrushBSPFloodStack()
+	{
+		frames = localFrames;
+		numFrames = 0;
+		maxFrames = NUM_LOCAL_FRAMES;
+	}
+	~idBrushBSPFloodStack()
+	{
+		if( frames != localFrames )
+		{
+			Mem_Free( frames );
+		}
+	}
+	void					Push( idBrushBSPNode* node, idBrushBSPPortal* portal, int depth )
+	{
+		if( numFrames == maxFrames )
+		{
+			// most floods stay inside the local frames; a deep one doubles its memory each time it runs out
+			brushBSPFloodFrame_t* grown = ( brushBSPFloodFrame_t* ) Mem_Alloc( ( size_t )maxFrames * 2 * sizeof( brushBSPFloodFrame_t ), TAG_AAS );
+			memcpy( grown, frames, numFrames * sizeof( brushBSPFloodFrame_t ) );
+			if( frames != localFrames )
+			{
+				Mem_Free( frames );
+			}
+			frames = grown;
+			maxFrames *= 2;
+		}
+		frames[numFrames].node = node;
+		frames[numFrames].portal = portal;
+		frames[numFrames].depth = depth;
+		numFrames++;
+	}
+	bool					Pop( idBrushBSPNode*& node, idBrushBSPPortal*& portal, int& depth )
+	{
+		if( numFrames == 0 )
+		{
+			return false;
+		}
+		numFrames--;
+		node = frames[numFrames].node;
+		portal = frames[numFrames].portal;
+		depth = frames[numFrames].depth;
+		return true;
+	}
+
+private:
+	idBrushBSPFloodStack( const idBrushBSPFloodStack& );		// not copyable: two copies would free one block
+	void					operator=( const idBrushBSPFloodStack& );
+	enum { NUM_LOCAL_FRAMES = 64 };
+	brushBSPFloodFrame_t	localFrames[NUM_LOCAL_FRAMES];
+	brushBSPFloodFrame_t* 	frames;
+	int						numFrames;
+	int						maxFrames;
+};
+//puncho end - R2 widening
+
 /*
 ============
 idBrushBSPNode::RemoveFlagFlood
+
+//puncho - R2 widening: a loop (idBrushBSPFloodStack above); it called itself once per node with the flag
 ============
 */
 void idBrushBSPNode::RemoveFlagFlood( int flag )
 {
-	int s;
-	idBrushBSPPortal* p;
+	int s, depth;
+	idBrushBSPPortal* p, *next;
+	idBrushBSPNode* node, *other;
+	idBrushBSPFloodStack stack;
 
-	RemoveFlag( flag );
+	node = this;
+	node->RemoveFlag( flag );
+	p = node->GetPortals();
+	depth = 0;
 
-	for( p = GetPortals(); p; p = p->Next( s ) )
+	while( true )
 	{
-		s = ( p->GetNode( 1 ) == this );
-
-		if( !( p->GetNode( !s )->GetFlags() & flag ) )
+		// go on with the portals of the node
+		while( p )
 		{
-			continue;
+			s = ( p->GetNode( 1 ) == node );
+			next = p->Next( s );
+			other = p->GetNode( !s );
+
+			if( other->GetFlags() & flag )
+			{
+				// what the call for the node at the other side did first; this node goes on with its next portal afterwards
+				stack.Push( node, next, depth );
+				node = other;
+				node->RemoveFlag( flag );
+				p = node->GetPortals();
+			}
+			else
+			{
+				p = next;
+			}
 		}
 
-		p->GetNode( !s )->RemoveFlagFlood( flag );
+		if( !stack.Pop( node, p, depth ) )
+		{
+			break;
+		}
 	}
 }
 
@@ -1606,49 +1701,88 @@ void idBrushBSP::LeakFile( const idStr& fileName )
 
 /*
 ============
-idBrushBSP::FloodThroughPortals_r
+idBrushBSP::FloodThroughPortals
+
+//puncho - R2 widening: this was FloodThroughPortals_r, which called itself once per leaf node; a loop now
+(idBrushBSPFloodStack above). Every node gets the depth the calls gave it: one more than the node it was
+entered from. The test for a NULL node now comes before the node is read.
 ============
 */
-void idBrushBSP::FloodThroughPortals_r( idBrushBSPNode* node, int contents, int depth )
+void idBrushBSP::FloodThroughPortals( idBrushBSPNode* node, int contents, int depth )
 {
-	idBrushBSPPortal* p;
+	idBrushBSPPortal* p, *next;
+	idBrushBSPNode* other;
 	int s;
+	bool enter;
+	idBrushBSPFloodStack stack;
 
-	if( node->occupied )
+	p = NULL;
+	enter = true;
+
+	while( true )
 	{
-		common->Error( "FloodThroughPortals_r: node already occupied\n" );
-	}
-	if( !node )
-	{
-		common->Error( "FloodThroughPortals_r: NULL node\n" );
-	}
+		if( enter )
+		{
+			// what one call did before it went on to the portals
+			enter = false;
+			if( !node )
+			{
+				common->Error( "FloodThroughPortals: NULL node\n" );
+			}
+			if( node->occupied )
+			{
+				common->Error( "FloodThroughPortals: node already occupied\n" );
+			}
 
-	node->occupied = depth;
+			node->occupied = depth;
+			p = node->portals;
+		}
 
-	for( p = node->portals; p; p = p->next[s] )
-	{
-		s = ( p->nodes[1] == node );
+		// go on with the portals of the node
+		while( p )
+		{
+			s = ( p->nodes[1] == node );
+			next = p->next[s];
+			other = p->nodes[!s];
 
-		// if the node at the other side of the portal is removed
-		if( !p->nodes[!s] )
+			// if the node at the other side of the portal is removed
+			if( !other )
+			{
+				p = next;
+				continue;
+			}
+
+			// if the node at the other side of the portal is occupied already
+			if( other->occupied )
+			{
+				p = next;
+				continue;
+			}
+
+			// can't flood through the portal if it has the seperating contents at the other side
+			if( other->contents & contents )
+			{
+				p = next;
+				continue;
+			}
+
+			// flood through the current portal; this node goes on with its next portal afterwards
+			stack.Push( node, next, depth );
+			node = other;
+			depth = depth + 1;
+			enter = true;
+			break;
+		}
+
+		if( enter )
 		{
 			continue;
 		}
 
-		// if the node at the other side of the portal is occupied already
-		if( p->nodes[!s]->occupied )
+		if( !stack.Pop( node, p, depth ) )
 		{
-			continue;
+			break;
 		}
-
-		// can't flood through the portal if it has the seperating contents at the other side
-		if( p->nodes[!s]->contents & contents )
-		{
-			continue;
-		}
-
-		// flood recursively through the current portal
-		FloodThroughPortals_r( p->nodes[!s], contents, depth + 1 );
 	}
 }
 
@@ -1693,7 +1827,7 @@ bool idBrushBSP::FloodFromOrigin( const idVec3& origin, int contents )
 		return false;
 	}
 
-	FloodThroughPortals_r( node, contents, 1 );
+	FloodThroughPortals( node, contents, 1 );	//puncho - R2 widening
 
 	return true;
 }
@@ -2270,63 +2404,103 @@ bool idBrushBSP::TryMergeLeafNodes( idBrushBSPPortal* portal, int side )
 
 /*
 ============
-idBrushBSP::MeltFloor_r
+idBrushBSP::MeltFlood
 
   flood through portals touching the bounds to find all vertices that might be inside the bounds
+
+//puncho - R2 widening: this was MeltFlood_r, which called itself once per leaf node; a loop now
+(idBrushBSPFloodStack above). The vertices are found in the order the calls found them.
 ============
 */
-void idBrushBSP::MeltFlood_r( idBrushBSPNode* node, int skipContents, idBounds& bounds, idVectorSet<idVec3, 3>& vertexList )
+void idBrushBSP::MeltFlood( idBrushBSPNode* node, int skipContents, idBounds& bounds, idVectorSet<idVec3, 3>& vertexList )
 {
-	int s1, i;
-	idBrushBSPPortal* p1;
+	int s1, i, depth;
+	idBrushBSPPortal* p1, *next;
+	idBrushBSPNode* other;
 	idBounds b;
 	const idWinding* w;
+	bool enter;
+	idBrushBSPFloodStack stack;
 
-	node->SetFlag( NODE_VISITED );
+	p1 = NULL;
+	depth = 0;
+	enter = true;
 
-	for( p1 = node->GetPortals(); p1; p1 = p1->Next( s1 ) )
+	while( true )
 	{
-		s1 = ( p1->GetNode( 1 ) == node );
-
-		if( p1->GetNode( !s1 )->GetFlags() & NODE_VISITED )
+		if( enter )
 		{
-			continue;
-		}
+			// what one call did before it went on to the nodes at the other side of its portals
+			enter = false;
+			node->SetFlag( NODE_VISITED );
 
-		w = p1->GetWinding();
-
-		for( i = 0; i < w->GetNumPoints(); i++ )
-		{
-			if( bounds.ContainsPoint( ( *w )[i].ToVec3() ) )
+			for( p1 = node->GetPortals(); p1; p1 = p1->Next( s1 ) )
 			{
-				vertexList.FindVector( ( *w )[i].ToVec3(), VERTEX_MELT_EPSILON );
+				s1 = ( p1->GetNode( 1 ) == node );
+
+				if( p1->GetNode( !s1 )->GetFlags() & NODE_VISITED )
+				{
+					continue;
+				}
+
+				w = p1->GetWinding();
+
+				for( i = 0; i < w->GetNumPoints(); i++ )
+				{
+					if( bounds.ContainsPoint( ( *w )[i].ToVec3() ) )
+					{
+						vertexList.FindVector( ( *w )[i].ToVec3(), VERTEX_MELT_EPSILON );
+					}
+				}
 			}
+
+			p1 = node->GetPortals();
 		}
-	}
 
-	for( p1 = node->GetPortals(); p1; p1 = p1->Next( s1 ) )
-	{
-		s1 = ( p1->GetNode( 1 ) == node );
+		// go on with the portals of the node
+		while( p1 )
+		{
+			s1 = ( p1->GetNode( 1 ) == node );
+			next = p1->Next( s1 );
+			other = p1->GetNode( !s1 );
 
-		if( p1->GetNode( !s1 )->GetFlags() & NODE_VISITED )
+			if( other->GetFlags() & NODE_VISITED )
+			{
+				p1 = next;
+				continue;
+			}
+
+			if( other->GetContents() & skipContents )
+			{
+				p1 = next;
+				continue;
+			}
+
+			w = p1->GetWinding();
+			w->GetBounds( b );
+
+			if( !bounds.IntersectsBounds( b ) )
+			{
+				p1 = next;
+				continue;
+			}
+
+			// the call for the node at the other side; this node goes on with its next portal afterwards
+			stack.Push( node, next, depth );
+			node = other;
+			enter = true;
+			break;
+		}
+
+		if( enter )
 		{
 			continue;
 		}
 
-		if( p1->GetNode( !s1 )->GetContents() & skipContents )
+		if( !stack.Pop( node, p1, depth ) )
 		{
-			continue;
+			break;
 		}
-
-		w = p1->GetWinding();
-		w->GetBounds( b );
-
-		if( !bounds.IntersectsBounds( b ) )
-		{
-			continue;
-		}
-
-		MeltFlood_r( p1->GetNode( !s1 ), skipContents, bounds, vertexList );
 	}
 }
 
@@ -2363,7 +2537,7 @@ void idBrushBSP::MeltLeafNodePortals( idBrushBSPNode* node, int skipContents, id
 		vertexList.Init( bounds[0], bounds[1], VERTEX_MELT_HASH_SIZE, 128 );
 
 		// get all vertices to be considered
-		MeltFlood_r( node, skipContents, bounds, vertexList );
+		MeltFlood( node, skipContents, bounds, vertexList );	//puncho - R2 widening
 		node->RemoveFlagFlood( NODE_VISITED );
 
 		for( i = 0; i < vertexList.Num(); i++ )

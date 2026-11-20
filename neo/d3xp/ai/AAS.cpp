@@ -64,6 +64,23 @@ idAASLocal::idAASLocal()
 {
 	file = NULL;
 	router = NULL;	//puncho - R2 router
+	zeroAreaTravelTimes = NULL;	//puncho - R2 widening
+	maxInReach = 0;				//puncho - R2 widening
+	//puncho start - R2 widening: every routing pointer starts NULL. A map load that ends in an error inside
+	// SetupRouting (an AAS file the cap refuses) leaves file set and these never written, and the next
+	// Shutdown freed and followed them
+	areaCacheIndex = NULL;
+	areaCacheIndexSize = 0;
+	portalCacheIndex = NULL;
+	portalCacheIndexSize = 0;
+	areaUpdate = NULL;
+	portalUpdate = NULL;
+	goalAreaTravelTimes = NULL;
+	areaTravelTimes = NULL;
+	numAreaTravelTimes = 0;
+	cacheListStart = NULL;
+	cacheListEnd = NULL;
+	//puncho end - R2 widening
 	totalCacheMemory = 0;
 	cacheEvictions = 0;
 	travelSaturated = 0;
@@ -71,6 +88,8 @@ idAASLocal::idAASLocal()
 	areaWalls = NULL;
 	wallEdgeStamp = NULL;
 	wallQueryStamp = 0;
+	wallAreasVisited = NULL;	//puncho - R2 scale guards
+	wallAreaQueue = NULL;		//puncho - R2 scale guards
 	memset( flowFields, 0, sizeof( flowFields ) );	// WP-A6: the cells come with the file (SetupFlowFields)
 	flowCells = NULL;
 	flowUseCount = 0;

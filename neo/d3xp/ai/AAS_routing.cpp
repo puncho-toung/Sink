@@ -37,7 +37,10 @@ If you have questions concerning this license or the applicable additional terms
 #define CACHETYPE_AREA				1
 #define CACHETYPE_PORTAL			2
 
-static idCVar aas_routingCacheKB( "aas_routingCacheKB", "2048", CVAR_GAME | CVAR_INTEGER, "routing cache budget in KB per AAS size class", 1, 1048576 );
+//puncho - R2 widening: the default was 2048. A cache entry is 4 bytes now (a 16-bit time and a 16-bit selector; it was
+// 3), and 2731 KB holds the caches 2048 KB held. Measured on the open tile: with 2048 the widened build evicted
+// 18,160 times in a pass in which the old build evicted 113 times; with 2731 it evicted 95 times
+static idCVar aas_routingCacheKB( "aas_routingCacheKB", "2731", CVAR_GAME | CVAR_INTEGER, "routing cache budget in KB per AAS size class", 1, 1048576 );
 static idCVar aas_saturateTravelTime( "aas_saturateTravelTime", "1", CVAR_GAME | CVAR_BOOL, "saturate routing travel times instead of wrapping" );
 
 unsigned short idAASLocal::ClampTravelTime( int value, bool saturate ) const
@@ -55,7 +58,7 @@ unsigned short idAASLocal::ClampTravelTime( int value, bool saturate ) const
 
 void idAASLocal::GetRoutingStats( int& bytes, int& evictions, int& saturated ) const
 {
-	bytes = totalCacheMemory;
+	bytes = ( totalCacheMemory > INT_MAX ) ? INT_MAX : ( int )totalCacheMemory;	//puncho - R2 scale guards: the count is 64 bits, this answer stays an int
 	evictions = cacheEvictions;
 	saturated = travelSaturated;
 }
@@ -77,7 +80,7 @@ idRoutingCache::idRoutingCache( int size )
 	startTravelTime = 0;
 	type = 0;
 	this->size = size;
-	reachabilities = new( TAG_AAS ) byte[size];
+	reachabilities = new( TAG_AAS ) unsigned short[size];	//puncho - R2 widening: was byte
 	memset( reachabilities, 0, size * sizeof( reachabilities[0] ) );
 	travelTimes = new( TAG_AAS ) unsigned short[size];
 	memset( travelTimes, 0, size * sizeof( travelTimes[0] ) );
@@ -145,6 +148,37 @@ void idAASLocal::CalculateAreaTravelTimes()
 	byte* bytePtr;
 	idReachability* reach, *rev_reach;
 
+	//puncho start - R2 widening: the counts of every area first. The most reachabilities entering one area sizes
+	// the zeros UpdateAreaRoutingCache starts from; the total below is summed in 64 bits and checked before
+	// anything is allocated
+	long long totalAreaTravelTimes = 0;
+	int numReachabilities = 0;
+	int maxOutReach = 0;
+	maxInReach = 1;
+	for( n = 0; n < file->GetNumAreas(); n++ )
+	{
+		numReach = 0;
+		for( reach = file->GetArea( n ).reach; reach; reach = reach->next )
+		{
+			numReach++;
+		}
+		numRevReach = 0;
+		for( rev_reach = file->GetArea( n ).rev_reach; rev_reach; rev_reach = rev_reach->rev_next )
+		{
+			numRevReach++;
+		}
+		numReachabilities += numReach;
+		if( numReach > maxOutReach )
+		{
+			maxOutReach = numReach;
+		}
+		if( numRevReach > maxInReach )
+		{
+			maxInReach = numRevReach;
+		}
+	}
+	//puncho end - R2 widening
+
 	// get total memory for all area travel times
 	numAreaTravelTimes = 0;
 	for( n = 0; n < file->GetNumAreas(); n++ )
@@ -166,8 +200,31 @@ void idAASLocal::CalculateAreaTravelTimes()
 		{
 			numRevReach++;
 		}
-		numAreaTravelTimes += numReach * numRevReach;
+		//puncho start - R2 widening: the cap is refused here, by name, before the travel times are allocated
+		if( numReach > MAX_REACH_PER_AREA )
+		{
+			// the object goes back to no file before the error: a file left set would be kept by the next Init of
+			// the same map, which sets up no routing
+			const idStr refusedName = file->GetName();
+			Shutdown();
+			gameLocal.Error( "AAS %s: area %d has %d reachabilities, MAX_REACH_PER_AREA is %d", refusedName.c_str(), n, numReach, MAX_REACH_PER_AREA );
+		}
+		totalAreaTravelTimes += ( long long )numReach * numRevReach;
+		//puncho end - R2 widening
 	}
+
+	//puncho start - R2 widening
+	if( totalAreaTravelTimes > ( long long )( INT_MAX / sizeof( unsigned short ) ) )
+	{
+		const idStr refusedName = file->GetName();	// as the refusal above
+		Shutdown();
+		gameLocal.Error( "AAS %s: %lld area travel times are more than fit", refusedName.c_str(), totalAreaTravelTimes );
+	}
+	numAreaTravelTimes = ( int )totalAreaTravelTimes;
+	zeroAreaTravelTimes = ( unsigned short* ) Mem_ClearedAlloc( maxInReach * sizeof( unsigned short ), TAG_AAS );
+	gameLocal.Printf( "AAS %s: %d areas, %d planes, %d reachabilities, most out of one area %d, most into one area %d, %d area travel times\n",
+					  file->GetName(), file->GetNumAreas(), file->GetNumPlanes(), numReachabilities, maxOutReach, maxInReach, numAreaTravelTimes );
+	//puncho end - R2 widening
 
 	areaTravelTimes = ( unsigned short* ) Mem_Alloc( numAreaTravelTimes * sizeof( unsigned short ), TAG_AAS );
 	bytePtr = ( byte* ) areaTravelTimes;
@@ -187,6 +244,7 @@ void idAASLocal::CalculateAreaTravelTimes()
 			assert( i < MAX_REACH_PER_AREA );
 			if( i >= MAX_REACH_PER_AREA )
 			{
+				Shutdown();	//puncho - R2 widening: as the refusals above; it also frees the travel times allocated by now
 				gameLocal.Error( "i >= MAX_REACH_PER_AREA" );
 			}
 			reach->number = i;
@@ -228,6 +286,11 @@ void idAASLocal::DeleteAreaTravelTimes()
 	Mem_Free( areaTravelTimes );
 	areaTravelTimes = NULL;
 	numAreaTravelTimes = 0;
+	//puncho start - R2 widening
+	Mem_Free( zeroAreaTravelTimes );
+	zeroAreaTravelTimes = NULL;
+	maxInReach = 0;
+	//puncho end - R2 widening
 }
 
 /*
@@ -319,12 +382,21 @@ void idAASLocal::ShutdownRoutingCache()
 {
 	int i;
 
-	for( i = 0; i < file->GetNumClusters(); i++ )
+	//puncho start - R2 widening: after a set-up that ended in an error before SetupRoutingCache there is no
+	// index to walk (the constructor's NULLs); the frees below are safe on NULL
+	if( areaCacheIndex != NULL )
 	{
-		DeleteClusterCache( i );
+		for( i = 0; i < file->GetNumClusters(); i++ )
+		{
+			DeleteClusterCache( i );
+		}
 	}
 
-	DeletePortalCache();
+	if( portalCacheIndex != NULL )
+	{
+		DeletePortalCache();
+	}
+	//puncho end - R2 widening
 
 	Mem_Free( areaCacheIndex );
 	areaCacheIndex = NULL;
@@ -377,7 +449,7 @@ void idAASLocal::RoutingStats() const
 {
 	idRoutingCache* cache;
 	int numAreaCache, numPortalCache;
-	int totalAreaCacheMemory, totalPortalCacheMemory;
+	long long totalAreaCacheMemory, totalPortalCacheMemory;	//puncho - R2 scale guards: were int
 
 	numAreaCache = numPortalCache = 0;
 	totalAreaCacheMemory = totalPortalCacheMemory = 0;
@@ -386,18 +458,19 @@ void idAASLocal::RoutingStats() const
 		if( cache->type == CACHETYPE_AREA )
 		{
 			numAreaCache++;
-			totalAreaCacheMemory += sizeof( idRoutingCache ) + cache->size * ( sizeof( unsigned short ) + sizeof( byte ) );
+			totalAreaCacheMemory += sizeof( idRoutingCache ) + cache->size * ( sizeof( unsigned short ) + sizeof( unsigned short ) );	//puncho - R2 widening: the selector is 16 bits
 		}
 		else
 		{
 			numPortalCache++;
-			totalPortalCacheMemory += sizeof( idRoutingCache ) + cache->size * ( sizeof( unsigned short ) + sizeof( byte ) );
+			totalPortalCacheMemory += sizeof( idRoutingCache ) + cache->size * ( sizeof( unsigned short ) + sizeof( unsigned short ) );	//puncho - R2 widening: the selector is 16 bits
 		}
 	}
 
-	gameLocal.Printf( "%6d area cache (%d KB)\n", numAreaCache, totalAreaCacheMemory >> 10 );
-	gameLocal.Printf( "%6d portal cache (%d KB)\n", numPortalCache, totalPortalCacheMemory >> 10 );
-	gameLocal.Printf( "%6d total cache (%d KB), budget %i KB, evictions %i, travel saturated %i\n", numAreaCache + numPortalCache, totalCacheMemory >> 10, aas_routingCacheKB.GetInteger(), cacheEvictions, travelSaturated );
+	//puncho - R2 scale guards: the three byte counts are 64 bits; in KB they fit the int the format takes
+	gameLocal.Printf( "%6d area cache (%d KB)\n", numAreaCache, ( int )( totalAreaCacheMemory >> 10 ) );
+	gameLocal.Printf( "%6d portal cache (%d KB)\n", numPortalCache, ( int )( totalPortalCacheMemory >> 10 ) );
+	gameLocal.Printf( "%6d total cache (%d KB), budget %i KB, evictions %i, travel saturated %i\n", numAreaCache + numPortalCache, ( int )( totalCacheMemory >> 10 ), aas_routingCacheKB.GetInteger(), cacheEvictions, travelSaturated );
 	gameLocal.Printf( "%6d area travel times (%d KB)\n", numAreaTravelTimes, ( numAreaTravelTimes * sizeof( unsigned short ) ) >> 10 );
 	gameLocal.Printf( "%6d area cache entries (%d KB)\n", areaCacheIndexSize, ( areaCacheIndexSize * sizeof( idRoutingCache* ) ) >> 10 );
 	gameLocal.Printf( "%6d portal cache entries (%d KB)\n", portalCacheIndexSize, ( portalCacheIndexSize * sizeof( idRoutingCache* ) ) >> 10 );
@@ -876,7 +949,7 @@ void idAASLocal::UpdateAreaRoutingCache( idRoutingCache* areaCache ) const
 {
 	const bool saturate = aas_saturateTravelTime.GetBool();
 	int i, nextAreaNum, cluster, badTravelFlags, clusterAreaNum, numReachableAreas;
-	unsigned short t, startAreaTravelTimes[MAX_REACH_PER_AREA];
+	unsigned short t;	//puncho - R2 widening: the start area's zeros are zeroAreaTravelTimes, one per reachability entering an area
 	idRoutingUpdate* updateListStart, *updateListEnd, *curUpdate, *nextUpdate;
 	idReachability* reach;
 	const aasArea_t* nextArea;
@@ -893,12 +966,11 @@ void idAASLocal::UpdateAreaRoutingCache( idRoutingCache* areaCache ) const
 
 	areaCache->travelTimes[clusterAreaNum] = areaCache->startTravelTime;
 	badTravelFlags = ~areaCache->travelFlags;
-	memset( startAreaTravelTimes, 0, sizeof( startAreaTravelTimes ) );
 
 	// initialize first update
 	curUpdate = &areaUpdate[clusterAreaNum];
 	curUpdate->areaNum = areaCache->areaNum;
-	curUpdate->areaTravelTimes = startAreaTravelTimes;
+	curUpdate->areaTravelTimes = zeroAreaTravelTimes;	//puncho - R2 widening
 	curUpdate->tmpTravelTime = areaCache->startTravelTime;
 	curUpdate->next = NULL;
 	curUpdate->prev = NULL;
@@ -1248,7 +1320,17 @@ bool idAASLocal::RouteToGoalArea( int areaNum, const idVec3 origin, int goalArea
 	}
 	//puncho end - R2 router
 
-	while( totalCacheMemory > aas_routingCacheKB.GetInteger() * 1024 && cacheListStart != NULL )
+	//puncho start - R2 widening: an area without reachabilities has no slot in its cluster's cache rows (its
+	// ClusterAreaNum is numReachableAreas or more): GetAreaRoutingCache would read and write past the row and the
+	// same-cluster read below past the cache. Monsters ask from and to reachable areas; aasRoute takes any number
+	if( !( file->GetArea( areaNum ).flags & ( AREA_REACHABLE_WALK | AREA_REACHABLE_FLY ) ) ||
+			!( file->GetArea( goalAreaNum ).flags & ( AREA_REACHABLE_WALK | AREA_REACHABLE_FLY ) ) )
+	{
+		return false;
+	}
+	//puncho end - R2 widening
+
+	while( totalCacheMemory > ( long long )aas_routingCacheKB.GetInteger() * 1024 && cacheListStart != NULL )	//puncho - R2 scale guards: 64 bits
 	{
 		DeleteOldestCache();
 		if( cacheEvictions < INT_MAX )
