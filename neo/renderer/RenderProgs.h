@@ -224,7 +224,7 @@ enum renderParm_t
 	RENDERPARM_SHADOWBIAS,		// rpShadowBias: sun bias scale, regular bias scale, the sun's rows, the sun's fade ( F4 ) ( set 9 )
 	RENDERPARM_SHADOWFILTER,	// rpShadowFilter: sample count, texel step, noise scale, frame index ( set 9 )
 	// ---- TRACK F: render parms ----
-	RENDERPARM_FORWARDVIEW,		// rpForwardView: x, y = the view's top-left pixel in the target, z = 1 / r_lightScale, w = 1: the loop adds no light ( the difference view's twin mode ) ( set 9 )
+	RENDERPARM_FORWARDVIEW,		// rpForwardView: x, y = the view's top-left pixel in the target, z = 1 / r_lightScale, w = 1: the loop adds no light ( the difference view's twin mode, and r_skipInteractions since F5 ) ( set 9 )
 	// ---- END TRACK F ----
 
 	RENDERPARM_TOTAL,

@@ -515,9 +515,18 @@ void idRenderBackend::DrawElementsWithCounters( const drawSurf_t* surf, bool sha
 		keyDepthBias = DEPTH_CONVENTION_BIAS_SIGN * depthBias * unitsScale;
 		keySlopeBias = DEPTH_CONVENTION_BIAS_SIGN * slopeScaleBias;
 	}
+	// F5 ( review O2-5 of F4 ): a pipeline takes the biases only under GLS_POLYGON_OFFSET ( PipelineCache's
+	// GetRenderState ), so a draw without it keys none: the offset the last decal or shadow pass left set made a second
+	// pipeline, the same in all but its key, built at its first draw
+	if( ( glStateBits & GLS_POLYGON_OFFSET ) == 0 )
+	{
+		keyDepthBias = 0.0f;
+		keySlopeBias = 0.0f;
+	}
 	const PipelineKey key{ glStateBits, program, static_cast<int>( keyDepthBias ), keySlopeBias, currentFrameBuffer };
 #else
-	const PipelineKey key{ glStateBits, program, static_cast<int>( depthBias ), slopeScaleBias, currentFrameBuffer };
+	const bool keyOffset = ( glStateBits & GLS_POLYGON_OFFSET ) != 0;		// F5 ( review O2-5 of F4 ): as above
+	const PipelineKey key{ glStateBits, program, keyOffset ? static_cast<int>( depthBias ) : 0, keyOffset ? slopeScaleBias : 0.0f, currentFrameBuffer };
 #endif
 	const auto pipeline = pipelineCache.GetOrCreatePipeline( key );
 

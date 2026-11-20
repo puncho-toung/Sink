@@ -697,14 +697,15 @@ THE ENGINE SIDE
 viewLight_t into the core's flat input, cvars into its parms, and its tables back into
 viewLight_t::recordNumber, the C1 records, the log line and the commands. Two hooks, both on
 the frontend's serial path: R_NumberRecordLights after R_AddLights ( the lights are final and
-no model job has run ) and R_BuildLightLists after R_AddModels. Until the forward pass exists
-( F2 ) no surface lists a light, so nothing here changes what is drawn.
+no model job has run ) and R_BuildLightLists after R_AddModels. Since F5 the lists are on by
+default ( r_useForwardLists 1, r_forwardLightKinds 7, r_forwardMaterials 1 ): a pair this side
+lists is drawn by the forward pass and leaves the legacy pass's chains.
 
 ==========================================================================================
 */
 
-idCVar r_useForwardLists( "r_useForwardLists", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "build the light records, Z-bins and tile bits of the hybrid forward pass in the main view ( needs r_useShadowAtlas )" );
-idCVar r_forwardLightKinds( "r_forwardLightKinds", "3", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "light kinds that may be listed: 1 = emitters, 2 = default-texture lights, 4 = the primary sun ( with the default textures; an emitter sun stays legacy )" );
+idCVar r_useForwardLists( "r_useForwardLists", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "build the light records, Z-bins and tile bits of the hybrid forward pass in the main view ( needs r_useShadowAtlas ); 0 = every pair on the legacy pass" );
+idCVar r_forwardLightKinds( "r_forwardLightKinds", "7", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "light kinds that may be listed: 1 = emitters, 2 = default-texture lights, 4 = the primary sun ( with the default textures; an emitter sun stays legacy )" );
 idCVar r_zbinTileSize( "r_zbinTileSize", "16", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "pixels per Z-bin tile side", 8, 64 );
 idCVar r_zbinCount( "r_zbinCount", "8192", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "Z-bins per view", 1, LL_MAX_BINS );
 idCVar r_zbinFar( "r_zbinFar", "16384", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "view distance the Z-bins cover; beyond it, the last bin" );
@@ -713,10 +714,10 @@ idCVar r_surfLightForcePath( "r_surfLightForcePath", "-1", CVAR_RENDERER | CVAR_
 idCVar r_surfLightFetchCost( "r_surfLightFetchCost", "1", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the Z-bin lookup, in light iterations ( F of the rule )" );
 idCVar r_surfLightUnsampledMax( "r_surfLightUnsampledMax", "8", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "longest run a surface with no sample on screen loops" );
 idCVar r_showLightLists( "r_showLightLists", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "1 = lights looped per pixel ( a heatmap over the view, drawn before the temporal filter, which smears it in motion ), 2 = path per surface ( green list, blue Z-bins, magenta pool overflow ), 3 = run length", 0, 3 );
-idCVar r_lightListLog( "r_lightListLog", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "print one line per listing view: records by class, surfaces by path and by reason, pool, overflow, hash" );
+idCVar r_lightListLog( "r_lightListLog", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "print one line per listing view: records by class, surfaces by path and by reason, pool, overflow, hash; and a second: the lit pairs left on the legacy pass, by reason" );
 idCVar r_lightListStrict( "r_lightListStrict", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "a full table of the light lists ( record cap, pool ) or an unknown forward tag is a FatalError instead of a warning ( developer machines )" );
 idCVar r_lightListCapture( "r_lightListCapture", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "copy the next listing view's builder input for lightListBench and lightListDump, then clear" );
-idCVar r_forwardMaterials( "r_forwardMaterials", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "1 = every material the forward pass can draw ( one bump, one diffuse and at most one specular stage, no texture matrix, no vertex colour ) lists its lights, with or without the forward keyword" );
+idCVar r_forwardMaterials( "r_forwardMaterials", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "1 = every material the forward pass can draw ( one bump, one diffuse and at most one specular stage, no texture matrix, no vertex colour ) lists its lights, with or without the forward keyword" );
 idCVar r_showLightDiff( "r_showLightDiff", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "1 = twin mode: a listed pair also keeps its lit surface, so the legacy pass lights it and the forward pass adds no light ( the legacy image, with the lists built beside it ); 2 = the difference view: the lit passes are drawn twice, forward and legacy, the screen shows their difference times r_lightDiffScale and the HUD its mean and maximum; lit translucents are drawn after the fog apply and are in neither picture", 0, 2 );
 
 static bool lightListSaidNoAtlas = false;		// the console says once that the lists need the shadow atlas
@@ -725,6 +726,34 @@ static int lightListWarned = 0;					// R_LightListLoud: the kinds of warning thi
 const lightListSurface_t lightListTwinMark = { NULL, 0, 0, LLH_TWIN, 0, 0 };	// see LightLists.h
 
 static void R_LightListCapture( const lightListView_t* llv );
+
+// F5: why a lit pair of a listing view stays on the legacy pass, for r_lightListLog's census line ( R_LightListCensus ).
+// A pair takes the first reason that holds: the light's side first ( R_LightListRecordFlags ), and there what the loop
+// can never express ( a texture matrix, an ambient light, more than one stage, a custom cookie, a parallel light that
+// is not the primary sun or is an emitter ) before the switches that keep a light out ( its forward key, the emitter
+// debug view, r_forwardLightKinds ); then its record; then the material's and the surface's side, again what the
+// loop cannot draw ( the slow path ) and the ruling ( the lit decal ) before the switch ( the keyword under
+// r_forwardMaterials 0 ). The enum's order is the log's, not this one.
+// Listed for the log by kind: the first five are the classes WP-F5 names; the others are the plan's rulings
+// ( D42, D83, row 32 ), the author's switches, and what should not happen ( other )
+enum lightListWhy_t
+{
+	LLW_MULTI_STAGE,		// the light shader has more than one stage: a record carries one colour
+	LLW_COOKIE,				// a texture light whose projection or falloff is not its kind's default ( D39 )
+	LLW_MATRIX,				// a light stage with a texture matrix ( D57 )
+	LLW_AMBIENT,			// an ambient light
+	LLW_SLOW_PATH,			// a material without fast-path images ( stages, a texture matrix, vertex colour )
+	LLW_DECAL,				// a lit decal: translucent below SS_FAR, lit before the fog apply ( D83 )
+	LLW_PARALLEL,			// a parallel light that is not the primary sun, or an emitter sun ( D42, row 32 )
+	LLW_KINDS,				// r_forwardLightKinds leaves the light's kind out
+	LLW_KEY,				// the light's forward key says legacy
+	LLW_DEBUG,				// an emitter while r_showEmitters is on
+	LLW_NO_RECORD,			// a listable light past the record cap ( a light with no pixel has no lit pair )
+	LLW_NOT_FORWARD,		// a fast-path material without the forward keyword while r_forwardMaterials is 0
+	LLW_UNLINKED,			// a surface not linked to the view ( a deform's ): no view surface to list it on
+	LLW_OTHER,				// none of the above
+	LLW_NUM
+};
 
 /*
 ====================
@@ -735,7 +764,7 @@ record; RLF_CLUSTERED in the result says it may be listed. Computed once per vie
 in the record's class and flags and is never tested again.
 ====================
 */
-static uint32 R_LightListRecordFlags( const viewLight_t* vLight, bool emitterDebug, int* unknownModes )
+static uint32 R_LightListRecordFlags( const viewLight_t* vLight, bool emitterDebug, int* unknownModes, int* why )
 {
 	const idMaterial* shader = vLight->lightShader;
 	if( shader == NULL || shader->IsBlendLight() )
@@ -746,6 +775,10 @@ static uint32 R_LightListRecordFlags( const viewLight_t* vLight, bool emitterDeb
 	{
 		if( shader->GetStage( i )->texture.hasMatrix )
 		{
+			if( why != NULL )
+			{
+				*why = LLW_MATRIX;
+			}
 			return 0;															// D57: no record, legacy path, no fog
 		}
 	}
@@ -755,6 +788,10 @@ static uint32 R_LightListRecordFlags( const viewLight_t* vLight, bool emitterDeb
 	}
 	if( shader->IsAmbientLight() )
 	{
+		if( why != NULL )
+		{
+			*why = LLW_AMBIENT;
+		}
 		return RLF_AMBIENT;
 	}
 
@@ -820,6 +857,15 @@ static uint32 R_LightListRecordFlags( const viewLight_t* vLight, bool emitterDeb
 	if( vLight->parallel && ( !vLight->isPrimarySun || emitter ) )
 	{
 		listable = false;														// D42: only the primary sun, through record 0; row 32: never an emitter sun
+	}
+	if( why != NULL && !listable )
+	{
+		// F5: the census's reason ( lightListWhy_t's order ): what the loop cannot express, whatever the switches say,
+		// then the switches. The forward key LIST still needs one stage and a kind the loop can express, so a light it
+		// cannot list names the reason the loop cannot
+		const bool legacyKey = vLight->lightDef->parms.forwardMode == LIGHT_FORWARD_LEGACY;
+		*why = !oneStage ? LLW_MULTI_STAGE : ( !emitter && !defaults ) ? LLW_COOKIE : ( vLight->parallel && ( !vLight->isPrimarySun || emitter ) ) ? LLW_PARALLEL
+			   : legacyKey ? LLW_KEY : ( emitter && emitterDebug ) ? LLW_DEBUG : LLW_KINDS;
 	}
 	return flags | ( listable ? RLF_CLUSTERED : 0 );
 }
@@ -1134,11 +1180,15 @@ void R_NumberRecordLights()
 	int n = 0;
 	for( viewLight_t* vLight = viewDef->viewLights; vLight != NULL; vLight = vLight->next )
 	{
-		const uint32 flags = R_LightListRecordFlags( vLight, emitterDebug, &llv->unknownLightModes );
+		const uint32 flags = R_LightListRecordFlags( vLight, emitterDebug, &llv->unknownLightModes, NULL );
 		const idScreenRect& sr = vLight->scissorRect;
 		if( flags == 0 || sr.IsEmpty() )
 		{
 			continue;															// no record, or no pixel: lights nothing in this view
+		}
+		if( fogReach <= 0.0f && ( flags & RLF_CLUSTERED ) == 0 )
+		{
+			continue;															// F5 ( review F1-2 ): only the froxel fog reads a record the lists cannot use
 		}
 		lightListLight_t& L = llv->lights[n];
 		// the bin range is linear view distance, zNear / zmax .. zNear / zmin ( reversed-Z: zmax is the nearest );
@@ -1244,6 +1294,7 @@ not the cvar r_skipInteractionFastPath ). Every other material keeps the legacy 
 F4: a translucent surface too when its sort is SS_FAR or above: ForwardPass( translucent ) draws it after the fog
 apply ( D50, D83 ). A lit decal ( translucent below SS_FAR ) keeps the legacy pass, which lights it before the apply,
 under the blended decals that may lie over it ( the owner's decision of 2026-11-12, D83 as amended ).
+F5: a test added here needs its reason in R_LightListCensus, which would count it as an unlinked surface.
 ====================
 */
 int R_LightListTakePair( const viewDef_t* viewDef, const viewLight_t* vLight, const idMaterial* shader, drawSurf_t* baseDrawSurf, int maxLights )
@@ -1398,10 +1449,118 @@ static void R_LightListPrintRecords( const viewDef_t* viewDef, const lightListVi
 
 /*
 ====================
+R_LightListCensus
+
+F5, r_lightListLog's second line ( WP-F5's verify ): every lit pair of a listing view that the legacy pass draws, by
+the first reason that kept it there ( lightListWhy_t ). Serial, after R_AddModels has linked the interaction chains
+and before R_OptimizeViewLightsList: a lit drawSurf_t on a light's chains is a legacy pair, but for the difference
+view's twins, which are counted apart. A fog or blend light's chains hold the surfaces it is drawn over, not lit
+pairs: counted apart too. These are the pairs the frontend left legacy, whether or not the backend then draws them
+( r_skipInteractions, r_skipTranslucent ). Whether a light is listable is read from the flags R_LightListRecordFlags
+gave its input when it has a record; its reason, from that function again, which reads r_showEmitters ( here ),
+r_forwardLightKinds and the default lights' images again: nothing writes them between the two hooks of one view
+====================
+*/
+static void R_LightListCensus( const viewDef_t* viewDef, const lightListView_t* llv )
+{
+	const lightListTables_t& t = llv->tables;
+	const bool emitterDebug = r_showEmitters.GetInteger() != 0;
+	int count[LLW_NUM] = { 0 };
+	int pairs = 0;
+	int twins = 0;
+	int fogBlend = 0;
+	for( const viewLight_t* vLight = viewDef->viewLights; vLight != NULL; vLight = vLight->next )
+	{
+		const drawSurf_t* chains[3] = { vLight->localInteractions, vLight->globalInteractions, vLight->translucentInteractions };
+		const idMaterial* lightShader = vLight->lightShader;
+		if( lightShader == NULL || lightShader->IsFogLight() || lightShader->IsBlendLight() )
+		{
+			for( int c = 0; c < 3; c++ )
+			{
+				for( const drawSurf_t* walk = chains[c]; walk != NULL; walk = walk->nextOnLight )
+				{
+					fogBlend++;
+				}
+			}
+			continue;
+		}
+		// the light's side: as decided, when it has a record
+		const int record = vLight->recordNumber;
+		int lightWhy = -1;
+		if( record >= 0 && record < t.numRecords && t.lightOfRecord[record] >= 0 )
+		{
+			if( ( llv->flagsOfInput[ t.lightOfRecord[record] ] & RLF_CLUSTERED ) == 0 )
+			{
+				int dummyModes = 0;
+				lightWhy = LLW_OTHER;
+				R_LightListRecordFlags( vLight, emitterDebug, &dummyModes, &lightWhy );
+			}
+			else if( record >= t.firstFogOnly || ( record == 0 && !t.sunListed ) )
+			{
+				lightWhy = LLW_OTHER;											// a safety net: a clustered record lies below firstFogOnly, a clustered sun is listed
+			}
+		}
+		else
+		{
+			int dummyModes = 0;
+			lightWhy = LLW_OTHER;
+			const uint32 flags = R_LightListRecordFlags( vLight, emitterDebug, &dummyModes, &lightWhy );
+			if( flags & RLF_CLUSTERED )
+			{
+				lightWhy = LLW_NO_RECORD;
+			}
+		}
+		for( int c = 0; c < 3; c++ )
+		{
+			for( const drawSurf_t* walk = chains[c]; walk != NULL; walk = walk->nextOnLight )
+			{
+				if( walk->lightList == &lightListTwinMark )
+				{
+					twins++;
+					continue;
+				}
+				int why = lightWhy;
+				if( why < 0 )
+				{
+					// the material's and the surface's side, R_LightListTakePair's tests: the slow path, the decal ( a
+					// ruling ), then the keyword ( a switch ), as on the light's side
+					const idMaterial* shader = walk->material;
+					if( shader->GetFastPathBumpImage() == NULL )
+					{
+						why = LLW_SLOW_PATH;
+					}
+					else if( shader->Coverage() == MC_TRANSLUCENT && shader->GetSort() < SS_FAR )
+					{
+						why = LLW_DECAL;
+					}
+					else if( !( llv->allMaterials || shader->TestMaterialFlag( MF_FORWARD ) ) )
+					{
+						why = LLW_NOT_FORWARD;
+					}
+					else
+					{
+						why = LLW_UNLINKED;
+					}
+				}
+				count[why]++;
+				pairs++;
+			}
+		}
+	}
+	common->Printf( "lightlists: legacy pairs %d | multi-stage %d cookie %d matrix %d ambient %d slow-path %d | decal %d parallel %d kinds %d key %d "
+					"debug %d noRecord %d notForward %d unlinked %d other %d | twins %d fogBlend %d\n",
+					pairs, count[LLW_MULTI_STAGE], count[LLW_COOKIE], count[LLW_MATRIX], count[LLW_AMBIENT], count[LLW_SLOW_PATH], count[LLW_DECAL],
+					count[LLW_PARALLEL], count[LLW_KINDS], count[LLW_KEY], count[LLW_DEBUG], count[LLW_NO_RECORD], count[LLW_NOT_FORWARD],
+					count[LLW_UNLINKED], count[LLW_OTHER], twins, fogBlend );
+}
+
+/*
+====================
 R_BuildLightLists
 
 The second hook: after R_AddModels, before R_OptimizeViewLightsList. Serial, in draw order: the shadow row bases,
-the pool, the listed counts ( so a listed light keeps its shadows, D9 ), listsBuilt, the warnings, the log line.
+the pool, the listed counts ( so a listed light keeps its shadows, D9 ), listsBuilt, the warnings, the log line and,
+in a view with lists, the census of the pairs left legacy ( F5 ).
 ====================
 */
 void R_BuildLightLists()
@@ -1489,6 +1648,10 @@ void R_BuildLightLists()
 						tr.frameCount, st.records, st.narrow, st.wide, st.fogOnly, st.capped, st.listSurfs, st.zbinSurfs, st.zbinAllSurfs,
 						st.how[LLH_FORCED], st.how[LLH_TAG], st.how[LLH_SHORT], st.how[LLH_SAMPLED], st.how[LLH_UNSAMPLED], st.unknownTags + llv->unknownLightModes,
 						st.listedPairs, st.poolUsed, st.poolOverflow, numRows, llv->numVanishedPrev, st.hash );
+		if( llv->lists )
+		{
+			R_LightListCensus( viewDef, llv );								// F5: the pairs left on the legacy pass
+		}
 	}
 	if( lightListPrintArmed )
 	{

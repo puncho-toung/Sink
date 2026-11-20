@@ -1227,6 +1227,8 @@ void idRenderBackend::DrawSingleInteraction( drawInteraction_t* din, bool useFas
 	// frontend lists gets exactly one interaction here ( one bump, one diffuse, one specular stage ), so the
 	// surface is drawn once. viewDef->listsBuilt, never the cvar ( C3 )
 	const bool forwardSurf = useIBL && viewDef->listsBuilt && din->surf->lightList != NULL && din->surf->lightList->run != NULL;
+	// F5 ( review F1-4 ): r_useLightGrid read once for this draw, so the set-up below and the program agree
+	const bool lightGridSurf = din->surf->area != NULL && r_useLightGrid.GetBool();
 	if( forwardSurf )
 	{
 		float surfLights[4];
@@ -1235,7 +1237,7 @@ void idRenderBackend::DrawSingleInteraction( drawInteraction_t* din, bool useFas
 	}
 	// ---- END TRACK F ----
 	// RB begin
-	if( useIBL && din->surf->area != NULL && r_useLightGrid.GetBool() )
+	if( useIBL && lightGridSurf )	// F5 ( review F1-4 ): read once above
 	{
 		// the bounds, their centre and the positions are relative to the render origin; cleared
 		// bounds ( .w = 0 ) were never converted, and the shaders then read none of them
@@ -1716,7 +1718,7 @@ void idRenderBackend::DrawSingleInteraction( drawInteraction_t* din, bool useFas
 		}
 		else
 		{
-			renderProgManager.BindShader_Forward( din->surf->jointCache != 0, pbr, din->surf->area != NULL && r_useLightGrid.GetBool() );
+			renderProgManager.BindShader_Forward( din->surf->jointCache != 0, pbr, lightGridSurf );
 		}
 	}
 	// ---- END TRACK F ----
@@ -2914,8 +2916,10 @@ void idRenderBackend::ForwardPass( const drawSurf_t* const* drawSurfs, int numDr
 		renderProgManager.SetUniformValue( RENDERPARM_ZBINSCALE, zbinScale );
 		// the tiles count from the view's own corner; the surface's stage colours reach the loop times r_lightScale
 		// ( the ambient pass's modifiers ), which a record's colour already holds; in the twin mode the legacy pass
-		// lights the listed pairs and the loop adds nothing
-		const float forwardView[4] = { ( float )viewDef->viewport.x1, ( float )viewDef->viewport.y1, 1.0f / Max( llv->lightScale, 0.001f ), ( llv->twin && !lightDiffPassA ) ? 1.0f : 0.0f };
+		// lights the listed pairs and the loop adds nothing. F5 ( review O1-6 of F4 ): with r_skipInteractions the loop
+		// adds nothing either, as the legacy pass and the glass draw nothing, and the ambient term stays
+		const bool addNoLight = ( llv->twin && !lightDiffPassA ) || r_skipInteractions.GetBool();
+		const float forwardView[4] = { ( float )viewDef->viewport.x1, ( float )viewDef->viewport.y1, 1.0f / Max( llv->lightScale, 0.001f ), addNoLight ? 1.0f : 0.0f };
 		renderProgManager.SetUniformValue( RENDERPARM_FORWARDVIEW, forwardView );
 		// the shadow lookup's constants, each as RenderInteractions sets its own for an atlas light: the bias scales
 		// ( rpScreenCorrectionFactor.w there ), the sample count ( rpJitterTexScale.w ), the texel step ( 1 / atlas
