@@ -1231,10 +1231,11 @@ void idCommonLocal::ExecuteMapChange()
 	LoadPhase( LOAD_FINISH );
 
 	{
-		int vertexMemUsedKB = vertexCache.staticData.vertexMemUsed.GetValue() / 1024;
-		int indexMemUsedKB = vertexCache.staticData.indexMemUsed.GetValue() / 1024;
-		idLib::Printf( "Used %dkb of static vertex memory (%d%%)\n", vertexMemUsedKB, vertexMemUsedKB * 100 / ( STATIC_VERTEX_MEMORY / 1024 ) );
-		idLib::Printf( "Used %dkb of static index memory (%d%%)\n", indexMemUsedKB, indexMemUsedKB * 100 / ( STATIC_INDEX_MEMORY / 1024 ) );
+		//puncho - static index (2R R3.1): the static sets are counted in 16-byte units; bytes through the accessors
+		const int64 vertexMemUsedKB = vertexCache.StaticUsedBytes( CACHE_VERTEX ) / 1024;
+		const int64 indexMemUsedKB = vertexCache.StaticUsedBytes( CACHE_INDEX ) / 1024;
+		idLib::Printf( "Used %lldkb of static vertex memory (%lld%%)\n", ( long long )vertexMemUsedKB, ( long long )( vertexMemUsedKB * 100 / ( vertexCache.StaticSizeBytes( CACHE_VERTEX ) / 1024 ) ) );
+		idLib::Printf( "Used %lldkb of static index memory (%lld%%)\n", ( long long )indexMemUsedKB, ( long long )( indexMemUsedKB * 100 / ( vertexCache.StaticSizeBytes( CACHE_INDEX ) / 1024 ) ) );
 	}
 
 	if( common->JapaneseCensorship() )

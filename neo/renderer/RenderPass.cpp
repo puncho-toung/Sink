@@ -333,7 +333,7 @@ void BasicTriangle::Render( nvrhi::IFramebuffer* framebuffer )
 			}
 			vertexBuffer = &vertexCache.frameData[vertexCache.drawListNum].vertexBuffer;
 		}
-		vertOffset = ( uint )( vertexBlock >> VERTCACHE_OFFSET_SHIFT ) & VERTCACHE_OFFSET_MASK;
+		vertOffset = ( uint )idVertexCache::CacheOffsetBytes( vertexBlock );	//puncho - static index (2R R3.1): bytes for a static and a per-frame handle alike
 	}
 
 	vertCacheHandle_t indexBlockTemp = indexBlock + ( ( int64 )( 0 * sizeof( triIndex_t ) ) << VERTCACHE_OFFSET_SHIFT );
@@ -356,7 +356,7 @@ void BasicTriangle::Render( nvrhi::IFramebuffer* framebuffer )
 		}
 		indexBuffer = &vertexCache.frameData[vertexCache.drawListNum].indexBuffer;
 	}
-	indexOffset = ( uint )( indexBlock >> VERTCACHE_OFFSET_SHIFT ) & VERTCACHE_OFFSET_MASK;
+	indexOffset = ( uint )idVertexCache::CacheOffsetBytes( indexBlock );	//puncho - static index (2R R3.1)
 
 	nvrhi::GraphicsState state;
 	state.bindings = { bindingSet };

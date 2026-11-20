@@ -3252,10 +3252,11 @@ idRenderSystemLocal::GetMapStats
 void idRenderSystemLocal::GetMapStats( renderMapStats_t& stats ) const
 {
 	memset( &stats, 0, sizeof( stats ) );
-	stats.staticVertexBytes = vertexCache.staticData.vertexMemUsed.GetValue();
-	stats.staticIndexBytes = vertexCache.staticData.indexMemUsed.GetValue();
-	stats.staticVertexCapacity = STATIC_VERTEX_MEMORY;
-	stats.staticIndexCapacity = STATIC_INDEX_MEMORY;
+	//puncho - static index (2R R3.1): the static sets are counted in 16-byte units; bytes through the accessors
+	stats.staticVertexBytes = vertexCache.StaticUsedBytes( CACHE_VERTEX );
+	stats.staticIndexBytes = vertexCache.StaticUsedBytes( CACHE_INDEX );
+	stats.staticVertexCapacity = vertexCache.StaticSizeBytes( CACHE_VERTEX );
+	stats.staticIndexCapacity = vertexCache.StaticSizeBytes( CACHE_INDEX );
 	stats.imageBytes = R_GetImageLoadBytes();
 	if( frameData != NULL )
 	{

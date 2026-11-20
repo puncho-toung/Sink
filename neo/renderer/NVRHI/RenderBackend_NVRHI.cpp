@@ -342,11 +342,13 @@ void idRenderBackend::DrawElementsWithCounters( const drawSurf_t* surf, bool sha
 	//
 	const vertCacheHandle_t vbHandle = surf->ambientCache;
 	idVertexBuffer* vertexBuffer;
+	uint vertOffset;	//puncho - static index (2R R3.1): bytes; decoded in the branch that knows the handle's kind (a constant shift)
 	if( vertexCache.CacheIsStatic( vbHandle ) )
 	{
 		//puncho - static arena (P2b.1.8): stage 4 inherits this bind: no generation test here (the frontend's
 		// CacheIsCurrent did, light tris excepted); P2b.4.11 adds it
 		vertexBuffer = &vertexCache.staticData.vertexBuffer;
+		vertOffset = static_cast<uint>( idVertexCache::CacheStaticOffsetBytes( vbHandle ) );
 	}
 	else
 	{
@@ -357,8 +359,8 @@ void idRenderBackend::DrawElementsWithCounters( const drawSurf_t* surf, bool sha
 			return;
 		}
 		vertexBuffer = &vertexCache.frameData[vertexCache.drawListNum].vertexBuffer;
+		vertOffset = static_cast<uint>( idVertexCache::CacheFrameOffsetBytes( vbHandle ) );
 	}
-	const uint vertOffset = static_cast<uint>( vbHandle >> VERTCACHE_OFFSET_SHIFT ) & VERTCACHE_OFFSET_MASK;
 
 	bool changeState = false;
 
@@ -378,11 +380,13 @@ void idRenderBackend::DrawElementsWithCounters( const drawSurf_t* surf, bool sha
 	//
 	const vertCacheHandle_t ibHandle = surf->indexCache;
 	idIndexBuffer* indexBuffer;
+	uint indexOffset;	//puncho - static index (2R R3.1): bytes; decoded in the branch that knows the handle's kind
 	if( vertexCache.CacheIsStatic( ibHandle ) )
 	{
 		//puncho - static arena (P2b.1.8): stage 4 inherits this bind: no generation test here (the frontend's
 		// CacheIsCurrent did, light tris excepted); P2b.4.11 adds it
 		indexBuffer = &vertexCache.staticData.indexBuffer;
+		indexOffset = static_cast<uint>( idVertexCache::CacheStaticOffsetBytes( ibHandle ) );
 	}
 	else
 	{
@@ -396,8 +400,8 @@ void idRenderBackend::DrawElementsWithCounters( const drawSurf_t* surf, bool sha
 			return;
 		}
 		indexBuffer = &vertexCache.frameData[vertexCache.drawListNum].indexBuffer;
+		indexOffset = static_cast<uint>( idVertexCache::CacheFrameOffsetBytes( ibHandle ) );
 	}
-	const uint indexOffset = static_cast<uint>( ibHandle >> VERTCACHE_OFFSET_SHIFT ) & VERTCACHE_OFFSET_MASK;
 
 	if( currentIndexOffset != indexOffset )
 	{
@@ -437,10 +441,12 @@ void idRenderBackend::DrawElementsWithCounters( const drawSurf_t* surf, bool sha
 	if( jointHandle )
 	{
 		const idUniformBuffer* jointBuffer = nullptr;
+		uint offset;	//puncho - static index (2R R3.1): bytes; decoded in the branch that knows the handle's kind
 
 		if( vertexCache.CacheIsStatic( jointHandle ) )
 		{
 			jointBuffer = &vertexCache.staticData.jointBuffer;
+			offset = static_cast<uint>( idVertexCache::CacheStaticOffsetBytes( jointHandle ) );
 		}
 		else
 		{
@@ -458,9 +464,9 @@ void idRenderBackend::DrawElementsWithCounters( const drawSurf_t* surf, bool sha
 				return;
 			}
 			jointBuffer = &vertexCache.frameData[vertexCache.drawListNum].jointBuffer;
+			offset = static_cast<uint>( idVertexCache::CacheFrameOffsetBytes( jointHandle ) );
 		}
 
-		uint offset = static_cast<uint>( jointHandle >> VERTCACHE_OFFSET_SHIFT ) & VERTCACHE_OFFSET_MASK;
 		if( currentJointBuffer != jointBuffer->GetAPIObject() || currentJointOffset != offset )
 		{
 			changeState = true;

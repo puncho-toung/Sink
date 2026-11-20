@@ -68,7 +68,18 @@ If you have questions concerning this license or the applicable additional terms
 	const int VERTCACHE_FRAME_SHIFT = 51;
 	const int VERTCACHE_FRAME_MASK = 0x1fff;			// 13 bits = 8191 frames to wrap around
 
-	compile_time_assert( STATIC_INDEX_MEMORY <= VERTCACHE_OFFSET_MASK + 1 && STATIC_VERTEX_MEMORY <= VERTCACHE_OFFSET_MASK + 1 );
+	//puncho end
+
+	//puncho start - static index (2R R3.1): in a STATIC handle the offset field counts units of 16 bytes, so its 28 bits
+	// reach 4 GiB; in a per-frame handle it counts bytes as before. Only idVertexCache's three decoders take it out.
+	// Every static block starts on its set's alignment (16 or 32 bytes), so the unit loses no start
+	const int STATIC_OFFSET_UNIT_BITS = 4;
+	const int STATIC_OFFSET_UNIT = 1 << STATIC_OFFSET_UNIT_BITS;		// bytes
+	compile_time_assert( VERTCACHE_STATIC == 1 );	// CacheOffsetBytes shifts by ( handle & VERTCACHE_STATIC ) * STATIC_OFFSET_UNIT_BITS
+	compile_time_assert( ( uint64 )STATIC_INDEX_MEMORY <= ( ( uint64 )VERTCACHE_OFFSET_MASK + 1 ) << STATIC_OFFSET_UNIT_BITS );
+	compile_time_assert( ( uint64 )STATIC_VERTEX_MEMORY <= ( ( uint64 )VERTCACHE_OFFSET_MASK + 1 ) << STATIC_OFFSET_UNIT_BITS );
+	compile_time_assert( VERTCACHE_INDEX_MEMORY_PER_FRAME <= VERTCACHE_OFFSET_MASK + 1 && VERTCACHE_VERTEX_MEMORY_PER_FRAME <= VERTCACHE_OFFSET_MASK + 1 );
+	compile_time_assert( VERTCACHE_JOINT_MEMORY_PER_FRAME <= VERTCACHE_OFFSET_MASK + 1 );
 	//puncho end
 
 
@@ -296,6 +307,10 @@ inline int StaticArenaNextGeneration( int generation )
 const int VERTEX_CACHE_ALIGN		= 32;
 const int INDEX_CACHE_ALIGN			= 16;
 const int JOINT_CACHE_ALIGN			= 16;
+//puncho start - static index (2R R3.1): the static sets are counted in 16-byte units; a set's size and its alignment are whole units
+compile_time_assert( INDEX_CACHE_ALIGN % STATIC_OFFSET_UNIT == 0 && VERTEX_CACHE_ALIGN % STATIC_OFFSET_UNIT == 0 );
+compile_time_assert( STATIC_INDEX_MEMORY % INDEX_CACHE_ALIGN == 0 && STATIC_VERTEX_MEMORY % VERTEX_CACHE_ALIGN == 0 );
+//puncho end
 
 enum cacheType_t
 {
@@ -318,15 +333,18 @@ struct geoBufferSet_t
 	int						allocations;	// number of index and vertex allocations combined
 };
 
-//puncho start - static arena (P2b.1.8): one static set's bookkeeping, staticSets[ CACHE_VERTEX ], [ CACHE_INDEX ]; arena
-// and high at split 1 only, late and mark at both; at split 1 geoBufferSet_t's vertexMemUsed and indexMemUsed mirror
-// used0 + used1
+//puncho start - static arena (P2b.1.8): one static set's bookkeeping, staticSets[ CACHE_VERTEX ], [ CACHE_INDEX ]; high
+// is printed at split 1 only, late and mark are used at both.
+// Static index (2R R3.1): the arena serves both splits and counts 16-byte UNITS (size, used0, used1); a block is
+// charged its ALIGN'd length, and split 0 allocates in segment 0 only. geoBufferSet_t's vertexMemUsed and indexMemUsed
+// mirror used0 + used1, in units. Bytes come from idVertexCache::StaticUsedBytes, StaticSegmentBytes and StaticSizeBytes
 struct staticArenaStats_t
 {
-	staticArenaSet_t		arena;			// segment 0 from offset 0 up, segment 1 from the end down
-	int						high[2];		// per segment: the most bytes it held
-	int						late;			// the most bytes allocated after a load's upload loops, before the next load
-	int						mark;			// the set's bytes when the last upload loops ended, -1 before any
+	staticArenaSet_t		arena;			// in 16-byte units: segment 0 from offset 0 up, segment 1 from the end down
+	int						tail0;			// split 1: the bytes of padding behind segment 0's last block (0 to alignment - 1); 0 at split 0
+	int64					high[2];		// per segment: the most bytes it held
+	int64					late;			// the most bytes allocated after a load's upload loops, before the next load
+	int64					mark;			// the set's bytes when the last upload loops ended, -1 before any
 	int64					live0;			// preflight: the bytes segment 0's kept handles hold (ALIGN'd)
 	int64					incoming;		// preflight: the bytes the upload loops will ask for (ALIGN'd)
 	int64					dead0;			// the last preflight's dead bytes in segment 0 (0 when it did not walk)
@@ -386,6 +404,47 @@ public:
 	{
 		return ( handle & VERTCACHE_STATIC ) != 0;
 	}
+	//puncho start - static index (2R R3.1): the only decoders of a handle's offset and size fields. A static handle's
+	// offset field counts 16-byte units, a per-frame handle's counts bytes; both come back as bytes (the shift is 4 for
+	// a static handle and 0 for a per-frame one, without a branch). The size is the block's own length in bytes
+	static int64	CacheOffsetBytes( const vertCacheHandle_t handle )
+	{
+		return ( int64 )( ( handle >> VERTCACHE_OFFSET_SHIFT ) & VERTCACHE_OFFSET_MASK ) << ( ( int )( handle & VERTCACHE_STATIC ) * STATIC_OFFSET_UNIT_BITS );
+	}
+	// the same bytes for a caller that has just tested the handle's kind (the back end's draw path): the shift count is a
+	// constant in each of the two, where CacheOffsetBytes works it out from the handle. Measured in the R3.1 review with
+	// the engine's compiler: the variable count cost about 0.5 ns a decode, these cost nothing over the old shift and mask
+	static int64	CacheStaticOffsetBytes( const vertCacheHandle_t handle )
+	{
+		assert( CacheIsStatic( handle ) );
+		return ( int64 )( ( handle >> VERTCACHE_OFFSET_SHIFT ) & VERTCACHE_OFFSET_MASK ) << STATIC_OFFSET_UNIT_BITS;
+	}
+	static int64	CacheFrameOffsetBytes( const vertCacheHandle_t handle )
+	{
+		assert( !CacheIsStatic( handle ) );
+		return ( int64 )( ( handle >> VERTCACHE_OFFSET_SHIFT ) & VERTCACHE_OFFSET_MASK );
+	}
+	static int		CacheSizeBytes( const vertCacheHandle_t handle )
+	{
+		return ( int )( ( handle >> VERTCACHE_SIZE_SHIFT ) & VERTCACHE_SIZE_MASK );
+	}
+	// the static sets in bytes: both segments of a set, one segment, the set's size. The counters and the arena hold
+	// units, and segment 0's figure ends on the set's alignment (at split 1 it ended at its last block's own end)
+	int64			StaticUsedBytes( cacheType_t type ) const
+	{
+		const int units = ( type == CACHE_INDEX ) ? staticData.indexMemUsed.GetValue() : staticData.vertexMemUsed.GetValue();
+		return ( int64 )units << STATIC_OFFSET_UNIT_BITS;
+	}
+	int64			StaticSegmentBytes( cacheType_t type, int segment ) const
+	{
+		const staticArenaSet_t& arena = staticSets[ type ].arena;
+		return ( int64 )( ( segment == 0 ) ? arena.used0 : arena.used1 ) << STATIC_OFFSET_UNIT_BITS;
+	}
+	int64			StaticSizeBytes( cacheType_t type ) const
+	{
+		return ( int64 )staticSets[ type ].arena.size << STATIC_OFFSET_UNIT_BITS;
+	}
+	//puncho end
 
 	// vb/ib is a temporary reference -- don't store it
 	bool			GetVertexBuffer( vertCacheHandle_t handle, idVertexBuffer* vb );
@@ -413,7 +472,7 @@ public:
 	// generations it reads sit together, and staticStaleHandles, which frontend jobs write, comes first with staticSets
 	// (over 64 bytes, asserted below the struct) between, so the two counters never share a cache line
 	idSysInterlockedInteger	staticStaleHandles;	// since Init: stale static handles CacheIsCurrent refused (frontend jobs; each is then replaced by a per-frame copy)
-	staticArenaStats_t	staticSets[2];				// [ CACHE_VERTEX ], [ CACHE_INDEX ]; arena and high at split 1 only, late and mark at both
+	staticArenaStats_t	staticSets[2];				// [ CACHE_VERTEX ], [ CACHE_INDEX ]; the arena at both splits, in 16-byte units (2R R3.1)
 	idSysInterlockedInteger	staticTestStale;	// dev: 1 while r_staticTestStale's plant is armed
 	bool			staticSplit;				// r_staticArenaSplit, latched by BeginStaticLoad
 	bool			staticSplitChanged;			// this load changed the split: no handle is valid until its uploads end
@@ -430,13 +489,13 @@ public:
 	int64			staticNewBytes;
 	//puncho end
 
-	//puncho start - static arena (P2b.1.8): the split-1 static allocation (AllocStaticVertex/Index) and CacheIsCurrent's
-	// cold path
+	//puncho start - static arena (P2b.1.8): the static allocation (AllocStaticVertex/Index; at both splits since 2R R3.1)
+	// and CacheIsCurrent's cold path
 	vertCacheHandle_t	AllocStaticArena( const void* data, int bytes, cacheType_t type, nvrhi::ICommandList* commandList );
 	bool			CountStaleHandle();
 	//puncho end
 
-	// Try to make room for <bytes> bytes
+	// Try to make room for <bytes> bytes //puncho - static index (2R R3.1): in a per-frame set only
 	vertCacheHandle_t	ActuallyAlloc( geoBufferSet_t& vcs, const void* data, int bytes, cacheType_t type, nvrhi::ICommandList* commandList );
 };
 

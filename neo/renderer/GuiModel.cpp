@@ -147,6 +147,11 @@ void idGuiModel::EmitSurfaces( float modelMatrixAbs[16], float modelMatrixRel[16
 		drawSurf->numIndexes = guiSurf.numIndexes;
 		drawSurf->ambientCache = vertexBlock;
 		// build a vertCacheHandle_t that points inside the allocated block
+		//puncho start - static index (2R R3.1): a byte offset may be added only to a per-frame handle's offset field (a
+		// static handle's field counts 16-byte units), and the sum has to stay inside the field
+		assert( !vertexCache.CacheIsStatic( indexBlock ) );
+		assert( guiSurf.firstIndex >= 0 && idVertexCache::CacheOffsetBytes( indexBlock ) + ( int64 )guiSurf.firstIndex * ( int64 )sizeof( triIndex_t ) <= VERTCACHE_OFFSET_MASK );
+		//puncho end
 		drawSurf->indexCache = indexBlock + ( ( int64 )( guiSurf.firstIndex * sizeof( triIndex_t ) ) << VERTCACHE_OFFSET_SHIFT );
 		drawSurf->jointCache = 0;
 		drawSurf->frontEndGeo = NULL;
