@@ -37,7 +37,8 @@ If you have questions concerning this license or the applicable additional terms
   The contract every dress pass keeps:
 
   A pass walks the areas of the world and collects the tris it generates into a
-  local list; it inserts them (AddMapTriToAreas) only after the walk is done.
+  local list; it inserts them (AddMapTriToAreas, or whole groups prepended to an
+  area's list, as the chunk pass does) only after the walk is done.
   AddMapTriToAreas ends in AddTriListToArea, which merges into a matching
   optimizeGroup_t or prepends a new one to the area's group list, so inserting
   while the pass still iterates that list would make it visit its own output.
@@ -227,7 +228,9 @@ void DressAreasPostOptimize( uEntity_t* e )
 		return;
 	}
 
-	// no pass is registered here yet
+	// after the optimizer, which would merge the pieces again, and before the T-junction fix,
+	// which repairs the seams the cut leaves against the groups it does not cut
+	DressChunkWorldSurfaces( e );
 }
 
 /*
