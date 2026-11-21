@@ -451,7 +451,7 @@ void LZWJobInternal( lzwParm_t* parm, unsigned int dmaTag )
 	if( !parm->saveDictionary )
 	{
 		// Write out terminator
-		uint16 objectDelta = 0xFFFF - parm->ioData->lastObjId;
+		uint16 objectDelta = SNAPSHOT_OBJECT_END - parm->ioData->lastObjId;	//puncho - R4.2: the named end mark, the same value
 		lzwCompressor.WriteAgnostic( objectDelta );
 
 		// Last stream

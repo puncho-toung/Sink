@@ -398,6 +398,7 @@ saveGameHandle_t idSessionLocal::LoadGameSync( const char* name, saveFileEntryLi
 			{
 				if( details[i].GetSaveVersion() > BUILD_NUMBER )
 				{
+					idLib::Warning( "save '%s' is newer than this build (%d > %d)", name, details[i].GetSaveVersion(), BUILD_NUMBER );	//puncho - R4.2: the refusal names both versions in the log
 					parms.errorCode = SAVEGAME_E_INCOMPATIBLE_NEWER_VERSION;
 					return 0;
 				}
@@ -796,6 +797,7 @@ bool idSessionLocal::LoadGameCheckDescriptionFile( idSaveLoadParms& parms )
 	{
 		if( parms.description.GetSaveVersion() > BUILD_NUMBER )
 		{
+			idLib::Warning( "save '%s' is newer than this build (%d > %d)", parms.directory.c_str(), parms.description.GetSaveVersion(), BUILD_NUMBER );	//puncho - R4.2: the refusal names both versions in the log
 			parms.errorCode = SAVEGAME_E_INCOMPATIBLE_NEWER_VERSION;
 		}
 	}

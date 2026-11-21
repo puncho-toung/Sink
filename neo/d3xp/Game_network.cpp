@@ -54,6 +54,7 @@ static const int MAX_PORTAL_CHUNKS = 16;
 compile_time_assert( SNAP_PORTALS_EXTRA + MAX_PORTAL_CHUNKS - MAX_GENTITIES <= MAX_NET_FIXED_OBJECTS );
 //puncho - P0-m9: the objects other than entities fit the snapshot layer's budget for them (sys/sys_session.h)
 compile_time_assert( SNAP_LAST_CLIENT_FRAME_END - MAX_GENTITIES <= MAX_NET_FIXED_OBJECTS );
+compile_time_assert( SNAP_MAP_REMOVED + MAP_REMOVED_CHUNKS <= SNAPSHOT_OBJECT_END );	//puncho - R4.2: the last fixed object's number is inside the snapshot layer's number space (sys/Snapshot_Jobs.h)
 
 /*
 ===============================================================================

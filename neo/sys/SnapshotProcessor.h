@@ -146,18 +146,20 @@ private:
 		// The real solution should be coming soon.
 		// Doom MP: we encountered the same problem, going from 1024 to 4096 as well until a better solution is in place
 		// (initial, useless, exchange of func_statics is killing us)
-		// D3-Sink 2026-10-23: one object per replicated entity plus the fixed snapshot objects;
-		// about 1.3 MB per processor
-		//puncho start - P0-m9 (plans/phase1/02-FIXES.md): both terms from sys/sys_session.h, which the game asserts
-		// against. An LZW job takes the objects of one batch, closed at MAX_OBJ_HEADERS objects or when idLobby's
-		// 128 KB of object job memory is full, so twice the header batches of a full table covers objects of up to
-		// about 1 KB on average. The batches split where they always did: only a snapshot past the old 32 jobs (8192
-		// objects at most) changes, from a fatal error to sent, so no wire byte changes
-		static const int MAX_OBJ_PARMS		= MAX_NET_ENTITIES + MAX_NET_FIXED_OBJECTS;
-		static const int MAX_OBJ_HEADERS	= 256;
-		static const int MAX_LZW_PARMS		= 2 * ( ( MAX_OBJ_PARMS + MAX_OBJ_HEADERS - 1 ) / MAX_OBJ_HEADERS );
-		// the game's object numbers stay below MAX_OBJ_PARMS and cross the jobs as uint16 (objJobState_t)
-		compile_time_assert( MAX_OBJ_PARMS <= 1 << 16 );
+		//puncho start - P0-m9 (plans/phase1/02-FIXES.md), R4.2: one parameter block per object number, the whole number
+		// space of sys/Snapshot_Jobs.h, so the table fills a bit width and no number the wire can carry falls outside it:
+		// about 5.2 MB per processor (1.3 MB when it was one block per entity slot of 14 bits plus the fixed objects).
+		// An LZW job takes the objects of one batch, closed at MAX_OBJ_HEADERS objects or when idLobby's 128 KB of
+		// object job memory is full; MAX_LZW_PARMS jobs take a snapshot that uses every object number as long as no
+		// object is larger than 1008 bytes (130 of those fill the job memory). The batches split where they always
+		// did, so no wire byte changes
+		static const int MAX_OBJ_PARMS		= MAX_SNAPSHOT_OBJECTS;
+		static const int OBJ_HEADER_BITS	= 8;
+		static const int MAX_OBJ_HEADERS	= 1 << OBJ_HEADER_BITS;
+		static const int LZW_PARM_BITS		= SNAPSHOT_OBJECT_BITS - OBJ_HEADER_BITS + 1;
+		static const int MAX_LZW_PARMS		= 1 << LZW_PARM_BITS;
+		// the game's object numbers, one per entity slot and the fixed ones, stay inside the number space
+		compile_time_assert( MAX_NET_ENTITIES + MAX_NET_FIXED_OBJECTS <= SNAPSHOT_OBJECT_END );
 		//puncho end
 		static const int MAX_LZW_MEM		= 1024 * 8;		// 8k in the byte * lzwMem buffers, must be <= PS3_DMA_MAX
 

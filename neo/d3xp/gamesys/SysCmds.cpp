@@ -4106,7 +4106,8 @@ Cmd_TestSnapSubmit_f
 
 testSnapSubmit <objects> <bytes>: one synthetic snapshot of <objects> objects of <bytes> random bytes each, through the
 host's submit path (idSnapshotProcessor::SubmitPendingSnap with idLobby's 128 KB of object job memory) against an empty
-base, so every object is new. A full table is MAX_GENTITIES entity objects and the game's fixed ones: 16403 today.
+base, so every object is new. A full table is MAX_GENTITIES entity objects and the game's fixed ones; the layer's
+object numbers allow SNAPSHOT_OBJECT_END objects (sys/Snapshot_Jobs.h), and a count outside 1 to that is refused.
 A cap reached ends in idLib::Error; reaching the PASS line means the jobs took it.
 ==================
 */
@@ -4117,7 +4118,18 @@ static void Cmd_TestSnapSubmit_f( const idCmdArgs& args )
 		gameLocal.Printf( "usage: testSnapSubmit <objects> <bytes>\n" );
 		return;
 	}
-	const int numObjects = idMath::ClampInt( 1, MAX_NET_ENTITIES + MAX_NET_FIXED_OBJECTS, atoi( args.Argv( 1 ) ) );
+	//puncho start - R4.2: the count in digits, 1 to SNAPSHOT_OBJECT_END; a count outside is refused, not clamped
+	int numObjects = 0;
+	for( const char* p = args.Argv( 1 ); *p != '\0' && numObjects >= 0; p++ )
+	{
+		numObjects = ( *p >= '0' && *p <= '9' && numObjects <= SNAPSHOT_OBJECT_END ) ? numObjects * 10 + ( *p - '0' ) : -1;
+	}
+	if( numObjects < 1 || numObjects > SNAPSHOT_OBJECT_END )
+	{
+		gameLocal.Printf( "testSnapSubmit: <objects> is 1 to %d, the object numbers of the snapshot layer\n", SNAPSHOT_OBJECT_END );
+		return;
+	}
+	//puncho end
 	const int objectBytes = idMath::ClampInt( 1, 4096, atoi( args.Argv( 2 ) ) );
 	const int objMemorySize = 128 * 1024;	// idLobby::SNAP_OBJ_JOB_MEMORY
 

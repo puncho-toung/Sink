@@ -45,7 +45,8 @@ If you have questions concerning this license or the applicable additional terms
 #define MIN_SAVEGAME_SIZE_BYTES				( 4 * 1024 * 1024 )
 
 // RB: doubled this for DoomSpartan360 mods
-#define MAX_SAVEGAME_STRING_TABLE_SIZE		( 400 * 1024 * 2 )	// 400 kB max string table size
+//puncho - R4.2: 1 MiB, a whole bit width (800 KB before): the names of a full entity table alone are about 300 KB
+#define MAX_SAVEGAME_STRING_TABLE_SIZE		( 1 << 20 )
 
 
 #define MAX_FILENAME_LENGTH					255

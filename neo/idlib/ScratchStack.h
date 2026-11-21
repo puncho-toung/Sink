@@ -35,7 +35,7 @@ If you have questions concerning this license or the applicable additional terms
 	idScratchStack (D3-Sink, plans/phase1/00-PLAN.md P1-A4)
 
 	A fixed-size LIFO arena for lists that live for one call. The game's clip and
-	radius queries ask for MAX_GENTITIES entries, 128 KB of pointers, and nest through
+	radius queries ask for MAX_GENTITIES entries, 256 KB of pointers, and nest through
 	damage and physics; they take those lists here instead of from the thread's stack.
 
 	The size is set by Init and never grows. Running out is an error that names the

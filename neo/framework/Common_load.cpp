@@ -1814,12 +1814,14 @@ pass. A save older than the header is refused by its version.
 */
 static bool CheckSaveLayers( const idDict& saved, idStr& refusal )
 {
-	//puncho - P0-m5: the oldest save this build loads, the first whose details hold the mod list and the layer rows
-	const int OLDEST_LOADABLE_SAVE_VERSION = BUILD_NUMBER_SAVE_VERSION_MOD_LAYERS;
+	//puncho - P0-m5, R4.2: the oldest save this build loads. Its details hold the mod list and the layer rows (since
+	// BUILD_NUMBER_SAVE_VERSION_MOD_LAYERS) and its entity slots are 15 bits wide: an older save has half as many rows
+	// in its per-slot arrays and packs 14 bits of entity number into its spawn ids, and nothing converts them
+	const int OLDEST_LOADABLE_SAVE_VERSION = BUILD_NUMBER_SAVE_VERSION_ENTITY_BITS_15;
 	const int saveVersion = saved.GetInt( SAVEGAME_DETAIL_FIELD_SAVE_VERSION, 0 );
 	if( saveVersion < OLDEST_LOADABLE_SAVE_VERSION )
 	{
-		refusal.Format( "save version %d predates the mod list in the save header (version %d)", saveVersion, OLDEST_LOADABLE_SAVE_VERSION );
+		refusal.Format( "save version %d predates the oldest this build loads (%d): entity slots are 15 bits since %d", saveVersion, OLDEST_LOADABLE_SAVE_VERSION, BUILD_NUMBER_SAVE_VERSION_ENTITY_BITS_15 );
 		return false;
 	}
 

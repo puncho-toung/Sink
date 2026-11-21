@@ -37,6 +37,14 @@ typedef int32 objectSize_t;
 static const objectSize_t SIZE_STALE		= MAX_TYPE( objectSize_t );				// Special size to indicate object went stale
 static const objectSize_t SIZE_NOT_STALE	= MAX_TYPE( objectSize_t ) - 1;			// Special size to indicate object is no longer stale
 
+//puncho start - R4.2: the snapshot object number space. An object number crosses the jobs and the wire as a uint16
+// step from the one before it, and the step that reaches SNAPSHOT_OBJECT_END ends a snapshot: the numbers a snapshot
+// may hold are [0, SNAPSHOT_OBJECT_END)
+static const int SNAPSHOT_OBJECT_BITS	= 16;
+static const int MAX_SNAPSHOT_OBJECTS	= 1 << SNAPSHOT_OBJECT_BITS;
+static const int SNAPSHOT_OBJECT_END	= MAX_SNAPSHOT_OBJECTS - 1;	// the end mark of a delta, never an object
+//puncho end
+
 static const int RLE_COMPRESSION_PADDING				= 16;			// Padding to accommodate possible enlargement due to zlre compression
 
 // OBJ_DEST_SIZE_ALIGN16 returns the total space needed to store an object for reading/writing during jobs

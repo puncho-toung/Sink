@@ -37,8 +37,9 @@ static const int MAX_PLAYERS			= 8;
 //puncho start - P0-m9 (plans/phase1/02-FIXES.md): the snapshot layer's object budget, one place for both sides of it.
 // The game sends one snapshot object per entity slot (d3xp/Game_local.h asserts MAX_GENTITIES fits) plus a few fixed
 // ones (game state, shader parms, portals, player states, client frames: d3xp/Game_network.cpp asserts they fit), and
-// sys/SnapshotProcessor.h sizes its job memory from the sum
-static const int MAX_NET_ENTITIES		= 1 << 14;
+// R4.2: sys/SnapshotProcessor.h sizes its job memory for the whole object number space (sys/Snapshot_Jobs.h) and
+// asserts that this sum fits inside it. 15 bits, as GENTITYNUM_BITS
+static const int MAX_NET_ENTITIES		= 1 << 15;
 static const int MAX_NET_FIXED_OBJECTS	= 128;
 //puncho end
 

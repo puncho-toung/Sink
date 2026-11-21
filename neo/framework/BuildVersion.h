@@ -63,5 +63,6 @@ const int BUILD_NUMBER_SAVE_VERSION_RECORD_SCHEMA = 1429; // P2b.1.2: MREC v3 on
 const int BUILD_NUMBER_SAVE_VERSION_RECORD_IDENTITY = 1430; // P2b.1.3: WorldIdentity entry (world flags, budget class and join seq, created id and time) replaces the _world*/_budgetClass spawnArgs
 const int BUILD_NUMBER_SAVE_VERSION_EMITTERS = 1431; // light emitters (plans/light-emitters, G1): WriteRenderLight writes the emitter flag after the math block and the rest of the block when it is set; idLight writes emitterBroken last
 const int BUILD_NUMBER_SAVE_VERSION_NO_MATH_LIGHTS = 1432; // light emitters, batch G: WriteRenderLight no longer writes the math light block; saves from 1404 to 1431 hold it, and ReadRenderLight reads and drops it
-const int BUILD_NUMBER = BUILD_NUMBER_SAVE_VERSION_NO_MATH_LIGHTS;
+const int BUILD_NUMBER_SAVE_VERSION_ENTITY_BITS_15 = 1433; // R4.2: 15-bit entity index: spawn ids in saves pack 16 + 15 bits and the per-slot arrays hold 32768 rows (d3xp/Game_local.h); older saves are refused
+const int BUILD_NUMBER = BUILD_NUMBER_SAVE_VERSION_ENTITY_BITS_15;
 const int BUILD_NUMBER_MINOR = 0;

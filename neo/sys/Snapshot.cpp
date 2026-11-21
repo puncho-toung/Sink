@@ -285,7 +285,7 @@ bool idSnapShot::ReadDeltaForJob( const char* deltaMem, int deltaSize, int visIn
 		bytesRead += sizeof( delta );
 
 		objectNum += delta;
-		if( objectNum >= 0xFFFF )
+		if( objectNum >= SNAPSHOT_OBJECT_END )	//puncho - R4.2: the named end mark, the same value
 		{
 			// full delta
 			if( net_verboseSnapshotCompression.GetBool() )
@@ -728,7 +728,7 @@ bool idSnapShot::ReadDelta( idFile* file, int visIndex )
 	while( file->ReadBig( delta ) == sizeof( delta ) )
 	{
 		objectNum += delta;
-		if( objectNum >= 0xFFFF )
+		if( objectNum >= SNAPSHOT_OBJECT_END )	//puncho - R4.2: the named end mark, the same value
 		{
 			// full delta
 			return true;
@@ -1060,7 +1060,7 @@ bool idSnapShot::WriteDelta( idSnapShot& old, int visIndex, idFile* file, int ma
 	{
 		return false;
 	}
-	uint16 objectDelta = 0xFFFF - lastobjectNum;
+	uint16 objectDelta = SNAPSHOT_OBJECT_END - lastobjectNum;	//puncho - R4.2: the named end mark, the same value
 	file->WriteBig( objectDelta );
 
 	return true;
@@ -1281,6 +1281,13 @@ idSnapShot::FindOrCreateObjectByID
 idSnapShot::objectState_t& idSnapShot::FindOrCreateObjectByID( int objectNum )
 {
 	//assert( mem.IsMapHeap() );
+	//puncho start - R4.2: objectState_t holds the number as a uint16 and SNAPSHOT_OBJECT_END is a delta's end mark, so a
+	// number outside the space is refused here, before it is narrowed
+	if( objectNum < 0 || objectNum >= SNAPSHOT_OBJECT_END )
+	{
+		idLib::Error( "idSnapShot::FindOrCreateObjectByID: object number %d is outside [0, %d)", objectNum, SNAPSHOT_OBJECT_END );
+	}
+	//puncho end
 
 	int i = BinarySearch( objectNum );
 

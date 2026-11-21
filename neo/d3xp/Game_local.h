@@ -73,13 +73,13 @@ class EnvironmentProbe; // RB
 const int MAX_CLIENTS			= MAX_PLAYERS;
 const int MAX_DORMANT_SOURCES	= 2 * MAX_CLIENTS;	// each player and its view source (P2b.2.2b-ii)
 const int MAX_CLIENTS_IN_PVS	= MAX_CLIENTS >> 3;
-// 14 bits since 2026-10-23: 16384 entity slots. The width is baked into spawn ids (the other
-// 18 bits carry the slot's generation, MAX_SPAWN_GENERATION below), idEntityPtr, saves (gated by
-// BUILD_NUMBER_SAVE_VERSION_ENTITY_BITS_14), snapshots and bind packing; the snapshot layer's
-// MAX_OBJ_PARMS (sys/SnapshotProcessor.h) is sized from MAX_NET_ENTITIES (sys/sys_session.h),
-// and the query lists of this many entries live in the scratch arena (com_gameScratchKB), not on
-// the stack. Client and server must agree on it.
-const int GENTITYNUM_BITS		= 14;
+// 15 bits since R4.2 (2026-11-20; 14 bits from 2026-10-23): 32768 entity slots. The width is baked into spawn ids (16
+// of the other 17 bits carry the slot's generation, MAX_SPAWN_GENERATION below; the sign bit stays clear),
+// idEntityPtr, saves (gated by BUILD_NUMBER_SAVE_VERSION_ENTITY_BITS_15), snapshots and bind packing; the snapshot
+// layer's MAX_NET_ENTITIES (sys/sys_session.h) is the same number and its object numbers (sys/Snapshot_Jobs.h,
+// SNAPSHOT_OBJECT_BITS) have room for it, and the query lists of this many entries live in the scratch arena
+// (com_gameScratchKB), not on the stack. Client and server must agree on it.
+const int GENTITYNUM_BITS		= 15;
 const int MAX_GENTITIES			= 1 << GENTITYNUM_BITS;
 compile_time_assert( MAX_GENTITIES <= MAX_NET_ENTITIES );	//puncho - P0-m9: one snapshot object per entity slot
 const int ENTITYNUM_NONE		= MAX_GENTITIES - 1;
@@ -89,7 +89,7 @@ const int ENTITYNUM_FIRST_NON_REPLICATED	= ENTITYNUM_MAX_NORMAL - 256;
 //puncho start - identity (P1-A2, K9): each slot counts its own spawn-id generations, 1 to this and around again; 0 is
 // the null spawn id. The wire carries 32 - GENTITYNUM_BITS bits of it, but idEntityPtr packs generation <<
 // GENTITYNUM_BITS into a signed int, where 1 << ( 31 - GENTITYNUM_BITS ) would take the sign bit and never resolve:
-// 2^17 - 1 at 14 index bits.
+// 2^16 - 1 at 15 index bits.
 const int MAX_SPAWN_GENERATION	= ( 1 << ( 31 - GENTITYNUM_BITS ) ) - 1;
 //puncho end
 
