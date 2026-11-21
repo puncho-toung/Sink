@@ -3123,6 +3123,13 @@ static void Cmd_TestSaveRoundTrip_f( const idCmdArgs& args )
 	int entitiesFirstLoad = -1;
 	int entitiesSecondLoad = -1;
 
+	//puncho start - R4: the frame the game thread drew before this command still waits for the back end (idCommonLocal::Frame
+	// swaps the command buffers after the console's commands and draws them then), and the loads below free what it
+	// points at: with 32,000 entities the back end read freed memory in RenderInteractions in 3 runs of 11. Draw it
+	// now, while the world it was made from is whole. UpdateScreen draws, swaps and renders, as the screenshot command
+	// does, and leaves an empty list for Frame
+	common->UpdateScreen( false, false );
+	//puncho end
 	SaveTraced( firstSave, firstFile, firstStrings );
 	bool loaded = LoadTraced( firstLoad, firstFile, firstStrings, mapName, renderWorld, soundWorld );
 	if( loaded )

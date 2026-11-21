@@ -1525,6 +1525,14 @@ void idCommonLocal::Frame()
 		delete loadGUI;
 		loadGUI = NULL;
 
+		//puncho start - R4: the frame the game drew before the error may still wait for the back end, and idCommonLocal::Error
+		// has stopped the game, which freed the world that frame points at. LeaveGame's UpdateScreen would draw it: with
+		// 32,760 entities freed, the back end read freed memory in RenderInteractions (a full entity table's "no free
+		// entities", thrown from a console command). Take the waiting list off the renderer undrawn, as this function's
+		// early return does with a list that a transition's LeaveGame made stale
+		gameThread.WaitForThread();
+		renderSystem->SwapCommandBuffers( &time_frontend, &time_backend, &time_moc, &time_gpu, &stats_backend, &stats_frontend );
+		//puncho end
 		// drop back to main menu
 		LeaveGame();
 
