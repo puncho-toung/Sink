@@ -35,7 +35,7 @@ Texture2D	 t_BaseColor	: register( t0 VK_DESCRIPTOR_SET( 1 ) );
 SamplerState s_Sampler		: register( s0 VK_DESCRIPTOR_SET( 2 ) );
 
 #if defined( USE_FROXEL_FOG ) && USE_FROXEL_FOG
-	// X0 stub ( D33, D83 ): the froxel fog permutation. Track V ( V5 ) fogs this stage here; nothing is sampled yet.
+	// the froxel fog permutation ( D33 ): bound by the stage loop after the fog view's apply ( V5, D20, D35 )
 #define FROXEL_FOG_SET 3
 #include "froxel_fog.inc.hlsl"
 #endif
@@ -64,4 +64,9 @@ void main( in PS_IN fragment, out PS_OUT result )
 	float4 color = t_BaseColor.Sample( s_Sampler, uv ) * fragment.color;
 	clip( color.a - pc.rpAlphaTest.x );
 	result.color = sRGBAToLinearRGBA( color );
+
+#if defined( USE_FROXEL_FOG ) && USE_FROXEL_FOG
+	// V5: the stage seen through the fog to its own depth, by the blend kind the stage loop set in rpTexGen0Enabled.y
+	result.color = FroxelFogTranslucent( result.color, FroxelFogSamplePixel( fragment.position.xy, FroxelFogViewDepth( fragment.position.z ) ), pc.rpTexGen0Enabled.y );
+#endif
 }

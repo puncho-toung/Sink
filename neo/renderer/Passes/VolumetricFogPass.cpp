@@ -38,6 +38,8 @@ If you have questions concerning this license or the applicable additional terms
 
 idCVar r_volumetricFog( "r_volumetricFog", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "froxel fog in the main view: 0 = off ( no fog pass: the engine's picture without it ), 1 = on" );
 static idCVar r_volumetricFogColumnPixels( "r_volumetricFogColumnPixels", "12", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "the side of a froxel column in pixels; the grid follows the render size, and a grid of too many froxels gets wider columns", 4, 64 );
+// V5: the quality levels of WP-V5. -1 takes r_volumetricFogColumnPixels and r_volumetricFogSlices as set
+static idCVar r_volumetricFogQuality( "r_volumetricFogQuality", "-1", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "the fog grid's quality: 0 low ( 16-pixel columns, 48 slices: at 1920 x 1080 0.39 M froxels, 19 MiB of volumes ), 1 medium ( 12, 64: 0.92 M, 44 MiB ), 2 high ( 8, 96: 3.1 M, 148 MiB ); a level takes at most 4 Mi froxels, about 200 MiB, widening its columns past them; -1 takes r_volumetricFogColumnPixels and r_volumetricFogSlices as set", -1, 2 );
 static idCVar r_volumetricFogSlices( "r_volumetricFogSlices", "64", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "the number of depth slices of the fog volume", 8, 256 );
 static idCVar r_volumetricFogFar( "r_volumetricFogFar", "3000", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the far end of the fog volume in units along the view axis; no fog is added beyond it", 64.0f, 65536.0f );
 static idCVar r_volumetricFogDistance( "r_volumetricFogDistance", "1500", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the global fog's distance D in units: the air is 99 percent opaque at D ( sigma_t = 4.632 / D ); 0 = no global fog; a distance above 0 counts as at least 0.1", 0.0f, 1000000.0f );
@@ -51,6 +53,8 @@ static idCVar r_volumetricFogJitter( "r_volumetricFogJitter", "1", CVAR_RENDERER
 static idCVar r_volumetricFogSkip( "r_volumetricFogSkip", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "the inject skips the froxels behind the farthest surface of their column and its neighbours: no pixel reads them; 0 = it lights every froxel ( the furnace always does )" );
 static idCVar r_volumetricFogShadows( "r_volumetricFogShadows", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "the fog's inject looks each light's shadow up in the shadow atlas, one comparison per froxel; 0 = no lookup: a light whose row has a place is taken unshadowed, times its fade" );
 static idCVar r_volumetricFogDebug( "r_volumetricFogDebug", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "fog debug view in place of the picture: 1 = the transmittance to each pixel as grey, 2 = the slices as bands over the grid of columns", 0, 2 );
+// V5 ( D20, D35 ): the translucent stages and the lit glass after the apply fogged by their own shaders
+static idCVar r_volumetricFogTranslucent( "r_volumetricFogTranslucent", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "the froxel fog fogs the translucent surfaces drawn after its apply, each at its own depth: 0 draws them unfogged ( V4's picture )" );
 // V4: the media ( the base of track M ). The map's worldspawn sets the height fog's cvars from its keys at every spawn and
 // restore ( d3xp/WorldSpawn.cpp ), each to its default where the key is absent
 static idCVar r_volumetricFogMedia( "r_volumetricFogMedia", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "the fog's media pass and its medium per froxel ( V4 ): the height fog, the dust, the fog lights and the test box; 0 = the global fog alone, as V3 drew it" );
@@ -69,7 +73,7 @@ static idCVar r_volumetricFogDustNoise( "r_volumetricFogDustNoise", "1", CVAR_RE
 static idCVar r_volumetricFogDustOctaves( "r_volumetricFogDustOctaves", "3", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "the octaves of the dust's noise, from its size down by halves; each costs as much as the first ( far froxels run fewer ). The worldspawn's key fog_dust_octaves", 1, 8 );
 static idCVar r_volumetricFogDustErode( "r_volumetricFogDustErode", "0", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "how much a finer fBm at a quarter of the dust's size eats its thin parts ( noise slot 2's erode, at most 3 octaves ); 0 = none. The worldspawn's key fog_dust_erode", 0.0f, 1.0f );
 static idCVar r_volumetricFogDustWarp( "r_volumetricFogDustWarp", "0", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "how far in units a curl field bends the dust's noise ( noise slot 1's warp, the noise in slot 2 and no erode ); 0 = none. The worldspawn's key fog_dust_warp", 0.0f, 1024.0f );
-static idCVar r_volumetricFogLights( "r_volumetricFogLights", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "Doom 3 fog lights as media in the froxel fog ( V4, D29 ); the fog pass still draws them until V5: compare with r_skipFogLights 1" );
+static idCVar r_volumetricFogLights( "r_volumetricFogLights", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "Doom 3 fog lights as media in the froxel fog ( V4, D29 ); V5: the fog takes them in place of the fog pass where the translucents fog themselves ( r_volumetricFogTranslucent ) and the light's volume lies inside the fog's reach; the others keep the fog pass ( the HUD's FOGLIGHTS row )" );
 static idCVar r_volumetricFogLightRate( "r_volumetricFogLightRate", "2.3", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "a fog light's sigma_t times its fog distance D in the froxel fog: 2.3 fits the picture the fog pass draws ( the sRGB decode of its table ) over the screen and is its centre column's minimax ( 2.72 the centre's least squares ), 4.632 is its table's rate, 5.54 leaves 1/255 at D ( D21 )", 0.1f, 20.0f );
 static idCVar r_volumetricFogTestBox( "r_volumetricFogTestBox", "", CVAR_RENDERER | CVAR_NEW, "test: a box of fog, \"x y z  hx hy hz  D  vx vy vz\" in map units: its centre, its half extents, its distance D ( albedo 1 ) and a velocity per second of game time ( optional ); empty = none" );
 
@@ -87,9 +91,7 @@ static const float FROXEL_MIN_FOG_DISTANCE	= 0.1f;
 // V4: sigma_t * D of the media of the media pass ( the height fog, the dust, the test box; track M's volumes ): 1/255 of the
 // light is left after D, the fog lights' rule ( D21, section 6 row 89 ). The global fog keeps V1's FROXEL_OPACITY_AT_D
 static const float FOG_MEDIA_OPACITY_AT_D	= 5.54f;
-// V4: a fog light's density rises from 0 at its fog plane to full this many units below it: the fog pass's enter ramp,
-// 8 texels of its enter image ( RAMP_RANGE ) at FOG_SCALE 0.001 and FOG_ENTER_SIZE 64 texels a unit of the scale
-static const float FROXEL_FOGLIGHT_RAMP	= 125.0f;
+// ( V5: FROXEL_FOGLIGHT_RAMP, the fog lights' enter ramp, is in renderer/VolumetricFog.h, which the frontend shares )
 // a bound on the froxels of one volume ( 8 bytes each: 32 MiB a volume; V3 has five such volumes, V4 six and two marks of
 // 1 byte a froxel ); a grid past it gets
 // wider columns
@@ -178,13 +180,28 @@ bool R_VolumetricFogTakesFogLights()
 	return r_volumetricFogMedia.GetBool() && r_volumetricFogLights.GetBool();
 }
 
+// V5 ( D21, D29 ): the cvars under which the froxel fog takes a fog light in place of the fog pass: the fog on, the fog
+// lights taken, the translucents fogging themselves ( the swap is atomic with them ), no furnace. The frontend asks it
+// for every fog light's record ( R_VolumetricFogMayTakeFogLight ); the backend goes by the records
+bool R_VolumetricFogSwapsFogLights()
+{
+	return r_volumetricFog.GetBool() && R_VolumetricFogTakesFogLights() && r_volumetricFogTranslucent.GetBool() && r_volumetricFogFurnace.GetFloat() <= 0.0f;
+}
+
+// V5: the fog light's rate as the inject reads it ( mediaParms2.y ), for the frontend's portal distance
+float R_VolumetricFogLightRate()
+{
+	return r_volumetricFogLightRate.GetFloat();
+}
+
 // V4: whether the global fog or a medium of the media pass scatters light ( the frontend's question, R_VolumetricFogMarkLights )
 bool R_VolumetricFogMediaScatter()
 {
 	return ( r_volumetricFogDistance.GetFloat() > 0.0f && r_volumetricFogAlbedo.GetFloat() > 0.0f ) || FroxelMediaScatter();
 }
 
-// V4: whether the view holds a fog light the inject takes ( record 0, the sun's slot, is never one: review O1-8 )
+// V4: whether the view holds a fog light the inject takes ( record 0, the sun's slot, is never one: review O1-8 ). V5: the
+// records carry the frontend's verdict ( RLF_FOG_OFF ), so this is also the question of V4's path ( row 170 a )
 static bool FroxelViewHasFogLight( const viewDef_t* viewDef )
 {
 	if( !R_VolumetricFogTakesFogLights() || viewDef->recordLights == NULL || viewDef->lightListView == NULL )
@@ -252,12 +269,17 @@ VolumetricFogPass::VolumetricFogPass( nvrhi::IDevice* device, CommonRenderPasses
 	, m_JitterIndex( 0 )
 	, m_ApplyColor( NULL )
 	, m_RenderedView( NULL )
+	, m_RenderedFogLights( false )
+	, m_FogLightPath( false )
 	, m_SkyMask( NULL )
 	, m_SkyMaskView( NULL )
 	, m_SkyMaskEmpty( false )
 	, m_ProbeWait( 0 )
 	, m_ProbeStaged( false )
 	, m_ProbeHasPixel( false )
+	, m_ProbeLateColor( NULL )
+	, m_ProbeLateView( NULL )
+	, m_ProbeHasPixelLate( false )
 	, m_ProbeSlices( 0 )
 	, m_ProbeSliceStep( 0.0f )
 	, m_ProbeSigmaT( 0.0f )
@@ -269,6 +291,7 @@ VolumetricFogPass::VolumetricFogPass( nvrhi::IDevice* device, CommonRenderPasses
 	, m_ProbeSigmaS( 0.0f )
 	, m_ProbeMedia( false )
 	, m_ProbeMediaClosed( false )
+	, m_ProbeFogLights( false )
 	, m_ProbeFurnace( 0.0f )
 	, m_ProbeNumMedia( 0 )
 	, m_ProbeSkip( false )
@@ -926,8 +949,9 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 	// debug view in clear air ) reads none
 	const bool furnace = r_volumetricFogFurnace.GetFloat() > 0.0f;
 	const lightListView_t* llv = viewDef->lightListView;
-	// V4: the fog lights are taken as media on V4's path ( r_volumetricFogLights ), never under the furnace
-	const bool takeFogLights = !furnace && R_VolumetricFogTakesFogLights();
+	// V4: the fog lights are taken as media on V4's path ( r_volumetricFogLights ), never under the furnace. V5: only where the
+	// view holds a fog light the frontend's verdict left on ( row 170 a: a view without one runs V3's path and pays nothing )
+	const bool takeFogLights = !furnace && FroxelViewHasFogLight( viewDef );
 	// V4: the lights only where something scatters them ( review O1-2 ): the global fog, a medium of the media pass, a fog light
 	// with an albedo above 0
 	const bool takeLights = sigmaS > 0.0f || FroxelMediaScatter() || ( takeFogLights && viewDef->recordLights != NULL
@@ -940,12 +964,16 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 	// size ( the engine's dynamic resolution ) fills a part of them and nothing is made again. A grid of more than
 	// FROXEL_MAX_CELLS froxels gets wider columns
 	const nvrhi::TextureDesc& renderDesc = m_SkyMask->getDesc();
-	const int gridSlices = idMath::ClampInt( 8, 256, r_volumetricFogSlices.GetInteger() );
-	const int wantedColumnPixels = idMath::ClampInt( 4, 64, r_volumetricFogColumnPixels.GetInteger() );
+	// V5: a quality level sets both; -1 the two cvars
+	static const int qualityColumnPixels[3] = { 16, 12, 8 };
+	static const int qualitySlices[3] = { 48, 64, 96 };
+	const int quality = idMath::ClampInt( -1, 2, r_volumetricFogQuality.GetInteger() );
+	const int gridSlices = ( quality >= 0 ) ? qualitySlices[ quality ] : idMath::ClampInt( 8, 256, r_volumetricFogSlices.GetInteger() );
+	const int wantedColumnPixels = ( quality >= 0 ) ? qualityColumnPixels[ quality ] : idMath::ClampInt( 4, 64, r_volumetricFogColumnPixels.GetInteger() );
 	int columnPixels = wantedColumnPixels;
 	while( columnPixels < 64 && ( ( ( int )renderDesc.width + columnPixels - 1 ) / columnPixels ) * ( ( ( int )renderDesc.height + columnPixels - 1 ) / columnPixels ) * gridSlices > FROXEL_MAX_CELLS )
 	{
-		columnPixels *= 2;
+		columnPixels += 1;		// V5e ( review O2-3 ): a pixel at a time: a finer level never has fewer froxels than a lower one ( F1-4 )
 	}
 	if( columnPixels != wantedColumnPixels )
 	{
@@ -953,7 +981,7 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 		if( !warned )
 		{
 			warned = true;
-			idLib::Warning( "VolumetricFogPass: r_volumetricFogColumnPixels %d with %d slices is more than %d froxels at this render size, the columns are %d pixels", wantedColumnPixels, gridSlices, FROXEL_MAX_CELLS, columnPixels );
+			idLib::Warning( "VolumetricFogPass: %s %d with %d slices is more than %d froxels at this render size, the columns are %d pixels", ( quality >= 0 ) ? "r_volumetricFogQuality's columns" : "r_volumetricFogColumnPixels", wantedColumnPixels, gridSlices, FROXEL_MAX_CELLS, columnPixels );
 		}
 	}
 	if( !CheckVolumes( ( ( int )renderDesc.width + columnPixels - 1 ) / columnPixels, ( ( int )renderDesc.height + columnPixels - 1 ) / columnPixels, gridSlices ) || !CheckInjectSet() )
@@ -1061,8 +1089,16 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 	const float historyWeight = idMath::ClampFloat( 0.0f, 0.98f, r_volumetricFogHistoryWeight.GetFloat() );
 	// V4: a flip of r_volumetricFogMedia cuts the history too: the two paths mark the skipped froxels in two ways
 	// ( review O2-2: only where the view has a medium besides the global fog, or takes fog lights: a map with the global fog
-	// alone runs V3's path and pays nothing for the marks; both terms are the map's or the cvars', so views do not flip )
-	const bool mediaPath = r_volumetricFogMedia.GetBool() && ( FroxelHasMediaPass() || takeFogLights );
+	// alone runs V3's path and pays nothing for the marks; V5: the fog lights' term follows the view's records, held from the
+	// first view that takes a fog light to the next camera cut, below )
+	// V5f ( review F1-2 ): the fog lights hold V4's path from the first view that takes one to the next camera cut, so a fog light
+	// coming into view or leaving it does not cut the view's history; V4 ran this path on every view with r_volumetricFogLights 1
+	if( backEnd.viewHistoryCut || !R_VolumetricFogTakesFogLights() )
+	{
+		m_FogLightPath = false;
+	}
+	m_FogLightPath = m_FogLightPath || takeFogLights;
+	const bool mediaPath = r_volumetricFogMedia.GetBool() && ( FroxelHasMediaPass() || m_FogLightPath );
 	const int historyGrid[8] = { gridWidth, gridHeight, columnPixels, gridSlices, furnace ? 1 : 0, viewWidth, viewHeight, mediaPath ? 1 : 0 };
 	const int historyEye = ( viewDef->renderView.viewEyeBuffer == 1 ) ? 1 : 0;
 	const bool historyValid = m_HistoryValid && historyWeight > 0.0f && !backEnd.viewHistoryCut && llv != NULL && llv->prevFrame != 0
@@ -1266,6 +1302,7 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 	}
 
 	m_RenderedView = viewDef;
+	m_RenderedFogLights = takeFogLights;		// V5: the apply tells the backend, whose FogAllLights then skips the fog pass for them
 }
 
 /*
@@ -1440,6 +1477,7 @@ void VolumetricFogPass::ProbeMedia( const froxelConstants_t& constants )
 	m_ProbeMedia = m_NumMedia > 0;
 	m_ProbeFurnace = constants.mediaParms.y;
 	m_ProbeMediaClosed = true;
+	m_ProbeFogLights = constants.mediaParms2.w > 0.0f;		// V5: also where the view has no other medium ( V4g's note )
 	m_ProbeSkip = constants.skipParms.x > 0.0f;
 	m_ProbeNumMedia = m_NumMedia;
 	memcpy( m_ProbeMediaList, m_MediaCopy, m_NumMedia * sizeof( fogMedium_t ) );
@@ -1649,6 +1687,12 @@ void VolumetricFogPass::ProbeCopy( nvrhi::ICommandList* commandList )
 		stagingDesc.format = nvrhi::Format::RGBA16_FLOAT;
 		stagingDesc.debugName = "Fog/ProbePixelStaging";
 		m_ProbePixelStaging = m_Device->createStagingTexture( stagingDesc, nvrhi::CpuAccessMode::Read );
+
+		// V5: the pixel behind the translucents
+		desc.debugName = "Fog/ProbePixelLate";
+		m_ProbePixelLate = m_Device->createTexture( desc );
+		stagingDesc.debugName = "Fog/ProbePixelLateStaging";
+		m_ProbePixelLateStaging = m_Device->createStagingTexture( stagingDesc, nvrhi::CpuAccessMode::Read );
 	}
 
 	for( int c = 0; c < FROXEL_PROBE_COLUMNS; c++ )
@@ -1687,6 +1731,9 @@ void VolumetricFogPass::ProbeCopy( nvrhi::ICommandList* commandList )
 	}
 	m_ProbeStaged = false;
 	m_ProbeHasPixel = false;
+	m_ProbeHasPixelLate = false;
+	m_ProbeLateColor = NULL;
+	m_ProbeLateView = NULL;
 }
 
 /*
@@ -1708,6 +1755,8 @@ void VolumetricFogPass::ProbeStage( nvrhi::ICommandList* commandList, nvrhi::ITe
 								  color, nvrhi::TextureSlice().setOrigin( centreX, centreY, 0 ).setSize( 1, 1, 1 ) );
 		commandList->copyTexture( m_ProbePixelStaging, nvrhi::TextureSlice(), m_ProbePixel, nvrhi::TextureSlice() );
 		m_ProbeHasPixel = true;
+		m_ProbeLateColor = color;			// V5: ProbeStageTranslucent reads it again behind the translucents
+		m_ProbeLateView = viewDef;
 	}
 	commandList->copyTexture( m_ProbeStaging, nvrhi::TextureSlice(), m_ProbeStrip, nvrhi::TextureSlice() );
 	if( m_ProbeMedia )
@@ -1760,6 +1809,10 @@ void VolumetricFogPass::ProbeRead()
 	{
 		common->Printf( "fogprobe: %d slices, far end %.1f, sigma_t %.6g, sigma_s * L %.6g\n", m_ProbeSlices,
 						FROXEL_SLICE_BIAS * ( exp( m_ProbeSlices * step ) - 1.0 ), m_ProbeSigmaT, m_ProbeSource );
+		if( m_ProbeFogLights )
+		{
+			common->Printf( "fogprobe: the view took fog lights: the closed forms of the slices below are the global fog's alone ( V5, consultant CN3-5 )\n" );
+		}
 		if( m_ProbeLit )
 		{
 			common->Printf( "fogprobe: lit by the ambient light and %d light records, %d of which the fog can take ( r_volumetricFogCull %d ), sigma_s %.6g; the in-scatter has no closed form\n", m_ProbeRecords, m_ProbeTakeable, m_ProbeCull, m_ProbeSigmaS );
@@ -1797,7 +1850,13 @@ void VolumetricFogPass::ProbeRead()
 									m_ProbeColumn[c][0], m_ProbeColumn[c][1], k, farFace, gotT, wantT, gotS, wantS );
 				}
 			}
-			if( m_ProbeLit )
+			if( m_ProbeFogLights )
+			{
+				// V5: the closed forms above are the global fog's alone; the fog lights the inject took are not in them
+				common->Printf( "fogprobe: column %d,%d ray length %.5f: the view took fog lights, which the closed form leaves out: no error is judged\n",
+								m_ProbeColumn[c][0], m_ProbeColumn[c][1], rayLength );
+			}
+			else if( m_ProbeLit )
 			{
 				common->Printf( "fogprobe: column %d,%d ray length %.5f: largest error of T %.6f\n",
 								m_ProbeColumn[c][0], m_ProbeColumn[c][1], rayLength, maxErrorT );
@@ -1818,6 +1877,15 @@ void VolumetricFogPass::ProbeRead()
 		{
 			common->Printf( "fogprobe: the picture's centre pixel behind the apply: %.5f %.5f %.5f\n", F16toF32( pixel[0] ), F16toF32( pixel[1] ), F16toF32( pixel[2] ) );
 			m_Device->unmapStagingTexture( m_ProbePixelStaging );
+		}
+	}
+	if( m_ProbeHasPixelLate )
+	{
+		const halfFloat_t* pixel = ( const halfFloat_t* )m_Device->mapStagingTexture( m_ProbePixelLateStaging, nvrhi::TextureSlice(), nvrhi::CpuAccessMode::Read, &rowPitch );
+		if( pixel != NULL )
+		{
+			common->Printf( "fogprobe: the picture's centre pixel behind the translucents: %.5f %.5f %.5f ( r_volumetricFogTranslucent %d )\n", F16toF32( pixel[0] ), F16toF32( pixel[1] ), F16toF32( pixel[2] ), r_volumetricFogTranslucent.GetInteger() );
+			m_Device->unmapStagingTexture( m_ProbePixelLateStaging );
 		}
 	}
 
@@ -1904,6 +1972,13 @@ void VolumetricFogPass::Apply( nvrhi::ICommandList* commandList, const viewDef_t
 
 	// from here on the engine's fog set binds this view's volume in place of the dummy
 	backEnd.froxelVolume = m_Integrated;
+	// V5: and the translucent draws after the apply fog themselves at their own depth ( D20, D83 ), until the end of
+	// the view's translucent shader passes
+	// ( review O1-3: also where the inject took fog lights, which the frontend did only with the cvar on: the fog pass skips
+	// them, so the swap stays whole when the cvar changes between the frontend's frame and this one )
+	backEnd.froxelFogTranslucent = r_volumetricFogTranslucent.GetBool() || m_RenderedFogLights;
+	// V5 ( D21 ): the fog lights its inject took are drawn: FogAllLights leaves them to it
+	backEnd.froxelFogLightsTaken = m_RenderedFogLights;
 
 	// the set comes from the engine's cache, which ReleaseVolume() clears where the volume dies
 	nvrhi::BindingSetDesc bindingSetDesc;
@@ -1942,6 +2017,32 @@ void VolumetricFogPass::Apply( nvrhi::ICommandList* commandList, const viewDef_t
 	{
 		ProbeStage( commandList, color, viewDef );
 	}
+}
+
+/*
+========================
+VolumetricFogPass::ProbeStageTranslucent
+
+V5: the probe's centre pixel once more, behind the view's translucent shader passes, which fog themselves at their
+own depth; the backend calls it at the end of those passes in every view, and it copies only in the view whose
+apply staged the probe. ProbeRead prints both pixels.
+========================
+*/
+bool VolumetricFogPass::ProbeStageTranslucent( nvrhi::ICommandList* commandList, const viewDef_t* viewDef )
+{
+	if( m_ProbeLateView != viewDef || m_ProbeLateColor == NULL )
+	{
+		return false;
+	}
+	const int centreX = ( viewDef->viewport.x1 + viewDef->viewport.x2 + 1 ) / 2;
+	const int centreY = ( viewDef->viewport.y1 + viewDef->viewport.y2 + 1 ) / 2;
+	commandList->copyTexture( m_ProbePixelLate, nvrhi::TextureSlice(),
+							  m_ProbeLateColor, nvrhi::TextureSlice().setOrigin( centreX, centreY, 0 ).setSize( 1, 1, 1 ) );
+	commandList->copyTexture( m_ProbePixelLateStaging, nvrhi::TextureSlice(), m_ProbePixelLate, nvrhi::TextureSlice() );
+	m_ProbeHasPixelLate = true;
+	m_ProbeLateColor = NULL;
+	m_ProbeLateView = NULL;
+	return true;
 }
 
 // The volumetric fog pass's debug-tools overlay; X0 lands it as a no-op and track V fills the body.

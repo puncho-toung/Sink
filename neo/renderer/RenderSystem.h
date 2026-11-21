@@ -219,6 +219,8 @@ struct performanceCounters_t
 	int		c_surfLightNoRecord;
 	// ---- END TRACK F ----
 	// ---- TRACK V: volumetric fog counters ----
+	int		c_fogPortalsMedium;			// V5f ( F1-3 ): fog portals the medium's rule decided ( a fog light the froxel fog may take )
+	int		c_fogPortalsNeverCulled;	// V5f: and of those, the portals it does not cull at any distance
 	// ---- END TRACK V ----
 	uint64	usFindView;
 	uint64	usAddLights;
@@ -339,6 +341,12 @@ struct backEndCounters_t
 	float	c_lightDiffLegacyMean;		// F2: the legacy picture's mean, for scale
 	// ---- END TRACK F ----
 	// ---- TRACK V: volumetric fog counters ----
+	int		c_fogLightsFroxel;			// V5: fog lights the froxel fog drew in place of the fog pass, over the frame's views
+	int		c_fogLightsFogPass;			// V5: fog lights the fog pass drew ( FogAllLights ), over the frame's views
+	int		c_shadowAtlasFogOnlyLights;	// V5 ( row 66 ): lights that light only the fog and have their places in the atlas
+	int		c_shadowAtlasFogOnlyTexels;	// V5: and the texels of those places
+	int		c_shadowAtlasSurfaceRefused;	// V5: lights with surfaces that the atlas refused a place ( one side or more )
+	int		c_fogStagesUnfogged;		// V5f ( F1-1 ): stages drawn after the apply without a fog twin where the fog lights were the froxel fog's
 	// ---- END TRACK V ----
 	uint64	gpuMicroSec;
 

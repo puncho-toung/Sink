@@ -43,6 +43,7 @@ If you have questions concerning this license or the applicable additional terms
 #include <sys/DeviceManager.h>
 #include <nvrhi/utils.h>
 
+#include "VolumetricFog.h"		// TRACK V ( V5 ): R_FroxelFogTookFogLight ( FogAllLights )
 #include "Passes/VolumetricFogPass_cb.h"		//puncho - reconcile: keep X0's per-view "fog off" write
 
 idCVar r_useNewSsaoPass( "r_useNewSSAOPass", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "use the new SSAO pass from Donut" );
@@ -375,7 +376,7 @@ void idRenderBackend::BindVariableStageImage( const textureStage_t* texture, con
 idRenderBackend::PrepareStageTexturing
 ================
 */
-void idRenderBackend::PrepareStageTexturing( const shaderStage_t* pStage,  const drawSurf_t* surf )
+void idRenderBackend::PrepareStageTexturing( const shaderStage_t* pStage,  const drawSurf_t* surf, int fogKind )
 {
 	float useTexGenParm[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 
@@ -662,6 +663,13 @@ void idRenderBackend::PrepareStageTexturing( const shaderStage_t* pStage,  const
 		idLib::Warning( "Using GlassWarp! Please contact Brian!" );
 	}
 
+	// ---- TRACK V ( V5, V5e ): a fog twin reads the stage's blend kind from rpTexGen0Enabled.y, which no other program reads
+	// ( texture_color.vs and texture.vs read .x ); written with the vector, so a draw's parms change once ( review O2-2 ) ----
+	if( fogKind >= 0 )
+	{
+		useTexGenParm[1] = ( float )fogKind;
+	}
+	// ---- END TRACK V ----
 	SetVertexParm( RENDERPARM_TEXGEN_0_ENABLED, useTexGenParm );
 }
 
@@ -1703,6 +1711,16 @@ void idRenderBackend::DrawSingleInteraction( drawInteraction_t* din, bool useFas
 		}
 	}
 	// RB end
+
+	// ---- TRACK V ( V5 ): the lit glass after the fog view's apply ( D83 ) takes the fog twin of the program chosen above,
+	// where it has one ( RenderProgs.h, FroxelFogTwin ). While the flag is up the legacy translucent interactions are the
+	// only draws of this function the rebind takes: the forward glass ( F4 ) comes here with setInteractionShader false
+	// and binds its own program below ( consultant CN2-3 ) ----
+	if( setInteractionShader && !useIBL && froxelFogTranslucent )
+	{
+		renderProgManager.BindShader_FroxelFogTwin();
+	}
+	// ---- END TRACK V ----
 
 	// ---- TRACK F: the forward program takes the place of the ambient program bound above ( F36 ) ----
 	if( forwardSurf )
@@ -4344,6 +4362,12 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 				failedNum++;
 				continue;
 			}
+			// ---- TRACK V ( V5, row 66 ): this side's texels, where the light lights only the fog ----
+			if( R_ViewLightLightsOnlyFog( vLight ) )
+			{
+				pc.c_shadowAtlasFogOnlyTexels += vLight->imageSize.x * vLight->imageSize.y;
+			}
+			// ---- END TRACK V ----
 
 			if( tileCopied != NULL && tileCopied[tileIndex] != 0 )
 			{
@@ -4378,6 +4402,21 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 		{
 			vLight->imageSize.x = -1;
 		}
+
+		// ---- TRACK V ( V5, row 66 ): what the fog takes of the atlas. A light that lights only the fog and has all its places
+		// ( its texels are counted per side above ); a light with surfaces that the atlas refused ( shadows its surfaces lost ) ----
+		if( R_ViewLightLightsOnlyFog( vLight ) )
+		{
+			if( imageFitsIntoAtlas )
+			{
+				pc.c_shadowAtlasFogOnlyLights++;
+			}
+		}
+		else if( !imageFitsIntoAtlas )
+		{
+			pc.c_shadowAtlasSurfaceRefused++;
+		}
+		// ---- END TRACK V ----
 
 		renderLog.CloseBlock();
 	}
@@ -4884,7 +4923,7 @@ void idRenderBackend::DrawTranslucentInteractions( const viewDef_t* _viewDef )
 		ResetViewportAndScissorToDefaultCamera( _viewDef );
 
 		renderLog.OpenBlock( "Translucent Interactions", colorCyan );
-		// ---- TRACK V ( V5 ): the fog view binds the INTERACTION_SM_FOG twins for these draws ( D83 ) ----
+		// ---- TRACK V ( V5 ): these draws take their programs' fog twins in the fog view, in DrawSingleInteraction ( D83 ) ----
 		// ---- END TRACK V ----
 		RenderInteractions( vLight->translucentInteractions, vLight, GLS_DEPTHFUNC_LESS, false, false, INTERACTION_SORT_FAR_AND_ABOVE );
 		renderLog.CloseBlock();
@@ -4903,6 +4942,61 @@ NON-INTERACTION SHADER PASSES
 
 =============================================================================================
 */
+
+// ---- TRACK V ( V5 ) ----
+/*
+=====================
+FroxelFogBlendKind
+
+How a translucent stage drawn after the fog view's apply is fogged by its own shader ( froxel_fog.inc.hlsl,
+FroxelFogTranslucent ), from the blend it draws with. The picture behind it was fogged by the apply to its own
+depth, so what the blend keeps of it keeps that fog, and what the stage adds is seen through the fog to the
+stage. -1: every blend not listed below ( a destination-alpha source, ONE with SRC_ALPHA, ... ), and a blend op
+other than add: drawn unfogged ( review O1-8 ).
+0 adds ( destination factor ONE ): exact where the source factor reads no colour ( ONE, SRC_ALPHA,
+ONE_MINUS_SRC_ALPHA ); with a source factor that reads a colour ( DST_COLOR, ONE_MINUS_DST_COLOR ), and
+for ZERO or ONE with ONE_MINUS_SRC_COLOR ( a darkening, a screen; V5f, F1-5 ), the stage fades out in the fog instead, which is not exact
+( consultant CN1-1 ). 1 lays over ( SRC_ALPHA with ONE_MINUS_SRC_ALPHA, or ONE with ZERO ), 2 lays over
+premultiplied ( ONE with ONE_MINUS_SRC_ALPHA ): exact. 3 filters ( DST_COLOR with ZERO, ZERO with SRC_COLOR ), 4
+filters twice ( DST_COLOR with SRC_COLOR ): they fade out, not exact. ( ZERO with ONE, "blend none", never draws:
+the stage loop skips it first. )
+=====================
+*/
+static int FroxelFogBlendKind( const uint64 stateBits )
+{
+	if( ( stateBits & GLS_BLENDOP_BITS ) != GLS_BLENDOP_ADD )
+	{
+		return -1;
+	}
+	const uint64 src = stateBits & GLS_SRCBLEND_BITS;
+	const uint64 dst = stateBits & GLS_DSTBLEND_BITS;
+	if( src == GLS_SRCBLEND_DST_ALPHA || src == GLS_SRCBLEND_ONE_MINUS_DST_ALPHA )
+	{
+		return -1;
+	}
+	if( dst == GLS_DSTBLEND_ONE || ( ( src == GLS_SRCBLEND_ZERO || src == GLS_SRCBLEND_ONE ) && dst == GLS_DSTBLEND_ONE_MINUS_SRC_COLOR ) )		// V5f: and the screen blend ( F1-5 )
+	{
+		return 0;
+	}
+	if( ( src == GLS_SRCBLEND_SRC_ALPHA && dst == GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA ) || ( src == GLS_SRCBLEND_ONE && dst == GLS_DSTBLEND_ZERO ) )
+	{
+		return 1;
+	}
+	if( src == GLS_SRCBLEND_ONE && dst == GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA )
+	{
+		return 2;
+	}
+	if( ( src == GLS_SRCBLEND_DST_COLOR && dst == GLS_DSTBLEND_ZERO ) || ( src == GLS_SRCBLEND_ZERO && dst == GLS_DSTBLEND_SRC_COLOR ) )
+	{
+		return 3;
+	}
+	if( src == GLS_SRCBLEND_DST_COLOR && dst == GLS_DSTBLEND_SRC_COLOR )
+	{
+		return 4;
+	}
+	return -1;
+}
+// ---- END TRACK V ----
 
 /*
 =====================
@@ -5205,6 +5299,13 @@ int idRenderBackend::DrawShaderPasses( const drawSurf_t* const* const drawSurfs,
 					}
 				}
 
+				// ---- TRACK V ( V5f, review F1-1 ): a stage with a program of its own has no fog twin ----
+				if( froxelFogTranslucent && froxelFogLightsTaken )
+				{
+					pc.c_fogStagesUnfogged++;
+				}
+				// ---- END TRACK V ----
+
 				// draw it
 				DrawElementsWithCounters( surf );
 
@@ -5253,6 +5354,18 @@ int idRenderBackend::DrawShaderPasses( const drawSurf_t* const* const drawSurfs,
 
 			renderLog.OpenBlock( "Standard Shader Stage", colorGreen );
 			GL_Color( color );
+
+			// ---- TRACK V ( V5 ): after the fog view's apply a world stage is fogged by its own shader ( D20, D35 ); a gui
+			// surface ( sort SS_GUI ) and a cinematic stay as they were, and so does a stage whose texgen makes
+			// PrepareStageTexturing bind a program of its own ( a reflection or sky cube: consultant CN1-2 ) ----
+			const bool fogTexgen = pStage->texture.texgen == TG_EXPLICIT || pStage->texture.texgen == TG_SCREEN || pStage->texture.texgen == TG_SCREEN2;
+			const int fogKind = ( froxelFogTranslucent && fogTexgen && !surf->space->isGuiSurface && !pStage->texture.cinematic ) ? FroxelFogBlendKind( stageGLState ) : -1;
+			// V5f ( review F1-1 ): a stage drawn unfogged where the fog lights are the froxel fog's lost the fog the fog pass gave it
+			if( froxelFogTranslucent && froxelFogLightsTaken && fogKind < 0 )		// gui surfaces too ( V5g, R-2 )
+			{
+				pc.c_fogStagesUnfogged++;
+			}
+			// ---- END TRACK V ----
 
 			if( surf->space->isGuiSurface )
 			{
@@ -5305,7 +5418,14 @@ int idRenderBackend::DrawShaderPasses( const drawSurf_t* const* const drawSurfs,
 			}
 			else if( ( pStage->texture.texgen == TG_SCREEN ) || ( pStage->texture.texgen == TG_SCREEN2 ) )
 			{
-				renderProgManager.BindShader_TextureTexGenVertexColor();
+				if( fogKind >= 0 )
+				{
+					renderProgManager.BindShader_TextureTexGenVertexColorFog();		// TRACK V ( V5 )
+				}
+				else
+				{
+					renderProgManager.BindShader_TextureTexGenVertexColor();
+				}
 			}
 			else if( pStage->texture.cinematic )
 			{
@@ -5315,11 +5435,25 @@ int idRenderBackend::DrawShaderPasses( const drawSurf_t* const* const drawSurfs,
 			{
 				if( surf->jointCache )
 				{
-					renderProgManager.BindShader_TextureVertexColorSkinned();
+					if( fogKind >= 0 )
+					{
+						renderProgManager.BindShader_TextureVertexColorSkinnedFog();		// TRACK V ( V5 )
+					}
+					else
+					{
+						renderProgManager.BindShader_TextureVertexColorSkinned();
+					}
 				}
 				else
 				{
-					renderProgManager.BindShader_TextureVertexColor();
+					if( fogKind >= 0 )
+					{
+						renderProgManager.BindShader_TextureVertexColorFog();		// TRACK V ( V5 )
+					}
+					else
+					{
+						renderProgManager.BindShader_TextureVertexColor();
+					}
 				}
 			}
 
@@ -5338,7 +5472,7 @@ int idRenderBackend::DrawShaderPasses( const drawSurf_t* const* const drawSurfs,
 			// set the state
 			GL_State( stageGLState );
 
-			PrepareStageTexturing( pStage, surf );
+			PrepareStageTexturing( pStage, surf, fogKind );		// TRACK V ( V5e ): the blend kind for a fog twin
 
 			// draw it
 			DrawElementsWithCounters( surf );
@@ -5716,6 +5850,14 @@ void idRenderBackend::FogAllLights()
 	{
 		if( vLight->lightShader->IsFogLight() )
 		{
+			// ---- TRACK V ( V5, D21, D29 ): a fog light the froxel fog took in this view is its medium now ----
+			if( froxelFogLightsTaken && R_FroxelFogTookFogLight( viewDef, vLight ) )
+			{
+				pc.c_fogLightsFroxel++;
+				continue;
+			}
+			pc.c_fogLightsFogPass++;
+			// ---- END TRACK V ----
 			FogPass( vLight->globalInteractions, vLight->localInteractions, vLight );
 		}
 		else if( vLight->lightShader->IsBlendLight() )
@@ -6596,6 +6738,12 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 		}
 	}
 
+	// ---- TRACK V ( V5 ): no draw of this view binds a fog twin before its apply has written the parms ( B22 ), and the fog
+	// pass draws every fog light until the apply says which the froxel fog took ----
+	froxelFogTranslucent = false;
+	froxelFogLightsTaken = false;
+	// ---- END TRACK V ----
+
 	// X0 ( D66, B22 ): a binding set that holds a volatile constant buffer which was not written in this command
 	// list is a fatal error at the draw. Every 3D view therefore starts with "fog off"; the fog pass ( V1 )
 	// overwrites it at the apply slot of the one view that has fog.
@@ -7082,6 +7230,14 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 		}
 		renderLog.CloseMainBlock( MRB_DRAW_SHADER_PASSES );
 	}
+	// ---- TRACK V ( V5 ): the fog lights and the post-process surfaces draw unfogged, as before V5: a post-process
+	// surface reads the picture, which the apply fogged already. A fog probe under way reads the picture first ----
+	if( volumetricFogPass && volumetricFogPass->ProbeStageTranslucent( commandList, _viewDef ) )
+	{
+		ResetGraphicsStateCache();		// V5e ( review O2-5 ): the copy ended the render pass
+	}
+	froxelFogTranslucent = false;
+	// ---- END TRACK V ----
 
 	//-------------------------------------------------
 	// use direct light and emissive light contributions to add indirect screen space light

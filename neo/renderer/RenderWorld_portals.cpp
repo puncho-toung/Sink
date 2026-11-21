@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "RenderCommon.h"
+#include "VolumetricFog.h"		// TRACK V ( V5 ): R_VolumetricFogPortalDistance
 
 // if we hit this many planes, we will just stop cropping the
 // view down, which is still correct, just conservative
@@ -606,6 +607,16 @@ bool idRenderWorldLocal::PortalIsFoggedOut( const portal_t* p )
 		// otherwise, distance = alpha color
 		a = -0.5f / alpha;
 	}
+
+	// ---- TRACK V ( V5, D21, S96 ): a fog light the froxel fog may take is culled where its medium is opaque, or not at all ----
+	const float fogDistance = R_VolumetricFogPortalDistance( ldef, p->w, alpha );
+	if( fogDistance <= 0.0f )
+	{
+		tr.pc.c_fogPortalsNeverCulled++;		// V5f ( review F1-3 )
+		return false;
+	}
+	a = -0.5f / fogDistance;
+	// ---- END TRACK V ----
 
 	idPlane forward;
 	forward[0] = a * tr.viewDef->worldSpace.modelViewMatrix[0 * 4 + 2];

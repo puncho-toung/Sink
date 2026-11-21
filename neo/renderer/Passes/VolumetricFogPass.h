@@ -76,6 +76,7 @@ public:
 	void	Render( nvrhi::ICommandList* commandList, const viewDef_t* viewDef );		// inject, resolve, integrate
 	void	Apply( nvrhi::ICommandList* commandList, const viewDef_t* viewDef );		// the composite
 	void	DebugTools( nvrhi::ICommandList* commandList, const viewDef_t* viewDef );	// track V's debug overlay, called from DBG_RenderDebugTools
+	bool	ProbeStageTranslucent( nvrhi::ICommandList* commandList, const viewDef_t* viewDef );	// V5: a probe's centre pixel behind the translucents; true where it copied
 
 private:
 	struct kernel_t
@@ -169,6 +170,8 @@ private:
 	nvrhi::GraphicsPipelineHandle	m_ApplyPipeline;
 
 	const viewDef_t*				m_RenderedView;		// the view Render() filled the volumes for: its apply alone may read them
+	bool							m_RenderedFogLights;	// V5: and whether its inject took fog lights
+	bool							m_FogLightPath;		// V5f: a view since the last camera cut took fog lights: V4's path holds
 
 	// the sky mask: 1 where the fog view shows a sky surface, which the apply fogs as infinitely far ( D52 ). The
 	// texture belongs to the engine framebuffer "_fogSkyMask"; the pointer is good for the frame of m_SkyMaskView
@@ -185,6 +188,12 @@ private:
 	int								m_ProbeWait;		// fog views until the copy is read; 0 = no probe under way
 	bool							m_ProbeStaged;		// the strip went into the staging texture ( the probe's frame had its apply )
 	bool							m_ProbeHasPixel;	// and the picture's centre pixel is in it
+	// V5: the same pixel once more behind the view's translucent shader passes ( the translucents fogged by their shaders )
+	nvrhi::TextureHandle			m_ProbePixelLate;
+	nvrhi::StagingTextureHandle		m_ProbePixelLateStaging;
+	nvrhi::ITexture*				m_ProbeLateColor;	// the colour target ProbeStage read, until the late copy is made
+	const viewDef_t*				m_ProbeLateView;	// and its view
+	bool							m_ProbeHasPixelLate;
 	int								m_ProbeSlices;		// the frame the copy was made in: its grid, its constants
 	int								m_ProbeColumn[3][2];
 	idVec4							m_ProbeRayParms;
@@ -201,6 +210,7 @@ private:
 	nvrhi::StagingTextureHandle		m_ProbeMediaStaging;
 	bool							m_ProbeMedia;		// the media pass ran in the probe's view
 	bool							m_ProbeMediaClosed;	// and its media have a closed form here ( no noise slot )
+	bool							m_ProbeFogLights;	// V5: the probe's view took fog lights: the plain read has no closed form for them
 	float							m_ProbeFurnace;		// the furnace radiance of the probe's view
 	idVec4							m_ProbeMedium[3][256];	// by column and slice: sigma_s ( rgb ) and sigma_t per unit at the sample
 	idVec3							m_ProbeSample[256];		// V4c: the centre column's samples in the relative frame, printed for every media probe ( review QR4 )

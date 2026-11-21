@@ -192,6 +192,7 @@ public:
 
 	renderLight_t			parms;					// specification
 
+	int						lastShapeFrameNum;		// TRACK V ( V5 ): the frame the def was made or changed its shape ( not a colour-only update )
 	bool					lightHasMoved;			// the light has changed its position since it was
 	// first added, so the prelight model is not valid
 	bool					isPrimarySun;			// X0: this parallel light is the map's sun ( D42, D73 )
@@ -1171,6 +1172,9 @@ enum bindingLayoutType_t
 	BINDING_LAYOUT_TEXGEN_FOG,
 	BINDING_LAYOUT_INTERACTION_SM_FOG,
 	BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG,
+	// V5 ( track V ): the fog twins of the plain interaction layouts, for the lit glass after the fog view's apply ( D83 )
+	BINDING_LAYOUT_DRAW_INTERACTION_FOG,
+	BINDING_LAYOUT_DRAW_INTERACTION_SKINNED_FOG,
 
 	NUM_BINDING_LAYOUTS
 };

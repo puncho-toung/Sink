@@ -838,6 +838,7 @@ void idRenderWorldLocal::UpdateLightDef( qhandle_t lightHandle, const renderLigh
 	if( !justUpdate )
 	{
 		R_CreateLightRefs( light );
+		light->lastShapeFrameNum = tr.frameCount;		// TRACK V ( V5 ): made, or its shape changed
 	}
 
 	// X0 ( D73 ): re-pick the world's sun when a parallel light is added, reshaped, or has

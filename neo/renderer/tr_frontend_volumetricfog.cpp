@@ -148,6 +148,141 @@ uint32 R_VolumetricFogRecordFlags( const viewLight_t* vLight, uint32 recordFlags
 	return flags;
 }
 
+// V5e ( reviews O1-1, O1-4 ): whether a fog light's whole volume lies within the fog's reach of the eye, by the distance of
+// its bounds' farthest corner. A view-depth test changed its answer as the view turned in place, and with it the light's
+// look and the view's history; a corner's distance is never less than its view depth, so the volume holds every pixel
+// behind the light either way. The record's verdict and the portal rule ask this one test
+static bool FogLightWithinReach( const idRenderLightLocal* ldef, float reach )
+{
+	const idBounds& bounds = ldef->globalLightBounds;
+	const idVec3& eye = tr.viewDef->renderView.vieworg;
+	float farDistanceSq = 0.0f;
+	for( int c = 0; c < 8; c++ )
+	{
+		const idVec3 corner( bounds[c & 1].x, bounds[( c >> 1 ) & 1].y, bounds[( c >> 2 ) & 1].z );
+		farDistanceSq = Max( farDistanceSq, ( corner - eye ).LengthSqr() );
+	}
+	return farDistanceSq < reach * reach;
+}
+
+/*
+====================
+R_VolumetricFogMayTakeFogLight
+
+V5 ( D21, D29, D57; rows 166, 170 c ): whether the froxel fog takes a fog light in place of the fog pass in the view being
+built ( tr.viewDef ), all but the reach, which R_VolumetricFogMarkLights adds once the lights' view depths are known. The
+fog view ( the backend's fogEligible ), the cvars ( R_VolumetricFogSwapsFogLights ), and the light: a fog light with a
+stage, no texture matrix ( D57: no record ), not parallel ( a parallel light may hold the sun's slot, record 0, row 166 ),
+not "volumetric" 2, of the default spectrum ( the record's channel bit 0 ), with an alpha share above 0. alpha is the first
+stage's colour alpha as the caller evaluated it. PortalIsFoggedOut asks it too, so its portals are culled by the medium's
+rule wherever the record may be taken: never by the fog pass's rule where the medium draws the fog ( S96 ).
+====================
+*/
+bool R_VolumetricFogMayTakeFogLight( const idRenderLightLocal* ldef, float alpha )
+{
+	const viewDef_t* viewDef = tr.viewDef;
+	if( viewDef == NULL || !R_LightListFogEligible( viewDef ) || !R_VolumetricFogSwapsFogLights() )
+	{
+		return false;
+	}
+	const idMaterial* shader = ldef->lightShader;
+	if( shader == NULL || !shader->IsFogLight() || shader->GetNumStages() == 0 || shader->Spectrum() != 0 )
+	{
+		return false;
+	}
+	for( int i = 0; i < shader->GetNumStages(); i++ )
+	{
+		if( shader->GetStage( i )->texture.hasMatrix )
+		{
+			return false;
+		}
+	}
+	return !ldef->parms.parallel && ldef->parms.volumetricMode != LIGHT_VOLUMETRIC_NEVER && alpha > 0.0f;
+}
+
+/*
+====================
+R_VolumetricFogPortalDistance
+
+V5 ( D21, S96 ): the distance along the view axis beyond which PortalIsFoggedOut may cull a fog light's portal, given
+the fog pass's own D ( alpha, or DEFAULT_FOG_DISTANCE at an alpha of at most 1 ). Where the froxel fog may take the light
+( R_VolumetricFogMayTakeFogLight ) the fog pass does not draw it, and an area beyond the portal shows only through the
+medium: cull it only where every ray to the portal runs through the medium's full density for the opaque distance
+D 5.54 / ( rate share ) ( transmittance 1/255; the share as the inject takes it ). The light's box is convex, so a segment between two points of it stays in
+it, and the density is full deeper than the enter ramp below the fog plane on the whole segment when it is at both ends:
+so the eye inside the box and both more than the ramp below the plane, every point of the portal too ( it lies in the
+box: R_CreateLightDefFogPortals ), and a ray is never shorter than its end's view depth. The opaque distance must also
+lie inside the fog's reach, past which the volume holds no more. 0: never cull ( the caller's test then keeps it ).
+Elsewhere the fog pass draws the light: D.
+====================
+*/
+float R_VolumetricFogPortalDistance( const idRenderLightLocal* ldef, const idWinding* w, float alpha )
+{
+	const float distance = ( alpha <= 1.0f ) ? DEFAULT_FOG_DISTANCE : alpha;
+	if( !R_VolumetricFogMayTakeFogLight( ldef, alpha ) )
+	{
+		return distance;
+	}
+	// the medium's rate as the inject has it ( froxel_lights.inc.hlsl, FroxelAddFogLight ): an alpha of at most 1 is not a
+	// distance but the fog pass's opacity at its most, Linear( alpha ), and scales the rate to the share that reaches it at
+	// D ( consultant CN3-1: the raw alpha overstated the density and culled where the medium is still thin )
+	const float lightRate = R_VolumetricFogLightRate();
+	float share = 1.0f;
+	if( alpha <= 1.0f && lightRate > 0.0f )
+	{
+		const float c = idMath::ClampFloat( 0.0f, 1.0f, alpha );
+		const float opacity = ( c <= 0.04045f ) ? c / 12.92f : idMath::Pow( ( c + 0.055f ) / 1.055f, 2.4f );		// Linear1
+		share = Min( 1.0f, -idMath::Log( Max( 1.0f - opacity, 1e-6f ) ) / lightRate );
+	}
+	else if( lightRate > 0.0f )
+	{
+		share = Min( 1.0f, 13.8155f / lightRate );		// review O1-4 b: an alpha above 1 is the inject's Linear( 1 ), -ln( 1e-6 )
+	}
+	const float rate = lightRate * share;
+	const float reach = R_VolumetricFogRecordReach();
+	if( reach <= 0.0f || !FogLightWithinReach( ldef, reach ) )
+	{
+		return distance;		// review O1-4 c: past the reach the record's verdict hands the light to the fog pass, and its rule holds
+	}
+	tr.pc.c_fogPortalsMedium++;		// V5f ( review F1-3; after the reach, V5g R-1 )
+	if( rate <= 0.0f )
+	{
+		return 0.0f;
+	}
+	const float opaque = distance * 5.54f / rate;		// -ln( 1 / 255 )
+	if( opaque >= reach )
+	{
+		return 0.0f;
+	}
+	// the fog plane in world space, as the frontend derives the view light's ( R_AddSingleLight ): the far plane of the
+	// absolute projection, negative inside
+	const idRenderMatrix& project = ldef->baseLightProject;
+	idPlane fogPlane( project[2][0] - project[3][0], project[2][1] - project[3][1], project[2][2] - project[3][2], project[2][3] - project[3][3] );
+	const float lengthSq = fogPlane.Normal().LengthSqr();
+	if( lengthSq <= 0.0f )
+	{
+		return 0.0f;
+	}
+	const float planeScale = idMath::InvSqrt( lengthSq );
+	for( int i = 0; i < 4; i++ )
+	{
+		fogPlane[i] *= planeScale;
+	}
+	const idVec3& eye = tr.viewDef->renderView.vieworg;
+	if( fogPlane.Distance( eye ) > -FROXEL_FOGLIGHT_RAMP || idRenderMatrix::CullPointToMVP( project, eye, true ) )
+	{
+		return 0.0f;
+	}
+	for( int i = 0; i < w->GetNumPoints(); i++ )
+	{
+		if( fogPlane.Distance( ( *w )[i].ToVec3() ) > -FROXEL_FOGLIGHT_RAMP )
+		{
+			return 0.0f;
+		}
+	}
+	return Max( opaque, distance );		// QR3-1: never nearer than the fog pass's own D, should the reach hand the light back to it
+}
+
 /*
 ====================
 R_VolumetricFogLightRecord
@@ -172,13 +307,28 @@ void R_VolumetricFogLightRecord( const viewLight_t* vLight, uint32 recordFlags, 
 	rec.ids.w = idMath::ClampFloat( 0.0f, 1.0f, vLight->lightDef->parms.fogAlbedo );
 	rec.emitter[0] = vLight->fogPlane.ToVec4();
 	float share = 1.0f;
+	float alpha = 0.0f;			// V5: the verdict below reads it too
 	const idMaterial* shader = vLight->lightShader;
 	if( shader->GetNumStages() > 0 )
 	{
-		const float alpha = vLight->shaderRegisters[ shader->GetStage( 0 )->color.registers[3] ];
+		alpha = vLight->shaderRegisters[ shader->GetStage( 0 )->color.registers[3] ];
 		share = ( alpha <= 1.0f ) ? idMath::ClampFloat( 0.0f, 1.0f, alpha ) : 1.0f;
 	}
 	rec.emitter[1].Set( share, 0.0f, 0.0f, 0.0f );
+
+	// V5 ( D21, D29 ): the verdict but for the reach ( R_VolumetricFogMarkLights adds it ): a fog light the froxel fog does not
+	// take keeps the fog pass and stays out of the inject
+	if( !R_VolumetricFogMayTakeFogLight( vLight->lightDef, alpha ) )
+	{
+		rec.flags |= RLF_FOG_OFF;
+	}
+	// V5 ( row 170 b, review F1-4 ): "moved" is any update of the def; a fog light faded by a script changed only its colour
+	// or alpha: the inject's change term carries a colour's change exactly, a density's by the resolve's renormalisation
+	// ( row 159; review F1-6 ): it does not clip its history unless its shape changed
+	if( vLight->lightDef->lastShapeFrameNum != tr.frameCount )
+	{
+		rec.flags &= ~RLF_MOVED_THIS_FRAME;
+	}
 }
 
 /*
@@ -192,9 +342,23 @@ while the fog reads the view's records; a view light the fog does not mark keeps
 ( R_ClearedFrameAlloc ).
 ====================
 */
-void R_VolumetricFogMarkLights( lightListView_t* llv, const recordLight_t* records, float fogReach )
+void R_VolumetricFogMarkLights( lightListView_t* llv, recordLight_t* records, float fogReach )
 {
 	const lightListTables_t& t = llv->tables;
+	// V5 ( D21 ): the reach of the verdict. A fog light the froxel fog may take is taken only where its whole volume lies
+	// nearer than the fog's reach along the view axis, so that the volume holds its whole extinction for every pixel behind
+	// it; one that reaches past it keeps the fog pass and stays out of the inject ( RLF_FOG_OFF )
+	// The far end is the light's bounds', not its scissor's depth range, which is clipped to the view and capped at twice the
+	// bins' far end, and is cleared with r_useLightScissors 0 ( consultant CN3-2 to CN3-4 ); by distance, not view depth,
+	// so the verdict does not change as the view turns ( review O1-1 )
+	for( int r = 1; r < t.numRecords; r++ )
+	{
+		const int input = t.lightOfRecord[r];
+		if( input >= 0 && R_FogCanTakeFogLight( records[r] ) && !FogLightWithinReach( llv->lightOfInput[input]->lightDef, fogReach ) )
+		{
+			records[r].flags |= RLF_FOG_OFF;
+		}
+	}
 	const bool fogLights = R_VolumetricFogTakesFogLights();		// V4: a fog light the inject takes is in sight as a medium
 	// V4: a light only where something scatters it ( review O1-2; the pass's take mask goes by the same rule )
 	const bool lights = R_VolumetricFogMediaScatter() || ( fogLights && R_FogLightsScatter( records, t.numRecords ) );

@@ -175,7 +175,7 @@ private:
 	void				CopyRender( const void* data );
 
 	void				BindVariableStageImage( const textureStage_t* texture, const float* shaderRegisters, nvrhi::ICommandList* commandList );
-	void				PrepareStageTexturing( const shaderStage_t* pStage, const drawSurf_t* surf );
+	void				PrepareStageTexturing( const shaderStage_t* pStage, const drawSurf_t* surf, int fogKind = -1 );	// V5e: fogKind, the stage's blend kind for a fog twin ( rpTexGen0Enabled.y )
 	void				FinishStageTexturing( const shaderStage_t* pStage, const drawSurf_t* surf );
 
 	void				ResetViewportAndScissorToDefaultCamera( const viewDef_t* _viewDef );
@@ -515,6 +515,11 @@ private:
 	// the pass writes froxelFogParms and swaps froxelVolume at its apply ( D27, D66 ), puts the dummy back and clears
 	// bindingCache where its volume dies, and draws its sky mask through the backend's draw path
 	friend class VolumetricFogPass;
+	// V5: true from the fog view's apply ( which wrote froxelFogParms ) to the end of its translucent shader passes;
+	// while it is true the translucent draws bind the fog twins ( D35, D66, B22 ). Every view starts false
+	bool							froxelFogTranslucent;
+	// V5: the fog view's apply ran with fog lights its inject took ( D21 ): its FogAllLights leaves them to the froxel fog
+	bool							froxelFogLightsTaken;
 	// ---- END TRACK V ----
 	MipMapGenPass*					hiZGenPass;
 	TonemapPass*					toneMapPass;
