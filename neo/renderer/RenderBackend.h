@@ -158,6 +158,20 @@ public:
 
 	void				ClearCaches();
 
+	//puncho start - static index (2R R3.3): when a static set of the vertex cache grows, its buffer is replaced by a larger one. The
+	// handles and offsets of the buffers bound last must not outlive the old buffer (idVertexCache::GrowStaticSet calls
+	// this, with the back end idle). It is the reset every view starts with
+	void				ClearGeometryBufferCache()
+	{
+		currentVertexBuffer = nullptr;
+		currentIndexBuffer = nullptr;
+		currentJointBuffer = nullptr;
+		currentVertexOffset = 0;
+		currentIndexOffset = 0;
+		currentJointOffset = 0;
+	}
+	//puncho end
+
 	static void			ImGui_RenderDrawLists( ImDrawData* draw_data );
 
 	void				DrawElementsWithCounters( const drawSurf_t* surf, bool shadowCounter = false );

@@ -131,6 +131,14 @@ void DefaultMessageCallback::message( nvrhi::MessageSeverity severity, const cha
 			common->Warning( messageText );
 			break;
 		case nvrhi::MessageSeverity::Error:
+			//puncho start - static index (2R R3.3): not fatal between BeginSoftErrors and EndSoftErrors (the growth of a static set)
+			if( idLib::IsMainThread() && softErrorDepth > 0 )
+			{
+				softErrors++;
+				common->Warning( "%s", messageText );
+				break;
+			}
+			//puncho end
 			common->FatalError( "%s", messageText );
 			break;
 		case nvrhi::MessageSeverity::Fatal:

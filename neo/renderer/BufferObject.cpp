@@ -149,7 +149,7 @@ idBufferObject::idBufferObject()
 // Init must not disarm it: in autoexec.cfg the command runs before the back end makes its buffers
 static int bufferAllocFailCountdown = 0;
 
-CONSOLE_COMMAND( testStaticAllocFail, "test only: the n-th buffer object allocation from now is refused (n from 1; default 1)", NULL )
+CONSOLE_COMMAND( testStaticAllocFail, "test only: the n-th buffer object allocation from now is refused (n from 1; default 1; 0 disarms)", NULL )
 {
 	long long n = 1;
 	if( args.Argc() > 1 )
@@ -159,12 +159,21 @@ CONSOLE_COMMAND( testStaticAllocFail, "test only: the n-th buffer object allocat
 		n = strtoll( text, &end, 10 );
 		if( end == text || *end != '\0' )
 		{
-			n = 0;
+			n = -1;	//puncho - static index (2R R3.3): not a number (0 has a meaning now)
 		}
 	}
+	//puncho start - static index (2R R3.3): 0 disarms. A count left over by an earlier test would refuse a later growth of a static
+	// set as if the device had refused it
+	if( n == 0 )
+	{
+		bufferAllocFailCountdown = 0;
+		idLib::Printf( "testStaticAllocFail: disarmed\n" );
+		return;
+	}
+	//puncho end
 	if( n < 1 || n > INT_MAX )
 	{
-		idLib::Printf( "usage: testStaticAllocFail [n], n from 1 to %d; the pending count stays %d\n", INT_MAX, bufferAllocFailCountdown );
+		idLib::Printf( "usage: testStaticAllocFail [n], n from 1 to %d, or 0 to disarm; the pending count stays %d\n", INT_MAX, bufferAllocFailCountdown );
 		return;
 	}
 	bufferAllocFailCountdown = ( int )n;
@@ -185,6 +194,7 @@ bool idBufferObject::TestAllocFail()
 #if !defined( ID_RETAIL )
 	if( bufferAllocFailCountdown > 0 && --bufferAllocFailCountdown == 0 )
 	{
+		idLib::Printf( "testStaticAllocFail: this buffer object allocation is refused\n" );	//puncho - static index (2R R3.3): the log shows where the fault fired
 		return true;
 	}
 #endif

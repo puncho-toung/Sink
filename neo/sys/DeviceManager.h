@@ -129,6 +129,23 @@ struct DefaultMessageCallback : public nvrhi::IMessageCallback
 	static DefaultMessageCallback& GetInstance();
 
 	void message( nvrhi::MessageSeverity severity, const char* messageText ) override;
+
+	//puncho start - static index (2R R3.3): between these two calls an NVRHI error raised on the main thread is printed as a warning
+	// and counted, and is not fatal. The growth of a static set of the vertex cache asks for a buffer the device may refuse
+	// (on D3D12 NVRHI reports that as an error and returns no buffer) and keeps its old buffer then
+	void BeginSoftErrors()
+	{
+		softErrorDepth++;
+		softErrors = 0;
+	}
+	int EndSoftErrors()
+	{
+		softErrorDepth--;
+		return softErrors;
+	}
+	int softErrorDepth = 0;
+	int softErrors = 0;
+	//puncho end
 };
 
 

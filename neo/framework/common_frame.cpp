@@ -236,7 +236,8 @@ void idCommonLocal::FormatMapRows( char rows[MAP_STAT_ROWS][MAP_STAT_ROW_CHARS],
 		game->GetMapStats( g );
 	}
 	const int cap = g.skipStaticsCap;
-	idStr::snPrintf( rows[0], 256, "MAP static vtx %llu/%llu idx %llu/%llu KB frame %llu/65536 KB", ( unsigned long long )( r.staticVertexBytes / 1024 ), ( unsigned long long )( r.staticVertexCapacity / 1024 ), ( unsigned long long )( r.staticIndexBytes / 1024 ), ( unsigned long long )( r.staticIndexCapacity / 1024 ), ( unsigned long long )( r.frameBytes / 1024 ) );
+	//puncho - static index (2R R3.3): the caps follow; the row's old text is its prefix
+	idStr::snPrintf( rows[0], 256, "MAP static vtx %llu/%llu idx %llu/%llu KB frame %llu/65536 KB cap vtx %llu idx %llu KB", ( unsigned long long )( r.staticVertexBytes / 1024 ), ( unsigned long long )( r.staticVertexCapacity / 1024 ), ( unsigned long long )( r.staticIndexBytes / 1024 ), ( unsigned long long )( r.staticIndexCapacity / 1024 ), ( unsigned long long )( r.frameBytes / 1024 ), ( unsigned long long )( r.staticVertexCap / 1024 ), ( unsigned long long )( r.staticIndexCap / 1024 ) );
 	idStr::snPrintf( rows[1], 256, "MAP handles entities %d/%d lights %d/%d probes %d/%d interactions %llu KB %dx%d", r.entityDefs, r.entityCapacity, r.lightDefs, r.lightCapacity, r.envprobeDefs, r.probeCapacity, ( unsigned long long )( r.interactionBytes / 1024 ), r.interactionWidth, r.interactionHeight );
 	idStr::snPrintf( rows[2], 256, "MAP world areas %d portals %d/20800 pvs %llu KB %d ms lightgrid %llu KB", r.areas, r.portals, ( unsigned long long )( g.pvsBytes / 1024 ), g.pvsMilliseconds, ( unsigned long long )( r.lightGridBytes / 1024 ) );
 	idStr::snPrintf( rows[3], 256, "MAP game entities %d/16384 active %d nonrep %d/256 cm %d/%d statics %d/%d", g.entities, g.activeEntities, g.nonReplicated, g.cmModels, g.cmModelsCap, g.skipStatics, cap );	//puncho - R1.3: display the ordinary collision capacity reported by the manager
@@ -247,7 +248,7 @@ void idCommonLocal::FormatMapRows( char rows[MAP_STAT_ROWS][MAP_STAT_ROW_CHARS],
 		const int used = idStr::Length( rows[3] );
 		idStr::snPrintf( rows[3] + used, 256 - used, " rec %d/%d/%d %dKB drop%d commit/apply %.2f/%.2fms corpse %d/%d", g.recordMaps, g.recordEntries, g.recordCreated, g.recordBytes / 1024, g.recordDropped, g.recordCommitUs * 0.001, g.recordApplyUs * 0.001, g.corpseLive, g.corpseEvicted );
 	}
-	high[0] = r.staticVertexBytes * 4 >= r.staticVertexCapacity * 3 || r.staticIndexBytes * 4 >= r.staticIndexCapacity * 3 || r.frameBytes >= 48 * 1024 * 1024;
+	high[0] = r.staticVertexBytes * 4 >= r.staticVertexCap * 3 || r.staticIndexBytes * 4 >= r.staticIndexCap * 3 || r.frameBytes >= 48 * 1024 * 1024;	//puncho - static index (2R R3.3): against the caps; the capacity grows
 	high[1] = ( r.entityCapacity > 0 && r.entityDefs * 4 >= r.entityCapacity * 3 ) || ( r.lightCapacity > 0 && r.lightDefs * 4 >= r.lightCapacity * 3 ) || ( r.probeCapacity > 0 && r.envprobeDefs * 4 >= r.probeCapacity * 3 );
 	high[2] = r.portals >= 15600;
 	high[3] = g.entities >= 12288 || g.nonReplicated >= 192 || ( g.cmModelsCap > 0 && ( int64 )g.cmModels * 4 >= ( int64 )g.cmModelsCap * 3 ) || ( cap > 0 && g.skipStatics * 4 >= cap * 3 );	//puncho - R1.3: highlight at three quarters of live capacity, never for cleared 0/0

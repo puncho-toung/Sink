@@ -1228,6 +1228,9 @@ void idCommonLocal::ExecuteMapChange()
 	{
 		renderWorld->GenerateAllInteractions();
 	}
+	//puncho - static index (2R R3.3): the load's static window ends here, after its last static allocation (the interactions' light
+	// tris): the sets are topped up for the runtime use seen so far, and they cannot grow again until the next load or slice
+	vertexCache.EndStaticLoad();
 	LoadPhase( LOAD_FINISH );
 
 	{

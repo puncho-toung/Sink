@@ -662,6 +662,9 @@ void idInteraction::CreateStaticInteraction( nvrhi::ICommandList* commandList )
 
 				interactionGenerated = true;
 				R_FreeStaticTriSurf( lightTris );
+				//puncho - static index (2R R3.3): the list is executed whenever 32 MiB of light tris wait in it. Here, behind each
+				// lit surface: one interaction (a large area model under one light) can make far more than that
+				vertexCache.FlushStaticUploads( commandList );
 			}
 		}
 	}

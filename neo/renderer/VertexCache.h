@@ -82,6 +82,19 @@ If you have questions concerning this license or the applicable additional terms
 	compile_time_assert( VERTCACHE_JOINT_MEMORY_PER_FRAME <= VERTCACHE_OFFSET_MASK + 1 );
 	//puncho end
 
+	//puncho start - static index (2R R3.3): a static set starts at STATIC_INDEX_MEMORY or STATIC_VERTEX_MEMORY (at its cap when that
+	// is smaller) and grows by copy in steps of STATIC_GROW_QUANTUM_MB up to its cap, the cvars r_staticIndexMB and
+	// r_staticVertexMB. The largest cap leaves 1 MiB under 4 GiB: a set's byte size then fits the handle's 28 bits of
+	// 16-byte units and the 32-bit buffer view sizes of D3D12
+	const int STATIC_SET_MIN_MB = 8;
+	const int STATIC_SET_MAX_MB = 4095;
+	const int STATIC_GROW_QUANTUM_MB = 256;
+	const int STATIC_UPLOAD_FLUSH_MB = 32;		// an upload loop executes its command list each time this much static data waits in it (FlushStaticUploads)
+	compile_time_assert( ( ( uint64 )STATIC_SET_MAX_MB << 20 ) <= ( ( uint64 )VERTCACHE_OFFSET_MASK + 1 ) << STATIC_OFFSET_UNIT_BITS );
+	compile_time_assert( ( ( uint64 )STATIC_SET_MAX_MB << 20 ) < ( ( uint64 )1 << 32 ) );
+	compile_time_assert( ( STATIC_INDEX_MEMORY >> 20 ) >= STATIC_SET_MIN_MB && ( STATIC_VERTEX_MEMORY >> 20 ) >= STATIC_SET_MIN_MB );
+	//puncho end
+
 
 #else
 
@@ -348,8 +361,33 @@ struct staticArenaStats_t
 	int64					live0;			// preflight: the bytes segment 0's kept handles hold (ALIGN'd)
 	int64					incoming;		// preflight: the bytes the upload loops will ask for (ALIGN'd)
 	int64					dead0;			// the last preflight's dead bytes in segment 0 (0 when it did not walk)
+	//puncho start - static index (2R R3.3): the set's cap, what its growth did, and the figures the next load is sized from. All
+	// bytes. Test blocks (pads, fills) lie in the set like any block and are part of its used bytes; synth counts them apart,
+	// so that the figures a later load is sized from (late, lateRuntime, highLoad) leave them out
+	int						capMB;			// the cap in MiB: r_staticVertexMB or r_staticIndexMB as Init and each BeginStaticLoad latch it
+	int						growths;		// this load: buffers replaced by a larger one
+	int						growthSkips;	// this load: optional growths not made (the cap, split 1 or the device refused)
+	int64					copied;			// this load: bytes copied into larger buffers
+	int64					lastTransient;	// this load: old plus new size of the last growth
+	int64					maxTransient;	// since Init: the largest such sum
+	int64					resizeSkipped;	// split 1: the size this load's resize asked for and the device refused; 0: none
+	int64					markLoad;		// the set's bytes when the load ended (EndStaticLoad), -1 before
+	int64					lateRuntime;	// the most bytes allocated after a load had ended, before the next load
+	int64					highLoad;		// this load: the most bytes held, test blocks not counted
+	int64					previousHigh;	// highLoad of the load before
+	int64					synth[2];		// per segment: the bytes of test blocks
+	int64					synthMark;		// synth[0] + synth[1] at mark
+	int64					synthMarkLoad;	// the same at markLoad
+	//puncho end
 };
 compile_time_assert( sizeof( staticArenaStats_t ) * 2 >= 64 );	// keeps idVertexCache's two counters on separate cache lines
+//puncho - static index (2R R3.3): idVertexCache::staticWindow. A static set may grow in LOAD and in SLICE
+enum
+{
+	STATIC_WINDOW_CLOSED,
+	STATIC_WINDOW_LOAD,
+	STATIC_WINDOW_SLICE
+};
 //puncho end
 
 class idVertexCache
@@ -381,7 +419,23 @@ public:
 	bool			StaticUploadNeeded( vertCacheHandle_t indexHandle, int indexBytes, vertCacheHandle_t vertexHandle, int vertexBytes );
 	bool			BeginStaticPreflight();						// false at split 0 or with segment 0 empty; else measure mode
 	void			EndStaticPreflight( uint64 walkUs );		// the reset decision and its line
-	void			EndStaticUploads();							// after the upload loops: late use starts, segment 1
+	void			EndStaticUploads( nvrhi::ICommandList* commandList );	// after the upload loops, with their list still open: late use starts, segment 1
+	//puncho end
+
+	//puncho start - static index (2R R3.3): a static set grows by copy when a block does not fit it. That is allowed inside a window
+	// only: a level load, from BeginStaticLoad to EndStaticLoad, or one FinishInteractionSlice; on the main thread, with the
+	// back end idle. A caller hands AllocStaticVertex and AllocStaticIndex the command list it is recording into, and no
+	// other list may hold static uploads that were not executed
+	void			BeginStaticUploads( nvrhi::ICommandList* commandList );	// EndLevelLoad, before its upload loops
+	void			EndStaticLoad();							// after the load's interactions (a map) or its EndLevelLoad (the menu): top-up, the window closes
+	void			CancelStaticLoad();							// idCommonLocal::Stop: a load or a slice that did not end
+	void			BeginStaticSlice();							// FinishInteractionSlice, around its command list
+	void			EndStaticSlice();
+	void			FlushStaticUploads( nvrhi::ICommandList* commandList );	// the upload loops, between two surfaces: executes the list once STATIC_UPLOAD_FLUSH_MB wait in it
+	int64			StaticCapBytes( cacheType_t type ) const		// the set's cap, latched from r_staticVertexMB or r_staticIndexMB
+	{
+		return ( int64 )staticSets[ type ].capMB << 20;
+	}
 	//puncho end
 
 	// this data is only valid for one frame of rendering
@@ -489,10 +543,27 @@ public:
 	int64			staticNewBytes;
 	//puncho end
 
+	//puncho start - static index (2R R3.3): the growth's state; main thread only
+	int				staticWindow;				// STATIC_WINDOW_*: a set may grow in LOAD and SLICE only
+	int				staticEpoch;				// level loads begun since Init
+	bool			staticDiscard;				// a load or a slice was cancelled: the next load keeps no segment
+	const char*		staticPhase;				// who allocates now, for the growth's lines: "uploads", "interactions", "slice", ...
+	nvrhi::ICommandList*	staticUploadList;	// the command list that holds static uploads not yet executed, as far as this class can know; NULL: none
+	int64			staticUploadBytes;			// the charged bytes of static uploads recorded into staticUploadList since that list was last executed
+	int				staticFlushes;				// this load: how often FlushStaticUploads executed a list
+	//puncho end
+
 	//puncho start - static arena (P2b.1.8): the static allocation (AllocStaticVertex/Index; at both splits since 2R R3.1)
 	// and CacheIsCurrent's cold path
-	vertCacheHandle_t	AllocStaticArena( const void* data, int bytes, cacheType_t type, nvrhi::ICommandList* commandList );
+	vertCacheHandle_t	AllocStaticArena( const void* data, int bytes, cacheType_t type, nvrhi::ICommandList* commandList, bool synthetic = false );	// synthetic (2R R3.3): a test block
 	bool			CountStaleHandle();
+	//puncho end
+
+	//puncho start - static index (2R R3.3): AllocStaticArena's cold path (the block does not fit: grow the set or refuse), the growth
+	// itself, and the test fill
+	void			EnsureStaticRoom( cacheType_t type, int64 need, int bytes, int alignedBytes, nvrhi::ICommandList* commandList );
+	bool			GrowStaticSet( cacheType_t type, int64 newBytes, nvrhi::ICommandList* callerList, bool demanded );
+	void			StaticTestFill( int64 marginBytes, nvrhi::ICommandList* commandList );
 	//puncho end
 
 	// Try to make room for <bytes> bytes //puncho - static index (2R R3.1): in a per-frame set only

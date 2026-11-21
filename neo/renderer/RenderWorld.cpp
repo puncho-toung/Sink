@@ -2498,6 +2498,7 @@ void idRenderWorldLocal::FinishInteractionSlice()
 	const uint64 budget = ( uint64 )( r_lazyInteractionsMs.GetFloat() * 1000.0f );
 	viewDef_t* previousView = tr.viewDef;
 	tr.viewDef = NULL;
+	vertexCache.BeginStaticSlice();	//puncho - static index (2R R3.3): light tris made here may grow a static set, through this list
 	lazyInteractionCommands->open();
 	while( lazyInteractionCursor < lazyInteractionLights.Num() && Sys_Microseconds() - start < budget )
 	{
@@ -2511,6 +2512,7 @@ void idRenderWorldLocal::FinishInteractionSlice()
 	}
 	lazyInteractionCommands->close();
 	deviceManager->GetDevice()->executeCommandList( lazyInteractionCommands );
+	vertexCache.EndStaticSlice();	//puncho - static index (2R R3.3): after the list was executed
 	tr.viewDef = previousView;
 	const uint64 elapsed = Sys_Microseconds() - start;
 	lazyInteractionTotalUs += elapsed;

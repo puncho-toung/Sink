@@ -112,6 +112,8 @@ struct renderMapStats_t
 	uint64	staticIndexBytes;
 	uint64	staticVertexCapacity;
 	uint64	staticIndexCapacity;
+	uint64	staticVertexCap;	//puncho - static index (2R R3.3): the sets' caps in bytes (r_staticVertexMB, r_staticIndexMB as latched); Capacity is what is allocated now
+	uint64	staticIndexCap;
 	uint64	frameBytes;
 	uint64	frameHighWater;
 	uint64	imageBytes;

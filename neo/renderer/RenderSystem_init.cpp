@@ -3257,6 +3257,9 @@ void idRenderSystemLocal::GetMapStats( renderMapStats_t& stats ) const
 	stats.staticIndexBytes = vertexCache.StaticUsedBytes( CACHE_INDEX );
 	stats.staticVertexCapacity = vertexCache.StaticSizeBytes( CACHE_VERTEX );
 	stats.staticIndexCapacity = vertexCache.StaticSizeBytes( CACHE_INDEX );
+	//puncho - static index (2R R3.3): the sets' caps; a set's capacity grows up to its cap
+	stats.staticVertexCap = ( uint64 )vertexCache.StaticCapBytes( CACHE_VERTEX );
+	stats.staticIndexCap = ( uint64 )vertexCache.StaticCapBytes( CACHE_INDEX );
 	stats.imageBytes = R_GetImageLoadBytes();
 	if( frameData != NULL )
 	{

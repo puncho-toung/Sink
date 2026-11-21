@@ -1701,6 +1701,7 @@ void idCommonLocal::CreateMainMenu()
 
 		// load
 		renderSystem->EndLevelLoad();
+		vertexCache.EndStaticLoad();	//puncho - static index (2R R3.3): the menu's load has no interactions: its static window ends here
 		//puncho - P5-4 (DR-166): the sound system's level load must end before the decl manager's; ParseShader in sound/snd_shader.cpp pins by the sound system's flag
 		soundSystem->EndLevelLoad();
 		declManager->EndLevelLoad();
@@ -1721,6 +1722,10 @@ void idCommonLocal::Stop( bool resetSession )
 
 	// clear mapSpawned and demo playing flags
 	UnloadMap();
+
+	//puncho - static index (2R R3.3): a level load or an interaction slice that an error or a timeout ended has its static window
+	// closed here; with no window open this does nothing
+	vertexCache.CancelStaticLoad();
 
 	soundSystem->StopAllSounds();
 

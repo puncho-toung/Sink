@@ -282,10 +282,13 @@ void idRenderModelManagerLocal::Init()
 	{
 		nvrhi::CommandListParameters params = {};
 		params.enableImmediateExecution = false;
-		if( deviceManager->GetGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN )
+		//puncho - static index (2R R3.3): on D3D12 as on Vulkan. With NVRHI's own chunks of 64 KiB a D3D12 load made one upload chunk
+		// for every 64 KiB of static data and walked the growing pool for each one (measured in the R3.2 review: 0.8 s for
+		// 256 MiB in one load and 51 s for 4 GiB, against 0.4 s for 4 GiB with chunks of 64 MiB), and a static set may now
+		// hold 4 GiB. The product is made in size_t, of a value from 1 to 1024 (the cvar has no range of its own)
 		{
 			// SRS - set upload buffer size to avoid Vulkan staging buffer fragmentation
-			size_t maxBufferSize = ( size_t )( r_vkUploadBufferSizeMB.GetInteger() * 1024 * 1024 );
+			size_t maxBufferSize = ( size_t )idMath::ClampInt( 1, 1024, r_vkUploadBufferSizeMB.GetInteger() ) * 1024 * 1024;
 			params.setUploadChunkSize( maxBufferSize );
 		}
 		commandList = deviceManager->GetDevice()->createCommandList( params );
@@ -1129,6 +1132,8 @@ void idRenderModelManagerLocal::EndLevelLoad()
 		vertexCache.EndStaticPreflight( Sys_Microseconds() - preflightStart );
 	}
 	//puncho end
+	//puncho - static index (2R R3.3): the upload loops begin. A static set that runs full grows from here on, through this list
+	vertexCache.BeginStaticUploads( commandList );
 
 	//puncho - static arena (P2b.1.8): a model holding static data after the loops counts in its segment
 	// (staticSegmentModels): its deform caches in the first loop or its surfaces in the second (no model class has both:
@@ -1145,6 +1150,7 @@ void idRenderModelManagerLocal::EndLevelLoad()
 		model->CreateBuffers( commandList );
 		transitionBufferUs += Sys_Microseconds() - bufferStart;
 		vertexCache.staticSegmentModels[segment] += ( vertexCache.staticReports != reports ) ? 1 : 0;	//puncho - static arena (P2b.1.8)
+		vertexCache.FlushStaticUploads( commandList );	//puncho - static index (2R R3.3): the list is executed whenever 32 MiB of static uploads wait in it
 	}
 
 	// create static vertex/index buffers for all models
@@ -1163,11 +1169,14 @@ void idRenderModelManagerLocal::EndLevelLoad()
 				const uint64 uploadStart = Sys_Microseconds();
 				R_CreateStaticBuffersForTri( *( model->Surface( j )->geometry ), commandList );
 				transitionStaticUs += Sys_Microseconds() - uploadStart;
+				//puncho - static index (2R R3.3): the list is executed whenever 32 MiB of static uploads wait in it. Behind each
+				// surface, and not behind each model: one model (a large area of an outdoor map) can hold far more than that
+				vertexCache.FlushStaticUploads( commandList );
 			}
 			vertexCache.staticSegmentModels[segment] += ( vertexCache.staticReports != reports ) ? 1 : 0;	//puncho - static arena (P2b.1.8)
 		}
 	}
-	vertexCache.EndStaticUploads();	//puncho - static arena (P2b.1.8): light tris from here on are late use, in segment 1
+	vertexCache.EndStaticUploads( commandList );	//puncho - static arena (P2b.1.8): light tris from here on are late use, in segment 1; static index (2R R3.3): with the open list
 
 	commandList->close();
 	deviceManager->GetDevice()->executeCommandList( commandList );

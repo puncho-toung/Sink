@@ -57,7 +57,7 @@ idCVar stereoRender_warpTargetFraction( "stereoRender_warpTargetFraction", "1.0"
 idCVar r_showSwapBuffers( "r_showSwapBuffers", "0", CVAR_BOOL, "Show timings from GL_BlockingSwapBuffers" );
 idCVar r_syncEveryFrame( "r_syncEveryFrame", "1", CVAR_BOOL, "Don't let the GPU buffer execution past swapbuffers" );
 
-idCVar r_vkUploadBufferSizeMB( "r_vkUploadBufferSizeMB", "64", CVAR_INTEGER | CVAR_INIT | CVAR_NEW, "Size of gpu upload buffer (Vulkan only)" );
+idCVar r_vkUploadBufferSizeMB( "r_vkUploadBufferSizeMB", "64", CVAR_INTEGER | CVAR_INIT | CVAR_NEW, "Size of gpu upload buffer in MB (Vulkan; on D3D12 the model manager's command list, 2R R3.3)" );
 
 
 constexpr std::size_t MAX_IMAGE_PARMS = 16;
