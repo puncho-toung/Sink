@@ -8585,6 +8585,10 @@ void idGameLocal::GetMapStats( mapGameStats_t& stats ) const
 	stats.clipUs = current.usQueries - mapClipStart.usQueries;
 	stats.allocGameTic = mapAllocTic;
 	stats.entityHighWater = budgetHighWater;
+	//puncho start - R4.1: the MAP game row's denominators, so the framework holds no game constant
+	stats.entityCapacity = MAX_GENTITIES;
+	stats.nonReplicatedCapacity = ENTITYNUM_MAX_NORMAL - ENTITYNUM_FIRST_NON_REPLICATED;
+	//puncho end
 	stats.spawnStaticsSkipped = mapStaticSkipCount;
 	// the MAP row's columns are the four spawn classes (the corpse class has its own, corpseLive and corpseEvicted);
 	// a corpse is never refused

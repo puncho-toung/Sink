@@ -3460,6 +3460,9 @@ live at once, so the freed slots go round instead of one slot coming straight ba
 each live idEntityPtr must resolve to its entity, and the pointer to the entity just deleted must
 resolve to nothing, the new occupant of its slot included. With g_slotGenFastForward on one of the
 slots it uses, the same checks cover generation MAX_SPAWN_GENERATION and the wrap.
+With a third argument `retain` (R4.1; alive must be 1) the pointer to the first entity spawned is kept for the whole
+run, and the command says after how many reuses of that entity's slot the kept pointer resolved again: the alias a
+wrapped generation allows, MAX_SPAWN_GENERATION reuses later. A run too short to reach it says so and is no result.
 ==================
 */
 static void Cmd_TestSpawnChurn_f( const idCmdArgs& args )
@@ -3476,6 +3479,14 @@ static void Cmd_TestSpawnChurn_f( const idCmdArgs& args )
 
 	const int spawns = ( args.Argc() > 1 ) ? atoi( args.Argv( 1 ) ) : 300000;
 	const int alive = idMath::ClampInt( 1, 4096, ( args.Argc() > 2 ) ? atoi( args.Argv( 2 ) ) : 256 );
+	//puncho start - R4.1: the retain mode needs one slot going round, so that every spawn after the first reuses it
+	const bool retain = ( args.Argc() > 3 ) && idStr::Icmp( args.Argv( 3 ), "retain" ) == 0;
+	if( ( args.Argc() > 3 && !retain ) || ( retain && alive != 1 ) )
+	{
+		gameLocal.Printf( "usage: testSpawnChurn [spawns] [alive] [retain]; retain needs alive 1\n" );
+		return;
+	}
+	//puncho end
 
 	idList< idEntity* > live;
 	idList< idEntityPtr< idEntity > > livePtrs;
@@ -3491,6 +3502,15 @@ static void Cmd_TestSpawnChurn_f( const idCmdArgs& args )
 	int maxGen = 0;
 	int lowSlot = MAX_GENTITIES;
 	int highSlot = -1;
+	//puncho start - R4.1: the retain mode's state
+	idEntityPtr< idEntity > retained;
+	int retainedSlot = -1;
+	int retainedGen = 0;
+	int retainedReuses = 0;		// spawns after the first that took the retained entity's slot
+	int aliasReuses = -1;		// retainedReuses when the kept pointer first resolved again, -1 not yet
+	int aliasSpawn = -1;		// that spawn's number in the run, counted from 1
+	int offSlot = 0;			// spawns after the first that took another slot
+	//puncho end
 	const int startMs = Sys_Milliseconds();
 	for( int i = 0; i < spawns; i++ )
 	{
@@ -3519,6 +3539,31 @@ static void Cmd_TestSpawnChurn_f( const idCmdArgs& args )
 		maxGen = Max( maxGen, gen );
 		lowSlot = Min( lowSlot, slot );
 		highSlot = Max( highSlot, slot );
+		//puncho start - R4.1: the pointer to the first spawn is kept; it resolves again when the slot's generation comes
+		// back to that entity's, MAX_SPAWN_GENERATION reuses of the slot later
+		if( retain )
+		{
+			if( i == 0 )
+			{
+				retained = ent;
+				retainedSlot = slot;
+				retainedGen = gen;
+			}
+			else if( slot != retainedSlot )
+			{
+				offSlot++;
+			}
+			else
+			{
+				retainedReuses++;
+				if( aliasReuses < 0 && retained.GetEntity() != NULL )
+				{
+					aliasReuses = retainedReuses;
+					aliasSpawn = i + 1;
+				}
+			}
+		}
+		//puncho end
 
 		if( stale.GetEntity() != NULL )
 		{
@@ -3540,7 +3585,204 @@ static void Cmd_TestSpawnChurn_f( const idCmdArgs& args )
 
 	gameLocal.Printf( "testSpawnChurn: %d spawns, %d alive, slots %d-%d, highest generation %d, %d wraps seen, %d live pointers missed, %d stale pointers resolved, %d ms\n",
 					  spawns, alive, lowSlot, highSlot, maxGen, wraps, liveMisses, staleHits, Sys_Milliseconds() - startMs );
+	//puncho start - R4.1: the retained pointer's result; a run that did not reach the alias is no result
+	if( retain )
+	{
+		if( aliasReuses >= 0 )
+		{
+			gameLocal.Printf( "testSpawnChurn retain: slot %d, first generation %d, the kept pointer resolved again after %d reuses of the slot (spawn %d), %d spawns on other slots\n",
+							  retainedSlot, retainedGen, aliasReuses, aliasSpawn, offSlot );
+		}
+		else
+		{
+			gameLocal.Printf( "testSpawnChurn retain: slot %d, first generation %d, alias not reached in %d reuses of the slot (MAX_SPAWN_GENERATION %d), %d spawns on other slots\n",
+							  retainedSlot, retainedGen, retainedReuses, MAX_SPAWN_GENERATION, offSlot );
+		}
+	}
+	//puncho end
 }
+//puncho end
+
+//puncho start - R4.1: fill the entity table to a live total
+#if !defined( ID_RETAIL )
+/*
+==================
+Cmd_TestSpawnFill_f
+
+testSpawnFill <total> [prefix] [entityDef] [key value ...]: spawns entities until <total> entity slots are live. The
+count is of occupied slots, the world and the players included (ENTITYNUM_NONE never is one), not num_entities and
+not the map file's count. Each entity is named <prefix><n> (prefix "f" by default) from a counter that lasts for the
+process and skips a name already taken, so a fill after a load goes on past the loaded names. Without an entityDef
+the entity is an idTarget, which draws nothing, never thinks and binds to nothing; with one, the keys that follow go
+into its spawn args (name, classname and spawn_entnum are refused). A total at or below the live count spawns
+nothing and deletes nothing. When every ordinary slot is taken and the total asks for more, the census is printed
+with "full" and the spawn is attempted all the same: the error that follows is RegisterEntity's own refusal.
+==================
+*/
+struct spawnFillCensus_t
+{
+	int		live;			// occupied slots, the world and the players included
+	int		highest;		// the highest occupied slot, -1 for none
+	int		lastOrdinary;	// the highest occupied slot in [MAX_CLIENTS, ENTITYNUM_MAX_NORMAL), -1 for none
+	int		freeSlots[2];	// free ordinary slots below, and from, ENTITYNUM_FIRST_NON_REPLICATED
+};
+
+static uint64 testSpawnFillNextName = 0;	// never reset, never reused: a name's number is spent even when its spawn fails
+
+static void TestSpawnFillCensus( spawnFillCensus_t& census )
+{
+	census.live = 0;
+	census.highest = -1;
+	census.lastOrdinary = -1;
+	census.freeSlots[0] = 0;
+	census.freeSlots[1] = 0;
+	for( int n = 0; n < MAX_GENTITIES; n++ )
+	{
+		const bool ordinary = ( n >= MAX_CLIENTS && n < ENTITYNUM_MAX_NORMAL );
+		if( gameLocal.entities[ n ] == NULL )
+		{
+			if( ordinary )
+			{
+				census.freeSlots[ ( n >= ENTITYNUM_FIRST_NON_REPLICATED ) ? 1 : 0 ]++;
+			}
+			continue;
+		}
+		census.live++;
+		census.highest = n;
+		if( ordinary )
+		{
+			census.lastOrdinary = n;
+		}
+	}
+}
+
+static void TestSpawnFillPrint( const char* what, int64 total, int created, const spawnFillCensus_t& census )
+{
+	gameLocal.Printf( "testSpawnFill: %s: requested %lld, created %d, live %d, highest %d, last ordinary %d, free %d + %d, next name %llu\n",
+					  what, ( long long )total, created, census.live, census.highest, census.lastOrdinary,
+					  census.freeSlots[0], census.freeSlots[1], ( unsigned long long )testSpawnFillNextName );
+}
+
+static void Cmd_TestSpawnFill_f( const idCmdArgs& args )
+{
+	if( !gameLocal.CheatsOk( false ) )
+	{
+		return;
+	}
+	if( common->IsMultiplayer() )
+	{
+		gameLocal.Printf( "testSpawnFill: single player only\n" );
+		return;
+	}
+	if( gameLocal.GameState() != GAMESTATE_ACTIVE )
+	{
+		gameLocal.Printf( "testSpawnFill: needs a map running\n" );
+		return;
+	}
+
+	// the total: decimal digits only, at most ten of them, and no more than INT_MAX
+	int64 total = 0;
+	int digits = 0;
+	const char* totalText = ( args.Argc() > 1 ) ? args.Argv( 1 ) : "";
+	for( const char* p = totalText; *p != '\0'; p++ )
+	{
+		if( *p < '0' || *p > '9' || digits == 10 )
+		{
+			digits = -1;
+			break;
+		}
+		total = total * 10 + ( *p - '0' );
+		digits++;
+	}
+	const char* prefix = ( args.Argc() > 2 ) ? args.Argv( 2 ) : "f";
+	bool prefixOk = ( prefix[0] != '\0' && idStr::Length( prefix ) <= 16 );
+	for( const char* p = prefix; *p != '\0'; p++ )
+	{
+		prefixOk &= ( ( *p >= 'a' && *p <= 'z' ) || ( *p >= 'A' && *p <= 'Z' ) || ( *p >= '0' && *p <= '9' ) || *p == '_' );
+	}
+	const char* defName = ( args.Argc() > 3 ) ? args.Argv( 3 ) : NULL;
+	bool keysOk = ( args.Argc() <= 4 ) || ( ( args.Argc() - 4 ) % 2 == 0 );
+	idDict dict;
+	for( int i = 4; i + 1 < args.Argc(); i += 2 )
+	{
+		const char* key = args.Argv( i );
+		keysOk &= ( idStr::Icmp( key, "name" ) != 0 && idStr::Icmp( key, "classname" ) != 0 && idStr::Icmp( key, "spawn_entnum" ) != 0 );
+		dict.Set( key, args.Argv( i + 1 ) );
+	}
+	if( digits <= 0 || total > 0x7fffffff || !prefixOk || !keysOk )
+	{
+		gameLocal.Printf( "usage: testSpawnFill <total> [prefix] [entityDef] [key value ...]\n" );
+		gameLocal.Printf( "  total: 0 to 2147483647 in digits; prefix: 1 to 16 of A-Z a-z 0-9 _ (default f); the keys name, classname and spawn_entnum are refused\n" );
+		return;
+	}
+	if( defName != NULL && gameLocal.FindEntityDefDict( defName, false ) == NULL )
+	{
+		gameLocal.Printf( "testSpawnFill: no entityDef '%s'\n", defName );
+		return;
+	}
+	// without an entityDef the classname names none: an idTarget is spawned by type, as testSpawnChurn does
+	dict.Set( "classname", ( defName != NULL ) ? defName : "testSpawnFill" );
+
+	spawnFillCensus_t census;
+	TestSpawnFillCensus( census );
+	const int freeAtStart = census.freeSlots[0] + census.freeSlots[1];
+	int live = census.live;
+	int created = 0;
+	bool saidFull = false;
+	const int startMs = Sys_Milliseconds();
+	while( live < total )
+	{
+		if( !saidFull && created >= freeAtStart )
+		{
+			// every ordinary slot that was free is taken (single player fills both ranges): say so with a census, then
+			// let the allocator refuse. An entityDef that spawns further entities fills the table sooner and the
+			// allocator's error comes without this line; the map's own census is then the one before the command
+			saidFull = true;
+			TestSpawnFillCensus( census );
+			TestSpawnFillPrint( "full", total, created, census );
+		}
+		idStr name;
+		do
+		{
+			if( testSpawnFillNextName == ~( uint64 )0 )
+			{
+				TestSpawnFillCensus( census );
+				TestSpawnFillPrint( "the name counter is exhausted", total, created, census );
+				return;
+			}
+			name.Format( "%s%llu", prefix, ( unsigned long long )testSpawnFillNextName++ );
+		}
+		while( gameLocal.FindEntity( name.c_str() ) != NULL );
+		dict.Set( "name", name.c_str() );
+
+		idEntity* ent = NULL;
+		if( defName != NULL )
+		{
+			gameLocal.SpawnEntityDef( dict, &ent, true );
+		}
+		else
+		{
+			ent = gameLocal.SpawnEntityType( idTarget::Type, &dict );
+		}
+		if( ent == NULL )
+		{
+			TestSpawnFillCensus( census );
+			TestSpawnFillPrint( "spawn failed", total, created, census );
+			return;
+		}
+		created++;
+		live++;
+	}
+
+	TestSpawnFillCensus( census );
+	if( census.live != live )
+	{
+		gameLocal.Printf( "testSpawnFill: unexpected spawn or removal during the fill: %d slots are live, %d expected\n", census.live, live );
+	}
+	TestSpawnFillPrint( "done", total, created, census );
+	gameLocal.Printf( "testSpawnFill: %d ms\n", Sys_Milliseconds() - startMs );
+}
+#endif
 //puncho end
 
 //puncho start - content check (P1-A3a): a test tool for the implicit decl announce table
@@ -5960,6 +6202,9 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "testSpawnRead",			Cmd_TestSpawnRead_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"testSpawnRead <file>: writes each probed spawn member of every entity, in entity order, for a compare between builds" );
 #endif
 	cmdSystem->AddCommand( "testSpawnChurn",		Cmd_TestSpawnChurn_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"spawns and deletes entities to test the per-slot spawn-id generation" );	//puncho - identity (P1-A2)
+#if !defined( ID_RETAIL )	//puncho - R4.1: the fill is test scaffolding
+	cmdSystem->AddCommand( "testSpawnFill",			Cmd_TestSpawnFill_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"testSpawnFill <total> [prefix] [entityDef] [key value ...]: spawns entities until <total> entity slots are live" );
+#endif
 	//puncho start - gate tools for plans/phase1/02-FIXES.md track F3
 	cmdSystem->AddCommand( "testLaunch",			Cmd_TestLaunch_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"testLaunch <projectileDef> <target> [dmgPower]: launches a projectile at an entity as this peer's weapon would" );
 	cmdSystem->AddCommand( "testUnspectate",		Cmd_TestUnspectate_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"on a multiplayer host, makes every player want to play, so warmup can end" );

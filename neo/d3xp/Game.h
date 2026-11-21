@@ -230,6 +230,7 @@ struct mapGameStats_t
 	uint32 concurrencyUsTic, concurrencyUsThink, concurrencyUsEvents;
 	int cmModelsCap;	//puncho - R1.3: collisionModelManager->GetMaxModels(), the MAP row's cm denominator, 0 when cleared; appended, never saved or sent
 	int eventHighWater, eventCapacity, eventPassHighWater;	//puncho - R1.1: idEvent's H, MAX_EVENTS and P for the MAP alloc row; appended, never saved or sent
+	int entityCapacity, nonReplicatedCapacity;	//puncho - R4.1: MAX_GENTITIES and the size of the non-replicated range, the MAP game row's denominators; appended, never saved or sent
 };
 
 // The last tic's record for the com_showFPS 3 window, the aistats: line and the CSV (§2.5). POD on
@@ -630,7 +631,7 @@ extern idGameEdit* 				gameEdit;
 ===============================================================================
 */
 
-const int GAME_API_VERSION		= 17; // steam-audio merged: idSoundWorld::LoadMapAcoustics, FreeMapAcoustics, ListenerCut virtual, idRenderWorld::GetMapCompileId virtual, loadPhase_t appends LOAD_ACOUSTICS; the GitHub line merged (v0001.3e, AAS-router): mapGameStats_t appends avoidDue, avoidEnrolled, avoidHits, avoidMisses, avoidUnenrolled, concurrencyUsTic, concurrencyUsThink, concurrencyUsEvents; idFile::FlushChecked virtual; renderLight_t holds emitter in place of mathLight; R1: idCollisionModelManager::LoadModel bool + out handle, GetMaxModels; mapGameStats_t (idGame::GetMapStats) appends cmModelsCap, eventHighWater, eventCapacity, eventPassHighWater; P2b stage 2: GetSchemaKeys; stage 1: GetLevelKeep, RefusesMapWithPeers, FormatMapRows virtual, LoadPhase slot, skipStaticsCap, IsResident, IsSampleResident, bool SaveGame; stage 0: idCommon::LoadSpanAdd/LoadSpanName, idFileSystem::GetReadUs/GetThreadReadBytes
+const int GAME_API_VERSION		= 18; // R4.1: mapGameStats_t (idGame::GetMapStats) appends entityCapacity, nonReplicatedCapacity; steam-audio merged: idSoundWorld::LoadMapAcoustics, FreeMapAcoustics, ListenerCut virtual, idRenderWorld::GetMapCompileId virtual, loadPhase_t appends LOAD_ACOUSTICS; the GitHub line merged (v0001.3e, AAS-router): mapGameStats_t appends avoidDue, avoidEnrolled, avoidHits, avoidMisses, avoidUnenrolled, concurrencyUsTic, concurrencyUsThink, concurrencyUsEvents; idFile::FlushChecked virtual; renderLight_t holds emitter in place of mathLight; R1: idCollisionModelManager::LoadModel bool + out handle, GetMaxModels; mapGameStats_t (idGame::GetMapStats) appends cmModelsCap, eventHighWater, eventCapacity, eventPassHighWater; P2b stage 2: GetSchemaKeys; stage 1: GetLevelKeep, RefusesMapWithPeers, FormatMapRows virtual, LoadPhase slot, skipStaticsCap, IsResident, IsSampleResident, bool SaveGame; stage 0: idCommon::LoadSpanAdd/LoadSpanName, idFileSystem::GetReadUs/GetThreadReadBytes
 
 typedef struct
 {
