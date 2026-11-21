@@ -56,6 +56,7 @@ idCVar r_staticTestStale( "r_staticTestStale", "0", CVAR_RENDERER | CVAR_BOOL, "
 idCVar r_staticArenaTestPadMB( "r_staticArenaTestPadMB", "", CVAR_RENDERER, "test only: \"<index MiB> <vertex MiB>\": empty blocks placed before a level load's uploads (split 0), so the level's own blocks start behind them" );
 idCVar r_staticArenaTestFillMB( "r_staticArenaTestFillMB", "", CVAR_RENDERER, "test only: \"<a> <b> [force]\": empty blocks fill the index set down to <a> MiB free after a level load's uploads and to <b> MiB free after its interactions (-1: no fill); force 1 (with <a> 0 to 2) then asks for one block more than is free, which grows the set" );
 idCVar r_staticArenaTestFlushKB( "r_staticArenaTestFlushKB", "0", CVAR_RENDERER | CVAR_INTEGER, "test only: above 0, the upload loops execute their command list each time this many KiB of static uploads wait in it, in place of 32 MiB", 0, 1048576 );
+idCVar r_staticVerify( "r_staticVerify", "0", CVAR_RENDERER | CVAR_BOOL, "test only: 1 keeps a checksum of every static block as it is uploaded; the end of each level load, an interaction slice that grew a set and testStaticVerify then read the two static sets back from the device and compare (not for timing runs: about a second for each GiB uploaded and again for each GiB read back)" );
 static const int STATIC_TEST_BLOCK_BYTES = 2 * 1024 * 1024;
 //puncho end
 #endif
@@ -130,6 +131,64 @@ CONSOLE_COMMAND( listStaticSegments, "lists the static arena's segments: bytes u
 //puncho end
 
 extern DeviceManager* deviceManager;
+
+//puncho start - static index (2R R3.3): the readback check, test only (r_staticVerify, testStaticVerify, testStaticDamage). With the
+// cvar set, AllocStaticArena keeps one record for every block it uploads; StaticVerifyRun reads the sets back and compares
+#if !defined( ID_RETAIL )
+struct staticVerifyBlock_t
+{
+	int64		offset;		// where the block lies in its set's buffer, in bytes
+	uint64		hash;		// StaticVerifyHash of the block's own bytes as they were handed to the buffer
+	int			bytes;
+	int			type;		// CACHE_VERTEX or CACHE_INDEX
+	int			segment;
+	int			pass;		// the StaticVerifyRun that read it last
+};
+static idList<staticVerifyBlock_t>	staticVerifyBlocks( 16384 );	// main thread only, as every static allocation is
+static int staticVerifyUnrecorded[2] = { 0, 0 };	// per segment: blocks uploaded with data that have no record (the cvar was 0, or their load was cancelled)
+static int staticVerifySliceGrowths = 0;	// how often the two sets had grown when the running interaction slice began
+static const int64 STATIC_VERIFY_WINDOW_BYTES = 64 * 1024 * 1024;	// the staging buffer's size
+static void StaticVerifyRun( const char* when );
+
+/*
+==============
+StaticVerifyHash
+
+FNV-1a, 64 bits.
+==============
+*/
+static uint64 StaticVerifyHash( const byte* data, int bytes )
+{
+	uint64 hash = 14695981039346656037ULL;
+	for( int i = 0; i < bytes; i++ )
+	{
+		hash = ( hash ^ data[i] ) * 1099511628211ULL;
+	}
+	return hash;
+}
+
+/*
+==============
+StaticVerifyForget
+
+A freed segment's blocks are no longer the buffer's: their records go (FreeStaticSegment).
+==============
+*/
+static void StaticVerifyForget( int segment )
+{
+	staticVerifyUnrecorded[ segment ] = 0;
+	int kept = 0;
+	for( int i = 0; i < staticVerifyBlocks.Num(); i++ )
+	{
+		if( staticVerifyBlocks[i].segment != segment )
+		{
+			staticVerifyBlocks[kept++] = staticVerifyBlocks[i];
+		}
+	}
+	staticVerifyBlocks.SetNum( kept );
+}
+#endif
+//puncho end
 
 /*
 ==============
@@ -333,6 +392,11 @@ void idVertexCache::Shutdown()
 	staticData.vertexBuffer.FreeBufferObject();
 	staticData.indexBuffer.FreeBufferObject();
 	staticData.jointBuffer.FreeBufferObject();
+#if !defined( ID_RETAIL )
+	staticVerifyBlocks.Clear();	//puncho - static index (2R R3.3): the readback check's records go with the buffers
+	staticVerifyUnrecorded[0] = 0;
+	staticVerifyUnrecorded[1] = 0;
+#endif
 }
 
 /*
@@ -501,6 +565,15 @@ void idVertexCache::CancelStaticLoad()
 	staticPhase = "cancelled";
 	staticUploadList = NULL;
 	staticDiscard = true;
+#if !defined( ID_RETAIL )
+	//puncho - static index (2R R3.3): the readback check's records go: the cancelled load's uploads may never have been executed (their
+	// list was open when the error came). The blocks stay in the sets, without a record, until the next load frees both segments
+	for( int i = 0; i < staticVerifyBlocks.Num(); i++ )
+	{
+		staticVerifyUnrecorded[ staticVerifyBlocks[i].segment ]++;
+	}
+	staticVerifyBlocks.Clear();
+#endif
 	for( int type = CACHE_VERTEX; type <= CACHE_INDEX; type++ )
 	{
 		staticSets[ type ].mark = -1;
@@ -523,17 +596,32 @@ void idVertexCache::BeginStaticSlice()
 	{
 		staticWindow = STATIC_WINDOW_SLICE;
 		staticPhase = "slice";
+#if !defined( ID_RETAIL )
+		//puncho - static index (2R R3.3): test only, for the readback check: how often the sets had grown when the slice began
+		staticVerifySliceGrowths = staticSets[ CACHE_VERTEX ].growths + staticSets[ CACHE_INDEX ].growths;
+#endif
 	}
 }
 
 void idVertexCache::EndStaticSlice()
 {
+#if !defined( ID_RETAIL )
+	//puncho - static index (2R R3.3): test only: a slice that grew a set is read back below, where its list has been executed
+	const bool verifySlice = ( staticWindow == STATIC_WINDOW_SLICE ) && r_staticVerify.GetBool()
+							 && ( staticSets[ CACHE_VERTEX ].growths + staticSets[ CACHE_INDEX ].growths != staticVerifySliceGrowths );
+#endif
 	if( staticWindow == STATIC_WINDOW_SLICE )
 	{
 		staticWindow = STATIC_WINDOW_CLOSED;
 		staticPhase = "closed";
 	}
 	staticUploadList = NULL;
+#if !defined( ID_RETAIL )
+	if( verifySlice )
+	{
+		StaticVerifyRun( "slice" );
+	}
+#endif
 }
 
 /*
@@ -570,6 +658,9 @@ void idVertexCache::FreeStaticSegment( int segment )
 	//puncho - static index (2R R3.3): the segment's test blocks go with it
 	staticSets[ CACHE_VERTEX ].synth[ segment ] = 0;
 	staticSets[ CACHE_INDEX ].synth[ segment ] = 0;
+#if !defined( ID_RETAIL )
+	StaticVerifyForget( segment );	//puncho - static index (2R R3.3): and the readback check's records of its blocks
+#endif
 	staticGenerations[ segment ] = StaticArenaNextGeneration( staticGenerations[ segment ] );
 	staticData.vertexMemUsed.SetValue( staticSets[ CACHE_VERTEX ].arena.used0 + staticSets[ CACHE_VERTEX ].arena.used1 );
 	staticData.indexMemUsed.SetValue( staticSets[ CACHE_INDEX ].arena.used0 + staticSets[ CACHE_INDEX ].arena.used1 );
@@ -1024,6 +1115,13 @@ void idVertexCache::EndStaticLoad()
 	{
 		idLib::Printf( "static uploads, load %d: %d early executions of an upload list (one every %d MiB)\n", staticEpoch, staticFlushes, STATIC_UPLOAD_FLUSH_MB );
 	}
+#if !defined( ID_RETAIL )
+	//puncho - static index (2R R3.3): test only, the readback check over everything this load placed, behind its growths and the top-up
+	if( r_staticVerify.GetBool() )
+	{
+		StaticVerifyRun( "load" );
+	}
+#endif
 }
 
 /*
@@ -1120,6 +1218,26 @@ vertCacheHandle_t idVertexCache::AllocStaticArena( const void* data, int bytes, 
 		}
 	}
 	staticData.allocations++;
+#if !defined( ID_RETAIL )
+	//puncho - static index (2R R3.3): test only, the readback check's record: where the block lies and a checksum of the bytes just handed
+	// to the buffer (StaticVerifyRun compares)
+	if( data != NULL && r_staticVerify.GetBool() )
+	{
+		staticVerifyBlock_t block;
+		block.offset = offset;
+		block.hash = StaticVerifyHash( ( const byte* )data, bytes );
+		block.bytes = bytes;
+		block.type = type;
+		block.segment = segment;
+		block.pass = 0;
+		staticVerifyBlocks.Append( block );
+	}
+	else if( data != NULL )
+	{
+		// uploaded without a record: the check's total line says how many such blocks the sets hold
+		staticVerifyUnrecorded[ segment ]++;
+	}
+#endif
 	//puncho - static index (2R R3.3): the list this upload was recorded into. A growth flushes its caller's list only, so it must
 	// be asked for through this list as long as the upload waits in it (EnsureStaticRoom)
 	if( data != NULL )
@@ -1491,6 +1609,159 @@ bool idVertexCache::GrowStaticSet( cacheType_t type, int64 newBytes, nvrhi::ICom
 }
 
 #if !defined( ID_RETAIL )
+/*
+==============
+StaticVerifyRun
+
+Test only (static index, 2R R3.3): reads the static sets back from the device and compares every block recorded while
+r_staticVerify was set with the checksum taken when it was uploaded. The bytes come through a staging buffer the CPU can
+read, a window of at most STATIC_VERIFY_WINDOW_BYTES at a time: a window starts at the lowest block not yet read and ends
+with the last block that lies wholly inside the staging buffer's length from there (a block is at most 4 MiB, so every
+window holds at least one). Main thread, with every command list that took static uploads executed (staticUploadList is
+NULL): what a list has not executed is not in the buffer yet. The copy goes through a list of its own, and the GPU's
+queue is emptied before the bytes are read. The sets, the frontiers and every handle are left as they are.
+A record is made only while the cvar is set: the total line also says how many blocks with data the sets hold without one.
+==============
+*/
+static void StaticVerifyRun( const char* when )
+{
+	if( !idLib::IsMainThread() || vertexCache.staticUploadList != NULL )
+	{
+		idLib::Printf( "static verify (%s): not run: %s\n", when, idLib::IsMainThread() ? "static uploads wait in a command list" : "not the main thread" );
+		return;
+	}
+	// with no record there is nothing to read back, and the line says so: a cvar that was set after the level had loaded records nothing
+	const int unrecorded = staticVerifyUnrecorded[0] + staticVerifyUnrecorded[1];
+	if( staticVerifyBlocks.Num() == 0 )
+	{
+		idLib::Printf( "static verify (%s, load %d): NOTHING RECORDED (r_staticVerify must be 1 while the level loads); %d blocks with data have no record\n", when, vertexCache.staticEpoch, unrecorded );
+		return;
+	}
+	static int pass = 0;
+	pass++;
+	const uint64 startUs = Sys_Microseconds();
+	nvrhi::IDevice* device = deviceManager->GetDevice();
+
+	nvrhi::BufferDesc desc;
+	desc.byteSize = STATIC_VERIFY_WINDOW_BYTES;
+	desc.debugName = "static verify staging";
+	desc.cpuAccess = nvrhi::CpuAccessMode::Read;
+	desc.initialState = nvrhi::ResourceStates::CopyDest;
+	desc.keepInitialState = true;
+	nvrhi::BufferHandle staging;
+	{
+		// a refused staging buffer is no reason to end the game (on D3D12 a refused buffer is an NVRHI error)
+		const staticSoftErrors_t softErrors;
+		staging = device->createBuffer( desc );
+	}
+	if( !staging )
+	{
+		idLib::Printf( "static verify (%s): not run: the device refused the staging buffer\n", when );
+		return;
+	}
+	nvrhi::CommandListParameters params;
+	params.enableImmediateExecution = false;
+	nvrhi::CommandListHandle list = device->createCommandList( params );
+
+	int totalBlocks = 0;
+	int totalBad = 0;
+	bool mapFailed = false;
+	for( int type = CACHE_VERTEX; type <= CACHE_INDEX && !mapFailed; type++ )
+	{
+		nvrhi::IBuffer* live = ( type == CACHE_INDEX ) ? vertexCache.staticData.indexBuffer.GetAPIObject() : vertexCache.staticData.vertexBuffer.GetAPIObject();
+		int blocks = 0;
+		for( int i = 0; i < staticVerifyBlocks.Num(); i++ )
+		{
+			blocks += ( staticVerifyBlocks[i].type == type ) ? 1 : 0;
+		}
+		int checked = 0;
+		int bad = 0;
+		int windows = 0;
+		int64 readBytes = 0;
+		int64 firstBad = -1;
+		int firstBadBytes = 0;
+		while( checked < blocks )
+		{
+			int64 windowStart = -1;
+			for( int i = 0; i < staticVerifyBlocks.Num(); i++ )
+			{
+				const staticVerifyBlock_t& block = staticVerifyBlocks[i];
+				if( block.type == type && block.pass != pass && ( windowStart < 0 || block.offset < windowStart ) )
+				{
+					windowStart = block.offset;
+				}
+			}
+			int64 windowEnd = windowStart;
+			for( int i = 0; i < staticVerifyBlocks.Num(); i++ )
+			{
+				const staticVerifyBlock_t& block = staticVerifyBlocks[i];
+				if( block.type == type && block.pass != pass && block.offset + block.bytes <= windowStart + STATIC_VERIFY_WINDOW_BYTES )
+				{
+					windowEnd = Max( windowEnd, block.offset + block.bytes );
+				}
+			}
+			list->open();
+			list->copyBuffer( staging, 0, live, ( uint64 )windowStart, ( uint64 )( windowEnd - windowStart ) );
+			list->close();
+			device->executeCommandList( list );
+			if( !device->waitForIdle() )
+			{
+				idLib::FatalError( "StaticVerifyRun: the device was lost" );
+			}
+			device->runGarbageCollection();
+			const byte* readBack = NULL;
+			{
+				// a failed map is no reason to end the game either (on D3D12 it is an NVRHI error)
+				const staticSoftErrors_t softErrors;
+				readBack = ( const byte* )device->mapBuffer( staging, nvrhi::CpuAccessMode::Read );
+			}
+			if( readBack == NULL )
+			{
+				idLib::Printf( "static verify (%s): the staging buffer could not be mapped\n", when );
+				mapFailed = true;
+				break;
+			}
+			for( int i = 0; i < staticVerifyBlocks.Num(); i++ )
+			{
+				staticVerifyBlock_t& block = staticVerifyBlocks[i];
+				if( block.type != type || block.pass == pass || block.offset + block.bytes > windowEnd )
+				{
+					continue;
+				}
+				block.pass = pass;
+				checked++;
+				if( StaticVerifyHash( readBack + ( block.offset - windowStart ), block.bytes ) != block.hash )
+				{
+					if( bad == 0 )
+					{
+						firstBad = block.offset;
+						firstBadBytes = block.bytes;
+					}
+					bad++;
+				}
+			}
+			device->unmapBuffer( staging );
+			windows++;
+			readBytes += windowEnd - windowStart;
+		}
+		if( bad > 0 )
+		{
+			idLib::Printf( "static verify (%s, load %d): %s set: %d of %d blocks read back, %lld bytes in %d windows, %d mismatched, the first at offset %lld (%d bytes)\n", when, vertexCache.staticEpoch,
+						   StaticSetName( ( cacheType_t )type ), checked, blocks, ( long long )readBytes, windows, bad, ( long long )firstBad, firstBadBytes );
+		}
+		else
+		{
+			idLib::Printf( "static verify (%s, load %d): %s set: %d of %d blocks read back, %lld bytes in %d windows, 0 mismatched\n", when, vertexCache.staticEpoch,
+						   StaticSetName( ( cacheType_t )type ), checked, blocks, ( long long )readBytes, windows );
+		}
+		totalBlocks += checked;
+		totalBad += bad;
+	}
+	// "0 mismatched" speaks for the recorded blocks only: the line also says how many blocks with data the sets hold without a record
+	idLib::Printf( "static verify (%s, load %d): %d of %d recorded blocks read back, %d mismatched; %d blocks with data have no record; %llu us%s\n", when, vertexCache.staticEpoch, totalBlocks,
+				   staticVerifyBlocks.Num(), totalBad, unrecorded, ( unsigned long long )( Sys_Microseconds() - startUs ), mapFailed ? " (INCOMPLETE: the staging buffer could not be mapped)" : "" );
+}
+
 CONSOLE_COMMAND( testStaticWindow, "test only: asks the static index set for 16 bytes now, outside a level load (a full set answers with the window refusal, a fatal error)", NULL )
 {
 	const vertCacheHandle_t handle = vertexCache.AllocStaticArena( NULL, INDEX_CACHE_ALIGN, CACHE_INDEX, NULL, true );
@@ -1501,6 +1772,72 @@ CONSOLE_COMMAND( testStaticWindow, "test only: asks the static index set for 16 
 CONSOLE_COMMAND( testStaticBlock, "test only: asks the static index set for one block of 4 MiB, one byte over the block limit (an error that ends the running map)", NULL )
 {
 	vertexCache.AllocStaticArena( NULL, VERTCACHE_SIZE_MASK + 1, CACHE_INDEX, NULL, true );
+}
+
+CONSOLE_COMMAND( testStaticVerify, "test only: reads the static sets back from the device and compares every block recorded while r_staticVerify was set with its checksum", NULL )
+{
+	StaticVerifyRun( "command" );
+}
+
+CONSOLE_COMMAND( testStaticDamage, "test only: overwrites 16 bytes of one recorded static block in the device's buffer, so that testStaticVerify must report one mismatch; arguments: \"vertex\" (a vertex block; default: an index block), \"first\" (the recorded block at the lowest offset; default: the one recorded last); the geometry stays damaged until the next level load", NULL )
+{
+	int type = CACHE_INDEX;
+	bool lowest = false;
+	for( int i = 1; i < args.Argc(); i++ )
+	{
+		if( idStr::Icmp( args.Argv( i ), "vertex" ) == 0 )
+		{
+			type = CACHE_VERTEX;
+		}
+		else if( idStr::Icmp( args.Argv( i ), "first" ) == 0 )
+		{
+			lowest = true;
+		}
+	}
+	if( !idLib::IsMainThread() || vertexCache.staticUploadList != NULL )
+	{
+		idLib::Printf( "testStaticDamage: nothing done: static uploads wait in a command list\n" );
+		return;
+	}
+	// the block recorded last, or with "first" the one at the lowest offset
+	int found = -1;
+	for( int i = 0; i < staticVerifyBlocks.Num(); i++ )
+	{
+		const staticVerifyBlock_t& candidate = staticVerifyBlocks[i];
+		if( candidate.type != type || candidate.bytes < 16 )
+		{
+			continue;
+		}
+		if( found < 0 || !lowest || candidate.offset < staticVerifyBlocks[found].offset )
+		{
+			found = i;
+		}
+	}
+	if( found < 0 )
+	{
+		idLib::Printf( "testStaticDamage: nothing done: no recorded %s block of 16 bytes (r_staticVerify must be 1 while the level loads)\n", StaticSetName( ( cacheType_t )type ) );
+		return;
+	}
+	const staticVerifyBlock_t& block = staticVerifyBlocks[found];
+	// an index block gets zeros: index 0 lies in every surface's range (0xEE would be index 61166, a fetch beyond the surface's
+	// vertices), and no index list begins with eight of it. A vertex block gets 0xEE: one vertex far away
+	byte pattern[16];
+	memset( pattern, ( type == CACHE_INDEX ) ? 0x00 : 0xEE, sizeof( pattern ) );
+	nvrhi::IDevice* device = deviceManager->GetDevice();
+	nvrhi::IBuffer* live = ( type == CACHE_INDEX ) ? vertexCache.staticData.indexBuffer.GetAPIObject() : vertexCache.staticData.vertexBuffer.GetAPIObject();
+	nvrhi::CommandListParameters params;
+	params.enableImmediateExecution = false;
+	nvrhi::CommandListHandle list = device->createCommandList( params );
+	list->open();
+	list->writeBuffer( live, pattern, sizeof( pattern ), ( uint64 )block.offset );
+	list->close();
+	device->executeCommandList( list );
+	if( !device->waitForIdle() )
+	{
+		idLib::FatalError( "testStaticDamage: the device was lost" );
+	}
+	device->runGarbageCollection();
+	idLib::Printf( "testStaticDamage: 16 bytes overwritten in the %s set at offset %lld (a block of %d bytes)\n", StaticSetName( ( cacheType_t )type ), ( long long )block.offset, block.bytes );
 }
 #endif
 //puncho end
