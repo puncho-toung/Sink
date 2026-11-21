@@ -2134,7 +2134,18 @@ void idCommonLocal::OnLoadFilesCompleted( idSaveLoadParms& parms )
 		mapSpawnData.savegameFile->ReadString( gamename );
 		mapSpawnData.savegameFile->ReadString( mapname );
 
-		if( ( gamename != GAME_NAME ) || ( mapname.IsEmpty() ) || ( parms.description.GetSaveVersion() > BUILD_NUMBER ) )
+		//puncho start - R4 (review): the details read with THIS load go through the test the listed ones went through.
+		// LoadGame ran CheckSaveLayers on the details cached when the saves were listed; a slot whose files were replaced
+		// since then reached this point unchecked: an older build's save holds 16,384 rows a table where InitFromSaveGame
+		// reads 32,768 (that load ended in heap corruption), and a save of another mod set stores other entityDef indices
+		idStr loadedRefusal;
+		const bool loadedRefused = !CheckSaveLayers( parms.description.descriptors, loadedRefusal );
+		if( loadedRefused )
+		{
+			common->Warning( "Save is refused: %s (its files changed since the saves were listed)", loadedRefusal.c_str() );
+		}
+		//puncho end
+		if( ( gamename != GAME_NAME ) || ( mapname.IsEmpty() ) || ( parms.description.GetSaveVersion() > BUILD_NUMBER ) || loadedRefused )	//puncho - R4 (review)
 		{
 			// if this isn't a savegame for the correct game, abort loadgame
 			common->Warning( "Attempted to load an invalid savegame" );

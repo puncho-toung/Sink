@@ -3624,6 +3624,9 @@ the entity is an idTarget, which draws nothing, never thinks and binds to nothin
 into its spawn args (name, classname and spawn_entnum are refused). A total at or below the live count spawns
 nothing and deletes nothing. When every ordinary slot is taken and the total asks for more, the census is printed
 with "full" and the spawn is attempted all the same: the error that follows is RegisterEntity's own refusal.
+An entityDef that spawns further entities takes more than one slot a pass: the fill then overshoots the total and its
+closing line says so. Where a freed slot below the map's spawn count is not given out again (the world store active),
+the allocator's refusal can come before the "full" line.
 ==================
 */
 struct spawnFillCensus_t
@@ -3784,7 +3787,7 @@ static void Cmd_TestSpawnFill_f( const idCmdArgs& args )
 	TestSpawnFillCensus( census );
 	if( census.live != live )
 	{
-		gameLocal.Printf( "testSpawnFill: unexpected spawn or removal during the fill: %d slots are live, %d expected\n", census.live, live );
+		gameLocal.Printf( "testSpawnFill: %d slots are live, %d expected: the entityDef spawned further entities, or something else spawned or removed one during the fill\n", census.live, live );
 	}
 	TestSpawnFillPrint( "done", total, created, census );
 	gameLocal.Printf( "testSpawnFill: %d ms\n", Sys_Milliseconds() - startMs );

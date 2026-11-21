@@ -51,7 +51,7 @@ struct partyTransition_t
 	bool pending, active, relative, carryApplied;
 };
 static partyTransition_t partyTransition;
-//puncho - transitions (stage 3 review): CommitMapTransition's carry scratch, 224 KB, off the 1 MB Game/Draw stack; only
+//puncho - transitions (stage 3 review): CommitMapTransition's carry scratch (14 bytes a slot: 448 KB at 15 entity bits), off the 1 MB Game/Draw stack; only
 // the game thread commits. rootOf is each entity's candidate root (-1 if none), found once instead of once per group
 static struct
 {

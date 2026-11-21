@@ -1653,8 +1653,9 @@ bool idGameLocal::InitFromSaveGame( const char* mapName, idRenderWorld* renderWo
 
 	//puncho start - saves (P0-m5): the owner frees the pipelined file on every way out, the refused-script return and
 	// every Error's unwind included; declared before the idRestoreGame that reads through it, so it outlives the reader.
-	// No version test is needed here: CheckSaveLayers (Common_load.cpp) refuses every save older than
-	// BUILD_NUMBER_SAVE_VERSION_MOD_LAYERS before any map loads
+	// No version test is needed here: CheckSaveLayers and OnLoadFilesCompleted (Common_load.cpp) refuse every save older
+	// than BUILD_NUMBER_SAVE_VERSION_ENTITY_BITS_15 before any map loads. The per-slot loops below carry no count, so
+	// that refusal is what keeps a save of 16,384 slots away from them
 	idSaveGamePipelineOwner pipeline( new( TAG_SAVEGAMES ) idFile_SaveGamePipelined() );
 	idFile_SaveGamePipelined* pipelineFile = pipeline.file;
 	//puncho end

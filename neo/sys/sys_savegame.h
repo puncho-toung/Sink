@@ -42,11 +42,17 @@ If you have questions concerning this license or the applicable additional terms
 #define MAX_SAVEGAMES						16
 #define MAX_FILES_WITHIN_SAVEGAME			10
 
-#define MIN_SAVEGAME_SIZE_BYTES				( 4 * 1024 * 1024 )
+//puncho - R4.4: 8 MiB (4 MiB before), the limit of a save's compressed stream. Measured 2026-11-21 on the outdoor map
+// om32k_split_d740: 2,247,685 bytes for 15,645 entities, about 142 bytes an entity. A level of 32,000 such entities
+// needs about 4.6 MB; five quarters of that, to a whole power of two
+#define MIN_SAVEGAME_SIZE_BYTES				( 8 * 1024 * 1024 )
 
 // RB: doubled this for DoomSpartan360 mods
-//puncho - R4.2: 1 MiB, a whole bit width (800 KB before): the names of a full entity table alone are about 300 KB
-#define MAX_SAVEGAME_STRING_TABLE_SIZE		( 1 << 20 )
+//puncho - R4.2 made it 1 MiB (800 KB before); R4.4: 4 MiB. Measured 2026-11-21: the outdoor map om32k_split_d740 writes
+// 921,231 bytes of strings for 15,645 entities (about 56 bytes an entity), and filled to 32,000 with lean test entities
+// its save was refused at 1,073,707. A level of 32,000 real entities needs about 1.85 MB; five quarters of that, to a
+// whole power of two
+#define MAX_SAVEGAME_STRING_TABLE_SIZE		( 1 << 22 )
 
 
 #define MAX_FILENAME_LENGTH					255
