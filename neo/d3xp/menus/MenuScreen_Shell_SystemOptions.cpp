@@ -189,7 +189,7 @@ void idMenuScreen_Shell_SystemOptions::Initialize( idMenuHandler* data )
 	control = new( TAG_SWF ) idMenuWidget_ControlButton();
 	control->SetOptionType( OPTION_SLIDER_BAR );
 	control->SetLabel( "View Distance" );
-	control->SetDescription( "Full detail from 1024 to 8192 units; distant lights fade beyond this radius. The top notch turns distance culling off." );
+	control->SetDescription( "Radius of full detail, 1024 to 65536 units. Beyond it lights fade out and objects vanish 15 percent farther." );
 	control->SetDataSource( &systemData, idMenuDataSource_SystemSettings::SYSTEM_FIELD_VIEWDISTANCE );
 	control->SetupEvents( 2, options->GetChildren().Num() );
 	control->AddEventAction( WIDGET_EVENT_PRESS ).Set( WIDGET_ACTION_COMMAND, idMenuDataSource_SystemSettings::SYSTEM_FIELD_VIEWDISTANCE );
@@ -695,12 +695,13 @@ void idMenuScreen_Shell_SystemOptions::idMenuDataSource_SystemSettings::AdjustFi
 		}
 		case SYSTEM_FIELD_VIEWDISTANCE:
 		{
-			//puncho - view distance (P2 review): whole notches, so a step always lands on the top one, and the top notch
-			// is r_distanceCull 0, the stock image; it used to switch the archived cull on for good and still cut at 9420
-			const int notch = r_distanceCull.GetBool() ? idMath::Ftoi( LinearAdjust( r_viewDistance.GetFloat(), 1024.0f, 8192.0f, 0.0f, 100.0f ) + 0.5f ) : 100;
+			//puncho - view distance ( P2 review, R7.2 ): whole notches of 645.12 units, 1024 at notch 0 to 65536 at notch 100.
+			// A step always leaves the distance cull on, the top notch too ( it cuts at 65536, and authored cull keys keep
+			// working ); an archived r_distanceCull 0 is the stock image and shows as the top notch until the slider is stepped
+			const int notch = r_distanceCull.GetBool() ? idMath::Ftoi( LinearAdjust( r_viewDistance.GetFloat(), 1024.0f, 65536.0f, 0.0f, 100.0f ) + 0.5f ) : 100;
 			const int adjusted = idMath::ClampInt( 0, 100, notch + adjustAmount );
-			r_viewDistance.SetFloat( LinearAdjust( ( float )adjusted, 0.0f, 100.0f, 1024.0f, 8192.0f ) );
-			r_distanceCull.SetBool( adjusted < 100 );
+			r_viewDistance.SetFloat( LinearAdjust( ( float )adjusted, 0.0f, 100.0f, 1024.0f, 65536.0f ) );
+			r_distanceCull.SetBool( true );
 			break;
 		}
 		case SYSTEM_FIELD_VOLUME:
@@ -895,8 +896,8 @@ idSWFScriptVar idMenuScreen_Shell_SystemOptions::idMenuDataSource_SystemSettings
 			return LinearAdjust( r_exposure.GetFloat(), 0.0f, 1.0f, 0.0f, 100.0f );
 
 		case SYSTEM_FIELD_VIEWDISTANCE:
-			// the top notch is distance culling off, whatever r_viewDistance holds
-			return r_distanceCull.GetBool() ? LinearAdjust( r_viewDistance.GetFloat(), 1024.0f, 8192.0f, 0.0f, 100.0f ) : 100.0f;
+			// R7.2: 1024 to 65536 over the notches; an archived r_distanceCull 0 shows as the top notch, whatever r_viewDistance holds
+			return r_distanceCull.GetBool() ? LinearAdjust( r_viewDistance.GetFloat(), 1024.0f, 65536.0f, 0.0f, 100.0f ) : 100.0f;
 
 		case SYSTEM_FIELD_VOLUME:
 		{

@@ -119,12 +119,12 @@ idCVar r_mocFixes( "r_mocFixes", "0", CVAR_RENDERER | CVAR_INTEGER, "MOC fixes: 
 idCVar r_lightGatherGrid( "r_lightGatherGrid", "0", CVAR_RENDERER | CVAR_INTEGER, "minimum area refs for spatial light gather; zero off" );
 idCVar r_lightGatherCell( "r_lightGatherCell", "1024", CVAR_RENDERER | CVAR_FLOAT, "minimum light-gather XY cell extent" );
 idCVar r_lightGatherCompare( "r_lightGatherCompare", "0", CVAR_RENDERER | CVAR_BOOL, "count refs the spatial gather drops that the plain walk would pass at its table or light bounds test" );
-idCVar r_modelLod( "r_modelLod", "0", CVAR_RENDERER | CVAR_BOOL, "discover model LOD siblings at next map load" );
+idCVar r_modelLod( "r_modelLod", "1", CVAR_RENDERER | CVAR_BOOL, "discover model LOD siblings at next map load" );	//puncho - R7.3: was 0
 idCVar r_modelLodPixels( "r_modelLodPixels", "256 128 64", CVAR_RENDERER | 0, "LOD projected diameter thresholds" );
 idCVar r_modelLodScale( "r_modelLodScale", "1", CVAR_RENDERER | CVAR_FLOAT, "scale model LOD thresholds" );
 idCVar r_showModelLod( "r_showModelLod", "0", CVAR_RENDERER | CVAR_BOOL, "label selected frontend model LOD" );
-idCVar r_viewDistance( "r_viewDistance", "8192", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "full-detail radius before the outer visibility fade band", 1024.0f, 8192.0f );
-idCVar r_distanceCull( "r_distanceCull", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "enable distance and projected-size culling" );
+idCVar r_viewDistance( "r_viewDistance", "65536", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "full-detail radius before the outer visibility fade band", 1024.0f, 65536.0f );	//puncho - R7.2: was 8192 with a range of 1024 to 8192
+idCVar r_distanceCull( "r_distanceCull", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "enable distance and projected-size culling" );	//puncho - R7.2: was 0
 idCVar r_cullDistanceScale( "r_cullDistanceScale", "1", CVAR_RENDERER | CVAR_FLOAT, "scale authored visibility distances" );
 idCVar r_cullPixelsScale( "r_cullPixelsScale", "1", CVAR_RENDERER | CVAR_FLOAT, "scale authored minimum projected sizes" );
 idCVar r_cullFadeFraction( "r_cullFadeFraction", "0.15", CVAR_RENDERER | CVAR_FLOAT, "fraction of light visibility range faded" );
