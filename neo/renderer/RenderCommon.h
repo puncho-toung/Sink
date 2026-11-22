@@ -437,6 +437,9 @@ struct viewLight_t
 	//puncho start - moved here from after scissorRect, into the padding after parallel
 	// R_AddSingleLight() determined that the light isn't actually needed
 	bool					removeFromList;
+	// E-R4-3 (L-D1): the definition's noSpecular, copied by R_SetLightDefViewLight: the back end must not read lightDef,
+	// which a game tic may free while this frame waits for the back end. In the same padding
+	bool					noSpecular;
 	//puncho end
 	idVec3					lightCenter;				// offset the lighting direction for shading and
 	int						shadowLOD;					// level of detail for shadowmap selection
@@ -527,6 +530,10 @@ struct viewEntity_t
 	bool					skipMotionBlur;
 
 	bool					weaponDepthHack;
+	//puncho - E-R4-3 (L-D1): the definition's xrayIndex (0 to 2), copied at the top of R_AddSingleModel (it was copied in the
+	// serial portal walk, one more cache line of every definition there): the back end must not read entityDef, which a game
+	// tic may free while this frame waits for the back end. In the padding after the bools
+	byte					xrayIndex;
 	float					modelDepthHack;
 
 	// two frames ( viewDef_t::renderOrigin ): the backend reads only the relative one

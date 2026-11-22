@@ -366,6 +366,7 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 	}
 
 	idRenderEntityLocal* entityDef = vEntity->entityDef;
+	vEntity->xrayIndex = ( byte )entityDef->parms.xrayIndex;	//puncho - E-R4-3 (L-D1): the back end reads this copy
 	const renderEntity_t* renderEntity = &entityDef->parms;
 	const idRenderWorldLocal* world = entityDef->world;
 

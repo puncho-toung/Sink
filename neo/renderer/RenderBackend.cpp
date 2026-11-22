@@ -2004,7 +2004,7 @@ void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const view
 		// turn this back to 1.0
 		idVec4 specularColor = lightColor * 1.0f;
 // jmarshall
-		if( vLight->lightDef->parms.noSpecular )
+		if( vLight->noSpecular )	//puncho - E-R4-3 (L-D1): the view light's copy, not the definition
 		{
 			specularColor.Zero();
 		}
@@ -2317,7 +2317,7 @@ void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const view
 					case SL_SPECULAR:
 					{
 						// ignore stage that fails the condition
-						if( !surfaceRegs[ surfaceStage->conditionRegister ] || vLight->lightDef->parms.noSpecular ) // SRS - From RB forums
+						if( !surfaceRegs[ surfaceStage->conditionRegister ] || vLight->noSpecular ) // SRS - From RB forums //puncho - E-R4-3 (L-D1): the view light's copy
 						{
 							break;
 						}
@@ -4913,7 +4913,7 @@ int idRenderBackend::DrawShaderPasses( const drawSurf_t* const* const drawSurfs,
 
 		if( viewDef->isXraySubview && surf->space->entityDef )
 		{
-			if( surf->space->entityDef->parms.xrayIndex != 2 )
+			if( surf->space->xrayIndex != 2 )	//puncho - E-R4-3 (L-D1): the view entity's copy, not the definition
 			{
 				continue;
 			}
