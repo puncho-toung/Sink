@@ -366,9 +366,15 @@ public:
 	//--------------------------
 	// RenderWorld_portals.cpp
 
-	// if we hit this many planes, we will just stop cropping the
-	// view down, which is still correct, just conservative
-	static const int MAX_PORTAL_PLANES	= 20;
+	// R7.2: a portal stack's plane space is 1 << PORTAL_PLANE_BITS = 32 slots, every one of them inside the array.
+	// A stack uses at most MAX_PORTAL_SIDE_PLANES side planes; a view's stack keeps the portal's own plane behind
+	// them ( PORTAL_PLANE_RESERVE ). At the side limit we just stop cropping the view down, which is still
+	// correct, just conservative
+	static const int PORTAL_PLANE_BITS		= 5;
+	static const int MAX_PORTAL_PLANES		= 1 << PORTAL_PLANE_BITS;
+	static const int MAX_PORTAL_SIDE_PLANES	= 20;
+	static const int PORTAL_PLANE_RESERVE	= 1;
+	static_assert( MAX_PORTAL_SIDE_PLANES + PORTAL_PLANE_RESERVE <= MAX_PORTAL_PLANES, "a portal stack's side planes and the portal's own plane must fit its plane space" );
 
 	struct portalStack_t
 	{
@@ -376,7 +382,7 @@ public:
 		const portalStack_t* 	next;
 		// positive side is outside the visible frustum
 		int						numPortalPlanes;
-		idPlane					portalPlanes[MAX_PORTAL_PLANES + 1];
+		idPlane					portalPlanes[MAX_PORTAL_PLANES];
 		idScreenRect			rect;
 	};
 

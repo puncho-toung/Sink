@@ -33,9 +33,15 @@ If you have questions concerning this license or the applicable additional terms
 #include "RenderCommon.h"
 #include "VolumetricFog.h"		// TRACK V ( V5 ): R_VolumetricFogPortalDistance
 
-// if we hit this many planes, we will just stop cropping the
-// view down, which is still correct, just conservative
-const int MAX_PORTAL_PLANES	= 20;
+// R7.2: a portal stack's plane space is 1 << PORTAL_PLANE_BITS = 32 slots, every one of them inside the array.
+// A stack uses at most MAX_PORTAL_SIDE_PLANES side planes; a view's stack keeps the portal's own plane behind
+// them ( PORTAL_PLANE_RESERVE ). At the side limit we just stop cropping the view down, which is still
+// correct, just conservative. The same four constants and the same struct are declared in idRenderWorldLocal
+// ( RenderWorld_local.h ): keep the two in step
+const int PORTAL_PLANE_BITS			= 5;
+const int MAX_PORTAL_PLANES			= 1 << PORTAL_PLANE_BITS;
+const int MAX_PORTAL_SIDE_PLANES	= 20;
+const int PORTAL_PLANE_RESERVE		= 1;
 
 struct portalStack_t
 {
@@ -43,7 +49,7 @@ struct portalStack_t
 	const portalStack_t* 	next;
 	// positive side is outside the visible frustum
 	int						numPortalPlanes;
-	idPlane					portalPlanes[MAX_PORTAL_PLANES + 1];
+	idPlane					portalPlanes[MAX_PORTAL_PLANES];
 	idScreenRect			rect;
 };
 
@@ -717,7 +723,7 @@ void idRenderWorldLocal::FloodViewThroughArea_r( const idVec3& origin, int areaN
 		}
 
 		// clip the portal winding to all of the planes
-		idFixedWinding w;		// we won't overflow because MAX_PORTAL_PLANES = 20
+		idFixedWinding w;		// scratch of 64 points ( MAX_POINTS_ON_WINDING ); every clip plane can add one point, and a stack holds at most MAX_PORTAL_SIDE_PLANES + PORTAL_PLANE_RESERVE planes
 		w = *p->w;
 		for( int j = 0; j < ps->numPortalPlanes; j++ )
 		{
@@ -753,9 +759,9 @@ void idRenderWorldLocal::FloodViewThroughArea_r( const idVec3& origin, int areaN
 		// the visible view beyond just the scissor rect
 
 		int addPlanes = w.GetNumPoints();
-		if( addPlanes > MAX_PORTAL_PLANES )
+		if( addPlanes > MAX_PORTAL_SIDE_PLANES )
 		{
-			addPlanes = MAX_PORTAL_PLANES;
+			addPlanes = MAX_PORTAL_SIDE_PLANES;
 		}
 
 		newStack.numPortalPlanes = 0;
@@ -783,6 +789,7 @@ void idRenderWorldLocal::FloodViewThroughArea_r( const idVec3& origin, int areaN
 		}
 
 		// the last stack plane is the portal plane
+		assert( newStack.numPortalPlanes + PORTAL_PLANE_RESERVE <= MAX_PORTAL_PLANES );
 		newStack.portalPlanes[newStack.numPortalPlanes] = p->plane;
 		newStack.numPortalPlanes++;
 
@@ -805,7 +812,7 @@ void idRenderWorldLocal::FlowViewThroughPortals( const idVec3& origin, int numPl
 	ps.next = NULL;
 	ps.p = NULL;
 
-	assert( numPlanes <= MAX_PORTAL_PLANES );
+	assert( numPlanes <= MAX_PORTAL_SIDE_PLANES );
 	for( int i = 0; i < numPlanes; i++ )
 	{
 		ps.portalPlanes[i] = planes[i];
@@ -990,7 +997,7 @@ void idRenderWorldLocal::FloodLightThroughArea_r( idRenderLightLocal* light, int
 	int				i, j;
 	idVec3			v1, v2;
 	int				addPlanes;
-	idFixedWinding	w;		// we won't overflow because MAX_PORTAL_PLANES = 20
+	idFixedWinding	w;		// scratch of 64 points ( MAX_POINTS_ON_WINDING ); every clip plane can add one point: the stack's side planes and the light's own six
 
 	area = &portalAreas[ areaNum ];
 
@@ -1069,9 +1076,9 @@ void idRenderWorldLocal::FloodLightThroughArea_r( idRenderLightLocal* light, int
 		// the visible view beyond just the scissor rect
 
 		addPlanes = w.GetNumPoints();
-		if( addPlanes > MAX_PORTAL_PLANES )
+		if( addPlanes > MAX_PORTAL_SIDE_PLANES )
 		{
-			addPlanes = MAX_PORTAL_PLANES;
+			addPlanes = MAX_PORTAL_SIDE_PLANES;
 		}
 
 		newStack.numPortalPlanes = 0;
