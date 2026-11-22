@@ -69,12 +69,14 @@ static nvrhi::BufferHandle R_LightListCreateBuffer( const char* name, int stride
 idRenderBackend::LightListCreateBuffers
 
 The six table buffers ( D69, C22 ). Called at the start of every frame and before every upload; it creates what is
-missing, which is everything after ClearCaches. Five sizes are fixed by the caps. The tile bits depend on the
+missing, which is everything after ClearCaches. Four sizes are fixed by the caps. The tile bits depend on the
 render size and the tile size: the buffer is made for the render size at 16-pixel tiles and the record cap, and
 made again, larger, when a view needs more words than it holds ( tileBitWords ).
+The light pool is sized in the same way ( R5 join ): its buffer starts at LL_MIN_POOL_BUFFER words and is made again,
+larger, up to LL_MAX_POOL, when a view's pool holds more words than it ( poolWords ). It was fixed at 65,536 words.
 ====================
 */
-void idRenderBackend::LightListCreateBuffers( int tileBitWords )
+void idRenderBackend::LightListCreateBuffers( int tileBitWords, int poolWords )
 {
 	if( !recordLightsBuffer )
 	{
@@ -84,10 +86,18 @@ void idRenderBackend::LightListCreateBuffers( int tileBitWords )
 	{
 		shadowRowsBuffer = R_LightListCreateBuffer( "LightList Shadow Rows", sizeof( shadowRow_t ), MAX_RECORD_LIGHTS * 6 );
 	}
+	//puncho start - R5 join: the pool's buffer grows with the view, as the tile bits' does
 	if( !lightPoolBuffer )
 	{
-		lightPoolBuffer = R_LightListCreateBuffer( "LightList Pool", sizeof( uint32 ), LL_MAX_POOL );
+		lightListPoolWords = 0;
 	}
+	if( !lightPoolBuffer || poolWords > lightListPoolWords )
+	{
+		// at least twice the old size: the old buffer stays alive in the binding cache until ClearCaches
+		lightListPoolWords = Min( Max( Max( LL_MIN_POOL_BUFFER, poolWords ), 2 * lightListPoolWords ), LL_MAX_POOL );
+		lightPoolBuffer = R_LightListCreateBuffer( "LightList Pool", sizeof( uint32 ), lightListPoolWords );
+	}
+	//puncho end
 	if( !zBinsBuffer )
 	{
 		zBinsBuffer = R_LightListCreateBuffer( "LightList Z-Bins", LL_BIN_STRIDE * sizeof( uint32 ), LL_MAX_BINS );
@@ -126,6 +136,7 @@ void idRenderBackend::LightListReleaseBuffers()
 	tileBitsBuffer.Reset();
 	vanishedPrevBuffer.Reset();
 	lightListTileBitsWords = 0;
+	lightListPoolWords = 0;		//puncho - R5 join
 	lightListHeatmapPipeline = nullptr;
 	lightListHeatmapTarget = nullptr;
 	lightListHeatmapColor = nullptr;
@@ -276,7 +287,7 @@ void idRenderBackend::R_BuildShadowRows( const viewDef_t* viewDef )
 	}
 
 	const int tileBitWords = t.tilesX * t.tilesY * t.wordsPerTile;
-	LightListCreateBuffers( tileBitWords );
+	LightListCreateBuffers( tileBitWords, llv->stats.poolUsed );	//puncho - R5 join: the pool's buffer holds this view's pool
 	commandList->writeBuffer( recordLightsBuffer, viewDef->recordLights, viewDef->numRecordLights * sizeof( recordLight_t ) );
 	if( numRows > 0 )
 	{

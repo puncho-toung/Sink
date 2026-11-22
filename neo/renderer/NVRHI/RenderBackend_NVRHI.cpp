@@ -2808,7 +2808,7 @@ void idRenderBackend::GL_StartFrame()
 	}
 
 	// ---- TRACK F: create the light-list buffers once per render size ( D69 ) ----
-	LightListCreateBuffers( 0 );
+	LightListCreateBuffers( 0, 0 );
 	// ---- END TRACK F ----
 	// ---- TRACK V: create the volumetric fog pass ----
 	// The pass lives while r_volumetricFog is on. At 0 there is no pass and every fog slot of the view is a no-op:
@@ -3373,6 +3373,7 @@ idRenderBackend::idRenderBackend()
 	// ---- END TRACK S ----
 	// ---- TRACK F: light lists ( the handles construct themselves empty ) ----
 	lightListTileBitsWords = 0;
+	lightListPoolWords = 0;		//puncho - R5 join
 	lightListHeatmapColor = NULL;
 	lightDiffPassA = false;
 	forwardTranslucent = false;

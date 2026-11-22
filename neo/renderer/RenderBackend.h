@@ -505,9 +505,10 @@ private:
 	nvrhi::BufferHandle				zBinsBuffer;
 	nvrhi::BufferHandle				tileBitsBuffer;
 	nvrhi::BufferHandle				vanishedPrevBuffer;
-	void							LightListCreateBuffers( int tileBitWords );	// F1: creates what is missing, and the tile bits again when a view needs more words
+	void							LightListCreateBuffers( int tileBitWords, int poolWords );	// F1: creates what is missing, and the tile bits again when a view needs more words; the pool too //puncho - R5 join
 	void							LightListReleaseBuffers();					// F1: with ClearCaches
 	int								lightListTileBitsWords;						// F1: the uint32 words tileBitsBuffer holds; valid while the buffer exists
+	int								lightListPoolWords;							//puncho - R5 join: the uint32 words lightPoolBuffer holds; valid while the buffer exists
 	nvrhi::ShaderHandle				lightListHeatmapVS;							// F1: the heatmap pass ( r_showLightLists 1 ), made at first use
 	nvrhi::ShaderHandle				lightListHeatmapPS;
 	nvrhi::BindingLayoutHandle		lightListHeatmapLayout;

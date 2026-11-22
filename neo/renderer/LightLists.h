@@ -169,7 +169,8 @@ const int		LL_MAX_WORDS		= LL_MAX_RECORDS / 32;	// words per tile and per surfac
 const int		LL_MAX_BINS			= 8192;				// r_zbinCount's ceiling
 const int		LL_BIN_STRIDE		= 4;				// uint32 per bin: narrow, wide, fog-only range, 0 ( a uint4 on the GPU, 16 bytes )
 const int		LL_MAX_TILES		= 512;				// per axis: 8192 pixels at 16-pixel tiles
-const int		LL_MAX_POOL			= 1 << 16;			// pool words per view: 256 KiB of uint32
+const int		LL_MAX_POOL			= 1 << 21;			// pool words per view at most: 8 MiB of uint32, the sort's 65,536 surfaces at a mask of 32 words each; a view's pool and its GPU buffer are sized by the view //puncho - R5 join: was 1 << 16, which a view of the R4.3 sizes filled
+const int		LL_MIN_POOL_BUFFER	= 1 << 16;			// the words the pool's GPU buffer starts with; it is made again, larger, when a view's pool needs more //puncho - R5 join
 const int		LL_POOL_SUN			= 0;				// pool word 0 holds 0, the sun's record index: the list loop reads it on the Z-bin path
 const int		LL_POOL_ALL_ONES	= 1;				// pool words [ 1, 33 ): the shared all-ones mask ( pool overflow ); bit 0 = the sun is listed
 const int		LL_POOL_FIRST		= LL_POOL_ALL_ONES + LL_MAX_WORDS;	// 33: the first word a surface's run or mask may take
