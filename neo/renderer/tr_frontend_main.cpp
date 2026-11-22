@@ -1093,11 +1093,9 @@ void R_RenderView( viewDef_t* parms )
 	// build up the GUIs on world surfaces
 	R_AddInGameGuis( tr.viewDef->drawSurfs, tr.viewDef->numDrawSurfs );
 
-	R_BuildLightLists();		// F1: fills the listed-surface counts the optimize below reads ( a view with records )
-
-	// any viewLight that didn't have visible surfaces can have it's shadows removed
-	R_OptimizeViewLightsList();
-
+	//puncho start - R5 join: the cut of a view above the sort's space comes before the light lists are built, so a
+	// surface that is cut takes no pool words, no upload and keeps no light's shadow maps alive ( the cut stood behind
+	// R_OptimizeViewLightsList; the surfaces kept are the first in link order either way )
 	// The packed sort key has only 16 bits for the draw-surface index.
 	tr.pc.c_drawSurfs += tr.viewDef->numDrawSurfs;
 	const int maxSorted = r_maxSortedDrawSurfs.GetInteger();
@@ -1111,6 +1109,12 @@ void R_RenderView( viewDef_t* parms )
 		}
 		tr.viewDef->numDrawSurfs = maxSorted;
 	}
+	//puncho end
+
+	R_BuildLightLists();		// F1: fills the listed-surface counts the optimize below reads ( a view with records )
+
+	// any viewLight that didn't have visible surfaces can have it's shadows removed
+	R_OptimizeViewLightsList();
 
 	// sort all the ambient surfaces for translucency ordering
 	R_SortDrawSurfs( tr.viewDef->drawSurfs, tr.viewDef->numDrawSurfs );
