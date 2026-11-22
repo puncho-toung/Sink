@@ -1523,7 +1523,7 @@ extern void Sys_CPUCount( int& logicalNum, int& coreNum, int& packageNum );
 
 // DOOM3: We don't have that many jobs, so just set this fairly low so we don't spin up a ton of idle threads
 #define MAX_JOB_THREADS		32
-#define NUM_JOB_THREADS		"2"
+#define NUM_JOB_THREADS		"-1"	//puncho - R5: was "2"; -1 takes the count from the machine ( ResolveJobThreads )
 #define JOB_THREAD_CORES	{	CORE_ANY, CORE_ANY, CORE_ANY, CORE_ANY,	\
 								CORE_ANY, CORE_ANY, CORE_ANY, CORE_ANY,	\
 								CORE_ANY, CORE_ANY, CORE_ANY, CORE_ANY,	\
@@ -1534,7 +1534,7 @@ extern void Sys_CPUCount( int& logicalNum, int& coreNum, int& packageNum );
 								CORE_ANY, CORE_ANY, CORE_ANY, CORE_ANY }
 
 
-//puncho - G1: automatic is opt-in; retain the default of two workers.
+//puncho - G1: a count of 0 or more is taken as given. R5: automatic ( -1 ) is the default, it was two workers.
 idCVar jobs_numThreads( "jobs_numThreads", NUM_JOB_THREADS, CVAR_INTEGER | CVAR_NOCHEAT, "number of job workers (-1: physical cores minus two, minimum two)", -1, MAX_JOB_THREADS );
 
 static int ResolveJobThreads( int requested, int physicalCores )

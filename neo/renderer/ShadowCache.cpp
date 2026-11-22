@@ -35,7 +35,8 @@ If you have questions concerning this license or the applicable additional terms
 #include <sys/DeviceManager.h>
 extern DeviceManager* deviceManager;
 
-idCVar r_shadowCache( "r_shadowCache", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "shadow cache: 0 = off ( today's path ), 1 = the primary sun's cascades use a map-anchored snapped window of constant size, 2 = also the frontend's snapshot, the atlas plan, the per-side caster cull, and static casters drawn through the cache images ( kept between frames with r_shadowCacheReuse 1 )", 0, 2 );
+//puncho - R5: the default is 2, it was 0; on an outdoor map the shadow pass was 27 of the back end's 30 ms without the cache
+idCVar r_shadowCache( "r_shadowCache", "2", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "shadow cache: 0 = off ( today's path ), 1 = the primary sun's cascades use a map-anchored snapped window of constant size, 2 = also the frontend's snapshot, the atlas plan, the per-side caster cull, and static casters drawn through the cache images ( kept between frames with r_shadowCacheReuse 1 )", 0, 2 );
 idCVar r_shadowCacheLog( "r_shadowCacheLog", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "1 = print the primary sun's cascade windows of the main view whenever one changes, and the shadow cache's counters every 64 frames; 2 = also one line per local light of the view with those counters", 0, 2 );
 idCVar r_shadowCacheSize( "r_shadowCacheSize", "4096", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE | CVAR_NEW, "side of the shadow cache atlas in texels: 8192, or 4096 for any other value; read when the cache images are created", 4096, 8192 );
 
