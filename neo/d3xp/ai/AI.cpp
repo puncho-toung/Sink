@@ -4973,6 +4973,10 @@ static idEntity* DormantPathSuccessor( const idEntity* node )
 	return result;
 }
 
+// R7.6: the wake catch-up lands on at most 1 << CATCHUP_NODE_BITS distinct path nodes ( the key catchup_maxNodes, 1 to 64 )
+static const int CATCHUP_NODE_BITS = 6;
+static const int MAX_CATCHUP_NODES = 1 << CATCHUP_NODE_BITS;
+
 void idAI::DormantCatchUp( int elapsedMs )
 {
 	const float speed = spawnArgs.GetFloat( "catchup_speed", "0" );
@@ -4991,9 +4995,9 @@ void idAI::DormantCatchUp( int elapsedMs )
 	{
 		return;
 	}
-	const int maxNodes = idMath::ClampInt( 1, 64, spawnArgs.GetInt( "catchup_maxNodes", "64" ) );
-	idEntity* visited[64];
-	float arrival[64];
+	const int maxNodes = idMath::ClampInt( 1, MAX_CATCHUP_NODES, spawnArgs.GetInt( "catchup_maxNodes", "64" ) );
+	idEntity* visited[MAX_CATCHUP_NODES];
+	float arrival[MAX_CATCHUP_NODES];
 	int count = 0;
 	float remaining = elapsedMs * 0.001f;
 	float used = 0.0f;
@@ -5015,10 +5019,6 @@ void idAI::DormantCatchUp( int elapsedMs )
 		{
 			break;
 		}
-		remaining -= cost;
-		used += cost;
-		position = node->GetPhysics()->GetOrigin();
-		landing = node;
 		int repeated = -1;
 		for( int i = 0; i < count; i++ )
 		{
@@ -5028,6 +5028,17 @@ void idAI::DormantCatchUp( int elapsedMs )
 				break;
 			}
 		}
+		// R7.6: a node not visited before is admitted BEFORE the walk lands on it, so the walk never lands on node
+		// maxNodes + 1 ( it did: this test came after the landing ). A node visited before may still close its
+		// cycle when the list is full
+		if( repeated < 0 && count == maxNodes )
+		{
+			break;
+		}
+		remaining -= cost;
+		used += cost;
+		position = node->GetPhysics()->GetOrigin();
+		landing = node;
 		if( repeated >= 0 )
 		{
 			const float cycle = used - arrival[repeated];
@@ -5037,10 +5048,6 @@ void idAI::DormantCatchUp( int elapsedMs )
 			}
 			remaining -= idMath::Floor( remaining / cycle ) * cycle;
 			count = 0;
-		}
-		if( count == maxNodes )
-		{
-			break;
 		}
 		visited[count] = node;
 		arrival[count++] = used;
