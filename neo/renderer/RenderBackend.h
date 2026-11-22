@@ -428,6 +428,12 @@ private:
 	idStaticList<nvrhi::BindingSetHandle, nvrhi::c_MaxBindingLayouts> currentBindingSets;
 	idStaticList<idStaticList<nvrhi::BindingSetDesc, nvrhi::c_MaxBindingLayouts>, NUM_BINDING_LAYOUTS> pendingBindingSetDescs;
 
+	//puncho - stack (2R R4.3): FillDepthBufferFast and ShadowMapPassFast each set aside one pointer for every surface
+	// they are given and draw the perforated ones last. The array is this list; it was an _alloca on the main thread's
+	// stack. Num() is the list's capacity: it grows by doubling and never shrinks. The two passes never run inside each
+	// other, and each has used the array before it returns
+	idList<const drawSurf_t*, TAG_RENDER>	perforatedScratch;
+
 	Framebuffer*					currentFrameBuffer;
 	Framebuffer*					lastFrameBuffer;
 	nvrhi::CommandListHandle		commandList;

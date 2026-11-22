@@ -190,6 +190,41 @@ void R_ListRenderEntityDefs_f( const idCmdArgs& args )
 
 /*
 ===================
+R_ListRenderDefCounts_f
+
+puncho - render defs (2R R4.3): one line for the three lists: the definitions alive, the list's length ( the highest
+handle ever given out, plus one; the MAP handles row prints this number ) and the cap
+===================
+*/
+void R_ListRenderDefCounts_f( const idCmdArgs& args )
+{
+	if( !tr.primaryWorld )
+	{
+		return;
+	}
+	const idRenderWorldLocal* world = tr.primaryWorld;
+	int entities = 0;
+	for( int i = 0; i < world->entityDefs.Num(); i++ )
+	{
+		entities += world->entityDefs[i] != NULL;
+	}
+	int lights = 0;
+	for( int i = 0; i < world->lightDefs.Num(); i++ )
+	{
+		lights += world->lightDefs[i] != NULL;
+	}
+	int probes = 0;
+	for( int i = 0; i < world->envprobeDefs.Num(); i++ )
+	{
+		probes += world->envprobeDefs[i] != NULL;
+	}
+	common->Printf( "render defs: entities %i alive, length %i, cap %i; lights %i alive, length %i, cap %i; probes %i alive, length %i, cap %i\n",
+					entities, world->entityDefs.Num(), MAX_RENDER_ENTITY_DEFS, lights, world->lightDefs.Num(), MAX_RENDER_LIGHT_DEFS,
+					probes, world->envprobeDefs.Num(), MAX_RENDER_ENVPROBE_DEFS );
+}
+
+/*
+===================
 idRenderWorldLocal::idRenderWorldLocal
 ===================
 */
@@ -480,6 +515,12 @@ qhandle_t idRenderWorldLocal::AddEntityDef( const renderEntity_t* re )
 	int entityHandle = entityDefs.FindNull();
 	if( entityHandle == -1 )
 	{
+		//puncho - render defs (2R R4.3): a full list is refused before it grows, so its length stays within the cap; a
+		// freed slot is still taken above
+		if( entityDefs.Num() >= MAX_RENDER_ENTITY_DEFS )
+		{
+			common->Error( "idRenderWorld::AddEntityDef: no free entity definition, %i of %i in use", entityDefs.Num(), MAX_RENDER_ENTITY_DEFS );
+		}
 		entityHandle = entityDefs.Append( NULL );
 
 	}
@@ -501,6 +542,12 @@ int c_callbackUpdate;
 
 void idRenderWorldLocal::UpdateEntityDef( qhandle_t entityHandle, const renderEntity_t* re )
 {
+	//puncho - render defs (2R R4.3): the handle is checked first, even when r_skipUpdates is set
+	if( entityHandle < 0 || entityHandle >= MAX_RENDER_ENTITY_DEFS )
+	{
+		common->Error( "idRenderWorld::UpdateEntityDef: index = %i", entityHandle );
+	}
+
 	if( r_skipUpdates.GetBool() )
 	{
 		return;
@@ -514,10 +561,6 @@ void idRenderWorldLocal::UpdateEntityDef( qhandle_t entityHandle, const renderEn
 	}
 
 	// create new slots if needed
-	if( entityHandle < 0 || entityHandle >= MAX_RENDER_ENTITY_DEFS )
-	{
-		common->Error( "idRenderWorld::UpdateEntityDef: index = %i", entityHandle );
-	}
 	while( entityHandle >= entityDefs.Num() )
 	{
 		entityDefs.Append( NULL );
@@ -693,6 +736,11 @@ qhandle_t idRenderWorldLocal::AddLightDef( const renderLight_t* rlight )
 
 	if( lightHandle == -1 )
 	{
+		//puncho - render defs (2R R4.3): a full list is refused before it grows; a freed slot is still taken above
+		if( lightDefs.Num() >= MAX_RENDER_LIGHT_DEFS )
+		{
+			common->Error( "idRenderWorld::AddLightDef: no free light definition, %i of %i in use", lightDefs.Num(), MAX_RENDER_LIGHT_DEFS );
+		}
 		lightHandle = lightDefs.Append( NULL );
 	}
 	UpdateLightDef( lightHandle, rlight );
@@ -758,6 +806,12 @@ Does not write to the demo file, which will only be done for visible lights
 */
 void idRenderWorldLocal::UpdateLightDef( qhandle_t lightHandle, const renderLight_t* rlight )
 {
+	//puncho - render defs (2R R4.3): the handle is checked first, even when r_skipUpdates is set
+	if( lightHandle < 0 || lightHandle >= MAX_RENDER_LIGHT_DEFS )
+	{
+		common->Error( "idRenderWorld::UpdateLightDef: index = %i", lightHandle );
+	}
+
 	if( r_skipUpdates.GetBool() )
 	{
 		return;
@@ -766,10 +820,6 @@ void idRenderWorldLocal::UpdateLightDef( qhandle_t lightHandle, const renderLigh
 	tr.pc.c_lightUpdates++;
 
 	// create new slots if needed
-	if( lightHandle < 0 || lightHandle >= MAX_RENDER_LIGHT_DEFS )
-	{
-		common->Error( "idRenderWorld::UpdateLightDef: index = %i", lightHandle );
-	}
 	while( lightHandle >= lightDefs.Num() )
 	{
 		lightDefs.Append( NULL );
@@ -925,6 +975,11 @@ qhandle_t idRenderWorldLocal::AddEnvprobeDef( const renderEnvironmentProbe_t* ep
 
 	if( envprobeHandle == -1 )
 	{
+		//puncho - render defs (2R R4.3): a full list is refused before it grows; a freed slot is still taken above
+		if( envprobeDefs.Num() >= MAX_RENDER_ENVPROBE_DEFS )
+		{
+			common->Error( "idRenderWorld::AddEnvprobeDef: no free probe definition, %i of %i in use", envprobeDefs.Num(), MAX_RENDER_ENVPROBE_DEFS );
+		}
 		envprobeHandle = envprobeDefs.Append( NULL );
 
 		// TODO
@@ -951,6 +1006,12 @@ Does not write to the demo file, which will only be done for visible lights
 */
 void idRenderWorldLocal::UpdateEnvprobeDef( qhandle_t envprobeHandle, const renderEnvironmentProbe_t* ep )
 {
+	//puncho - render defs (2R R4.3): the handle is checked first, even when r_skipUpdates is set
+	if( envprobeHandle < 0 || envprobeHandle >= MAX_RENDER_ENVPROBE_DEFS )
+	{
+		common->Error( "idRenderWorld::UpdateEnvprobeDef: index = %i", envprobeHandle );
+	}
+
 	if( r_skipUpdates.GetBool() )
 	{
 		return;
@@ -959,10 +1020,6 @@ void idRenderWorldLocal::UpdateEnvprobeDef( qhandle_t envprobeHandle, const rend
 	tr.pc.c_envprobeUpdates++;
 
 	// create new slots if needed
-	if( envprobeHandle < 0 || envprobeHandle >= MAX_RENDER_ENVPROBE_DEFS )
-	{
-		common->Error( "idRenderWorld::UpdateEnvprobeDef: index = %i", envprobeHandle );
-	}
 	while( envprobeHandle >= envprobeDefs.Num() )
 	{
 		envprobeDefs.Append( NULL );

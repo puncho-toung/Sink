@@ -113,6 +113,13 @@ struct drawSurf_t
 // the struct itself ( 24 bytes ) took every surface, lit and shadow surfaces too, to two lines, with the lists off as well
 compile_time_assert( sizeof( drawSurf_t ) <= 128 );
 
+//puncho - sort index (2R R4.3): R_SortDrawSurfs packs one 64-bit key a surface: the sort value's bits, 16 bits of depth
+// and, lowest, the surface's position in the view's list, counted from the list's end ( numDrawSurfs - 1 - i ). All
+// 1 << DRAWSURF_SORT_INDEX_BITS positions are used, zero too; R_VerifyPrintSortKeys decodes the same way
+const int DRAWSURF_SORT_INDEX_BITS = 16;
+const int MAX_SORTED_DRAW_SURFS = 1 << DRAWSURF_SORT_INDEX_BITS;
+const int DRAWSURF_SORT_INDEX_MASK = MAX_SORTED_DRAW_SURFS - 1;
+
 // areas have references to hold all the lights and entities in them
 struct areaReference_t
 {

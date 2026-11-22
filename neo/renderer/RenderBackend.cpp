@@ -1003,7 +1003,13 @@ void idRenderBackend::FillDepthBufferFast( drawSurf_t** drawSurfs, int numDrawSu
 		FillDepthBufferGeneric( &drawSurfs[surfNum], 1 );
 	}
 
-	const drawSurf_t** perforatedSurfaces = ( const drawSurf_t** )_alloca( numDrawSurfs * sizeof( drawSurf_t* ) );
+	//puncho - stack (2R R4.3): one pointer for every surface of the view, from the back end's own list. It was taken
+	// from the main thread's stack: half of its 1 MiB for a view of 65,536 surfaces. The list grows by doubling
+	if( numDrawSurfs > perforatedScratch.Num() )
+	{
+		perforatedScratch.SetNum( idMath::CeilPowerOfTwo( Max( numDrawSurfs, 1024 ) ) );
+	}
+	const drawSurf_t** perforatedSurfaces = perforatedScratch.Ptr();
 	int numPerforatedSurfaces = 0;
 
 	// draw all the opaque surfaces and build up a list of perforated surfaces that
@@ -3684,7 +3690,13 @@ void idRenderBackend::ShadowMapPassFast( const drawSurf_t* drawSurfs, viewLight_
 		numDrawSurfs++;
 	}
 
-	const drawSurf_t** perforatedSurfaces = ( const drawSurf_t** )_alloca( numDrawSurfs * sizeof( drawSurf_t* ) );
+	//puncho - stack (2R R4.3): one pointer for every caster of this light, from the back end's own list. It was taken
+	// from the main thread's stack, and a light's chain of casters has no limit. The list grows by doubling
+	if( numDrawSurfs > perforatedScratch.Num() )
+	{
+		perforatedScratch.SetNum( idMath::CeilPowerOfTwo( Max( numDrawSurfs, 1024 ) ) );
+	}
+	const drawSurf_t** perforatedSurfaces = perforatedScratch.Ptr();
 	int numPerforatedSurfaces = 0;
 
 	int casterIndex = -1;

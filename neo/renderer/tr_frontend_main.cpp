@@ -261,15 +261,24 @@ static void R_SortDrawSurfs( drawSurf_t** drawSurfs, const int numDrawSurfs )
 {
 #if 1
 
-	uint64* indices = ( uint64* ) _alloca16( numDrawSurfs * sizeof( indices[0] ) );
+	//puncho - sort index (2R R4.3): a key's low DRAWSURF_SORT_INDEX_BITS hold the surface's position, so one view sorts at
+	// most MAX_SORTED_DRAW_SURFS. R_RenderView has cut the count to r_maxSortedDrawSurfs before; a count that is still
+	// outside is refused here, before the keys are allocated, and the list stays in the order it was linked
+	if( numDrawSurfs < 0 || numDrawSurfs > MAX_SORTED_DRAW_SURFS )
+	{
+		return;
+	}
+
+	// the keys come from frame memory. They were taken from the stack: 8 bytes a surface, half of the Game/Draw thread's
+	// 1 MiB at the cap
+	uint64* indices = ( uint64* )R_FrameAlloc( numDrawSurfs * sizeof( indices[0] ), FRAME_ALLOC_DRAW_SURFACE_POINTER );
 
 	// sort the draw surfs in descending key order ( the quicksort below puts larger keys first ), so:
 	// 1. sort value: SS_POST_PROCESS - sort, largest first, so the smallest material sort draws first
 	// 2. dist: the depth of the bounds' nearest point, largest first, so within one sort value the
 	//    surface whose nearest point is farthest draws first; under reversed-Z the key is built from
 	//    1 - that depth, so the same surfaces keep the same order in both conventions
-	// 3. index: numDrawSurfs - i, largest first, so equal keys keep their submission order
-	assert( numDrawSurfs <= 0xFFFF );
+	// 3. index: numDrawSurfs - 1 - i, largest first, so equal keys keep their submission order; the last surface has 0
 	for( int i = 0; i < numDrawSurfs; i++ )
 	{
 		float sort = SS_POST_PROCESS - drawSurfs[i]->sort;
@@ -289,7 +298,7 @@ static void R_SortDrawSurfs( drawSurf_t** drawSurfs, const int numDrawSurfs )
 #endif
 		}
 
-		indices[i] = ( ( numDrawSurfs - i ) & 0xFFFF ) | ( dist << 16 ) | ( ( uint64 )( *( uint32* )&sort ) << 32 );
+		indices[i] = ( ( numDrawSurfs - 1 - i ) & DRAWSURF_SORT_INDEX_MASK ) | ( dist << DRAWSURF_SORT_INDEX_BITS ) | ( ( uint64 )( *( uint32* )&sort ) << 32 );
 	}
 
 	const int64 MAX_LEVELS = 128;
@@ -373,7 +382,7 @@ static void R_SortDrawSurfs( drawSurf_t** drawSurfs, const int numDrawSurfs )
 	drawSurf_t** newDrawSurfs = ( drawSurf_t** ) indices;
 	for( int i = 0; i < numDrawSurfs; i++ )
 	{
-		newDrawSurfs[i] = drawSurfs[numDrawSurfs - ( indices[i] & 0xFFFF )];
+		newDrawSurfs[i] = drawSurfs[numDrawSurfs - 1 - ( indices[i] & DRAWSURF_SORT_INDEX_MASK )];
 	}
 	memcpy( drawSurfs, newDrawSurfs, numDrawSurfs * sizeof( drawSurfs[0] ) );
 

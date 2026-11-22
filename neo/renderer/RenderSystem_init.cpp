@@ -65,7 +65,7 @@ If you have questions concerning this license or the applicable additional terms
 // DeviceContext bypasses RenderSystem to work directly with this
 idGuiModel* tr_guiModel;
 
-idCVar r_maxSortedDrawSurfs( "r_maxSortedDrawSurfs", "65535", CVAR_RENDERER | CVAR_INTEGER, "maximum ambient draw surfaces before the 16-bit sort index clamps", 1, 65535 );
+idCVar r_maxSortedDrawSurfs( "r_maxSortedDrawSurfs", "65536", CVAR_RENDERER | CVAR_INTEGER, "the most ambient draw surfaces a view sorts; the surfaces above it are dropped and counted (the sort key has 16 bits for a surface's position)", 1, MAX_SORTED_DRAW_SURFS );
 
 // functions that are not called every frame
 glconfig_t	glConfig;
@@ -2215,6 +2215,7 @@ void R_InitCommands()
 	cmdSystem->AddCommand( "vid_restart", R_VidRestart_f, CMD_FL_RENDERER, "restarts renderSystem" );
 	cmdSystem->AddCommand( "checkOpenAreas", R_CheckOpenAreas_f, CMD_FL_RENDERER, "report open-area budgets and advisory extents" );
 	cmdSystem->AddCommand( "listRenderEntityDefs", R_ListRenderEntityDefs_f, CMD_FL_RENDERER, "lists the entity defs" );
+	cmdSystem->AddCommand( "listRenderDefCounts", R_ListRenderDefCounts_f, CMD_FL_RENDERER, "prints how many entity, light and probe defs are alive, the lists' lengths and their caps" );
 	cmdSystem->AddCommand( "listRenderLightDefs", R_ListRenderLightDefs_f, CMD_FL_RENDERER, "lists the light defs" );
 	cmdSystem->AddCommand( "listModes", R_ListModes_f, CMD_FL_RENDERER, "lists all video modes" );
 	cmdSystem->AddCommand( "reloadSurface", R_ReloadSurface_f, CMD_FL_RENDERER, "reloads the decl and images for selected surface" );

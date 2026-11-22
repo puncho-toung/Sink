@@ -32,10 +32,17 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "BoundsTrack.h"
 
-// assume any lightDef or entityDef index above this is an internal error
-const int MAX_RENDER_ENTITY_DEFS = 32768;
-const int MAX_RENDER_LIGHT_DEFS = 16384;
-const int MAX_RENDER_ENVPROBE_DEFS = 10000;
+//puncho - render defs (2R R4.3): the caps of the three lists of definitions, named as bit counts. They are capacities,
+// not packed fields: a handle is a signed int, every slot from 0 to cap - 1 is usable and -1 is "no handle", never a
+// slot. The game's table holds 1 << 15 entities and a drawn entity takes one definition or more, so the entity list
+// has one bit more: a full table of entities with two definitions each only just fits, and one with three does not.
+// An index at or above a cap is an internal error
+const int RENDER_ENTITY_BITS = 16;
+const int RENDER_LIGHT_BITS = 14;
+const int RENDER_ENVPROBE_BITS = 14;
+const int MAX_RENDER_ENTITY_DEFS = 1 << RENDER_ENTITY_BITS;
+const int MAX_RENDER_LIGHT_DEFS = 1 << RENDER_LIGHT_BITS;
+const int MAX_RENDER_ENVPROBE_DEFS = 1 << RENDER_ENVPROBE_BITS;
 
 
 typedef struct portal_s
@@ -482,6 +489,7 @@ ID_INLINE idInteraction* idRenderWorldLocal::GetInteraction( int light, int enti
 void R_ListRenderLightDefs_f( const idCmdArgs& args );
 void R_CheckOpenAreas_f( const idCmdArgs& args );
 void R_ListRenderEntityDefs_f( const idCmdArgs& args );
+void R_ListRenderDefCounts_f( const idCmdArgs& args );	//puncho - render defs (2R R4.3)
 
 // X0 ( D42, D73 ): flags the one parallel light of the world that is its sun; per world, never per view
 void R_PickPrimarySun( idRenderWorldLocal* world );

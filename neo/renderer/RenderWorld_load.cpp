@@ -1305,10 +1305,17 @@ void idRenderWorldLocal::AddWorldModelEntities()
 	{
 		common->UpdateLevelLoadPacifier();
 
+		// try and reuse a free spot
+		//puncho - render defs (2R R4.3): AddEntityDef's refusal, here too: a map with more portal areas than free
+		// definitions stops before the list grows past its cap, and before the definition is allocated
+		int index = entityDefs.FindNull();
+		if( index == -1 && entityDefs.Num() >= MAX_RENDER_ENTITY_DEFS )
+		{
+			common->Error( "idRenderWorldLocal::AddWorldModelEntities: no free entity definition for area %i of %i", i, numPortalAreas );
+		}
+
 		idRenderEntityLocal*	 def = new( TAG_RENDER_ENTITY ) idRenderEntityLocal;
 
-		// try and reuse a free spot
-		int index = entityDefs.FindNull();
 		if( index == -1 )
 		{
 			index = entityDefs.Append( def );

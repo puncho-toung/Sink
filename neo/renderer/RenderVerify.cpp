@@ -125,7 +125,7 @@ R_VerifyPrintSortKeys
 
 Called from R_SortDrawSurfs after the sort and before the keys are overwritten with the sorted
 pointers. keys[] is in draw order; each key is ( sort << 32 ) | ( dist << 16 ) | index, with
-index = numDrawSurfs - original position (tr_frontend_main.cpp).
+index = numDrawSurfs - 1 - original position (tr_frontend_main.cpp; zero-based since 2R R4.3, one higher before).
 ==================
 */
 void R_VerifyPrintSortKeys( const viewDef_t* viewDef, drawSurf_t* const* drawSurfs, const uint64* keys, const int numDrawSurfs )
@@ -138,13 +138,13 @@ void R_VerifyPrintSortKeys( const viewDef_t* viewDef, drawSurf_t* const* drawSur
 	for( int i = 0; i < numDrawSurfs; i++ )
 	{
 		const uint64 key = keys[i];
-		const drawSurf_t* surf = drawSurfs[ numDrawSurfs - ( int )( key & 0xFFFF ) ];
+		const drawSurf_t* surf = drawSurfs[ numDrawSurfs - 1 - ( int )( key & DRAWSURF_SORT_INDEX_MASK ) ];
 
 		const int entityIndex = ( surf->space != NULL && surf->space->entityDef != NULL ) ? surf->space->entityDef->index : -1;
 		const char* materialName = ( surf->material != NULL ) ? surf->material->GetName() : "<none>";
 
 		common->Printf( "%5i sort %g dist %5u key %016llx ent %i mat %s\n", i, surf->sort,
-						( unsigned int )( ( key >> 16 ) & 0xFFFF ), ( unsigned long long )key, entityIndex, materialName );
+						( unsigned int )( ( key >> DRAWSURF_SORT_INDEX_BITS ) & 0xFFFF ), ( unsigned long long )key, entityIndex, materialName );
 	}
 }
 
