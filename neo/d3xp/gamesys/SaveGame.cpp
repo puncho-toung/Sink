@@ -91,7 +91,10 @@ idSaveGame::idSaveGame( idFile* savefile, idFile* stringTableFile, int saveVersi
 
 	// Put NULL at the start of the list so we can skip over it.
 	objects.Clear();
+	objects.SetGranularity( 1024 );	//puncho - E-R4-6 (L-D1; Opus reviewer B): 16 a step made 2,000 copies at 32,000 entities
 	objects.Append( NULL );
+	//puncho - E-R4-6 (L-D1): 16,384 buckets, about two objects a bucket at 32,000 entities; the NULL is not hashed
+	objectHash.Clear( 16384, 16384 );
 
 	curStringTableOffset = 0;
 
@@ -157,6 +160,7 @@ bool idSaveGame::Close()
 	objectBytes = counter.count - objectStart;	//puncho - P2b.1.10k
 
 	objects.Clear();
+	objectHash.Free();	//puncho - E-R4-6 (L-D1)
 
 #if !defined( ID_RETAIL )
 	//puncho start - P2b.1.10k: g_testSaveOverflow's plants
@@ -338,7 +342,39 @@ idSaveGame::AddObject
 */
 void idSaveGame::AddObject( const idClass* obj )
 {
-	objects.AddUnique( obj );
+	//puncho start - E-R4-6 (L-D1): as objects.AddUnique, through the hash; the indices come out in the same order
+	if( FindObject( obj ) < 0 )
+	{
+		objectHash.Add( ( int )( ( uintptr_t )obj >> 4 ), objects.Append( obj ) );
+	}
+	//puncho end
+}
+
+/*
+================
+idSaveGame::FindObject
+
+E-R4-6 (L-D1): objects.FindIndex through objectHash: the object's index, 0 for NULL, -1 for an object not in the list
+================
+*/
+int idSaveGame::FindObject( const idClass* obj ) const
+{
+	if( obj == NULL )
+	{
+		return 0;
+	}
+	// the key does not go through GenerateKey: Add and First mask it themselves, and GenerateKey masks with the mask of the
+	// default size (1,023), which Clear( 16384, 16384 ) does not change before the first Add allocates: the first object went
+	// into a bucket no later lookup searched
+	const int key = ( int )( ( uintptr_t )obj >> 4 );
+	for( int i = objectHash.First( key ); i != -1; i = objectHash.Next( i ) )
+	{
+		if( objects[ i ] == obj )
+		{
+			return i;
+		}
+	}
+	return -1;
 }
 
 /*
@@ -658,7 +694,7 @@ void idSaveGame::WriteObject( const idClass* obj )
 {
 	int index;
 
-	index = objects.FindIndex( obj );
+	index = FindObject( obj );	//puncho - E-R4-6 (L-D1): through the hash, as objects.FindIndex
 	if( index < 0 )
 	{
 		gameLocal.DPrintf( "idSaveGame::WriteObject - WriteObject FindIndex failed\n" );

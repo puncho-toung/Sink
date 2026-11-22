@@ -134,6 +134,10 @@ private:
 	idCompressor* 			compressor;
 
 	idList<const idClass*>	objects;
+	//puncho - E-R4-6 (L-D1): the objects' pointers, hashed, beside the list: AddObject and WriteObject searched the list
+	// from its start, so a save's time grew with the square of the entities. The NULL at index 0 is not in it
+	idHashIndex				objectHash;
+	int						FindObject( const idClass* obj ) const;
 	int						version;
 
 	idStreamTrace* 			streamTrace;	//puncho - stream-trace (P1-A1c): NULL unless the checker armed this save
