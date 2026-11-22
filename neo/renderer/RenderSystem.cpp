@@ -159,6 +159,33 @@ void idRenderSystemLocal::RenderCommandBuffers( const emptyCommand_t* const cmdH
 	resolutionScale.InitForMap( NULL );
 }
 
+//puncho start - E-R43-18 (2R R4.3 follow-up)
+/*
+=============
+idRenderSystemLocal::HasPendingView
+
+True when the command list of the frame being built holds a 3D view: a frame the game thread drew that no back end has
+drawn yet. idCommonLocal::DrawPendingFrame draws it before a draw out of the frame's order (a save's or a load's screen
+updates, a wipe), which otherwise built a second view into the same frame memory and ran it out
+=============
+*/
+bool idRenderSystemLocal::HasPendingView() const
+{
+	if( frameData == NULL )
+	{
+		return false;
+	}
+	for( const emptyCommand_t* cmd = frameData->cmdHead; cmd != NULL; cmd = ( const emptyCommand_t* )cmd->next )
+	{
+		if( cmd->commandId == RC_DRAW_VIEW_3D )
+		{
+			return true;
+		}
+	}
+	return false;
+}
+//puncho end
+
 /*
 ============
 R_GetCommandBuffer

@@ -41,7 +41,11 @@ FRAME MEMORY ALLOCATION
 */
 
 static const unsigned int FRAME_ALLOC_ALIGNMENT = 128;
-static const unsigned int MAX_FRAME_MEMORY = 64 * 1024 * 1024;	// larger so that we can noclip on PC for dev purposes
+//puncho - E-R43-15 (2R R4.3 follow-up): 128 MiB a frame, was 64; the three frames' buffers are allocated once. By the sizes
+// Opus reviewer D measured, a view of all 65,536 definitions, each one surface lit and shadowed by the sun, takes about
+// 69 MiB: 1,087 bytes a definition (a 512-byte view entity; 128 bytes each for its draw surface, the lit copy and the
+// shadow copy; an 8-byte pointer and sort key; one byte for each of the 175 lights at the light walk), and the lists
+static const unsigned int MAX_FRAME_MEMORY = 128 * 1024 * 1024;	// larger so that we can noclip on PC for dev purposes
 
 idFrameData		smpFrameData[NUM_FRAME_DATA];
 idFrameData* 	frameData;

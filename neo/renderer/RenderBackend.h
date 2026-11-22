@@ -434,6 +434,12 @@ private:
 	// other, and each has used the array before it returns
 	idList<const drawSurf_t*, TAG_RENDER>	perforatedScratch;
 
+	//puncho - E-R43-1 (2R R4.3 follow-up): RenderInteractions' lists of one light's lit surfaces, the fast-path ones and
+	// the complex ones; they were fixed lists of 2,048 and 256 on the stack. They double when they are full and never
+	// shrink. RenderInteractions never runs inside itself, and is done with them before it returns
+	idList<const drawSurf_t*, TAG_RENDER>	interactionSurfaces;
+	idList<const drawSurf_t*, TAG_RENDER>	interactionComplexSurfaces;
+
 	Framebuffer*					currentFrameBuffer;
 	Framebuffer*					lastFrameBuffer;
 	nvrhi::CommandListHandle		commandList;

@@ -460,9 +460,18 @@ void idCommonLocal::StartWipe( const char* _wipeMaterial, bool hold )
 {
 	console->Close();
 
+	//puncho - E-R43-18 (2R R4.3 follow-up): a frame still waiting for the back end is drawn first (BeginCoopTransition calls
+	// this before the main loop's swap), so that this view goes into empty frame memory
+	DrawPendingFrame();
+
 	Draw();
 
 	renderSystem->CaptureRenderToImage( "_currentRender" );
+
+	//puncho - E-R43-18 (Opus reviewer A of the follow-up): and this view and its capture are drawn at once. The other co-op
+	// wipes (NotifyMapTransition, PumpMapTransition) run after the main loop's swap, and the game thread's next view would
+	// otherwise go into the same frame memory; the map change's own wipe gains one present of the same picture
+	DrawPendingFrame();
 
 	wipeMaterial = declManager->FindMaterial( _wipeMaterial, false );
 

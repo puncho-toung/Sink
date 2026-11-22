@@ -1258,6 +1258,7 @@ public:
 	virtual const emptyCommand_t* 	SwapCommandBuffers_FinishCommandBuffers();
 
 	virtual void			RenderCommandBuffers( const emptyCommand_t* commandBuffers );
+	virtual bool			HasPendingView() const;	//puncho - E-R43-18 (2R R4.3 follow-up)
 	virtual void			TakeScreenshot( int width, int height, const char* fileName, renderView_t* ref );
 	virtual bool			IsTakingScreenshot()
 	{

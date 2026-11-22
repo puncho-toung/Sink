@@ -531,6 +531,10 @@ public:
 	// so new scenes and GUIs can be built up in parallel with the rendering.
 	virtual void			RenderCommandBuffers( const emptyCommand_t* commandBuffers ) = 0;
 
+	//puncho - E-R43-18 (2R R4.3 follow-up): true when the frame being built holds a 3D view that no back end has drawn yet
+	// (the game thread's frame, before the main loop's swap); a draw out of the frame's order draws it first
+	virtual bool			HasPendingView() const = 0;
+
 	// aviDemo uses this.
 	// Will automatically tile render large screen shots if necessary
 	// If ref == NULL, common->UpdateScreen will be used

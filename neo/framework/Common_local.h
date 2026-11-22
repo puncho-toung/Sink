@@ -855,6 +855,9 @@ private:
 	void	StartWipe( const char* materialName, bool hold = false );
 	void	CompleteWipe();
 	void	ClearWipe();
+	//puncho - E-R43-18 (2R R4.3 follow-up): before a draw out of the frame's order, the frame still waiting for the back end
+	// is drawn, so that a view is never built twice into one frame's memory
+	void	DrawPendingFrame();
 
 	void	MoveToNewMap( const char* mapName, bool devmap );
 

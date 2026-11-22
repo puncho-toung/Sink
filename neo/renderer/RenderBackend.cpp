@@ -1761,6 +1761,18 @@ static void RB_SetupForFastPathInteractions( const idVec4& diffuseColor, const i
 	SetFragmentParm( RENDERPARM_SPECULARMODIFIER, specularColor.ToFloatPtr() );
 }
 
+//puncho start - E-R43-1 (2R R4.3 follow-up; Opus reviewer B): RenderInteractions' lists of one light's surfaces double when
+// they are full, from 1,024, so Append never grows them; growing by a fixed step was quadratic in the longest chain
+static ID_INLINE void R_AppendGrowing( idList< const drawSurf_t*, TAG_RENDER >& list, const drawSurf_t* surf )
+{
+	if( list.Num() == list.NumAllocated() )
+	{
+		list.Resize( Max( 1024, list.NumAllocated() * 2 ) );
+	}
+	list.Append( surf );
+}
+//puncho end
+
 /*
 =============
 idRenderBackend::RenderInteractions
@@ -1825,10 +1837,16 @@ void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const view
 	// are added single-threaded, and there is only a negligable amount
 	// of benefit to trying to sort by materials.
 	//---------------------------------
-	static const int MAX_INTERACTIONS_PER_LIGHT = 2048; // 1024 in BFG
-	static const int MAX_COMPLEX_INTERACTIONS_PER_LIGHT = 256;
-	idStaticList< const drawSurf_t*, MAX_INTERACTIONS_PER_LIGHT > allSurfaces;
-	idStaticList< const drawSurf_t*, MAX_COMPLEX_INTERACTIONS_PER_LIGHT > complexSurfaces;
+	//puncho start - E-R43-1 (2R R4.3 follow-up): one light's lit surfaces go into two lists of the back end that grow. They
+	// were fixed lists of 2,048 and 256 (1,024 in BFG): a Release build left every surface above them unlit by the light
+	// without a word and an assert build ended, and an outdoor view under the sun has more than 2,048 sunlit surfaces in
+	// one chain. The lists keep their memory from light to light, double when they are full (R_AppendGrowing) and never
+	// shrink
+	idList< const drawSurf_t*, TAG_RENDER >& allSurfaces = interactionSurfaces;
+	idList< const drawSurf_t*, TAG_RENDER >& complexSurfaces = interactionComplexSurfaces;
+	allSurfaces.SetNum( 0 );
+	complexSurfaces.SetNum( 0 );
+	//puncho end
 	for( const drawSurf_t* walk = surfList; walk != NULL; walk = walk->nextOnLight )
 	{
 		const idMaterial* surfaceShader = walk->material;
@@ -1852,16 +1870,16 @@ void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const view
 
 		if( surfaceShader->GetFastPathBumpImage() )
 		{
-			allSurfaces.Append( walk );
+			R_AppendGrowing( allSurfaces, walk );
 		}
 		else
 		{
-			complexSurfaces.Append( walk );
+			R_AppendGrowing( complexSurfaces, walk );
 		}
 	}
 	for( int i = 0; i < complexSurfaces.Num(); i++ )
 	{
-		allSurfaces.Append( complexSurfaces[i] );
+		R_AppendGrowing( allSurfaces, complexSurfaces[i] );
 	}
 
 	bool lightDepthBoundsDisabled = false;

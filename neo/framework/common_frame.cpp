@@ -846,6 +846,28 @@ void idCommonLocal::Draw()
 	}
 }
 
+//puncho start - E-R43-18 (2R R4.3 follow-up)
+/*
+===============
+idCommonLocal::DrawPendingFrame
+
+A draw out of the frame's order went into the frame memory that still held the game thread's frame: a view of more
+than half of it ended the process at a save, a load or a map change, and before that the two views were drawn as one
+frame. A frame that waits for the back end is closed and drawn first. It is drawn, not dropped: StartWipe's capture of
+the screen is in that list
+===============
+*/
+void idCommonLocal::DrawPendingFrame()
+{
+	gameThread.WaitForThread();
+	if( renderSystem->HasPendingView() )
+	{
+		const emptyCommand_t* cmd = renderSystem->SwapCommandBuffers( &time_frontend, &time_backend, &time_moc, &time_gpu, &stats_backend, &stats_frontend );
+		renderSystem->RenderCommandBuffers( cmd );
+	}
+}
+//puncho end
+
 /*
 ===============
 idCommonLocal::UpdateScreen
@@ -865,6 +887,10 @@ void idCommonLocal::UpdateScreen( bool captureToImage, bool releaseMouse )
 	// make sure the game / draw thread has completed
 	gameThread.WaitForThread();
 	DrainPrintRelay();
+	//puncho - E-R43-18 (2R R4.3 follow-up): the game thread's frame may still wait for the back end here (a console
+	// command, a save, a load, a map change and the console's Enter run before the main loop's swap); it is drawn first,
+	// and this draw goes into empty frame memory
+	DrawPendingFrame();
 
 	// release the mouse capture back to the desktop
 	if( releaseMouse )
@@ -1106,9 +1132,13 @@ void idCommonLocal::Frame()
 		{
 			// the GPU will stay idle through command generation for minimal
 			// input latency
+			//puncho - E-R43-18 (2R R4.3 follow-up): the first frame after com_smp goes from 1 to 0 finds the game thread's
+			// frame still waiting, and the game's draw below would go into the same frame memory: it is drawn first
+			DrawPendingFrame();
 			renderSystem->SwapCommandBuffers_FinishRendering( &time_frontend, &time_backend, &time_moc, &time_gpu, &stats_backend, &stats_frontend );
 		}
 		frameTiming.finishSyncTime = Sys_Microseconds();
+		const int frameAtSwap = renderSystem->GetFrameCount();	//puncho - E-R43-18: the swap's frame, tested before the list is drawn
 
 		// RB: slow down engine in background so it does not eat up so many resources along other 3D tools
 		if( !com_activeApp.GetBool() && !IsServer() /* and not VR */ )
@@ -1371,6 +1401,16 @@ void idCommonLocal::Frame()
 		}
 #endif
 		// RB end
+
+		//puncho start - E-R43-18 (Opus reviewer C of the R4.3 follow-up): a draw out of the frame's order since the swap above (a
+		// co-op wipe: StartWipe draws its own frame at once) swapped and drew a newer frame; the list the swap above returned is
+		// older, and drawing it now would draw it after that frame with no present between. It is dropped, as the error drop
+		// and the early returns above drop a list made stale
+		if( renderSystem->GetFrameCount() != frameAtSwap )
+		{
+			renderCommands = NULL;
+		}
+		//puncho end
 
 		// start the game / draw command generation thread going in the background
 		gameReturn_t ret = gameThread.RunGameAndDraw( numGameFrames, userCmdMgr, IsClient(), gameFrame - numGameFrames );
