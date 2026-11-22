@@ -47,6 +47,43 @@ If you have questions concerning this license or the applicable additional terms
 #include "Passes/VolumetricFogPass_cb.h"		//puncho - reconcile: keep X0's per-view "fog off" write
 
 idCVar r_useNewSsaoPass( "r_useNewSSAOPass", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "use the new SSAO pass from Donut" );
+
+// track F ( F7k ): neighbouring draws of one static vertex block whose index ranges touch, drawn as one
+idCVar r_joinDraws( "r_joinDraws", "1", CVAR_RENDERER | CVAR_BOOL, "draw neighbouring surfaces of one static vertex block whose indexes touch as one draw ( the depth pre-pass, shadow maps, the G-buffer fill ); 0 = a draw each" );
+
+/*
+==================
+RB_JoinTouching
+
+Track F ( F7k ): next joins the run that starts with first ( its first index at runIndexCache's offset, runNumIndexes long )
+when both are static, of one vertex block ( the same ambientCache, so the same base vertex ), of one entity, without joints,
+and next's indexes lie right after the run's or right before them. The caller has checked that next draws in this pass
+with first's state. A joined draw holds the members' triangles, each as its own draw would; only the draw count changes.
+==================
+*/
+static bool RB_JoinTouching( const drawSurf_t* first, vertCacheHandle_t& runIndexCache, int& runNumIndexes, const drawSurf_t* next )
+{
+	if( !r_joinDraws.GetBool() || next->space != first->space || next->ambientCache != first->ambientCache ||
+			first->jointCache != 0 || next->jointCache != 0 || !vertexCache.CacheIsStatic( first->ambientCache ) ||
+			!vertexCache.CacheIsStatic( runIndexCache ) || !vertexCache.CacheIsStatic( next->indexCache ) )
+	{
+		return false;
+	}
+	const uint64 runFirst = ( runIndexCache >> VERTCACHE_OFFSET_SHIFT ) & VERTCACHE_OFFSET_MASK;
+	const uint64 nextFirst = ( next->indexCache >> VERTCACHE_OFFSET_SHIFT ) & VERTCACHE_OFFSET_MASK;
+	if( nextFirst == runFirst + ( uint64 )runNumIndexes * sizeof( triIndex_t ) )
+	{
+		runNumIndexes += next->numIndexes;		// right after the run
+		return true;
+	}
+	if( nextFirst + ( uint64 )next->numIndexes * sizeof( triIndex_t ) == runFirst )
+	{
+		runIndexCache = next->indexCache;		// right before it
+		runNumIndexes += next->numIndexes;
+		return true;
+	}
+	return false;
+}
 extern DeviceManager* deviceManager;
 
 //puncho - owned by lane P; captured once for each backend command frame.
@@ -1060,8 +1097,34 @@ void idRenderBackend::FillDepthBufferFast( drawSurf_t** drawSurfs, int numDrawSu
 		// must render with less-equal for Z-Cull to work properly
 		assert( ( GL_GetCurrentState() & GLS_DEPTHFUNC_BITS ) == GLS_DEPTHFUNC_LESS );
 
+		// track F ( F7k ): with the next opaque surfaces of its static vertex block whose indexes touch, as one draw; no
+		// material is compared because this loop sets no per-material state for an opaque surface ( the MVP of its space
+		// and the depth shader only: review O2-S S-7 )
+		vertCacheHandle_t runIndexCache = surf->indexCache;
+		int runNumIndexes = surf->numIndexes;
+		while( surfNum + 1 < numDrawSurfs )
+		{
+			const drawSurf_t* next = drawSurfs[ surfNum + 1 ];
+			const materialCoverage_t nextCoverage = next->material->Coverage();
+			if( nextCoverage == MC_TRANSLUCENT || nextCoverage == MC_PERFORATED || !RB_JoinTouching( surf, runIndexCache, runNumIndexes, next ) )
+			{
+				break;
+			}
+			surfNum++;
+		}
+
 		// draw it solid
-		DrawElementsWithCounters( surf );
+		if( runNumIndexes != surf->numIndexes )
+		{
+			drawSurf_t joined = *surf;
+			joined.indexCache = runIndexCache;
+			joined.numIndexes = runNumIndexes;
+			DrawElementsWithCounters( &joined );
+		}
+		else
+		{
+			DrawElementsWithCounters( surf );
+		}
 
 		renderLog.CloseBlock();
 	}
@@ -1850,10 +1913,17 @@ void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const view
 	// are added single-threaded, and there is only a negligable amount
 	// of benefit to trying to sort by materials.
 	//---------------------------------
-	static const int MAX_INTERACTIONS_PER_LIGHT = 2048; // 1024 in BFG
-	static const int MAX_COMPLEX_INTERACTIONS_PER_LIGHT = 256;
-	idStaticList< const drawSurf_t*, MAX_INTERACTIONS_PER_LIGHT > allSurfaces;
-	idStaticList< const drawSurf_t*, MAX_COMPLEX_INTERACTIONS_PER_LIGHT > complexSurfaces;
+	// track F ( F7j ): no cap ( the idStaticLists of 2,048 and 256 dropped the rest of a light's surfaces unlit in a
+	// release build; a chunked floor under one light passes 256 ); the lists keep their memory between calls
+	idList< const drawSurf_t* >& allSurfaces = interactionSurfaces;
+	idList< const drawSurf_t* >& complexSurfaces = interactionComplexSurfaces;
+	if( allSurfaces.GetGranularity() != 1024 )		// F7m ( O1-S S-5, O2-S S-8 ): a light's first long chain grows in few steps;
+	{											// once, while empty ( SetGranularity resizes a list that holds memory )
+		allSurfaces.SetGranularity( 1024 );
+		complexSurfaces.SetGranularity( 1024 );
+	}
+	allSurfaces.SetNum( 0 );
+	complexSurfaces.SetNum( 0 );
 	for( const drawSurf_t* walk = surfList; walk != NULL; walk = walk->nextOnLight )
 	{
 		const idMaterial* surfaceShader = walk->material;
@@ -2111,6 +2181,9 @@ void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const view
 			const float* surfaceRegs = surf->shaderRegisters;
 
 			inter.surf = surf;
+
+			// track F ( F7m, review O2-S S-1 ): this pass does not join draws: its lookahead, run for every lit draw, cost
+			// more on many-light maps than the joins of lights that keep chunks whole saved
 
 			// change the MVP matrix, view/light origin and light projection vectors if needed
 			if( surf->space != currentSpace )
@@ -2675,6 +2748,32 @@ void idRenderBackend::AmbientPass( const drawSurf_t* const* drawSurfs, int numDr
 
 		drawInteraction_t inter = {};
 		inter.surf = drawSurf;
+
+		// track F ( F7l ): in the G-buffer fill, the next surfaces of the same material and registers whose indexes touch
+		// in one static vertex block with this one draw with it, through either path ( r_skipInteractionFastPath is 1 by
+		// default: the slow path ); the fill reads no light list ( review SD3 )
+		drawSurf_t joined;
+		if( fillGbuffer && r_joinDraws.GetBool() )		// F7m: no lookahead when joining is off
+		{
+			vertCacheHandle_t runIndexCache = drawSurf->indexCache;
+			int runNumIndexes = drawSurf->numIndexes;
+			while( i + 1 < numDrawSurfs )
+			{
+				const drawSurf_t* next = drawSurfs[ i + 1 ];
+				if( next->material != surfaceMaterial || next->shaderRegisters != surfaceRegs || !RB_JoinTouching( drawSurf, runIndexCache, runNumIndexes, next ) )
+				{
+					break;
+				}
+				i++;
+			}
+			if( runNumIndexes != drawSurf->numIndexes )
+			{
+				joined = *drawSurf;
+				joined.indexCache = runIndexCache;
+				joined.numIndexes = runNumIndexes;
+				inter.surf = &joined;
+			}
+		}
 
 		inter.diffuseColor[0] = inter.diffuseColor[1] = inter.diffuseColor[2] = inter.diffuseColor[3] = 1;
 		inter.specularColor[0] = inter.specularColor[1] = inter.specularColor[2] = inter.specularColor[3] = 0;
@@ -3883,8 +3982,38 @@ void idRenderBackend::ShadowMapPassFast( const drawSurf_t* drawSurfs, viewLight_
 		// must render with less-equal for Z-Cull to work properly
 		assert( ( GL_GetCurrentState() & GLS_DEPTHFUNC_BITS ) == GLS_DEPTHFUNC_LESS );
 
+		// track F ( F7k ): with the next casters of its static vertex block whose indexes touch, each drawn into this side
+		// and opaque, as one draw; no material is compared because this loop sets no per-material state for an opaque
+		// caster ( the MVP of its space and the depth shader only: review O2-S S-7 )
+		const drawSurf_t* runFirst = drawSurf;
+		vertCacheHandle_t runIndexCache = drawSurf->indexCache;
+		int runNumIndexes = drawSurf->numIndexes;
+		while( drawSurf->nextOnLight != NULL )
+		{
+			const drawSurf_t* next = drawSurf->nextOnLight;
+			const int nextBits = ( casterBits != NULL && casterIndex + 1 < vLight->numShadowCasterBits ) ? casterBits[casterIndex + 1] : SCB_SIDE_MASK;
+			const bool nextDrawn = ( casterBits == NULL || ( nextBits & casterMask ) == casterWant ) && next->numIndexes > 0 && next->material != NULL &&
+								  next->material->Coverage() != MC_TRANSLUCENT && next->material->Coverage() != MC_PERFORATED;
+			if( !nextDrawn || !RB_JoinTouching( runFirst, runIndexCache, runNumIndexes, next ) )
+			{
+				break;
+			}
+			drawSurf = next;
+			casterIndex++;
+		}
+
 		// draw it solid
-		DrawElementsWithCounters( drawSurf , true );
+		if( runNumIndexes != runFirst->numIndexes )
+		{
+			drawSurf_t joined = *runFirst;
+			joined.indexCache = runIndexCache;
+			joined.numIndexes = runNumIndexes;
+			DrawElementsWithCounters( &joined , true );
+		}
+		else
+		{
+			DrawElementsWithCounters( runFirst , true );
+		}
 
 		renderLog.CloseBlock();
 	}

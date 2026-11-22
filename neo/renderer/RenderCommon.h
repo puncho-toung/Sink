@@ -341,6 +341,7 @@ public:
 	areaReference_t* 		entityRefs;				// chain of all references
 	idInteraction* 			firstInteraction;		// doubly linked list
 	idInteraction* 			lastInteraction;
+	entitySurfLights_t* 	surfLights;				// track F ( F7 ): each surface's lights, while any has one ( Interaction.cpp )
 
 	bool					needsPortalSky;
 };
@@ -546,6 +547,7 @@ struct viewEntity_t
 	int					mocVerts;
 	int					mocTests;
 	int					mocCulled;
+	int					surfLightPairs;			// track F ( F7a ): pairs this entity's light loops visited, summed after the jobs
 
 	//puncho - model-job output only; pairs and total are derived at the serial merge.
 	int					shadowSideHist[6];
@@ -2084,6 +2086,8 @@ void				R_RemoveUnusedVerts( srfTriangles_t* tri );
 void				R_RangeCheckIndexes( const srfTriangles_t* tri );
 void				R_CreateVertexNormals( srfTriangles_t* tri );		// also called by dmap
 void				R_CleanupTriangles( srfTriangles_t* tri, bool createNormals, bool identifySilEdges, bool useUnsmoothedTangents, bool useMikktspace );
+void				R_DeriveAreaTangents( idRenderModel* model );	// track F ( F7e ): a world area's tangents across its surfaces
+void				R_CountAreaTangentSeams( const idRenderModel* model, int* numCopies, int* numDiffer );	// track F ( F7e ): for r_areaTangentsLog
 void				R_ReverseTriangles( srfTriangles_t* tri );
 
 // Only deals with vertexes and indexes, not silhouettes, planes, etc.
@@ -2101,6 +2105,8 @@ void				R_InitDrawSurfFromTri( drawSurf_t& ds, srfTriangles_t& tri, nvrhi::IComm
 // For static surfaces, the indexes, ambient, and shadow buffers can be pre-created at load
 // time, rather than being re-created each frame in the frame temporary buffers.
 void				R_CreateStaticBuffersForTri( srfTriangles_t& tri, nvrhi::ICommandList* commandList );
+// track F ( F7k ): a world area model's surfaces in shared static blocks ( tr_trisurf.cpp )
+void				R_CreateStaticBuffersForAreaModel( idRenderModel* model, nvrhi::ICommandList* commandList );
 
 // RB
 idVec3				R_ClosestPointPointTriangle( const idVec3& point, const idVec3& vertex1, const idVec3& vertex2, const idVec3& vertex3 );

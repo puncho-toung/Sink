@@ -224,6 +224,8 @@ struct performanceCounters_t
 	// ---- END TRACK V ----
 	uint64	usFindView;
 	uint64	usAddLights;
+	uint64	usAddModels;		// track F ( F7a ): R_AddModels, its jobs and the merge, summed over the frame's views
+	int		c_surfLightPairs;	// track F ( F7a ): surface-and-light pairs the model jobs' light loops visited
 	uint64	mocMicroSec;
 	uint64	frontEndMicroSec;	// sum of time in all RE_RenderScene's in a frame
 

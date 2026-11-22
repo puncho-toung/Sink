@@ -202,6 +202,9 @@ private:
 										  const float guiStereoScreenOffset, const int stereoEye, const bool stopAtFar );
 
 	void				RenderInteractions( const drawSurf_t* surfList, const viewLight_t* vLight, int depthFunc, bool performStencilTest, bool useLightDepthBounds, const interactionSort_t sortFilter );
+	// track F ( F7j ): RenderInteractions' lists of a light's lit surfaces, emptied per call, their memory kept
+	idList< const drawSurf_t* >	interactionSurfaces;
+	idList< const drawSurf_t* >	interactionComplexSurfaces;
 
 	// RB
 	void				AmbientPass( const drawSurf_t* const* drawSurfs, int numDrawSurfs, bool fillGbuffer );

@@ -110,6 +110,8 @@ struct srfTriangles_t
 	// data in vertex object space, not directly readable by the CPU
 	vertCacheHandle_t			indexCache;				// GL_INDEX_TYPE
 	vertCacheHandle_t			ambientCache;			// idDrawVert
+	int							staticBlockVertex;		// track F ( F7k ): the first vertex of this surface in its area's static block,
+														// which its static indexes count from; 0 when it has a block of its own
 
 	DISALLOW_COPY_AND_ASSIGN( srfTriangles_t );
 };

@@ -186,6 +186,9 @@ void idCommonLocal::LogMapRows( int tics, bool concurrencyStats ) //puncho - P0
 			{
 				mapRowsFile->Printf( ",jl%i_execUs,jl%i_wallUs,jl%i_waitUs,jl%i_jobs,jl%i_submits", i, i, i, i, i );
 			}
+			// track F ( F7a ): the model jobs' wall time and pairs; the GPU times of the frame's first depth pre-pass,
+			// forward pass and shadow atlas pass ( one frame old, as usGPU; a subview's, when a subview draws first, F7i O2-11 )
+			mapRowsFile->Printf( ",usAddModels,surfLightPairs,gpuDepth,gpuFwd,gpuShadow" );
 			mapRowsFile->Printf( "\n" );
 			//puncho end
 			mapRowsFlushTime = Sys_Milliseconds();
@@ -337,6 +340,10 @@ void idCommonLocal::LogMapRows( int tics, bool concurrencyStats ) //puncho - P0
 		}
 	}
 	//puncho end
+	length += idStr::snPrintf( row + length, sizeof( row ) - length, ",%llu,%i,%llu,%llu,%llu", ( unsigned long long )stats_frontend.usAddModels,		// track F ( F7a )
+							   stats_frontend.c_surfLightPairs, ( unsigned long long )GetRendererGpuEarlyZMicroseconds(),
+							   ( unsigned long long )GetRendererGpuForwardPassMicroseconds(), ( unsigned long long )GetRendererGpuShadowAtlasPassMicroseconds() );
+	assert( length < ( int )sizeof( row ) - 1 );		// review CN1-3: about 3.65 KB at most since F7a
 	row[length++] = '\n';
 	if( mapRowsUsed + length > ( int )sizeof( mapRowsBuffer ) )
 	{

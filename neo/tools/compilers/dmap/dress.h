@@ -77,9 +77,10 @@ void	DressDecalsPreOptimize( uEntity_t* e );
 // merge group back, so each projector is written as one surface
 void	DressDecalsPostTjunction( uEntity_t* e );
 
-// world-surface chunking (dress_chunk.cpp), from DressAreasPostOptimize: when the option
-// -chunkGrid or the worldspawn key chunkGrid asks for it, cuts every world group whose material
-// is lit, not discrete and not noFragment on the planes k * grid of each axis and gives each cell's piece a merge
+// world-surface chunking (dress_chunk.cpp), from DressAreasPostOptimize: at the grid the option
+// -chunkGrid or the worldspawn key chunkGrid names, else at 512 ( F7; 0 for no cut ), cuts every
+// world group whose material is lit, not discrete, not translucent and not noFragment on the
+// planes k * grid of each axis and gives each cell's piece a merge
 // group of its own, so each is written as its own surface; FixGlobalTjunctions, which runs next,
 // repairs the seams against the groups not cut
 void	DressChunkWorldSurfaces( uEntity_t* e );
