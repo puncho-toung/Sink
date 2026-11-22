@@ -186,14 +186,23 @@ static void R_RenderGuiSurf( idUserInterface* gui, const drawSurf_t* drawSurf )
 	R_MatrixMultiply( guiModelMatrix, drawSurf->space->modelMatrixRel, modelMatrixRel );
 
 	tr.guiRecursionLevel++;
+	//puncho start - L-D1 (E-R4-4; Opus reviewer C of the R4.3 follow-up): on every exit, also an error's (frame memory run
+	// out in the GUI's flush), the shared 2D model is emptied and the recursion level lowered. A model left full was flushed
+	// again by the error drop's swap into the same full frame memory, a second error that ended the process
+	struct guiSurfGuard_t
+	{
+		~guiSurfGuard_t()
+		{
+			tr.guiModel->Clear();
+			tr.guiRecursionLevel--;
+		}
+	} guiSurfGuard;
+	//puncho end
 
 	// call the gui, which will call the 2D drawing functions
 	tr.guiModel->Clear();
 	gui->Redraw( tr.viewDef->renderView.time[0] );
 	tr.guiModel->EmitToCurrentView( modelMatrixAbs, modelMatrixRel, drawSurf->space->weaponDepthHack );
-	tr.guiModel->Clear();
-
-	tr.guiRecursionLevel--;
 }
 
 /*

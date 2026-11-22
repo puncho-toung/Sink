@@ -213,7 +213,9 @@ protected:
 
 private:
 	friend class idFatalException;
-	static char error[MAX_ERROR_LEN];
+	//puncho - L-D1 (E-R4-4; Opus reviewers A and B of the R4.3 follow-up): one buffer for each thread. Job threads throw at
+	// once when frame memory runs out, and a catch copied another thread's text, or two texts mixed
+	static thread_local char error[MAX_ERROR_LEN];
 };
 
 /*

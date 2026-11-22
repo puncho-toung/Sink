@@ -112,6 +112,14 @@ public:
 	// Try to wait for the jobs in this list to finish but either way return immediately. Returns true if all jobs are done.
 	bool					TryWait();
 
+	//puncho - L-D1 (E-R4-4): true while this thread runs a job; idCommonLocal::Error then throws to the job's boundary
+	// instead of stopping the game
+	static bool				InsideJob();
+
+	//puncho - L-D1 (E-R4-4): waits as Wait does and drops an error a job kept, without raising it (a list freed or quieted
+	// after an error)
+	void					WaitAndDropError();
+
 	// returns true if the job list has been submitted.
 	bool					IsSubmitted() const;
 

@@ -945,6 +945,18 @@ void R_RenderView( viewDef_t* parms )
 {
 	// save view in case we are a subview
 	viewDef_t* oldView = tr.viewDef;
+	//puncho start - L-D1 (E-R4-4; the Fable reviewer of R4.3): tr.viewDef is set back whenever this function is left, also
+	// by an error raised inside it (an R_FrameAlloc that runs out). It pointed at the abandoned view's frame memory, and
+	// R_IssueEntityDefCallback hands tr.viewDef to the game
+	struct viewDefRestore_t
+	{
+		viewDef_t* view;
+		~viewDefRestore_t()
+		{
+			tr.viewDef = view;
+		}
+	} viewDefRestore = { oldView };
+	//puncho end
 
 	tr.viewDef = parms;
 

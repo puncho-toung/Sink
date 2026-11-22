@@ -396,6 +396,24 @@ public:
 
 	int						RunJobs( unsigned int threadNum, threadJobListState_t& state, bool singleJob );
 
+	//puncho start - L-D1 (E-R4-4): a job's error, kept by RunJobsInternal; read after Wait, when no job runs
+	bool					HasError() const
+	{
+		return errorTaken.GetValue() > 0;
+	}
+	idStr					TakeError()
+	{
+		const idStr text = errorText;
+		ClearError();
+		return text;
+	}
+	void					ClearError()
+	{
+		errorTaken.SetValue( 0 );
+		errorText[0] = '\0';
+	}
+	//puncho end
+
 private:
 	bool					threaded;
 	bool					done;
@@ -426,6 +444,9 @@ private:
 	jobListFrameStats_t				frameStats; //puncho - P0
 	threadStats_t						deferredThreadStats;
 	threadStats_t						threadStats;
+	//puncho - L-D1 (E-R4-4): the first error a job of this submission raised (errorTaken above 0), for the list's owner
+	jobListCounter_t					errorTaken;
+	char								errorText[idException::MAX_ERROR_LEN];
 
 	int						RunJobsInternal( unsigned int threadNum, threadJobListState_t& state, bool singleJob );
 
@@ -439,6 +460,10 @@ private:
 int idParallelJobList_Threads::JOB_SIGNAL;
 int idParallelJobList_Threads::JOB_SYNCHRONIZE;
 int idParallelJobList_Threads::JOB_LIST_DONE;
+
+//puncho - L-D1 (E-R4-4): how deep this thread is inside RunJobs (a job may run a job list of its own). While it is above
+// 0 idCommonLocal::Error raises nothing; it throws to the job's boundary in RunJobsInternal
+static thread_local int jobDepth = 0;
 
 /*
 ========================
@@ -593,6 +618,7 @@ void idParallelJobList_Threads::Submit( int parallelism ) //puncho - C1a
 
 	done = false;
 	currentJob.SetValue( 0 );
+	ClearError();	//puncho - L-D1 (E-R4-4): a new submission starts without an error
 
 	memset( &deferredThreadStats, 0, sizeof( deferredThreadStats ) );
 	deferredThreadStats.numExecutedJobs = jobList.Num() - numSyncs * 2;
@@ -904,7 +930,22 @@ int idParallelJobList_Threads::RunJobsInternal( unsigned int threadNum, threadJo
 #endif
 			uint64 jobStart = Sys_Microseconds();
 
-			jobList[state.nextJobIndex].function( jobList[state.nextJobIndex].data );
+			//puncho start - L-D1 (E-R4-4, E-TDM-1): an error raised in a job ended the process (idlib/Thread.cpp:257) or, on a
+			// thread that runs a list's jobs itself, unwound through this loop and left the list's counters behind. The first
+			// error of a submission is kept for the list's owner, which raises it again after Wait (idParallelJobList::Wait);
+			// the job counts as run, so the counters move on and Wait returns
+			try
+			{
+				jobList[state.nextJobIndex].function( jobList[state.nextJobIndex].data );
+			}
+			catch( idException& ex )
+			{
+				if( errorTaken.Increment() == 1 )
+				{
+					idStr::Copynz( errorText, ex.GetError(), sizeof( errorText ) );
+				}
+			}
+			//puncho end
 			jobList[state.nextJobIndex].executed = 1;
 
 			uint64 jobEnd = Sys_Microseconds();
@@ -966,7 +1007,9 @@ int idParallelJobList_Threads::RunJobs( unsigned int threadNum, threadJobListSta
 		return RUN_DONE;
 	}
 
+	jobDepth++;	//puncho - L-D1 (E-R4-4): idCommonLocal::Error throws to the job's boundary while this is above 0
 	int result = RunJobsInternal( threadNum, state, singleJob );
+	jobDepth--;
 
 	deferredThreadStats.threadTotalTime[threadNum] += Sys_Microseconds() - start;
 	//puncho - C1a: publish every write before Wait can observe retirement.
@@ -1046,6 +1089,48 @@ void idParallelJobList::Wait()
 	if( jobListThreads != NULL )
 	{
 		jobListThreads->Wait();
+		//puncho start - L-D1 (E-R4-4): a job of this submission raised an error; it is raised again here, on the list's
+		// owner. On the main thread idCommonLocal::Error stops the game, so every job list is done first; on another thread,
+		// or inside a job, it throws on up to that thread's boundary
+		if( jobListThreads->HasError() )
+		{
+			const idStr text = jobListThreads->TakeError();
+			if( idLib::IsMainThread() && !InsideJob() )
+			{
+				parallelJobManager->WaitForAllJobLists();
+			}
+			idLib::Error( "%s", text.c_str() );
+		}
+		//puncho end
+	}
+}
+
+/*
+========================
+idParallelJobList::InsideJob
+
+L-D1 (E-R4-4): true while this thread runs a job (RunJobs)
+========================
+*/
+bool idParallelJobList::InsideJob()
+{
+	return jobDepth > 0;
+}
+
+/*
+========================
+idParallelJobList::WaitAndDropError
+
+L-D1 (E-R4-4): waits as Wait does and drops an error a job kept, without raising it: for a list that is freed or quieted
+after an error, where an exception cannot pass
+========================
+*/
+void idParallelJobList::WaitAndDropError()
+{
+	if( jobListThreads != NULL )
+	{
+		jobListThreads->Wait();
+		jobListThreads->ClearError();
 	}
 }
 
@@ -1601,7 +1686,7 @@ void idParallelJobManagerLocal::FreeJobList( idParallelJobList* jobList )
 	}
 	int index = jobLists.FindIndex( jobList );
 	assert( index >= 0 && jobLists[index] == jobList );
-	jobLists[index]->Wait();
+	jobLists[index]->WaitAndDropError();	//puncho - L-D1 (E-R4-4): Wait may raise a kept error, and the list must still go
 	delete jobLists[index];
 	jobLists.RemoveIndexFast( index );
 }
@@ -1656,7 +1741,9 @@ void idParallelJobManagerLocal::WaitForAllJobLists()
 	// wait for all job lists to complete
 	for( int i = 0; i < jobLists.Num(); i++ )
 	{
-		jobLists[i]->Wait();
+		//puncho - L-D1 (E-R4-4): a wait that raises nothing: this runs before an error that is being raised already stops the
+		// game (idParallelJobList::Wait, idGameThread::RaiseError). A job's error kept by a list is dropped with it
+		jobLists[i]->WaitAndDropError();
 	}
 }
 

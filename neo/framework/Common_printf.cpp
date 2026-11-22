@@ -619,6 +619,22 @@ void idCommonLocal::Error( const char* fmt, ... )
 	static int	errorCount;
 	int			currentTime;
 
+	//puncho start - L-D1 (E-R4-4, E-TDM-1): off the main thread, or inside a job, nothing is raised here. Stop() below would
+	// unload the map under the main thread's draw, or under the other threads of the same job list (two job threads that
+	// ran out of frame memory at once unloaded it together and the process ended), and an exception that leaves a worker
+	// thread ends the process. The text goes up to the boundary of the job (idParallelJobList_Threads::RunJobsInternal) or
+	// of the game thread (idGameThread::Run), which keeps it; the main thread raises it again with this function
+	if( !idLib::IsMainThread() || idParallelJobList::InsideJob() )
+	{
+		char deferredText[idException::MAX_ERROR_LEN];
+		va_start( argptr, fmt );
+		idStr::vsnPrintf( deferredText, sizeof( deferredText ), fmt, argptr );
+		va_end( argptr );
+		deferredText[sizeof( deferredText ) - 1] = '\0';
+		throw idException( deferredText );
+	}
+	//puncho end
+
 	errorParm_t code = ERP_DROP;
 
 	// always turn this off after an error
@@ -783,7 +799,7 @@ static void PrintRelayTestJob( void* data )
 	}
 }
 REGISTER_PARALLEL_JOB( PrintRelayTestJob, "PrintRelayTestJob" );
-idCVar com_printRelayTest( "com_printRelayTest", "0", CVAR_SYSTEM | CVAR_INTEGER, "developer: emit N worker lines and two game-thread lines; -1 tests fatal thread handling" );
+idCVar com_printRelayTest( "com_printRelayTest", "0", CVAR_SYSTEM | CVAR_INTEGER, "developer: emit N worker lines and two game-thread lines; -1 throws in a job: the error is raised on the main thread and drops to the menu" );
 #endif
 
 void RunPrintRelayTest()
@@ -805,7 +821,17 @@ void RunPrintRelayTest()
 	idParallelJobList* jobs = parallelJobManager->AllocJobList( JOBLIST_UTILITY, JOBLIST_PRIORITY_LOW, 1, 0, NULL );
 	jobs->AddJob( PrintRelayTestJob, ( void* )&count );
 	jobs->Submit();
-	jobs->Wait();
+	//puncho - L-D1 (E-R4-4): the test job's error is raised by Wait, on this thread; the list is freed first, else every use
+	// of the test kept one of the manager's 32 lists
+	try
+	{
+		jobs->Wait();
+	}
+	catch( idException& )
+	{
+		parallelJobManager->FreeJobList( jobs );
+		throw;
+	}
 	parallelJobManager->FreeJobList( jobs );
 	gameLinesPending = true;
 #endif

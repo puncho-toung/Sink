@@ -241,6 +241,26 @@ void idGuiModel::EmitFullScreen( Framebuffer* renderTarget )
 
 	SCOPED_PROFILE_EVENT( "Gui::EmitFullScreen" );
 
+	//puncho start - L-D1 (E-R4-4; Opus reviewer A of the R4.3 follow-up): an error raised in here (frame memory run out:
+	// the 2D flush is often a frame's last allocation) leaves no 2D model and no view behind. The model is emptied, so that
+	// Frame's catch, whose swap flushes it again, finds nothing to flush: that second flush into the same full frame raised
+	// a second error out of the catch and ended the process. tr.viewDef is set back on every exit, as R_RenderView's is
+	struct emitGuard_t
+	{
+		idGuiModel* model;
+		viewDef_t* oldViewDef;
+		bool done;
+		~emitGuard_t()
+		{
+			tr.viewDef = oldViewDef;
+			if( !done )
+			{
+				model->Clear();
+			}
+		}
+	} emitGuard = { this, tr.viewDef, false };
+	//puncho end
+
 	viewDef_t* viewDef = ( viewDef_t* )R_ClearedFrameAlloc( sizeof( *viewDef ), FRAME_ALLOC_VIEW_DEF );
 	viewDef->is2Dgui = true;
 
@@ -360,6 +380,7 @@ void idGuiModel::EmitFullScreen( Framebuffer* renderTarget )
 	tr.viewDef = oldViewDef;
 
 	R_AddDrawViewCmd( viewDef, true );
+	emitGuard.done = true;	//puncho - L-D1 (E-R4-4)
 }
 
 // RB begin

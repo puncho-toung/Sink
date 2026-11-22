@@ -53,12 +53,21 @@ public:
 		userCmdMgr( NULL ),
 		ret(),
 		numGameFrames(),
-		isClient()
+		isClient(),
+		hasError( false )	//puncho - L-D1 (E-R4-4)
 	{}
 
 	// the gameReturn_t is from the previous frame, the
 	// new frame will be running in parallel on exit
 	gameReturn_t	RunGameAndDraw( int numGameFrames, idUserCmdMgr& userCmdMgr_, bool isClient_, int startGameFrame );
+
+	//puncho - L-D1 (E-R4-4): on the main thread after WaitForThread: RaiseError raises an error the game thread kept,
+	// ClearError drops it
+	void			RaiseError();
+	void			ClearError()
+	{
+		hasError = false;
+	}
 
 	// Accessors to the stored frame/thread time information
 	void			SetThreadTotalTime( const int inTime )
@@ -93,6 +102,7 @@ public:
 
 private:
 	virtual int	Run();
+	int				RunWork();	//puncho - L-D1 (E-R4-4): the work of Run, which keeps an error raised in it
 
 	int				gameTime;
 	int				drawTime;
@@ -103,6 +113,9 @@ private:
 	gameReturn_t	ret;
 	int				numGameFrames;
 	bool			isClient;
+	//puncho - L-D1 (E-R4-4): an error raised on the game thread, kept by Run for the main thread (RaiseError)
+	bool			hasError;
+	char			errorText[idException::MAX_ERROR_LEN];
 };
 
 enum errorParm_t

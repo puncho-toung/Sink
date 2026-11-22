@@ -45,7 +45,7 @@ int				idLib::frameNumber	= 0;
 bool			idLib::mainThreadInitialized = 0;
 ID_TLS			idLib::isMainThread = 0;
 
-char idException::error[2048];
+thread_local char idException::error[2048];	//puncho - L-D1 (E-R4-4): one buffer for each thread
 
 /*
 ================

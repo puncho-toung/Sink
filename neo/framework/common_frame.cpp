@@ -483,7 +483,48 @@ be called directly in the foreground thread for comparison.
 */
 extern void RunPrintRelayTest();
 
+//puncho start - L-D1 (E-R4-4, E-TDM-1): an idException that left this function on the game thread ended the process
+// (idlib/Thread.cpp:257). It is kept, and the main thread raises it again after WaitForThread (RaiseError). On the main
+// thread (com_smp 0) it goes on up as it always did: idCommonLocal::Error has stopped the game there
 int idGameThread::Run()
+{
+	try
+	{
+		return RunWork();
+	}
+	catch( idException& ex )
+	{
+		if( idLib::IsMainThread() )
+		{
+			throw;
+		}
+		idStr::Copynz( errorText, ex.GetError(), sizeof( errorText ) );
+		hasError = true;
+	}
+	return 0;
+}
+
+/*
+===============
+idGameThread::RaiseError
+
+On the main thread, after WaitForThread: an error the game thread kept is raised with idCommonLocal::Error, which stops the
+game and throws to Frame's catch. No job of a list the game thread submitted may still run when the map is unloaded
+===============
+*/
+void idGameThread::RaiseError()
+{
+	if( !hasError )
+	{
+		return;
+	}
+	hasError = false;
+	parallelJobManager->WaitForAllJobLists();
+	common->Error( "%s", errorText );
+}
+//puncho end
+
+int idGameThread::RunWork()
 {
 	InitGameThreadFpState(); //puncho - C1a: once per calling OS thread
 	RunPrintRelayTest();
@@ -1441,6 +1482,9 @@ void idCommonLocal::Frame()
 		// This may block if the game is taking longer than the render back end
 		gameThread.WaitForThread();
 		DrainPrintRelay();
+		//puncho - L-D1 (E-R4-4): an error the game thread kept (its tic's, or one of its front end's jobs') is raised here,
+		// on the main thread, into this function's catch; the frame it was drawing is never drawn
+		gameThread.RaiseError();
 		FlushTransitionTimeline();
 		Prefetch_Pump();
 		if( mapSpawned )
@@ -1571,6 +1615,7 @@ void idCommonLocal::Frame()
 		// entities", thrown from a console command). Take the waiting list off the renderer undrawn, as this function's
 		// early return does with a list that a transition's LeaveGame made stale
 		gameThread.WaitForThread();
+		gameThread.ClearError();	//puncho - L-D1 (E-R4-4): an error the game thread kept as well is dropped with this one
 		renderSystem->SwapCommandBuffers( &time_frontend, &time_backend, &time_moc, &time_gpu, &stats_backend, &stats_frontend );
 		//puncho end
 		// drop back to main menu

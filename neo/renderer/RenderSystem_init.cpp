@@ -1480,7 +1480,9 @@ void R_BakeEnd( bool printStages )
 		{
 			bakeLists[i]->Submit( NULL, JOBLIST_PARALLELISM_MAX_CORES );
 		}
-		bakeLists[i]->Wait();
+		//puncho - L-D1 (E-R4-4; Opus reviewer A of the R4.3 follow-up): R_BakeEnd runs from Frame's catch and at shutdown, where an
+		// error a job kept must not be raised: Wait would raise it
+		bakeLists[i]->WaitAndDropError();
 	}
 
 	// RA2-01: every job, face and output a bake left; empty after a bake that ended normally
