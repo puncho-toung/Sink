@@ -565,7 +565,7 @@ bool idRenderProgManager::CommitConstantBuffer( nvrhi::ICommandList* commandList
 		SelectUniforms( &renderParmSet, bindingLayoutType );
 
 		commandList->writeBuffer( constantBuffer[bindingLayoutType], &renderParmSet, layoutTypeAttributes[bindingLayoutType].rpBufSize );
-		frameCommits[bindingLayoutType]++;		// F3: one version of the layout's ring ( CheckFrameCommits )
+		frameCommits[ FroxelFogParmRing( bindingLayoutType ) ]++;		// F3: one version of the layout's ring ( CheckFrameCommits ); V5e: a fog twin's is its base's ( O2-1 )
 
 		uniformsChanged[bindingLayoutType] = false;
 

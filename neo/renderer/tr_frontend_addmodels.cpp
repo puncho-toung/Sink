@@ -56,6 +56,11 @@ idCVar r_forceShadowMapsOnAlphaTestedSurfaces( "r_forceShadowMapsOnAlphaTestedSu
 // foresthale 2014-11-24: cvar to control the material lod flags - this is the distance at which a mesh switches from lod1 to lod2, where lod3 will appear at this distance *2, lod4 at *4, and persistentLOD keyword will disable the max distance check (thus extending this LOD to all further distances, rather than disappearing)
 idCVar r_lodMaterialDistance( "r_lodMaterialDistance", "500", CVAR_RENDERER | CVAR_FLOAT, "surfaces further than this distance will use lower quality versions (if their material uses the lod1-4 keywords, persistentLOD disables the max distance checks)" );
 
+// renderer upgrade F6: the masked occlusion test of a surface draws its bounds grown by this margin. Every opaque world
+// surface is an occluder as well ( tr_frontend_masked_occlusion_culling.cpp ), so the box of a planar one lies on its own
+// occluder depth and rounding decided whether it was drawn: a chunked wall lost whole chunks, an unchunked one pixels
+idCVar r_mocSurfaceMargin( "r_mocSurfaceMargin", "1", CVAR_RENDERER | CVAR_FLOAT, "units the bounds of a surface are grown by for its masked occlusion test, so a surface is not hidden by its own occluder depth; 0 = the bounds as they are", 0.0f, 64.0f );
+
 static const float CHECK_BOUNDS_EPSILON = 1.0f;
 
 
@@ -833,7 +838,7 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 		//}
 
 		// RB: test surface visibility by drawing the triangles of the bounds
-		if( r_useMaskedOcclusionCulling.GetBool() && !viewInsideSurface && !viewDef->isMirror && !viewDef->isSubview )
+		if( surfaceDirectlyVisible && r_useMaskedOcclusionCulling.GetBool() && !viewInsideSurface && !viewDef->isMirror && !viewDef->isSubview )		// review O2-9
 		{
 			if( //!model->IsStaticWorldModel() &&
 				!renderEntity->weaponDepthHack && renderEntity->modelDepthHack == 0.0f )
@@ -853,6 +858,12 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 #endif
 				{
 					surfaceBounds = tri->bounds;
+				}
+
+				// renderer upgrade F6: off its own occluder depth ( r_mocSurfaceMargin )
+				if( r_mocSurfaceMargin.GetFloat() > 0.0f )
+				{
+					surfaceBounds.ExpandSelf( r_mocSurfaceMargin.GetFloat() );
 				}
 
 				// F1 ( impl/BUILD-AND-G0.md 10 ): like the light test, this test is formed in the

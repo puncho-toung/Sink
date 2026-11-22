@@ -106,6 +106,7 @@ idRenderLightLocal::idRenderLightLocal()
 	uniqueId				= 0;
 	areaNum					= 0;
 	lastModifiedFrameNum	= 0;
+	lastShapeFrameNum		= 0;		// TRACK V ( V5 )
 	lightShader				= NULL;
 	falloffImage			= NULL;
 	globalLightOrigin		= vec3_zero;

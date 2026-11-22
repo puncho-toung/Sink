@@ -166,7 +166,9 @@ void fhImmediateMode::End()
 	uint64 stateBits = backEnd.glStateBits;
 
 	int program = renderProgManager.CurrentProgram();
-	PipelineKey key{ stateBits, program, static_cast<int>( backEnd.depthBias ), backEnd.slopeScaleBias, backEnd.currentFrameBuffer };
+	// F5 ( review O2-5 of F4 ): the biases enter the key only with GLS_POLYGON_OFFSET, the only state the pipeline takes them in
+	const bool keyOffset = ( stateBits & GLS_POLYGON_OFFSET ) != 0;
+	PipelineKey key{ stateBits, program, keyOffset ? static_cast<int>( backEnd.depthBias ) : 0, keyOffset ? backEnd.slopeScaleBias : 0.0f, backEnd.currentFrameBuffer };
 	auto pipeline = backEnd.pipelineCache.GetOrCreatePipeline( key );
 
 	{

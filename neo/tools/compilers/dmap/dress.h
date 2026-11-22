@@ -39,12 +39,13 @@ If you have questions concerning this license or the applicable additional terms
 	scatter, smoothing, tessellation) and puts into the areas of the world.
 
 	ProcessModel calls the three dispatchers at fixed points of the pass order.
-	Each pass lives in its own file (dress_decal.cpp, later dress_scatter.cpp,
-	dress_smooth.cpp, dress_tess.cpp); dress.cpp holds only the dispatchers,
+	Each pass lives in its own file (dress_decal.cpp, dress_chunk.cpp, later
+	dress_scatter.cpp, dress_smooth.cpp, dress_tess.cpp); dress.cpp holds only the dispatchers,
 	the checks that warn about dmap_* material keywords no pass reads and
 	map-only entities no pass bakes, and DressSeed.
 
-	A pass collects the tris it generates and inserts them (AddMapTriToAreas)
+	A pass collects the tris it generates and inserts them (AddMapTriToAreas, or
+	whole groups, as dress_chunk.cpp does)
 	only after its walk of the areas is done, see the contract in dress.cpp.
 
 	World entity only: every dispatcher returns at once for any other entity.
@@ -75,6 +76,13 @@ void	DressDecalsPreOptimize( uEntity_t* e );
 // written with PROC_VERTEX_FORMAT_COLOR) and gives the fade band groups their projector's
 // merge group back, so each projector is written as one surface
 void	DressDecalsPostTjunction( uEntity_t* e );
+
+// world-surface chunking (dress_chunk.cpp), from DressAreasPostOptimize: when the option
+// -chunkGrid or the worldspawn key chunkGrid asks for it, cuts every world group whose material
+// is lit, not discrete and not noFragment on the planes k * grid of each axis and gives each cell's piece a merge
+// group of its own, so each is written as its own surface; FixGlobalTjunctions, which runs next,
+// repairs the seams against the groups not cut
+void	DressChunkWorldSurfaces( uEntity_t* e );
 
 // a seed for idRandom::SetSeed derived from map content only: the map entity index, the
 // primitive index inside that entity and a side (brush side, patch or mesh triangle) index.

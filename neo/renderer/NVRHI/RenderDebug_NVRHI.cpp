@@ -231,7 +231,7 @@ void idRenderBackend::DBG_ShowOverdraw()
 	}
 
 	// FIXME: can't frame alloc from the renderer back-end
-	drawSurf_t** newDrawSurfs = ( drawSurf_t** )R_FrameAlloc( numDrawSurfs + interactions * sizeof( newDrawSurfs[0] ), FRAME_ALLOC_DRAW_SURFACE_POINTER );
+	drawSurf_t** newDrawSurfs = ( drawSurf_t** )R_FrameAlloc( ( numDrawSurfs + interactions ) * sizeof( newDrawSurfs[0] ), FRAME_ALLOC_DRAW_SURFACE_POINTER );	// F5 ( review F1-5 ): pointers, not bytes
 
 	for( i = 0; i < numDrawSurfs; i++ )
 	{

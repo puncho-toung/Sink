@@ -90,6 +90,42 @@ float4 FroxelFogSample( float2 screenUV, float viewDepth )
 	return lerp( float4( 0.0, 0.0, 0.0, 1.0 ), fog, saturate( s ) );
 }
 
+// V5 ( D20 ): a translucent stage's colour ( linear ) seen through the fog between the camera and its own surface, by
+// the kind of blend the stage draws with ( RenderBackend.cpp, FroxelFogBlendKind ); fog is FroxelFogSample's. The
+// picture behind the stage was fogged by the apply to its own depth: what the blend keeps of it keeps that fog, and
+// what the stage adds is seen through the fog to the stage.
+//   0 adds: rgb T ( exact where the blend's source factor reads no colour; otherwise, and for a darkening ZERO,
+//     ONE_MINUS_SRC_COLOR, the stage fades out in the fog: not exact )
+//   1 lays over ( SRC_ALPHA, ONE_MINUS_SRC_ALPHA, or replaces ): rgb T + the in-scatter ( exact )
+//   2 lays over premultiplied ( ONE, ONE_MINUS_SRC_ALPHA ): rgb T + the in-scatter times alpha ( exact )
+//   3 filters ( the destination times rgb ): rgb T + 1 - T, the filter fading out in the fog. Not exact: the exact
+//     filter darkens only the light behind the stage and keeps the in-scatter in front of it, which a multiplying
+//     blend cannot
+//   4 filters twice ( the destination times 2 rgb ): rgb T + ( 1 - T ) / 2, the same
+// alpha stays as the stage made it: the blend's factors read it. Fog off ( T 1, no in-scatter ) returns the colour
+float4 FroxelFogTranslucent( float4 color, float4 fog, float kind )
+{
+	const int k = ( int )( kind + 0.5 );
+	float3 rgb = color.rgb * fog.a;
+	if( k == 1 )
+	{
+		rgb += fog.rgb;
+	}
+	else if( k == 2 )
+	{
+		rgb += fog.rgb * color.a;
+	}
+	else if( k == 3 )
+	{
+		rgb += 1.0 - fog.a;
+	}
+	else if( k == 4 )
+	{
+		rgb += 0.5 * ( 1.0 - fog.a );
+	}
+	return float4( rgb, color.a );
+}
+
 // the same for a pixel of the fog view, from its SV_Position: what a fogged pixel shader calls
 float4 FroxelFogSamplePixel( float2 svPosition, float viewDepth )
 {

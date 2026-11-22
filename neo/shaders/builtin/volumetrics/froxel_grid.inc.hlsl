@@ -32,6 +32,9 @@ struct froxelConstants_t
 	float4 skipParms;		// x = 1 where the inject skips the froxels no pixel's lookup reaches, y = a column's side in pixels, zw = the view's size in pixels
 	float4 pixelParms;		// xy = the projection's depth terms ( distance = x / ( depth + y ) ), zw = the view's first pixel in the render target
 	uint4 takeMask[8];		// a bit per light record, word w in [ w / 4 ][ w % 4 ]: set where the fog can take the record's light at all
+	// V4: the media
+	float4 mediaParms;		// x = 1 where the inject reads the media volume ( the media pass ran ), y = the furnace radiance ( a test input ), z = 1 on V4's path ( r_volumetricFogMedia: the resolve's medium per froxel and the mark volume ), w = the media in the view's list
+	float4 mediaParms2;		// x = the media that moved, came or went ( four boxes each in t_MediaMoved ), y = the fog lights' rate times the store scale, z = 1 / the fog lights' enter ramp, w = 1 where the inject takes fog lights ( V4b )
 };
 
 cbuffer c_Froxel : register( b1 )
@@ -54,12 +57,49 @@ float FroxelSliceFar( float k )
 }
 
 // the centre of a froxel in the relative frame: its column's centre, half way through its slice in the slice coordinate
-// ( V3: the inject's sample is this moved by the frame's jitter; the resolve reprojects the centre )
+// ( V3: the inject's sample is this moved by the frame's jitter; the resolve reprojects the centre; V4g: the media pass and
+// the fog lights take the medium here, review F1-1 )
 float3 FroxelCentre( uint3 froxelId )
 {
 	const float2 lateral = FroxelColumnLateral( float2( froxelId.xy ) + 0.5 );
 	const float3 ray = froxel.viewForward.xyz + lateral.x * froxel.viewRight.xyz - lateral.y * froxel.viewUp.xyz;
 	return froxel.viewOrigin.xyz + FroxelSliceFar( float( froxelId.z ) - 0.5 ) * ray;
+}
+
+// Whether a sphere ( xyz = its centre in the relative frame, w = 1 / r^2 ) misses every sample of a thread group of the
+// inject or the media pass. The group's samples lie in one plane across the view axis ( one slice, one depth ), in the
+// rectangle its 8 x 8 column centres span. A sphere with w = 0 ( a parallel light, an unbounded medium ) is never missed.
+// Every thread of the group computes the same answer ( V4: the inject's test of a record, shared with the media pass ).
+// offset is the samples' place in their columns: the frame's jitter for the inject's lights, 0 for the froxels' centres
+// ( V4g: where the media pass and the fog lights take the medium, review F1-1 )
+bool FroxelGroupMissesSphere( float4 sphere, uint2 groupId, float viewDepth, float2 offset )
+{
+	const float3 d = sphere.xyz - froxel.viewOrigin.xyz;
+	// the sphere's centre in the view frame: right, down, forward
+	const float3 centre = float3( dot( d, froxel.viewRight.xyz ), -dot( d, froxel.viewUp.xyz ), dot( d, froxel.viewForward.xyz ) );
+	const float2 first = FroxelColumnLateral( float2( groupId ) * 8.0 + 0.5 + offset ) * viewDepth;
+	const float2 last = FroxelColumnLateral( float2( groupId ) * 8.0 + 7.5 + offset ) * viewDepth;
+	const float2 gap = max( max( first - centre.xy, centre.xy - last ), 0.0 );
+	const float along = centre.z - viewDepth;
+	return ( dot( gap, gap ) + along * along ) * sphere.w > 1.0;
+}
+
+// V3: the last slice a pixel's lookup reads in a froxel's column: the farthest surface of the column and its eight
+// neighbours ( the apply's filter reads the neighbouring columns ), and one slice more ( it reads the two slices round a
+// pixel's depth ). columns is the columns kernel's texture ( froxel_columns.cs.hlsl; V4: shared by the inject and the
+// media pass )
+float FroxelColumnReach( Texture2D<float> columns, uint2 column )
+{
+	float farthest = 0.0;
+	for( int dy = -1; dy <= 1; dy++ )
+	{
+		for( int dx = -1; dx <= 1; dx++ )
+		{
+			const int2 c = clamp( int2( column ) + int2( dx, dy ), int2( 0, 0 ), int2( froxel.gridSize.xy ) - 1 );
+			farthest = max( farthest, columns.Load( int3( c, 0 ) ) );
+		}
+	}
+	return ceil( FroxelSliceOf( farthest, froxel.sliceParms.x, froxel.sliceParms.y ) - 0.5 ) + 1.0;
 }
 
 #endif // FROXEL_GRID_INC_HLSL

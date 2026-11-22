@@ -313,6 +313,7 @@ typedef struct
 
 	bool	bspAlternateSplitWeights;
 	idVec3	blockSize;			// size of the blocks used for splitting
+	int		chunkGrid;			// -chunkGrid: the world's lit surfaces are cut on this grid ( dress_chunk.cpp ), 0 = not cut, -1 = not given ( the worldspawn key chunkGrid decides )
 
 	int		totalInlinedModels;
 } dmapGlobals_t;

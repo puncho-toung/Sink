@@ -43,6 +43,7 @@ If you have questions concerning this license or the applicable additional terms
 #include <sys/DeviceManager.h>
 #include <nvrhi/utils.h>
 
+#include "VolumetricFog.h"		// TRACK V ( V5 ): R_FroxelFogTookFogLight ( FogAllLights )
 #include "Passes/VolumetricFogPass_cb.h"		//puncho - reconcile: keep X0's per-view "fog off" write
 
 idCVar r_useNewSsaoPass( "r_useNewSSAOPass", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "use the new SSAO pass from Donut" );
@@ -375,7 +376,7 @@ void idRenderBackend::BindVariableStageImage( const textureStage_t* texture, con
 idRenderBackend::PrepareStageTexturing
 ================
 */
-void idRenderBackend::PrepareStageTexturing( const shaderStage_t* pStage,  const drawSurf_t* surf )
+void idRenderBackend::PrepareStageTexturing( const shaderStage_t* pStage,  const drawSurf_t* surf, int fogKind )
 {
 	float useTexGenParm[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 
@@ -662,6 +663,13 @@ void idRenderBackend::PrepareStageTexturing( const shaderStage_t* pStage,  const
 		idLib::Warning( "Using GlassWarp! Please contact Brian!" );
 	}
 
+	// ---- TRACK V ( V5, V5e ): a fog twin reads the stage's blend kind from rpTexGen0Enabled.y, which no other program reads
+	// ( texture_color.vs and texture.vs read .x ); written with the vector, so a draw's parms change once ( review O2-2 ) ----
+	if( fogKind >= 0 )
+	{
+		useTexGenParm[1] = ( float )fogKind;
+	}
+	// ---- END TRACK V ----
 	SetVertexParm( RENDERPARM_TEXGEN_0_ENABLED, useTexGenParm );
 }
 
@@ -1233,6 +1241,8 @@ void idRenderBackend::DrawSingleInteraction( drawInteraction_t* din, bool useFas
 	// frontend lists gets exactly one interaction here ( one bump, one diffuse, one specular stage ), so the
 	// surface is drawn once. viewDef->listsBuilt, never the cvar ( C3 )
 	const bool forwardSurf = useIBL && viewDef->listsBuilt && din->surf->lightList != NULL && din->surf->lightList->run != NULL;
+	// F5 ( review F1-4 ): r_useLightGrid read once for this draw, so the set-up below and the program agree
+	const bool lightGridSurf = din->surf->area != NULL && r_useLightGrid.GetBool();
 	if( forwardSurf )
 	{
 		float surfLights[4];
@@ -1241,7 +1251,7 @@ void idRenderBackend::DrawSingleInteraction( drawInteraction_t* din, bool useFas
 	}
 	// ---- END TRACK F ----
 	// RB begin
-	if( useIBL && din->surf->area != NULL && r_useLightGrid.GetBool() )
+	if( useIBL && lightGridSurf )	// F5 ( review F1-4 ): read once above
 	{
 		// the bounds, their centre and the positions are relative to the render origin; cleared
 		// bounds ( .w = 0 ) were never converted, and the shaders then read none of them
@@ -1708,11 +1718,32 @@ void idRenderBackend::DrawSingleInteraction( drawInteraction_t* din, bool useFas
 	}
 	// RB end
 
+	// ---- TRACK V ( V5 ): the lit glass after the fog view's apply ( D83 ) takes the fog twin of the program chosen above,
+	// where it has one ( RenderProgs.h, FroxelFogTwin ). While the flag is up the legacy translucent interactions are the
+	// only draws of this function the rebind takes: the forward glass ( F4 ) comes here with setInteractionShader false
+	// and binds its own program below ( consultant CN2-3 ) ----
+	if( setInteractionShader && !useIBL && froxelFogTranslucent )
+	{
+		renderProgManager.BindShader_FroxelFogTwin();
+	}
+	// ---- END TRACK V ----
+
 	// ---- TRACK F: the forward program takes the place of the ambient program bound above ( F36 ) ----
 	if( forwardSurf )
 	{
 		const bool pbr = ( specUsage == TD_SPECULAR_PBR_RMAO || specUsage == TD_SPECULAR_PBR_RMAOD );
-		renderProgManager.BindShader_Forward( din->surf->jointCache != 0, pbr, din->surf->area != NULL && r_useLightGrid.GetBool() );
+		if( forwardTranslucent )
+		{
+			// F4 ( D50, C6 ): the listed glass, its lights alone, in the second state: tested against the opaque depth
+			// ( LESS ), added to what lies behind ( ONE, ONE ), no depth write, as RenderInteractions draws a translucent
+			// chain. Set here, after the ambient pass's loop has set its own
+			renderProgManager.BindShader_ForwardTranslucent( din->surf->jointCache != 0, pbr );
+			GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHMASK | GLS_DEPTHFUNC_LESS | GLS_STENCIL_FUNC_ALWAYS );
+		}
+		else
+		{
+			renderProgManager.BindShader_Forward( din->surf->jointCache != 0, pbr, lightGridSurf );
+		}
 	}
 	// ---- END TRACK F ----
 
@@ -2360,6 +2391,22 @@ AMBIENT PASS RENDERING
 =========================================================================================
 */
 
+// ---- TRACK F ( F4 ): the surfaces ForwardPass( translucent ) draws ----
+/*
+==================
+R_ForwardTranslucentSurf
+
+A view surface that ForwardPass( translucent ) draws: translucent, of sort SS_FAR or above, and listing lights ( the
+frontend lists a translucent surface's lights only then, R_LightListTakePair ). The same test of the list as
+DrawSingleInteraction's, after the material's, whose fields the loop reads anyway
+==================
+*/
+static bool R_ForwardTranslucentSurf( const drawSurf_t* surf )
+{
+	return surf->material->Coverage() == MC_TRANSLUCENT && surf->material->GetSort() >= SS_FAR && surf->lightList != NULL && surf->lightList->run != NULL;
+}
+// ---- END TRACK F ----
+
 /*
 ==================
 idRenderBackend::AmbientPass
@@ -2392,9 +2439,10 @@ void idRenderBackend::AmbientPass( const drawSurf_t* const* drawSurfs, int numDr
 
 	// track F ( F2 ): in a view with light lists this pass is the forward pass ( the lit surfaces' ambient term and
 	// their listed lights in one draw ), timed as such: the HUD's Forward row
-	const renderLogMainBlock_t litBlock = ( viewDef->listsBuilt && ( viewDef->renderView.rdflags & RDF_IRRADIANCE ) == 0 ) ? MRB_FORWARD_PASS : MRB_AMBIENT_PASS;
+	// F4: and when ForwardPass( translucent ) draws the listed glass through this loop, a block of its own ( D70 )
+	const renderLogMainBlock_t litBlock = forwardTranslucent ? MRB_FORWARD_TRANSLUCENT : ( ( viewDef->listsBuilt && ( viewDef->renderView.rdflags & RDF_IRRADIANCE ) == 0 ) ? MRB_FORWARD_PASS : MRB_AMBIENT_PASS );
 	renderLog.OpenMainBlock( fillGbuffer ? MRB_FILL_GEOMETRY_BUFFER : litBlock );
-	renderLog.OpenBlock( fillGbuffer ? "Fill_GeometryBuffer" : "Render_AmbientPass", colorBlue );
+	renderLog.OpenBlock( fillGbuffer ? "Fill_GeometryBuffer" : ( forwardTranslucent ? "Render_ForwardTranslucent" : "Render_AmbientPass" ), colorBlue );
 
 	// make sure rpWindowCoord is set even without post processing surfaces in the view
 	int x = viewDef->viewport.x1;
@@ -2416,7 +2464,7 @@ void idRenderBackend::AmbientPass( const drawSurf_t* const* drawSurfs, int numDr
 	}
 
 	// RB: TODO remove this
-	if( !fillGbuffer && r_useSSAO.GetBool() && r_ssaoDebug.GetBool() )
+	if( !fillGbuffer && r_useSSAO.GetBool() && r_ssaoDebug.GetBool() && !forwardTranslucent )		// F4: the glass's call draws no debug quad
 	{
 		GL_State( GLS_DEPTHMASK | GLS_DEPTHFUNC_ALWAYS | GLS_CULL_TWOSIDED );
 
@@ -2534,9 +2582,16 @@ void idRenderBackend::AmbientPass( const drawSurf_t* const* drawSurfs, int numDr
 		const drawSurf_t* drawSurf = drawSurfs[i];
 		const idMaterial* surfaceMaterial = drawSurf->material;
 
+		// ---- TRACK F ( F4 ): ForwardPass( translucent ) draws the listed glass and nothing else ----
+		if( forwardTranslucent && !R_ForwardTranslucentSurf( drawSurf ) )
+		{
+			continue;
+		}
+		// ---- END TRACK F ----
+
 		// translucent surfaces don't put anything in the depth buffer and don't
 		// test against it, which makes them fail the mirror clip plane operation
-		if( surfaceMaterial->Coverage() == MC_TRANSLUCENT )
+		if( surfaceMaterial->Coverage() == MC_TRANSLUCENT && !forwardTranslucent )
 		{
 			continue;
 		}
@@ -2848,24 +2903,52 @@ void idRenderBackend::AmbientPass( const drawSurf_t* const* drawSurfs, int numDr
 ==================
 idRenderBackend::ForwardPass
 
-X0 seam ( H1, D37 ): the lit opaque pass and, from F4 on, the lit translucent pass. The translucent call draws
-nothing yet. It opens no main block.
+X0 seam ( H1, D37 ): the lit opaque pass and, from F4 on, the lit translucent pass. It opens no main block: the
+ambient pass's loop does.
 
 F2: the opaque call is the ambient pass's loop, in which a surface that lists lights is drawn by the forward
 program instead of the ambient program ( DrawSingleInteraction ). Here, once per view, what that program needs
 beyond the ambient pass's own parms and images: the view's lanes and the two image units the ambient pass
 never binds. A view without lists ( viewDef->listsBuilt false ) is the ambient pass as it was.
+
+F4 ( D50, D83, C6 ): the translucent call, after the fog apply and the legacy pass's translucent chains, is the same
+loop in a mode of its own ( forwardTranslucent ): it draws only the view surfaces that are translucent, of sort
+SS_FAR or above, and list lights, with the translucent program, in the second state and in the block
+MRB_FORWARD_TRANSLUCENT. A view that lists no such surface returns before any of it and opens no block. An
+RDF_NOAMBIENT view lists nothing ( C5 ), so its glass keeps the legacy pass's light.
 ==================
 */
 void idRenderBackend::ForwardPass( const drawSurf_t* const* drawSurfs, int numDrawSurfs, bool translucent )
 {
-	if( translucent )
-	{
-		return;
-	}
-
 	// ---- TRACK F ( F2 ): the forward program's lanes and images of this view ----
 	const lightListView_t* llv = viewDef->lightListView;
+	int glassFirst = 0;
+	if( translucent )
+	{
+		// F4: only a view with lists has listed glass; the legacy pass's switches hold for the forward glass too
+		if( !viewDef->listsBuilt || llv == NULL || r_skipInteractions.GetBool() || r_skipTranslucent.GetBool() )
+		{
+			return;
+		}
+		// the glass sorts last: R_SortDrawSurfs orders the view's surfaces by drawSurf_t::sort, the material's sort for
+		// every 3D surface, so only the tail of sort SS_FAR and above is scanned, and only it goes to the loop
+		glassFirst = numDrawSurfs;
+		while( glassFirst > 0 && drawSurfs[glassFirst - 1]->sort >= SS_FAR )
+		{
+			glassFirst--;
+		}
+		bool anyGlass = false;
+		for( int i = glassFirst; i < numDrawSurfs && !anyGlass; i++ )
+		{
+			anyGlass = R_ForwardTranslucentSurf( drawSurfs[i] );
+		}
+		if( !anyGlass )
+		{
+			return;
+		}
+		// the legacy pass's translucent chains, drawn just before, left their last light's scissor behind
+		ResetViewportAndScissorToDefaultCamera( viewDef );
+	}
 	if( viewDef->listsBuilt && llv != NULL )
 	{
 		float zbinParms[4];
@@ -2875,14 +2958,29 @@ void idRenderBackend::ForwardPass( const drawSurf_t* const* drawSurfs, int numDr
 		renderProgManager.SetUniformValue( RENDERPARM_ZBINSCALE, zbinScale );
 		// the tiles count from the view's own corner; the surface's stage colours reach the loop times r_lightScale
 		// ( the ambient pass's modifiers ), which a record's colour already holds; in the twin mode the legacy pass
-		// lights the listed pairs and the loop adds nothing
-		const float forwardView[4] = { ( float )viewDef->viewport.x1, ( float )viewDef->viewport.y1, 1.0f / Max( llv->lightScale, 0.001f ), ( llv->twin && !lightDiffPassA ) ? 1.0f : 0.0f };
+		// lights the listed pairs and the loop adds nothing. F5 ( review O1-6 of F4 ): with r_skipInteractions the loop
+		// adds nothing either, as the legacy pass and the glass draw nothing, and the ambient term stays
+		const bool addNoLight = ( llv->twin && !lightDiffPassA ) || r_skipInteractions.GetBool();
+		const float forwardView[4] = { ( float )viewDef->viewport.x1, ( float )viewDef->viewport.y1, 1.0f / Max( llv->lightScale, 0.001f ), addNoLight ? 1.0f : 0.0f };
 		renderProgManager.SetUniformValue( RENDERPARM_FORWARDVIEW, forwardView );
 		// the shadow lookup's constants, each as RenderInteractions sets its own for an atlas light: the bias scales
 		// ( rpScreenCorrectionFactor.w there ), the sample count ( rpJitterTexScale.w ), the texel step ( 1 / atlas
 		// size times the jitter scale: rpScreenCorrectionFactor.z x rpJitterTexScale.x ), the noise scale and the
-		// frame index ( rpJitterTexOffset.x and .w )
-		const float shadowBias[4] = { r_shadowMapSunDepthBiasScale.GetFloat(), r_shadowMapRegularDepthBiasScale.GetFloat(), ( float )r_shadowMapSplits.GetInteger(), 0.0f };
+		// frame index ( rpJitterTexOffset.x and .w ). F4: then the sun's rows, as many as the frontend gave record 0
+		// ( its cascades: frame data, not r_shadowMapSplits, which may have changed since ), and the sun's fade to
+		// unshadowed on its last shadow LOD ( rpJitterTexScale.z there ), which its rows cannot carry: a sun's row holds
+		// its cascade's far end in w ( C2 )
+		float sunFade = 0.0f;
+		for( const viewLight_t* vLight = viewDef->viewLights; vLight != NULL; vLight = vLight->next )
+		{
+			if( vLight->recordNumber == 0 )
+			{
+				sunFade = vLight->shadowFadeOut;
+				break;
+			}
+		}
+		const float sunRows = ( llv->tables.numRecords > 0 ) ? ( float )llv->rowsOfRecord[0] : 0.0f;
+		const float shadowBias[4] = { r_shadowMapSunDepthBiasScale.GetFloat(), r_shadowMapRegularDepthBiasScale.GetFloat(), sunRows, sunFade };
 		renderProgManager.SetUniformValue( RENDERPARM_SHADOWBIAS, shadowBias );
 		const float shadowFilter[4] = { ( float )r_shadowMapSamples.GetInteger(), ( 1.0f / r_shadowMapAtlasSize.GetInteger() ) * r_shadowMapJitterScale.GetFloat(),
 										1.0f / globalImages->blueNoiseImage256->GetUploadWidth(), r_shadowMapRandomizeJitter.GetBool() ? ( float )( tr.frameCount % 64 ) : 0.0f
@@ -2896,7 +2994,9 @@ void idRenderBackend::ForwardPass( const drawSurf_t* const* drawSurfs, int numDr
 	}
 	// ---- END TRACK F ----
 
-	AmbientPass( drawSurfs, numDrawSurfs, false );
+	forwardTranslucent = translucent;			// F4: the glass's call takes only the listed glass ( AmbientPass, DrawSingleInteraction )
+	AmbientPass( drawSurfs + glassFirst, numDrawSurfs - glassFirst, false );
+	forwardTranslucent = false;
 }
 
 // RB end
@@ -4292,6 +4392,12 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 				failedNum++;
 				continue;
 			}
+			// ---- TRACK V ( V5, row 66 ): this side's texels, where the light lights only the fog ----
+			if( R_ViewLightLightsOnlyFog( vLight ) )
+			{
+				pc.c_shadowAtlasFogOnlyTexels += vLight->imageSize.x * vLight->imageSize.y;
+			}
+			// ---- END TRACK V ----
 
 			if( tileCopied != NULL && tileCopied[tileIndex] != 0 )
 			{
@@ -4326,6 +4432,21 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 		{
 			vLight->imageSize.x = -1;
 		}
+
+		// ---- TRACK V ( V5, row 66 ): what the fog takes of the atlas. A light that lights only the fog and has all its places
+		// ( its texels are counted per side above ); a light with surfaces that the atlas refused ( shadows its surfaces lost ) ----
+		if( R_ViewLightLightsOnlyFog( vLight ) )
+		{
+			if( imageFitsIntoAtlas )
+			{
+				pc.c_shadowAtlasFogOnlyLights++;
+			}
+		}
+		else if( !imageFitsIntoAtlas )
+		{
+			pc.c_shadowAtlasSurfaceRefused++;
+		}
+		// ---- END TRACK V ----
 
 		renderLog.CloseBlock();
 	}
@@ -4832,7 +4953,7 @@ void idRenderBackend::DrawTranslucentInteractions( const viewDef_t* _viewDef )
 		ResetViewportAndScissorToDefaultCamera( _viewDef );
 
 		renderLog.OpenBlock( "Translucent Interactions", colorCyan );
-		// ---- TRACK V ( V5 ): the fog view binds the INTERACTION_SM_FOG twins for these draws ( D83 ) ----
+		// ---- TRACK V ( V5 ): these draws take their programs' fog twins in the fog view, in DrawSingleInteraction ( D83 ) ----
 		// ---- END TRACK V ----
 		RenderInteractions( vLight->translucentInteractions, vLight, GLS_DEPTHFUNC_LESS, false, false, INTERACTION_SORT_FAR_AND_ABOVE );
 		renderLog.CloseBlock();
@@ -4851,6 +4972,61 @@ NON-INTERACTION SHADER PASSES
 
 =============================================================================================
 */
+
+// ---- TRACK V ( V5 ) ----
+/*
+=====================
+FroxelFogBlendKind
+
+How a translucent stage drawn after the fog view's apply is fogged by its own shader ( froxel_fog.inc.hlsl,
+FroxelFogTranslucent ), from the blend it draws with. The picture behind it was fogged by the apply to its own
+depth, so what the blend keeps of it keeps that fog, and what the stage adds is seen through the fog to the
+stage. -1: every blend not listed below ( a destination-alpha source, ONE with SRC_ALPHA, ... ), and a blend op
+other than add: drawn unfogged ( review O1-8 ).
+0 adds ( destination factor ONE ): exact where the source factor reads no colour ( ONE, SRC_ALPHA,
+ONE_MINUS_SRC_ALPHA ); with a source factor that reads a colour ( DST_COLOR, ONE_MINUS_DST_COLOR ), and
+for ZERO or ONE with ONE_MINUS_SRC_COLOR ( a darkening, a screen; V5f, F1-5 ), the stage fades out in the fog instead, which is not exact
+( consultant CN1-1 ). 1 lays over ( SRC_ALPHA with ONE_MINUS_SRC_ALPHA, or ONE with ZERO ), 2 lays over
+premultiplied ( ONE with ONE_MINUS_SRC_ALPHA ): exact. 3 filters ( DST_COLOR with ZERO, ZERO with SRC_COLOR ), 4
+filters twice ( DST_COLOR with SRC_COLOR ): they fade out, not exact. ( ZERO with ONE, "blend none", never draws:
+the stage loop skips it first. )
+=====================
+*/
+static int FroxelFogBlendKind( const uint64 stateBits )
+{
+	if( ( stateBits & GLS_BLENDOP_BITS ) != GLS_BLENDOP_ADD )
+	{
+		return -1;
+	}
+	const uint64 src = stateBits & GLS_SRCBLEND_BITS;
+	const uint64 dst = stateBits & GLS_DSTBLEND_BITS;
+	if( src == GLS_SRCBLEND_DST_ALPHA || src == GLS_SRCBLEND_ONE_MINUS_DST_ALPHA )
+	{
+		return -1;
+	}
+	if( dst == GLS_DSTBLEND_ONE || ( ( src == GLS_SRCBLEND_ZERO || src == GLS_SRCBLEND_ONE ) && dst == GLS_DSTBLEND_ONE_MINUS_SRC_COLOR ) )		// V5f: and the screen blend ( F1-5 )
+	{
+		return 0;
+	}
+	if( ( src == GLS_SRCBLEND_SRC_ALPHA && dst == GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA ) || ( src == GLS_SRCBLEND_ONE && dst == GLS_DSTBLEND_ZERO ) )
+	{
+		return 1;
+	}
+	if( src == GLS_SRCBLEND_ONE && dst == GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA )
+	{
+		return 2;
+	}
+	if( ( src == GLS_SRCBLEND_DST_COLOR && dst == GLS_DSTBLEND_ZERO ) || ( src == GLS_SRCBLEND_ZERO && dst == GLS_DSTBLEND_SRC_COLOR ) )
+	{
+		return 3;
+	}
+	if( src == GLS_SRCBLEND_DST_COLOR && dst == GLS_DSTBLEND_SRC_COLOR )
+	{
+		return 4;
+	}
+	return -1;
+}
+// ---- END TRACK V ----
 
 /*
 =====================
@@ -5153,6 +5329,13 @@ int idRenderBackend::DrawShaderPasses( const drawSurf_t* const* const drawSurfs,
 					}
 				}
 
+				// ---- TRACK V ( V5f, review F1-1 ): a stage with a program of its own has no fog twin ----
+				if( froxelFogTranslucent && froxelFogLightsTaken )
+				{
+					pc.c_fogStagesUnfogged++;
+				}
+				// ---- END TRACK V ----
+
 				// draw it
 				DrawElementsWithCounters( surf );
 
@@ -5201,6 +5384,18 @@ int idRenderBackend::DrawShaderPasses( const drawSurf_t* const* const drawSurfs,
 
 			renderLog.OpenBlock( "Standard Shader Stage", colorGreen );
 			GL_Color( color );
+
+			// ---- TRACK V ( V5 ): after the fog view's apply a world stage is fogged by its own shader ( D20, D35 ); a gui
+			// surface ( sort SS_GUI ) and a cinematic stay as they were, and so does a stage whose texgen makes
+			// PrepareStageTexturing bind a program of its own ( a reflection or sky cube: consultant CN1-2 ) ----
+			const bool fogTexgen = pStage->texture.texgen == TG_EXPLICIT || pStage->texture.texgen == TG_SCREEN || pStage->texture.texgen == TG_SCREEN2;
+			const int fogKind = ( froxelFogTranslucent && fogTexgen && !surf->space->isGuiSurface && !pStage->texture.cinematic ) ? FroxelFogBlendKind( stageGLState ) : -1;
+			// V5f ( review F1-1 ): a stage drawn unfogged where the fog lights are the froxel fog's lost the fog the fog pass gave it
+			if( froxelFogTranslucent && froxelFogLightsTaken && fogKind < 0 )		// gui surfaces too ( V5g, R-2 )
+			{
+				pc.c_fogStagesUnfogged++;
+			}
+			// ---- END TRACK V ----
 
 			if( surf->space->isGuiSurface )
 			{
@@ -5253,7 +5448,14 @@ int idRenderBackend::DrawShaderPasses( const drawSurf_t* const* const drawSurfs,
 			}
 			else if( ( pStage->texture.texgen == TG_SCREEN ) || ( pStage->texture.texgen == TG_SCREEN2 ) )
 			{
-				renderProgManager.BindShader_TextureTexGenVertexColor();
+				if( fogKind >= 0 )
+				{
+					renderProgManager.BindShader_TextureTexGenVertexColorFog();		// TRACK V ( V5 )
+				}
+				else
+				{
+					renderProgManager.BindShader_TextureTexGenVertexColor();
+				}
 			}
 			else if( pStage->texture.cinematic )
 			{
@@ -5263,11 +5465,25 @@ int idRenderBackend::DrawShaderPasses( const drawSurf_t* const* const drawSurfs,
 			{
 				if( surf->jointCache )
 				{
-					renderProgManager.BindShader_TextureVertexColorSkinned();
+					if( fogKind >= 0 )
+					{
+						renderProgManager.BindShader_TextureVertexColorSkinnedFog();		// TRACK V ( V5 )
+					}
+					else
+					{
+						renderProgManager.BindShader_TextureVertexColorSkinned();
+					}
 				}
 				else
 				{
-					renderProgManager.BindShader_TextureVertexColor();
+					if( fogKind >= 0 )
+					{
+						renderProgManager.BindShader_TextureVertexColorFog();		// TRACK V ( V5 )
+					}
+					else
+					{
+						renderProgManager.BindShader_TextureVertexColor();
+					}
 				}
 			}
 
@@ -5286,7 +5502,7 @@ int idRenderBackend::DrawShaderPasses( const drawSurf_t* const* const drawSurfs,
 			// set the state
 			GL_State( stageGLState );
 
-			PrepareStageTexturing( pStage, surf );
+			PrepareStageTexturing( pStage, surf, fogKind );		// TRACK V ( V5e ): the blend kind for a fog twin
 
 			// draw it
 			DrawElementsWithCounters( surf );
@@ -5664,6 +5880,14 @@ void idRenderBackend::FogAllLights()
 	{
 		if( vLight->lightShader->IsFogLight() )
 		{
+			// ---- TRACK V ( V5, D21, D29 ): a fog light the froxel fog took in this view is its medium now ----
+			if( froxelFogLightsTaken && R_FroxelFogTookFogLight( viewDef, vLight ) )
+			{
+				pc.c_fogLightsFroxel++;
+				continue;
+			}
+			pc.c_fogLightsFogPass++;
+			// ---- END TRACK V ----
 			FogPass( vLight->globalInteractions, vLight->localInteractions, vLight );
 		}
 		else if( vLight->lightShader->IsBlendLight() )
@@ -6544,6 +6768,12 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 		}
 	}
 
+	// ---- TRACK V ( V5 ): no draw of this view binds a fog twin before its apply has written the parms ( B22 ), and the fog
+	// pass draws every fog light until the apply says which the froxel fog took ----
+	froxelFogTranslucent = false;
+	froxelFogLightsTaken = false;
+	// ---- END TRACK V ----
+
 	// X0 ( D66, B22 ): a binding set that holds a volatile constant buffer which was not written in this command
 	// list is a fatal error at the draw. Every 3D view therefore starts with "fog off"; the fog pass ( V1 )
 	// overwrites it at the apply slot of the one view that has fog.
@@ -6997,6 +7227,8 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 			DrawTranslucentInteractions( _viewDef );
 			renderLog.CloseMainBlock( MRB_DRAW_INTERACTIONS_TRANSLUCENT );
 		}
+		// F4 ( D70 b ): the forward glass draws after this pair, so the pair is followed by a reset of its own
+		ResetGraphicsStateCache();
 		//puncho - reconcile: account for the renderer upgrade pass.
 		if( concurrencyStats )
 		{
@@ -7004,10 +7236,11 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 		}
 		{
 			OPTICK_GPU_EVENT( "Render_ForwardTranslucent" );
-			// probe bakes keep the ambient pass ( D6 ); F4 must also decide what an RDF_NOAMBIENT view draws here
+			// probe bakes keep the ambient pass ( D6 ); an RDF_NOAMBIENT view lists nothing ( C5 ), so ForwardPass draws
+			// nothing there and its glass keeps the legacy light drawn above ( F4 )
 			if( !( _viewDef->renderView.rdflags & RDF_IRRADIANCE ) )
 			{
-				ForwardPass( drawSurfs, numDrawSurfs, true );		// draws nothing until F4, which opens MRB_FORWARD_TRANSLUCENT
+				ForwardPass( drawSurfs, numDrawSurfs, true );		// F4: the listed glass, in MRB_FORWARD_TRANSLUCENT
 			}
 		}
 		ResetGraphicsStateCache();
@@ -7027,6 +7260,14 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 		}
 		renderLog.CloseMainBlock( MRB_DRAW_SHADER_PASSES );
 	}
+	// ---- TRACK V ( V5 ): the fog lights and the post-process surfaces draw unfogged, as before V5: a post-process
+	// surface reads the picture, which the apply fogged already. A fog probe under way reads the picture first ----
+	if( volumetricFogPass && volumetricFogPass->ProbeStageTranslucent( commandList, _viewDef ) )
+	{
+		ResetGraphicsStateCache();		// V5e ( review O2-5 ): the copy ended the render pass
+	}
+	froxelFogTranslucent = false;
+	// ---- END TRACK V ----
 
 	//-------------------------------------------------
 	// use direct light and emissive light contributions to add indirect screen space light

@@ -774,6 +774,26 @@ float idConsoleLocal::DrawFPS( float y )
 		}
 		// ---- END TRACK F ----
 		// ---- TRACK V: HUD rows ----
+		// V5 ( D21 ): the frame's fog lights: those the froxel fog drew as media and those the fog pass drew ( beyond the fog's
+		// reach, a texture matrix, "volumetric" 2, another spectrum, a parallel fog light, or a view without the froxel fog )
+		// ( shown only with the froxel fog on: with it off the fog pass draws every fog light, as before V5 )
+		const bool froxelFogOn = cvarSystem->GetCVarBool( "r_volumetricFog" );
+		if( froxelFogOn && commonLocal.stats_backend.c_fogLightsFroxel + commonLocal.stats_backend.c_fogLightsFogPass > 0 )
+		{
+			// V5f ( reviews F1-1, F1-3 ): the stages after the apply that the swap left unfogged, and the fog portals the medium's
+			// rule decided and of those the ones it never culls
+			ImGui::TextColored( colorLtGrey, "FOGLIGHTS: froxel:%i fogpass:%i unfogged:%i portals:%i nocull:%i",
+								commonLocal.stats_backend.c_fogLightsFroxel, commonLocal.stats_backend.c_fogLightsFogPass, commonLocal.stats_backend.c_fogStagesUnfogged,
+								commonLocal.stats_frontend.c_fogPortalsMedium, commonLocal.stats_frontend.c_fogPortalsNeverCulled );
+		}
+		// V5 ( row 66 ): the atlas's places taken by lights that light only the fog, as a share of the atlas, and the lights with
+		// surfaces it refused: whether surfaces lose their shadows to the fog
+		if( froxelFogOn && ( commonLocal.stats_backend.c_shadowAtlasFogOnlyLights > 0 || commonLocal.stats_backend.c_shadowAtlasFogOnlyTexels > 0 || commonLocal.stats_backend.c_shadowAtlasSurfaceRefused > 0 ) )
+		{
+			const int fogOnlyPercentage = idMath::Ftoi( 100.0f * ( commonLocal.stats_backend.c_shadowAtlasFogOnlyTexels / ( float )Square( r_shadowMapAtlasSize.GetInteger() ) ) );
+			ImGui::TextColored( colorLtGrey, "FOGATLAS: fog-only lights:%i usage:%2i%% surface lights refused:%i",
+								commonLocal.stats_backend.c_shadowAtlasFogOnlyLights, fogOnlyPercentage, commonLocal.stats_backend.c_shadowAtlasSurfaceRefused );
+		}
 		// ---- END TRACK V ----
 		ImGui::TextColored( frameBusyTime > maxTime || rendererGPUTime > maxTime ? colorRed : colorWhite, "Total:   %5lld us   Total:        %5lld us", frameBusyTime, rendererGPUTime );
 		ImGui::TextColored( colorWhite,														"Idle:    %5lld us   Idle:         %5lld us", frameIdleTime, rendererGPUIdleTime );

@@ -44,6 +44,12 @@ Texture2D				t_LightProjection	: register( t4 VK_DESCRIPTOR_SET( 2 ) );
 SamplerState			s_Material : register( s0 VK_DESCRIPTOR_SET( 3 ) ); // for the normal/specular/basecolor
 SamplerState 			s_Lighting : register( s1 VK_DESCRIPTOR_SET( 3 ) ); // for sampling the jitter
 
+#if defined( USE_FROXEL_FOG ) && USE_FROXEL_FOG
+	// the froxel fog permutation ( D33 ): the lit glass after the fog view's apply ( V5, D83 ); the fog set is the fifth
+#define FROXEL_FOG_SET 4
+#include "froxel_fog.inc.hlsl"
+#endif
+
 struct PS_IN
 {
 	float4 position		: SV_Position;
@@ -157,4 +163,10 @@ void main( PS_IN fragment, out PS_OUT result )
 
 	result.color.xyz = ( diffuseColor + specularColor ) * lightColor * fragment.color.xyz;
 	result.color.w = 1.0;
+
+#if defined( USE_FROXEL_FOG ) && USE_FROXEL_FOG
+	// V5: the light is added ( ONE, ONE ), so the fog dims it by the transmittance to the glass; the fog's own light behind
+	// the glass is the apply's
+	result.color.rgb *= FroxelFogSamplePixel( fragment.position.xy, FroxelFogViewDepth( fragment.position.z ) ).a;
+#endif
 }

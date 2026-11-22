@@ -2252,6 +2252,7 @@ void idRestoreGame::ReadRenderLight( renderLight_t& renderLight )
 	renderLight.primarySun = false;		// X0: neither field is in the stream; an idLight re-reads both from its dict,
 	renderLight.forwardMode = 0;			// every other owner ( an FX light restored into uncleared memory ) gets the defaults
 	renderLight.volumetricMode = 0;		// V2: the same
+	renderLight.fogAlbedo = 0.0f;			// V4: the same
 	ReadMat3( renderLight.axis );
 	ReadVec3( renderLight.origin );
 

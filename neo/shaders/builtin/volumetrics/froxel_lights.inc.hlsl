@@ -10,7 +10,7 @@
 //     integrates to 1 over the sphere. The angle is between the light's travel direction and the direction from
 //     the sample to the camera, so a positive g brightens the fog when looking toward the light.
 //   - An ambient light is radiance from every direction: no pi, no phase, no shadow.
-//   - A fog light is a medium, not a light: the inject of this package leaves it out ( V4 ).
+//   - A fog light is a medium, not a light: V4 adds it to the froxel's medium ( FroxelAddFogLight, below ), never as a light ( FroxelRecordLight ).
 //
 // The shadow rule ( D80, and the owner's rows 50 and 51 ): FroxelShadowShare. A light's shadow is looked up at the
 // sample, one comparison against the shadow atlas ( V3 ), and the fog is not culled by area as surfaces are, so a
@@ -146,7 +146,7 @@ float3 FroxelRecordLight( uint r, FROXEL_SAMPLE s, out recordLight_t L, out floa
 		weight = -1.0;
 		return float3( 0.0, 0.0, 0.0 );
 	}
-	L = t_LightRecords[ r ];		// a fog light or a light switched off has no bit in the take mask and is not here
+	L = t_LightRecords[ r ];		// a light switched off has no bit in the take mask, and a fog light goes to FroxelAddFogLight: neither is here
 
 	// the share of the light that reaches the sample through its shadow ( FroxelShadowShare ); an ambient light has none
 	const float3 toLight = L.originInvRadiusSq.xyz - s.position;
@@ -263,6 +263,79 @@ void FroxelAddRecord( uint r, FROXEL_SAMPLE s, inout float3 light, inout float3 
 		const bool casterHere = ( L.flags & RLF_FOG_CASTERMOVED ) != 0 && FroxelInCasterBoxes( r, s.position );
 		if( isNew || casterHere || ( L.flags & RLF_MOVED_THIS_FRAME ) != 0 || ( ( L.flags ^ prevFlags ) & RLF_FOG_NOCASTER ) != 0
 				|| any( abs( L.color.rgb - prevColor ) > froxel.historyParms.z * max( L.color.rgb, prevColor ) ) )
+		{
+			clip = true;
+		}
+	}
+}
+
+// V4: what the fog lights add to a froxel ( FroxelAddFogLight ): their sigma_t, their grey sigma_s, their emission and the
+// emission's change since last frame, all times the store scale, as the inject's other terms
+struct FROXEL_FOG
+{
+	float	sigmaT;
+	float	sigmaS;
+	float3	emission;
+	float3	emissionChange;
+};
+
+// V4: a Doom 3 fog light as a medium inside its volume ( D29, D81 ), its record read the fog pass's way: color.rgb the
+// stage's raw colour, color.w the fog distance D ( the stage's alpha, or 500 ), the scattering albedo in ids.w, and in the
+// emitter lanes, which a fog light never uses ( R_VolumetricFogLightRecord, renderer/tr_frontend_volumetricfog.cpp ): the fog
+// plane itself in emitter[0] ( vLight->fogPlane: a projected light's planes do not give it, consultant CN4-1 ) and in
+// emitter[1].x the stage alpha's share, 0 to 1, by which the fog pass scales its opacity where the alpha is not a
+// distance ( CN4-2: the fog pass's opacity is then at most Linear( share ) at any depth; the medium reaches that opacity at
+// D and goes on thickening past it, review O1-1 ). The density rises from 0 at the fog plane to full mediaParms2.z^-1 units below it ( the fog
+// pass's enter ramp: 8 texels of its enter image at FOG_SCALE 0.001, 125 units ); sigma_t is the rate over D
+// ( mediaParms2.y, times the store scale ). The albedo's share scatters the lights and the ambient; the rest shines with
+// the light's colour as fog.ps.hlsl draws it ( clamped, decoded from sRGB ), so at albedo 0 a deep, long ray reads
+// colour * ( 1 - T ), the fog pass's blend. The fog plane is the light's far clip plane, unit length, in the relative
+// frame, negative inside. While the history holds last frame's fog: a fog light
+// that is new, moved or changed its colour by more than historyParms.z of the larger clips it, and its emission's change
+// is the colour's change in this frame's medium. position is the froxel's centre in the relative frame ( V4g: the medium
+// is taken there, not at the inject's jittered sample, review F1-1 )
+void FroxelAddFogLight( uint r, float3 position, inout FROXEL_FOG fog, inout bool clip )
+{
+	const float4 P = float4( position, 1.0 );
+	float projS, projT, projQ, fallS;
+	if( !LL_RecordPlanes( r, P, projS, projT, projQ, fallS ) )
+	{
+		return;
+	}
+	const recordLight_t L = t_LightRecords[ r ];
+	if( L.color.w <= 0.0 )
+	{
+		return;			// a record with no fog distance ( no stage ) is no medium ( V4g, review F1-9 )
+	}
+	const float height = dot( P, L.emitter[0] );
+	// the alpha's share: the fraction of sigma_t that makes the medium as opaque at D as the fog pass at its most, Linear( share );
+	// 1 for a share of 1 ( a distance alpha ). mediaParms2.y * sliceParms.z is the rate ( the store scale cancels )
+	const float shareOpacity = sRGBToLinearRGB( L.emitter[1].xxx ).x;
+	const float share = min( 1.0, -log( max( 1.0 - shareOpacity, 1e-6 ) ) / ( froxel.mediaParms2.y * froxel.sliceParms.z ) );
+	const float density = saturate( -height * froxel.mediaParms2.z ) * share;
+	if( density <= 0.0 )
+	{
+		return;
+	}
+	const float sigmaT = froxel.mediaParms2.y / max( L.color.w, 1.0 ) * density;		// D is 500 or an alpha above 1: the max guards a record nobody filled
+	const float albedo = saturate( L.ids.w );
+	const float3 colour = sRGBToLinearRGB( L.color.rgb );
+	fog.sigmaT += sigmaT;
+	fog.sigmaS += albedo * sigmaT;
+	fog.emission += colour * ( sigmaT * ( 1.0 - albedo ) );
+	if( froxel.jitter.w > 0.0 )
+	{
+		const int prev = int( L.ids.z );
+		const bool isNew = prev < 0 || prev >= int( froxel.historyGrid.w );
+		const float3 prevColour = isNew ? float3( 0.0, 0.0, 0.0 ) : sRGBToLinearRGB( t_PrevRecords[ prev ].color.rgb );
+		const float prevDistance = isNew ? L.color.w : t_PrevRecords[ prev ].color.w;
+		const float prevShare = isNew ? L.emitter[1].x : t_PrevRecords[ prev ].emitter[1].x;
+		const float prevAlbedo = isNew ? L.ids.w : t_PrevRecords[ prev ].ids.w;
+		fog.emissionChange += ( colour - prevColour ) * ( sigmaT * ( 1.0 - albedo ) );
+		// a fog light's D or alpha share can change without a def update ( a material's expression ): it clips as a colour does
+		// ( review O1-5 ); so does a changed albedo ( the light editor's key: V4g, review F1-10 )
+		if( isNew || ( L.flags & RLF_MOVED_THIS_FRAME ) != 0 || any( abs( colour - prevColour ) > froxel.historyParms.z * max( colour, prevColour ) )
+				|| abs( L.color.w - prevDistance ) > froxel.historyParms.z * max( L.color.w, prevDistance ) || abs( L.emitter[1].x - prevShare ) > froxel.historyParms.z || L.ids.w != prevAlbedo )
 		{
 			clip = true;
 		}

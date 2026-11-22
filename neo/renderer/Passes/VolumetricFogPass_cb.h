@@ -67,5 +67,46 @@ struct froxelConstants_t
 	idVec4	skipParms;		// x = 1 where the inject skips the froxels no pixel's lookup reaches, y = a column's side in pixels, zw = the view's size in pixels
 	idVec4	pixelParms;		// xy = the projection's depth terms ( distance = x / ( depth + y ) ), zw = the view's first pixel in the render target
 	uint32	takeMask[32];	// a bit per light record, word w in [ w / 4 ][ w % 4 ] of the shader's uint4 lanes: set where the fog can take the record's light at all
+	// V4: the media
+	idVec4	mediaParms;		// x = 1 where the inject reads the media volume ( the media pass ran ), y = the furnace radiance ( a test input ), z = 1 on V4's path ( r_volumetricFogMedia: the resolve's medium per froxel and the mark volume ), w = the media in the view's list
+	idVec4	mediaParms2;	// x = the media that moved, came or went ( four boxes each in m_MediaMoved ), y = the fog lights' rate times the store scale, z = 1 / the fog lights' enter ramp, w = 1 where the inject takes fog lights ( V4b )
 };
-compile_time_assert( sizeof( froxelConstants_t ) == 608 );
+compile_time_assert( sizeof( froxelConstants_t ) == 640 );
+
+// V4: one medium of the media pass ( shaders/builtin/volumetrics/froxel_media.inc.hlsl has the same struct, lane for lane ):
+// the height fog, the dust, the test box, and track M's volumes later. The pass writes at most FOG_MEDIA_MAX a view into
+// its media list; the media pass tests each one's sphere once per thread group and sums the density of those left
+const int FOG_MEDIA_MAX = 64;
+enum fogMediumShape_t
+{
+	FOG_SHAPE_ALL		= 0,		// everywhere
+	FOG_SHAPE_HEIGHT	= 1,		// full below a height of the map, falling off above it
+	FOG_SHAPE_BOX		= 2		// inside a box of the medium's frame
+};
+struct fogMedium_t
+{
+	idVec4	sphere;			// xyz = the bounding sphere's centre in the relative frame, w = 1 / r^2; 0 = unbounded ( no group test )
+	idVec4	sigma;			// rgb = sigma_s at full density ( the albedo times sigma_t ), a = sigma_t at full density, per unit times the store scale
+	idVec4	shape;			// x = the shape ( fogMediumShape_t ); HEIGHT: y = the base height in the medium's frame ( its z ), z = 1 / the falloff; BOX: yzw = the half extents
+	idVec4	frame[3];		// the medium's frame: coordinate i of a relative point p is dot( frame[i].xyz, p ) + frame[i].w
+	idVec4	noiseOffset;	// xyz = added to the frame's coordinates where the slots read them ( the wind's drift, the map's wrapped offset ), w = the slots in use
+	idVec4	slot[6];		// noise slots 1 and 2, three lanes each ( V4c )
+};
+compile_time_assert( sizeof( fogMedium_t ) == 208 );
+// V4c: a noise slot's kind and its op ( shaders/builtin/volumetrics/froxel_media.inc.hlsl, the same numbers )
+enum fogNoiseType_t
+{
+	FOG_NOISE_NONE			= 0,
+	FOG_NOISE_FBM			= 1,		// gradient-noise fBm: soft lumps
+	FOG_NOISE_WORLEY		= 2,		// cellular noise: round billows
+	FOG_NOISE_PERLINWORLEY	= 3,		// fBm remapped by Worley's fBm: puffy lumps
+	FOG_NOISE_CURL			= 4		// the curl of a noise potential: a warp
+};
+enum fogNoiseOp_t
+{
+	FOG_OP_MULTIPLY		= 0,
+	FOG_OP_ADD			= 1,
+	FOG_OP_ERODE		= 2,
+	FOG_OP_REMAP		= 3,
+	FOG_OP_WARP			= 4
+};

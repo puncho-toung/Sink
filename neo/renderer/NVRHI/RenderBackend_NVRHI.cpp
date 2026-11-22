@@ -521,9 +521,18 @@ void idRenderBackend::DrawElementsWithCounters( const drawSurf_t* surf, bool sha
 		keyDepthBias = DEPTH_CONVENTION_BIAS_SIGN * depthBias * unitsScale;
 		keySlopeBias = DEPTH_CONVENTION_BIAS_SIGN * slopeScaleBias;
 	}
+	// F5 ( review O2-5 of F4 ): a pipeline takes the biases only under GLS_POLYGON_OFFSET ( PipelineCache's
+	// GetRenderState ), so a draw without it keys none: the offset the last decal or shadow pass left set made a second
+	// pipeline, the same in all but its key, built at its first draw
+	if( ( glStateBits & GLS_POLYGON_OFFSET ) == 0 )
+	{
+		keyDepthBias = 0.0f;
+		keySlopeBias = 0.0f;
+	}
 	const PipelineKey key{ glStateBits, program, static_cast<int>( keyDepthBias ), keySlopeBias, currentFrameBuffer };
 #else
-	const PipelineKey key{ glStateBits, program, static_cast<int>( depthBias ), slopeScaleBias, currentFrameBuffer };
+	const bool keyOffset = ( glStateBits & GLS_POLYGON_OFFSET ) != 0;		// F5 ( review O2-5 of F4 ): as above
+	const PipelineKey key{ glStateBits, program, keyOffset ? static_cast<int>( depthBias ) : 0, keyOffset ? slopeScaleBias : 0.0f, currentFrameBuffer };
 #endif
 	const auto pipeline = pipelineCache.GetOrCreatePipeline( key );
 
@@ -1011,7 +1020,7 @@ void idRenderBackend::GetCurrentBindingLayout( int type )
 			desc[1].bindings[0] = nvrhi::BindingSetItem::Sampler( 0, commonPasses.m_PointWrapSampler );
 		}
 	}
-	else if( type == BINDING_LAYOUT_DRAW_INTERACTION )
+	else if( type == BINDING_LAYOUT_DRAW_INTERACTION || type == BINDING_LAYOUT_DRAW_INTERACTION_FOG )		// TRACK V ( V5 ): and its fog twin
 	{
 		// renderparms: 0
 		if( desc[0].bindings.empty() )
@@ -1091,8 +1100,20 @@ void idRenderBackend::GetCurrentBindingLayout( int type )
 				desc[3].bindings[1].resourceHandle = commonPasses.m_LinearBorderSampler;
 			}
 		}
+
+		// ---- TRACK V ( V5 ): the fog twin's fog set, 4 - written whole on every call ( see BINDING_LAYOUT_FORWARD ) ----
+		if( type == BINDING_LAYOUT_DRAW_INTERACTION_FOG )
+		{
+			desc[4].bindings =
+			{
+				nvrhi::BindingSetItem::ConstantBuffer( 1, froxelFogParms ),
+				nvrhi::BindingSetItem::Texture_SRV( 15, froxelVolume ),
+				nvrhi::BindingSetItem::Sampler( 5, commonPasses.m_LinearClampSampler )
+			};
+		}
+		// ---- END TRACK V ----
 	}
-	else if( type == BINDING_LAYOUT_DRAW_INTERACTION_SKINNED )
+	else if( type == BINDING_LAYOUT_DRAW_INTERACTION_SKINNED || type == BINDING_LAYOUT_DRAW_INTERACTION_SKINNED_FOG )		// TRACK V ( V5 ): and its fog twin
 	{
 		// renderparms / skinning joints: 0
 		if( desc[0].bindings.empty() )
@@ -1176,6 +1197,18 @@ void idRenderBackend::GetCurrentBindingLayout( int type )
 				desc[3].bindings[1].resourceHandle = commonPasses.m_LinearBorderSampler;
 			}
 		}
+
+		// ---- TRACK V ( V5 ): the fog twin's fog set, 4 - written whole on every call ( see BINDING_LAYOUT_FORWARD ) ----
+		if( type == BINDING_LAYOUT_DRAW_INTERACTION_SKINNED_FOG )
+		{
+			desc[4].bindings =
+			{
+				nvrhi::BindingSetItem::ConstantBuffer( 1, froxelFogParms ),
+				nvrhi::BindingSetItem::Texture_SRV( 15, froxelVolume ),
+				nvrhi::BindingSetItem::Sampler( 5, commonPasses.m_LinearClampSampler )
+			};
+		}
+		// ---- END TRACK V ----
 	}
 	else if( type == BINDING_LAYOUT_DRAW_INTERACTION_SM )
 	{
@@ -3342,6 +3375,7 @@ idRenderBackend::idRenderBackend()
 	lightListTileBitsWords = 0;
 	lightListHeatmapColor = NULL;
 	lightDiffPassA = false;
+	forwardTranslucent = false;
 	lightDiffHasReadout = false;
 	lightDiffShowColor = NULL;
 	lightDiffFrame = 0;
@@ -3358,6 +3392,8 @@ idRenderBackend::idRenderBackend()
 	ssaoPass = nullptr;
 	volumetricFogPass = nullptr;
 	viewHistoryCut = false;
+	froxelFogTranslucent = false;	// TRACK V ( V5 )
+	froxelFogLightsTaken = false;	// TRACK V ( V5 )
 
 	memset( &glConfig, 0, sizeof( glConfig ) );
 

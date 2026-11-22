@@ -2799,6 +2799,7 @@ static const fgdLightKey_t FGD_LIGHT_KEYS[] =
 	{ "primarySun",				"choices",	"0",					"Marks this parallel light as the map's sun for cascaded shadows and the forward light list",	FGD_BOOL_CHOICES },
 	{ "forward",				"integer",	"0",					"Lighting path: 0 = automatic, 1 = force the forward light list, 2 = force the legacy interaction path",	NULL },
 	{ "volumetric",				"integer",	"0",					"Froxel fog: 0 = the fog takes the light where its shadow is known ( a shadow map with a place, or no shadow caster at all ), 1 = also where it has no shadow map ( a light without shadows opts in; its fog shines through walls ), 2 = the light adds no fog",	NULL },
+	{ "fog_albedo",				"float",	"0",					"Froxel fog, a fog light only: the share of its fog that scatters the lights and the ambient, 0 to 1 ( 0 = the fog only darkens and shines with the light's colour, as the fog pass draws it )",	NULL },
 	{ "noshadows",				"choices",	"0",					"The light casts no shadows",															FGD_BOOL_CHOICES },
 	{ "nospecular",				"choices",	"0",					"The light adds no specular highlights, diffuse only",									FGD_BOOL_CHOICES },
 	//puncho start - the emitter block ( G0 section 2 ); EM_ParseAllFromDict reads each of these keys

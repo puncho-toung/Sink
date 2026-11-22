@@ -395,6 +395,7 @@ void DmapHelp()
 //puncho end - P2b.3.8
 		"noFlood                = skip area flooding = bad performance\n"
 		"blockSize <x> <y> <z>  = cut BSP along these dimensions or disable with 0 0 0\n"
+		"chunkGrid <size>       = experimental: cut the world's lit surfaces on this grid, a power of two from 128 to 1024, or 0 for no cut (default: the worldspawn key chunkGrid, else 0)\n"
 		"obj                    = export BSP render surfaces as .obj file\n"
 		"debug                  = export BSP portals and other details as .obj files\n"
 		//puncho - SB1a (R-SB1a-6)
@@ -437,6 +438,7 @@ void ResetDmapGlobals()
 	dmapGlobals.drawflag = false;
 	dmapGlobals.bspAlternateSplitWeights = false;
 	dmapGlobals.blockSize = idVec3( 1024.0f, 1024.0f, 1024.0f );	// default block size for splitting
+	dmapGlobals.chunkGrid = -1;	// renderer upgrade F6: not given; the worldspawn key chunkGrid decides, else no cut ( dress_chunk.cpp )
 	dmapGlobals.totalInlinedModels = 0;
 }
 
@@ -574,6 +576,22 @@ bool Dmap( const idCmdArgs& args ) //puncho - TC1: command errors follow cleanup
 			dmapGlobals.blockSize[2] = atof( args.Argv( i + 3 ) );
 			common->Printf( "blockSize = %f %f %f\n", dmapGlobals.blockSize[0], dmapGlobals.blockSize[1], dmapGlobals.blockSize[2] );
 			i += 3;
+		}
+		else if( !idStr::Icmp( s, "chunkGrid" ) )
+		{
+			if( i + 1 >= args.Argc() )
+			{
+				common->Error( "usage: dmap chunkGrid <size>: a power of two from 128 to 1024, or 0 for no cut" );
+			}
+			// only the number itself: atoi reads a word or an empty value as 0, no cut, and 256.5 as 256 ( review CN1-4 )
+			const int grid = atoi( args.Argv( i + 1 ) );
+			if( idStr::Cmp( va( "%i", grid ), args.Argv( i + 1 ) ) != 0 || ( grid != 0 && ( grid < 128 || grid > 1024 || !idMath::IsPowerOfTwo( grid ) ) ) )
+			{
+				common->Error( "dmap chunkGrid %s: must be a power of two from 128 to 1024, or 0 for no cut", args.Argv( i + 1 ) );
+			}
+			dmapGlobals.chunkGrid = grid;
+			common->Printf( "chunkGrid = %i\n", grid );
+			i += 1;
 		}
 		else if( !idStr::Icmp( s, "inlineAll" ) )
 		{

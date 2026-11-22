@@ -216,6 +216,7 @@ void idGameEdit::ParseSpawnArgsToRenderLight( const idDict* args, renderLight_t*
 	args->GetBool( "primarySun", "0", renderLight->primarySun );
 	renderLight->forwardMode = ( byte )idMath::ClampInt( 0, 2, args->GetInt( "forward", "0" ) );
 	renderLight->volumetricMode = ( byte )idMath::ClampInt( 0, 2, args->GetInt( "volumetric", "0" ) );
+	renderLight->fogAlbedo = idMath::ClampFloat( 0.0f, 1.0f, args->GetFloat( "fog_albedo", "0" ) );
 	//puncho start - an emitter reads neither parallel ( the emitter branch sets it from the shape, and the
 	// emitter parse reads the key when it needs it ) nor texture, whose material is fixed below: a light
 	// that kept its texture key would otherwise load that material and its images for nothing ( G0
@@ -495,6 +496,7 @@ void idLight::RestoreRenderLight( idRestoreGame* savefile )
 	renderLight.primarySun = spawnArgs.GetBool( "primarySun", "0" );
 	renderLight.forwardMode = ( byte )idMath::ClampInt( 0, 2, spawnArgs.GetInt( "forward", "0" ) );
 	renderLight.volumetricMode = ( byte )idMath::ClampInt( 0, 2, spawnArgs.GetInt( "volumetric", "0" ) );
+	renderLight.fogAlbedo = idMath::ClampFloat( 0.0f, 1.0f, spawnArgs.GetFloat( "fog_albedo", "0" ) );
 
 	//puncho start - emit_effect plays from the saved emitter block and needs no light_styles; its frame
 	// time is spawn data, so it comes back from the restored spawnArgs instead of the constructor's 100

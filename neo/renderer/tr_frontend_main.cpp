@@ -1085,7 +1085,7 @@ void R_RenderView( viewDef_t* parms )
 	R_AddLights();
 	tr.pc.usAddLights += Sys_Microseconds() - addLightsStart;
 
-	R_NumberRecordLights();		// F1: numbers the lights that get a record; no-op until then
+	R_NumberRecordLights();		// F1: numbers the lights that get a record ( a view with lists, or the fog's records )
 
 	// adds ambient surfaces and create any necessary interaction surfaces to add to the light lists
 	R_AddModels();
@@ -1093,7 +1093,7 @@ void R_RenderView( viewDef_t* parms )
 	// build up the GUIs on world surfaces
 	R_AddInGameGuis( tr.viewDef->drawSurfs, tr.viewDef->numDrawSurfs );
 
-	R_BuildLightLists();		// F1: fills the listed-surface counts the optimize below reads; no-op until then
+	R_BuildLightLists();		// F1: fills the listed-surface counts the optimize below reads ( a view with records )
 
 	// any viewLight that didn't have visible surfaces can have it's shadows removed
 	R_OptimizeViewLightsList();

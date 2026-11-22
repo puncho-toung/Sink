@@ -55,7 +55,7 @@ SamplerComparisonState  s_Shadow   : register( s2 VK_DESCRIPTOR_SET( 3 ) ); // f
 SamplerState 			s_Jitter   : register( s3 VK_DESCRIPTOR_SET( 3 ) ); // for sampling the jitter
 
 #if defined( USE_FROXEL_FOG ) && USE_FROXEL_FOG
-	// X0 stub ( D33, D83 ): the froxel fog permutation. Track V ( V5 ) fogs this stage here; nothing is sampled yet.
+	// the froxel fog permutation ( D33 ): the lit glass after the fog view's apply ( V5, D83 )
 #define FROXEL_FOG_SET 4
 #include "froxel_fog.inc.hlsl"
 #endif
@@ -648,4 +648,10 @@ void main( PS_IN fragment, out PS_OUT result )
 
 	result.color.rgb = color;
 	result.color.a = 1.0;
+
+#if defined( USE_FROXEL_FOG ) && USE_FROXEL_FOG
+	// V5: the light is added ( ONE, ONE ), so the fog dims it by the transmittance to the glass; the fog's own light behind
+	// the glass is the apply's. The emEarlyOut return above writes black, which needs no fog ( consultant CN2-2 )
+	result.color.rgb *= FroxelFogSamplePixel( fragment.position.xy, FroxelFogViewDepth( fragment.position.z ) ).a;
+#endif
 }

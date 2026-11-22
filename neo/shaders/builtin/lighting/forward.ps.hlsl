@@ -35,8 +35,9 @@ If you have questions concerning this license or the applicable additional terms
 // Track F ( F2 ): after the ambient term the surface's listed lights are added by the light loop of
 // lightloop.inc.hlsl, from the tables of the FORWARD image set. LL_EvaluateRecord gives for one record what the
 // legacy interaction shaders add for that light: the body of interaction.ps.hlsl for a light without a placed
-// shadow map, the body of interactionSM.ps.hlsl for a light with one ( D48 ). USE_TRANSLUCENT is F4's and is not
-// tested here.
+// shadow map, the body of interactionSM.ps.hlsl for a light with one ( D48 ). USE_TRANSLUCENT ( F4 ): the lit
+// translucent program, drawn after the fog apply: no ambient term, the listed lights times the fog's transmittance to
+// the surface.
 
 #include "global_inc.hlsl"
 #include "renderParmSet9.inc.hlsl"
@@ -68,6 +69,12 @@ TextureCube t_DepthCubeMap3		: register( t14 VK_DESCRIPTOR_SET( 2 ) );	// inter-
 SamplerState s_Material			: register( s0 VK_DESCRIPTOR_SET( 3 ) ); // (Wrap) Anisotropic sampler: normal sampler & specular sampler
 SamplerState s_LinearClamp		: register( s1 VK_DESCRIPTOR_SET( 3 ) ); // (Clamp) Linear sampler: brdf lut sampler & ssao sampler
 //SamplerState s_Light			: register( s2 VK_DESCRIPTOR_SET( 3 )); // (Clamp) Anisotropic sampler: irradiance, radiance 1, 2 and 3.
+
+// ---- track F ( F4 ): the lit translucent program reads the fog set, the FORWARD layouts' fifth ( D66, C4 ) ----
+#if USE_TRANSLUCENT
+#define FROXEL_FOG_SET 4
+#include "froxel_fog.inc.hlsl"
+#endif
 
 // ---- track F ( F2 ): the tail of the FORWARD image set and its three more samplers ( C4; the order is the layout's ) ----
 #include "lightlists.inc.hlsl"
@@ -741,6 +748,12 @@ void main( PS_IN fragment, out PS_OUT result )
 	//result.color.rgb = localNormal.xyz * 0.5 + 0.5;
 	//result.color.rgb = float3( ao );
 	result.color.w = fragment.color.a;
+#if USE_TRANSLUCENT
+	// F4 ( D50, C6 ): a lit translucent adds its listed lights alone over what lies behind it ( ONE, ONE ): no ambient,
+	// IBL or SSAO term, and the target's alpha stays as it is ( a legacy interaction adds 1 per light there, which no
+	// pass of the engine reads: F2's review O2-4 )
+	result.color = float4( 0.0, 0.0, 0.0, 0.0 );
+#endif
 
 	// ---- track F ( F2 ): the surface's listed lights, after the ambient term. rpSurfLights says which ----
 	const uint llFirst = uint( pcSurf.rpSurfLights.x );			// the first pool word, the run length, the path
@@ -797,9 +810,16 @@ void main( PS_IN fragment, out PS_OUT result )
 	const float llNoise = t_Jitter.Sample( s_PointWrap, fragment.position.xy * pc.rpShadowFilter.z ).r + c_goldenRatioConjugate * pc.rpShadowFilter.w;
 	llSurface.vogelPhi = llNoise - floor( llNoise );
 	llSurface.vogelSqrtSamples = sqrt( pc.rpShadowFilter.x );
+	llSurface.viewDepth = llViewZ;								// F4: the sun's cascade, chosen on the depth the bins use
 	if( pc.rpForwardView.w == 0.0 )								// 1: the twin mode, the legacy pass lights these pairs
 	{
+#if USE_TRANSLUCENT
+		// F4 ( D66, D83 ): drawn after the fog apply, the light is dimmed by the fog between the eye and the surface: the
+		// transmittance to its own depth ( 1 where no fog view wrote the parms )
+		result.color.rgb += LL_AccumulateLights( llPath, llFirst, llCount, llPixel, llViewZ, llSurface ) * FroxelFogSamplePixel( fragment.position.xy, llViewZ ).a;
+#else
 		result.color.rgb += LL_AccumulateLights( llPath, llFirst, llCount, llPixel, llViewZ, llSurface );
+#endif
 	}
 	const uint llShow = uint( pc.rpZBinScale.w );
 	if( llShow >= 2 )											// uniform: off, the views cost one branch per pixel

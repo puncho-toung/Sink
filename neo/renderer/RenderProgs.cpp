@@ -648,6 +648,16 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 	{
 		uniformsLayout( BINDING_LAYOUT_DRAW_INTERACTION_SKINNED, true ), defaultMaterialLayout, interactionBindingLayout, samplerTwoBindingLayout
 	};
+	// ---- TRACK V ( V5 ): their fog twins, the fog set as the fifth, as X0's SM twins ( D35, D83 ) ----
+	bindingLayouts[BINDING_LAYOUT_DRAW_INTERACTION_FOG] =
+	{
+		uniformsLayout( BINDING_LAYOUT_DRAW_INTERACTION_FOG, false ), defaultMaterialLayout, interactionBindingLayout, samplerTwoBindingLayout, froxelFogLayout
+	};
+	bindingLayouts[BINDING_LAYOUT_DRAW_INTERACTION_SKINNED_FOG] =
+	{
+		uniformsLayout( BINDING_LAYOUT_DRAW_INTERACTION_SKINNED_FOG, true ), defaultMaterialLayout, interactionBindingLayout, samplerTwoBindingLayout, froxelFogLayout
+	};
+	// ---- END TRACK V ----
 
 	auto interactionSmBindingLayoutDesc = nvrhi::BindingLayoutDesc()
 										  .setVisibility( nvrhi::ShaderType::Pixel )
@@ -896,13 +906,13 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 	//puncho end
 	for( int i = 0; i < NUM_BINDING_LAYOUTS; i++ )
 	{
-		// X0: a seam layout has no program yet, so it gets no RenderParams buffer ( 8192 versions of
-		// host-visible memory on Vulkan ). A track deletes its lines here with its first builtins[] row.
+		// X0: a seam layout got no RenderParams buffer until its track's first builtins[] row ( every seam layout has rows
+		// since V5 ).
 		// ---- TRACK F: the forward layouts have builtins since F2 and take their RenderParams buffer ----
 		// ---- END TRACK F ----
-		// ---- TRACK V: remove with the first fog-twin builtin ----
-		if( i == BINDING_LAYOUT_TEXTURE_FOG || i == BINDING_LAYOUT_TEXTURE_SKINNED_FOG || i == BINDING_LAYOUT_TEXGEN_FOG
-				|| i == BINDING_LAYOUT_INTERACTION_SM_FOG || i == BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG )
+		// ---- TRACK V ( V5e, review O2-1 ): a fog twin layout takes its base's buffer, below: no ring of its own ( 8192
+		// versions of host-visible memory on Vulkan ) ----
+		if( FroxelFogParmRing( i ) != i )
 		{
 			continue;
 		}
@@ -988,6 +998,13 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 						( unsigned long long )totalBytes, ( double )totalBytes / ( 1024.0 * 1024.0 ) );
 	}
 	//puncho end
+
+	// ---- TRACK V ( V5e, review O2-1 ): the fog twins' buffers are their bases' ----
+	for( int i = 0; i < NUM_BINDING_LAYOUTS; i++ )
+	{
+		constantBuffer[i] = constantBuffer[ FroxelFogParmRing( i ) ];
+	}
+	// ---- END TRACK V ----
 
 	// SRS - added support for runtime configuration of push constants
 #define usePushConstants( layoutType ) ( layoutTypeAttributes[layoutType].pcEnabled ? "1" : "0" )
@@ -1186,8 +1203,8 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 		{ BUILTIN_DEBUG_DEPTH, "builtin/debug/depth", "", { { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_POST_PROCESS_FINAL2 ) } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_POST_PROCESS_FINAL2 },
 		// ---- TRACK F: builtins[] rows ( keep the enum order ) ----
 		// the forward program ( F2 ). No USE_PUSH_CONSTANTS key: the forward layouts always take the constant buffer
-		// ( D51 ). USE_WAVE_OPS: the row the device check above picked ( F3 ). USE_TRANSLUCENT 0: the other half
-		// of that axis is F4's
+		// ( D51 ). USE_WAVE_OPS: the row the device check above picked ( F3 ). USE_TRANSLUCENT 0: the opaque program;
+		// the rows with 1 follow these eight ( F4 )
 		{ BUILTIN_FORWARD, "builtin/lighting/forward", "", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "0" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
 		{ BUILTIN_FORWARD_SKINNED, "builtin/lighting/forward", "_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "0" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
 		{ BUILTIN_FORWARD_PBR, "builtin/lighting/forward", "_PBR", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "0" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
@@ -1196,8 +1213,51 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 		{ BUILTIN_FORWARD_LIGHTGRID_SKINNED, "builtin/lighting/forward", "_lightgrid_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "1" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "0" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
 		{ BUILTIN_FORWARD_LIGHTGRID_PBR, "builtin/lighting/forward", "_lightgrid_PBR", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "1" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "0" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
 		{ BUILTIN_FORWARD_LIGHTGRID_PBR_SKINNED, "builtin/lighting/forward", "_lightgrid_PBR_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "1" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "0" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
+		// F4: the lit translucent program, USE_TRANSLUCENT 1. USE_LIGHTGRID 0: it draws no ambient term, so no row needs
+		// the light grid's half
+		{ BUILTIN_FORWARD_TRANSLUCENT, "builtin/lighting/forward", "_translucent", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
+		{ BUILTIN_FORWARD_TRANSLUCENT_SKINNED, "builtin/lighting/forward", "_translucent_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "0" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
+		{ BUILTIN_FORWARD_TRANSLUCENT_PBR, "builtin/lighting/forward", "_translucent_PBR", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD },
+		{ BUILTIN_FORWARD_TRANSLUCENT_PBR_SKINNED, "builtin/lighting/forward", "_translucent_PBR_skinned", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "1" }, { "USE_LIGHTGRID", "0" }, { "USE_WAVE_OPS", useWaveOps }, { "USE_TRANSLUCENT", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_FORWARD_SKINNED },
 		// ---- END TRACK F ----
 		// ---- TRACK V: builtins[] rows ( keep the enum order ) ----
+		// V5: the fog twins of the translucent stage programs; USE_FROXEL_FOG comes LAST, as the cfg's second lines have it
+		{ BUILTIN_TEXTURE_VERTEXCOLOR_FOG, "builtin/texture_color", "_fog", { { "USE_GPU_SKINNING", "0" }, {"USE_SRGB", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TEXTURE_FOG ) }, { "USE_FROXEL_FOG", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_TEXTURE_FOG },
+		{ BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED_FOG, "builtin/texture_color", "_skinned_fog", { { "USE_GPU_SKINNING", "1" }, {"USE_SRGB", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TEXTURE_SKINNED_FOG ) }, { "USE_FROXEL_FOG", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_TEXTURE_SKINNED_FOG },
+		{ BUILTIN_TEXTURE_TEXGEN_VERTEXCOLOR_FOG, "builtin/texture_color_texgen", "_fog", { { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TEXGEN_FOG ) }, { "USE_FROXEL_FOG", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_TEXGEN_FOG },
+		// V5b: the fog twins of the interactionSM rows and the plain interaction rows, in their order
+		{ BUILTIN_INTERACTION_SHADOW_MAPPING_SPOT_FOG, "builtin/lighting/interactionSM", "_spot_fog", { { "USE_GPU_SKINNING", "0" }, { "LIGHT_POINT", "0" }, { "LIGHT_PARALLEL", "0" }, { "USE_PBR", "0" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_FOG ) }, { "USE_FROXEL_FOG", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_FOG },
+		{ BUILTIN_INTERACTION_SHADOW_MAPPING_SPOT_SKINNED_FOG, "builtin/lighting/interactionSM", "_spot_skinned_fog", { { "USE_GPU_SKINNING", "1" }, { "LIGHT_POINT", "0" }, { "LIGHT_PARALLEL", "0" }, { "USE_PBR", "0" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG ) }, { "USE_FROXEL_FOG", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG },
+		{ BUILTIN_INTERACTION_SHADOW_MAPPING_POINT_FOG, "builtin/lighting/interactionSM", "_point_fog", { { "USE_GPU_SKINNING", "0" }, { "LIGHT_POINT", "1" }, { "LIGHT_PARALLEL", "0" }, { "USE_PBR", "0" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_FOG ) }, { "USE_FROXEL_FOG", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_FOG },
+		{ BUILTIN_INTERACTION_SHADOW_MAPPING_POINT_SKINNED_FOG, "builtin/lighting/interactionSM", "_point_skinned_fog", { { "USE_GPU_SKINNING", "1" }, { "LIGHT_POINT", "1" }, { "LIGHT_PARALLEL", "0" }, { "USE_PBR", "0" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG ) }, { "USE_FROXEL_FOG", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG },
+		{ BUILTIN_INTERACTION_SHADOW_MAPPING_PARALLEL_FOG, "builtin/lighting/interactionSM", "_parallel_fog", { { "USE_GPU_SKINNING", "0" }, { "LIGHT_POINT", "0" }, { "LIGHT_PARALLEL", "1" }, { "USE_PBR", "0" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_FOG ) }, { "USE_FROXEL_FOG", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_FOG },
+		{ BUILTIN_INTERACTION_SHADOW_MAPPING_PARALLEL_SKINNED_FOG, "builtin/lighting/interactionSM", "_parallel_skinned_fog", { { "USE_GPU_SKINNING", "1" }, { "LIGHT_POINT", "0" }, { "LIGHT_PARALLEL", "1" }, { "USE_PBR", "0" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG ) }, { "USE_FROXEL_FOG", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG },
+		{ BUILTIN_PBR_INTERACTION_SHADOW_MAPPING_SPOT_FOG, "builtin/lighting/interactionSM", "_spot_PBR_fog", { { "USE_GPU_SKINNING", "0" }, { "LIGHT_POINT", "0" }, { "LIGHT_PARALLEL", "0" }, { "USE_PBR", "1" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_FOG ) }, { "USE_FROXEL_FOG", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_FOG },
+		{ BUILTIN_PBR_INTERACTION_SHADOW_MAPPING_SPOT_SKINNED_FOG, "builtin/lighting/interactionSM", "_spot_skinned_PBR_fog", { { "USE_GPU_SKINNING", "1" }, { "LIGHT_POINT", "0" }, { "LIGHT_PARALLEL", "0" }, { "USE_PBR", "1" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG ) }, { "USE_FROXEL_FOG", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG },
+		{ BUILTIN_PBR_INTERACTION_SHADOW_MAPPING_POINT_FOG, "builtin/lighting/interactionSM", "_point_PBR_fog", { { "USE_GPU_SKINNING", "0" }, { "LIGHT_POINT", "1" }, { "LIGHT_PARALLEL", "0" }, { "USE_PBR", "1" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_FOG ) }, { "USE_FROXEL_FOG", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_FOG },
+		{ BUILTIN_PBR_INTERACTION_SHADOW_MAPPING_POINT_SKINNED_FOG, "builtin/lighting/interactionSM", "_point_skinned_PBR_fog", { { "USE_GPU_SKINNING", "1" }, { "LIGHT_POINT", "1" }, { "LIGHT_PARALLEL", "0" }, { "USE_PBR", "1" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG ) }, { "USE_FROXEL_FOG", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG },
+		{ BUILTIN_PBR_INTERACTION_SHADOW_MAPPING_PARALLEL_FOG, "builtin/lighting/interactionSM", "_parallel_PBR_fog", { { "USE_GPU_SKINNING", "0" }, { "LIGHT_POINT", "0" }, { "LIGHT_PARALLEL", "1" }, { "USE_PBR", "1" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_FOG ) }, { "USE_FROXEL_FOG", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_FOG },
+		{ BUILTIN_PBR_INTERACTION_SHADOW_MAPPING_PARALLEL_SKINNED_FOG, "builtin/lighting/interactionSM", "_parallel_skinned_PBR_fog", { { "USE_GPU_SKINNING", "1" }, { "LIGHT_POINT", "0" }, { "LIGHT_PARALLEL", "1" }, { "USE_PBR", "1" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG ) }, { "USE_FROXEL_FOG", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG },
+		{ BUILTIN_INTERACTION_SHADOW_ATLAS_SPOT_FOG, "builtin/lighting/interactionSM", "_atlas_spot_fog", { { "USE_GPU_SKINNING", "0" }, { "LIGHT_POINT", "0" }, { "LIGHT_PARALLEL", "0" }, { "USE_PBR", "0" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_FOG ) }, { "USE_FROXEL_FOG", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_FOG },
+		{ BUILTIN_INTERACTION_SHADOW_ATLAS_SPOT_SKINNED_FOG, "builtin/lighting/interactionSM", "_atlas_spot_skinned_fog", { { "USE_GPU_SKINNING", "1" }, { "LIGHT_POINT", "0" }, { "LIGHT_PARALLEL", "0" }, { "USE_PBR", "0" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG ) }, { "USE_FROXEL_FOG", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG },
+		{ BUILTIN_INTERACTION_SHADOW_ATLAS_POINT_FOG, "builtin/lighting/interactionSM", "_atlas_point_fog", { { "USE_GPU_SKINNING", "0" }, { "LIGHT_POINT", "1" }, { "LIGHT_PARALLEL", "0" }, { "USE_PBR", "0" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_FOG ) }, { "USE_FROXEL_FOG", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_FOG },
+		{ BUILTIN_INTERACTION_SHADOW_ATLAS_POINT_SKINNED_FOG, "builtin/lighting/interactionSM", "_atlas_point_skinned_fog", { { "USE_GPU_SKINNING", "1" }, { "LIGHT_POINT", "1" }, { "LIGHT_PARALLEL", "0" }, { "USE_PBR", "0" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG ) }, { "USE_FROXEL_FOG", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG },
+		{ BUILTIN_INTERACTION_SHADOW_ATLAS_PARALLEL_FOG, "builtin/lighting/interactionSM", "_atlas_parallel_fog", { { "USE_GPU_SKINNING", "0" }, { "LIGHT_POINT", "0" }, { "LIGHT_PARALLEL", "1" }, { "USE_PBR", "0" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_FOG ) }, { "USE_FROXEL_FOG", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_FOG },
+		{ BUILTIN_INTERACTION_SHADOW_ATLAS_PARALLEL_SKINNED_FOG, "builtin/lighting/interactionSM", "_atlas_parallel_skinned_fog", { { "USE_GPU_SKINNING", "1" }, { "LIGHT_POINT", "0" }, { "LIGHT_PARALLEL", "1" }, { "USE_PBR", "0" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG ) }, { "USE_FROXEL_FOG", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG },
+		{ BUILTIN_PBR_INTERACTION_SHADOW_ATLAS_SPOT_FOG, "builtin/lighting/interactionSM", "_atlas_spot_PBR_fog", { { "USE_GPU_SKINNING", "0" }, { "LIGHT_POINT", "0" }, { "LIGHT_PARALLEL", "0" }, { "USE_PBR", "1" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_FOG ) }, { "USE_FROXEL_FOG", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_FOG },
+		{ BUILTIN_PBR_INTERACTION_SHADOW_ATLAS_SPOT_SKINNED_FOG, "builtin/lighting/interactionSM", "_atlas_spot_skinned_PBR_fog", { { "USE_GPU_SKINNING", "1" }, { "LIGHT_POINT", "0" }, { "LIGHT_PARALLEL", "0" }, { "USE_PBR", "1" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG ) }, { "USE_FROXEL_FOG", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG },
+		{ BUILTIN_PBR_INTERACTION_SHADOW_ATLAS_POINT_FOG, "builtin/lighting/interactionSM", "_atlas_point_PBR_fog", { { "USE_GPU_SKINNING", "0" }, { "LIGHT_POINT", "1" }, { "LIGHT_PARALLEL", "0" }, { "USE_PBR", "1" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_FOG ) }, { "USE_FROXEL_FOG", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_FOG },
+		{ BUILTIN_PBR_INTERACTION_SHADOW_ATLAS_POINT_SKINNED_FOG, "builtin/lighting/interactionSM", "_atlas_point_skinned_PBR_fog", { { "USE_GPU_SKINNING", "1" }, { "LIGHT_POINT", "1" }, { "LIGHT_PARALLEL", "0" }, { "USE_PBR", "1" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG ) }, { "USE_FROXEL_FOG", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG },
+		{ BUILTIN_PBR_INTERACTION_SHADOW_ATLAS_PARALLEL_FOG, "builtin/lighting/interactionSM", "_atlas_parallel_PBR_fog", { { "USE_GPU_SKINNING", "0" }, { "LIGHT_POINT", "0" }, { "LIGHT_PARALLEL", "1" }, { "USE_PBR", "1" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_FOG ) }, { "USE_FROXEL_FOG", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_FOG },
+		{ BUILTIN_PBR_INTERACTION_SHADOW_ATLAS_PARALLEL_SKINNED_FOG, "builtin/lighting/interactionSM", "_atlas_parallel_skinned_PBR_fog", { { "USE_GPU_SKINNING", "1" }, { "LIGHT_POINT", "0" }, { "LIGHT_PARALLEL", "1" }, { "USE_PBR", "1" }, { "USE_NORMAL_FMT_RGB8", "0" }, { "USE_SHADOW_ATLAS", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG ) }, { "USE_FROXEL_FOG", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_INTERACTION_SM_SKINNED_FOG },
+		{ BUILTIN_INTERACTION_FOG, "builtin/lighting/interaction", "_fog", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_DRAW_INTERACTION_FOG ) }, { "USE_FROXEL_FOG", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_DRAW_INTERACTION_FOG },
+		{ BUILTIN_INTERACTION_SKINNED_FOG, "builtin/lighting/interaction", "_skinned_fog", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_DRAW_INTERACTION_SKINNED_FOG ) }, { "USE_FROXEL_FOG", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_DRAW_INTERACTION_SKINNED_FOG },
+		{ BUILTIN_INTERACTION_AMBIENT_FOG, "builtin/lighting/interactionAmbient", "_fog", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_DRAW_INTERACTION_FOG ) }, { "USE_FROXEL_FOG", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_DRAW_INTERACTION_FOG },
+		{ BUILTIN_INTERACTION_AMBIENT_SKINNED_FOG, "builtin/lighting/interactionAmbient", "_skinned_fog", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_DRAW_INTERACTION_SKINNED_FOG ) }, { "USE_FROXEL_FOG", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_DRAW_INTERACTION_SKINNED_FOG },
+		{ BUILTIN_PBR_INTERACTION_FOG, "builtin/lighting/interaction", "_PBR_fog", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_DRAW_INTERACTION_FOG ) }, { "USE_FROXEL_FOG", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_DRAW_INTERACTION_FOG },
+		{ BUILTIN_PBR_INTERACTION_SKINNED_FOG, "builtin/lighting/interaction", "_skinned_PBR_fog", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_DRAW_INTERACTION_SKINNED_FOG ) }, { "USE_FROXEL_FOG", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_DRAW_INTERACTION_SKINNED_FOG },
+		{ BUILTIN_PBR_INTERACTION_AMBIENT_FOG, "builtin/lighting/interactionAmbient", "_PBR_fog", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_DRAW_INTERACTION_FOG ) }, { "USE_FROXEL_FOG", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_DRAW_INTERACTION_FOG },
+		{ BUILTIN_PBR_INTERACTION_AMBIENT_SKINNED_FOG, "builtin/lighting/interactionAmbient", "_skinned_PBR_fog", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_DRAW_INTERACTION_SKINNED_FOG ) }, { "USE_FROXEL_FOG", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_DRAW_INTERACTION_SKINNED_FOG },
 		// ---- END TRACK V ----
 	};
 	int numBuiltins = sizeof( builtins ) / sizeof( builtins[0] );
@@ -1214,6 +1274,13 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 		prog.bindingLayoutType = builtins[i].bindingLayout;
 
 		builtinShaders[builtins[i].index] = i;
+		// ---- TRACK V ( V5 ): BindShader_Builtin( i ) binds program i, and the fog twins' map ( FroxelFogTwin ) rests on it:
+		// a row out of the enum's order would bind another program ( consultant CN2-1 ) ----
+		if( builtins[i].index != i )
+		{
+			common->FatalError( "builtins[] row %d is builtin %d: the rows must keep the enum's order", i, builtins[i].index );
+		}
+		// ---- END TRACK V ----
 
 		//if( builtins[i].requireGPUSkinningSupport && !glConfig.gpuSkinningAvailable )
 		//{
@@ -1309,6 +1376,26 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 		renderProgs[builtinShaders[BUILTIN_PBR_INTERACTION_SHADOW_ATLAS_SPOT_SKINNED]].usesJoints = true;
 		renderProgs[builtinShaders[BUILTIN_PBR_INTERACTION_SHADOW_ATLAS_POINT_SKINNED]].usesJoints = true;
 		renderProgs[builtinShaders[BUILTIN_PBR_INTERACTION_SHADOW_ATLAS_PARALLEL_SKINNED]].usesJoints = true;
+
+		// ---- TRACK V ( V5 ): the skinned fog twins, as their bases ----
+		renderProgs[builtinShaders[BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED_FOG]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_INTERACTION_SHADOW_MAPPING_SPOT_SKINNED_FOG]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_INTERACTION_SHADOW_MAPPING_POINT_SKINNED_FOG]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_INTERACTION_SHADOW_MAPPING_PARALLEL_SKINNED_FOG]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_PBR_INTERACTION_SHADOW_MAPPING_SPOT_SKINNED_FOG]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_PBR_INTERACTION_SHADOW_MAPPING_POINT_SKINNED_FOG]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_PBR_INTERACTION_SHADOW_MAPPING_PARALLEL_SKINNED_FOG]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_INTERACTION_SHADOW_ATLAS_SPOT_SKINNED_FOG]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_INTERACTION_SHADOW_ATLAS_POINT_SKINNED_FOG]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_INTERACTION_SHADOW_ATLAS_PARALLEL_SKINNED_FOG]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_PBR_INTERACTION_SHADOW_ATLAS_SPOT_SKINNED_FOG]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_PBR_INTERACTION_SHADOW_ATLAS_POINT_SKINNED_FOG]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_PBR_INTERACTION_SHADOW_ATLAS_PARALLEL_SKINNED_FOG]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_INTERACTION_SKINNED_FOG]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_INTERACTION_AMBIENT_SKINNED_FOG]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_PBR_INTERACTION_SKINNED_FOG]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_PBR_INTERACTION_AMBIENT_SKINNED_FOG]].usesJoints = true;
+		// ---- END TRACK V ----
 	}
 
 	cmdSystem->AddCommand( "reloadShaders", R_ReloadShaders, CMD_FL_RENDERER, "reloads shaders" );
