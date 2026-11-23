@@ -36,6 +36,22 @@ If you have questions concerning this license or the applicable additional terms
 //puncho start - P2b.3.8
 idCVar aas_fixInvalidPortals( "aas_fixInvalidPortals", "0", CVAR_TOOL | CVAR_BOOL, "remove one-sided cluster portals using the opposite face area" );
 //puncho end - P2b.3.8
+//puncho start - R5 speed
+idCVar aas_clusterFast( "aas_clusterFast", "1", CVAR_TOOL | CVAR_BOOL, "clustering: 1 = a portal area's portal comes from a table, and a cluster's areas are numbered from the flood's own list; 0 = the searches over all portals and all areas as they were; changes no output" );
+idCVar aas_clusterCheck( "aas_clusterCheck", "0", CVAR_TOOL | CVAR_BOOL, "clustering with aas_clusterFast 1: also runs the old searches and stops when they give something else" );
+// tests only: aas_fault ( AASReach.cpp ) 2 and 3 plant a fault here. A retail build has no such cvar and plants nothing
+#ifndef ID_RETAIL
+extern idCVar aas_fault;
+#endif
+static int AAS_ClusterFault()
+{
+#ifndef ID_RETAIL
+	return aas_fault.GetInteger();
+#else
+	return 0;
+#endif
+}
+//puncho end - R5 speed
 
 
 /*
@@ -49,12 +65,48 @@ bool idAASCluster::UpdatePortal( int areaNum, int clusterNum )
 	aasPortal_t* portal;
 
 	// find the portal for this area
+	//puncho start - R5 speed: CreatePortals wrote every portal area's first portal into areaPortal. The search below
+	// stays for aas_clusterFast 0, and aas_clusterCheck runs it beside the table
+	if( aas_clusterFast.GetBool() )
+	{
+		portalNum = areaPortal[areaNum];
+		if( portalNum == 0 )
+		{
+			// no portal: where the search ends
+			portalNum = file->portals.Num();
+		}
+		else if( portalNum < 0 || portalNum >= file->portals.Num() || file->portals[portalNum].areaNum != areaNum )
+		{
+			common->Error( "areaPortal: area %d is given portal %d of %d, which is not the area's", areaNum, portalNum, file->portals.Num() );
+			return true;
+		}
+		if( aas_clusterCheck.GetBool() )
+		{
+			int searched;
+			for( searched = 1; searched < file->portals.Num(); searched++ )
+			{
+				if( file->portals[searched].areaNum == areaNum )
+				{
+					break;
+				}
+			}
+			if( searched != portalNum )
+			{
+				common->Error( "aas_clusterCheck: area %d: the table gives portal %d, the search %d", areaNum, portalNum, searched );
+			}
+		}
+	}
+	else
+	{
+		//puncho end - R5 speed
 	for( portalNum = 1; portalNum < file->portals.Num(); portalNum++ )
 	{
 		if( file->portals[portalNum].areaNum == areaNum )
 		{
 			break;
 		}
+	}
+	//puncho - R5 speed: the end of the else above; the search's own lines stay where they were
 	}
 
 	if( portalNum >= file->portals.Num() )
@@ -111,14 +163,6 @@ updated, in the order the calls did it, so the file written is the same. An area
 once, so there are never more frames than areas.
 ================
 */
-typedef struct aasFloodFrame_s
-{
-	int						areaNum;		// the area this frame floods from
-	int						nextFace;		// the next of its faces to look at
-	idReachability* 		reach;			// the next reachability leaving it
-	idReachability* 		revReach;		// the next reachability entering it
-} aasFloodFrame_t;
-
 bool idAASCluster::FloodClusterAreas( int areaNum, int clusterNum )
 {
 	aasArea_t* area;
@@ -126,11 +170,13 @@ bool idAASCluster::FloodClusterAreas( int areaNum, int clusterNum )
 	int faceNum, nextAreaNum, numFrames, maxFrames;
 	bool enter, result;
 	aasFloodFrame_t* frames, *frame;
-	idList<aasFloodFrame_t> frameList;	// owns the frames, so they are freed also when common->Error throws (runAAS in the game)
 
-	maxFrames = file->areas.Num();
-	frameList.SetNum( maxFrames );
+	//puncho - R5 speed: frameList is a member, sized once in Build ( it was made new for every cluster ); the
+	// frames are written before they are read, and the member is freed with this object, also when common->Error throws
+	maxFrames = frameList.Num();
 	frames = frameList.Ptr();
+	numFloodAreas = 0;
+	bool faultSkip = ( AAS_ClusterFault() == 2 );	// tests only, see where an area gets its cluster number
 	numFrames = 0;
 	result = true;
 	nextAreaNum = areaNum;
@@ -168,6 +214,18 @@ bool idAASCluster::FloodClusterAreas( int areaNum, int clusterNum )
 			{
 				// set the area cluster number
 				area->cluster = clusterNum;
+				//puncho - R5 speed: NumberClusterAreas numbers from this list. Area 0 is the dummy: the scans over all areas
+				// start at area 1, so it is never listed ( no reachability leads to it either )
+				if( faultSkip )
+				{
+					// aas_fault 2, tests only: the first area of this flood is left out; CheckClusterAreaNumbers must refuse
+					faultSkip = false;
+					numFaults++;
+				}
+				else if( nextAreaNum > 0 )
+				{
+					floodAreas[numFloodAreas++] = nextAreaNum;
+				}
 
 				if( numFrames >= maxFrames )
 				{
@@ -257,7 +315,7 @@ idAASCluster::NumberClusterAreas
 */
 void idAASCluster::NumberClusterAreas( int clusterNum )
 {
-	int i, portalNum;
+	int i, k, portalNum;
 	aasCluster_t* cluster;
 	aasPortal_t* portal;
 
@@ -265,9 +323,41 @@ void idAASCluster::NumberClusterAreas( int clusterNum )
 	cluster->numAreas = 0;
 	cluster->numReachableAreas = 0;
 
-	// number all areas in this cluster WITH reachabilities
-	for( i = 1; i < file->areas.Num(); i++ )
+	//puncho start - R5 speed: with aas_clusterFast the two scans over the areas run over floodAreas, the areas the
+	// flood gave this cluster's number, sorted ascending here: the same areas in the same order as the scans over
+	// every area find, because the flood is the only code that gives an area a cluster number above 0
+	const bool fast = aas_clusterFast.GetBool();
+	const int numScan = fast ? numFloodAreas : file->areas.Num() - 1;
+	if( fast )
 	{
+		std::sort( floodAreas.Ptr(), floodAreas.Ptr() + numFloodAreas );
+		if( aas_clusterCheck.GetBool() )
+		{
+			// the check: the list against a scan over every area
+			for( i = 1, k = 0; i < file->areas.Num(); i++ )
+			{
+				if( file->areas[i].cluster != clusterNum )
+				{
+					continue;
+				}
+				if( k >= numFloodAreas || floodAreas[k] != i )
+				{
+					common->Error( "aas_clusterCheck: cluster %d: area %d is not in the flood's list", clusterNum, i );
+				}
+				k++;
+			}
+			if( k != numFloodAreas )
+			{
+				common->Error( "aas_clusterCheck: cluster %d: the flood's list holds %d areas, the scan finds %d", clusterNum, numFloodAreas, k );
+			}
+		}
+	}
+	//puncho end - R5 speed
+
+	// number all areas in this cluster WITH reachabilities
+	for( k = 0; k < numScan; k++ )
+	{
+		i = fast ? floodAreas[k] : k + 1;
 
 		if( file->areas[i].cluster != clusterNum )
 		{
@@ -306,8 +396,9 @@ void idAASCluster::NumberClusterAreas( int clusterNum )
 	}
 
 	// number all areas in this cluster WITHOUT reachabilities
-	for( i = 1; i < file->areas.Num(); i++ )
+	for( k = 0; k < numScan; k++ )
 	{
+		i = fast ? floodAreas[k] : k + 1;
 
 		if( file->areas[i].cluster != clusterNum )
 		{
@@ -408,6 +499,10 @@ void idAASCluster::CreatePortals()
 	int i;
 	aasPortal_t portal;
 
+	//puncho start - R5 speed: areaPortal[area] = the area's portal, 0 = none; UpdatePortal reads it
+	areaPortal.SetNum( file->areas.Num() );
+	memset( areaPortal.Ptr(), 0, areaPortal.Num() * sizeof( int ) );
+	//puncho end - R5 speed
 	for( i = 1; i < file->areas.Num(); i++ )
 	{
 		// if the area is a cluster portal
@@ -416,6 +511,17 @@ void idAASCluster::CreatePortals()
 			portal.areaNum = i;
 			portal.clusters[0] = portal.clusters[1] = 0;
 			portal.maxAreaTravelTime = 0;
+			//puncho - R5 speed: an area's first portal, the one the search from portal 1 finds
+			if( areaPortal[i] == 0 )
+			{
+				areaPortal[i] = file->portals.Num();
+				if( AAS_ClusterFault() == 3 )
+				{
+					// tests only: one too high; UpdatePortal must refuse the entry
+					areaPortal[i]++;
+					numFaults++;
+				}
+			}
 			file->portals.Append( portal );
 		}
 	}
@@ -595,6 +701,84 @@ void idAASCluster::RemoveInvalidPortals()
 
 /*
 ================
+idAASCluster::CheckClusterAreaNumbers
+
+//puncho - R5 speed: run once, on the clusters that are written. NumberClusterAreas numbers the areas of a
+cluster in ascending area number: the areas with reachabilities from 0; then, after the cluster's portals
+with reachabilities, the areas without from numReachableAreas. This sweep over all areas gives every area
+that number again and compares, and it counts each cluster's areas and portals against numReachableAreas
+and numAreas. It does not read the flood's list, so it holds for either way of numbering.
+================
+*/
+bool idAASCluster::CheckClusterAreaNumbers()
+{
+	int i, c, expect, portalNum;
+	const int numClusters = file->clusters.Num();
+	const int reachable = AREA_REACHABLE_WALK | AREA_REACHABLE_FLY;
+	idList<int> with, without, portalsWith, portalsWithout;
+
+	with.SetNum( numClusters );
+	without.SetNum( numClusters );
+	portalsWith.SetNum( numClusters );
+	portalsWithout.SetNum( numClusters );
+	for( c = 0; c < numClusters; c++ )
+	{
+		with[c] = 0;
+		without[c] = file->clusters[c].numReachableAreas;
+		portalsWith[c] = 0;
+		portalsWithout[c] = 0;
+	}
+
+	for( i = 1; i < file->areas.Num(); i++ )
+	{
+		c = file->areas[i].cluster;
+		if( c <= 0 )
+		{
+			continue;
+		}
+		if( c >= numClusters )
+		{
+			return false;
+		}
+		if( file->areas[i].flags & reachable )
+		{
+			expect = with[c]++;
+		}
+		else
+		{
+			expect = without[c]++;
+		}
+		if( file->areas[i].clusterAreaNum != expect )
+		{
+			return false;
+		}
+	}
+
+	for( c = 1; c < numClusters; c++ )
+	{
+		const aasCluster_t* cluster = &file->clusters[c];
+		for( i = 0; i < cluster->numPortals; i++ )
+		{
+			portalNum = file->portalIndex[cluster->firstPortal + i];
+			if( file->areas[file->portals[portalNum].areaNum].flags & reachable )
+			{
+				portalsWith[c]++;
+			}
+			else
+			{
+				portalsWithout[c]++;
+			}
+		}
+		if( with[c] + portalsWith[c] != cluster->numReachableAreas || without[c] + portalsWithout[c] != cluster->numAreas )
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+/*
+================
 idAASCluster::Build
 ================
 */
@@ -605,6 +789,12 @@ bool idAASCluster::Build( idAASFileLocal* file )
 
 	this->file = file;
 	this->noFaceFlood = true;
+	//puncho start - R5 speed: the flood's frames and its list of numbered areas, sized once
+	frameList.SetNum( file->areas.Num() );
+	floodAreas.SetNum( file->areas.Num() );
+	numFloodAreas = 0;
+	numFaults = 0;
+	//puncho end - R5 speed
 
 	RemoveInvalidPortals();
 
@@ -616,6 +806,11 @@ bool idAASCluster::Build( idAASFileLocal* file )
 
 		// create the portals from the portal areas
 		CreatePortals();
+		if( AAS_ClusterFault() == 3 )
+		{
+			//puncho - R5 speed, tests only: said here because the flood ends the compile when it meets the fault
+			common->Printf( "\raas fault: 3 planted %d\n", numFaults );
+		}
 
 		common->Printf( "\r%6d", file->portals.Num() );
 
@@ -635,6 +830,15 @@ bool idAASCluster::Build( idAASFileLocal* file )
 	}
 
 	common->Printf( "\r%6d portals\n", file->portals.Num() );
+	//puncho start - R5 speed: which path ran ( the tests ask for this line; it comes after the portals line, so it starts
+	// a line of its own ), then, always, the area numbers as NumberClusterAreas' scans over all areas give them
+	common->Printf( "aas cluster: fast %d, check %d, fault %d planted %d\n", aas_clusterFast.GetBool() ? 1 : 0, aas_clusterCheck.GetBool() ? 1 : 0, AAS_ClusterFault(), numFaults );
+	if( !CheckClusterAreaNumbers() )
+	{
+		common->Error( "the cluster area numbers are not the ones the scan over all areas gives" );
+	}
+	//puncho end - R5 speed
+
 	common->Printf( "%6d clusters\n", file->clusters.Num() );
 
 	for( int i = 0; i < file->clusters.Num(); i++ )

@@ -37,6 +37,16 @@ If you have questions concerning this license or the applicable additional terms
 ===============================================================================
 */
 
+//puncho start - R5 speed: one frame of idAASCluster::FloodClusterAreas ( moved here from AASCluster.cpp: the frames are a member now )
+typedef struct aasFloodFrame_s
+{
+	int						areaNum;		// the area this frame floods from
+	int						nextFace;		// the next of its faces to look at
+	idReachability* 		reach;			// the next reachability leaving it
+	idReachability* 		revReach;		// the next reachability entering it
+} aasFloodFrame_t;
+//puncho end - R5 speed
+
 class idAASCluster
 {
 
@@ -47,6 +57,13 @@ public:
 private:
 	idAASFileLocal* 		file;
 	bool					noFaceFlood;
+	//puncho start - R5 speed
+	idList<int>				areaPortal;			// area number -> the area's portal in file->portals, 0 = none ( CreatePortals )
+	idList<int>				floodAreas;			// the areas the last flood gave its cluster number, numFloodAreas of them
+	int						numFloodAreas;
+	int						numFaults;			// aas_fault 2 and 3: how many were planted
+	idList<aasFloodFrame_t>	frameList;			// the flood's frames, at most one an area
+	//puncho end - R5 speed
 
 private:
 	bool					UpdatePortal( int areaNum, int clusterNum );
@@ -58,6 +75,7 @@ private:
 	bool					TestPortals();
 	void					ReportEfficiency();
 	void					RemoveInvalidPortals();
+	bool					CheckClusterAreaNumbers();	//puncho - R5 speed
 };
 
 #endif /* !__AASCLUSTER_H__ */
