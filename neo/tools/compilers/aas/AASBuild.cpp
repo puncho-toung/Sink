@@ -1337,7 +1337,25 @@ bool RunAAS( const idCmdArgs& args ) //puncho - TC1: return before command Error
 				mapName = "maps/" + mapName;
 			}
 //puncho start - P2b.3.8, TC1
+			//puncho start - R5 speed: this type's phase times; Build adds them to sums that only dmap printed
+			int phaseBefore[DP_AAS_WRITE - DP_AAS_LOAD + 1];
+			for( int phase = DP_AAS_LOAD; phase <= DP_AAS_WRITE; phase++ )
+			{
+				phaseBefore[phase - DP_AAS_LOAD] = DmapPhaseMilliseconds( ( compilerPhase_t )phase );
+			}
+			//puncho end - R5 speed
 			const aasBuildResult_t result = aas.Build( mapName, &settings, useSeeds );
+			//puncho start - R5 speed
+			if( dmap_phaseTimes.GetBool() )
+			{
+				static const char* phaseNames[] = { "load", "brushes", "expand", "bsp", "subdivide", "store", "reach", "cluster", "optimize", "write" };
+				static_assert( sizeof( phaseNames ) / sizeof( phaseNames[0] ) == DP_AAS_WRITE - DP_AAS_LOAD + 1, "one name a phase" );
+				for( int phase = DP_AAS_LOAD; phase <= DP_AAS_WRITE; phase++ )
+				{
+					common->Printf( "aas phase %s %s %i\n", kv->GetValue().c_str(), phaseNames[phase - DP_AAS_LOAD], DmapPhaseMilliseconds( ( compilerPhase_t )phase ) - phaseBefore[phase - DP_AAS_LOAD] );
+				}
+			}
+			//puncho end - R5 speed
 			if( result == AAS_BUILD_WRITE_FAILED || ( useSeeds && result != AAS_BUILD_OK && result != AAS_BUILD_UNUSED ) )	//puncho - R2 router: unused is no failure, as before
 			{
 				if( useSeeds )
@@ -1670,6 +1688,9 @@ static bool BakeRouterLists( const char* rtgName, const char* listsName )
 	_putenv_s( "RT_DOORS", "" );		// an empty value takes the variable out of the environment
 	_putenv_s( "RT_FLY", "" );
 	_putenv_s( "OD_WAYPOINTS", "" );
+	_putenv_s( "OD_COVER", "" );		//puncho - R5 speed: the bake's test switches ( census.cpp, nl_bake.cpp )
+	_putenv_s( "NL_PROOF", "" );
+	_putenv_s( "NL_FAULT", "" );
 	// the outer pair of quotes is cmd's own; inside it every path is quoted
 	command = va( "\"\"%s\" 2 \"%s\" FB 1 0 \"%s\"\"", tool.c_str(), levels, outOS.c_str() );
 #else
@@ -1678,6 +1699,9 @@ static bool BakeRouterLists( const char* rtgName, const char* listsName )
 	unsetenv( "RT_DOORS" );
 	unsetenv( "RT_FLY" );
 	unsetenv( "OD_WAYPOINTS" );
+	unsetenv( "OD_COVER" );		//puncho - R5 speed: the bake's test switches ( census.cpp, nl_bake.cpp )
+	unsetenv( "NL_PROOF" );
+	unsetenv( "NL_FAULT" );
 	command = va( "'%s' 2 '%s' FB 1 0 '%s'", tool.c_str(), levels, outOS.c_str() );
 #endif
 	RemoveRouterLists( listsName );
