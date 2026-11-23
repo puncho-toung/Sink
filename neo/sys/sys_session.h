@@ -692,7 +692,7 @@ public:
 	virtual void				UpdateRichPresence() = 0;
 
 	virtual void				SendUsercmds( idBitMsg& msg ) = 0;
-	virtual void				SendSnapshot( class idSnapShot& ss ) = 0;
+	virtual uint32				SendSnapshot( class idSnapShot& ss ) = 0;	//puncho - R6.2: returns bit p + 1 for every peer p that took it as its next snapshot
 
 	virtual int					GetInputRouting( int inputRouting[ MAX_INPUT_DEVICES ] );
 

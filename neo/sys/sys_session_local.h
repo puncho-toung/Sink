@@ -391,7 +391,7 @@ public:
 	virtual const char* 	GetStateString() const ;
 
 	virtual void			SendUsercmds( idBitMsg& msg );
-	virtual void			SendSnapshot( idSnapShot& ss );
+	virtual uint32			SendSnapshot( idSnapShot& ss );
 	virtual const char* 	GetPeerName( int peerNum );
 
 	virtual const char* 	GetLocalUserName( int i ) const

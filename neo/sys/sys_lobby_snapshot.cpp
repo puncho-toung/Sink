@@ -564,7 +564,7 @@ idLobby::SendSnapshotToPeer
 ========================
 */
 idCVar net_forceDropSnap( "net_forceDropSnap", "0", CVAR_BOOL, "wait on snaps" );
-void idLobby::SendSnapshotToPeer( idSnapShot& ss, int p )
+bool idLobby::SendSnapshotToPeer( idSnapShot& ss, int p )	//puncho - R6.2: was void; true when the peer took ss
 {
 	assert( lobbyType == GetActingGameStateLobbyType() );
 
@@ -573,12 +573,12 @@ void idLobby::SendSnapshotToPeer( idSnapShot& ss, int p )
 	if( net_forceDropSnap.GetBool() )
 	{
 		net_forceDropSnap.SetBool( false );
-		return;
+		return false;
 	}
 
 	if( peer.pauseSnapshots )
 	{
-		return;
+		return false;
 	}
 
 	int time = Sys_Milliseconds();
@@ -594,7 +594,7 @@ void idLobby::SendSnapshotToPeer( idSnapShot& ss, int p )
 		{
 			// This peer is throttled, skip his snap shot
 			NET_VERBOSESNAPSHOT_PRINT_LEVEL( 2, va( "NET: Throttling peer %d.Skipping snapshot. Time elapsed: %d peer snap rate: %d\n", p, ( time - peer.lastSnapJobTime ), peer.throttledSnapRate ) );
-			return;
+			return false;
 		}
 	}
 
@@ -607,14 +607,15 @@ void idLobby::SendSnapshotToPeer( idSnapShot& ss, int p )
 	{
 		if( peer.packetProc->GetOutgoingRateBytes() > peer.maxSnapBps )
 		{
-			return;
+			return false;
 		}
 	}
 
 	// TrySetPendingSnapshot will try to set the new pending snap.
 	// TrySetPendingSnapshot won't do anything until the last snap set was fully sent out.
 
-	if( peer.snapProc->TrySetPendingSnapshot( ss ) )
+	const bool accepted = peer.snapProc->TrySetPendingSnapshot( ss );	//puncho - R6.2
+	if( accepted )
 	{
 		NET_VERBOSESNAPSHOT_PRINT_LEVEL( 2, va( "  ^8Set next pending snapshot peer %d\n", 0 ) );
 
@@ -635,6 +636,7 @@ void idLobby::SendSnapshotToPeer( idSnapShot& ss, int p )
 	// We send out the pending snap, which could be the most recent, or an old one that hasn't fully been sent
 	// We don't send immediately, since we have to coordinate sending snaps for all peers in same place considering jobs.
 	peer.needToSubmitPendingSnap = true;
+	return accepted;
 }
 
 /*

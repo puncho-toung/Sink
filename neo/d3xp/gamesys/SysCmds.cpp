@@ -6162,6 +6162,11 @@ void idGameLocal::InitConsoleCommands()
 	cmdSystem->AddCommand( "listMonsters",			idAI::List_f,				CMD_FL_GAME | CMD_FL_CHEAT,	"lists monsters" );
 	cmdSystem->AddCommand( "listSpawnArgs",			Cmd_ListSpawnArgs_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"list the spawn args of an entity", idGameLocal::ArgCompletion_EntityName );
 	cmdSystem->AddCommand( "listSpawnIds",			Cmd_ListSpawnIds_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"lists the spawn-id generations of the map's entities, with a digest" );	//puncho - identity (P1-A2)
+	cmdSystem->AddCommand( "netDumpPresent",		Cmd_NetDumpPresent_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"netDumpPresent <file>: every live entity of this machine, one line each, into a file under fs_savepath" );	//puncho - R6.0 (Game_interest.cpp)
+	cmdSystem->AddCommand( "listInterest",			Cmd_ListInterest_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"the interest switches of the loaded map and, on the host, what each peer holds" );	//puncho - R6.2 (Game_interest.cpp)
+	cmdSystem->AddCommand( "netTestViewer",			Cmd_NetTestViewer_f,		CMD_FL_GAME | CMD_FL_CHEAT,	"netTestViewer <client> [<x> <y> <z>]: on the host, the point a client's peer views the game from (tests of net_interest)" );	//puncho - R6.2
+	cmdSystem->AddCommand( "netTestEvent",			Cmd_NetTestEvent_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"netTestEvent <entity>: on the host, sends a harmless entity event for that entity (tests of net_interest)" );	//puncho - R6.3
+	cmdSystem->AddCommand( "netTestStale",			Cmd_NetTestStale_f,			CMD_FL_GAME | CMD_FL_CHEAT,	"netTestStale <map ordinal>: on a client, removes a map entity as a snapshot from before a map restart would (tests of net_mapOrdinals)" );	//puncho - R6.1
 	cmdSystem->AddCommand( "say",					Cmd_Say_f,					CMD_FL_GAME,				"text chat" );
 	cmdSystem->AddCommand( "sayTeam",				Cmd_SayTeam_f,				CMD_FL_GAME,				"team text chat" );
 	cmdSystem->AddCommand( "addChatLine",			Cmd_AddChatLine_f,			CMD_FL_GAME,				"internal use - core to game chat lines" );

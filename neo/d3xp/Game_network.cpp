@@ -878,6 +878,8 @@ void idGameLocal::ServerWriteSnapshot( idSnapShot& ss )
 	const uint64	usWriteStart = profileSnap ? Sys_Microseconds() : 0;
 	//puncho end
 
+	NetInterestBuild( pvsHandles );	//puncho - R6.2: which peers this snapshot gives each entity to
+
 	// Add all entities to the snapshot
 	for( idEntity* ent = spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next() )
 	{
@@ -885,6 +887,24 @@ void idGameLocal::ServerWriteSnapshot( idSnapShot& ss )
 		{
 			continue;
 		}
+		//puncho start - R6.2: with the filter on, an entity goes to the peers that selected it and is not written for
+		// nobody (a resident is in no group, so nobody selects it). R6.3: with the filter off a resident is passed
+		// over here. What is written is on the wire from now on, and never a resident again
+		uint32 visMask = ~0U;
+		if( netInterest.active )
+		{
+			visMask = netInterest.presenceBuilt[ ent->entityNumber ];
+			if( visMask == 0 )
+			{
+				continue;
+			}
+		}
+		else if( NetInterestResident( ent ) )
+		{
+			continue;
+		}
+		netInterest.wiredEver[ ent->entityNumber >> 3 ] |= 1 << ( ent->entityNumber & 7 );
+		//puncho end
 
 		//puncho start - ai-harness
 		const bool isMinion = ent->IsType( idAI::Type );
@@ -916,7 +936,7 @@ void idGameLocal::ServerWriteSnapshot( idSnapShot& ss )
 			ent->WriteToSnapshot( msg );
 		}
 
-		ss.S_AddObject( SNAP_ENTITIES + ent->entityNumber, ~0U, msg, ent->GetName() );
+		ss.S_AddObject( SNAP_ENTITIES + ent->entityNumber, visMask, msg, ent->GetName() );	//puncho - R6.2: was ~0U
 
 		//puncho start - ai-harness
 		snapObjects++;
@@ -932,7 +952,8 @@ void idGameLocal::ServerWriteSnapshot( idSnapShot& ss )
 		//puncho end
 	}
 
-	if( worldStore.IsActive() && session->GetActingGameStateLobbyBase().GetNumConnectedPeers() > 0 )
+	//puncho - R6.1: the ordinal slots carry the host's removed bits too
+	if( ( worldStore.IsActive() || netInterest.ordinals ) && session->GetActingGameStateLobbyBase().GetNumConnectedPeers() > 0 )
 	{
 		for( int chunk = 0; chunk < MAP_REMOVED_CHUNKS; chunk++ )
 		{
@@ -1337,6 +1358,30 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 	idSnapshotTrace* const snapTrace = snapshotTrace.Start( false, ss.GetTime() );
 	//puncho end
 
+	//puncho start - R6.1: with the ordinal slots the removed bits are read before the entities. The chunks are the
+	// snapshot's last objects, and an entity ahead of them must not be judged by bits this same snapshot clears (the
+	// host restarted the map) or sets. A client that has restarted still reads the snapshots it had buffered from
+	// before the restart; they delete what the old bits name, and the first snapshot from after it, read in this
+	// order, clears the bits and then builds those entities again from the map file
+	NetInterestClientBegin();	//puncho - R6.2
+	if( netInterest.ordinals )
+	{
+		for( int chunk = 0; chunk < MAP_REMOVED_CHUNKS; chunk++ )
+		{
+			// the host adds a chunk only while it holds a bit: a snapshot without the object says "no bit", as a
+			// deleted object of size 0 does (a client can hold bits of a snapshot from before a map restart whose
+			// chunk the snapshots after it never name; Opus A, MINOR-3)
+			idBitMsg chunkMsg;
+			const int index = ss.FindObjectIndexByID( SNAP_MAP_REMOVED + chunk );
+			if( index < 0 || ss.GetObjectMsgByIndex( index, chunkMsg ) != SNAP_MAP_REMOVED + chunk )
+			{
+				chunkMsg.InitRead( NULL, 0 );
+			}
+			NetInterestReadRemoved( chunk * 500, chunkMsg );
+		}
+	}
+	//puncho end
+
 	// read all entities from the snapshot
 	for( int o = 0; o < ss.NumObjects(); o++ )
 	{
@@ -1438,6 +1483,12 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 		}
 		if( snapObjectNum >= SNAP_MAP_REMOVED && snapObjectNum < SNAP_MAP_REMOVED + MAP_REMOVED_CHUNKS )
 		{
+			//puncho start - R6.1: with the ordinal slots the chunks were read ahead of the entities (above the loop)
+			if( netInterest.ordinals )
+			{
+				continue;
+			}
+			//puncho end
 			const int first = ( snapObjectNum - SNAP_MAP_REMOVED ) * 500;
 			const int bytes = Min( 500, ( int )sizeof( worldStore.removed ) - first );
 			//puncho start - P2.4 (bug review 2026-10-28): a deleted object arrives with size 0, as for entities. The host
@@ -1485,7 +1536,12 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 
 		if( msg.GetSize() == 0 )
 		{
-			delete entities[entityNumber];
+			//puncho - R6.2: only an entity a snapshot gave or confirmed; the deleted object is read again with
+			// every later snapshot (Game_interest.cpp)
+			if( NetInterestClientDelete( entityNumber ) )
+			{
+				NetInterestClientRemove( entityNumber );	// and what this machine bound to it for itself
+			}
 			continue;
 		}
 
@@ -1561,10 +1617,12 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 		}
 
 		idEntity* ent = entities[entityNumber];
+		bool builtHere = false;	//puncho - R6.2
 
 		// if there is no entity or an entity of the wrong type
 		if( !ent || ent->GetType()->typeNum != typeNum || ent->entityDefNumber != entityDefNumber || spawnId != spawnIds[ entityNumber ] )
 		{
+			builtHere = true;
 			//puncho start - identity (P1-A2): the content check proves the map text equal, not the slot layout: a map-range
 			// slot the host fills with something else is logged, so a drift between the peers' map spawns shows. A
 			// networkSync entity's slot is the host's to free and refill (a broken light, a removed item), so its
@@ -1575,7 +1633,7 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 			}
 			//puncho end
 
-			delete ent;
+			NetInterestClientRemove( entityNumber );	//puncho - R6: ent, and what this machine bound to it for itself
 
 			//puncho start - identity (P1-A2): a one-shot that only the registration of this slot takes; the children the
 			// new entity spawns advance their own slots
@@ -1595,6 +1653,7 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 				idDict args;
 				args.SetInt( "spawn_entnum", entityNumber );
 				args.Set( "name", va( "entity%d", entityNumber ) );
+				netInterest.authoredSlot = entityNumber;	//puncho - R6.1: the reader may fill an authored slot (RegisterEntity takes the one-shot)
 
 				if( entityDefNumber >= 0 )
 				{
@@ -1604,11 +1663,27 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 					}
 					const char* classname = declManager->DeclByIndex( DECL_ENTITYDEF, entityDefNumber, false )->GetName();
 					args.Set( "classname", classname );
+					//puncho start - R6.1: in an authored slot, the host's map entity is built from this machine's map file,
+					// with every key the map gave it (its class name is the map's, which resolves to the host's def here)
+					const idMapEntity* baseline = NetInterestBaseline( entityNumber, spawnId, classname );
+					if( baseline != NULL )
+					{
+						args = baseline->epairs;
+						args.SetVector( BRUSH_ORIGIN_KEY, baseline->originOffset );
+						args.SetInt( "spawn_entnum", entityNumber );
+					}
+					//puncho end
 					//puncho - identity (P1-A2, P1-m6): the spawnId test catches a registration that did not take forcedGen
 					if( !SpawnEntityDef( args, &ent ) || !entities[entityNumber] || entities[entityNumber]->GetType()->typeNum != typeNum || spawnIds[ entityNumber ] != spawnId )
 					{
 						Error( "Failed to spawn entity with classname '%s' of type '%s'", classname, typeInfo->classname );
 					}
+					//puncho start - R6.1: the rebuilt map entity holds the keys its map spawn had, and no slot key
+					if( baseline != NULL )
+					{
+						ent->spawnArgs.Delete( "spawn_entnum" );
+					}
+					//puncho end
 				}
 				else
 				{
@@ -1634,8 +1709,10 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 			//puncho start - identity (P1-A2, P1-m6): the one-shot is for this slot's registration only; a spawn that did
 			// not take it must not leave it armed for a later one
 			forcedGenEntityNum = -1;
+			netInterest.authoredSlot = -1;	//puncho - R6.1
 			//puncho end
 		}
+		NetInterestClientSeen( entityNumber, builtHere );	//puncho - R6.2: the slot holds the host's entity
 
 		if( ss.ObjectIsStaleByIndex( o ) )
 		{
@@ -1690,6 +1767,8 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 	}
 	//puncho end
 
+	NetInterestClientFinish();	//puncho - R6.2: the sweep, and the targets and binds of what this read built
+
 	// process entity events
 	ClientProcessEntityNetworkEventQueue();
 }
@@ -1715,6 +1794,27 @@ void idGameLocal::ClientProcessEntityNetworkEventQueue()
 
 		if( !entPtr.SetSpawnId( event->spawnId ) )
 		{
+			//puncho start - R6.2: with the ordinal slots an entity comes and goes with the viewer's interest, and its
+			// event can be here before the snapshot that builds it. The event waits net_eventHoldMs of server time,
+			// counted from its arrival, and the events behind it wait with it; a slot that holds another generation
+			// will never be the event's entity
+			if( netInterest.ordinals )
+			{
+				if( gameLocal.entities[ event->spawnId & ( ( 1 << GENTITYNUM_BITS ) - 1 ) ] == NULL )
+				{
+					if( ( unsigned int )( this->serverTime - event->holdOrigin ) < ( unsigned int )Max( 0, net_eventHoldMs.GetInteger() ) )
+					{
+						if( !event->held )
+						{
+							event->held = 1;
+							netInterest.eventsHeld++;
+						}
+						break;
+					}
+				}
+				netInterest.eventsDropped++;
+			}
+			//puncho end
 			if( !gameLocal.entities[ event->spawnId & ( ( 1 << GENTITYNUM_BITS ) - 1 ) ] )
 			{
 				// if new entity exists in this position, silently ignore
@@ -1815,6 +1915,10 @@ void idGameLocal::ClientProcessReliableMessage( int type, const idBitMsg& msg )
 			event->spawnId = msg.ReadBits( 32 );
 			event->event = msg.ReadByte();
 			event->time = msg.ReadLong();
+			//puncho start - R6.2: the event's hold counts from the later of its own time and its arrival
+			event->holdOrigin = Max( event->time, serverTime );
+			event->held = 0;
+			//puncho end
 
 			event->paramsSize = msg.ReadBits( idMath::BitsForInteger( MAX_EVENT_PARAM_SIZE ) );
 			if( event->paramsSize )

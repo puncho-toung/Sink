@@ -7029,12 +7029,15 @@ void idEntity::ServerSendEvent( int eventId, const idBitMsg* msg, bool saveEvent
 	}
 
 	idLobbyBase& lobby = session->GetActingGameStateLobbyBase();
-	peerMask_t peerMask = MAX_UNSIGNED_TYPE( peerMask_t );
-	if( excluding.IsValid() )
+	//puncho start - R6.3: the users the event goes to (Game_interest.cpp). The mask's bits are lobby user ordinals;
+	// the old code built it as ~peerIndex, which for the excluded user's peer 0 excluded nobody and for peer 1
+	// excluded the host's own user. With the filter on, a user whose peer does not hold the entity gets no event
+	peerMask_t peerMask;
+	if( gameLocal.NetInterestEventUsers( this, excluding, peerMask ) )
 	{
-		peerMask = ~( peerMask_t )lobby.PeerIndexFromLobbyUser( excluding );
+		lobby.SendReliable( GAME_RELIABLE_MESSAGE_EVENT, outMsg, false, peerMask );
 	}
-	lobby.SendReliable( GAME_RELIABLE_MESSAGE_EVENT, outMsg, false, peerMask );
+	//puncho end
 
 	if( saveEvent )
 	{

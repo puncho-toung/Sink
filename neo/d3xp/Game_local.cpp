@@ -272,6 +272,11 @@ void idGameLocal::Clear()
 	mapSpawnCount = 0;
 	clientSpawnCensus.Clear();
 	//puncho end
+	//puncho start - R6
+	memset( &netInterest, 0, sizeof( netInterest ) );
+	netInterest.mapOrdinalEnd = MAX_CLIENTS;
+	netInterest.authoredSlot = -1;
+	//puncho end
 	memset( hitClaimRefusals, 0, sizeof( hitClaimRefusals ) );	//puncho - P0-m8
 	camera = NULL;
 	aasList.Clear();
@@ -1572,6 +1577,7 @@ void idGameLocal::InitFromNewMap( const char* mapName, idRenderWorld* renderWorl
 	{
 		Error( "map %s has %d portals; multiplayer supports at most 20800", mapName, renderWorld->NumPortals() );
 	}
+	NetInterestLatch();	//puncho - R6.1: the net switches this map is loaded under
 	LoadMap( mapName, randseed );
 
 	common->LoadPhase( LOAD_SCRIPT );
@@ -2120,6 +2126,14 @@ void idGameLocal::MapShutdown()
 	}
 
 	MapClear( true );
+	//puncho start - R6: the switches are a map's. The next map reads its own (NetInterestLatch), and a save that is
+	// loaded next, which reads none, must not inherit this map's ordinal slots
+	netInterest.ordinals = false;
+	netInterest.statics = false;
+	netInterest.active = false;
+	netInterest.mapOrdinalEnd = MAX_CLIENTS;
+	netInterest.authoredSlot = -1;
+	//puncho end
 
 	common->UpdateLevelLoadPacifier();
 
@@ -5722,7 +5736,8 @@ void idGameLocal::RegisterEntity( idEntity* ent, int forceSpawnId, const idDict&
 	int spawn_entnum;
 
 	ent->fl.skipReplication = spawnArgsToCopy.GetBool( "net_skip_replication", false );
-	if( common->IsMultiplayer() && common->IsServer() && gamestate == GAMESTATE_STARTUP && ent->fl.skipReplication )
+	//puncho - R6.1: a map entity in its ordinal's slot takes none of the 256 non-replicated slots the cap guards
+	if( common->IsMultiplayer() && common->IsServer() && gamestate == GAMESTATE_STARTUP && ent->fl.skipReplication && netInterest.authoredSlot < 0 )
 	{
 		skipReplicatedStatics++;
 		const int cap = net_maxSkipReplicatedStatics.GetInteger();
@@ -5733,7 +5748,26 @@ void idGameLocal::RegisterEntity( idEntity* ent, int forceSpawnId, const idDict&
 	}
 
 
-	if( !spawnArgsToCopy.GetInt( "spawn_entnum", "0", spawn_entnum ) )
+	//puncho start - R6.1: the map spawn's one-shot (SpawnMapEntities) names the slot of the entity it spawns
+	const int authoredSlot = netInterest.authoredSlot;
+	netInterest.authoredSlot = -1;
+	if( spawnArgsToCopy.GetInt( "spawn_entnum", "0", spawn_entnum ) )
+	{
+		if( netInterest.ordinals )
+		{
+			NetInterestCheckSlot( spawn_entnum, authoredSlot );
+		}
+	}
+	else if( authoredSlot >= 0 )
+	{
+		spawn_entnum = authoredSlot;
+		if( entities[ spawn_entnum ] != NULL )
+		{
+			Error( "entity slot %d of map ordinal %d is taken by '%s'", spawn_entnum, spawn_entnum - MAX_CLIENTS + 1, entities[ spawn_entnum ]->name.c_str() );
+		}
+	}
+	else
+	//puncho end
 	{
 		const int freeListType = ( common->IsMultiplayer() && ent->GetSkipReplication() ) ? 1 : 0;
 		const int maxEntityNum = ( common->IsMultiplayer() && !ent->GetSkipReplication() ) ? ENTITYNUM_FIRST_NON_REPLICATED : ENTITYNUM_MAX_NORMAL;
@@ -5807,6 +5841,7 @@ void idGameLocal::RegisterEntity( idEntity* ent, int forceSpawnId, const idDict&
 	entities[ spawn_entnum ] = ent;
 	spawnIds[ spawn_entnum ] = gen;
 	//puncho end
+	NetInterestSlotReset( spawn_entnum );	//puncho - R6.2: the slot's new occupant has been sent to nobody
 	ent->entityNumber = spawn_entnum;
 	entityHot.RegisterRow( ent );	//puncho - P2b.2.1a: the row from the constructor's members, now the entity has a number
 	ent->spawnNode.AddToEnd( spawnedEntities );
@@ -5858,6 +5893,8 @@ void idGameLocal::UnregisterEntity( idEntity* ent )
 		}
 		LeaveEntityBudget( ent );
 		worldStore.EntityRemoved( ent );
+		NetInterestEntityRemoved( ent );	//puncho - R6.1: the host's removed bit of an authored entity
+		NetInterestSlotReset( ent->entityNumber );	//puncho - R6.2
 		ent->spawnNode.Remove();
 		numSpawnedEntities--;	//puncho - P2b.0.3
 		entities[ ent->entityNumber ] = NULL;
@@ -5868,6 +5905,12 @@ void idGameLocal::UnregisterEntity( idEntity* ent )
 		if( ent->entityNumber >= MAX_CLIENTS && ent->entityNumber < firstFreeEntityIndex[ freeListType ] )
 		{
 			firstFreeEntityIndex[ freeListType ] = worldStore.IsActive() && freeListType == 0 ? Max( mapSpawnCount, ent->entityNumber ) : ent->entityNumber;
+			//puncho start - R6.1: a freed authored slot is never handed out again
+			if( freeListType == 0 )
+			{
+				firstFreeEntityIndex[ 0 ] = Max( firstFreeEntityIndex[ 0 ], netInterest.mapOrdinalEnd );
+			}
+			//puncho end
 		}
 		entityHot.UnregisterRow( ent->entityNumber );	//puncho - P2b.2.1a
 		ent->entityNumber = ENTITYNUM_NONE;
@@ -6376,6 +6419,7 @@ void idGameLocal::SpawnMapEntities()
 	{
 		Error( "...no entities" );
 	}
+	NetInterestBeginMapSpawn( numEntities );	//puncho - R6.1: before the world, whose children start above the map's slots
 
 	// the worldspawn is a special that performs any global setup
 	// needed by a level
@@ -6435,8 +6479,24 @@ void idGameLocal::SpawnMapEntities()
 			// Admer: brush origin offsets:
 			args.SetVector( BRUSH_ORIGIN_KEY, mapEnt->originOffset );
 
+			//puncho start - R6.1: with the ordinal slots on, the map entity takes its ordinal's slot. A one-shot for
+			// the entity's own registration, not a spawn_entnum key, which would take it out of the entity budgets;
+			// whatever the entity spawns beside itself registers after it and takes a slot above the map's
+			const int ordinalSlot = MAX_CLIENTS + i - 1;
+			if( netInterest.ordinals )
+			{
+				netInterest.authoredSlot = ordinalSlot;
+			}
+			//puncho end
 			idEntity* spawned = NULL;
 			SpawnEntityDef( args, &spawned );
+			//puncho start - R6.1: a refused or failed spawn never registered: the slot stays empty
+			netInterest.authoredSlot = -1;
+			if( netInterest.ordinals && entities[ ordinalSlot ] != NULL )
+			{
+				netInterest.authoredGen[ ordinalSlot ] = ( unsigned short )spawnIds[ ordinalSlot ];
+			}
+			//puncho end
 			worldStore.TrackSpawn( i, spawned );
 			num++;
 		}

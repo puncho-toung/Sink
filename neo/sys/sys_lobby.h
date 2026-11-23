@@ -765,7 +765,7 @@ public:		// Turning this on for now, for the sake of getting this up and running
 	void								CheckPeerThrottle( int p );
 	void								ApplySnapshotDelta( int p, int snapshotNumber );
 	bool								ApplySnapshotDeltaInternal( int p, int snapshotNumber );
-	void								SendSnapshotToPeer( idSnapShot& ss, int p );
+	bool								SendSnapshotToPeer( idSnapShot& ss, int p );	//puncho - R6.2: true when the peer's processor took ss as its pending snapshot
 	bool								AllPeersHaveBaseState();
 	void								ThrottleSnapsForXSeconds( int p, int seconds, bool recoverPing );
 	bool								FirstSnapHasBeenSent( int p );

@@ -349,5 +349,18 @@ extern idCVar g_dormantCatchUpMinMs;
 extern idCVar g_dormantDistanceFirst;
 extern idCVar g_dormantWorldRadius;
 //puncho end
+//puncho start - R6.1
+extern idCVar net_mapOrdinals;
+extern idCVar net_mapOrdinalHeadroom;
+extern idCVar net_interest;
+extern idCVar net_interestRadius;
+extern idCVar net_interestHysteresis;
+extern idCVar net_interestNearRadius;
+extern idCVar net_interestPVS;
+extern idCVar net_interestLinger;
+extern idCVar net_interestCreateBudget;
+extern idCVar net_eventHoldMs;
+extern idCVar net_interestStatics;
+//puncho end
 
 #endif /* !__SYS_CVAR_H__ */

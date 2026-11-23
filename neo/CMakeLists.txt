@@ -675,6 +675,7 @@ set(GAMED3XP_INCLUDES
 	d3xp/Camera.h
 	d3xp/Entity.h
 	d3xp/EntityHot.h
+	d3xp/Game_interest.h
 	d3xp/EnvironmentProbe.h
 	d3xp/Fx.h
 	d3xp/Game.h
@@ -721,6 +722,7 @@ set(GAMED3XP_SOURCES
 	d3xp/Corpse.cpp
 	d3xp/Game_local.cpp
 	d3xp/Game_transition.cpp
+	d3xp/Game_interest.cpp
 	d3xp/Game_network.cpp
 	d3xp/Grabber.cpp
 	d3xp/IK.cpp

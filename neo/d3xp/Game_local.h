@@ -113,6 +113,7 @@ compile_time_assert( MAX_EVENTS >= MAX_GENTITIES / 2 );	//puncho - R1.1: the eve
 #include "gamesys/Record.h"	//puncho - P2b.1.2: idRecordOut, idRecordIn, recordFrame_t
 #include "gamesys/MapGraph.h"
 #include "EntityHot.h"	//puncho - P2b.2.1a: idGameLocal holds the hot table
+#include "Game_interest.h"	//puncho - R6: idGameLocal holds the interest state
 
 #include "script/Script_Program.h"
 
@@ -156,6 +157,10 @@ typedef struct entityNetEvent_s
 	int						time;
 	int						paramsSize;
 	byte					paramsBuf[MAX_EVENT_PARAM_SIZE];
+	//puncho start - R6.2: a client's wait for an event's entity (ClientProcessEntityNetworkEventQueue); never sent
+	int						holdOrigin;				// the server time the wait counts from
+	int						held;					// counted once as held
+	//puncho end
 	struct entityNetEvent_s*	next;
 	struct entityNetEvent_s* prev;
 } entityNetEvent_t;
@@ -619,6 +624,29 @@ public:
 	bool					passTimed;				// this tic is timed (g_passProfile set, one tic in g_passProfileEvery)
 	//puncho end
 	snapStats_t				snapStats;				// written by ServerWriteSnapshot on the main thread between game frames
+	//puncho start - R6 (Game_interest.h, Game_interest.cpp)
+	netInterest_t			netInterest;
+	void					NetInterestLatch();
+	void					NetInterestBeginMapSpawn( int numMapEntities );
+	void					NetInterestCheckSlot( int slot, int authoredSlot ) const;
+	bool					NetInterestAuthored( int slot ) const;
+	void					NetInterestEntityRemoved( const idEntity* ent );
+	void					NetInterestReadRemoved( int firstByte, const idBitMsg& msg );
+	void					NetInterestRevive( int slot );
+	void					NetInterestClientRemove( int slot );
+	const idMapEntity*		NetInterestBaseline( int slot, int generation, const char* classname );
+	// R6.2, R6.3
+	void					NetInterestSlotReset( int slot );
+	bool					NetInterestGroupManaged( const idEntity* master ) const;
+	bool					NetInterestResident( const idEntity* ent ) const;
+	void					NetInterestBuild( const pvsHandle_t* pvsHandles );
+	virtual void			ServerSnapshotAccepted( uint32 acceptedMask );
+	bool					NetInterestEventUsers( const idEntity* ent, lobbyUserID_t excluding, peerMask_t& userMask );
+	void					NetInterestClientBegin();
+	bool					NetInterestClientDelete( int slot );
+	void					NetInterestClientSeen( int slot, bool created );
+	void					NetInterestClientFinish();
+	//puncho end
 	aiHudStats_t			aiHudStats;				// the last tic's record for the HUD, filled by RunAIStats
 	int						aiThinkRing[ 128 ];		// per-tic usThink by framenum, for the HUD peak
 	aiTicStats_t			aiSecSum;				// per-second aggregates for the aistats: line

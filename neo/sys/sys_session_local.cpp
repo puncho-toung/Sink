@@ -2614,8 +2614,9 @@ void idSessionLocal::SendUsercmds( idBitMsg& msg )
 idSessionLocal::SendSnapshot
 ========================
 */
-void idSessionLocal::SendSnapshot( idSnapShot& ss )
+uint32 idSessionLocal::SendSnapshot( idSnapShot& ss )
 {
+	uint32 acceptedMask = 0;	//puncho - R6.2
 	for( int p = 0; p < GetActingGameStateLobby().peers.Num(); p++ )
 	{
 		idLobby::peer_t& peer = GetActingGameStateLobby().peers[p];
@@ -2635,8 +2636,14 @@ void idSessionLocal::SendSnapshot( idSnapShot& ss )
 			continue;
 		}
 
-		GetActingGameStateLobby().SendSnapshotToPeer( ss, p );
+		//puncho start - R6.2: a snapshot's visibility mask has 32 bits and bit 0 is the dry run's
+		if( GetActingGameStateLobby().SendSnapshotToPeer( ss, p ) && p < 31 )
+		{
+			acceptedMask |= 1u << ( p + 1 );
+		}
+		//puncho end
 	}
+	return acceptedMask;
 }
 
 /*

@@ -384,6 +384,22 @@ idCVar g_gameReviewPause(			"g_gameReviewPause",		"10",			CVAR_GAME | CVAR_NETWO
 idCVar g_CTFArrows(					"g_CTFArrows",				"1",			CVAR_GAME | CVAR_NETWORKSYNC | CVAR_BOOL, "draw arrows over teammates in CTF" );
 
 idCVar net_clientPredictGUI(		"net_clientPredictGUI",		"1",			CVAR_GAME | CVAR_BOOL, "test guis in networking without prediction" );
+//puncho start - R6.1 (Game_interest.h): the host's, read at a map load. Server info cvars: the host's values go to every
+// client with the match parameters before its map spawns (idGameLocal::NetInterestLatch reads them from there)
+idCVar net_mapOrdinals(				"net_mapOrdinals",			"0",			CVAR_GAME | CVAR_BOOL | CVAR_NOCHEAT | CVAR_SERVERINFO, "the host of a multiplayer game, read at a map load: the map entity of ordinal i takes entity slot 8 + i - 1 on every machine, and run-time entities start above the map's slots" );
+idCVar net_mapOrdinalHeadroom(		"net_mapOrdinalHeadroom",	"1024",			CVAR_GAME | CVAR_INTEGER | CVAR_NOCHEAT | CVAR_SERVERINFO, "the host, with net_mapOrdinals, read at a map load: replicated slots a map must leave for run-time entities, or it is refused", 0, 32502 );
+//puncho end
+//puncho start - R6.2, R6.3 (Game_interest.h)
+idCVar net_interest(				"net_interest",				"0",			CVAR_GAME | CVAR_BOOL | CVAR_NOCHEAT, "the host, with net_mapOrdinals: each peer is sent the entities near its player; a client deletes the rest and builds them again from its map file" );
+idCVar net_interestRadius(			"net_interestRadius",		"16384",		CVAR_GAME | CVAR_FLOAT | CVAR_NOCHEAT, "net_interest: a managed entity inside this distance of a peer's player and in its PVS is sent", 0.0f, 131072.0f );
+idCVar net_interestHysteresis(		"net_interestHysteresis",	"1024",			CVAR_GAME | CVAR_FLOAT | CVAR_NOCHEAT, "net_interest: an entity a peer holds lingers while inside the radius plus this", 0.0f, 131072.0f );
+idCVar net_interestNearRadius(		"net_interestNearRadius",	"2048",			CVAR_GAME | CVAR_FLOAT | CVAR_NOCHEAT, "net_interest: inside this distance an entity is sent whatever the PVS says", 0.0f, 131072.0f );
+idCVar net_interestPVS(				"net_interestPVS",			"1",			CVAR_GAME | CVAR_BOOL | CVAR_NOCHEAT, "net_interest: beyond the near radius an entity must be in the player's PVS" );
+idCVar net_interestLinger(			"net_interestLinger",		"20",			CVAR_GAME | CVAR_INTEGER | CVAR_NOCHEAT, "net_interest: accepted snapshots an entity a peer holds stays after it left the radius or the PVS", 0, 255 );
+idCVar net_interestCreateBudget(	"net_interestCreateBudget",	"64",			CVAR_GAME | CVAR_INTEGER | CVAR_NOCHEAT, "net_interest: entity groups that may enter a peer's snapshot with one accepted snapshot", 1, 32768 );
+idCVar net_eventHoldMs(				"net_eventHoldMs",			"500",			CVAR_GAME | CVAR_INTEGER | CVAR_NOCHEAT, "a client with net_mapOrdinals: server milliseconds an entity event waits for an entity that is not there yet", 0, 60000 );
+idCVar net_interestStatics(			"net_interestStatics",		"0",			CVAR_GAME | CVAR_BOOL | CVAR_NOCHEAT | CVAR_SERVERINFO, "the host, with net_mapOrdinals, read at a map load (server info, as net_mapOrdinals): a map entity that is not networkSync, not bound and of no managed class is never sent; a removed one is named by the removed bits" );
+//puncho end
 
 idCVar g_grabberHoldSeconds(		"g_grabberHoldSeconds",		"3",			CVAR_GAME | CVAR_FLOAT | CVAR_CHEAT, "number of seconds to hold object" );
 idCVar g_grabberEnableShake(		"g_grabberEnableShake",		"1",			CVAR_GAME | CVAR_BOOL | CVAR_CHEAT, "enable the grabber shake" );

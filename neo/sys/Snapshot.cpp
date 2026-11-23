@@ -634,9 +634,18 @@ void idSnapShot::SubmitWriteDeltaToJobs( const submitDeltaJobsInfo_t& submitDelt
 
 	int numOldStates = submitDeltaJobInfo.oldSnap->objectStates.Num();
 
+	//puncho - R6.2: an object whose visibility mask lacks the receiving peer's bit is not in that peer's snapshot. It
+	// is passed over here as if it had not been added, so the delete runs below take it out of a base that holds it.
+	// Every caller but the game's interest filter (Game_interest.cpp) adds its objects with all bits set
+	const uint32 peerBit = ( submitDeltaJobInfo.visIndex > 0 && submitDeltaJobInfo.visIndex < 32 ) ? ( 1u << submitDeltaJobInfo.visIndex ) : 0;
+
 	for( int i = 0; i < objectStates.Num(); i++ )
 	{
 		objectState_t& newState = *objectStates[i];
+		if( peerBit != 0 && ( newState.visMask & peerBit ) == 0 )
+		{
+			continue;
+		}
 		if( !verify( newState.buffer.Size() > 0 ) )
 		{
 			// you CANNOT have a valid ss obj state w/ size = 0: this will be interpreted as a delete in ::ReadDelta and this will completely throw
@@ -670,6 +679,12 @@ void idSnapShot::SubmitWriteDeltaToJobs( const submitDeltaJobsInfo_t& submitDelt
 
 		if( j >= numOldStates )
 		{
+			//puncho start - R6.1: the old list ended inside the delete run above. This object is new to the peer and
+			// still has to go out: the bare `continue` here dropped it from the delta, and from every later one for as
+			// long as the old list ended below it (the removed-map chunks sit at the top of the object numbers)
+			objectState_t* oldState = GetTemplateState( newState.objectNum, submitDeltaJobInfo.templateStates, &newState );
+			SubmitObjectJob( submitDeltaJobInfo, &newState, oldState, baseObjParms, curObjParms, curHeader, curObjMemory, curlzwParms );
+			//puncho end
 			continue;	// Went past end of old list deleting objects
 		}
 

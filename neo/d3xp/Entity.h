@@ -41,6 +41,7 @@ static const int DELAY_DORMANT_TIME = 3000;
 
 extern const idEventDef EV_PostSpawn;
 extern const idEventDef EV_FindTargets;
+extern const idEventDef EV_SpawnBind;	//puncho - R6.2: a client runs the bind of a map entity it builds outside a map load (Game_interest.cpp)
 extern const idEventDef EV_Touch;
 extern const idEventDef EV_Use;
 extern const idEventDef EV_Activate;

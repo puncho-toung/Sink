@@ -158,7 +158,8 @@ void idCommonLocal::SendSnapshots()
 	idSnapShot ss;
 	game->ServerWriteSnapshot( ss );
 
-	session->SendSnapshot( ss );
+	//puncho - R6.2: the game learns which peers' sessions took this snapshot
+	game->ServerSnapshotAccepted( session->SendSnapshot( ss ) );
 	nextSnapshotSendTime = MSEC_ALIGN_TO_FRAME( currentTime + net_snapRate.GetInteger() );
 }
 
