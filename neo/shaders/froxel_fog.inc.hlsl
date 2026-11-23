@@ -62,6 +62,19 @@ float FroxelFogViewDepth( float deviceDepth )
 	return ( denominator * froxelFogParms.depthParms.z > 0.0 ) ? froxelFogParms.depthParms.z / denominator : 1e30;
 }
 
+// The distance along the view axis of a fog twin's own pixel, from its SV_Position. Under SPIR-V, SV_Position.w is
+// 1 / clip w, and clip w is that distance; on RADV reading SV_Position.z instead was most of the smoke's fog cost
+// ( V8h ), and the pictures are the same. D3D's SV_Position.w is clip w itself: the D3D path keeps the depth read
+// until it is measured there
+float FroxelFogPixelViewDepth( float4 svPosition )
+{
+#if defined( SPIRV )
+	return 1.0 / svPosition.w;
+#else
+	return FroxelFogViewDepth( svPosition.z );
+#endif
+}
+
 // a pixel's place in the fog view, 0..1 with the origin top-left, from its SV_Position
 float2 FroxelFogScreenUV( float2 svPosition )
 {

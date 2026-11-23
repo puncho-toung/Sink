@@ -237,6 +237,6 @@ void main( PS_IN fragment, out PS_OUT result )
 #if defined( USE_FROXEL_FOG ) && USE_FROXEL_FOG
 	// V5: the light is added ( ONE, ONE ), so the fog dims it by the transmittance to the glass; the fog's own light behind
 	// the glass is the apply's
-	result.color.rgb *= FroxelFogSamplePixel( fragment.position.xy, FroxelFogViewDepth( fragment.position.z ) ).a;
+	result.color.rgb *= FroxelFogSamplePixel( fragment.position.xy, FroxelFogPixelViewDepth( fragment.position ) ).a;
 #endif
 }

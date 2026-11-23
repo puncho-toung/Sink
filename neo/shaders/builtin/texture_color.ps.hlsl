@@ -67,6 +67,6 @@ void main( in PS_IN fragment, out PS_OUT result )
 
 #if defined( USE_FROXEL_FOG ) && USE_FROXEL_FOG
 	// V5: the stage seen through the fog to its own depth, by the blend kind the stage loop set in rpTexGen0Enabled.y
-	result.color = FroxelFogTranslucent( result.color, FroxelFogSamplePixel( fragment.position.xy, FroxelFogViewDepth( fragment.position.z ) ), pc.rpTexGen0Enabled.y );
+	result.color = FroxelFogTranslucent( result.color, FroxelFogSamplePixel( fragment.position.xy, FroxelFogPixelViewDepth( fragment.position ) ), pc.rpTexGen0Enabled.y );
 #endif
 }
