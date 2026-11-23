@@ -1023,6 +1023,22 @@ public:
 
 	virtual void			Error( const char* fmt, ... )
 	{
+		//puncho start - R5 speed: on a thread that works in a loop of AAS_ParallelFor ( tools/compilers/aas/AASParallel.h:
+		// the loop's workers and the thread that started it ) nothing is raised here: exit() under running threads lost
+		// the printed text and the exit code. The text is thrown to the loop, which stops and joins its threads and
+		// then calls this function again from the thread that started it
+		extern bool AAS_ParallelThreadInLoop();	// tools/compilers/aas/AASReach.cpp
+		if( AAS_ParallelThreadInLoop() )
+		{
+			char keptText[idException::MAX_ERROR_LEN];
+			va_list keptArgs;
+			va_start( keptArgs, fmt );
+			idStr::vsnPrintf( keptText, sizeof( keptText ), fmt, keptArgs );
+			va_end( keptArgs );
+			keptText[sizeof( keptText ) - 1] = '\0';
+			throw idException( keptText );
+		}
+		//puncho end - R5 speed
 		STDIO_PRINT( "ERROR: ", "\n" );
 
 		if( com_refreshOnPrint )
@@ -1034,6 +1050,19 @@ public:
 	}
 	virtual void			FatalError( const char* fmt, ... )
 	{
+		//puncho start - R5 speed: as in Error above; the loop calls FatalError again after it has joined its threads
+		extern bool AAS_ParallelThreadInLoop();
+		if( AAS_ParallelThreadInLoop() )
+		{
+			char keptText[idException::MAX_ERROR_LEN];
+			va_list keptArgs;
+			va_start( keptArgs, fmt );
+			idStr::vsnPrintf( keptText, sizeof( keptText ), fmt, keptArgs );
+			va_end( keptArgs );
+			keptText[sizeof( keptText ) - 1] = '\0';
+			throw idFatalException( keptText );
+		}
+		//puncho end - R5 speed
 		STDIO_PRINT( "FATAL ERROR: ", "\n" );
 
 		if( com_refreshOnPrint )

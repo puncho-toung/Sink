@@ -624,7 +624,10 @@ void idCommonLocal::Error( const char* fmt, ... )
 	// ran out of frame memory at once unloaded it together and the process ended), and an exception that leaves a worker
 	// thread ends the process. The text goes up to the boundary of the job (idParallelJobList_Threads::RunJobsInternal) or
 	// of the game thread (idGameThread::Run), which keeps it; the main thread raises it again with this function
-	if( !idLib::IsMainThread() || idParallelJobList::InsideJob() )
+	//puncho - R5 speed: the same on the main thread while it works in a loop of AAS_ParallelFor ( the AAS compiler's
+	// pair loop, tools/compilers/aas/AASParallel.h ): the loop joins its threads first and then raises the text with this function
+	extern bool AAS_ParallelThreadInLoop();	// tools/compilers/aas/AASReach.cpp
+	if( !idLib::IsMainThread() || idParallelJobList::InsideJob() || AAS_ParallelThreadInLoop() )
 	{
 		char deferredText[idException::MAX_ERROR_LEN];
 		va_start( argptr, fmt );
@@ -739,6 +742,22 @@ Dump out of the game to a system dialog
 void idCommonLocal::FatalError( const char* fmt, ... )
 {
 	va_list		argptr;
+
+	//puncho start - R5 speed: on a thread that works in a loop of AAS_ParallelFor ( the AAS compiler's pair loop,
+	// tools/compilers/aas/AASParallel.h: its workers and the thread that started it ) nothing is raised here. The text is
+	// thrown to the loop, which joins its threads and then calls this function again on the thread that started it.
+	// The test is the thread's own: every other caller of FatalError, on every other thread, goes on below as before
+	extern bool AAS_ParallelThreadInLoop();	// tools/compilers/aas/AASReach.cpp
+	if( AAS_ParallelThreadInLoop() )
+	{
+		char keptText[idException::MAX_ERROR_LEN];
+		va_start( argptr, fmt );
+		idStr::vsnPrintf( keptText, sizeof( keptText ), fmt, argptr );
+		va_end( argptr );
+		keptText[sizeof( keptText ) - 1] = '\0';
+		throw idFatalException( keptText );
+	}
+	//puncho end - R5 speed
 
 	if( com_productionMode.GetInteger() == 3 )
 	{

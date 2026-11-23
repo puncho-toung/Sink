@@ -32,6 +32,28 @@ If you have questions concerning this license or the applicable additional terms
 #include "../../../aas/AASFile.h"
 #include "../../../aas/AASFile_local.h"
 #include "AASReach.h"
+//puncho start - R5 speed
+#include "AASParallel.h"
+#include "AASReach_fast.h"
+
+idCVar aas_threads( "aas_threads", "0", CVAR_TOOL | CVAR_INTEGER, "threads of the AAS compiler's reachability pair loop: 0 = one a logical processor, 1 = no thread is started; changes no output", 0, 64 );
+idCVar aas_reachFast( "aas_reachFast", "1", CVAR_TOOL | CVAR_INTEGER, "reachability pair loop: 0 = every area against every area on one thread; 1 = the bounds test first, on a packed copy of the bounds, on aas_threads threads; changes no output", 0, 1 );
+idCVar aas_reachCheck( "aas_reachCheck", "1", CVAR_TOOL | CVAR_BOOL, "reachability pair loop with aas_reachFast: 1 = beside the loop the old bounds test is run for every pair of areas, and the compile ends with an error when an area that passes it is not among an area's candidates; 0 = no such check; changes no output" );
+#ifndef ID_RETAIL
+idCVar aas_fault( "aas_fault", "0", CVAR_TOOL | CVAR_INTEGER, "tests only, not in a retail build: plants a fault that a check of the AAS compiler must refuse. 1 = with aas_reachCheck 1 one candidate of the pair loop is taken away; 2 = one area of every cluster is left out of the flood's list; 3 = every entry of the area to portal table is one too high; 4 = an error is raised inside the pair loop on a thread that is not the calling thread; 5 = on the calling thread while the other threads run; 6 = as 4, a fatal error; 7 = with aas_reachCheck 1 the check's own copy of one area is changed", 0, 7 );
+#endif
+
+// Above 0 on a thread while it works in a loop of AAS_ParallelFor: the loop's workers and the thread that started
+// it ( AASParallel.h ). On such a thread common->Error and common->FatalError only throw their text
+// ( tools/compilers/main.cpp and main_posix.cpp for rbdmap, framework/Common_printf.cpp for the game ); the loop
+// joins its threads and then raises the error itself.
+thread_local int aasParallelThreadDepth = 0;
+
+bool AAS_ParallelThreadInLoop()
+{
+	return aasParallelThreadDepth > 0;
+}
+//puncho end - R5 speed
 
 #define INSIDEUNITS							2.0f
 #define INSIDEUNITS_WALKEND					0.5f
@@ -104,7 +126,7 @@ void idAASReach::AddReachabilityToArea( idReachability* reach, int areaNum )
 	area = &file->areas[areaNum];
 	reach->next = area->reach;
 	area->reach = reach;
-	numReachabilities++;
+	//puncho - R5 speed: numReachabilities is no longer counted here ( several threads add ); Build counts the lists at its end
 }
 
 /*
@@ -995,6 +1017,236 @@ void idAASReach::FlagReachableAreas( idAASFileLocal* file )
 
 /*
 ================
+idAASReach::BuildPairsFast
+
+//puncho - R5 speed: the pair loop of Build with the areas spread over threads and, for each area, the loop's
+body run only for the area's candidates ( AASReach_fast.h ). Every reachability an area gets is made by the one
+worker that has the area, in ascending order of the other area, as the loop over all areas made them; no worker
+reads or writes another area's list. So every list is the list the old loop builds, for any thread count.
+aas_reachCheck ( on by default ) runs the old bounds test for every pair of areas beside the loop and ends the
+compile with an error when an area that passes it is not among an area's candidates.
+aas_fault ( tests only, not in a retail build ): 1 takes one candidate away, which aas_reachCheck must miss; 4, 5
+and 6 raise an error inside the loop ( 4 on a worker that is not the calling thread, 5 on the calling thread, 6 a
+fatal error on a worker ); 7 changes the check's own copy of the areas, which the comparison after the loop must
+refuse. 2 and 3 are clustering's ( AASCluster.cpp ).
+================
+*/
+void idAASReach::BuildPairsFast()
+{
+	const int numAreas = file->areas.Num();
+	const aasArea_t* areas = file->areas.Ptr();
+	const bool check = aas_reachCheck.GetBool();
+#ifndef ID_RETAIL
+	const int fault = aas_fault.GetInteger();
+#else
+	const int fault = 0;	// a retail build plants no fault: it has no cvar aas_fault
+#endif
+	const int numThreads = AAS_NumThreads( aas_threads.GetInteger() );
+	int n, reported = 0;
+	long long numCandidates = 0;
+	std::atomic<int> badArea( 0 ), badOther( 0 ), faultArea( 0 );
+	aasReachPack_t pack;
+	idList<int*> buffers;
+	idList<long long> counts;
+	aasReachRaw_t raw;
+
+	memset( &raw, 0, sizeof( raw ) );
+	// Mem_Alloc16 returns NULL when the system has no memory: every scratch array is checked before the loop starts
+	bool haveMemory = AAS_ReachPackBuild( pack, areas, numAreas );
+	// frees the scratch memory when this function ends, also when the loop ends with an error ( in the game
+	// common->Error throws; the lists made so far go with the file, as after any error )
+	struct aasReachScratch_t
+	{
+		idList<int*>* 		buffers;
+		aasReachPack_t* 	pack;
+		aasReachRaw_t* 		raw;
+		~aasReachScratch_t()
+		{
+			for( int b = 0; b < buffers->Num(); b++ )
+			{
+				Mem_Free16( ( *buffers )[b] );
+			}
+			buffers->Clear();
+			AAS_ReachPackFree( *pack );
+			AAS_ReachRawFree( *raw );
+		}
+	} scratch = { &buffers, &pack, &raw };
+	if( haveMemory && check )
+	{
+		// what the check reads of every area ( AASReach_fast.h ); it is compared with the areas again after the loop
+		haveMemory = AAS_ReachRawBuild( raw, areas, numAreas );
+		if( haveMemory && fault == 7 && numAreas > 1 )
+		{
+			// the planted fault of that comparison, tests only: in the copy the last area's walk flag is turned over
+			raw.walk[numAreas - 1] = raw.walk[numAreas - 1] ? 0 : 1;
+			faultArea.store( numAreas - 1 );
+		}
+	}
+	// every worker's candidates, and how many it ran
+	for( n = 0; haveMemory && n < numThreads; n++ )
+	{
+		buffers.Append( ( int* )Mem_Alloc16( ( size_t )numAreas * sizeof( int ), TAG_AAS ) );
+		counts.Append( 0 );
+		haveMemory = ( buffers[n] != NULL );
+	}
+	if( !haveMemory )
+	{
+		// no thread is started yet: a plain error; `scratch` frees what there is
+		common->Error( "aas reach: no memory for the pair loop's scratch arrays ( %d areas, %d threads )", numAreas, numThreads );
+	}
+	int* const* workerBuffers = buffers.Ptr();
+	long long* workerCounts = counts.Ptr();
+
+	const aasParallelRun_t ran = AAS_ParallelFor( numAreas, 64, numThreads,
+								  [&]( const int first, const int last, const int worker )
+	{
+		int i, j, k, num, missing;
+		int* candidates = workerBuffers[worker];
+		long long numRan = 0;	// the candidates this chunk ran
+
+		for( i = ( first > 1 ) ? first : 1; i < last; i++ )
+		{
+			if( !( areas[i].flags & AREA_REACHABLE_WALK ) )
+			{
+				continue;
+			}
+
+			num = AAS_ReachCandidates( pack, &areas[i], candidates );
+			numRan += num;
+
+			if( fault == 1 && check && faultArea.load() == 0 )
+			{
+				// the planted fault of the check: one area, once, loses a candidate the check asks for
+				int none = 0;
+				if( faultArea.compare_exchange_strong( none, i ) )
+				{
+					const int kept = AAS_ReachFaultDrop( areas, i, candidates, num );
+					if( kept == num )
+					{
+						faultArea.store( 0 );	// nothing to take away here: another area takes the fault
+					}
+					num = kept;
+				}
+			}
+			else if( fault >= 4 && fault <= 6 && faultArea.load() == 0 )
+			{
+				// the planted errors, tests only: 4 is raised on a worker that is not the calling thread, 5 on the calling
+				// thread ( worker 0 ) while the others run, 6 is 4 as a fatal error. The side that must not raise it waits
+				// here, at most 20 seconds, until the other side has: so the error comes from the wanted thread also on a
+				// busy machine and a small map
+				const bool raises = ( numThreads == 1 ) || ( ( fault != 5 ) == ( worker != 0 ) );
+				if( !raises )
+				{
+					const int giveUp = Sys_Milliseconds() + 20000;
+					while( faultArea.load() == 0 && Sys_Milliseconds() < giveUp )
+					{
+						std::this_thread::yield();
+					}
+				}
+				else
+				{
+					int none = 0;
+					if( faultArea.compare_exchange_strong( none, i ) )
+					{
+						if( fault == 6 )
+						{
+							common->FatalError( "aas_fault 6 planted 1: a fatal error raised in the pair loop at area %d on worker %d", i, worker );
+						}
+						common->Error( "aas_fault %d planted 1: an error raised in the pair loop at area %d on worker %d", fault, i, worker );
+					}
+				}
+			}
+
+			if( check )
+			{
+				missing = AAS_ReachCheckArea( raw, &areas[i], candidates, num );
+				if( missing != -1 )
+				{
+					int none = 0;
+					if( badArea.compare_exchange_strong( none, i ) )
+					{
+						badOther.store( missing );
+					}
+				}
+			}
+
+			for( k = 0; k < num; k++ )
+			{
+				j = candidates[k];
+
+				// the body of the loop in Build
+				if( i == j )
+				{
+					continue;
+				}
+
+				if( !( areas[j].flags & AREA_REACHABLE_WALK ) )
+				{
+					continue;
+				}
+
+				if( ReachabilityExists( i, j ) )
+				{
+					continue;
+				}
+				if( Reachability_Step_Barrier_WaterJump_WalkOffLedge( i, j ) )
+				{
+					continue;
+				}
+			}
+		}
+		workerCounts[worker] += numRan;	// once a chunk: the slots of the workers lie in one cache line
+	},
+	[&]( const int done )
+	{
+		// on the calling thread: the pacifier gets one step an area from area 1, as the loop gave it. Nothing is printed
+		// from here: in the game a print draws a frame, and the workers are running. ( The game's pacifier functions
+		// are empty, framework/Common_local.h; rbdmap's show the progress as they did. )
+		const int steps = ( done > 1 ) ? done - 1 : 0;
+		if( steps > reported )
+		{
+			common->DmapPacifierCompileProgressIncrement( steps - reported );
+			reported = steps;
+		}
+	} );
+
+	// ( the buffers and the pack are freed by `scratch`, when this function ends in whatever way )
+	for( n = 0; n < counts.Num(); n++ )
+	{
+		numCandidates += counts[n];
+	}
+
+	// which path ran: the tests ask for this line. In the game it is also the one line this loop prints ( no percent
+	// while the workers run )
+	common->Printf( "\raas reach: fast %d, threads %d of %d, check %d, fault %d planted %d, %lld candidates\n", aas_reachFast.GetInteger(), ran.threads, numThreads, check ? 1 : 0, fault, ( faultArea.load() != 0 ) ? 1 : 0, numCandidates );
+
+	if( ran.controlWords != 0 )
+	{
+		common->Error( "aas reach: %d threads ran with another floating point control word than the calling thread", ran.controlWords );
+	}
+	if( badArea.load() != 0 )
+	{
+		// the area named is the first one a worker found, not the lowest: it can differ from run to run
+		if( badOther.load() == -2 )
+		{
+			common->Error( "aas_reachCheck: area %d: its candidates are not ascending, or hold an area twice, or hold a number that is no area", badArea.load() );
+		}
+		common->Error( "aas_reachCheck: area %d: area %d has AREA_REACHABLE_WALK and passes the bounds test and is not among the candidates", badArea.load(), badOther.load() );
+	}
+	if( check )
+	{
+		// the check read the other area's bounds and flag from its own copy: the copy must still hold, bit for bit,
+		// what the areas hold
+		const int changed = AAS_ReachRawSame( raw, areas, numAreas );
+		if( changed != -1 )
+		{
+			common->Error( "aas_reachCheck: the check's copy of the bounds and the walk flag differs from the areas at area %d", changed );
+		}
+	}
+}
+
+/*
+================
 idAASReach::Build
 ================
 */
@@ -1030,6 +1282,18 @@ bool idAASReach::Build( const idMapFile* mapFile, idAASFileLocal* file )
 	common->DmapPacifierCompileProgressTotal( file->areas.Num() - 1 );
 
 	lastPercent = -1;
+	//puncho start - R5 speed: aas_reachFast 0 keeps the loop below as it was, every area against every area on one thread
+	if( aas_reachFast.GetInteger() != 0 )
+	{
+		BuildPairsFast();
+	}
+	else
+	{
+		common->Printf( "aas reach: fast 0, the loop over every pair of areas on one thread\n" );
+	}
+	if( aas_reachFast.GetInteger() == 0 )
+	{
+		//puncho end - R5 speed
 	for( i = 1; i < file->areas.Num(); i++, common->DmapPacifierCompileProgressIncrement( 1 ) )
 	{
 
@@ -1071,6 +1335,8 @@ bool idAASReach::Build( const idMapFile* mapFile, idAASFileLocal* file )
 		}
 #endif
 	}
+	//puncho - R5 speed: the end of `if( aas_reachFast.GetInteger() == 0 )` above; the loop's own lines stay where they were
+	}
 
 	if( file->GetSettings().allowFlyReachabilities )
 	{
@@ -1091,6 +1357,7 @@ bool idAASReach::Build( const idMapFile* mapFile, idAASFileLocal* file )
 		{
 			numAreaReach++;
 		}
+		numReachabilities += numAreaReach;	//puncho - R5 speed: counted here from the lists; AddReachabilityToArea no longer counts
 		if( numAreaReach > MAX_REACH_PER_AREA )
 		{
 			common->Warning( "area %d has %d reachabilities, MAX_REACH_PER_AREA is %d: the game will not load this AAS file", i, numAreaReach, MAX_REACH_PER_AREA );

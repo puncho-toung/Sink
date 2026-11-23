@@ -62,6 +62,7 @@ private:	// reachability
 	void					Reachability_EqualFloorHeight( int areaNum );
 	bool					Reachability_Step_Barrier_WaterJump_WalkOffLedge( int fromAreaNum, int toAreaNum );
 	void					Reachability_WalkOffLedge( int areaNum );
+	void					BuildPairsFast();	//puncho - R5 speed
 
 };
 
