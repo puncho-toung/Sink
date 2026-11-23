@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "snd_local.h"
 #include "snd_acoustics.h"	//puncho - SB3-T: the command and Render's log hook
+#include "snd_convolver.h"	//puncho - C1-K (WP-C1 R-C1-17): the s_convSelfTest command
 
 idCVar s_noSound( "s_noSound", "0", CVAR_BOOL, "returns NULL for all sounds loaded and does not update the sound rendering" );
 
@@ -263,36 +264,66 @@ static void SmoothSelfTest_f( const idCmdArgs& args )
 	idWaveFile::waveFmt_t b = a;
 	b.basic.samplesPerSec = 44100;
 	b.basic.avgBytesPerSec = 88200;
-	SmoothSelfTest_Line( lines, fails, idSoundVoice_XAudio2::FormatsMatch( a, b ), "R-E6-15 another rate matches" );
+	SmoothSelfTest_Line( lines, fails, idSoundVoice::FormatsMatch( a, b ), "R-E6-15 another rate matches" );
 	b = a;
 	b.basic.formatTag = idWaveFile::FORMAT_ADPCM;
-	SmoothSelfTest_Line( lines, fails, !idSoundVoice_XAudio2::FormatsMatch( a, b ), "R-E6-15 another format tag does not match" );
+	SmoothSelfTest_Line( lines, fails, !idSoundVoice::FormatsMatch( a, b ), "R-E6-15 another format tag does not match" );
 	b = a;
 	b.basic.numChannels = 2;
-	SmoothSelfTest_Line( lines, fails, !idSoundVoice_XAudio2::FormatsMatch( a, b ), "R-E6-15 another channel count does not match" );
+	SmoothSelfTest_Line( lines, fails, !idSoundVoice::FormatsMatch( a, b ), "R-E6-15 another channel count does not match" );
 	b = a;
 	b.basic.blockSize = 4;
-	SmoothSelfTest_Line( lines, fails, !idSoundVoice_XAudio2::FormatsMatch( a, b ), "R-E6-15 another block size does not match" );
+	SmoothSelfTest_Line( lines, fails, !idSoundVoice::FormatsMatch( a, b ), "R-E6-15 another block size does not match" );
 	b = a;
 	b.basic.bitsPerSample = 8;
-	SmoothSelfTest_Line( lines, fails, !idSoundVoice_XAudio2::FormatsMatch( a, b ), "R-E6-15 another sample width does not match" );
+	SmoothSelfTest_Line( lines, fails, !idSoundVoice::FormatsMatch( a, b ), "R-E6-15 another sample width does not match" );
 	b = a;
 	b.extraSize = 2;
-	SmoothSelfTest_Line( lines, fails, !idSoundVoice_XAudio2::FormatsMatch( a, b ), "R-E6-15 another extra size does not match" );
+	SmoothSelfTest_Line( lines, fails, !idSoundVoice::FormatsMatch( a, b ), "R-E6-15 another extra size does not match" );
 	a.basic.formatTag = idWaveFile::FORMAT_ADPCM;
 	a.extraSize = 2;
 	a.extra.adpcm.samplesPerBlock = 1012;
 	b = a;
 	b.extra.adpcm.samplesPerBlock = 500;
-	SmoothSelfTest_Line( lines, fails, !idSoundVoice_XAudio2::FormatsMatch( a, b ), "R-E6-15 other extra bytes within extraSize do not match" );
+	SmoothSelfTest_Line( lines, fails, !idSoundVoice::FormatsMatch( a, b ), "R-E6-15 other extra bytes within extraSize do not match" );
 	b = a;
 	b.extra.adpcm.numCoef = 7;
-	SmoothSelfTest_Line( lines, fails, idSoundVoice_XAudio2::FormatsMatch( a, b ), "R-E6-15 bytes beyond extraSize are not compared" );
+	SmoothSelfTest_Line( lines, fails, idSoundVoice::FormatsMatch( a, b ), "R-E6-15 bytes beyond extraSize are not compared" );
 #else
 	idLib::Printf( "R-E6-39, R-E6-15: not the XAudio2 build, no lines\n" );
 #endif
 
 	idLib::Printf( "s_smoothSelfTest: %d of %d lines pass\n", lines - fails, lines );
+}
+
+/*
+========================
+ConvSelfTest_f
+
+//puncho - C1-K (WP-C1 R-C1-17, A-C1-10): the convolver's own self-test, the same function the standalone program
+TOOLS/conv/convtest runs, here under the engine's compiler flags. It takes about 4.7 MB for its moment and about
+half a second on the calling thread (C-C1-6); nothing of it runs unless the command is typed.
+========================
+*/
+static void ConvSelfTest_Print( const char* line )
+{
+	idLib::Printf( "%s\n", line );
+}
+
+static void* ConvSelfTest_Alloc( size_t bytes )
+{
+	return Mem_Alloc16( bytes, TAG_AUDIO );
+}
+
+static void ConvSelfTest_Free( void* ptr )
+{
+	Mem_Free16( ptr );
+}
+
+static void ConvSelfTest_f( const idCmdArgs& args )
+{
+	const int failed = SndConvolver_SelfTest( ConvSelfTest_Print, ConvSelfTest_Alloc, ConvSelfTest_Free );
+	idLib::Printf( "s_convSelfTest: %d failed\n", failed );
 }
 
 /*
@@ -357,6 +388,7 @@ void idSoundSystemLocal::Init()
 	cmdSystem->AddCommand( "listSamples", ListSamples_f, 0, "lists all loaded sound samples" );
 	cmdSystem->AddCommand( "listAcoustics", ListAcoustics_f, 0, "lists baked acoustics [areas|zones|doors|portals]" );	//puncho - SB3-T (R-SB3-17)
 	cmdSystem->AddCommand( "s_smoothSelfTest", SmoothSelfTest_f, CMD_FL_SYSTEM, "pure checks of the sound smoother, the listener cut and the voice rules, pass or fail" );	//puncho - R-E6-25
+	cmdSystem->AddCommand( "s_convSelfTest", ConvSelfTest_f, CMD_FL_SYSTEM, "pure checks of the engine's convolver, pass or fail" );	//puncho - C1-K (R-C1-17)
 
 	idLib::Printf( "sound system initialized.\n" );
 	idLib::Printf( "--------------------------------------\n" );
@@ -416,6 +448,7 @@ void idSoundSystemLocal::Shutdown()
 {
 	SmoothLog_Close();	//puncho - R-E6-24
 	AcousticsLog_Close();	//puncho - SB3-T (DR-210): the log survives Restart, but not Shutdown
+	MixRecord_Close();	//puncho - C3a-R (R-C3a-13)
 	hardware.Shutdown();
 	FreeStreamBuffers();
 	samples.DeleteContents( true );
@@ -542,6 +575,11 @@ void idSoundSystemLocal::Render()
 	if( !s_noSound.GetBool() )
 	{
 		hardware.Update();
+	}
+
+	if( s_mixRecord.GetString()[0] != '\0' || mixRecordFile != NULL )	//puncho - C3a-R (R-C3a-11)
+	{
+		MixRecord_Frame();
 	}
 
 	if( s_acousticsLog.GetString()[0] != '\0' || acousticsLog != NULL )	//puncho - SB3-T (R-SB3-31): paused and draining too
@@ -805,6 +843,19 @@ void idSoundSystemLocal::BeginLevelLoad()
 {
 	soundLevelLoadCount++;
 	insideLevelLoad = true;
+#if defined( USE_SOUND_MIXER )
+	//puncho - C3e-C: batch every stop the following loop can free into one fence.
+	hardware.TracePurgeCandidate( NULL );
+	for( int i = 0; i < samples.Num(); i++ )
+	{
+		if( !samples[i]->GetNeverPurge() && common->LevelKeepGrace() == 0 )
+		{
+			StopVoicesWithSample( samples[i] );
+			hardware.TracePurgeCandidate( samples[i] );
+		}
+	}
+	hardware.FenceSamples();
+#endif
 	for( int i = 0; i < samples.Num(); i++ )
 	{
 		if( samples[i]->GetNeverPurge() )
@@ -902,6 +953,25 @@ void idSoundSystemLocal::EndLevelLoad()
 	idList< preloadSort_t > preloadSort;
 	preloadSort.Resize( samples.Num() );
 
+#if defined( USE_SOUND_MIXER )
+	//puncho - C3e-C: the same purge predicate, before the pacifier can run.
+	hardware.TracePurgeCandidate( NULL );
+	for( int i = 0; i < samples.Num(); i++ )
+	{
+		if( samples[i]->GetNeverPurge() )
+		{
+			continue;
+		}
+		const bool pinned = samples[i]->IsLoaded() && common->IsLevelAssetPinned( PRELOAD_SAMPLE, samples[i]->GetName() );
+		if( !samples[i]->GetLevelLoadReferenced() && samples[i]->IsLoaded() && !pinned &&
+			soundLevelLoadCount - samples[i]->lastUseLoad >= common->LevelKeepGrace() )
+		{
+			StopVoicesWithSample( samples[i] );
+			hardware.TracePurgeCandidate( samples[i] );
+		}
+	}
+	hardware.FenceSamples();
+#endif
 	for( int i = 0; i < samples.Num(); i++ )
 	{
 		common->UpdateLevelLoadPacifier();
@@ -990,6 +1060,21 @@ void idSoundSystemLocal::PrintMemInfo( MemInfo_t* mi )
 
 void idSoundSystemLocal::PurgeUnusedLevelCache()
 {
+#if defined( USE_SOUND_MIXER )
+	//puncho - C3e-C: Stop on an already-OFF voice incurs no new fence debt.
+	hardware.TracePurgeCandidate( NULL );
+	for( int i = 0; i < samples.Num(); i++ )
+	{
+		idSoundSample* sample = samples[i];
+		const bool pinned = sample->IsLoaded() && common->IsLevelAssetPinned( PRELOAD_SAMPLE, sample->GetName() );
+		if( sample->IsLoaded() && !sample->GetNeverPurge() && !sample->GetLevelLoadReferenced() && !pinned && soundLevelLoadCount - sample->lastUseLoad >= 1 )
+		{
+			StopVoicesWithSample( sample );
+			hardware.TracePurgeCandidate( sample );
+		}
+	}
+	hardware.FenceSamples();
+#endif
 	int purged = 0, resident = 0, pins = 0;
 	int64 bytes = 0;
 	for( int i = 0; i < samples.Num(); i++ )

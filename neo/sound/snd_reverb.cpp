@@ -24,7 +24,14 @@
 */
 
 // R-SB4-30, H1 (SB4-C's line) and R-SB4-14. SB4-Z defines the other three; none changes a bake, none is saved or sent
+#if defined( USE_SOUND_MIXER )
+//puncho - C4-R: the voice already includes its gain, this is the room input level.
+idCVar s_acousticReverbSend( "s_acousticReverbSend", "0.35", CVAR_SOUND | CVAR_FLOAT, "room input gain" );
+idCVar s_acousticReverbFadeMs( "s_acousticReverbFadeMs", "400", CVAR_SOUND | CVAR_FLOAT, "room fade in ms", 50.0f, 2000.0f );
+idCVar s_acousticReverbSendDistance( "s_acousticReverbSendDistance", "0", CVAR_SOUND | CVAR_FLOAT, "room send distance share", 0.0f, 1.0f );
+#else
 idCVar s_acousticReverbSend( "s_acousticReverbSend", "1.0", CVAR_SOUND | CVAR_FLOAT, "level of the send to the reverb from every voice of a baked map that is not global" );
+#endif
 idCVar s_acousticReverbDwellMs( "s_acousticReverbDwellMs", "250", CVAR_SOUND | CVAR_INTEGER, "ms a new zone must stay the listener's before the reverb takes it" );
 idCVar s_acousticReverbHysteresis( "s_acousticReverbHysteresis", "32", CVAR_SOUND | CVAR_FLOAT, "the reverb also takes a new zone once the listener is farther than this many units from every portal into the old one" );
 
@@ -238,6 +245,9 @@ void idSoundReverb::FreeTables()
 	frontier = NULL;
 	frontierCapacity = 0;
 	acoustics = NULL;
+#if defined( USE_SOUND_MIXER )
+	mixerCutPending = false; //puncho - C4-R
+#endif
 	armPending = false;
 	armed = false;
 	armDeferred = false;
@@ -412,6 +422,9 @@ void idSoundReverb::Update()
 			return;
 		}
 		armed = true;
+#if defined( USE_SOUND_MIXER )
+		mixerCutPending = true; //puncho - C4-R: the arm also cuts in no area.
+#endif
 		armDeferred = true;		// taken below in the same update when the listener is in an area
 		lastUpdateUs = 0;
 	}
@@ -464,6 +477,9 @@ void idSoundReverb::Update()
 		}
 	}
 
+#if defined( USE_SOUND_MIXER )
+	mixerCutPending |= world->listenerCut || armThisUpdate; //puncho - C4-R: before the no-area return.
+#endif
 	if( held )
 	{
 		return;		// R-SB4-9: no lookup; the last targets and zone stay

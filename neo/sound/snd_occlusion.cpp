@@ -872,6 +872,13 @@ void idSoundOcclusion::ResolveEmitter( idSoundEmitterLocal& emitter, const int s
 		}
 	}
 
+#if defined( USE_SOUND_MIXER )
+	//puncho - W1-R: cvars are refreshed inside the call, before testing rays-on.
+	if( soundInArea != -1 && soundInArea == world.listener.area )
+	{
+		ResolveWalls( emitter );
+	}
+#endif
 	// R-SA3-25: the only log writes are under this update's flag (a non-NULL array). A slot collapse after this
 	// resolve changes the index, so GetLogVoice also checks the owner before handing anything to SB3-T.
 	if( logSlots != NULL )
@@ -1038,3 +1045,213 @@ float idSoundOcclusion::DoorwayScale( const sndPortalEdge_t& q, const idVec3& p,
 	}
 	return idMath::ClampFloat( 0.0f, 1.0f, ( ( p - x ).Length() - SND_OCC_DOORWAY_NEAR ) / SND_OCC_DOORWAY_RAMP );
 }
+#if defined( USE_SOUND_MIXER )
+//puncho - W1-R: these includes and all bodies stay below the last profile event.
+// Its source line is embedded even in the off build, so nothing above it may move.
+#include "snd_wallmath.h"
+#include "../tools/compilers/dmap/acoustic_shared.h"
+bool AcousticMaterialPasses( const idMaterial* material, int& source, int& preset );
+
+idCVar s_occlusionRays( "s_occlusionRays", "2", CVAR_SOUND | CVAR_INTEGER, "same-area wall rays: 0 off, 1 centre, 2 centre and three side rays", 0, 2, idCmdSystem::ArgCompletion_Integer<0, 2> );
+idCVar s_occlusionRayRadius( "s_occlusionRayRadius", "48", CVAR_SOUND | CVAR_FLOAT, "side-ray radius in Doom units", 0.0f, 128.0f );
+idCVar s_occlusionWallScale( "s_occlusionWallScale", "1", CVAR_SOUND | CVAR_FLOAT, "scale of wall loss in dB before the route loss clamp", 0.0f, 2.0f );
+idCVar s_occlusionShowRays( "s_occlusionShowRays", "0", CVAR_SOUND | CVAR_INTEGER, "draw same-area wall rays and counted hits", 0, 1, idCmdSystem::ArgCompletion_Integer<0, 1> );
+
+static const float SND_WALL_NEAR = 16.0f;
+static const float SND_WALL_PULL = 2.0f;
+static const float SND_WALL_OWN = 8.0f;
+static const int SND_WALL_MAX_SEGMENTS = 4;
+
+/*
+========================
+idSoundOcclusion::TraceWallRay
+
+The reverse trace tests air between faces without the CM point-contents test.
+The advance crosses the actual plane, not CM's epsilon-backed stopping point.
+========================
+*/
+template< bool draw >
+bool idSoundOcclusion::TraceWallRay( const idVec3& start, const idVec3& end, const idVec3& source,
+	idRenderWorld* renderWorld, float loss[2], int& hits )
+{
+	loss[0] = loss[1] = 0.0f;
+	hits = 0;
+	idVec3 direction = end - start;
+	const float distance = direction.Normalize();
+	if( !SndWall_Finite( distance ) ) { return false; }
+	if( distance <= 0.0f ) { return true; }
+	float sum[2] = { 0.0f, 0.0f };
+	idVec3 from = start;
+	idVec3 drawn = start;
+	idVec3 previousCrossing = start;
+	idVec3 previousNormal = vec3_origin;
+	float previousDist = 0.0f;
+	for( int segment = 0; segment < SND_WALL_MAX_SEGMENTS; segment++ )
+	{
+		trace_t forward;
+		collisionModelManager->Translation( &forward, from, end, NULL, mat3_identity, CONTENTS_SOLID, 0, vec3_origin, mat3_identity );
+		wallCounts[2]++;
+		if( forward.fraction >= 1.0f ) { break; }
+		const contactInfo_t& contact = forward.c;
+		const float alongNormal = contact.normal * direction;
+		if( !SndWall_Finite( alongNormal ) || alongNormal >= 0.0f ) { return false; }
+		const float crossing = ( contact.dist - contact.normal * from ) / alongNormal;
+		if( !SndWall_Finite( crossing ) ) { return false; }
+		const idVec3 onPlane = from + crossing * direction;
+		bool throughAir = true;
+		if( segment != 0 )
+		{
+			// A zero-length back trace would invoke CM's point test, not test air.
+			throughAir = false;
+			if( !forward.endpos.Compare( previousCrossing ) )
+			{
+				trace_t back;
+				// The step may have left the brush at an edge. Reach its previous crossing.
+				collisionModelManager->Translation( &back, forward.endpos, previousCrossing, NULL, mat3_identity, CONTENTS_SOLID, 0, vec3_origin, mat3_identity );
+				wallCounts[2]++;
+				// A two-sided face's reversed polygon is still the same plane, not air.
+				throughAir = back.fraction < 1.0f && !( back.c.normal.Compare( -previousNormal, 0.000001f ) &&
+					idMath::Fabs( back.c.dist + previousDist ) < 0.01f );
+			}
+		}
+		int materialSource, preset;
+		if( throughAir && AcousticMaterialPasses( contact.material, materialSource, preset ) &&
+			idMath::Fabs( contact.normal * source - contact.dist ) > SND_WALL_OWN )
+		{
+			acousticNumbers_t numbers;
+			float surface[2];
+			if( !AcousticResolveNumbers( contact.material, numbers ) || !SndWall_SurfaceLoss( numbers.transmission, surface ) )
+			{
+				return false;
+			}
+			sum[0] += surface[0];
+			sum[1] += surface[1];
+			if( draw )
+			{
+				renderWorld->DebugLine( hits == 0 ? colorGreen : colorRed, drawn, onPlane, 20 );
+				renderWorld->DebugLine( colorYellow, onPlane - idVec3( 3.0f, 0.0f, 0.0f ), onPlane + idVec3( 3.0f, 0.0f, 0.0f ), 20 );
+				renderWorld->DebugLine( colorYellow, onPlane - idVec3( 0.0f, 0.0f, 3.0f ), onPlane + idVec3( 0.0f, 0.0f, 3.0f ), 20 );
+				drawn = onPlane;
+			}
+			hits++;
+		}
+		// Inner polygons must not replace the hit whose outward face proves air.
+		// A hit reached through air is kept even when it adds no acoustic loss.
+		if( throughAir )
+		{
+			previousCrossing = onPlane;
+			previousNormal = contact.normal;
+			previousDist = contact.dist;
+		}
+		const float advance = crossing + Min( 0.5f / -alongNormal, 4.0f );
+		if( !SndWall_Finite( advance ) || advance <= 0.0f ) { return false; }
+		if( advance >= ( end - from ) * direction ) { break; }
+		from += advance * direction;
+	}
+	if( draw )
+	{
+		renderWorld->DebugLine( hits == 0 ? colorGreen : colorRed, drawn, end, 20 );
+	}
+	return SndWall_RayTotal( sum, wallScale, GetMaxLossDb(), loss );
+}
+
+bool idSoundOcclusion::WallRay( const idVec3& start, const idVec3& end, const idVec3& source,
+	idRenderWorld* renderWorld, float loss[2], int& hits )
+{
+	// One drawing test per ray. The false instantiation has no drawing work.
+	if( wallShow )
+	{
+		return TraceWallRay< true >( start, end, source, renderWorld, loss, hits );
+	}
+	return TraceWallRay< false >( start, end, source, renderWorld, loss, hits );
+}
+
+/*
+========================
+idSoundOcclusion::ResolveWalls
+========================
+*/
+void idSoundOcclusion::ResolveWalls( idSoundEmitterLocal& emitter )
+{
+	const idSoundWorldLocal& world = *emitter.soundWorld;
+	if( wallUpdateUs != world.smoothLastUpdateUs )
+	{
+		wallUpdateUs = world.smoothLastUpdateUs;
+		wallRays = s_occlusionRays.GetInteger();
+		wallRadius = s_occlusionRayRadius.GetFloat();
+		if( IsNAN( wallRadius ) )
+		{
+			wallRadius = ( float )atof( s_occlusionRayRadius.GetDefaultString() );
+		}
+		wallScale = s_occlusionWallScale.GetFloat();
+		if( IsNAN( wallScale ) )
+		{
+			wallScale = ( float )atof( s_occlusionWallScale.GetDefaultString() );
+		}
+		wallShow = s_occlusionShowRays.GetBool();
+		for( int i = 0; i < 3; i++ )
+		{
+			wallCounts[i] = 0;
+		}
+	}
+	if( wallRays == 0 ) { return; }
+	idVec3 direction = emitter.origin - world.listener.pos;
+	const float distance = direction.Normalize();
+	if( !SndWall_Finite( distance ) || distance <= SND_WALL_NEAR ) { return; }
+	float loss[4][2] = {};
+	int hits;
+	wallCounts[0]++;
+	if( !WallRay( world.listener.pos, emitter.origin, emitter.origin, world.renderWorld, loss[0], hits ) ) { return; }
+	if( hits == 0 ) { return; }
+	wallCounts[1]++;
+	int count = 1;
+	if( wallRays == 2 )
+	{
+		if( !SndWall_Finite( wallRadius ) ) { return; }
+		idVec3 right = direction.Cross( idVec3( 0.0f, 0.0f, 1.0f ) );
+		if( right.Normalize() < 0.01f ) { right.Set( 1.0f, 0.0f, 0.0f ); }
+		const idVec3 up = right.Cross( direction );
+		const idVec3 offsets[3] = { right * wallRadius, right * -wallRadius, up * wallRadius };
+		for( int ray = 0; ray < 3; ray++ )
+		{
+			idVec3 ends[2] = { world.listener.pos, emitter.origin };
+			// Radius zero must not turn Translation into its point-contents special case.
+			if( wallRadius > 0.0f )
+			{
+				for( int e = 0; e < 2; e++ )
+				{
+					trace_t offset;
+					collisionModelManager->Translation( &offset, ends[e], ends[e] + offsets[ray], NULL, mat3_identity, CONTENTS_SOLID, 0, vec3_origin, mat3_identity );
+					wallCounts[2]++;
+					idVec3 moved = offset.endpos - ends[e];
+					const float length = moved.Normalize();
+					ends[e] += Max( 0.0f, length - SND_WALL_PULL ) * moved;
+				}
+			}
+			if( !WallRay( ends[0], ends[1], emitter.origin, world.renderWorld, loss[count], hits ) ) { return; }
+			count++;
+		}
+	}
+	SndWall_Targets( loss, count, GetMuffle(), GetMinCutoff(), emitter.portalLossDb, emitter.portalOcclusion );
+}
+
+/*
+========================
+idSoundOcclusion::ListWallRays
+
+The command runs between updates on the main thread, so these counts are complete.
+A frame with no call leaves a stale stamp and prints zero instead.
+========================
+*/
+void idSoundOcclusion::ListWallRays( const idSoundWorldLocal& world )
+{
+	const idSoundOcclusion* wall = world.occlusion;
+	const bool read = wall != NULL && wall->wallUpdateUs != 0;
+	const bool current = read && wall->wallUpdateUs == world.smoothLastUpdateUs;
+	common->Printf( "wall rays %d radius %.6g scale %.6g%s emitters %d blocked %d traces %d\n",
+		read ? wall->wallRays : s_occlusionRays.GetInteger(),
+		read ? wall->wallRadius : s_occlusionRayRadius.GetFloat(),
+		read ? wall->wallScale : s_occlusionWallScale.GetFloat(), read ? " (as read)" : " (not read)",
+		current ? wall->wallCounts[0] : 0, current ? wall->wallCounts[1] : 0, current ? wall->wallCounts[2] : 0 );
+}
+#endif

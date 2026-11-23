@@ -583,7 +583,7 @@ logRows: the acoustics log follows this world. The places W1 and W2 are the late
 ========================
 */
 template< bool gated >
-ID_FORCE_INLINE void idSoundWorldLocal::UpdateBody( idSoundAcoustics* gate, bool logRows )
+ID_FORCE_INLINE void idSoundWorldLocal::UpdateBody( idSoundAcoustics* gate, bool logRows, bool mixRows ) //puncho - C3a-R (R-C3a-10)
 {
 	// ------------------
 	// Update emitters
@@ -737,6 +737,12 @@ ID_FORCE_INLINE void idSoundWorldLocal::UpdateBody( idSoundAcoustics* gate, bool
 	bool showVoices = s_showVoices.GetBool();
 	if( showVoices )
 	{
+#if defined( USE_SOUND_MIXER )
+		//puncho - C3e-C: this backend has one stream and no zombie voices.
+		showVoiceTable.Format( "currentCushionDB: %5.1f  freeVoices: %i mixed: %i block: %u us\nacoustics: %s", currentCushionDB,
+			soundSystemLocal.hardware.GetNumFreeVoices(), soundSystemLocal.hardware.GetStatus().voicesMixed,
+			soundSystemLocal.hardware.GetStatus().blockUs, AcousticsState() );
+#else
 #if !defined(USE_OPENAL) && defined(_MSC_VER) //puncho - R-E6-15, R-E6-18: XAudio2's queued buffers over its embedded contexts; created and destroyed source voices
 		showVoiceTable.Format( "currentCushionDB: %5.1f  freeVoices: %i zombieVoices: %i buffers:%i/%i voicesCreated: %i voicesDestroyed: %i\nacoustics: %s", currentCushionDB, //puncho - SB3-T (D-7, TL8-3, DR-213)
 							   soundSystemLocal.hardware.GetNumFreeVoices(), soundSystemLocal.hardware.GetNumZombieVoices(),
@@ -746,6 +752,7 @@ ID_FORCE_INLINE void idSoundWorldLocal::UpdateBody( idSoundAcoustics* gate, bool
 		showVoiceTable.Format( "currentCushionDB: %5.1f  freeVoices: %i zombieVoices: %i buffers:%i/%i\nacoustics: %s", currentCushionDB, //puncho - SB3-T (D-7, TL8-3, DR-213)
 							   soundSystemLocal.hardware.GetNumFreeVoices(), soundSystemLocal.hardware.GetNumZombieVoices(),
 							   soundSystemLocal.activeStreamBufferContexts.Num(), soundSystemLocal.freeStreamBufferContexts.Num(), AcousticsState() );
+#endif
 #endif
 		//puncho - SB3-T (DR-213): keep the suffix out of Format's outgoing argument area; no new Update local.
 		showVoiceTable += acoustics != NULL ? ( acoustics->IsArmed() ? ", armed\n" : ", not armed\n" ) : "\n";
@@ -809,6 +816,10 @@ ID_FORCE_INLINE void idSoundWorldLocal::UpdateBody( idSoundAcoustics* gate, bool
 	if( logRows )	//puncho - SB3-T (D-46, DR-210): the row scratch stays out of Update's stack
 	{
 		AcousticsLog_World( activeEmitterChannels, currentTime );	//puncho - SB3-T (OP8-1, DR-211): no local or count argument
+	}
+	if( mixRows )	//puncho - C3a-R: scratch stays out of Update
+	{
+		MixRecord_World( activeEmitterChannels, currentTime );
 	}
 }
 
@@ -942,14 +953,15 @@ void idSoundWorldLocal::Update()
 	//puncho - SB3-K (R-SB3-21): with no bake, one load and one branch on acoustics (C-SB50) and the log's compare
 	// (C-SB51b); ListenerPass returns NULL until the load's cut arms the gate and after a live s_acoustics 0
 	const bool logRows = ( soundSystemLocal.acousticsLogWorld == this );
+	const bool mixRows = ( soundSystemLocal.mixRecordFile != NULL );	//puncho - C3a-R: one pointer compare kept as a byte
 	idSoundAcoustics* gate;
 	if( acoustics != NULL && ( gate = ListenerPass( acoustics ) ) != NULL )
 	{
-		UpdateBody< true >( gate, logRows );
+		UpdateBody< true >( gate, logRows, mixRows ); //puncho - C3a-R
 	}
 	else
 	{
-		UpdateBody< false >( NULL, logRows );
+		UpdateBody< false >( NULL, logRows, mixRows ); //puncho - C3a-R
 	}
 
 	if( s_drawSounds.GetBool() && renderWorld != NULL )

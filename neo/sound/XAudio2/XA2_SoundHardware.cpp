@@ -541,7 +541,7 @@ void idSoundHardware_XAudio2::Init()
 	XAudio2CreateVolumeMeter( &vuMeter, 0 );
 
 	XAUDIO2_EFFECT_DESCRIPTOR descriptor;
-	descriptor.InitialState = true;
+	descriptor.InitialState = false;	//puncho - C3a-R: the first Update after Init/restart must enable it before reporting levels
 	descriptor.OutputChannels = outputChannels;
 	descriptor.pEffect = vuMeter;
 
@@ -846,15 +846,26 @@ void idSoundHardware_XAudio2::Update()
 	vuMeterRMS->Enable( s_showLevelMeter.GetBool() );
 	vuMeterPeak->Enable( s_showLevelMeter.GetBool() );
 
-	if( !s_showLevelMeter.GetBool() )
+	//puncho - C3a-R: the graphs still follow only s_showLevelMeter. The file closes after this Update;
+	// disabling at the close itself needs access to pMasterVoice outside this owned block.
+	if( !s_showLevelMeter.GetBool() && soundSystemLocal.mixRecordFile == NULL )
 	{
 		pMasterVoice->DisableEffect( 0 );
 		return;
 	}
-	else
+	const bool recording = soundSystemLocal.mixRecordFile != NULL;	//puncho - C3a-R (OR-1): no saved flag on the off path
+	//puncho - C3a-R (OR-6): GetEffectState reports the requested state; allow a whole metered pass to finish.
+	static uint32 mixRecordMeterEnabledMs = 0;
+	BOOL meterWasEnabled = TRUE;
+	if( recording )
 	{
-		pMasterVoice->EnableEffect( 0 );
+		pMasterVoice->GetEffectState( 0, &meterWasEnabled );
+		if( !meterWasEnabled )
+		{
+			mixRecordMeterEnabledMs = ( uint32 )Sys_Milliseconds();
+		}
 	}
+	pMasterVoice->EnableEffect( 0 );
 
 	float peakLevels[ 8 ];
 	float rmsLevels[ 8 ];
@@ -869,7 +880,17 @@ void idSoundHardware_XAudio2::Update()
 		levels.ChannelCount = 8;
 	}
 
-	pMasterVoice->GetEffectParameters( 0, &levels, sizeof( levels ) );
+	//puncho - C3a-R (R-C3a-12): one read shared with the display, no rows from an unsuccessful read.
+	const HRESULT meterResult = pMasterVoice->GetEffectParameters( 0, &levels, sizeof( levels ) );
+	if( recording && meterWasEnabled && SUCCEEDED( meterResult )
+			&& ( uint32 )Sys_Milliseconds() - mixRecordMeterEnabledMs >= 25 )	//puncho - C3a-R (OR-6): unsigned elapsed time also spans clock wrap
+	{
+		MixRecord_Levels( rmsLevels, peakLevels, ( int )levels.ChannelCount );
+	}
+	if( !s_showLevelMeter.GetBool() || FAILED( meterResult ) )
+	{
+		return;
+	}
 
 	int currentTime = Sys_Milliseconds();
 	for( int i = 0; i < outputChannels; i++ )

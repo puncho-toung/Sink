@@ -345,6 +345,9 @@ static void SndAcoustics_PrintReverb( const sndReverb_t& r )
 void idSoundWorldLocal::ListAcoustics( const idCmdArgs& args ) const
 {
 	common->Printf( "%s\n", acousticsLine[0] != '\0' ? acousticsLine : "acoustics: off (no map)" );
+#if defined( USE_SOUND_MIXER )
+	idSoundOcclusion::ListWallRays( *this ); //puncho - W1-R: also prints zero counts without a bake.
+#endif
 	if( acoustics == NULL )
 	{
 		return;

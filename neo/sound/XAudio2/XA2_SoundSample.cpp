@@ -46,7 +46,17 @@ AllocBuffer
 */
 static void* AllocBuffer( int size, const char* name )
 {
+#if defined( USE_SOUND_MIXER ) && defined( SND_MIX_QUARANTINE )
+	//puncho - C3e-C: a separate reservation for every sample buffer, never reused this run.
+	void* p = VirtualAlloc( NULL, Max( 1, size ), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE );
+	if( p == NULL )
+	{
+		idLib::FatalError( "sound quarantine: allocating %d bytes for %s failed", size, name );
+	}
+	return p;
+#else
 	return Mem_Alloc( size, TAG_AUDIO );
+#endif
 }
 
 /*
@@ -56,7 +66,25 @@ FreeBuffer
 */
 static void FreeBuffer( void* p )
 {
+#if defined( USE_SOUND_MIXER ) && defined( SND_MIX_QUARANTINE )
+	if( p == NULL )
+	{
+		return;
+	}
+	MEMORY_BASIC_INFORMATION info;
+	if( VirtualQuery( p, &info, sizeof( info ) ) != sizeof( info ) || info.AllocationBase != p || info.State != MEM_COMMIT )
+	{
+		idLib::FatalError( "sound quarantine: invalid buffer at free" );
+	}
+	memset( p, 0xDD, info.RegionSize );
+	// Decommit removes access and physical storage, but keeps the address reserved forever.
+	if( !VirtualFree( p, info.RegionSize, MEM_DECOMMIT ) )
+	{
+		idLib::FatalError( "sound quarantine: decommitting a buffer failed" );
+	}
+#else
 	return Mem_Free( p );
+#endif
 }
 
 /*
@@ -543,6 +571,93 @@ void idSoundSample_XAudio2::MakeDefault()
 	playLength = DEFAULT_NUM_SAMPLES;
 }
 
+#if defined( USE_SOUND_MIXER )
+//puncho - C3e-C: only bytes in this one buffer may be exposed to the audio thread.
+bool idSoundSample_XAudio2::GetView( sndSampleView_t& view, const char** reason ) const
+{
+	memset( &view, 0, sizeof( view ) );
+	if( reason != NULL )
+	{
+		*reason = !loaded ? "not loaded" : buffers.Num() != 1 ? "not one buffer" :
+			buffers[0].buffer == NULL ? "null buffer" : buffers[0].bufferSize < 0 ? "negative buffer size" :
+			( playBegin < 0 || playLength < 0 ) ? "negative play range" :
+			( format.basic.numChannels != 1 && format.basic.numChannels != 2 ) ? "not mono or stereo" :
+			format.basic.formatTag == idWaveFile::FORMAT_PCM ? "PCM is not 16 bit" :
+			format.basic.formatTag != idWaveFile::FORMAT_ADPCM ? "unsupported format tag" :
+			format.extra.adpcm.numCoef != 7 ? "ADPCM coefficient count is not 7" :
+			( format.basic.blockSize == 0 || format.basic.blockSize > SHRT_MAX ) ? "ADPCM block bytes out of range" :
+			"ADPCM block frames outside 4..128";
+	}
+	if( !loaded )
+	{
+		return false;
+	}
+	if( buffers.Num() != 1 || buffers[0].buffer == NULL || buffers[0].bufferSize < 0 ||
+		playBegin < 0 || playLength < 0 || ( format.basic.numChannels != 1 && format.basic.numChannels != 2 ) )
+	{
+		return false;
+	}
+	view.rate = format.basic.samplesPerSec;
+	view.channels = format.basic.numChannels;
+	int64 wholeFrames;
+	int64 offsetBytes;
+	if( format.basic.formatTag == idWaveFile::FORMAT_PCM && format.basic.bitsPerSample == 16 )
+	{
+		view.format = SND_SAMPLE_PCM16;
+		const int frameBytes = view.channels * ( int )sizeof( short );
+		wholeFrames = buffers[0].bufferSize / frameBytes;
+		offsetBytes = ( int64 )playBegin * frameBytes;
+	}
+	else if( format.basic.formatTag == idWaveFile::FORMAT_ADPCM && format.extra.adpcm.numCoef == 7 &&
+		format.basic.blockSize > 0 && format.basic.blockSize <= SHRT_MAX &&
+		format.extra.adpcm.samplesPerBlock >= 4 && format.extra.adpcm.samplesPerBlock <= SND_VOICE_ADPCM_FRAMES )
+	{
+		view.format = SND_SAMPLE_MSADPCM;
+		view.blockBytes = format.basic.blockSize;
+		view.blockFrames = format.extra.adpcm.samplesPerBlock;
+		if( playBegin % view.blockFrames != 0 )
+		{
+			if( reason != NULL )
+			{
+				*reason = "ADPCM play begin is not a block boundary";
+			}
+			return false;	// the plain decoder accepts whole blocks only
+		}
+		wholeFrames = ( int64 )( buffers[0].bufferSize / view.blockBytes ) * view.blockFrames;
+		offsetBytes = ( int64 )( playBegin / view.blockFrames ) * view.blockBytes;
+		for( int i = 0; i < 7; i++ )
+		{
+			view.coef[i][0] = format.extra.adpcm.aCoef[i].coef1;
+			view.coef[i][1] = format.extra.adpcm.aCoef[i].coef2;
+		}
+	}
+	else
+	{
+		return false;
+	}
+	if( playBegin > wholeFrames || offsetBytes > buffers[0].bufferSize )
+	{
+		if( reason != NULL )
+		{
+			*reason = "play begin lies past the complete frames in the buffer";
+		}
+		return false;
+	}
+	view.data = ( const unsigned char* )buffers[0].buffer + ( size_t )offsetBytes;
+	view.numFrames = ( int )Min( ( int64 )playLength, wholeFrames - playBegin );
+	if( view.format == SND_SAMPLE_MSADPCM )
+	{
+		view.numFrames -= view.numFrames % view.blockFrames;
+	}
+	const bool valid = SndSample_ViewValid( view );
+	if( reason != NULL )
+	{
+		*reason = valid ? NULL : ( view.rate < 1000 || view.rate > 192000 ) ? "rate outside 1000..192000 Hz" :
+			"ADPCM padded block bytes or incomplete nibble pair";
+	}
+	return valid;
+}
+#endif
 /*
 ========================
 idSoundSample_XAudio2::FreeData
@@ -554,12 +669,28 @@ void idSoundSample_XAudio2::FreeData()
 {
 	if( buffers.Num() > 0 )
 	{
+#if defined( USE_SOUND_MIXER )
+#if defined( _DEBUG )
+		soundSystemLocal.hardware.BeginSampleFree(); //puncho - C3e-C: uninterrupted stops, fence, frees
+#endif
+#endif
 		soundSystemLocal.StopVoicesWithSample( ( idSoundSample* )this );
+#if defined( USE_SOUND_MIXER )
+		soundSystemLocal.hardware.FenceSamples( GetName() ); //puncho - C3e-C
+#ifndef ID_RETAIL
+		mixerPurgeCandidate = false;
+#endif
+#endif
 		for( int i = 0; i < buffers.Num(); i++ )
 		{
 			FreeBuffer( buffers[i].buffer );
 		}
 		buffers.Clear();
+#if defined( USE_SOUND_MIXER )
+#if defined( _DEBUG )
+		soundSystemLocal.hardware.EndSampleFree(); //puncho - C3e-C
+#endif
+#endif
 	}
 	amplitude.Clear();
 

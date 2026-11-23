@@ -636,6 +636,19 @@ ID_FORCE_INLINE void idSoundChannel::UpdateHardwareBody( float volumeAdd, int cu
 		{
 			hardwareVoice->SetReverbSend( global ? 0.0f : s_acousticReverbSend.GetFloat() );
 		}
+#if defined( USE_SOUND_MIXER )
+		//puncho - C4-R: the whole send uses the cushion-adjusted voice volume, every gated update.
+		float roomSend = 0.0f;
+		if( !global )
+		{
+			const float v = volumeDB + volumeAdd;
+			const float straight = emitterIsListener ? 0.0f : SoundDistanceDB( emitter->directDistance, parms.minDistance, parms.maxDistance );
+			const float w = idMath::ClampFloat( 0.0f, 1.0f, ( v + 60.0f ) / 30.0f );
+			roomSend = DBtoLinear( v - ( 1.0f - s_acousticReverbSendDistance.GetFloat() ) * straight * w );
+			if( ( parms.soundShaderFlags & SSF_UNCLAMPED ) == 0 ) { roomSend = Min( 1.0f, roomSend ); }
+		}
+		hardwareVoice->SetReverbSend( roomSend );
+#endif
 	}
 	occlusion.Step( occTarget, soundWorld->filterAlpha, soundWorld->filterParms, snap );
 	hardwareVoice->SetOcclusion( occlusion.value );

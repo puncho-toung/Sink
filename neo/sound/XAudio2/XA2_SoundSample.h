@@ -61,6 +61,21 @@ public:
 
 	// frees all data
 	void			FreeData();
+#if defined( USE_SOUND_MIXER )
+	//puncho - C3e-C: a bounded, immutable view; reads no sample bytes.
+	bool			GetView( sndSampleView_t& view, const char** reason = NULL ) const;
+	bool			MarkNoiseWarning() const { const bool first = !noiseWarned; noiseWarned = true; return first; }
+#ifndef ID_RETAIL
+	bool			WasMixerPurgeCandidate() const { return mixerPurgeCandidate; }
+	void			SetMixerPurgeCandidate( bool candidate ) { mixerPurgeCandidate = candidate; }
+#endif
+private:
+#ifndef ID_RETAIL
+	bool			mixerPurgeCandidate = false; // diagnostic mark, cleared only by the free or the test
+#endif
+	mutable bool	noiseWarned = false; // once per sample object, main thread only
+public:
+#endif
 
 	int				LengthInMsec() const
 	{

@@ -1,0 +1,19 @@
+PFFFT (marton78 fork)
+Repository: https://github.com/marton78/pffft.git
+Commit: e0bf595c98ded55cc457a371c1b29c8cab552628
+Local source: steam-audio-build/fetch/core/deps-build/pffft/src/pffft/
+Provenance: rbdoom/neo/libs/steamaudio/SOURCE.txt
+
+Copied byte for byte, including the complete upstream LICENSE.txt:
+pffft.c
+pffft.h
+pffft_common.c
+pffft_priv_impl.h
+simd/pf_float.h
+simd/pf_sse1_float.h
+simd/pf_neon_float.h
+simd/pf_altivec_float.h
+simd/pf_scalar_float.h
+LICENSE.txt
+
+No vendor file was edited. C1-K, R-C1-2.

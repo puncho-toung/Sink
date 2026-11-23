@@ -117,7 +117,52 @@ typedef enum
 
 #include "SoundVoice.h"
 
-#if defined(USE_OPENAL)
+#if defined( USE_SOUND_MIXER )
+//puncho - C3e-C: the mixer keeps XAudio2 for samples, the device and cinematics.
+#define OPERATION_SET 1
+
+// RB: not available on Windows 8 SDK
+#if defined(USE_WINRT) // (_WIN32_WINNT < 0x0602 /*_WIN32_WINNT_WIN8*/)
+#include <mmdeviceapi.h>
+#include <initguid.h> // For the pkey defines to be properly instantiated.
+#include <propkeydef.h>
+#include "functiondiscoverykeys_devpkey.h"
+#include <string>
+#include <vector>
+
+DEFINE_PROPERTYKEY( PKEY_AudioEndpoint_Path, 0x9c119480, 0xddc2, 0x4954, 0xa1, 0x50, 0x5b, 0xd2, 0x40, 0xd4, 0x54, 0xad, 1 );
+
+#pragma comment(lib,"xaudio2.lib")
+
+struct AudioDevice
+{
+	std::wstring name;
+	std::wstring id;
+};
+#else
+#include <dxsdkver.h>
+#endif
+// RB end
+
+#include <xaudio2.h>
+#include <xaudio2fx.h>
+#include <X3DAudio.h>
+
+// RB: not available on Windows 8 SDK
+#if !defined(USE_WINRT) // (_WIN32_WINNT < 0x0602 /*_WIN32_WINNT_WIN8*/)
+	#include <xma2defs.h>
+#endif
+// RB end
+
+#include "snd_voice.h"
+#include "XAudio2/XA2_SoundSample.h"
+#include "Mixer/MX_SoundVoice.h"
+#include "XAudio2/XA2_SoundSink.h"
+#include "Mixer/MX_SoundHardware.h"
+const int SND_MIX_SAMPLE_RATE = 44100;
+float SoundFilterFrequency( float cutoffHz, float filterRate );
+
+#elif defined(USE_OPENAL)
 
 //#define AL_ALEXT_PROTOTYPES
 
@@ -424,7 +469,7 @@ public:
 	idSoundAcoustics*		ListenerPass( idSoundAcoustics* current );		// SB3-K: the gate of this update, or NULL
 private:
 	template< bool gated >
-	ID_FORCE_INLINE void	UpdateBody( idSoundAcoustics* gate, bool logRows );	// SB3-K: Update's body, one per arm
+	ID_FORCE_INLINE void	UpdateBody( idSoundAcoustics* gate, bool logRows, bool mixRows );	//puncho - C3a-R: SB3-K's body, one per arm; recorder flag mirrors logRows
 public:
 	idSoundAcoustics*		acoustics;						// read by SB4's and SA3's gated lines
 	char					acousticsLine[128];				// the last console line of the load or free
@@ -433,6 +478,7 @@ public:
 	void					ListAcoustics( const idCmdArgs& args ) const;
 	const char*				AcousticsState() const;
 	void					AcousticsLog_World( const idStaticList< idActiveChannel, MAX_HARDWARE_VOICES >& channels, int currentTime ) const;	//puncho - SB3-T (OP8-1)
+	void					MixRecord_World( const idStaticList< idActiveChannel, MAX_HARDWARE_VOICES >& channels, int currentTime );	//puncho - C3a-R (R-C3a-10)
 	//puncho end
 private:
 	static void				DeleteAcoustics( idSoundAcoustics* it );	// the one teardown of the object (L3-3)
@@ -776,7 +822,10 @@ public:
 			bufferNumber( 0 )
 		{ }
 
-#if defined(USE_OPENAL)
+#if defined( USE_SOUND_MIXER )
+		idSoundVoice_Mixer*	voice; //puncho - C3e-C
+		idSoundSample_XAudio2*	sample;
+#elif defined(USE_OPENAL)
 		idSoundVoice_OpenAL* 	voice;
 		idSoundSample_OpenAL*	sample;
 #elif defined(_MSC_VER) // XAudio backend
@@ -827,6 +876,7 @@ public:
 
 	bool						insideLevelLoad;
 	bool						levelSeen = false;	//puncho - R-E6-23 (DR-150): true after the first EndLevelLoad following engine startup
+	idFile*						mixRecordFile = NULL;	//puncho - C3a-R: allocated only while recording
 
 	//-------------------------
 
@@ -843,5 +893,11 @@ public:
 };
 
 extern	idSoundSystemLocal	soundSystemLocal;
+
+//puncho - C3a-R (R-C3a-1, R-C3a-11 to R-C3a-13): main-thread recorder entry points
+extern idCVar s_mixRecord;
+void MixRecord_Frame();
+void MixRecord_Levels( const float* rms, const float* peak, int channels );
+void MixRecord_Close();
 
 #endif /* !__SND_LOCAL_H__ */

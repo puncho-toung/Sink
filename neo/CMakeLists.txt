@@ -34,6 +34,16 @@ option(USE_PRECOMPILED_HEADERS
 option(OPENAL
 		"Use OpenAL soft instead of XAudio2" OFF)
 
+# puncho - WP-C3e R-C3e-1: the engine's own mixer on XAudio2's device (one stream), beside today's back end.
+# Windows only for now; OFF builds every object as before.
+option(SOUND_MIXER
+		"Use the engine's own mixer on XAudio2's device instead of XAudio2's voices" OFF)
+
+# puncho - WP-C3e A-C3e-7: a test build of the mixer in which a freed sample's memory stays unreadable
+# (each buffer on pages of its own, never committed again). For the fence's test only; needs SOUND_MIXER.
+option(SOUND_MIXER_QUARANTINE
+		"Test build: freed sound sample memory stays reserved and unreadable (needs SOUND_MIXER)" OFF)
+
 option(FFMPEG
 		"Use FMPEG to render Bink videos" OFF)
 
@@ -539,6 +549,14 @@ file(GLOB TINYEXR_INCLUDES libs/tinyexr/*.h)
 file(GLOB MIKKTSPACE_INCLUDES libs/mikktspace/*.h)
 file(GLOB MIKKTSPACE_SOURCES libs/mikktspace/*.c)
 
+#puncho - C1-K (WP-C1 R-C1-2): PFFFT, vendored unchanged for the engine's convolver. C files, compiled outside
+# the precompiled header (below). Its NEON path needs the define; without it an ARM64 build gets the scalar path.
+file(GLOB PFFFT_INCLUDES libs/pffft/*.h libs/pffft/simd/*.h)
+file(GLOB PFFFT_SOURCES libs/pffft/*.c)
+if(USE_INTRINSICS_NEON)
+	set_source_files_properties(${PFFFT_SOURCES} PROPERTIES COMPILE_DEFINITIONS PFFFT_ENABLE_NEON)
+endif()
+
 
 if (NOT ZLIB_FOUND)
 	file(GLOB ZLIB_INCLUDES libs/zlib/*.h)
@@ -565,6 +583,10 @@ set(SOUND_INCLUDES
 	sound/snd_acoustics.h
 	sound/snd_occlusion.h
 	sound/snd_reverb.h
+	sound/snd_convolver.h
+	sound/snd_irbuilder.h
+	sound/snd_hdr.h
+	sound/snd_master.h
 	sound/sound.h
 	sound/SoundVoice.h
 	sound/WaveFile.h
@@ -572,10 +594,15 @@ set(SOUND_INCLUDES
 	
 set(SOUND_SOURCES
 	sound/snd_acoustics.cpp
+	sound/snd_mixrecord.cpp
 	sound/snd_decoder.cpp
 	sound/snd_emitter.cpp
 	sound/snd_occlusion.cpp
 	sound/snd_reverb.cpp
+	sound/snd_convolver.cpp
+	sound/snd_irbuilder.cpp
+	sound/snd_hdr.cpp
+	sound/snd_master.cpp
 	sound/snd_shader.cpp
 	sound/snd_system.cpp
 	sound/snd_world.cpp
@@ -593,6 +620,40 @@ set(XAUDIO2_SOURCES
 	sound/XAudio2/XA2_SoundSample.cpp
 	sound/XAudio2/XA2_SoundVoice.cpp
 	sound/Xaudio2/XA2_CinematicAudio.cpp)
+
+# puncho - WP-C3e R-C3e-1: with SOUND_MIXER the voice and hardware classes are the mixer's and the device is the
+# sink's; the sample class and the cinematic's voice stay XAudio2's. The three plain files (the voice's path, the
+# block, the hand-off) are compiled only here: linked into an OFF build they are called by nothing but lay its
+# executable out anew, and an OFF build is to be the program it was (DR-305).
+set(SOUND_MIXER_INCLUDES
+	sound/snd_voice.h
+	sound/snd_mixer.h
+	sound/snd_mixlink.h
+	sound/snd_reverbmix.h
+	sound/Mixer/MX_SoundVoice.h
+	sound/Mixer/MX_SoundHardware.h
+	sound/XAudio2/XA2_SoundSink.h
+	sound/XAudio2/XA2_SoundSample.h
+	sound/Xaudio2/XA2_CinematicAudio.h)
+
+set(SOUND_MIXER_SOURCES
+	sound/snd_voice.cpp
+	sound/snd_mixer.cpp
+	sound/snd_mixlink.cpp
+	sound/snd_reverbmix.cpp
+	sound/Mixer/MX_SoundVoice.cpp
+	sound/Mixer/MX_SoundHardware.cpp
+	sound/XAudio2/XA2_SoundSink.cpp
+	sound/XAudio2/XA2_SoundSample.cpp
+	sound/Xaudio2/XA2_CinematicAudio.cpp)
+
+# puncho - WP-C3b R-C3b-14, WP-C3e R-C3e-1: the three plain files' results were shown with a multiply and an add
+# never fused; that is their own option in every configuration, whatever the build's flags become.
+if(MSVC)
+	set_source_files_properties(sound/snd_voice.cpp sound/snd_mixer.cpp sound/snd_mixlink.cpp sound/snd_reverbmix.cpp PROPERTIES COMPILE_OPTIONS "/fp:precise")
+else()
+	set_source_files_properties(sound/snd_voice.cpp sound/snd_mixer.cpp sound/snd_mixlink.cpp sound/snd_reverbmix.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+endif()
 	
 set(OPENAL_INCLUDES
 	sound/OpenAL/AL_SoundHardware.h
@@ -892,6 +953,9 @@ source_group("engine\\sound" FILES ${SOUND_SOURCES})
 source_group("engine\\sound\\XAudio2" FILES ${XAUDIO2_INCLUDES})
 source_group("engine\\sound\\XAudio2" FILES ${XAUDIO2_SOURCES})
 
+source_group("engine\\sound\\Mixer" FILES sound/Mixer/MX_SoundVoice.h sound/Mixer/MX_SoundHardware.h sound/Mixer/MX_SoundVoice.cpp sound/Mixer/MX_SoundHardware.cpp)
+source_group("engine\\sound\\XAudio2" FILES sound/XAudio2/XA2_SoundSink.h sound/XAudio2/XA2_SoundSink.cpp)
+
 source_group("engine\\sound\\OpenAL" FILES ${OPENAL_INCLUDES})
 source_group("engine\\sound\\OpenAL" FILES ${OPENAL_SOURCES})
 
@@ -921,6 +985,9 @@ source_group("libs\\tinyexr" FILES ${TINYEXR_INCLUDES})
 
 source_group("libs\\mikktspace" FILES ${MIKKTSPACE_INCLUDES})
 source_group("libs\\mikktspace" FILES ${MIKKTSPACE_SOURCES})
+
+source_group("libs\\pffft" FILES ${PFFFT_INCLUDES})
+source_group("libs\\pffft" FILES ${PFFFT_SOURCES})
 
 source_group("libs\\libbinkdec" FILES ${BINKDEC_INCLUDES})
 source_group("libs\\libbinkdec" FILES ${BINKDEC_SOURCES})
@@ -1004,6 +1071,7 @@ set(RBDOOM3_INCLUDES
 			${MESA_INCLUDES}
 			${TINYEXR_INCLUDES}
 			${MIKKTSPACE_INCLUDES}
+			${PFFFT_INCLUDES}
 			${ZLIB_INCLUDES}
 			${MINIZIP_INCLUDES}
 			${BINKDEC_INCLUDES}
@@ -1048,6 +1116,7 @@ set(RBDOOM3_SOURCES
 			${FRAMEWORK_IMGUI_SOURCES}
 			${IMGUI_SOURCES}
 			${MIKKTSPACE_SOURCES}
+			${PFFFT_SOURCES}
 			${ZLIB_SOURCES}
 			${MINIZIP_SOURCES}
 			${BINKDEC_SOURCES}
@@ -1152,6 +1221,19 @@ if(MSVC)
 			install(FILES libs/openal-soft/lib/bin/win32/OpenAL32.dll DESTINATION .)
 			install(FILES libs/openal-soft/lib/bin/win32/OpenAL32.pdb DESTINATION .)
 		endif()
+	elseif(SOUND_MIXER)
+		# puncho - WP-C3e R-C3e-1: the definition is given only here, so that an OFF build's are what they were
+		add_definitions(-DUSE_SOUND_MIXER)
+		if(SOUND_MIXER_QUARANTINE)
+			add_definitions(-DSND_MIX_QUARANTINE)
+		endif()
+
+		list(APPEND RBDOOM3_INCLUDES ${SOUND_MIXER_INCLUDES})
+		list(APPEND RBDOOM3_SOURCES	${SOUND_MIXER_SOURCES})
+
+		if(DOOM_CLASSIC)
+			list(APPEND RBDOOM3_SOURCES	${DOOMCLASSIC_XAUDIO2_SOURCES})
+		endif()
 	else()
 		list(APPEND RBDOOM3_INCLUDES ${XAUDIO2_INCLUDES})
 		list(APPEND RBDOOM3_SOURCES	${XAUDIO2_SOURCES})
@@ -1220,6 +1302,8 @@ if(MSVC)
 	if(USE_PRECOMPILED_HEADERS) 
 		set(RBDOOM3_PRECOMPILED_SOURCES ${RBDOOM3_SOURCES})
 		list(REMOVE_ITEM RBDOOM3_PRECOMPILED_SOURCES ${TIMIDITY_SOURCES} ${ZLIB_SOURCES} ${BINKDEC_SOURCES} ${IMGUI_SOURCES} ${MIKKTSPACE_SOURCES} ${OGGVORBIS_SOURCES} ${OPTICK_SOURCES})
+		#puncho - C1-K, C2-I, H1-W, M1-K (EC-2): PFFFT is C, and the four step 3 files include no precompiled.h
+		list(REMOVE_ITEM RBDOOM3_PRECOMPILED_SOURCES ${PFFFT_SOURCES} sound/snd_convolver.cpp sound/snd_irbuilder.cpp sound/snd_hdr.cpp sound/snd_master.cpp sound/snd_voice.cpp sound/snd_mixer.cpp sound/snd_mixlink.cpp sound/snd_reverbmix.cpp)
 		list(REMOVE_ITEM RBDOOM3_PRECOMPILED_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/libs/zlib/minizip/ioapi.c)
 		list(REMOVE_ITEM RBDOOM3_PRECOMPILED_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/renderer/DXT/DXTDecoder.cpp)
 		list(REMOVE_ITEM RBDOOM3_PRECOMPILED_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/renderer/DXT/DXTEncoder.cpp)
@@ -1379,6 +1463,8 @@ else()
 
 		set(RBDOOM3_PRECOMPILED_SOURCES ${RBDOOM3_SOURCES})
 		list(REMOVE_ITEM RBDOOM3_PRECOMPILED_SOURCES ${TIMIDITY_SOURCES} ${ZLIB_SOURCES} ${BINKDEC_SOURCES} ${IMGUI_SOURCES} ${MIKKTSPACE_SOURCES} ${OGGVORBIS_SOURCES} ${OPTICK_SOURCES})
+		#puncho - C1-K, C2-I, H1-W, M1-K (EC-2): PFFFT is C, and the four step 3 files include no precompiled.h
+		list(REMOVE_ITEM RBDOOM3_PRECOMPILED_SOURCES ${PFFFT_SOURCES} sound/snd_convolver.cpp sound/snd_irbuilder.cpp sound/snd_hdr.cpp sound/snd_master.cpp sound/snd_voice.cpp sound/snd_mixer.cpp sound/snd_mixlink.cpp sound/snd_reverbmix.cpp)
 		list(REMOVE_ITEM RBDOOM3_PRECOMPILED_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/libs/zlib/minizip/ioapi.c)
 		list(REMOVE_ITEM RBDOOM3_PRECOMPILED_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/renderer/DXT/DXTDecoder.cpp)
 		list(REMOVE_ITEM RBDOOM3_PRECOMPILED_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/renderer/DXT/DXTEncoder.cpp)

@@ -164,6 +164,24 @@ private:
 	sndOccLogSlot_t*			logSlots;
 	int						numLogSlots;
 	uint32					logFrame;			// this update, independent of the flood's stamp (a clean frame reuses it)
+#if defined( USE_SOUND_MIXER )
+	//puncho - W1-R: no constructor edit above the source's profile events.
+	uint64					wallUpdateUs = 0;
+	int						wallRays = 2;
+	float					wallRadius = 48.0f;
+	float					wallScale = 1.0f;
+	bool					wallShow = false;
+	int						wallCounts[3] = {}; // emitters, blocked centre rays, all point traces
+
+	void					ResolveWalls( idSoundEmitterLocal& emitter );
+	bool					WallRay( const idVec3& start, const idVec3& end, const idVec3& source,
+								idRenderWorld* renderWorld, float loss[2], int& hits );
+	template< bool draw >
+	bool					TraceWallRay( const idVec3& start, const idVec3& end, const idVec3& source,
+								idRenderWorld* renderWorld, float loss[2], int& hits );
+public:
+	static void				ListWallRays( const idSoundWorldLocal& world );
+#endif
 };
 
 ID_INLINE int idSoundOcclusion::GetAreaLabels( int area, const sndOccLabel_t* out[3] ) const

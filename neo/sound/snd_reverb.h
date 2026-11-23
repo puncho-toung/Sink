@@ -30,6 +30,10 @@ struct reverbCarrierFrame_t { reverbCarrierSubmix_t submix[ 2 ]; bool disabledMi
 
 // R-SB4-30 and H1 (SB4-C's line): the send level of every voice of a gated world that is not SSF_GLOBAL. In snd_reverb.cpp
 extern idCVar s_acousticReverbSend;
+#if defined( USE_SOUND_MIXER )
+extern idCVar s_acousticReverbFadeMs; //puncho - C4-R
+extern idCVar s_acousticReverbSendDistance;
+#endif
 
 // R-SB4-33's target[]: ln T_mid, ln( T_low / T_mid ), ln( T_high / T_mid ), earlyDb, lateDb
 static const int REVERB_NUM_TARGETS = 5;
@@ -74,6 +78,10 @@ public:
 	bool					held;				// R-SB4-9: the last update had no area (or one the bake lacks); no lookup, targets and zone kept
 
 private:
+#if defined( USE_SOUND_MIXER )
+	friend class idSoundHardware_Mixer; //puncho - C4-R: main-thread caller takes and clears the cut once.
+	bool mixerCutPending;
+#endif
 	void					FreeTables();		// the one release of the per-map tables; also forgets the map
 
 	idSoundWorldLocal*			world;			// the world this is the member of

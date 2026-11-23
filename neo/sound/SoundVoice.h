@@ -103,6 +103,13 @@ public:
 		return pitch;
 	}
 
+	//puncho - C3a-R (R-C3a-14): the layout CalculateSurround writes; no voice state is changed
+	static void GetSurroundLayout( int& channels, int& mask )
+	{
+		channels = dstChannels;
+		mask = dstMask;
+	}
+
 protected:
 	idVec3		position;			// Position of the sound relative to listener
 	float		gain;				// Volume (0-1)
