@@ -96,6 +96,13 @@ int main(int argc, char** argv) { try {
   }
 
   // ---- the proof: every goal, every source
+  // NL_PROOF=full in the environment: the proof computes a base route for every source, as before. NL_FAULT=row0, row1 or row2 (a test): a fault is planted in that level's rows (see the source loop).
+  const char* proofMode = getenv("NL_PROOF"); if (proofMode && !*proofMode) proofMode = nullptr; const bool fullProof = proofMode && !strcmp(proofMode, "full"); Need(!proofMode || fullProof, "NL_PROOF must be full");
+  const char* faultMode = getenv("NL_FAULT"); if (faultMode && !*faultMode) faultMode = nullptr; const bool rowFault = faultMode && !strncmp(faultMode, "row", 3) && faultMode[3] >= '0' && faultMode[3] <= '9' && !faultMode[4];
+  Need(!faultMode || rowFault, "NL_FAULT must be row0, row1 or row2"); const U faultLevel = rowFault ? U(faultMode[3] - '0') : 0; Need(faultLevel < NL, "NL_FAULT names a level that is not there");
+  printf("M W2_MODE proof=%s fault=%s\n", fullProof ? "full" : "skip", rowFault ? faultMode : "none");      // which way runs: the tests ask for this line
+  // outCount[level][x]: how many of the Out records the proof reads (the first min(K, count) of every area) name waypoint x
+  std::vector<std::vector<W>> outCount(NL); for (U lev = 0; lev < NL; ++lev) { const Level& l = levels[lev]; outCount[lev].assign(l.m, 0); for (U a = 0; a < n; ++a) for (U i = 0; i < std::min(l.K, l.out[a].count); ++i) ++outCount[lev][l.out[a].a[i].wp]; }
   const double begin = omp_get_wtime(); std::vector<Totals> per(omp_get_max_threads());
   #pragma omp parallel
   {
@@ -111,12 +118,22 @@ int main(int argc, char** argv) { try {
         for (U j = 0; j < std::min(l.K, tail.count); ++j) { const Att& z = tail.a[j]; const U tailTree = distG[nodeOf(l.wp[z.wp])];
           for (size_t p = l.col[z.wp]; p < l.col[z.wp + 1]; ++p) { const U x = l.cx[p], t = l.ch[p] + z.t;
             if (t < r.t[x] || (t == r.t[x] && z.wp < r.y[x])) { if (r.t[x] == BIG) r.touched.push_back(x); r.t[x] = t; r.y[x] = z.wp; r.pos[x] = p; r.first[x] = x != z.wp ? l.hops[x][l.cn[p]].first : z.far; r.tree[x] = chainTree[lev][p] + tailTree; } } } }
+      // NL_FAULT=row<level> (a test): one row entry of that level is made finite for a waypoint that a source without a route names, through a record with a reach (so the full proof refuses at the same check). The bake must refuse.
+      if (rowFault) for (U si = 0, planted = 0; si < n && !planted; ++si) if (ref.d[active[si]] == BIG) { Row& r = rows[faultLevel]; const Lists& own = levels[faultLevel].out[si];
+        for (U i = 0; i < std::min(levels[faultLevel].K, own.count) && !planted; ++i) { const Att& h = own.a[i]; const U x = h.wp; if (h.reach != NONE && r.t[x] == BIG) { r.touched.push_back(x); r.t[x] = 1; r.y[x] = x; r.first[x] = h.reach; r.pos[x] = SIZE_MAX; r.tree[x] = 0; planted = 1;
+          printf("M W2_FAULT planted level=%u waypoint=%u goal=%u source=%u\n", faultLevel, x, gi, si); } } }
+      // rowRecords: over ALL areas, the Out records the loop below would read whose waypoint has a finite row entry. seenRecords: those the loop does find.
+      W rowRecords = 0, seenRecords = 0; for (U lev = 0; lev < NL; ++lev) for (U x : rows[lev].touched) if (rows[lev].t[x] != BIG) rowRecords += outCount[lev][x];
+      for (U lev = 0; lev < NL; ++lev) { const Level& l = levels[lev]; const Lists& own = l.out[gi]; for (U i = 0; i < std::min(l.K, own.count); ++i) seenRecords += rows[lev].t[own.a[i].wp] != BIG; }      // the goal's own records: its scan is left out below (si == gi)
       // every source: its base route, the exact Origin-aware time and first reach
       order.clear(); U contThis = 0, startThis = 0;
       for (U si = 0; si < n; ++si) { const U s = active[si]; Base a;
+        // A source the exact flood does not reach has no route, and nothing below reads its entries for this goal. Its base route is not computed (NL_PROOF=full computes it as before);
+        // that its records give no route either is checked for all such sources at once by the count after the loop.
+        if (!fullProof && ref.d[s] == BIG) { ++T.pairs; ++T.unreachable; continue; }
         if (si == gi) a.t = 0;
         else for (U lev = 0; lev < NL; ++lev) { const Level& l = levels[lev]; const Row& r = rows[lev]; const Lists& head = l.out[si];
-          for (U i = 0; i < std::min(l.K, head.count); ++i) { const Att& h = head.a[i]; if (r.t[h.wp] == BIG) continue; const U t = h.t + r.t[h.wp];
+          for (U i = 0; i < std::min(l.K, head.count); ++i) { const Att& h = head.a[i]; if (r.t[h.wp] == BIG) continue; ++seenRecords; const U t = h.t + r.t[h.wp];
             if (std::tie(t, lev, h.wp, r.y[h.wp]) < std::tie(a.t, a.level, a.wa, a.wg)) { a = {t, lev, h.wp, r.y[h.wp], h.reach != NONE ? h.reach : r.first[h.wp], r.pos[h.wp], r.tree[h.wp]}; Need(a.first != NONE, "base route without a first reach"); } } }
         if (a.t != BIG && si != gi) a.tree += dt.Dist(nodeOf(si), nodeOf(levels[a.level].wp[a.wa]));     // tree length of the whole base route
         base[si] = a; contPatch[si] = 0; startPatch[si] = 0; chain[si] = 0; next[si] = NONE; ++T.pairs;
@@ -125,8 +142,15 @@ int main(int argc, char** argv) { try {
         W bestKey = UINT64_MAX; U bestReach = NONE;
         for (U e = f.g.out[s]; e < f.g.out[s + 1]; ++e) { const U to = f.g.edges[e].to; if (!f.g.enabled[to] || ref.d[to] == BIG) continue; const W key = W(geo.origin[e]) + f.g.edges[e].w + ref.d[to]; if (key < bestKey) { bestKey = key; bestReach = e; } }
         exactTime[si] = si == gi ? 0 : bestKey + 1; exactReach[si] = bestReach; }
+      // every Out record with a finite row entry was found by a source that reaches the goal (or is the goal's own): none belongs to a source without a route
+      Need(rowRecords == seenRecords, "base route to an unreachable goal");
       // continuation closure, nearest first
-      std::sort(order.begin(), order.end(), [&](U x, U y) { return std::tie(ref.d[active[x]], x) < std::tie(ref.d[active[y]], y); });
+      // The order std::sort(order) by (distance, index) gives, made from the flood's own order: ref.order holds the reached areas by distance, so only each run of one distance is sorted, by index.
+      // The keys are unique, so a list of all reachable sources that ascends strictly by (distance, index) is that order; both are checked.
+      { const size_t reachable = order.size(); order.clear(); for (U v : ref.order) order.push_back(index[v]);
+        for (size_t a = 0; a < order.size();) { size_t b = a + 1; const U da = ref.d[active[order[a]]]; while (b < order.size() && ref.d[active[order[b]]] == da) ++b; std::sort(order.begin() + a, order.begin() + b); a = b; }
+        Need(order.size() == reachable, "the flood's order does not hold the reachable sources");
+        for (size_t a = 1; a < order.size(); ++a) Need(std::tie(ref.d[active[order[a - 1]]], order[a - 1]) < std::tie(ref.d[active[order[a]]], order[a]), "the flood's order is not the sorted order"); }
       for (U si : order) { const U s = active[si], d = ref.d[s]; const U t = base[si].t; const bool unneededDoor = t != BIG && !Fails(t, d) && base[si].tree != distG[dt.node[s]];
         if (t == BIG || Fails(t, d) || unneededDoor) { ++contThis; contPatch[si] = 1; U best = NONE, bestKey = BIG; T.doorPatches += unneededDoor; ++T.contBand[d <= 128 ? 0 : d <= 256 ? 1 : d <= 512 ? 2 : d <= 1365 ? 3 : d <= 2730 ? 4 : d <= 5460 ? 5 : 6];
           for (U e = f.g.out[s]; e < f.g.out[s + 1]; ++e) { const U to = f.g.edges[e].to; if (!f.g.enabled[to] || ref.d[to] == BIG) continue; const U key = f.g.edges[e].w + ref.d[to]; if (key < bestKey) { bestKey = key; best = e; } }
@@ -135,9 +159,12 @@ int main(int argc, char** argv) { try {
           Need(!Fails(fin[si], d), "continuation patch did not repair"); T.contP.push_back({gi, si, best});
           Need(dt.Dist(dt.node[s], dt.node[f.g.edges[best].to]) + distG[dt.node[f.g.edges[best].to]] == distG[dt.node[s]], "the plain next reach turns back in the door tree"); }
         else { fin[si] = t; firstC[si] = base[si].first;
-          if (si != gi) { ++T.baseByLevel[base[si].level]; uint8_t* mark = &levels[base[si].level].used[base[si].pos];
+          if (si != gi) { ++T.baseByLevel[base[si].level]; uint8_t* mark = &levels[base[si].level].used[base[si].pos]; uint8_t marked;
+            #pragma omp atomic read
+            marked = *mark;
+            if (!marked) {      // most marks are set already; reading first leaves their cache lines shared between the threads
             #pragma omp atomic write
-            *mark = 1;
+            *mark = 1; }
           } } }
       // start checks against the exact Origin-aware time
       for (U si : order) { if (si == gi) continue; const U s = active[si]; const W exact = exactTime[si]; Need(exactReach[si] != NONE, "reference start missing");
@@ -157,6 +184,7 @@ int main(int argc, char** argv) { try {
       for (U si : order) { if (si == gi) continue; const W exact = exactTime[si]; U at = si, first = NONE; W graph = 0;
         if (startPatch[si]) { const U e = startReach[si]; first = e; graph = f.g.edges[e].w; at = index[f.g.edges[e].to]; }
         U guard = 0; while (contPatch[at]) { const U e = next[at]; if (first == NONE) first = e; graph += f.g.edges[e].w; at = index[f.g.edges[e].to]; Need(++guard <= n, "continuation chain does not end"); }
+        Need(ref.d[active[at]] != BIG, "replay left the sources that reach the goal");
         if (at != gi) { Need(base[at].t != BIG, "replay base missing"); graph += base[at].t; if (first == NONE) first = base[at].first; }
         Need(first != NONE, "replay without a first reach"); const W time = W(geo.origin[first]) + graph + 1; if (Fails(time, exact) || time < exact) ++T.violate;
         T.sumRatio += double(time) / double(exact);
@@ -172,6 +200,7 @@ int main(int argc, char** argv) { try {
       T.cont += contThis; T.start += startThis; T.maxContPerGoal = std::max(T.maxContPerGoal, contThis); T.maxStartPerGoal = std::max(T.maxStartPerGoal, startThis); T.maxBuf = std::max(T.maxBuf, wk.maxBuf);
     } catch (const std::exception& e) { Die("proof", e); } }
   }
+  Need(!rowFault, "NL_FAULT: the proof ended: no fault was planted (no source without a route has a record with a reach in that level), or it was not refused");
   Totals t; for (const auto& p : per) { t.startP.insert(t.startP.end(), p.startP.begin(), p.startP.end()); t.contP.insert(t.contP.end(), p.contP.begin(), p.contP.end()); t.goals += p.goals; t.pairs += p.pairs; t.reachable += p.reachable; t.unreachable += p.unreachable; t.baseMissing += p.baseMissing; t.cont += p.cont; t.start += p.start; t.violate += p.violate; t.digest ^= p.digest;
     t.walks += p.walks; t.walkReaches += p.walkReaches; t.sumRatio += p.sumRatio; for (int i = 0; i < 4; ++i) t.baseByLevel[i] += p.baseByLevel[i]; for (int i = 0; i < 6; ++i) t.startBand[i] += p.startBand[i]; for (int i = 0; i < 7; ++i) t.contBand[i] += p.contBand[i]; t.doorPatches += p.doorPatches; t.doorStepStarts += p.doorStepStarts; t.ladderPairs += p.ladderPairs;
     t.maxChain = std::max(t.maxChain, p.maxChain); t.maxContPerGoal = std::max(t.maxContPerGoal, p.maxContPerGoal); t.maxStartPerGoal = std::max(t.maxStartPerGoal, p.maxStartPerGoal); t.maxWalkReaches = std::max(t.maxWalkReaches, p.maxWalkReaches); t.maxBuf = std::max(t.maxBuf, p.maxBuf); }

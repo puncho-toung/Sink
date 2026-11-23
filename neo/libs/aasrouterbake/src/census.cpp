@@ -4,6 +4,7 @@
 #include "classification.h"
 #include <atomic>
 using namespace s3c;
+#include "largest_gain.h"   // LargestGain, GainHeap: Cover's choice of the next waypoint
 constexpr int NB=11;
 constexpr U RB[NB+1]={0,128,256,384,512,768,1024,1536,2048,3072,4096,BIG};
 constexpr U KS[4]={1,2,4,8};
@@ -49,10 +50,21 @@ std::vector<U> Cover(const Fixture4&f,const NativeGeometry&geo,const std::vector
  // Same deterministic lazy greedy as levels.cpp: maximum uncovered gain,
  // then smallest enabled area ID. Stale gains are upper bounds.
  std::vector<uint8_t>covered(n);std::vector<U>gain(n),wp;for(U i=0;i<n;++i)gain[i]=cov[i].size();U left=n;
- while(left){U best=NONE,bg=0;for(U i=0;i<n;++i)if(gain[i]>bg){bg=gain[i];best=i;}Need(best!=NONE,"cover lost an uncovered area");U real=0;for(U a:cov[best])real+=!covered[a];if(real!=gain[best]){gain[best]=real;continue;}
-  wp.push_back(active[best]);for(U a:cov[best])if(!covered[a]){covered[a]=1;--left;}gain[best]=0;
+ // OD_COVER in the environment says how the largest gain is found; every way finds the same area. Not set: the scan,
+ // four gains at a time (LargestGain). "old": the scan as it was. "heap": a heap. "check": all three, and they must agree.
+ const char*coverMode=getenv("OD_COVER");if(coverMode&&!*coverMode)coverMode=nullptr;
+ const bool coverOld=coverMode&&!strcmp(coverMode,"old"),coverHeap=coverMode&&!strcmp(coverMode,"heap"),coverCheck=coverMode&&!strcmp(coverMode,"check");
+ Need(!coverMode||coverOld||coverHeap||coverCheck,"OD_COVER must be old, heap or check");Need(n<0x80000000u,"cover: too many areas for the scan");
+ GainHeap heap;if(coverHeap||coverCheck)heap.Fill(gain);
+ while(left){U best=NONE;
+  if(coverOld||coverCheck){U bg=0;for(U i=0;i<n;++i)if(gain[i]>bg){bg=gain[i];best=i;}}
+  if(!coverOld&&!coverHeap){const U b=LargestGain(gain);Need(!coverCheck||b==best,"cover: the scan four at a time differs from the scan");best=b;}
+  if(coverHeap||coverCheck){const U b=heap.Top(gain);Need(!coverCheck||b==best,"cover: the heap differs from the scan");best=b;}
+  Need(best!=NONE,"cover lost an uncovered area");U real=0;for(U a:cov[best])real+=!covered[a];if(real!=gain[best]){gain[best]=real;if(coverHeap||coverCheck)heap.Lower(best,real);continue;}
+  wp.push_back(active[best]);for(U a:cov[best])if(!covered[a]){covered[a]=1;--left;}gain[best]=0;if(coverHeap||coverCheck)heap.Lower(best,0);
  }
  std::sort(wp.begin(),wp.end());
+ printf("M COVER_PICK cap=%u pick=%s\n",cap,coverOld?"old":coverHeap?"heap":coverCheck?"check":"scan");   // which way ran: the tests ask for this line
  printf("M COVER cap=%u enabled=%u waypoints=%zu share=%.12f seconds=%.6f\n",cap,n,wp.size(),double(wp.size())/n,omp_get_wtime()-begin);
  return wp;
 }
