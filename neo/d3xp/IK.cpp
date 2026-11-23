@@ -673,6 +673,15 @@ void idIK_Walk::Evaluate()
 		return;
 	}
 
+	//puncho start - R6 (E-R6-1): the IK measures the skeleton without its own joint changes of the frame before.
+	// idAI::Think and idPlayer clear them at the start of their frame, and then this is one test. A client's monster
+	// (idAnimatedEntity::ClientThink) and an actor evaluated by its team master's physics came here without that
+	// clear: the IK added to its own result every frame, on uneven ground the waist ran to 1e38 and to NaN within
+	// seconds, and a foot trace from a NaN point is tested against every clip model of the map (the join stall on
+	// outdoor maps)
+	ClearJointMods();
+	//puncho end
+
 	normal = - self->GetPhysics()->GetGravityNormal();
 	modelOrigin = self->GetPhysics()->GetOrigin();
 	modelAxis = self->GetRenderEntity()->axis;
