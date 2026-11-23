@@ -1345,8 +1345,11 @@ void idMultiplayerGame::NewState( gameState_t news, idPlayer* player )
 	{
 		case GAMEON:
 		{
+			//puncho - R6.4: the number of the instance of the map the host restarts into, first in the message
+			const uint32 restartSerial = gameLocal.NetRestartBegin();
 			gameLocal.LocalMapRestart();
 			outMsg.InitWrite( msgBuf, sizeof( msgBuf ) );
+			outMsg.WriteLong( ( int )restartSerial );
 			outMsg.WriteBits( 0, 1 );
 			session->GetActingGameStateLobbyBase().SendReliable( GAME_RELIABLE_MESSAGE_RESTART, outMsg, false );
 

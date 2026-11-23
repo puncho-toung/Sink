@@ -64,5 +64,6 @@ const int BUILD_NUMBER_SAVE_VERSION_RECORD_IDENTITY = 1430; // P2b.1.3: WorldIde
 const int BUILD_NUMBER_SAVE_VERSION_EMITTERS = 1431; // light emitters (plans/light-emitters, G1): WriteRenderLight writes the emitter flag after the math block and the rest of the block when it is set; idLight writes emitterBroken last
 const int BUILD_NUMBER_SAVE_VERSION_NO_MATH_LIGHTS = 1432; // light emitters, batch G: WriteRenderLight no longer writes the math light block; saves from 1404 to 1431 hold it, and ReadRenderLight reads and drops it
 const int BUILD_NUMBER_SAVE_VERSION_ENTITY_BITS_15 = 1433; // R4.2: 15-bit entity index: spawn ids in saves pack 16 + 15 bits and the per-slot arrays hold 32768 rows (d3xp/Game_local.h); older saves are refused
-const int BUILD_NUMBER = BUILD_NUMBER_SAVE_VERSION_ENTITY_BITS_15;
+const int BUILD_NUMBER_SAVE_VERSION_NET_INTEREST = 1434; // R6.4 step A: no save field changes; the multiplayer wire does (a restart serial ahead of the snapshot's game state and in the restart message) and net_mapOrdinals and net_interestStatics default to 1 (d3xp/Game_interest.h)
+const int BUILD_NUMBER = BUILD_NUMBER_SAVE_VERSION_NET_INTEREST;
 const int BUILD_NUMBER_MINOR = 0;

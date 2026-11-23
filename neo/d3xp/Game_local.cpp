@@ -1370,7 +1370,13 @@ void idGameLocal::MapRestart()
 	}
 	else
 	{
+		//puncho start - R6.4: the message carries the number of the instance of the map the host restarts into
+		byte msgBuf[ 8 ];
 		idBitMsg msg;
+		msg.InitWrite( msgBuf, sizeof( msgBuf ) );
+		msg.BeginWriting();
+		msg.WriteLong( ( int )NetRestartBegin() );
+		//puncho end
 		session->GetActingGameStateLobbyBase().SendReliable( GAME_RELIABLE_MESSAGE_RESTART, msg, false );
 
 		LocalMapRestart();

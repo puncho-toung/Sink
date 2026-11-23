@@ -68,6 +68,7 @@ If you have questions concerning this license or the applicable additional terms
 
 const int NET_INTEREST_PEERS		= 8;		// the peers a host can serve: MAX_PLAYERS, a snapshot mask's bits 1 to 8
 const int NET_INTEREST_MAX_TYPES	= 1024;		// idClass types the class table holds
+const int NET_RESTART_SERIAL_RUN	= 30;		// snapshots of one other instance in a row before a client takes the host's number (3 s)
 
 struct netInterestPeer_t
 {
@@ -105,10 +106,19 @@ struct netInterest_t
 	int				removedCreates;		// a client was sent a map entity whose removed bit it holds
 	int				removedSet;			// the host set a removed bit
 	int				removedApplied;		// a client deleted its copy for a removed bit
+	int				staleSnapshots;		// a client did not apply a snapshot of another instance of the map (R6.4; since the map load)
 	int				revived;			// a client built a map entity again when its removed bit cleared
 	int				swept;				// a client deleted a managed map entity its snapshot did not hold
 	int				eventsHeld;			// a client's event waited for its entity
 	int				eventsDropped;		// a client's event was dropped: no entity within the hold, or another generation
+
+	// R6.4, multiplayer, whatever the switches say: the instance of the loaded map. The host counts its restarts of
+	// the map from 1; the restart message and every snapshot carry the number, and a client applies only the
+	// snapshots of the instance it is in (NetRestartSerialAccept). Set at a map load, kept over a restart
+	uint32			restartSerial;
+	bool			restartSerialKnown;	// a client: a restart message or a first snapshot gave the number
+	uint32			otherSerial;		// a client: the number of the last snapshot it did not apply
+	int				otherSerialRun;		// and how many of that number came in a row
 
 	// R6.3
 	bool			statics;			// net_interestStatics with the ordinal slots, read at a map load
@@ -118,6 +128,7 @@ struct netInterest_t
 	// entity), and the slots the snapshot being read holds
 	uint32			wired[ MAX_GENTITIES / 32 ];
 	uint32			seen[ MAX_GENTITIES / 32 ];
+	bool			fullSweep;			// a client: the next sweep looks at every authored slot (the first after a map spawn)
 
 	// R6.2, the host. Written between game frames, on the main thread (ServerWriteSnapshot, ServerSnapshotAccepted);
 	// the game thread reads presenceSent for events and clears a slot's rows when an entity registers or leaves

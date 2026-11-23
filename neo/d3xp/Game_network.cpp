@@ -754,6 +754,7 @@ void idGameLocal::ServerWriteSnapshot( idSnapShot& ss )
 		snapTrace->Object( SNAP_GAMESTATE, "<gamestate>", msg, false );
 	}
 	//puncho end
+	msg.WriteLong( ( int )netInterest.restartSerial );	//puncho - R6.4: the instance of the map this snapshot is of
 	mpGame.WriteToSnapshot( msg );
 	ss.S_AddObject( SNAP_GAMESTATE, ~0U, msg, "Game State" );
 
@@ -1331,6 +1332,22 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 		return;
 	}
 
+	//puncho start - R6.4: a snapshot of another instance of the map is applied to nothing (the host restarted the map
+	// and this machine has not yet, or this machine has and the host built the snapshot before). The serial stands
+	// ahead of the game state
+	{
+		idBitMsg stateMsg;
+		const int stateIndex = ss.FindObjectIndexByID( SNAP_GAMESTATE );
+		if( stateIndex >= 0 && ss.GetObjectMsgByIndex( stateIndex, stateMsg ) == SNAP_GAMESTATE && stateMsg.GetSize() >= 4 )
+		{
+			if( !NetRestartSerialAccept( ( uint32 )stateMsg.ReadLong() ) )
+			{
+				return;
+			}
+		}
+	}
+	//puncho end
+
 	//puncho start - content check (P1-A3a, K19): the announce table's slots this snapshot may use came in as reliables,
 	// ahead of it in the same or an earlier packet, but game reliables otherwise run after the snapshots of the frame
 	commonLocal.ExecuteReliableMessagesOfType( GAME_RELIABLE_MESSAGE_DECL_REMAP );
@@ -1360,9 +1377,9 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 
 	//puncho start - R6.1: with the ordinal slots the removed bits are read before the entities. The chunks are the
 	// snapshot's last objects, and an entity ahead of them must not be judged by bits this same snapshot clears (the
-	// host restarted the map) or sets. A client that has restarted still reads the snapshots it had buffered from
-	// before the restart; they delete what the old bits name, and the first snapshot from after it, read in this
-	// order, clears the bits and then builds those entities again from the map file
+	// host restarted the map) or sets. Before the restart serial (R6.4, the top of this function) a client that had
+	// restarted still read the snapshots the host had built before the restart: they deleted what the old bits name,
+	// and the first snapshot from after it, read in this order, cleared the bits and built those entities again
 	NetInterestClientBegin();	//puncho - R6.2
 	if( netInterest.ordinals )
 	{
@@ -1400,6 +1417,7 @@ void idGameLocal::ClientReadSnapshot( const idSnapShot& ss )
 		//puncho end
 		if( snapObjectNum == SNAP_GAMESTATE )
 		{
+			msg.ReadLong();	//puncho - R6.4: the restart serial, judged at the top of this function
 			mpGame.ReadFromSnapshot( msg );
 			continue;
 		}
@@ -1935,6 +1953,8 @@ void idGameLocal::ClientProcessReliableMessage( int type, const idBitMsg& msg )
 		}
 		case GAME_RELIABLE_MESSAGE_RESTART:
 		{
+			//puncho - R6.4: the instance of the map this machine restarts into; snapshots of any other are not applied
+			NetRestartSerialSet( ( uint32 )msg.ReadLong() );
 			MapRestart();
 			break;
 		}

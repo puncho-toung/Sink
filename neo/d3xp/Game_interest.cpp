@@ -52,6 +52,9 @@ void idGameLocal::NetInterestLatch()
 	netInterest.mapOrdinalEnd = MAX_CLIENTS;
 	netInterest.authoredSlot = -1;
 	netInterest.statics = netInterest.ordinals && serverInfo.GetBool( "net_interestStatics", "0" );
+	// R6.4: the host's instance of this map is number 1; a client takes the number of the first snapshot it reads
+	netInterest.restartSerial = common->IsClient() ? 0 : 1;
+	netInterest.restartSerialKnown = !common->IsClient();
 	for( int c = 0; c < MAX_CLIENTS; c++ )
 	{
 		netInterest.peerOfClient[ c ] = -1;
@@ -108,6 +111,7 @@ void idGameLocal::NetInterestBeginMapSpawn( int numMapEntities )
 	}
 	netInterest.mapOrdinalEnd = MAX_CLIENTS + ( int )nonWorld;
 	firstFreeEntityIndex[0] = netInterest.mapOrdinalEnd;
+	netInterest.fullSweep = true;	// a client: the map entities about to spawn are not yet anything a snapshot gave
 }
 
 /*
@@ -998,12 +1002,94 @@ bool idGameLocal::NetInterestEventUsers( const idEntity* ent, lobbyUserID_t excl
 
 /*
 ================
+idGameLocal::NetRestartBegin
+
+the host, once for every restart of the loaded map, before it restarts and before it tells the peers: the number
+of the instance of the map its snapshots are of from now on. The restart message carries it, and so does every
+snapshot (ahead of the game state)
+================
+*/
+uint32 idGameLocal::NetRestartBegin()
+{
+	if( common->IsClient() )
+	{
+		return netInterest.restartSerial;
+	}
+	if( netInterest.restartSerial == 0xFFFFFFFFu )
+	{
+		Error( "idGameLocal::NetRestartBegin: the map was restarted %u times", netInterest.restartSerial - 1 );
+	}
+	return ++netInterest.restartSerial;
+}
+
+/*
+================
+idGameLocal::NetRestartSerialSet
+
+a client reads the host's restart message: the instance this machine restarts into
+================
+*/
+void idGameLocal::NetRestartSerialSet( uint32 serial )
+{
+	netInterest.restartSerial = serial;
+	netInterest.restartSerialKnown = true;
+}
+
+/*
+================
+idGameLocal::NetRestartSerialAccept
+
+a client, for the serial of a snapshot it is about to read. A snapshot of another instance of the map is applied to
+nothing: the host built it before a restart this machine has made already, or after one this machine has not made
+yet (the restart message and the snapshots travel apart). The layers below have read and acknowledged it. After a
+map load a client takes the first snapshot's number: a snapshot of an earlier map never reaches a loaded client
+================
+*/
+bool idGameLocal::NetRestartSerialAccept( uint32 serial )
+{
+	netInterest_t& ni = netInterest;
+	if( !ni.restartSerialKnown )
+	{
+		ni.restartSerial = serial;
+		ni.restartSerialKnown = true;
+		ni.otherSerialRun = 0;
+		return true;
+	}
+	if( serial == ni.restartSerial )
+	{
+		ni.otherSerialRun = 0;
+		return true;
+	}
+	ni.staleSnapshots++;
+	// The snapshots of another instance around a restart are a few. An unbroken run of NET_RESTART_SERIAL_RUN of one
+	// other number means the host is in that instance and this machine was told a wrong one (a restart message of an
+	// earlier map delivered into this one; Opus A, step A). A machine that applies nothing never recovers, so it takes
+	// the host's number and says so
+	if( serial != ni.otherSerial )
+	{
+		ni.otherSerial = serial;
+		ni.otherSerialRun = 0;
+	}
+	if( ++ni.otherSerialRun < NET_RESTART_SERIAL_RUN )
+	{
+		return false;
+	}
+	Warning( "this machine took itself to be in instance %u of the map; the host's last %d snapshots are of instance %u: taking the host's", ni.restartSerial, ni.otherSerialRun, serial );
+	ni.restartSerial = serial;
+	ni.otherSerialRun = 0;
+	return true;
+}
+
+/*
+================
 idGameLocal::NetInterestRevive
 
 a client: the host's removed bit of an authored slot cleared, so the map entity lives on the host again. Where this
-machine deleted its copy for that bit (a snapshot the host built before a map restart, read here after this machine's
-own restart) it builds the entity again as its map spawn did, with the generation that spawn gave it. The snapshot
-in hand then confirms it, or the sweep takes it; a resident is never sent, and nothing else would bring it back
+machine deleted its copy for that bit it builds the entity again as its map spawn did, with the generation that
+spawn gave it. The snapshot in hand then confirms it, or the sweep takes it; a resident is never sent, and nothing
+else would bring it back. Before the restart serial (R6.4) a client read snapshots the host had built before a map
+restart after its own restart, and their bits deleted what the restart had just spawned; since it, this is for a
+machine that was in a wrong instance for a while (NetRestartSerialAccept)
 ================
 */
 void idGameLocal::NetInterestRevive( int slot )
@@ -1138,11 +1224,54 @@ void idGameLocal::NetInterestClientFinish()
 	{
 		return;
 	}
-	int numDoomed = 0;
-	for( int n = MAX_CLIENTS; n < netInterest.mapOrdinalEnd; n++ )
+	// The candidates. The first read after a map spawn looks at every authored slot: this machine's own map spawn
+	// made entities no snapshot has spoken of. After that sweep a managed map entity is here only because a snapshot
+	// gave or confirmed it (wired) or this read built it (niCreated), so only those can be missing from the snapshot
+	// in hand; a resident is never wired, and with residents on most of a map would be opened for nothing on every
+	// read (Opus B, step A)
+	int numCandidates = 0;
+	if( netInterest.fullSweep )
 	{
+		netInterest.fullSweep = false;
+		for( int n = MAX_CLIENTS; n < netInterest.mapOrdinalEnd; n++ )
+		{
+			if( entities[ n ] != NULL && ( ( netInterest.seen[ n >> 5 ] >> ( n & 31 ) ) & 1 ) == 0 )
+			{
+				niDoomed[ numCandidates++ ] = n;
+			}
+		}
+	}
+	else
+	{
+		const int words = ( netInterest.mapOrdinalEnd + 31 ) >> 5;
+		for( int w = 0; w < words; w++ )
+		{
+			const uint32 bits = netInterest.wired[ w ] & ~netInterest.seen[ w ];
+			for( int b = 0; bits != 0 && b < 32; b++ )
+			{
+				const int n = ( w << 5 ) + b;
+				if( ( bits & ( 1u << b ) ) != 0 && n >= MAX_CLIENTS && n < netInterest.mapOrdinalEnd && entities[ n ] != NULL )
+				{
+					niDoomed[ numCandidates++ ] = n;
+				}
+			}
+		}
+		for( int i = 0; i < niNumCreated; i++ )
+		{
+			const int n = niCreated[ i ];
+			if( n >= MAX_CLIENTS && n < netInterest.mapOrdinalEnd && entities[ n ] != NULL
+					&& ( ( ( netInterest.seen[ n >> 5 ] | netInterest.wired[ n >> 5 ] ) >> ( n & 31 ) ) & 1 ) == 0 )
+			{
+				niDoomed[ numCandidates++ ] = n;
+			}
+		}
+	}
+	int numDoomed = 0;
+	for( int c = 0; c < numCandidates; c++ )
+	{
+		const int n = niDoomed[ c ];
 		const idEntity* ent = entities[ n ];
-		if( ent == NULL || ( ( netInterest.seen[ n >> 5 ] >> ( n & 31 ) ) & 1 ) != 0 || ent->fl.skipReplication || !NetInterestAuthored( n ) )
+		if( ent->fl.skipReplication || !NetInterestAuthored( n ) )
 		{
 			continue;
 		}
@@ -1197,6 +1326,7 @@ void Cmd_ListInterest_f( const idCmdArgs& args )
 					  net_interestNearRadius.GetFloat(), net_interestPVS.GetBool() ? 1 : 0, net_interestLinger.GetInteger(), net_interestCreateBudget.GetInteger(), ni.usBuild, ni.usGather );
 	gameLocal.Printf( "listInterest: client creates baseline %d plain %d removed %d, swept %d, removed bits set %d applied %d, events held %d dropped %d, revived %d\n",
 					  ni.baselineCreates, ni.plainCreates, ni.removedCreates, ni.swept, ni.removedSet, ni.removedApplied, ni.eventsHeld, ni.eventsDropped, ni.revived );
+	gameLocal.Printf( "listInterest: restart serial %u known %d, snapshots of another instance not applied %d\n", ni.restartSerial, ni.restartSerialKnown ? 1 : 0, ni.staleSnapshots );
 	for( int p = 0; p < NET_INTEREST_PEERS; p++ )
 	{
 		const netInterestPeer_t& peer = ni.peers[ p ];
@@ -1270,15 +1400,23 @@ Cmd_NetTestStale_f
 
 netTestStale <map ordinal>: on a client, a test's stand-in for a snapshot the host built before a map restart and
 the client read after its own: the ordinal's removed bit is set and the map entity deleted, through the reader
-itself. The host's next snapshot does not hold the bit
+itself. The host's next snapshot does not hold the bit.
+netTestStale serial <n>: on a client, the instance of the map this machine takes itself to be in (R6.4): with a
+number that is not the host's every snapshot is one of another instance and is applied to nothing
 ================
 */
 void Cmd_NetTestStale_f( const idCmdArgs& args )
 {
-	const int ordinal = ( args.Argc() == 2 ) ? atoi( args.Argv( 1 ) ) : 0;
-	if( !common->IsClient() || !gameLocal.netInterest.ordinals || ordinal < 1 || MAX_CLIENTS + ordinal - 1 >= gameLocal.netInterest.mapOrdinalEnd )
+	if( args.Argc() == 3 && idStr::Icmp( args.Argv( 1 ), "serial" ) == 0 && common->IsClient() )
 	{
-		gameLocal.Printf( "usage, on a client of a map with net_mapOrdinals: netTestStale <map ordinal>\n" );
+		gameLocal.NetRestartSerialSet( ( uint32 )atoi( args.Argv( 2 ) ) );
+		gameLocal.Printf( "netTestStale: this machine takes itself to be in instance %u of the map\n", gameLocal.netInterest.restartSerial );
+		return;
+	}
+	const int ordinal = ( args.Argc() == 2 ) ? atoi( args.Argv( 1 ) ) : 0;
+	if( !common->IsClient() || !gameLocal.netInterest.ordinals || ordinal < 1 || ordinal > gameLocal.netInterest.mapOrdinalEnd - MAX_CLIENTS )
+	{
+		gameLocal.Printf( "usage, on a client of a map with net_mapOrdinals: netTestStale <map ordinal>; on any client: netTestStale serial <n>\n" );
 		return;
 	}
 	const int firstByte = ( ordinal / 8 / 500 ) * 500;

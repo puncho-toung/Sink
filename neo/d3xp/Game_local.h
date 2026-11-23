@@ -634,6 +634,10 @@ public:
 	void					NetInterestReadRemoved( int firstByte, const idBitMsg& msg );
 	void					NetInterestRevive( int slot );
 	void					NetInterestClientRemove( int slot );
+	// R6.4: the restart serial
+	uint32					NetRestartBegin();
+	void					NetRestartSerialSet( uint32 serial );
+	bool					NetRestartSerialAccept( uint32 serial );
 	const idMapEntity*		NetInterestBaseline( int slot, int generation, const char* classname );
 	// R6.2, R6.3
 	void					NetInterestSlotReset( int slot );
