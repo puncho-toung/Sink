@@ -1126,11 +1126,21 @@ void R_NumberRecordLights()
 	// ---- TRACK V ( V2 ): the froxel fog's switch ( renderer/VolumetricFog.h ): how far its inject reads this view's
 	// records, 0 = not at all. While it reads them, the records, the bins and the tile bits are built with the lists
 	// off as well; they list nothing ( llv->lists stays the lists' own switch ) ----
-	const float fogReach = R_VolumetricFogBeginView( viewDef );
+	bool fogIdle = false;		// V6 ( bite V6h ): the reach is 0 because the view holds nothing the fog draws
+	const float fogReach = R_VolumetricFogBeginView( viewDef, fogIdle );
 	wantRecords = wantRecords || fogReach > 0.0f;
 	// ---- END TRACK V ----
 	if( !wantRecords )
 	{
+		// ---- TRACK V ( V6, bite V6h ): an idle fog view without records. Before V6h every fog view built records while
+		// the fog was on, so R_LightListHistory moved the stamp each frame and the pass's history ended with the first
+		// view it did not draw. This view moves no stamp: without this line the next fog view's prevFrame would still
+		// name the last view the pass drew, and with a still camera the pass would read a history from before the gap ----
+		if( fogIdle )
+		{
+			lightListPrevFrame = 0;
+		}
+		// ---- END TRACK V ----
 		return;
 	}
 

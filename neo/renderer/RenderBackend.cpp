@@ -4540,6 +4540,10 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 			{
 				pc.c_shadowAtlasFogOnlyLights++;
 			}
+			else
+			{
+				pc.c_shadowAtlasFogOnlyRefused++;		// V6 ( row 181 ): a light that lights only the fog and lost a place
+			}
 		}
 		else if( !imageFitsIntoAtlas )
 		{

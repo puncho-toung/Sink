@@ -782,6 +782,16 @@ float idConsoleLocal::DrawFPS( float y )
 			ImGui::TextColored( colorLtGrey, "FOGATLAS: fog-only lights:%i usage:%2i%% surface lights refused:%i",
 								commonLocal.stats_backend.c_shadowAtlasFogOnlyLights, fogOnlyPercentage, commonLocal.stats_backend.c_shadowAtlasSurfaceRefused );
 		}
+		// V6 ( row 182 ): the fog's zones ( r_volumetricFogZones 1 ), by FOG_ZONE_*: the sky mask, the five kernels, and the
+		// Volumetrics block less the kernels
+		if( froxelFogOn && cvarSystem->GetCVarBool( "r_volumetricFogZones" ) )
+		{
+			const uint64* zone = commonLocal.stats_backend.gpuFogZoneMicroSec;
+			const int64 other = ( int64 )rendererGPUVolumetricsTime - ( int64 )( zone[1] + zone[2] + zone[3] + zone[4] + zone[5] );
+			ImGui::TextColored( colorLtGrey, "FOGZONES: sky:%llu col:%llu media:%llu inject:%llu resolve:%llu integ:%llu other:%lld",
+								( unsigned long long )zone[0], ( unsigned long long )zone[1], ( unsigned long long )zone[2], ( unsigned long long )zone[3],
+								( unsigned long long )zone[4], ( unsigned long long )zone[5], ( long long )other );
+		}
 		// ---- END TRACK V ----
 		ImGui::TextColored( frameBusyTime > maxTime || rendererGPUTime > maxTime ? colorRed : colorWhite, "Total:   %5lld us   Total:        %5lld us", frameBusyTime, rendererGPUTime );
 		ImGui::TextColored( colorWhite,														"Idle:    %5lld us   Idle:         %5lld us", frameIdleTime, rendererGPUIdleTime );

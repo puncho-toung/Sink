@@ -49,6 +49,12 @@ idRenderProgManager::idRenderProgManager()
 */
 idRenderProgManager::idRenderProgManager()
 {
+	// ---- TRACK V ( V6 ): no load pass ----
+	blobCacheThread = 0;
+	blobCacheReads = 0;
+	memset( blobCacheHits, 0, sizeof( blobCacheHits ) );
+	blobCacheBytes = 0;
+	// ---- END TRACK V ----
 }
 
 /*
@@ -72,7 +78,7 @@ static void R_ReloadShaders( const idCmdArgs& args )
 }
 
 // ---- TRACK F ( F3, D51 ): the forward programs' wave row ----
-idCVar r_forwardWaveOps( "r_forwardWaveOps", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_INIT | CVAR_NEW, "the forward pass's Z-bin loop uses wave intrinsics where the device runs them in a pixel shader; 0 = the row without them ( read when the render programs are made: at start-up and by vid_restart )" );
+idCVar r_forwardWaveOps( "r_forwardWaveOps", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_INIT | CVAR_NEW, "the forward pass's Z-bin loop uses wave intrinsics where the device runs them in a pixel shader; 0 = the row without them ( read when the render programs are made, at start-up: vid_restart does not remake them )" );
 // ---- END TRACK F ----
 
 /*
@@ -1169,6 +1175,7 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 
 	renderProgs.SetNum( numBuiltins );
 
+	BlobCacheBegin();		// TRACK V ( V6, row 179 ): the rows of one file read it once
 	for( int i = 0; i < numBuiltins; i++ )
 	{
 		renderProg_t& prog = renderProgs[i];
@@ -1228,6 +1235,7 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 			LoadComputeProgram( i, cIndex );
 		}
 	}
+	BlobCacheEnd( "start-up" );		// TRACK V ( V6 )
 
 	r_pbrDebug.ClearModified();
 
@@ -1313,10 +1321,12 @@ idRenderProgManager::LoadAllShaders()
 */
 void idRenderProgManager::LoadAllShaders()
 {
+	BlobCacheBegin();		// TRACK V ( V6, row 179 ): the shaders of one file that follow each other read it once
 	for( int i = 0; i < shaders.Num(); i++ )
 	{
 		LoadShader( i, shaders[i].stage );
 	}
+	BlobCacheEnd( "reloadShaders" );		// TRACK V ( V6 )
 
 	for( int i = 0; i < renderProgs.Num(); ++i )
 	{

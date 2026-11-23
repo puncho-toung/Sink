@@ -189,6 +189,11 @@ void idCommonLocal::LogMapRows( int tics, bool concurrencyStats ) //puncho - P0
 			// track F ( F7a ): the model jobs' wall time and pairs; the GPU times of the frame's first depth pre-pass,
 			// forward pass and shadow atlas pass ( one frame old, as usGPU; a subview's, when a subview draws first, F7i O2-11 )
 			mapRowsFile->Printf( ",usAddModels,surfLightPairs,gpuDepth,gpuFwd,gpuShadow" );
+			// track V ( V6, rows 181, 182, 158 ): the fog's two blocks and its zones ( r_volumetricFogZones 1 ), the atlas's fog
+			// counts, the fog lights, the fog portals, the frontend's fog work
+			mapRowsFile->Printf( ",gpuFog,gpuFogApply,gpuFogSky,gpuFogCol,gpuFogMedia,gpuFogInject,gpuFogResolve,gpuFogInteg" );
+			mapRowsFile->Printf( ",fogOnlyLights,fogOnlyTexels,fogOnlyRefused,surfaceRefused,fogLightsFroxel,fogLightsFogPass,fogUnfogged" );
+			mapRowsFile->Printf( ",fogPortals,fogPortalsNoCull,usFogFE,usFogCasters,fogChangedCasters,fogRecords,fogIdle" );
 			mapRowsFile->Printf( "\n" );
 			//puncho end
 			mapRowsFlushTime = Sys_Milliseconds();
@@ -278,7 +283,7 @@ void idCommonLocal::LogMapRows( int tics, bool concurrencyStats ) //puncho - P0
 		g.recordCommitUs, g.recordApplyUs, g.corpseLive, g.corpseEvicted,
 		g.dungeonTransitions, g.dungeonRefused, g.dungeonInhibited, g.dungeonPrefetches
 	};
-	char row[4096]; //puncho - P0: room for the appended per-pass and shadow columns
+	char row[8192]; //puncho - P0: room for the appended per-pass and shadow columns ( V6: and the fog's 22 )
 	int length = 0;
 	for( int i = 0; i < ( int )( sizeof( values ) / sizeof( values[0] ) ); i++ )
 	{
@@ -343,7 +348,18 @@ void idCommonLocal::LogMapRows( int tics, bool concurrencyStats ) //puncho - P0
 	length += idStr::snPrintf( row + length, sizeof( row ) - length, ",%llu,%i,%llu,%llu,%llu", ( unsigned long long )stats_frontend.usAddModels,		// track F ( F7a )
 							   stats_frontend.c_surfLightPairs, ( unsigned long long )GetRendererGpuEarlyZMicroseconds(),
 							   ( unsigned long long )GetRendererGpuForwardPassMicroseconds(), ( unsigned long long )GetRendererGpuShadowAtlasPassMicroseconds() );
-	assert( length < ( int )sizeof( row ) - 1 );		// review CN1-3: about 3.65 KB at most since F7a
+	// track V ( V6 ): the fog's columns, in the header's order
+	const uint64* fogZone = stats_backend.gpuFogZoneMicroSec;
+	length += idStr::snPrintf( row + length, sizeof( row ) - length, ",%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu", ( unsigned long long )GetRendererGpuVolumetricsMicroseconds(),
+							   ( unsigned long long )GetRendererGpuVolumetricsApplyMicroseconds(), ( unsigned long long )fogZone[0], ( unsigned long long )fogZone[1],
+							   ( unsigned long long )fogZone[2], ( unsigned long long )fogZone[3], ( unsigned long long )fogZone[4], ( unsigned long long )fogZone[5] );
+	length += idStr::snPrintf( row + length, sizeof( row ) - length, ",%i,%i,%i,%i,%i,%i,%i", stats_backend.c_shadowAtlasFogOnlyLights, stats_backend.c_shadowAtlasFogOnlyTexels,
+							   stats_backend.c_shadowAtlasFogOnlyRefused, stats_backend.c_shadowAtlasSurfaceRefused, stats_backend.c_fogLightsFroxel, stats_backend.c_fogLightsFogPass,
+							   stats_backend.c_fogStagesUnfogged );
+	length += idStr::snPrintf( row + length, sizeof( row ) - length, ",%i,%i,%llu,%llu,%i,%i,%i", stats_frontend.c_fogPortalsMedium, stats_frontend.c_fogPortalsNeverCulled,
+							   ( unsigned long long )stats_frontend.usFogFE, ( unsigned long long )stats_frontend.usFogCasters, stats_frontend.c_fogChangedCasters, stats_frontend.c_fogRecords,
+							   stats_frontend.c_fogIdleViews );
+	assert( length < ( int )sizeof( row ) - 1 );		// review CN1-3: about 3.65 KB at most since F7a; V6's 22 columns ( V6h: fogIdle ) add at most 22 x 21
 	row[length++] = '\n';
 	if( mapRowsUsed + length > ( int )sizeof( mapRowsBuffer ) )
 	{

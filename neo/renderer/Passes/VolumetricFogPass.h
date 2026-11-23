@@ -66,6 +66,20 @@ extern idCVar r_volumetricFog;
 
 struct froxelView_t;			// opaque; track V defines it later
 
+// V6 ( row 182 ): the zones, GPU timer queries the pass keeps round its sky mask and each kernel ( r_volumetricFogZones ).
+// The render log's main blocks are nearly all taken ( RenderLog.h ) and Optick is off in the build, so the pass times
+// itself. backEndCounters_t::gpuFogZoneMicroSec is indexed by these
+enum fogZone_t
+{
+	FOG_ZONE_SKY,			// DrawSkyMask's clear and draws, in no main block
+	FOG_ZONE_COLUMNS,		// the kernels, in the block MRB_VOLUMETRICS
+	FOG_ZONE_MEDIA,
+	FOG_ZONE_INJECT,
+	FOG_ZONE_RESOLVE,
+	FOG_ZONE_INTEGRATE,
+	FOG_ZONE_COUNT
+};
+
 class VolumetricFogPass
 {
 public:
@@ -101,6 +115,9 @@ private:
 	void	ProbeStage( nvrhi::ICommandList* commandList, nvrhi::ITexture* color, const viewDef_t* viewDef );
 	void	ProbeRead();
 	void	ProbeReadMedia( const byte* data, size_t rowPitch );	// V4: ProbeRead's columns where the media pass ran
+	void	ZonesRead();												// V6: once a frame, the zones of the slot this frame reuses, into backEnd.pc
+	void	ZoneBegin( nvrhi::ICommandList* commandList, fogZone_t zone );	// V6: a zone's two timestamps, while r_volumetricFogZones is on
+	void	ZoneEnd( nvrhi::ICommandList* commandList, fogZone_t zone );
 
 	nvrhi::DeviceHandle				m_Device;
 	CommonRenderPasses*				commonRenderPasses;
@@ -219,6 +236,15 @@ private:
 	fogMedium_t						m_ProbeMediaList[ FOG_MEDIA_MAX ];	// the media list of the probe's view, and its count: the list of the view it reads in is another
 	int								m_ProbeNumMedia;
 	bool							m_ProbeSkip;		// the skip was on: past a column's reach the GPU holds the global fog alone, and there is no closed form
+
+	// V6 ( row 182 ): the zones. A slot per frame of NUM_FRAME_DATA, by tr.frameCount ( the swap moves it before the backend
+	// runs, so it stays the same through one backend frame ); a slot's queries are read when the slot comes round again,
+	// NUM_FRAME_DATA frames later, as the render log reads its blocks
+	nvrhi::TimerQueryHandle			m_ZoneQueries[ NUM_FRAME_DATA ][ FOG_ZONE_COUNT ];
+	bool							m_ZoneUsed[ NUM_FRAME_DATA ][ FOG_ZONE_COUNT ];	// ended and not read yet ( the render log's timerUsed )
+	bool							m_ZoneOpen[ FOG_ZONE_COUNT ];	// begun in this frame and not ended yet
+	int								m_ZoneFrame[ NUM_FRAME_DATA ];	// the frame each slot's queries were made in
+	int								m_ZoneReadFrame;	// the frame ZonesRead last ran in
 };
 
 #endif // RENDERER_PASSES_VOLUMETRICFOGPASS_H_

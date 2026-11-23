@@ -42,7 +42,9 @@ static idCVar r_volumetricFogColumnPixels( "r_volumetricFogColumnPixels", "12", 
 static idCVar r_volumetricFogQuality( "r_volumetricFogQuality", "-1", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "the fog grid's quality: 0 low ( 16-pixel columns, 48 slices: at 1920 x 1080 0.39 M froxels, 19 MiB of volumes ), 1 medium ( 12, 64: 0.92 M, 44 MiB ), 2 high ( 8, 96: 3.1 M, 148 MiB ); a level takes at most 4 Mi froxels, about 200 MiB, widening its columns past them; -1 takes r_volumetricFogColumnPixels and r_volumetricFogSlices as set", -1, 2 );
 static idCVar r_volumetricFogSlices( "r_volumetricFogSlices", "64", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "the number of depth slices of the fog volume", 8, 256 );
 static idCVar r_volumetricFogFar( "r_volumetricFogFar", "3000", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the far end of the fog volume in units along the view axis; no fog is added beyond it", 64.0f, 65536.0f );
-static idCVar r_volumetricFogDistance( "r_volumetricFogDistance", "1500", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the global fog's distance D in units: the air is 99 percent opaque at D ( sigma_t = 4.632 / D ); 0 = no global fog; a distance above 0 counts as at least 0.1", 0.0f, 1000000.0f );
+// V6 ( row 158 ): no global fog by default; a map's media and its fog lights make the fog, and a gate or a test that wants the
+// global fog names its distance
+static idCVar r_volumetricFogDistance( "r_volumetricFogDistance", "0", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the global fog's distance D in units: the air is 99 percent opaque at D ( sigma_t = 4.632 / D ); 0 = no global fog ( the default: the fog comes from a map's media and fog lights ); a distance above 0 counts as at least 0.1", 0.0f, 1000000.0f );
 static idCVar r_volumetricFogAlbedo( "r_volumetricFogAlbedo", "0.9", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the global fog's scattering albedo: the share of the light the air takes out of a ray that it scatters and does not absorb", 0.0f, 1.0f );
 static idCVar r_volumetricFogFurnace( "r_volumetricFogFurnace", "0", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "test: above 0 the fog is the uniform test medium, lit by this radiance from every direction and by nothing else ( cut where the fog is so thick that the half-float volumes cannot hold the in-scatter )", 0.0f, 1000.0f );
 static idCVar r_volumetricFogAnisotropy( "r_volumetricFogAnisotropy", "0.4", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the fog's phase function ( Henyey-Greenstein g ): at 0 a light's fog is as bright from every side, above 0 it is brighter when looking toward the light, below 0 when looking along it", -0.9f, 0.9f );
@@ -75,6 +77,15 @@ static idCVar r_volumetricFogDustErode( "r_volumetricFogDustErode", "0", CVAR_RE
 static idCVar r_volumetricFogDustWarp( "r_volumetricFogDustWarp", "0", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "how far in units a curl field bends the dust's noise ( noise slot 1's warp, the noise in slot 2 and no erode ); 0 = none. The worldspawn's key fog_dust_warp", 0.0f, 1024.0f );
 static idCVar r_volumetricFogLights( "r_volumetricFogLights", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "Doom 3 fog lights as media in the froxel fog ( V4, D29 ); V5: the fog takes them in place of the fog pass where the translucents fog themselves ( r_volumetricFogTranslucent ) and the light's volume lies inside the fog's reach; the others keep the fog pass ( the HUD's FOGLIGHTS row )" );
 static idCVar r_volumetricFogLightRate( "r_volumetricFogLightRate", "2.3", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "a fog light's sigma_t times its fog distance D in the froxel fog: 2.3 fits the picture the fog pass draws ( the sRGB decode of its table ) over the screen and is its centre column's minimax ( 2.72 the centre's least squares ), 4.632 is its table's rate, 5.54 leaves 1/255 at D ( D21 )", 0.1f, 20.0f );
+// V6 ( row 182 ): the zones. The pass times its sky mask and each kernel with GPU timer queries of its own; the numbers are
+// NUM_FRAME_DATA frames old ( the render log's age ) and leave by fogProbe, the HUD's FOGZONES row and the map rows log
+static idCVar r_volumetricFogZones( "r_volumetricFogZones", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "GPU timer queries round the fog's sky mask and each of its kernels, and timers round the frontend's fog work, for fogProbe, the HUD's FOGZONES row and the map rows log; 0 = nothing is timed" );
+// V6 ( row 176 ): the band at the fog light's reach ( R_VolumetricFogLightReachBand, tr_frontend_volumetricfog.cpp )
+static idCVar r_volumetricFogLightReachBand( "r_volumetricFogLightReachBand", "0.1", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "a band of hysteresis at the fog's reach, as a share of it: a fog light the froxel fog did not take is taken only once its volume lies nearer than the reach less the band, and one it took is kept until its volume passes the reach, so a light near the fog's far end does not swap between the fog pass and the fog volume; 0 = the reach alone", 0.0f, 0.5f );
+// ---- TRACK V ( V6 ): the idle view ( bite V6h ). Fog is placed in volumes with bounds, as lights are: a view that holds
+// none builds nothing for it ----
+static idCVar r_volumetricFogIdle( "r_volumetricFogIdle", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "a view in which no fog light is taken and no other medium is set builds nothing for the froxel fog: no light records of its own, no list of changed shadow casters; 0 = every fog view builds them ( the path before V6h, for a paired timing )" );
+// ---- END TRACK V ----
 static idCVar r_volumetricFogTestBox( "r_volumetricFogTestBox", "", CVAR_RENDERER | CVAR_NEW, "test: a box of fog, \"x y z  hx hy hz  D  vx vy vz\" in map units: its centre, its half extents, its distance D ( albedo 1 ) and a velocity per second of game time ( optional ); empty = none" );
 
 // coefficients are stored times this, which keeps thin, dim fog out of the half floats' subnormal range
@@ -194,11 +205,37 @@ float R_VolumetricFogLightRate()
 	return r_volumetricFogLightRate.GetFloat();
 }
 
+// V6 ( row 182 ): whether the zones and the frontend's fog timers run, for the frontend
+bool R_VolumetricFogZones()
+{
+	return r_volumetricFogZones.GetBool();
+}
+
+// V6 ( row 176 ): r_volumetricFogLightReachBand, for the frontend's reach verdict
+float R_VolumetricFogLightReachBand()
+{
+	return idMath::ClampFloat( 0.0f, 0.5f, r_volumetricFogLightReachBand.GetFloat() );
+}
+
 // V4: whether the global fog or a medium of the media pass scatters light ( the frontend's question, R_VolumetricFogMarkLights )
 bool R_VolumetricFogMediaScatter()
 {
 	return ( r_volumetricFogDistance.GetFloat() > 0.0f && r_volumetricFogAlbedo.GetFloat() > 0.0f ) || FroxelMediaScatter();
 }
+
+// ---- TRACK V ( V6 ): the idle view ( bite V6h ) ----
+// Whether a fog view may be idle: the cvars leave only the fog lights as a medium, so that FroxelHasMedium is
+// FroxelViewHasFogLight and the pass does nothing in a view without a fog light it takes. Every other term of
+// FroxelHasMedium must fail here: the global fog's distance ( not its albedo: air that only absorbs is drawn too ), the
+// media pass ( asked as FroxelMediaScatter asks the test box, by its string: an unreadable box counts as one, which only
+// keeps today's path ), the debug views. The frontend asks once a fog view and once a frame for the changed casters
+bool R_VolumetricFogMayIdle()
+{
+	return r_volumetricFogIdle.GetBool() && r_volumetricFogDistance.GetFloat() <= 0.0f && r_volumetricFogDebug.GetInteger() == 0
+		   && !( r_volumetricFogMedia.GetBool() && ( r_volumetricFogHeightDistance.GetFloat() > 0.0f || r_volumetricFogDustDistance.GetFloat() > 0.0f
+				 || r_volumetricFogTestBox.GetString()[0] != '\0' ) );
+}
+// ---- END TRACK V ----
 
 // V4: whether the view holds a fog light the inject takes ( record 0, the sun's slot, is never one: review O1-8 ). V5: the
 // records carry the frontend's verdict ( RLF_FOG_OFF ), so this is also the question of V4's path ( row 170 a )
@@ -296,7 +333,20 @@ VolumetricFogPass::VolumetricFogPass( nvrhi::IDevice* device, CommonRenderPasses
 	, m_ProbeNumMedia( 0 )
 	, m_ProbeSkip( false )
 	, m_ProbeHistory( false )
+	, m_ZoneReadFrame( -1 )
 {
+	// V6: the zones' timer queries, made with the pass and freed with it ( the handles count their references )
+	compile_time_assert( FOG_ZONE_COUNT == sizeof( backEnd.pc.gpuFogZoneMicroSec ) / sizeof( backEnd.pc.gpuFogZoneMicroSec[0] ) );
+	for( int s = 0; s < NUM_FRAME_DATA; s++ )
+	{
+		for( int z = 0; z < FOG_ZONE_COUNT; z++ )
+		{
+			m_ZoneQueries[s][z] = device->createTimerQuery();
+			m_ZoneUsed[s][z] = false;
+		}
+		m_ZoneFrame[s] = -1000;		// no frame
+	}
+	memset( m_ZoneOpen, 0, sizeof( m_ZoneOpen ) );
 	memset( m_InjectSetKey, 0, sizeof( m_InjectSetKey ) );
 	memset( m_HistoryGrid, 0, sizeof( m_HistoryGrid ) );
 	memset( m_PrevFogBits, 0, sizeof( m_PrevFogBits ) );
@@ -402,6 +452,91 @@ void VolumetricFogPass::ReleaseVolume()
 		backEnd.froxelVolume = backEnd.froxelDummyVolume;
 		backEnd.bindingCache.Clear();
 	}
+}
+
+/*
+========================
+VolumetricFogPass::ZonesRead
+
+V6 ( row 182 ): the zones of the frame slot this frame reuses, into backEnd.pc.gpuFogZoneMicroSec. Called at the top of
+DrawSkyMask and of Render, and runs once a frame: the sky mask is drawn first, and a read only in Render would wait on
+this frame's own sky query, which the GPU has not been handed yet. The slot's queries were made NUM_FRAME_DATA frames
+ago, so the GPU has done them and the read does not wait, as the render log's FetchGPUTimers reads its blocks. A slot
+last made in an older frame ( frames without a fog view in between ) is read to free its queries and gives 0, as does a
+zone that did not run in its frame. backEnd.pc is cleared at every swap, so a frame without a fog view reads 0 too. A query
+read is reset ( review CN1-1 asked for it; reviews O1-1, O2-1: not needed on either API, NVRHI's D3D12 command list re-arms
+every timer query it used at each submission, d3d12-commandlist.cpp:350; kept, harmless ), and a slot is read only when it
+was made in an older frame ( review CN1-3: tr.frameCount has one writer, the swap; should it ever stay or step back inside a
+backend frame, the read skips a query of this frame instead of waiting for one the GPU has not been handed )
+========================
+*/
+void VolumetricFogPass::ZonesRead()
+{
+	const int frame = tr.frameCount;
+	if( frame == m_ZoneReadFrame )
+	{
+		return;
+	}
+	m_ZoneReadFrame = frame;
+	const int slot = frame % ( int )NUM_FRAME_DATA;
+	const bool older = m_ZoneFrame[ slot ] < frame;
+	const bool current = ( m_ZoneFrame[ slot ] == frame - ( int )NUM_FRAME_DATA );
+	for( int z = 0; z < FOG_ZONE_COUNT; z++ )
+	{
+		uint64 microSec = 0;
+		if( m_ZoneUsed[ slot ][ z ] && older )
+		{
+			const double seconds = m_Device->getTimerQueryTime( m_ZoneQueries[ slot ][ z ] );
+			m_Device->resetTimerQuery( m_ZoneQueries[ slot ][ z ] );
+			m_ZoneUsed[ slot ][ z ] = false;
+			if( current )
+			{
+				microSec = ( uint64 )( seconds * 1000000.0 );
+			}
+		}
+		backEnd.pc.gpuFogZoneMicroSec[ z ] = microSec;
+	}
+	if( older )
+	{
+		m_ZoneFrame[ slot ] = frame;
+	}
+}
+
+/*
+========================
+VolumetricFogPass::ZoneBegin, ZoneEnd
+
+V6: a zone's two timestamps on the backend's command list, in this frame's slot ( ZonesRead ran first in the frame ). A
+zone whose slot is still taken, by a second fog view in one frame, is not timed: the first pair is, as the render log
+times only a block's first pair. The end follows its begin whatever the cvar does in between.
+========================
+*/
+void VolumetricFogPass::ZoneBegin( nvrhi::ICommandList* commandList, fogZone_t zone )
+{
+	if( !r_volumetricFogZones.GetBool() || !glConfig.timerQueryAvailable )
+	{
+		return;
+	}
+	assert( m_ZoneReadFrame == tr.frameCount );
+	const int slot = m_ZoneReadFrame % ( int )NUM_FRAME_DATA;
+	if( m_ZoneUsed[ slot ][ zone ] || m_ZoneOpen[ zone ] || !m_ZoneQueries[ slot ][ zone ] )		// review O1-10: a query the device could not make
+	{
+		return;
+	}
+	commandList->beginTimerQuery( m_ZoneQueries[ slot ][ zone ] );
+	m_ZoneOpen[ zone ] = true;
+}
+
+void VolumetricFogPass::ZoneEnd( nvrhi::ICommandList* commandList, fogZone_t zone )
+{
+	if( !m_ZoneOpen[ zone ] )
+	{
+		return;
+	}
+	const int slot = m_ZoneReadFrame % ( int )NUM_FRAME_DATA;
+	commandList->endTimerQuery( m_ZoneQueries[ slot ][ zone ] );
+	m_ZoneOpen[ zone ] = false;
+	m_ZoneUsed[ slot ][ zone ] = true;
 }
 
 /*
@@ -797,6 +932,7 @@ state cache behind it.
 */
 void VolumetricFogPass::DrawSkyMask( nvrhi::ICommandList* commandList, const viewDef_t* viewDef )
 {
+	ZonesRead();				// V6: once a frame, before any zone of the frame begins
 	m_SkyMask = NULL;
 	m_SkyMaskView = NULL;
 
@@ -848,6 +984,7 @@ void VolumetricFogPass::DrawSkyMask( nvrhi::ICommandList* commandList, const vie
 	}
 	nvrhi::ITexture* mask = targetDesc.colorAttachments[0].texture;
 
+	ZoneBegin( commandList, FOG_ZONE_SKY );		// V6: the clear and the draws
 	// cleared only when it holds marks, or when this pass does not know what it holds ( a mask taken over )
 	if( !m_SkyMaskEmpty )
 	{
@@ -893,6 +1030,7 @@ void VolumetricFogPass::DrawSkyMask( nvrhi::ICommandList* commandList, const vie
 	{
 		previous->Bind();
 	}
+	ZoneEnd( commandList, FOG_ZONE_SKY );
 
 	m_SkyMask = mask;
 	m_SkyMaskView = viewDef;
@@ -909,6 +1047,7 @@ furnace radiance alone; the resolve copies.
 */
 void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_t* viewDef )
 {
+	ZonesRead();				// V6: once a frame ( DrawSkyMask's call came first where the view has a sky mask )
 	m_RenderedView = NULL;
 
 	// a probe's copy is read some fog views after it was made
@@ -1221,8 +1360,10 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 		};
 		state.pipeline = m_ColumnsKernel.pipeline;
 		state.bindings = { backEnd.bindingCache.GetOrCreateBindingSet( columnsDesc, m_ColumnsKernel.layout ) };
+		ZoneBegin( commandList, FOG_ZONE_COLUMNS );
 		commandList->setComputeState( state );
 		commandList->dispatch( fillWidth, fillHeight, 1 );
+		ZoneEnd( commandList, FOG_ZONE_COLUMNS );
 	}
 	if( m_NumMedia > 0 )
 	{
@@ -1230,15 +1371,19 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 		OPTICK_GPU_EVENT( "Fog_Media" );
 		state.pipeline = m_MediaKernel.pipeline;
 		state.bindings = { m_MediaKernel.bindingSet };
+		ZoneBegin( commandList, FOG_ZONE_MEDIA );
 		commandList->setComputeState( state );
 		commandList->dispatch( groupsX, groupsY, gridSlices );
+		ZoneEnd( commandList, FOG_ZONE_MEDIA );
 	}
 	{
 		OPTICK_GPU_EVENT( "Fog_Inject" );
 		state.pipeline = m_Inject.pipeline;
 		state.bindings = { m_Inject.bindingSet };
+		ZoneBegin( commandList, FOG_ZONE_INJECT );
 		commandList->setComputeState( state );
 		commandList->dispatch( groupsX, groupsY, gridSlices );
+		ZoneEnd( commandList, FOG_ZONE_INJECT );
 	}
 	// V3: this view's records are last frame's for the next fog view ( after the inject, which read the old ones )
 	const int allRecords = ( llv != NULL && viewDef->recordLights != NULL ) ? Min( viewDef->numRecordLights, MAX_RECORD_LIGHTS ) : 0;
@@ -1252,16 +1397,20 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 		OPTICK_GPU_EVENT( "Fog_Resolve" );
 		state.pipeline = m_Resolve.pipeline;
 		state.bindings = { m_ResolveSets[ m_ResolvedIndex ] };
+		ZoneBegin( commandList, FOG_ZONE_RESOLVE );
 		commandList->setComputeState( state );
 		commandList->dispatch( groupsX, groupsY, gridSlices );
+		ZoneEnd( commandList, FOG_ZONE_RESOLVE );
 	}
 	{
 		// one thread per column: it walks the slices from the camera outward
 		OPTICK_GPU_EVENT( "Fog_Integrate" );
 		state.pipeline = m_Integrate.pipeline;
 		state.bindings = { m_IntegrateSets[ m_ResolvedIndex ] };
+		ZoneBegin( commandList, FOG_ZONE_INTEGRATE );
 		commandList->setComputeState( state );
 		commandList->dispatch( groupsX, groupsY, 1 );
+		ZoneEnd( commandList, FOG_ZONE_INTEGRATE );
 	}
 	// what the next fog view's history is made of
 	m_HistoryValid = true;
@@ -1891,6 +2040,17 @@ void VolumetricFogPass::ProbeRead()
 
 	// the GPU time of the fog's two blocks as the engine last measured them ( the HUD's "Volumetrics" and "Fog apply" )
 	common->Printf( "fogprobe: GPU microseconds: Volumetrics %d, Fog apply %d\n", ( int )commonLocal.GetRendererGpuVolumetricsMicroseconds(), ( int )commonLocal.GetRendererGpuVolumetricsApplyMicroseconds() );
+	// V6 ( row 182 ): the zones of the same frame, and the block less its five kernels ( the records' copy, the probe's copies,
+	// the gaps ); both NUM_FRAME_DATA frames old, so a cvar flipped on shows zeros for the first frames ( review CN1-5 )
+	if( r_volumetricFogZones.GetBool() )
+	{
+		const uint64* zone = commonLocal.GetRendererGpuFogZoneMicroseconds();
+		const int kernels = ( int )( zone[ FOG_ZONE_COLUMNS ] + zone[ FOG_ZONE_MEDIA ] + zone[ FOG_ZONE_INJECT ] + zone[ FOG_ZONE_RESOLVE ] + zone[ FOG_ZONE_INTEGRATE ] );
+		const int block = ( int )commonLocal.GetRendererGpuVolumetricsMicroseconds();
+		common->Printf( "fogprobe: GPU zones: sky %d, columns %d, media %d, inject %d, resolve %d, integrate %d; kernels %d of Volumetrics %d, other %d\n",
+						( int )zone[ FOG_ZONE_SKY ], ( int )zone[ FOG_ZONE_COLUMNS ], ( int )zone[ FOG_ZONE_MEDIA ], ( int )zone[ FOG_ZONE_INJECT ], ( int )zone[ FOG_ZONE_RESOLVE ],
+						( int )zone[ FOG_ZONE_INTEGRATE ], kernels, block, block - kernels );
+	}
 }
 
 /*

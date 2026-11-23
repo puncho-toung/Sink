@@ -1451,8 +1451,23 @@ protected:
 private:
 	void		LoadShader( int index, rpStage_t stage );
 
-	// Reads the binary fileName and returns a ShaderBlob.
-	ShaderBlob	GetBytecode( const char* fileName );
+	// Reads the binary fileName and returns a ShaderBlob. V6: cacheSlot 0, 1, 2 ( vertex, pixel, compute ) lets a load pass
+	// keep the blob ( BlobCacheBegin ); -1 reads a blob the caller frees
+	ShaderBlob	GetBytecode( const char* fileName, int cacheSlot = -1 );
+	// ---- TRACK V ( V6, row 179 ): the load pass's blob cache. Init's loop over the builtins and LoadAllShaders keep the
+	// last blob read for each stage, so the rows of one file that follow each other read it once ( the 24 interactionSM
+	// rows two files once, not 48 times ); a shader loaded outside a load pass, or by another thread, reads and frees its
+	// blob as before ----
+	void		BlobCacheBegin();
+	void		BlobCacheEnd( const char* pass );
+	void		ReleaseBytecode( const ShaderBlob& blob );	// frees a blob unless the load pass keeps it
+	idStr		blobCacheName[3];	// by stage slot: the file of the kept blob, empty = none
+	ShaderBlob	blobCacheBlob[3];
+	uintptr_t	blobCacheThread;	// the thread of the load pass that keeps them; 0 = no load pass
+	int			blobCacheReads;		// the pass's files read, the blobs it took from the cache by stage slot, the bytes it read
+	int			blobCacheHits[3];
+	int64		blobCacheBytes;
+	// ---- END TRACK V ----
 
 	int builtinShaders[MAX_BUILTINS];
 	void BindShader_Builtin( int i )

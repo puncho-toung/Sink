@@ -468,6 +468,11 @@ public:
 	// ---- TRACK F: counter getters ----
 	// ---- END TRACK F ----
 	// ---- TRACK V: counter getters ----
+	// V6 ( row 182 ): the fog pass's zones by FOG_ZONE_* ( renderer/Passes/VolumetricFogPass.h ), for fogProbe
+	const uint64*	GetRendererGpuFogZoneMicroseconds() const
+	{
+		return stats_backend.gpuFogZoneMicroSec;
+	}
 	// ---- END TRACK V ----
 	// RB end
 
