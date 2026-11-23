@@ -22,6 +22,7 @@ SamplerState s_History : register( s0 );			// linear, clamped
 VK_IMAGE_FORMAT( "rgba16f" ) RWTexture3D<float4> u_Resolved : register( u0 );
 Texture3D<float> t_PrevMark : register( t3 );		// V4: last frame's marks: 1 where the inject skipped the froxel, in step with t_History
 VK_IMAGE_FORMAT( "r8" ) RWTexture3D<float> u_Mark : register( u1 );		// V4: this frame's
+Texture2D<float> t_Columns : register( t4 );		// V8 ( B4 ): the farthest surface of each column ( froxel_columns.cs.hlsl )
 // *INDENT-ON*
 
 // V4: on V4's path a history read is not used where last frame's sigma_t there ( times the store scale ) was below this:
@@ -37,6 +38,16 @@ void main( uint3 froxelId : SV_DispatchThreadID )
 		return;
 	}
 
+	// V8 ( B4 ): outside the box of the view's bounded media the inject did not run this frame: clear air there, and the mark of
+	// the inject's own skip test ( state 3 ), which are what the whole work gives ( a skipped froxel is marked and holds clear air
+	// on V4's path; clear air resolves to clear air whatever its history holds ). Nothing is read but the columns
+	if( FroxelOutsideBox( froxelId ) )
+	{
+		const bool skipped = froxel.skipParms.x > 0.0 && float( froxelId.z ) > FroxelColumnReach( t_Columns, froxelId.xy );
+		u_Mark[ froxelId ] = skipped ? 1.0 : 0.0;
+		u_Resolved[ froxelId ] = float4( 0.0, 0.0, 0.0, 0.0 );
+		return;
+	}
 	const float4 injected = t_Injected[ froxelId ];
 	float4 resolved = injected;
 	const float4 state = t_State[ froxelId ];
@@ -52,6 +63,18 @@ void main( uint3 froxelId : SV_DispatchThreadID )
 	if( state.a > 2.5 )
 	{
 		u_Resolved[ froxelId ] = mediaPath ? float4( 0.0, 0.0, 0.0, 0.0 ) : float4( 0.0, 0.0, 0.0, -injected.a );
+		return;
+	}
+	// V8 ( B1 ): clear air ( r_volumetricFogBounds, where the view's media are its fog lights alone, on V4's path ). Where nothing
+	// was injected this frame the result is the injected zeros whatever the history holds: its light is carried per unit of
+	// this frame's sigma_t ( 0 ), and the inject's light change is 0 where nothing scatters or glows; the clip's range starts
+	// at 0. So the reprojection and the history read are skipped; the mark above is 0 here either way. It leans on
+	// sigma_s <= sigma_t in every medium ( review CN1-2: the inject's own return is then the one way a froxel stores
+	// ( 0, 0, 0, 0 ) but the half store's flush of a sigma_t below 2^-25, where the state's change flushes with it, review O1-7 ):
+	// a medium of track M must keep it
+	if( froxel.boundsParms.x > 0.0 && all( injected == 0.0 ) )
+	{
+		u_Resolved[ froxelId ] = injected;
 		return;
 	}
 	if( froxel.jitter.w > 0.0 && state.a < 1.5 )

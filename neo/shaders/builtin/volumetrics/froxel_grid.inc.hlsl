@@ -35,6 +35,11 @@ struct froxelConstants_t
 	// V4: the media
 	float4 mediaParms;		// x = 1 where the inject reads the media volume ( the media pass ran ), y = the furnace radiance ( a test input ), z = 1 on V4's path ( r_volumetricFogMedia: the resolve's medium per froxel and the mark volume ), w = the media in the view's list
 	float4 mediaParms2;		// x = the media that moved, came or went ( four boxes each in t_MediaMoved ), y = the fog lights' rate times the store scale, z = 1 / the fog lights' enter ramp, w = 1 where the inject takes fog lights ( V4b )
+	// V8: the fog's cost follows its volumes' bounds ( r_volumetricFogBounds )
+	float4 boundsParms;		// x = 1 where a froxel with no medium returns early in the resolve and the inject runs its permutation FROXEL_CLEAR_AIR 1 ( B1: the view's media are its fog lights alone, V4's path ), yzw = 0
+	// V8 ( B4 ): the box of the view's bounded media in froxels, padded by one ( the pass's BoundsBox )
+	float4 boxMin;			// xyz = its first column, row and slice, w = 1 where the inject runs over it alone and the resolve and the integrate skip its outside
+	float4 boxMax;			// xyz = its last column, row and slice ( inclusive ), w = 0
 };
 
 cbuffer c_Froxel : register( b1 )
@@ -82,6 +87,13 @@ bool FroxelGroupMissesSphere( float4 sphere, uint2 groupId, float viewDepth, flo
 	const float2 gap = max( max( first - centre.xy, centre.xy - last ), 0.0 );
 	const float along = centre.z - viewDepth;
 	return ( dot( gap, gap ) + along * along ) * sphere.w > 1.0;
+}
+
+// V8 ( B4 ): whether the kernels follow the box of the view's bounded media and a froxel lies outside it ( the resolve's test;
+// the inject's dispatch origin and the integrate's read range spell the same box: keep the three in step, review CN4-5 )
+bool FroxelOutsideBox( uint3 froxelId )
+{
+	return froxel.boxMin.w > 0.0 && ( any( float3( froxelId ) < froxel.boxMin.xyz ) || any( float3( froxelId ) > froxel.boxMax.xyz ) );
 }
 
 // V3: the last slice a pixel's lookup reads in a froxel's column: the farthest surface of the column and its eight

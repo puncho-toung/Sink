@@ -118,6 +118,7 @@ private:
 	void	ZonesRead();												// V6: once a frame, the zones of the slot this frame reuses, into backEnd.pc
 	void	ZoneBegin( nvrhi::ICommandList* commandList, fogZone_t zone );	// V6: a zone's two timestamps, while r_volumetricFogZones is on
 	void	ZoneEnd( nvrhi::ICommandList* commandList, fogZone_t zone );
+	void	BoundsBox( const viewDef_t* viewDef, const froxelConstants_t& constants, int viewWidth, int viewHeight, int fillWidth, int fillHeight );	// V8 ( B0, B2, B4 ): the box of the view's bounded media
 
 	nvrhi::DeviceHandle				m_Device;
 	CommonRenderPasses*				commonRenderPasses;
@@ -143,6 +144,9 @@ private:
 	nvrhi::TextureHandle			m_Mark[2];			// V4: 1 where the inject skipped the froxel, in step with m_Resolved ( the resolve writes mark i in turn i, reads the other )
 
 	kernel_t						m_Inject;			// its layout is its own ( InitInject ) and its set is made by CheckInjectSet
+	// V8 ( B1 ): the inject's permutation FROXEL_CLEAR_AIR 1, which returns early in clear air: m_Inject's layout and set
+	nvrhi::ShaderHandle				m_InjectClearAirShader;
+	nvrhi::ComputePipelineHandle	m_InjectClearAir;
 	kernel_t						m_Resolve;			// V3: its set is one of m_ResolveSets, by turns
 	kernel_t						m_Integrate;		// V3: its set is one of m_IntegrateSets, by turns
 	kernel_t						m_ColumnsKernel;	// V3: the farthest surface of each column; its set comes from the engine's binding cache
@@ -188,6 +192,12 @@ private:
 
 	const viewDef_t*				m_RenderedView;		// the view Render() filled the volumes for: its apply alone may read them
 	bool							m_RenderedFogLights;	// V5: and whether its inject took fog lights
+	// V8 ( B0, B2 ): and where its bounded media can be seen ( BoundsBox ): the fog set's rectangle and first slice, for its apply
+	bool							m_BoundsOn;			// the rectangle and the first slice hold ( no map-wide medium, every fog light taken has its entry )
+	idVec4							m_BoundsRect;		// froxelFogParms_t::boundsRect
+	float							m_BoundsFirstSlice;	// froxelFogParms_t::boundsParms.y
+	int								m_BoxMin[3];		// V8 ( B4 ): the box in froxels ( columns, rows, slices; inclusive ), padded by one; empty where the first passes the last
+	int								m_BoxMax[3];
 	bool							m_FogLightPath;		// V5f: a view since the last camera cut took fog lights: V4's path holds
 
 	// the sky mask: 1 where the fog view shows a sky surface, which the apply fogs as infinitely far ( D52 ). The

@@ -27,10 +27,29 @@ void main( uint3 columnId : SV_DispatchThreadID )
 	const float2 lateral = FroxelColumnLateral( float2( columnId.xy ) + 0.5 );
 	const float rayLength = sqrt( 1.0 + dot( lateral, lateral ) );
 
+	// V8 ( B4 ): outside the box of the view's bounded media every froxel holds clear air ( the resolve wrote it ), so only the
+	// box's slices of the box's columns are read; an empty range where the column lies beside the box
+	const bool boxed = froxel.boxMin.w > 0.0;
+	const bool besideBox = boxed && ( any( float2( columnId.xy ) < froxel.boxMin.xy ) || any( float2( columnId.xy ) > froxel.boxMax.xy ) );
+	const uint readFirst = besideBox ? grid.z : ( boxed ? uint( froxel.boxMin.z ) : 0 );
+	const uint readLast = boxed ? uint( froxel.boxMax.z ) : grid.z - 1;
+
 	float3 inScatter = float3( 0.0, 0.0, 0.0 );
 	float transmittance = 1.0;
 	float nearFace = 0.0;
-	for( uint k = 0; k < grid.z; k++ )
+	// V8f ( review O1-1 ): three loops, not a branch per slice ( which cost the views that are not bounded 1 to 2 us ). A clear
+	// slab adds nothing ( + 0 ) and passes everything ( exp( -0 ) = 1 ), so in front of the box the slices hold ( 0, 0, 0, 1 )
+	// and behind it the box's last sums; the loop between is the loop before V8, the whole of it where the view is not bounded
+	uint k = 0;
+	for( ; k < min( readFirst, grid.z ); k++ )
+	{
+		u_Integrated[ uint3( columnId.xy, k ) ] = float4( 0.0, 0.0, 0.0, 1.0 );
+	}
+	if( k > 0 )
+	{
+		nearFace = FroxelSliceFar( float( k - 1 ) );
+	}
+	for( ; k <= readLast; k++ )
 	{
 		// sigma_s * L and sigma_t, per unit
 		const float4 slice = t_Resolved[ uint3( columnId.xy, k ) ] * froxel.sliceParms.z;
@@ -49,6 +68,10 @@ void main( uint3 columnId : SV_DispatchThreadID )
 		inScatter += transmittance * slice.rgb * slabWeight;
 		transmittance *= slabTransmittance;
 
+		u_Integrated[ uint3( columnId.xy, k ) ] = float4( inScatter, transmittance );
+	}
+	for( ; k < grid.z; k++ )
+	{
 		u_Integrated[ uint3( columnId.xy, k ) ] = float4( inScatter, transmittance );
 	}
 }

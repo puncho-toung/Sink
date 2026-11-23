@@ -510,6 +510,64 @@ void R_VolumetricFogLightRecord( const viewLight_t* vLight, uint32 recordFlags, 
 
 /*
 ====================
+R_VolumetricFogBoundsList
+
+V8 ( B0, CF1 section 1 ): the view's bounded media, froxelView_t::fogBounds. One entry per record the froxel fog takes as a
+fog light after the reach's verdict ( R_FogCanTakeFogLight ), from its light's globalLightBounds in the frame relative to
+the view's renderOrigin, with the record's index and whether it scatters ( its albedo, ids.w ). The pass takes the fog
+lights by the same test ( its take mask ) and checks that each one it takes has its entry: a list that misses one bounds
+nothing. Made only with r_volumetricFogBounds on and the fog lights taken. Each entry is a unit wider each way than the
+light's bounds ( review O1-6: the inject takes the medium inside the record's planes, which round apart from this bounds;
+near the eye under a zoom the box's margin is a small part of a unit ). Frame memory, as the caster boxes. Track M's placed
+volumes join this list
+====================
+*/
+static void R_VolumetricFogBoundsList( viewDef_t* viewDef, const lightListView_t* llv, const recordLight_t* records )
+{
+	if( !R_VolumetricFogBounds() || !R_VolumetricFogTakesFogLights() )
+	{
+		return;					// the pass bounds nothing with the switch off ( review CN2-1: nor is the list made ), nor where the
+								// inject takes no fog light ( review O2-11 )
+	}
+	const lightListTables_t& t = llv->tables;
+	int numBounds = 0;
+	for( int r = 1; r < t.numRecords; r++ )
+	{
+		if( t.lightOfRecord[r] >= 0 && R_FogCanTakeFogLight( records[r] ) )
+		{
+			numBounds++;
+		}
+	}
+	if( viewDef == NULL || numBounds == 0 )
+	{
+		return;
+	}
+	if( viewDef->froxelView == NULL )
+	{
+		viewDef->froxelView = ( froxelView_t* )R_ClearedFrameAlloc( sizeof( froxelView_t ), FRAME_ALLOC_UNKNOWN );
+	}
+	idVec4* out = ( idVec4* )R_FrameAlloc( 2 * numBounds * sizeof( idVec4 ), FRAME_ALLOC_UNKNOWN );
+	int n = 0;
+	for( int r = 1; r < t.numRecords; r++ )
+	{
+		const int input = t.lightOfRecord[r];
+		if( input < 0 || !R_FogCanTakeFogLight( records[r] ) )
+		{
+			continue;
+		}
+		const idBounds& bounds = llv->lightOfInput[input]->lightDef->globalLightBounds;
+		out[2 * n].Set( ( float )( bounds[0].x - viewDef->renderOrigin.x ) - 1.0f, ( float )( bounds[0].y - viewDef->renderOrigin.y ) - 1.0f,
+						( float )( bounds[0].z - viewDef->renderOrigin.z ) - 1.0f, ( float )r );
+		out[2 * n + 1].Set( ( float )( bounds[1].x - viewDef->renderOrigin.x ) + 1.0f, ( float )( bounds[1].y - viewDef->renderOrigin.y ) + 1.0f,
+							( float )( bounds[1].z - viewDef->renderOrigin.z ) + 1.0f, ( records[r].ids.w > 0.0f ) ? 1.0f : 0.0f );
+		n++;
+	}
+	viewDef->froxelView->fogBounds = out;
+	viewDef->froxelView->numFogBounds = n;
+}
+
+/*
+====================
 R_VolumetricFogMarkLights
 
 A light the inject can take counts as lit ( R_ViewLightIsLit ), so one whose surfaces are all out of sight keeps its
@@ -554,6 +612,8 @@ void R_VolumetricFogMarkLights( lightListView_t* llv, recordLight_t* records, fl
 			records[r].flags |= RLF_FOG_OFF;
 		}
 	}
+	// V8 ( B0 ): the view's bounded media, after the verdict: the fog lights the froxel fog takes
+	R_VolumetricFogBoundsList( tr.viewDef, llv, records );
 	const bool fogLights = R_VolumetricFogTakesFogLights();		// V4: a fog light the inject takes is in sight as a medium
 	// V4: a light only where something scatters it ( review O1-2; the pass's take mask goes by the same rule )
 	const bool lights = R_VolumetricFogMediaScatter() || ( fogLights && R_FogLightsScatter( records, t.numRecords ) );
