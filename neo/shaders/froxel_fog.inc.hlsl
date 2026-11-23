@@ -71,6 +71,9 @@ float FroxelFogPixelViewDepth( float4 svPosition )
 #if defined( SPIRV )
 	return 1.0 / svPosition.w;
 #else
+	// TODO D3D12 ( plan row 255 ): D3D's SV_Position.w is clip w itself, not its reciprocal, so the same fix here is
+	// `return svPosition.w;` with no 1 / . Switch to it only after timing it and comparing pictures against this line
+	// on D3D12 ( the owner's RTX 2070 ). Never 1.0 / svPosition.w here: that is 1 / depth and fogs every translucent wrong
 	return FroxelFogViewDepth( svPosition.z );
 #endif
 }
