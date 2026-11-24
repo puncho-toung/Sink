@@ -837,6 +837,11 @@ void idAI::Spawn()
 
 	if( !g_monsters.GetBool() )
 	{
+		//puncho - E-R7-1: the events the base classes' Spawn posted (idEntity: EV_Hide for "hide", EV_SpawnBind,
+		// EV_FindTargets, EV_UpdateCameraTarget) would be served before the remove, on an AI whose physics were never
+		// set up (idAI::Hide wrote through the missing clip model at the first ServiceEvents of MapPopulate); the
+		// remove is all that is left to do
+		idEvent::CancelEvents( this );
 		PostEventMS( &EV_Remove, 0 );
 		return;
 	}
@@ -6362,6 +6367,10 @@ idAI::Hide
 void idAI::Hide()
 {
 	idActor::Hide();
+	if( physicsObj.GetClipModel() == NULL )
+	{
+		return;	//puncho - E-R7-1: an AI whose Spawn returned early under g_monsters 0 has no physics; a world record (ApplyRecordVisibility, before the map's events) or a script can still hide it
+	}
 	fl.takedamage = false;
 	physicsObj.SetContents( 0 );
 	physicsObj.GetClipModel()->Unlink();
@@ -6381,6 +6390,10 @@ idAI::Show
 void idAI::Show()
 {
 	idActor::Show();
+	if( physicsObj.GetClipModel() == NULL )
+	{
+		return;	//puncho - E-R7-1: an AI whose Spawn returned early under g_monsters 0 has no physics; a world record (ApplyRecordVisibility, before the map's events) or a script can still show it
+	}
 	if( spawnArgs.GetBool( "big_monster" ) )
 	{
 		physicsObj.SetContents( 0 );
