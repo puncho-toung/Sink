@@ -3040,7 +3040,7 @@ static void SaveTraced( idStreamTrace& trace, idFile_Memory& saveFile, idFile_Me
 	pipeline->OpenForWriting( &saveFile );
 	{
 		idStreamTraceArm arm( &trace );
-		int storeBytes, objectBytes;	//puncho - P2b.1.10k: the checker keeps a refused save's stream too: every byte is written
+		int storeBytes, objectBytes;	//puncho - P2b.1.10k: the checker keeps a size-refused save's stream too: every byte is written (R7.7: a console refusal writes none, so CanTraceSave keeps the test commands from running then)
 		gameLocal.SaveGame( pipeline, &stringsFile, storeBytes, objectBytes );
 	}
 	pipeline->Finish();
@@ -3060,6 +3060,14 @@ static bool CanTraceSave( const char* command )
 		gameLocal.Printf( "%s: needs a single-player map running\n", command );
 		return false;
 	}
+	//puncho start - R7.7 (E-HALO-21): idGameLocal::SaveGame refuses while the console's script command has compiled code
+	// into this map, and these commands would go on with an empty stream (testSaveRoundTrip's load of it never ends)
+	if( gameLocal.program.ConsoleCompiled() )
+	{
+		gameLocal.Printf( "%s: refused, the console's script command compiled code into this map (load a map or a save first)\n", command );
+		return false;
+	}
+	//puncho end
 	return true;
 }
 

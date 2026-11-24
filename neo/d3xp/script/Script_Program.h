@@ -534,6 +534,7 @@ private:
 	int											top_types;
 	int											top_defs;
 	int											top_files;
+	bool										consoleCompiled;	//puncho - R7.7 (E-HALO-21): a console compile listed the pseudo-file "console"
 
 	void										CompileStats();
 	byte*										ReserveDefMemory( int size );
@@ -542,6 +543,12 @@ private:
 public:
 	idVarDef*									returnDef;
 	idVarDef*									returnStringDef;
+	//puncho start - R7.7 (E-HALO-21): true after the console's script command compiled code into this map
+	bool										ConsoleCompiled() const
+	{
+		return consoleCompiled;
+	}
+	//puncho end
 
 	idProgram();
 	~idProgram();

@@ -2220,6 +2220,13 @@ bool idProgram::CompileSource( const char* fileName, const char* text, bool cons
 
 	pendingIncludes.Clear();	// content check: what an earlier compile's error left waiting
 	filenum = GetFilenum( fileName, text, layer );
+	//puncho start - R7.7 (E-HALO-21): GetFilenum has just listed the pseudo-file "console", compiled or not; a save
+	// would list it and no load can read it (idProgram::Restore compiles every listed file), so saves are refused
+	if( console )
+	{
+		consoleCompiled = true;
+	}
+	//puncho end
 
 #if defined(USE_EXCEPTIONS)
 	try
@@ -2339,6 +2346,7 @@ void idProgram::FreeData()
 	returnDef		= NULL;
 	returnStringDef = NULL;
 	sysDef			= NULL;
+	consoleCompiled = false;	//puncho - R7.7 (E-HALO-21): FreeData starts every program, the constructor's too
 
 	// free any special types we've created
 	types.DeleteContents( true );
@@ -2640,6 +2648,7 @@ void idProgram::Restart()
 	statements.SetNum( top_statements );
 	fileList.SetNum( top_files );
 	fileSources.SetNum( top_files );	//puncho - content check (P1-A3b)
+	consoleCompiled = false;	//puncho - R7.7 (E-HALO-21): the console's compiles go with the files past top_files
 	filename.Clear();
 
 	// reset the variables to their default values

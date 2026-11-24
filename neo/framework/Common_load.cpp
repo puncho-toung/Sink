@@ -1756,7 +1756,10 @@ bool idCommonLocal::SaveGame( const char* saveName )
 	const int streamBytes = pipelineFile->Length();
 	if( !fits || streamBytes > MIN_SAVEGAME_SIZE_BYTES )
 	{
-		Warning( "save refused: stream %d (compressed) strings %d store %d objects %d (limits %d/%d)", streamBytes, stringsFile.Length(), storeBytes, objectBytes, MIN_SAVEGAME_SIZE_BYTES, MAX_SAVEGAME_STRING_TABLE_SIZE );
+		if( objectBytes > 0 || streamBytes > MIN_SAVEGAME_SIZE_BYTES )	//puncho - R7.7 (E-HALO-21): a refusal before any object was written (the console's) has printed its own reason
+		{
+			Warning( "save refused: stream %d (compressed) strings %d store %d objects %d (limits %d/%d)", streamBytes, stringsFile.Length(), storeBytes, objectBytes, MIN_SAVEGAME_SIZE_BYTES, MAX_SAVEGAME_STRING_TABLE_SIZE );
+		}
 		delete pipelineFile;
 		pipelineFile = NULL;
 		Dialog().ShowSaveIndicator( false );

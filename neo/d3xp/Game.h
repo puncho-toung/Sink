@@ -367,6 +367,7 @@ public:
 	// Saves the current game state, common may have written some data to the file already.
 	//puncho - P2b.1.10k: false when the string table, or the stream's blocks flushed so far, are past their limits
 	// (idSaveGame::Close), nothing fatal; true is not "fits": common tests the final compressed length after Finish.
+	//puncho - R7.7 (E-HALO-21): also false, before anything is written, while the console's script command has compiled code into the map
 	// storeBytes and objectBytes are the world store's and the objects' uncompressed bytes, for common's refusal line
 	virtual bool				SaveGame( idFile* saveGameFile, idFile* stringTableFile, int& storeBytes, int& objectBytes ) = 0;
 

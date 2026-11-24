@@ -525,6 +525,14 @@ the session may have written some data to the file already
 */
 bool idGameLocal::SaveGame( idFile* f, idFile* strings, int& storeBytes, int& objectBytes )
 {
+	//puncho start - R7.7 (E-HALO-21): a save would list the console's pseudo-file "console", which no load can read
+	// (idProgram::Restore compiles every listed file); refused here, the caller keeps the slot's old save
+	if( program.ConsoleCompiled() )
+	{
+		Warning( "save refused: the console's script command compiled code into this map, which a save cannot restore; saves work again after the next map load or save load" );
+		return false;
+	}
+	//puncho end
 	// The save commits the current map's record first; that commit leaves corpses over the cap out of the record and
 	// never deletes them from the game being saved.
 	worldStore.PrepareSave();
