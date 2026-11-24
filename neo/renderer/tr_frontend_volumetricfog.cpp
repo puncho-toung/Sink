@@ -511,6 +511,9 @@ float R_VolumetricFogPortalDistance( const idRenderLightLocal* ldef, const idWin
 		return distance;		// review O1-4 c: past the reach the record's verdict hands the light to the fog pass, and its rule holds
 	}
 	tr.pc.c_fogPortalsMedium++;		// V5f ( review F1-3; after the reach, V5g R-1 )
+	// REVISIT ( plan row 257, left so by the owner 2026-11-24 ): never culling a soft-sided light's portals is safe but draws
+	// rooms a hard light would cull. V7's review O1-9 gives an exact rule: cull where every ray runs the opaque distance
+	// through full density past the soft band ( fogEdge inside the faces ). Worth it once a map puts soft sides at a portal.
 	if( ldef->parms.fogEdge > 0.0f )
 	{
 		return 0.0f;		// V7 ( row 241 ): soft sides thin the medium near the volume's faces, where the rule below takes it as full
