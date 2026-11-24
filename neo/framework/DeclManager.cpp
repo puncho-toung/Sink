@@ -2773,6 +2773,13 @@ static const char* const FGD_EMIT_EFFECT_CHOICES	= " =\n\t[\n"
 		"\t]\n";
 //puncho end
 
+// V7 ( row 51 ): the key volumetric ( renderLight_t::volumetricMode ), worded as the light editor's combo words it
+static const char* const FGD_VOLUMETRIC_CHOICES	= " =\n\t[\n"
+		"\t\t0 : \"Automatic\"\n"
+		"\t\t1 : \"Always\"\n"
+		"\t\t2 : \"Never\"\n"
+		"\t]\n";
+
 struct fgdLightKey_t
 {
 	const char*		key;
@@ -2798,8 +2805,10 @@ static const fgdLightKey_t FGD_LIGHT_KEYS[] =
 	{ "parallel",				"choices",	"0",					"Sun light: parallel rays from the light_center direction",								FGD_BOOL_CHOICES },
 	{ "primarySun",				"choices",	"0",					"Marks this parallel light as the map's sun for cascaded shadows and the forward light list",	FGD_BOOL_CHOICES },
 	{ "forward",				"integer",	"0",					"Lighting path: 0 = automatic, 1 = force the forward light list, 2 = force the legacy interaction path",	NULL },
-	{ "volumetric",				"integer",	"0",					"Froxel fog: 0 = the fog takes the light where its shadow is known ( a shadow map with a place, or no shadow caster at all ), 1 = also where it has no shadow map ( a light without shadows opts in; its fog shines through walls ), 2 = the light adds no fog",	NULL },
-	{ "fog_albedo",				"float",	"0",					"Froxel fog, a fog light only: the share of its fog that scatters the lights and the ambient, 0 to 1 ( 0 = the fog only darkens and shines with the light's colour, as the fog pass draws it )",	NULL },
+	{ "volumetric",				"choices",	"0",					"Froxel fog: Automatic = the fog takes the light where its shadow is known ( a shadow map with a place, or no shadow caster at all ), Always = also where it has no shadow map ( a light without shadows opts in; its fog shines through walls ), Never = the light adds no fog. A fog light: Automatic, or Never for the classic fog pass only",	FGD_VOLUMETRIC_CHOICES },
+	{ "fog_albedo",				"float",	"0",					"Froxel fog, a fog light only: the share of its fog that scatters the lights and the ambient, 0 to 1 ( 0 = it scatters nothing, as the fog pass draws it; its glow is fog_emission )",	NULL },
+	{ "fog_emission",			"float",	"1",					"Froxel fog, a fog light only: how strongly its fog glows with the light's colour, 0 to 8 ( 1 = as the fog pass draws it; 0 = it only darkens and scatters )",	NULL },
+	{ "fog_edge",				"float",	"0",					"Froxel fog, a fog light only: soft sides: over this many units inside its volume's faces the fog thins to nothing, all but the fog plane's face ( an unrotated box's top, a projected light's far face ), which keeps its ramp, 0 to 4,096 ( 0 = hard sides )",	NULL },
 	{ "noshadows",				"choices",	"0",					"The light casts no shadows",															FGD_BOOL_CHOICES },
 	{ "nospecular",				"choices",	"0",					"The light adds no specular highlights, diffuse only",									FGD_BOOL_CHOICES },
 	//puncho start - the emitter block ( G0 section 2 ); EM_ParseAllFromDict reads each of these keys

@@ -66,6 +66,8 @@ static bool			fogChangedOverflow = false;	// more casters changed this frame tha
 // nothing the frame before, so the frame stamps do not meet, VolumetricFogPass::Render ). A frame with no fog view
 // leaves both as they are. -1, -1: live until the first fog view says otherwise
 static int			fogViewFrame = -1;
+static const idRenderWorldLocal*	fogViewWorld = NULL;	// V7 ( review O1-1 ): the last fog view's world and view, for the light editor's status
+static renderView_t	fogViewRenderView;
 static int			fogLiveFrame = -1;
 static bool			fogChangedStop = false;		// this frame's list takes no more: it overflowed, or the fog is idle
 static bool FogViewTakesFogLight( const viewDef_t* viewDef, float reach );
@@ -163,6 +165,8 @@ float R_VolumetricFogBeginView( const viewDef_t* viewDef, bool& idle )
 		tr.pc.c_fogIdleViews++;
 	}
 	fogViewFrame = tr.frameCount;
+	fogViewWorld = viewDef->renderWorld;
+	fogViewRenderView = viewDef->renderView;
 	if( reach > 0.0f )
 	{
 		fogLiveFrame = tr.frameCount;
@@ -304,6 +308,43 @@ static bool FogLightWithinReach( const idRenderLightLocal* ldef, float reach )
 	return verdict.taken;
 }
 
+// V7: the light's and its material's part of R_VolumetricFogMayTakeFogLight's verdict ( below ), which the light editor's
+// status shares
+// ( R_VolumetricFogLightStatus ), so that the Fog tab's words cannot drift from the verdict: the first test that fails,
+// FOGLIGHT_STATUS_FROXEL when none does
+static fogLightStatus_t FogLightStaticStatus( const idRenderLightLocal* ldef )
+{
+	const idMaterial* shader = ldef->lightShader;
+	if( shader == NULL || !shader->IsFogLight() )
+	{
+		return FOGLIGHT_STATUS_NOT_FOGLIGHT;
+	}
+	if( shader->GetNumStages() == 0 )
+	{
+		return FOGLIGHT_STATUS_NO_STAGE;
+	}
+	if( shader->Spectrum() != 0 )
+	{
+		return FOGLIGHT_STATUS_SPECTRUM;
+	}
+	for( int i = 0; i < shader->GetNumStages(); i++ )
+	{
+		if( shader->GetStage( i )->texture.hasMatrix )
+		{
+			return FOGLIGHT_STATUS_MATRIX;
+		}
+	}
+	if( ldef->parms.parallel )
+	{
+		return FOGLIGHT_STATUS_PARALLEL;
+	}
+	if( ldef->parms.volumetricMode == LIGHT_VOLUMETRIC_NEVER )
+	{
+		return FOGLIGHT_STATUS_NEVER;
+	}
+	return FOGLIGHT_STATUS_FROXEL;
+}
+
 /*
 ====================
 R_VolumetricFogMayTakeFogLight
@@ -324,19 +365,67 @@ bool R_VolumetricFogMayTakeFogLight( const idRenderLightLocal* ldef, float alpha
 	{
 		return false;
 	}
-	const idMaterial* shader = ldef->lightShader;
-	if( shader == NULL || !shader->IsFogLight() || shader->GetNumStages() == 0 || shader->Spectrum() != 0 )
+	return FogLightStaticStatus( ldef ) == FOGLIGHT_STATUS_FROXEL && alpha > 0.0f;
+}
+
+/*
+====================
+R_VolumetricFogLightStatus
+
+V7 ( plan section 3.5 ): which fog draws a fog light, and why, for the light editor's Fog tab. The light def is the last
+fog view's world's, by its handle ( not tr.primaryWorld: a GUI's render window may draw after the player's view, review
+O1-1 ). The light's and its material's tests are the verdict's own ( FogLightStaticStatus ); the strength is the first
+stage's alpha evaluated as R_AddSingleLight evaluates it, from the last fog view's parms and time; the reach is
+FogLightWithinReach's remembered verdict, if it was made in the last fog view ( a light the view did
+not ask about is not in it ). Reads the frontend's tables and writes nothing: the light editor draws in idCommonLocal::Draw,
+right after game->Draw, on the thread that has just run the frontend ( idGameThread::Run ), SMP or not ( review O2-4 ).
+====================
+*/
+fogLightStatus_t R_VolumetricFogLightStatus( qhandle_t lightDefHandle )
+{
+	const idRenderWorldLocal* world = ( fogViewWorld != NULL && tr.worlds.FindIndex( const_cast<idRenderWorldLocal*>( fogViewWorld ) ) >= 0 ) ? fogViewWorld : NULL;
+	if( world == NULL || lightDefHandle < 0 || lightDefHandle >= world->lightDefs.Num() || world->lightDefs[ lightDefHandle ] == NULL )
 	{
-		return false;
+		return FOGLIGHT_STATUS_UNKNOWN;
 	}
-	for( int i = 0; i < shader->GetNumStages(); i++ )
+	const idRenderLightLocal* ldef = world->lightDefs[ lightDefHandle ];
+	const fogLightStatus_t lightStatus = FogLightStaticStatus( ldef );
+	if( lightStatus == FOGLIGHT_STATUS_NOT_FOGLIGHT )
 	{
-		if( shader->GetStage( i )->texture.hasMatrix )
+		return lightStatus;
+	}
+	if( !cvarSystem->GetCVarBool( "r_volumetricFog" ) )
+	{
+		return FOGLIGHT_STATUS_FOG_OFF;
+	}
+	if( !R_VolumetricFogSwapsFogLights() )
+	{
+		return FOGLIGHT_STATUS_LIGHTS_OFF;
+	}
+	if( lightStatus != FOGLIGHT_STATUS_FROXEL )
+	{
+		return lightStatus;
+	}
+	const idMaterial* shader = ldef->lightShader;
+	float* regs = ( float* )_alloca( Max( shader->GetNumRegisters(), 1 ) * sizeof( float ) );	// review O1-5: no heap per frame
+	shader->EvaluateRegisters( regs, ldef->parms.shaderParms, fogViewRenderView.shaderParms, fogViewRenderView.time[0] * 0.001f,
+							  ldef->parms.referenceSound );
+	if( regs[ shader->GetStage( 0 )->color.registers[3] ] <= 0.0f )
+	{
+		return FOGLIGHT_STATUS_STRENGTH;
+	}
+	// the verdict FogLightWithinReach kept: the light's uniqueId restarts in every world, so the epoch ( moved at a map load
+	// or another world ) guards it; the frame, not the view: the views of one frame ( stereo eyes ) share their verdicts
+	// ( reviews QR2 F-2, QR4-6 )
+	if( ldef->index >= 0 && ldef->index < fogReachVerdicts.Num() )
+	{
+		const fogReachVerdict_t& verdict = fogReachVerdicts[ ldef->index ];
+		if( verdict.uniqueId == ldef->uniqueId && verdict.epoch == fogReachEpoch && verdict.frame == fogViewFrame )
 		{
-			return false;
+			return verdict.taken ? FOGLIGHT_STATUS_FROXEL : FOGLIGHT_STATUS_REACH;
 		}
 	}
-	return !ldef->parms.parallel && ldef->parms.volumetricMode != LIGHT_VOLUMETRIC_NEVER && alpha > 0.0f;
+	return FOGLIGHT_STATUS_NOT_IN_VIEW;
 }
 
 /*
@@ -422,6 +511,10 @@ float R_VolumetricFogPortalDistance( const idRenderLightLocal* ldef, const idWin
 		return distance;		// review O1-4 c: past the reach the record's verdict hands the light to the fog pass, and its rule holds
 	}
 	tr.pc.c_fogPortalsMedium++;		// V5f ( review F1-3; after the reach, V5g R-1 )
+	if( ldef->parms.fogEdge > 0.0f )
+	{
+		return 0.0f;		// V7 ( row 241 ): soft sides thin the medium near the volume's faces, where the rule below takes it as full
+	}
 	if( rate <= 0.0f )
 	{
 		return 0.0f;
@@ -472,7 +565,14 @@ emitter[0] the fog plane the fog pass fogs from, vLight->fogPlane ( unit length,
 negative inside; a projected light's planes do not give it, consultant CN4-1 ), and emitter[1].x the share of the fog
 the stage colour's alpha leaves where it is not a distance: the fog pass draws with the alpha clamped to 0 .. 1 as its
 colour's alpha ( GL_Color ), so an alpha of at most 1 scales the fog's opacity and an alpha above 1 ( the distance ) does
-not ( CN4-2 ). Nothing for any other record: its ids.w stays 0.
+not ( CN4-2 ). V7 ( row 156 ): emitter[1].y the glow, the spawnarg "fog_emission" ( 1 + renderLight_t::fogEmissionBias,
+so 1 by default ), the factor of the fog's emission in place of 1 - albedo. V7 ( row 241 ): soft sides, for a light whose
+spawnarg "fog_edge" is above 0: emitter[1].z the band's width in units, and the inverse lengths of the planes of the
+volume's faces but the fog plane over that width, so that the inject has each face's distance in widths ( review O1-8;
+the planes are world-unit planes in the relative frame, scout SV ): emitter[2] those of S = 0, S = Q, T = 0, T = Q
+( lightProject[0], [0] - [2], [1], [1] - [2] ), emitter[1].w that of the falloff's near face ( lightProject[3] at 0; its
+far face at 1 is the fog plane, which keeps its ramp ); a degenerate plane leaves the sides hard. Nothing for any other
+record: its ids.w stays 0.
 ====================
 */
 void R_VolumetricFogLightRecord( const viewLight_t* vLight, uint32 recordFlags, recordLight_t& rec )
@@ -491,7 +591,27 @@ void R_VolumetricFogLightRecord( const viewLight_t* vLight, uint32 recordFlags, 
 		alpha = vLight->shaderRegisters[ shader->GetStage( 0 )->color.registers[3] ];
 		share = ( alpha <= 1.0f ) ? idMath::ClampFloat( 0.0f, 1.0f, alpha ) : 1.0f;
 	}
-	rec.emitter[1].Set( share, 0.0f, 0.0f, 0.0f );
+	rec.emitter[1].Set( share, 1.0f + vLight->lightDef->parms.fogEmissionBias, 0.0f, 0.0f );
+	const float edge = vLight->lightDef->parms.fogEdge;
+	if( edge > 0.0f )
+	{
+		const idPlane* planes = vLight->lightProject;
+		// in widths ( review O1-8: the inject needs no divide ), divided before the guard below checks them ( review CN4-2 )
+		const float inverse[5] = { 1.0f / ( planes[0].Normal().Length() * edge ), 1.0f / ( ( planes[0].Normal() - planes[2].Normal() ).Length() * edge ),
+									1.0f / ( planes[1].Normal().Length() * edge ), 1.0f / ( ( planes[1].Normal() - planes[2].Normal() ).Length() * edge ),
+									1.0f / ( planes[3].Normal().Length() * edge ) };
+		bool finite = true;
+		for( int i = 0; i < 5; i++ )
+		{
+			finite &= inverse[i] > 0.0f && inverse[i] < idMath::INFINITUM;		// review CN2-4: a plane of no length, or of one past the float range
+		}
+		if( finite )
+		{
+			rec.emitter[1].z = edge;
+			rec.emitter[1].w = inverse[4];
+			rec.emitter[2].Set( inverse[0], inverse[1], inverse[2], inverse[3] );
+		}
+	}
 
 	// V5 ( D21, D29 ): the verdict but for the reach ( R_VolumetricFogMarkLights adds it ): a fog light the froxel fog does not
 	// take keeps the fog pass and stays out of the inject

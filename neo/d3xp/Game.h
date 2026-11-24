@@ -580,6 +580,9 @@ public:
 	virtual bool				MapIsGLTF() const;
 	//puncho - P1-m3: the map file as the game loaded it, merged patches and their log included, NULL with no map; never parses
 	virtual const idMapFile*	MapGetLoadedFile() const;
+	// V7: the render light def of a light entity, -1 for any other entity ( the light editor's Fog tab asks the renderer
+	// which fog draws it )
+	virtual qhandle_t			EntityGetLightDefHandle( const idEntity* ent ) const;
 
 };
 

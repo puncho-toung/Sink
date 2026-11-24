@@ -581,6 +581,25 @@ void R_ScreenshotFilename( int& lastNumber, const char* base, idStr& fileName );
 // ---- TRACK V ( V4 ): the froxel fog's media of a map from its worldspawn's keys; the game calls it at every spawn and
 // restore of the worldspawn ( renderer/tr_frontend_volumetricfog.cpp ) ----
 void R_VolumetricFogMapKeys( const idDict& worldspawnArgs );
+// V7: which fog draws a fog light, and why, for the light editor's Fog tab ( R_VolumetricFogLightStatus, the light def of
+// the last fog view's world by its handle; the editor words the answer )
+enum fogLightStatus_t
+{
+	FOGLIGHT_STATUS_FROXEL,			// the froxel fog draws it
+	FOGLIGHT_STATUS_UNKNOWN,		// no such light def in the last fog view's world
+	FOGLIGHT_STATUS_NOT_FOGLIGHT,	// its material is not a fog light
+	FOGLIGHT_STATUS_FOG_OFF,		// r_volumetricFog 0: the fog pass draws every fog light
+	FOGLIGHT_STATUS_LIGHTS_OFF,		// the froxel fog takes no fog lights ( r_volumetricFogLights, its media or its translucent fog off, the furnace )
+	FOGLIGHT_STATUS_NO_STAGE,		// its material has no stage
+	FOGLIGHT_STATUS_SPECTRUM,		// its material is of another spectrum
+	FOGLIGHT_STATUS_MATRIX,			// its material moves its texture
+	FOGLIGHT_STATUS_PARALLEL,		// a parallel light
+	FOGLIGHT_STATUS_NEVER,			// "volumetric" 2: the classic fog pass only
+	FOGLIGHT_STATUS_STRENGTH,		// its stage's alpha is 0
+	FOGLIGHT_STATUS_REACH,			// its volume reached past the fog's reach from the last fog view's eye
+	FOGLIGHT_STATUS_NOT_IN_VIEW		// not asked in the last fog view
+};
+fogLightStatus_t R_VolumetricFogLightStatus( qhandle_t lightDefHandle );
 // ---- END TRACK V ----
 
 #endif /* !__RENDERER_H__ */

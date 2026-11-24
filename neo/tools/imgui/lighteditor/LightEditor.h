@@ -82,6 +82,16 @@ public:
 	int			lightStyle;		// RBDOOM specific, saved to map as "style"
 	bool		primarySun;		// spawnarg "primarySun": this sun is the map's primary sun ( D42, D73 )
 	int			forwardMode;	// spawnarg "forward": 0 = auto, 1 = forward list, 2 = legacy
+	// V7: the fog keys ( the Fog tab; volumetric also in the Misc options ). shaderParm3 is a fog light's distance ( above 1 )
+	// or its faint strength ( 0 to 1 ), 1 when absent; ToDict writes the tab's value for a fog light the tab edited
+	// ( fogParm3Edited ), else the key's text as read ( fogParm3Read ): on another light it is the material's to read
+	float		fogParm3;
+	idStr		fogParm3Read;	// the key's text as read, empty when the light had none: ToDict writes it back unless the tab edited a fog light's density
+	bool		fogParm3Edited;
+	float		fogAlbedo;		// spawnarg "fog_albedo", 0 to 1
+	float		fogEmission;	// spawnarg "fog_emission", the glow, 0 to 8, 1 by default
+	float		fogEdge;		// spawnarg "fog_edge", soft sides in units, 0 = hard
+	int			volumetricMode;	// spawnarg "volumetric": 0 = automatic, 1 = always, 2 = never
 
 	emitterData_t	emitter;			// the emitter and emit_* keys; disabled on a texture light
 	bool		autoRange;			// emit_auto_range, read by the editors only
@@ -98,6 +108,14 @@ public:
 	void		FromDict( const idDict* e );
 	void		ToDict( idDict* e );
 };
+
+// V7: the Fog tab's controls without a light in their arguments, for track M's panel too ( WP-M1 ): Density ( 0 to 100,
+// logarithmic over a fog distance of 8,192 to 32 units ) and Distance, bound to one distance, with a line that says what is
+// left of the light behind the fog at the medium's rate; and the scattering albedo. Each returns true on a change
+float		LightFogDensityToDistance( float density );
+float		LightFogDistanceToDensity( float distance );
+bool		DrawFogDensityControls( float& distance, float rate );
+bool		DrawFogAlbedoControl( float& albedo );
 
 // D24 / plan 3.5: one light committed in this session, keyed by entityName. The locator part
 // (isNew .. indexHint) is resolved once, at the light's first commit.
@@ -192,6 +210,7 @@ private:
 	idEntity*			lightEntity;
 
 	idList<idStr>		textureNames;
+	idList<idStr>		fogMaterialNames;	// V7: the fog light materials the Fog tab lists
 	int					currentTextureIndex;
 	idImage*			currentTexture;
 	const idMaterial*	currentTextureMaterial;
@@ -279,6 +298,9 @@ private:
 	void				LoadLightTextures();
 	static bool			TextureItemsGetter( void* data, int idx, const char** out_text );
 	void				LoadCurrentTexture();
+	void				SelectCurrentTexture();	// V7: the Texture tab's combo index of cur.strTexture, and its image
+	bool				DrawFogTab();
+	static bool			FogMaterialItemsGetter( void* data, int idx, const char** out_text );
 
 	void				TempApplyChanges();
 	bool				SaveChanges( bool flushNow, bool onlyThisLight );

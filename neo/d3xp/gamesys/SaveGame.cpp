@@ -2217,6 +2217,8 @@ void idRestoreGame::ReadRenderLight( renderLight_t& renderLight )
 	renderLight.forwardMode = 0;			// every other owner ( an FX light restored into uncleared memory ) gets the defaults
 	renderLight.volumetricMode = 0;		// V2: the same
 	renderLight.fogAlbedo = 0.0f;			// V4: the same
+	renderLight.fogEmissionBias = 0.0f;	// V7: the same ( glow 1 )
+	renderLight.fogEdge = 0.0f;				// V7: the same ( hard sides )
 	ReadMat3( renderLight.axis );
 	ReadVec3( renderLight.origin );
 
