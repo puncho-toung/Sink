@@ -181,6 +181,7 @@ void idAASBuild::MergeLeafNodes( idBrushBSP& bsp )
 	common->Printf( "[Merge Leaf Nodes]\n" );
 
 	MergeLeafNodes_r( bsp, bsp.GetRootNode() );
+	bsp.RemoveMergedLeafNodes();	//puncho - Phase 2C P2.2
 	bsp.GetRootNode()->RemoveFlagRecurse( NODE_DONE );
 	bsp.PruneMergedTree_r( bsp.GetRootNode() );
 

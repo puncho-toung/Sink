@@ -43,6 +43,40 @@ If you have questions concerning this license or the applicable additional terms
 
 //#define OUPUT_BSP_STATS_PER_GRID_CELL
 
+//puncho start - Phase 2C P2.2: leaf nodes merged away are freed after the merging (TryMergeLeafNodes)
+idCVar aas_mergeLeafFix( "aas_mergeLeafFix", "1", CVAR_TOOL | CVAR_BOOL, "1 = a leaf node merged away is kept, empty, until the merging ends, and every reference the tree still has to it is then replaced by the leaf node it was merged into; 0 = v0001.7k's merging, which can leave references to merged leaf nodes, deleted ones among them" );
+//puncho end
+
+//puncho start - Phase 2C P2.2
+/*
+============
+SplitWindingDouble
+
+idWinding::Split of a float winding with the new points made in double (idDWinding::Split) and rounded once per
+coordinate: in float the crossing of a portal edge with a plane far from the origin is off by about the rounding of the
+point distances over their difference. With the portal splits in float as well, the aas48 area spread over copies of a
+map at 0, 28k and 30k was 0.8 points higher for integer content and 0.6 for rotated (P2.2 plan D, 66 maps). Takes the
+float split when a piece overflows idDWinding.
+============
+*/
+static int SplitWindingDouble( const idWinding& w, const idPlane& plane, const float epsilon, idWinding** front, idWinding** back )
+{
+	idDWinding dw, dfront, dback;
+	idDPlane dplane;
+
+	dplane.FromPlane( plane );
+	dw.FromWinding( w, vec3_origin );
+	const int side = dw.Split( dplane, epsilon, dfront, dback );
+	if( dw.Overflowed() || dfront.Overflowed() )
+	{
+		return w.Split( plane, epsilon, front, back );
+	}
+	*front = ( side != SIDE_BACK ) ? dfront.ToWinding( vec3_origin ) : NULL;
+	*back = ( side != SIDE_FRONT ) ? dback.ToWinding( vec3_origin ) : NULL;
+	return side;
+}
+//puncho end
+
 
 //===============================================================
 //
@@ -192,7 +226,16 @@ int idBrushBSPPortal::Split( const idPlane& splitPlane, idBrushBSPPortal** front
 	idWinding* frontWinding, *backWinding;
 
 	( *front ) = ( *back ) = NULL;
-	winding->Split( splitPlane, 0.1f, &frontWinding, &backWinding );
+	//puncho start - Phase 2C P2.2: in double
+	if( aas_brushWindingsDouble.GetBool() )
+	{
+		SplitWindingDouble( *winding, splitPlane, 0.1f, &frontWinding, &backWinding );
+	}
+	else
+	{
+		winding->Split( splitPlane, 0.1f, &frontWinding, &backWinding );
+	}
+	//puncho end
 	if( frontWinding )
 	{
 		( *front ) = new idBrushBSPPortal();
@@ -246,6 +289,7 @@ idBrushBSPNode::idBrushBSPNode()
 	children[0] = children[1] = NULL;
 	areaNum = 0;
 	occupied = 0;
+	mergedInto = NULL;	//puncho - Phase 2C P2.2
 }
 
 /*
@@ -361,6 +405,40 @@ bool idBrushBSPNode::TestLeafNode()
 	return true;
 }
 
+//puncho start - Phase 2C P2.2
+/*
+============
+idBrushBSPNode::MidWindingDouble
+
+Split's mid winding in double: the 2^18 square on the split plane clipped by the node's portal planes, rounded once
+per coordinate; NULL when nothing is left. Returns false, setting nothing, when a clip overflows idDWinding.
+============
+*/
+bool idBrushBSPNode::MidWindingDouble( const idPlane& splitPlane, idWinding** mid ) const
+{
+	idDWinding w;
+	idDPlane plane;
+	int s;
+
+	plane.FromPlane( splitPlane );
+	w.BaseForPlane( plane, MAX_WORLD_SIZE );
+	bool left = true;
+	for( const idBrushBSPPortal* p = portals; p && left; p = p->next[s] )
+	{
+		s = ( p->nodes[1] == this );
+		idDPlane portalPlane;
+		portalPlane.FromPlane( p->plane );
+		left = w.Clip( s ? -portalPlane : portalPlane, 0.1f, false );
+	}
+	if( w.Overflowed() )
+	{
+		return false;
+	}
+	*mid = left ? w.ToWinding( vec3_origin ) : NULL;
+	return true;
+}
+//puncho end
+
 /*
 ============
 idBrushBSPNode::Split
@@ -373,20 +451,25 @@ bool idBrushBSPNode::Split( const idPlane& splitPlane, int splitPlaneNum )
 	idBrushBSPPortal* p, *midPortal, *newPortals[2];
 	idBrushBSPNode* newNodes[2];
 
-	mid = new idWinding( splitPlane.Normal(), splitPlane.Dist() );
-
-	for( p = portals; p && mid; p = p->next[s] )
+	//puncho start - Phase 2C P2.2: the mid winding in double; in float as before if a clip overflows
+	if( !aas_brushWindingsDouble.GetBool() || !MidWindingDouble( splitPlane, &mid ) )
 	{
-		s = ( p->nodes[1] == this );
-		if( s )
+		mid = new idWinding( splitPlane.Normal(), splitPlane.Dist() );
+
+		for( p = portals; p && mid; p = p->next[s] )
 		{
-			mid = mid->Clip( -p->plane, 0.1f, false );
-		}
-		else
-		{
-			mid = mid->Clip( p->plane, 0.1f, false );
+			s = ( p->nodes[1] == this );
+			if( s )
+			{
+				mid = mid->Clip( -p->plane, 0.1f, false );
+			}
+			else
+			{
+				mid = mid->Clip( p->plane, 0.1f, false );
+			}
 		}
 	}
+	//puncho end
 
 	if( !mid )
 	{
@@ -678,6 +761,7 @@ idBrushBSP::~idBrushBSP
 idBrushBSP::~idBrushBSP()
 {
 
+	RemoveMergedLeafNodes();	//puncho - Phase 2C P2.2: merged leaf nodes not removed yet
 	RemoveMultipleLeafNodeReferences_r( root );
 	Free_r( root );
 
@@ -1352,6 +1436,64 @@ idWinding* idBrushBSP::BaseWindingForNode( idBrushBSPNode* node )
 	return w;
 }
 
+//puncho start - Phase 2C P2.2
+/*
+============
+idBrushBSP::NodePortalWindingDouble
+
+MakeNodePortal's winding in double: BaseWindingForNode's 2^18 square clipped by the parents, then by the node's
+portals, rounded once per coordinate; NULL when nothing is left. Returns false, setting nothing, when a clip overflows
+idDWinding.
+============
+*/
+bool idBrushBSP::NodePortalWindingDouble( idBrushBSPNode* node, idWinding** w ) const
+{
+	idDWinding dw;
+	idDPlane plane;
+	int side = 0;
+
+	plane.FromPlane( node->plane );
+	dw.BaseForPlane( plane, MAX_WORLD_SIZE );
+	bool left = true;
+
+	// clip by all the parents
+	const idBrushBSPNode* child = node;
+	for( const idBrushBSPNode* n = node->parent; n && left; n = n->parent )
+	{
+		plane.FromPlane( n->plane );
+		// the front for the front child, else the back
+		left = dw.Clip( ( n->children[0] == child ) ? plane : -plane, BASE_WINDING_EPSILON, false );
+		child = n;
+	}
+
+	// clip by all the other portals in the node
+	for( const idBrushBSPPortal* p = node->portals; p && left; p = p->next[side] )
+	{
+		if( p->nodes[0] == node )
+		{
+			side = 0;
+		}
+		else if( p->nodes[1] == node )
+		{
+			side = 1;
+		}
+		else
+		{
+			common->Error( "MakeNodePortal: mislinked portal" );
+		}
+		plane.FromPlane( p->plane );
+		left = dw.Clip( side ? -plane : plane, 0.1f, false );
+	}
+
+	if( dw.Overflowed() )
+	{
+		return false;
+	}
+	*w = left ? dw.ToWinding( vec3_origin ) : NULL;
+	return true;
+}
+//puncho end
+
 /*
 ============
 idBrushBSP::MakeNodePortal
@@ -1366,26 +1508,31 @@ void idBrushBSP::MakeNodePortal( idBrushBSPNode* node )
 	idWinding* w;
 	int side = 0;
 
-	w = BaseWindingForNode( node );
-
-	// clip the portal by all the other portals in the node
-	for( p = node->portals; p && w; p = p->next[side] )
+	//puncho start - Phase 2C P2.2: the portal winding in double; in float as before if a clip overflows
+	if( !aas_brushWindingsDouble.GetBool() || !NodePortalWindingDouble( node, &w ) )
 	{
-		if( p->nodes[0] == node )
+		w = BaseWindingForNode( node );
+
+		// clip the portal by all the other portals in the node
+		for( p = node->portals; p && w; p = p->next[side] )
 		{
-			side = 0;
-			w = w->Clip( p->plane, 0.1f );
-		}
-		else if( p->nodes[1] == node )
-		{
-			side = 1;
-			w = w->Clip( -p->plane, 0.1f );
-		}
-		else
-		{
-			common->Error( "MakeNodePortal: mislinked portal" );
+			if( p->nodes[0] == node )
+			{
+				side = 0;
+				w = w->Clip( p->plane, 0.1f );
+			}
+			else if( p->nodes[1] == node )
+			{
+				side = 1;
+				w = w->Clip( -p->plane, 0.1f );
+			}
+			else
+			{
+				common->Error( "MakeNodePortal: mislinked portal" );
+			}
 		}
 	}
+	//puncho end
 
 	if( !w )
 	{
@@ -1446,7 +1593,16 @@ void idBrushBSP::SplitNodePortals( idBrushBSPNode* node )
 		p->RemoveFromNode( p->nodes[1] );
 
 		// cut the portal into two portals, one on each side of the cut plane
-		p->winding->Split( *plane, SPLIT_WINDING_EPSILON, &frontWinding, &backWinding );
+		//puncho start - Phase 2C P2.2: in double
+		if( aas_brushWindingsDouble.GetBool() )
+		{
+			SplitWindingDouble( *p->winding, *plane, SPLIT_WINDING_EPSILON, &frontWinding, &backWinding );
+		}
+		else
+		{
+			p->winding->Split( *plane, SPLIT_WINDING_EPSILON, &frontWinding, &backWinding );
+		}
+		//puncho end
 
 		if( frontWinding && frontWinding->IsTiny() )
 		{
@@ -2247,6 +2403,62 @@ void idBrushBSP::PruneMergedTree_r( idBrushBSPNode* node )
 	}
 }
 
+//puncho start - Phase 2C P2.2: merged leaf nodes removed after the merging
+/*
+============
+idBrushBSP::ResolveMergedLeafNodes_r
+============
+*/
+void idBrushBSP::ResolveMergedLeafNodes_r( idBrushBSPNode* node )
+{
+	for( int i = 0; i < 2; i++ )
+	{
+		idBrushBSPNode* child = node->children[i];
+		if( !child )
+		{
+			continue;
+		}
+		if( child->mergedInto )
+		{
+			// the leaf node that holds the merged space now
+			while( child->mergedInto )
+			{
+				child = child->mergedInto;
+			}
+			node->children[i] = child;
+		}
+		else if( child->children[0] || child->children[1] )
+		{
+			ResolveMergedLeafNodes_r( child );
+		}
+	}
+}
+
+/*
+============
+idBrushBSP::RemoveMergedLeafNodes
+
+  TryMergeLeafNodes keeps a merged leaf node, empty, while the tree may still reference it (see there)
+============
+*/
+void idBrushBSP::RemoveMergedLeafNodes()
+{
+	if( !mergedLeafNodes.Num() )
+	{
+		return;
+	}
+	if( root )
+	{
+		ResolveMergedLeafNodes_r( root );
+	}
+	for( int i = 0; i < mergedLeafNodes.Num(); i++ )
+	{
+		delete mergedLeafNodes[i];
+	}
+	mergedLeafNodes.Clear();
+}
+//puncho end
+
 /*
 ============
 idBrushBSP::UpdateTreeAfterMerge_r
@@ -2391,6 +2603,19 @@ bool idBrushBSP::TryMergeLeafNodes( idBrushBSPPortal* portal, int side )
 
 	// replace every reference to node2 by a reference to node1
 	UpdateTreeAfterMerge_r( root, bounds, node2, node1 );
+
+	//puncho start - Phase 2C P2.2: UpdateTreeAfterMerge_r passes by the branches the merged portals' bounds are 2 units
+	// clear of, but a leaf node's space can reach beyond its portals (a split of a leaf node its portals do not close
+	// leaves a huge, unclipped winding): v0001.7k left 7 references to merged leaf nodes on 6 of 66 test maps, harmless
+	// only because none had been deleted, and with the double windings one had been (heap corruption). node2 is kept,
+	// empty, until RemoveMergedLeafNodes puts the leaf node it is merged into in its place
+	if( aas_mergeLeafFix.GetBool() )
+	{
+		node2->mergedInto = node1;
+		mergedLeafNodes.Append( node2 );
+		return true;
+	}
+	//puncho end
 
 	// HarrievG: fixed crash with polygon maps
 	if( node2->GetFlags() & NODE_DONE )

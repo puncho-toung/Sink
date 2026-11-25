@@ -392,6 +392,7 @@ idBrushList idAASBuild::AddBrushesForMapBrush( const idMapBrush* mapBrush, const
 	idList<idBrushSide*> sideList;
 	idBrush* brush;
 	idPlane plane;
+	const idBrushFrame worldFrame;	//puncho - Phase 2C P2.2: centre 0, the AAS windings are made at world coordinates
 
 	contents = 0;
 	for( i = 0; i < mapBrush->GetNumSides(); i++ )
@@ -402,6 +403,15 @@ idBrushList idAASBuild::AddBrushesForMapBrush( const idMapBrush* mapBrush, const
 		plane = mapSide->GetPlane();
 		plane.FixDegeneracies( DEGENERATE_DIST_EPSILON );
 		sideList.Append( new idBrushSide( plane, -1 ) );
+		//puncho start - Phase 2C P2.2: a non-axial Valve 220 side whose map points define its plane keeps the plane
+		// made from those points in double (dmap's S5b rule, idBrushFrame::PlaneFromPoints): the stored float plane is off
+		// by an ulp of its distance far from the origin. The points are less the entity origin the parser took off
+		idDPlane dplane;
+		if( aas_brushWindingsDouble.GetBool() && mapSide->GetProjectionType() == idMapBrushSide::PROJECTION_VALVE220 && worldFrame.PlaneFromPointsDouble( mapSide->planepts, mapSide->GetOrigin(), plane, dplane ) )
+		{
+			sideList[sideList.Num() - 1]->SetDPlane( dplane );
+		}
+		//puncho end
 	}
 
 	contents = ContentsForAAS( contents );

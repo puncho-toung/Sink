@@ -75,6 +75,10 @@ public:
 	// plane is non-axial and each point lies within BRUSHFRAME_SOURCE_PLANE_EPSILON of it; false, leaving `local` unset,
 	// otherwise (an axial plane, points that do not define the plane, collinear points)
 	bool			PlaneFromPoints( const idVec3 points[3], const idVec3& offset, const idPlane& plane, idPlane& local ) const;
+	// the same plane kept in double (Phase 2C P2.2): PlaneFromPoints is this rounded component by component
+	bool			PlaneFromPointsDouble( const idVec3 points[3], const idVec3& offset, const idPlane& plane, idDPlane& local ) const;	//puncho - Phase 2C P2.2
+	// MovePlane kept in double (Phase 2C P2.2): the float plane widened, then d + n.c
+	idDPlane		MovePlaneDouble( const idPlane& plane ) const;	//puncho - Phase 2C P2.2
 	// adds c back to every point of a winding made in the frame
 	void			ToWorld( idWinding& w ) const;
 
@@ -124,6 +128,28 @@ ID_INLINE idPlane idBrushFrame::MovePlane( const idPlane& plane ) const
 
 ID_INLINE bool idBrushFrame::PlaneFromPoints( const idVec3 points[3], const idVec3& offset, const idPlane& plane, idPlane& local ) const
 {
+	//puncho start - Phase 2C P2.2: the double rule, rounded once per component (the same arithmetic as before)
+	idDPlane dlocal;
+	if( !PlaneFromPointsDouble( points, offset, plane, dlocal ) )
+	{
+		return false;
+	}
+	local = dlocal.ToPlane();
+	return true;
+	//puncho end
+}
+
+//puncho start - Phase 2C P2.2
+ID_INLINE idDPlane idBrushFrame::MovePlaneDouble( const idPlane& plane ) const
+{
+	idDPlane local;
+	local.FromPlane( plane );
+	return local.Moved( centre );
+}
+//puncho end
+
+ID_INLINE bool idBrushFrame::PlaneFromPointsDouble( const idVec3 points[3], const idVec3& offset, const idPlane& plane, idDPlane& local ) const	//puncho - Phase 2C P2.2: was PlaneFromPoints
+{
 	if( plane.Type() < PLANETYPE_TRUEAXIAL )
 	{
 		return false;
@@ -159,10 +185,10 @@ ID_INLINE bool idBrushFrame::PlaneFromPoints( const idVec3 points[3], const idVe
 	{
 		return false;
 	}
-	local[0] = ( float )n[0];
-	local[1] = ( float )n[1];
-	local[2] = ( float )n[2];
-	local[3] = ( float ) - ( n[0] * p[1][0] + n[1] * p[1][1] + n[2] * p[1][2] );
+	local.n[0] = n[0];	//puncho - Phase 2C P2.2: kept in double
+	local.n[1] = n[1];
+	local.n[2] = n[2];
+	local.d = -( n[0] * p[1][0] + n[1] * p[1][1] + n[2] * p[1][2] );
 	return true;
 }
 

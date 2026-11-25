@@ -803,6 +803,14 @@ RemoveIfColinear
 ====================
 */
 #define	COLINEAR_EPSILON	0.1
+//puncho start - Phase 2C P2.2 (inv B): the outline vertex the optimizer drops as colinear must lie closer to the
+// new edge than the T-junction pass's colinear test ( 1.8 / 32, tritjunction.cpp ), or the neighbouring surface keeps
+// the vertex, the T-junction pass cannot put it back into this edge, and the sliver between becomes a crack (cl_vi_0
+// prism 104: an apex 0.093 off a 130-unit edge, a 6 units^2 sliver, 9 see-through rays). 0.05 is just below the
+// T-junction pass's 0.05625: on vertex-edited organic maps it keeps 3.5-4 % more triangles than stock, 1/32 kept 8.5-10 %
+idCVar dmap_optColinearFix( "dmap_optColinearFix", "1", CVAR_TOOL | CVAR_BOOL, "1 = the optimizer removes an outline vertex as colinear only within dmap_optColinearEps of the new edge, which the T-junction pass can split back; 0 = stock 0.1" );
+idCVar dmap_optColinearEps( "dmap_optColinearEps", "0.05", CVAR_TOOL | CVAR_FLOAT, "the optimizer's colinear tolerance with dmap_optColinearFix 1 (keep it below the T-junction pass's 1.8 / 32 = 0.05625)" );
+//puncho end
 static	void RemoveIfColinear( optVertex_t* ov, optIsland_t* island )
 {
 	optEdge_t*	e, *e1, *e2;
@@ -906,7 +914,7 @@ static	void RemoveIfColinear( optVertex_t* ov, optIsland_t* island )
 	offset = point - v2->v.xyz;
 	off = offset.Length();
 
-	if( off > COLINEAR_EPSILON )
+	if( off > ( dmap_optColinearFix.GetBool() ? dmap_optColinearEps.GetFloat() : COLINEAR_EPSILON ) )	//puncho - Phase 2C P2.2 (inv B)
 	{
 		return;
 	}

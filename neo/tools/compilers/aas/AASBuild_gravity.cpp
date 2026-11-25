@@ -125,6 +125,134 @@ idAASBuild::GravSubdivLeafNode
 #define FACE_CHECKED			BIT(31)
 #define GRAVSUBDIV_EPSILON		0.1f
 
+//puncho start - Phase 2C P2.2: gravitational edge planes from the planes that meet at the edge
+idCVar aas_gravityEdgePlanes( "aas_gravityEdgePlanes", "1", CVAR_TOOL | CVAR_BOOL, "1 = a gravitational split plane through a non-axial gap edge takes the edge direction from the two portal planes that meet there, crossed in double, the same wherever the content sits; 0 = from the edge's float vertices as in v0001.7k" );
+
+/*
+============
+GravEdgeNormal
+
+The normal of the gravitational plane through the gap portal's edge v1 -> v2, with the edge direction taken from the
+planes that meet there: the gap portal's plane crossed in double with the plane, at the largest angle to it, of a
+portal of either node the gap portal separates that holds both ends within GRAVSUBDIV_EPSILON and meets the gap plane
+along the edge (see the test below). Those planes come from
+the plane set and do not change with where the content sits. The difference of the edge's float vertices carries
+their rounding: at 28k a short edge's plane tilts by about 5e-5 rad, five times the plane set's 1e-5 normal epsilon,
+so another gravitational plane is chosen and the leaves merge differently (P2.2 plan D, 66 maps, with
+aas_brushWindingsDouble: the mean aas48 area spread over copies at 0, 28k and 30k fell from 3.16 to 0.90 % for integer
+content and from 4.91 to 4.29 % for rotated, the far copies' bias from +2.7 to -0.2 % and from +3.8 to +3.0 %).
+An axis-parallel edge keeps the float normal: its direction is exact, and idVec3::Normalize leaves 0.99999994 for some
+lengths where double gives 1, which would change all-axial maps. So does an edge no portal plane meets at an angle
+along the edge.
+============
+*/
+static void GravEdgeNormal( const idBrushBSPPortal* gap, const idVec3& v1, const idVec3& v2, const idVec3& invGravityDir, idVec3& normal )
+{
+	if( ( v1[0] == v2[0] && v1[1] == v2[1] ) || ( v1[0] == v2[0] && v1[2] == v2[2] ) || ( v1[1] == v2[1] && v1[2] == v2[2] ) )
+	{
+		return;
+	}
+
+	const idPlane& gapPlane = gap->GetPlane();
+	double dir[3] = { 0.0, 0.0, 0.0 };
+	double bestLength = 0.0;
+	//puncho start - Phase 2C P2.2 (Opus C review): a plane counts only if it meets the gap plane along the edge. Holding
+	// both ends within GRAVSUBDIV_EPSILON is not enough on a short edge: a portal plane through one end that crosses the
+	// edge passes too, and as the plane at the largest angle it won. Its line ran up to 90 degrees off the edge, and its
+	// gravitational plane cut the gap winding it was made to bound (66 maps, runAAS on v0001.7k's .proc: 3,464 planes
+	// more than sin 0.1 off the float edge, 1,639 gap windings cut; the float normal cuts none). The line must now run
+	// within the float edge's own error of it: each end is rounded once to float (half an ulp, at most 2^-24 of the
+	// largest coordinate, per component), so the float edge's direction is off by at most sqrt( 3 ) 2^-23 M / length;
+	// twice that, plus 1e-4 for the float planes' own normals crossed at 1e-3 rad or more. When no plane is that close,
+	// the plane through the float edge stays. Measured on the 66 maps: 0 gap windings cut, the largest accepted
+	// deviation sin 0.042, the float normal kept on 2,303 of 716,342 non-axial edges; mean aas48 area spread over the
+	// copies at 0, 28k and 30k 0.90 -> 0.86 % (integer), 4.29 -> 4.27 % (rotated)
+	const double edge[3] = { ( double )v2[0] - v1[0], ( double )v2[1] - v1[1], ( double )v2[2] - v1[2] };
+	const double edgeLength = sqrt( edge[0] * edge[0] + edge[1] * edge[1] + edge[2] * edge[2] );
+	double largest = 0.0;
+	for( int k = 0; k < 3; k++ )
+	{
+		largest = Max( largest, ( double )idMath::Fabs( v1[k] ) );
+		largest = Max( largest, ( double )idMath::Fabs( v2[k] ) );
+	}
+	const double maxSin = 1e-4 + 2.0 * 1.7320508 * ( 1.0 / 8388608.0 ) * largest / edgeLength;
+	//puncho end
+	for( int n = 0; n < 2; n++ )
+	{
+		const idBrushBSPNode* node = gap->GetNode( n );
+		int s;
+		for( const idBrushBSPPortal* p = node->GetPortals(); p; p = p->Next( s ) )
+		{
+			s = ( p->GetNode( 1 ) == node );
+			if( p == gap )
+			{
+				continue;
+			}
+			const idPlane& edgePlane = p->GetPlane();
+			if( idMath::Fabs( edgePlane.Distance( v1 ) ) > GRAVSUBDIV_EPSILON || idMath::Fabs( edgePlane.Distance( v2 ) ) > GRAVSUBDIV_EPSILON )
+			{
+				continue;
+			}
+			const double cross[3] =
+			{
+				( double )gapPlane[1] * edgePlane[2] - ( double )gapPlane[2] * edgePlane[1],
+				( double )gapPlane[2] * edgePlane[0] - ( double )gapPlane[0] * edgePlane[2],
+				( double )gapPlane[0] * edgePlane[1] - ( double )gapPlane[1] * edgePlane[0]
+			};
+			const double length = sqrt( cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2] );
+			//puncho start - Phase 2C P2.2 (Opus C review): the line where the two planes meet must run along the edge (a
+			// plane under 1e-3 rad to the gap plane is never taken, see below, and is not tested)
+			if( length > 1e-3 )
+			{
+				const double off[3] =
+				{
+					cross[1] * edge[2] - cross[2] * edge[1],
+					cross[2] * edge[0] - cross[0] * edge[2],
+					cross[0] * edge[1] - cross[1] * edge[0]
+				};
+				const double offSin = sqrt( off[0] * off[0] + off[1] * off[1] + off[2] * off[2] ) / ( length * edgeLength );
+				if( !( offSin <= maxSin ) )
+				{
+					continue;
+				}
+			}
+			//puncho end
+			if( length > bestLength )
+			{
+				bestLength = length;
+				dir[0] = cross[0];
+				dir[1] = cross[1];
+				dir[2] = cross[2];
+			}
+		}
+	}
+	// planes less than 1e-3 rad apart do not define the edge; no plane along the edge: the float normal stays
+	if( bestLength <= 1e-3 )
+	{
+		return;
+	}
+
+	// along the edge, crossed with the gravity direction as the float normal is
+	if( dir[0] * ( ( double )v2[0] - v1[0] ) + dir[1] * ( ( double )v2[1] - v1[1] ) + dir[2] * ( ( double )v2[2] - v1[2] ) < 0.0 )
+	{
+		dir[0] = -dir[0];
+		dir[1] = -dir[1];
+		dir[2] = -dir[2];
+	}
+	const double n[3] =
+	{
+		dir[1] * invGravityDir[2] - dir[2] * invGravityDir[1],
+		dir[2] * invGravityDir[0] - dir[0] * invGravityDir[2],
+		dir[0] * invGravityDir[1] - dir[1] * invGravityDir[0]
+	};
+	const double length = sqrt( n[0] * n[0] + n[1] * n[1] + n[2] * n[2] );
+	if( length > 1e-6 )
+	{
+		normal.Set( ( float )( n[0] / length ), ( float )( n[1] / length ), ( float )( n[2] / length ) );
+	}
+}
+//puncho end
+
 void idAASBuild::GravSubdivLeafNode( idBrushBSPNode* node )
 {
 	int s1, s2, i, j, k, side1;
@@ -193,6 +321,12 @@ void idAASBuild::GravSubdivLeafNode( idBrushBSPNode* node )
 			{
 				continue;
 			}
+			//puncho start - Phase 2C P2.2: the edge direction from the planes that meet at the edge
+			if( aas_gravityEdgePlanes.GetBool() )
+			{
+				GravEdgeNormal( p1, ( *w1 )[i].ToVec3(), ( *w1 )[( i + 1 ) % w1->GetNumPoints()].ToVec3(), aasSettings->invGravityDir, normal );
+			}
+			//puncho end
 			plane.SetNormal( normal );
 			plane.FitThroughPoint( ( *w1 )[i].ToVec3() );
 

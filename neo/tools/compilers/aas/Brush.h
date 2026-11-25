@@ -43,6 +43,8 @@ If you have questions concerning this license or the applicable additional terms
 #define BRUSH_PLANESIDE_BOTH		( BRUSH_PLANESIDE_FRONT | BRUSH_PLANESIDE_BACK )
 #define BRUSH_PLANESIDE_FACING		4
 
+extern idCVar aas_brushWindingsDouble;	//puncho - Phase 2C P2.2: Brush.cpp
+
 class idBrush;
 class idBrushList;
 
@@ -100,11 +102,23 @@ public:
 	}
 	idBrushSide* 			Copy() const;
 	int						Split( const idPlane& splitPlane, idBrushSide** front, idBrushSide** back ) const;
+	//puncho start - Phase 2C P2.2: the side's plane kept in double for aas_brushWindingsDouble
+	const idDPlane& 		GetDPlane() const
+	{
+		return dplane;
+	}
+	// the same plane as GetPlane() made more exactly (a Valve 220 side's from its map points)
+	void					SetDPlane( const idDPlane& p )
+	{
+		dplane = p;
+	}
+	//puncho end
 
 private:
 	int						flags;
 	int						planeNum;
 	idPlane					plane;
+	idDPlane				dplane;		//puncho - Phase 2C P2.2: plane widened, or made or moved in double
 	idWinding* 				winding;
 };
 
@@ -188,7 +202,7 @@ public:
 	// returns true if the brushes did intersect
 	bool					Subtract( const idBrush* b, idBrushList& list ) const;
 	// split the brush into a front and back brush
-	int						Split( const idPlane& plane, int planeNum, idBrush** front, idBrush** back ) const;
+	int						Split( const idPlane& plane, int planeNum, idBrush** front, idBrush** back, const idDPlane* dplane = NULL ) const;	//puncho - Phase 2C P2.2: dplane = the plane in double, if known
 	// expand the brush for an axial bounding box
 	void					ExpandForAxialBox( const idBounds& bounds );
 	// next brush in list
@@ -211,6 +225,9 @@ private:
 
 private:
 	bool					CreateWindings();
+	bool					CreateWindingsDouble();	//puncho - Phase 2C P2.2
+	bool					MidWindingDouble( const idDPlane& plane, idWinding** mid ) const;	//puncho - Phase 2C P2.2
+	bool					AllSidesAxial() const;	//puncho - Phase 2C P2.2
 	void					BoundBrush( const idBrush* original = NULL );
 	void					AddBevelsForAxialBox();
 	bool					RemoveSidesWithoutWinding();

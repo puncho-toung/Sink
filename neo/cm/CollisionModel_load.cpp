@@ -3165,12 +3165,20 @@ between the two polygons let traces through (generated rock sets g_vi_s2, g_vq_s
 ================
 */
 #define CM_NEAR_NORMAL_EPSILON	0.0001f
-static bool CM_SidePlanesAgree( const idPlane& a, const idPlane& b, const idPlane& localA, const idPlane& localB, const float halfSize, const idMaterial* materialA, const idMaterial* materialB )
+static bool CM_SidePlanesAgree( const idPlane& a, const idPlane& b, const idPlane& localA, const idPlane& localB, const float halfSize, const idMaterial* materialA, const idMaterial* materialB, const bool nearClause )	//puncho - Phase 2C P2.2: nearClause
 {
 	if( a.Compare( b, CM_DUP_NORMAL_EPSILON, CM_DUP_DIST_EPSILON ) )
 	{
 		return true;
 	}
+	//puncho start - Phase 2C P2.2: windings clipped in double (cm_brushWindingsDouble) meet two near-coplanar sides along an
+	// edge exact to the final rounding, so both polygons are kept and nothing passes between them (inv B: 0 holes on 50
+	// maps with the clause off; float windings with it off: up to 1,280)
+	if( !nearClause )
+	{
+		return false;
+	}
+	//puncho end
 	if( materialA != materialB || !localA.Compare( localB, CM_NEAR_NORMAL_EPSILON, CM_DUP_DIST_EPSILON ) )
 	{
 		return false;
@@ -3199,6 +3207,63 @@ static void CM_LocalPlanes( const idMapBrush* mapBrush, const idVec3& offset, co
 		localPlanes[i] = frame.MovePlane( planes[i] );
 	}
 }
+
+//puncho start - Phase 2C P2.2: the collision windings in double
+idCVar cm_brushWindingsDouble( "cm_brushWindingsDouble", "1", CVAR_SYSTEM | CVAR_BOOL, "with cm_brushLocalWindings 1: a non-axial brush's collision polygons and bounds are clipped in double in its frame (the planes kept in double, a Valve 220 side's from its map points) and rounded once per coordinate, and near-coplanar sides each keep their polygon; 0 = float clipping, near-coplanar sides of one material merged" );
+
+/*
+================
+CM_LocalPlanesDouble
+
+CM_LocalPlanes with the planes kept in double (idBrushFrame::PlaneFromPointsDouble, MovePlaneDouble).
+================
+*/
+static void CM_LocalPlanesDouble( const idMapBrush* mapBrush, const idVec3& offset, const idPlane* planes, const int numPlanes, const idBrushFrame& frame, idDPlane* localPlanes )
+{
+	for( int i = 0; i < numPlanes; i++ )
+	{
+		const idMapBrushSide* side = mapBrush->GetSide( i );
+		if( side->GetProjectionType() == idMapBrushSide::PROJECTION_VALVE220 && frame.PlaneFromPointsDouble( side->planepts, offset + side->GetOrigin(), planes[i], localPlanes[i] ) )
+		{
+			continue;
+		}
+		localPlanes[i] = frame.MovePlaneDouble( planes[i] );
+	}
+}
+
+/*
+================
+CM_LocalWindingDouble
+
+The local winding of side `side`, as BaseForPlane( -localPlanes[side], halfSize ) and ClipInPlace( -localPlanes[j], 0 )
+for every other side not in `skip` (NULL: none) make it, clipped in double (idDWinding); the points written to `w`
+in world coordinates (c + q rounded once). Returns false, leaving `w` unchanged, when a clip overflows: the caller then
+takes its float path.
+================
+*/
+static bool CM_LocalWindingDouble( const idDPlane* localPlanes, const int numPlanes, const int side, const bool* skip, const idBrushFrame& frame, idFixedWinding& w )
+{
+	idDWinding dw;
+	dw.BaseForPlane( -localPlanes[side], frame.HalfSize() );
+	bool left = true;
+	for( int j = 0; j < numPlanes && left; j++ )
+	{
+		if( j == side || ( skip != NULL && skip[j] ) )
+		{
+			continue;
+		}
+		left = dw.Clip( -localPlanes[j], 0.0, false );
+	}
+	// an idFixedWinding holds at most MAX_POINTS_ON_WINDING points and drops the rest (Opus A review: a 72-sided prism
+	// lost a wedge of its caps, 8,538 collision holes): such a face takes the float path, as before
+	if( dw.Overflowed() || dw.GetNumPoints() > MAX_POINTS_ON_WINDING )
+	{
+		return false;
+	}
+	dw.ToFixedWinding( frame.Centre(), w );
+	return true;
+}
+//puncho end
 
 /*
 ================
@@ -3322,6 +3387,17 @@ void idCollisionModelManagerLocal::ConvertBrushSides( cm_model_t* model, const i
 		kept[i] = false;
 	}
 	//puncho end
+	//puncho start - Phase 2C P2.2: the local planes kept in double, and per side the sides it is not clipped by
+	const bool dbl = local && cm_brushWindingsDouble.GetBool();
+	idDPlane* dPlanes = NULL;
+	bool* skip = NULL;
+	if( dbl )
+	{
+		dPlanes = ( idDPlane* ) _alloca16( mapBrush->GetNumSides() * sizeof( dPlanes[0] ) );
+		skip = ( bool* ) _alloca16( mapBrush->GetNumSides() * sizeof( skip[0] ) );
+		CM_LocalPlanesDouble( mapBrush, originOffset, planes, mapBrush->GetNumSides(), localFrame, dPlanes );
+	}
+	//puncho end
 
 	// create a collision polygon for each brush side
 	for( i = 0; i < mapBrush->GetNumSides(); i++ )
@@ -3342,7 +3418,7 @@ void idCollisionModelManagerLocal::ConvertBrushSides( cm_model_t* model, const i
 			// and nothing covered C's part of the face
 			for( j = 0; j < i; j++ )
 			{
-				if( kept[j] && CM_SidePlanesAgree( planes[j], planes[i], localPlanes[j], localPlanes[i], localFrame.HalfSize(), sideMaterials[j], material ) )	//puncho - Phase 2C P2.1
+				if( kept[j] && CM_SidePlanesAgree( planes[j], planes[i], localPlanes[j], localPlanes[i], localFrame.HalfSize(), sideMaterials[j], material, !dbl ) )	//puncho - Phase 2C P2.1, P2.2
 				{
 					break;
 				}
@@ -3352,16 +3428,30 @@ void idCollisionModelManagerLocal::ConvertBrushSides( cm_model_t* model, const i
 				continue;
 			}
 			//puncho end
+			//puncho start - Phase 2C P2.2: in double, the float clip below only if a clip overflows
+			bool made = false;
+			if( dbl )
+			{
+				for( j = 0; j < mapBrush->GetNumSides(); j++ )
+				{
+					skip[j] = CM_SidePlanesAgree( planes[j], planes[i], localPlanes[j], localPlanes[i], localFrame.HalfSize(), sideMaterials[j], material, false );
+				}
+				made = CM_LocalWindingDouble( dPlanes, mapBrush->GetNumSides(), i, skip, localFrame, w );
+			}
+			if( !made )
+			{
+			//puncho end
 			w.BaseForPlane( -localPlanes[i], localFrame.HalfSize() );
 			for( j = 0; j < mapBrush->GetNumSides() && w.GetNumPoints(); j++ )
 			{
-				if( i == j || CM_SidePlanesAgree( planes[j], planes[i], localPlanes[j], localPlanes[i], localFrame.HalfSize(), sideMaterials[j], material ) )	//puncho - Phase 2C P2 (F1c), P2.1
+				if( i == j || CM_SidePlanesAgree( planes[j], planes[i], localPlanes[j], localPlanes[i], localFrame.HalfSize(), sideMaterials[j], material, true ) )	//puncho - Phase 2C P2 (F1c), P2.1, P2.2: the float clip keeps the near clause (Opus A review)
 				{
 					continue;
 				}
 				w.ClipInPlace( -localPlanes[j], 0 );
 			}
 			localFrame.ToWorld( w );
+			}	//puncho - Phase 2C P2.2
 			// the tip of a cone or many-sided spire is cut by every side plane that meets there: a cluster of points closer
 			// than the cm vertex weld, which CreatePolygon turns into a repeated edge and drops the polygon silently
 			w.RemoveEqualPoints( VERTEX_EPSILON );	//puncho - Phase 2C P2 (F1c)
@@ -3431,6 +3521,14 @@ void idCollisionModelManagerLocal::ConvertBrush( cm_model_t* model, const idMapB
 		slot.frame = localFrame;
 	}
 	//puncho end
+	//puncho start - Phase 2C P2.2: the local planes kept in double for the bounds windings
+	idDPlane* dPlanes = NULL;
+	if( local && cm_brushWindingsDouble.GetBool() )
+	{
+		dPlanes = ( idDPlane* ) _alloca16( mapBrush->GetNumSides() * sizeof( dPlanes[0] ) );
+		CM_LocalPlanesDouble( mapBrush, originOffset, planes, mapBrush->GetNumSides(), localFrame, dPlanes );
+	}
+	//puncho end
 
 	// we are only getting the bounds for the brush so there's no need
 	// to create a winding for the last brush side
@@ -3442,6 +3540,17 @@ void idCollisionModelManagerLocal::ConvertBrush( cm_model_t* model, const idMapB
 		//puncho start - Phase 2C P2 (F1b)
 		if( local )
 		{
+			//puncho start - Phase 2C P2.2: in double (the points come back in world coordinates), the float clip below only
+			// if a clip overflows
+			if( dPlanes != NULL && CM_LocalWindingDouble( dPlanes, mapBrush->GetNumSides(), i, NULL, localFrame, w ) )
+			{
+				for( j = 0; j < w.GetNumPoints(); j++ )
+				{
+					bounds.AddPoint( w[j].ToVec3() );
+				}
+				continue;
+			}
+			//puncho end
 			w.BaseForPlane( -localPlanes[i], localFrame.HalfSize() );
 			for( j = 0; j < mapBrush->GetNumSides() && w.GetNumPoints(); j++ )
 			{

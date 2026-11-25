@@ -187,6 +187,9 @@ public:
 
 
 private:
+	bool					MidWindingDouble( const idPlane& splitPlane, idWinding** mid ) const;	//puncho - Phase 2C P2.2
+
+private:
 	idPlane					plane;			// split plane if this is not a leaf node
 	idBrush* 				volume;			// node volume
 	int						contents;		// node contents
@@ -197,6 +200,7 @@ private:
 	int						flags;			// node flags
 	int						areaNum;		// number of the area created for this node
 	int						occupied;		// true when portal is occupied
+	idBrushBSPNode* 		mergedInto;		//puncho - Phase 2C P2.2: the leaf node this leaf node was merged into
 };
 
 
@@ -229,6 +233,8 @@ public:
 	// try to merge the two leaf nodes at either side of the portal
 	bool					TryMergeLeafNodes( idBrushBSPPortal* portal, int side );
 	void					PruneMergedTree_r( idBrushBSPNode* node );
+	// put the leaf nodes they were merged into in place of the merged leaf nodes still referenced, and free them
+	void					RemoveMergedLeafNodes();	//puncho - Phase 2C P2.2
 	// melt portal windings
 	void					MeltPortals( int skipContents );
 	// write a map file with a brush for every leaf node that has the given contents
@@ -262,12 +268,14 @@ private:
 	idVec3					leakOrigin;
 	int						brushMapContents;
 	idBrushMap* 			brushMap;
+	idList<idBrushBSPNode*>	mergedLeafNodes;	//puncho - Phase 2C P2.2: leaf nodes merged away, kept until RemoveMergedLeafNodes
 
 	bool	( *BrushChopAllowed )( idBrush* b1, idBrush* b2 );
 	bool	( *BrushMergeAllowed )( idBrush* b1, idBrush* b2 );
 
 private:
 	void					RemoveMultipleLeafNodeReferences_r( idBrushBSPNode* node );
+	void					ResolveMergedLeafNodes_r( idBrushBSPNode* node );	//puncho - Phase 2C P2.2
 	void					Free_r( idBrushBSPNode* node );
 	void					IncreaseNumSplits();
 	bool					IsValidSplitter( const idBrushSide* side );
@@ -280,6 +288,7 @@ private:
 	void					PruneTree_r( idBrushBSPNode* node, int contents );
 	void					MakeOutsidePortals();
 	idWinding* 				BaseWindingForNode( idBrushBSPNode* node );
+	bool					NodePortalWindingDouble( idBrushBSPNode* node, idWinding** w ) const;	//puncho - Phase 2C P2.2
 	void					MakeNodePortal( idBrushBSPNode* node );
 	void					SplitNodePortals( idBrushBSPNode* node );
 	void					MakeTreePortals_r( idBrushBSPNode* node );

@@ -445,6 +445,7 @@ static void SplitNodePortals( node_t* node )
 		if( !frontwinding && !backwinding )
 		{
 			// tiny windings on both sides
+			FreePortal( p );	//puncho - Phase 2C P2.2 (Opus B review): the portal, already removed from both nodes, was leaked here (stock)
 			continue;
 		}
 

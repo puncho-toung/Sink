@@ -37,6 +37,10 @@ If you have questions concerning this license or the applicable additional terms
 
 #define OUTPUT_UPDATE_TIME				500		// update every 500 msec
 
+//puncho start - Phase 2C P2.2: the AAS compiler's brush and BSP windings in double
+idCVar aas_brushWindingsDouble( "aas_brushWindingsDouble", "1", CVAR_TOOL | CVAR_BOOL, "1 = the windings of a brush with a non-axial side, every brush split's mid winding, and the BSP's node portals, node split windings and portal splits are made in double from the planes kept in double (a Valve 220 side's from its map points, expanded planes moved in double) and rounded once per coordinate; 0 = float as in v0001.7k" );
+//puncho end
+
 //#define OUTPUT_CHOP_STATS
 
 /*
@@ -90,6 +94,7 @@ idBrushSide::idBrushSide( const idPlane& plane, int planeNum )
 {
 	this->flags = 0;
 	this->plane = plane;
+	this->dplane.FromPlane( plane );	//puncho - Phase 2C P2.2
 	this->planeNum = planeNum;
 	this->winding = NULL;
 }
@@ -118,6 +123,7 @@ idBrushSide* idBrushSide::Copy() const
 
 	side = new idBrushSide( plane, planeNum );
 	side->flags = flags;
+	side->dplane = dplane;	//puncho - Phase 2C P2.2
 	if( winding )
 	{
 		side->winding = winding->Copy();
@@ -149,6 +155,7 @@ int idBrushSide::Split( const idPlane& splitPlane, idBrushSide** front, idBrushS
 		( *front ) = new idBrushSide( plane, planeNum );
 		( *front )->winding = frontWinding;
 		( *front )->flags = flags;
+		( *front )->dplane = dplane;	//puncho - Phase 2C P2.2
 	}
 
 	if( backWinding )
@@ -156,6 +163,7 @@ int idBrushSide::Split( const idPlane& splitPlane, idBrushSide** front, idBrushS
 		( *back ) = new idBrushSide( plane, planeNum );
 		( *back )->winding = backWinding;
 		( *back )->flags = flags;
+		( *back )->dplane = dplane;	//puncho - Phase 2C P2.2
 	}
 
 	if( frontWinding && backWinding )
@@ -230,6 +238,84 @@ bool idBrush::RemoveSidesWithoutWinding()
 	return ( sides.Num() >= 4 );
 }
 
+//puncho start - Phase 2C P2.2: the brush windings in double
+/*
+============
+idBrush::AllSidesAxial
+============
+*/
+bool idBrush::AllSidesAxial() const
+{
+	for( int i = 0; i < sides.Num(); i++ )
+	{
+		if( sides[i]->plane.Type() >= PLANETYPE_TRUEAXIAL )
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+/*
+============
+idBrush::CreateWindingsDouble
+
+CreateWindings with each side's winding made from the 2^18 square at world coordinates and clipped in double
+(idDWinding) by the other sides' planes kept in double, then rounded once per coordinate. In float the corner where
+sides meet moves with the rounding of the coordinates, the more the nearer coplanar the sides are, so the AAS made from
+such brushes changes with where the content sits (P2.2 plan D, 66 maps: with the BSP's windings in double too, the mean
+aas48 area spread over copies of a map at 0, 28k and 30k fell from 5.35 to 3.16 % for integer content and from 5.39 to
+4.91 % for rotated). In double a brush frame makes no measurable difference (P2.2 inv A), so the windings are made at
+world coordinates. Returns false, with the bounds cleared, when a clip overflows idDWinding: the caller then clips in
+float.
+============
+*/
+bool idBrush::CreateWindingsDouble()
+{
+	idDWinding w;
+
+	for( int i = 0; i < sides.Num(); i++ )
+	{
+		idBrushSide* side = sides[i];
+
+		if( side->winding )
+		{
+			delete side->winding;
+			side->winding = NULL;
+		}
+
+		w.BaseForPlane( side->dplane, MAX_WORLD_SIZE );
+
+		bool left = true;
+		for( int j = 0; j < sides.Num() && left; j++ )
+		{
+			if( i == j )
+			{
+				continue;
+			}
+			// keep the winding if on the clip plane
+			left = w.Clip( -sides[j]->dplane, BRUSH_EPSILON, true );
+		}
+
+		if( w.Overflowed() )
+		{
+			bounds.Clear();
+			return false;
+		}
+
+		if( left )
+		{
+			side->winding = w.ToWinding( vec3_origin );
+			for( int j = 0; j < side->winding->GetNumPoints(); j++ )
+			{
+				bounds.AddPoint( ( *side->winding )[j].ToVec3() );
+			}
+		}
+	}
+	return true;
+}
+//puncho end
+
 /*
 ============
 idBrush::CreateWindings
@@ -241,6 +327,10 @@ bool idBrush::CreateWindings()
 	idBrushSide* side;
 
 	bounds.Clear();
+	//puncho start - Phase 2C P2.2: in double for a brush with a non-axial side; the float clip below for an all-axial
+	// brush (exact either way) or if a clip overflows
+	if( !aas_brushWindingsDouble.GetBool() || AllSidesAxial() || !CreateWindingsDouble() )
+	//puncho end
 	for( i = 0; i < sides.Num(); i++ )
 	{
 		side = sides[i];
@@ -480,6 +570,12 @@ void idBrush::Transform( const idVec3& origin, const idMat3& axis )
 	}
 	if( transformed )
 	{
+		//puncho start - Phase 2C P2.2: a plane made in double is not carried through the transform
+		for( i = 0; i < sides.Num(); i++ )
+		{
+			sides[i]->dplane.FromPlane( sides[i]->plane );
+		}
+		//puncho end
 		CreateWindings();
 	}
 }
@@ -545,7 +641,7 @@ bool idBrush::Subtract( const idBrush* b, idBrushList& list ) const
 	for( i = 0; i < b->sides.Num() && in; i++ )
 	{
 
-		in->Split( b->sides[i]->plane, b->sides[i]->planeNum, &front, &back );
+		in->Split( b->sides[i]->plane, b->sides[i]->planeNum, &front, &back, &b->sides[i]->dplane );	//puncho - Phase 2C P2.2: the plane in double
 
 		if( in != this )
 		{
@@ -706,12 +802,40 @@ bool idBrush::TryMerge( const idBrush* brush, const idPlaneSet& planeList )
 	return true;
 }
 
+//puncho start - Phase 2C P2.2
+/*
+============
+idBrush::MidWindingDouble
+
+Split's mid winding in double: the 2^18 square on the split plane clipped by the sides' planes kept in double, rounded
+once per coordinate; NULL when nothing is left. Returns false, setting nothing, when a clip overflows idDWinding.
+============
+*/
+bool idBrush::MidWindingDouble( const idDPlane& plane, idWinding** mid ) const
+{
+	idDWinding w;
+
+	w.BaseForPlane( plane, MAX_WORLD_SIZE );
+	bool left = true;
+	for( int i = 0; i < sides.Num() && left; i++ )
+	{
+		left = w.Clip( -sides[i]->dplane, BRUSH_EPSILON, false );
+	}
+	if( w.Overflowed() )
+	{
+		return false;
+	}
+	*mid = left ? w.ToWinding( vec3_origin ) : NULL;
+	return true;
+}
+//puncho end
+
 /*
 ============
 idBrush::Split
 ============
 */
-int idBrush::Split( const idPlane& plane, int planeNum, idBrush** front, idBrush** back ) const
+int idBrush::Split( const idPlane& plane, int planeNum, idBrush** front, idBrush** back, const idDPlane* dplane ) const	//puncho - Phase 2C P2.2: dplane
 {
 	int res, i, j;
 	idBrushSide* side, *frontSide, *backSide;
@@ -807,12 +931,29 @@ int idBrush::Split( const idPlane& plane, int planeNum, idBrush** front, idBrush
 		return PLANESIDE_FRONT;
 	}
 
-	mid = new idWinding( plane.Normal(), plane.Dist() );
-
-	for( i = 0; i < sides.Num() && mid; i++ )
+	//puncho start - Phase 2C P2.2: the split plane in double: the caller's, or the float plane widened
+	idDPlane splitPlane;
+	if( dplane )
 	{
-		mid = mid->Clip( -sides[i]->plane, BRUSH_EPSILON, false );
+		splitPlane = *dplane;
 	}
+	else
+	{
+		splitPlane.FromPlane( plane );
+	}
+
+	// the mid winding in double, unless the plane is axial and the brush all-axial (exact either way); in float as before
+	// if a clip overflows
+	if( !aas_brushWindingsDouble.GetBool() || ( plane.Type() < PLANETYPE_TRUEAXIAL && AllSidesAxial() ) || !MidWindingDouble( splitPlane, &mid ) )
+	{
+		mid = new idWinding( plane.Normal(), plane.Dist() );
+
+		for( i = 0; i < sides.Num() && mid; i++ )
+		{
+			mid = mid->Clip( -sides[i]->plane, BRUSH_EPSILON, false );
+		}
+	}
+	//puncho end
 
 	if( mid )
 	{
@@ -919,6 +1060,7 @@ int idBrush::Split( const idPlane& plane, int planeNum, idBrush** front, idBrush
 	}
 
 	side = new idBrushSide( -plane, planeNum ^ 1 );
+	side->dplane = -splitPlane;	//puncho - Phase 2C P2.2
 	side->winding = mid->Reverse();
 	side->flags |= SFL_SPLIT;
 	( *front )->sides.Append( side );
@@ -926,6 +1068,7 @@ int idBrush::Split( const idPlane& plane, int planeNum, idBrush** front, idBrush
 	( *front )->BoundBrush( this );
 
 	side = new idBrushSide( plane, planeNum );
+	side->dplane = splitPlane;	//puncho - Phase 2C P2.2
 	side->winding = mid;
 	side->flags |= SFL_SPLIT;
 	( *back )->sides.Append( side );
@@ -1132,6 +1275,7 @@ void idBrush::ExpandForAxialBox( const idBounds& bounds )
 			}
 		}
 
+		side->dplane = side->dplane.Moved( v );	//puncho - Phase 2C P2.2: the same move in double, d + n.v
 		side->plane.SetDist( side->plane.Dist() + v * -side->plane.Normal() );
 	}
 

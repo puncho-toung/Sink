@@ -249,6 +249,98 @@ static bool LocalSourcePlane( const side_t& side, const idPlane& plane, const id
 }
 //puncho end
 
+//puncho start - Phase 2C P2.2: the brush windings in double
+idCVar dmap_brushWindingsDouble( "dmap_brushWindingsDouble", "1", CVAR_TOOL | CVAR_BOOL, "with dmap_brushBaseWindings 1: a non-axial brush's windings and every split's mid winding are clipped in double in the brush's frame (the planes kept in double, a Valve 220 side's from its map points) and rounded once per coordinate; 0 = float clipping in the frame" );
+
+// LocalSourcePlane with the plane kept in double
+static bool LocalSourcePlaneDouble( const side_t& side, const idPlane& plane, const idBrushFrame& frame, idDPlane& local )
+{
+	if( !side.hasSourcePts || dmapSourceBrush == NULL || side.sourceSide < 0 || side.sourceSide >= dmapSourceBrush->GetNumSides() )
+	{
+		return false;
+	}
+	const idMapBrushSide* mapSide = dmapSourceBrush->GetSide( side.sourceSide );
+	return frame.PlaneFromPointsDouble( mapSide->planepts, mapSide->GetOrigin(), plane, local );
+}
+
+/*
+==================
+CreateBrushWindingsDouble
+
+CreateBrushWindingsLocal's windings clipped in double (idDWinding) and rounded once per coordinate. In float the edge
+where two near-coplanar sides meet moves by about the rounding of the local coordinates over the sine of their angle,
+and the faces of such sides leave strips that neither covers (inv B: 31 to 1,942 see-through rays on near-coplanar
+rock sets). Returns false, setting no winding, when a clip overflows idDWinding: the caller then clips in float.
+==================
+*/
+static bool CreateBrushWindingsDouble( uBrush_t* brush, const idBrushFrame& frame )
+{
+	const int numSides = brush->numsides;
+	int i, j;
+
+	// numSides <= MAX_BUILD_SIDES (512): at most 16 KB and 4 KB on the stack
+	idDPlane* localPlanes = ( idDPlane* ) _alloca16( numSides * sizeof( localPlanes[0] ) );
+	idWinding** windings = ( idWinding** ) _alloca16( numSides * sizeof( windings[0] ) );
+	for( i = 0; i < numSides; i++ )
+	{
+		const idPlane& plane = dmapGlobals.mapPlanes[brush->sides[i].planenum];
+		if( dmap_brushSourcePlanes.GetBool() && LocalSourcePlaneDouble( brush->sides[i], plane, frame, localPlanes[i] ) )
+		{
+			continue;
+		}
+		localPlanes[i] = frame.MovePlaneDouble( plane );
+	}
+
+	idDWinding dw;
+	for( i = 0; i < numSides; i++ )
+	{
+		dw.BaseForPlane( localPlanes[i], frame.HalfSize() );
+		bool left = true;
+		for( j = 0; j < numSides && left; j++ )
+		{
+			if( i == j )
+			{
+				continue;
+			}
+			if( brush->sides[j].planenum == ( brush->sides[i].planenum ^ 1 ) )
+			{
+				continue;		// back side clipaway
+			}
+			left = dw.Clip( -localPlanes[j], 0.0, false );
+		}
+		if( dw.Overflowed() )
+		{
+			for( j = 0; j < i; j++ )
+			{
+				delete windings[j];
+			}
+			return false;
+		}
+		windings[i] = NULL;
+		if( left )
+		{
+			windings[i] = dw.ToWinding( frame.Centre() );
+			// where three or more planes meet, double puts the copies of a corner on one float point; repeated points
+			// make idWinding::GetPlane (p[0], p[1] and the centre) return a zero normal, and FaceBSP's Split then sends a
+			// face lying within ON_EPSILON of a node plane to the back (inv B: +80 to +1,100 rays without this)
+			windings[i]->RemoveEqualPoints( 0.01f );
+			// a side that touches the brush only at a corner or an edge (or a face under 0.01) keeps no polygon (Opus A
+			// review: a 1- or 2-point winding gives GetPlane a zero normal)
+			if( windings[i]->GetNumPoints() < 3 )
+			{
+				delete windings[i];
+				windings[i] = NULL;
+			}
+		}
+	}
+	for( i = 0; i < numSides; i++ )
+	{
+		brush->sides[i].winding = windings[i];
+	}
+	return true;
+}
+//puncho end
+
 //puncho start - Phase 2C P2 (S5)
 /*
 ==================
@@ -299,6 +391,9 @@ static void CreateBrushWindingsLocal( uBrush_t* brush )
 		localPlanes[i] = frame.MovePlane( plane );
 	}
 
+	//puncho start - Phase 2C P2.2: in double, the float clip below only if a clip overflows
+	if( !dmap_brushWindingsDouble.GetBool() || !CreateBrushWindingsDouble( brush, frame ) )
+	//puncho end
 	for( i = 0; i < numSides; i++ )
 	{
 		idWinding* w = new idWinding;
@@ -756,6 +851,31 @@ void SplitBrush( uBrush_t* brush, int planenum, uBrush_t** front, uBrush_t** bac
 	{
 		idBrushFrame frame;
 		frame.FromBounds( brush->bounds );
+		//puncho start - Phase 2C P2.2: the mid winding in double, the float clip below only if a clip overflows
+		bool made = false;
+		w = NULL;
+		if( dmap_brushWindingsDouble.GetBool() )
+		{
+			idDWinding dw;
+			dw.BaseForPlane( frame.MovePlaneDouble( plane ), frame.HalfSize() );
+			bool left = true;
+			for( i = 0; i < brush->numsides && left; i++ )
+			{
+				left = dw.Clip( frame.MovePlaneDouble( dmapGlobals.mapPlanes[brush->sides[i].planenum ^ 1] ), 0.0, false );
+			}
+			if( !dw.Overflowed() )
+			{
+				made = true;
+				if( left )
+				{
+					w = dw.ToWinding( frame.Centre() );
+					w->RemoveEqualPoints( 0.01f );	// as CreateBrushWindingsDouble
+				}
+			}
+		}
+		if( !made )
+		{
+		//puncho end
 		w = new idWinding;
 		w->BaseForPlane( frame.MovePlane( plane ), frame.HalfSize() );
 		for( i = 0; i < brush->numsides && w; i++ )
@@ -766,6 +886,7 @@ void SplitBrush( uBrush_t* brush, int planenum, uBrush_t** front, uBrush_t** bac
 		{
 			frame.ToWorld( *w );
 		}
+		}	//puncho - Phase 2C P2.2
 	}
 	else
 	{
