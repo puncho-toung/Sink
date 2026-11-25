@@ -326,6 +326,9 @@ float idConsoleLocal::DrawFPS( float y )
 	const uint64 rendererGPUForwardTime = commonLocal.GetRendererGpuForwardPassMicroseconds() + commonLocal.GetRendererGpuForwardTranslucentMicroseconds();
 	const uint64 rendererGPUVolumetricsTime = commonLocal.GetRendererGpuVolumetricsMicroseconds();
 	const uint64 rendererGPUFogApplyTime = commonLocal.GetRendererGpuVolumetricsApplyMicroseconds();
+	// ---- TRACK G: the bloom chain's GPU time ----
+	const uint64 rendererGPUBloomTime = commonLocal.GetRendererGpuBloomMicroseconds();
+	// ---- END TRACK G ----
 	// ---- END X0 ----
 	// ---- TRACK S: HUD values ----
 	// ---- END TRACK S ----
@@ -719,6 +722,11 @@ float idConsoleLocal::DrawFPS( float y )
 		ImGui::TextColored( rendererGPUForwardTime > maxTime ? colorRed : colorWhite,			"                    Forward:      %5llu us", rendererGPUForwardTime );
 		ImGui::TextColored( rendererGPUVolumetricsTime > maxTime ? colorRed : colorWhite,		"                    Volumetrics:  %5llu us", rendererGPUVolumetricsTime );
 		ImGui::TextColored( rendererGPUFogApplyTime > maxTime ? colorRed : colorWhite,			"                    Fog apply:    %5llu us", rendererGPUFogApplyTime );
+		// ---- TRACK G: the bloom chain's time; it is also inside the PostFX row above, because the
+		// tonemap block holds the chain ( only the main view is timed: the backend switches the timers
+		// off for every other view ) ----
+		ImGui::TextColored( rendererGPUBloomTime > maxTime ? colorRed : colorWhite,			"                    Bloom:        %5llu us", rendererGPUBloomTime );
+		// ---- END TRACK G ----
 		// ---- END X0 ----
 		// ---- TRACK S: HUD rows ----
 		// S3b: the shadow cache's capacity line ( only while the cache runs: r_shadowCache 2 ). Cached units

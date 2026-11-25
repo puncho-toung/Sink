@@ -202,6 +202,7 @@ void idRenderBackend::Init()
 	hiZGenPass = nullptr;
 	ssaoPass = nullptr;
 	volumetricFogPass = nullptr;
+	bloomPass = nullptr;		// TRACK G: the bloom pass; GL_StartFrame makes it while r_bloom is on
 
 	// X0: the froxel fog parms - a volatile constant buffer, zeroed at the start of every 3D view ( D66 ).
 	// Created here ( not in ClearCaches ): it does not depend on the render size, and the device and
@@ -2840,6 +2841,27 @@ void idRenderBackend::GL_StartFrame()
 		toneMapPass->Init( deviceManager->GetDevice(), &commonPasses, createParms, globalFramebuffers.ldrFBO->GetApiObject() );
 	}
 
+	// ---- TRACK G: create the bloom pass ----
+	// The pass lives while r_bloom is on. At 0 there is no pass and the tonemap draw is the one without bloom: the
+	// picture is the engine's without the bloom. Made after the tonemap pass above, so toneMapPass is not NULL here;
+	// ClearCaches deletes it with every map load, resize and vid_restart
+	if( r_bloom.GetBool() )
+	{
+		if( !bloomPass )
+		{
+			bloomPass = new BloomPass( deviceManager->GetDevice(), &commonPasses );
+		}
+	}
+	else if( bloomPass )
+	{
+		// the tonemap pass must not keep a pointer to the dying pass, nor binding sets naming its dead levels
+		toneMapPass->SetBloomPass( NULL );
+		toneMapPass->ReleaseBloomSets();
+		delete bloomPass;
+		bloomPass = nullptr;
+	}
+	// ---- END TRACK G ----
+
 	if( !taaPass )
 	{
 		TemporalAntiAliasingPass::CreateParameters taaParams;
@@ -3218,6 +3240,15 @@ void idRenderBackend::ClearCaches()
 	froxelVolume = froxelDummyVolume;
 	// ---- END TRACK V ----
 
+	// ---- TRACK G: delete the bloom pass before the tonemap pass it feeds; the tonemap pass dies in this same
+	// function below, so its SetBloomPass( NULL ) is not needed here ----
+	if( bloomPass )
+	{
+		delete bloomPass;
+		bloomPass = nullptr;
+	}
+	// ---- END TRACK G ----
+
 	if( toneMapPass )
 	{
 		delete toneMapPass;
@@ -3385,6 +3416,7 @@ idRenderBackend::idRenderBackend()
 	hiZGenPass = nullptr;
 	ssaoPass = nullptr;
 	volumetricFogPass = nullptr;
+	bloomPass = nullptr;		// TRACK G: the bloom pass; GL_StartFrame makes it while r_bloom is on
 	viewHistoryCut = false;
 	froxelFogTranslucent = false;	// TRACK V ( V5 )
 	froxelFogLightsTaken = false;	// TRACK V ( V5 )

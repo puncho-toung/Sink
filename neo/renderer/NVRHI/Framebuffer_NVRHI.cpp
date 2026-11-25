@@ -198,13 +198,6 @@ void Framebuffer::ResizeFramebuffers( bool reloadImages )
 			nvrhi::FramebufferDesc()
 			.addColorAttachment( globalImages->smaaBlendImage->texture ) );
 
-	for( int i = 0; i < MAX_BLOOM_BUFFERS; i++ )
-	{
-		globalFramebuffers.bloomRenderFBO[i] = new Framebuffer( va( "_bloomRender%i", i ),
-				nvrhi::FramebufferDesc()
-				.addColorAttachment( globalImages->bloomRenderImage[i]->texture ) );
-	}
-
 	globalFramebuffers.guiRenderTargetFBO = new Framebuffer( "_guiEdit",
 			nvrhi::FramebufferDesc()
 			.addColorAttachment( globalImages->guiEdit->texture )
@@ -243,10 +236,6 @@ void Framebuffer::ReloadImages()
 	for( int i = 0; i < MAX_SHADOWMAP_RESOLUTIONS; i++ )
 	{
 		globalImages->shadowImage[i]->Reload( false, backEnd.commandList );
-	}
-	for( int i = 0; i < MAX_BLOOM_BUFFERS; i++ )
-	{
-		globalImages->bloomRenderImage[i]->Reload( false, backEnd.commandList );
 	}
 	globalImages->guiEdit->Reload( false, backEnd.commandList );
 	globalImages->accumImage->Reload( false, backEnd.commandList );

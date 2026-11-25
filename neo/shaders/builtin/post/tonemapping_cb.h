@@ -45,6 +45,14 @@ struct ToneMappingConstants
 
 	float2 colorLUTTextureSize;
 	float2 colorLUTTextureSizeInv;
+	// ---- TRACK G: the bloom mix, sent by the tonemap pass's bloom variant ( its C++ twin appends these three
+	// to ToneMappingConstants as ToneMappingBloomConstants, 128 bytes ) ----
+#if defined( BLOOM )
+	float4 bloomMix;		// x the frame's weight, y the bloom's, z the level read, w 1: one bilinear tap
+	float4 bloomRect;		// xy the view rectangle's origin in the frame ( pixels ); zw the read level's rectangle size ( texels )
+	float4 bloomScale;		// x 0.5 / 2^level: screen pixels ( relative to the view's origin ) to the read level's texels; y 0; zw 1 / the read level's TEXTURE size
+#endif
+	// ---- END TRACK G ----
 };
 
 #endif // DEPTH_CB_H

@@ -45,3 +45,20 @@ struct ToneMappingConstants
 	idVec2 colorLUTTextureSize;
 	idVec2 colorLUTTextureSizeInv;
 };
+
+// ---- TRACK G: what the tonemap draw's bloom variant sends: the 80 bytes above, then the bloom mix, the
+// rectangle it reads and the scale that maps screen pixels to the level's texels. The shader's
+// ToneMappingConstants under #if defined( BLOOM ) ( shaders/builtin/post/tonemapping_cb.h ) has the same 128
+// bytes: the base ends on a 16-byte boundary, so the three float4s sit at offsets 80, 96 and 112 on both sides,
+// where the shader packs float4s on 16-byte boundaries. 128 is Vulkan's guaranteed push-constant size and under
+// D3D12's 240 ----
+struct ToneMappingBloomConstants
+{
+	ToneMappingConstants base;
+	idVec4 bloomMix;
+	idVec4 bloomRect;
+	idVec4 bloomScale;
+};
+compile_time_assert( sizeof( ToneMappingConstants ) == 80 );
+compile_time_assert( sizeof( ToneMappingBloomConstants ) == 128 );
+// ---- END TRACK G ----

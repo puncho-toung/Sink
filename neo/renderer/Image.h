@@ -616,7 +616,6 @@ public:
 	idImage*			taaResolvedImage;
 	idImage*			taaFeedback1Image;
 	idImage*			taaFeedback2Image;
-	idImage*			bloomRenderImage[2];
 	idImage*			envprobeHDRImage;
 	idImage*			envprobeDepthImage;
 	idImage*			heatmap5Image;

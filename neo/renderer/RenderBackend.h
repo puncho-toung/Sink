@@ -39,6 +39,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "Passes/MipMapGenPass.h"
 #include "Passes/SsaoPass.h"
 #include "Passes/TonemapPass.h"
+// ---- TRACK G: the bloom of the main view; the member beside toneMapPass below ----
+#include "Passes/BloomPass.h"
+// ---- END TRACK G ----
 #include "Passes/TemporalAntiAliasingPass.h"
 #include "Passes/VolumetricFogPass.h"
 
@@ -224,9 +227,6 @@ private:
 	void				DrawMotionVectors();
 	void				TemporalAAPass( const viewDef_t* _viewDef );
 
-	// RB: outdated HDR stuff
-	void				Bloom( const viewDef_t* viewDef );
-
 	void				DrawScreenSpaceAmbientOcclusion( const viewDef_t* _viewDef );
 	void				DrawScreenSpaceAmbientOcclusion2( const viewDef_t* _viewDef );
 
@@ -392,10 +392,7 @@ private:
 
 	// RB begin
 	// TODO remove
-	float				hdrAverageLuminance;
-	float				hdrMaxLuminance;
 	float				hdrTime;
-	float				hdrKey;
 
 	// quad-tree for managing tiles within tiled shadow map
 	TileMap				tileMap;
@@ -526,6 +523,11 @@ private:
 	// ---- END TRACK V ----
 	MipMapGenPass*					hiZGenPass;
 	TonemapPass*					toneMapPass;
+	// ---- TRACK G: the bloom of the main view; made and deleted by the backend's GL_StartFrame and ClearCaches ----
+	// the bloom's direct NVRHI draws count themselves in the concurrency stats, as the fog's do
+	friend class BloomPass;
+	BloomPass*						bloomPass;
+	// ---- END TRACK G ----
 	TemporalAntiAliasingPass*		taaPass;
 
 	BindingCache					bindingCache;

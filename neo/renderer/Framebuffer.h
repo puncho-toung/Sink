@@ -32,7 +32,6 @@ If you have questions concerning this license or the applicable additional terms
 #define __FRAMEBUFFER_H__
 
 static const int MAX_SHADOWMAP_RESOLUTIONS = 5;
-static const int MAX_BLOOM_BUFFERS = 2;
 static const int MAX_GLOW_BUFFERS = 2;
 static const int MAX_SSAO_BUFFERS = 2;
 static const int MAX_HIERARCHICAL_ZBUFFERS = 6; // native resolution + 5 MIP LEVELS
@@ -156,7 +155,6 @@ struct globalFramebuffers_t
 	Framebuffer*				taaMotionVectorsFBO;
 	Framebuffer*				taaResolvedFBO;
 	Framebuffer*				envprobeFBO;
-	Framebuffer*				bloomRenderFBO[MAX_BLOOM_BUFFERS];
 	Framebuffer*				glowFBO[MAX_GLOW_BUFFERS];	// unused
 	Framebuffer*				transparencyFBO;			// unused
 	Framebuffer*				ambientOcclusionFBO[MAX_SSAO_BUFFERS];

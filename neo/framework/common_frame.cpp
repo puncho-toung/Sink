@@ -194,6 +194,10 @@ void idCommonLocal::LogMapRows( int tics, bool concurrencyStats ) //puncho - P0
 			mapRowsFile->Printf( ",gpuFog,gpuFogApply,gpuFogSky,gpuFogCol,gpuFogMedia,gpuFogInject,gpuFogResolve,gpuFogInteg" );
 			mapRowsFile->Printf( ",fogOnlyLights,fogOnlyTexels,fogOnlyRefused,surfaceRefused,fogLightsFroxel,fogLightsFogPass,fogUnfogged" );
 			mapRowsFile->Printf( ",fogPortals,fogPortalsNoCull,usFogFE,usFogCasters,fogChangedCasters,fogRecords,fogIdle" );
+			// track G: the bloom chain's GPU time and the tonemap block that contains it ( gpuToneMap
+			// includes gpuBloom: only the main view is timed, the backend switches the timers off for
+			// every other view )
+			mapRowsFile->Printf( ",gpuBloom,gpuToneMap" );
 			mapRowsFile->Printf( "\n" );
 			//puncho end
 			mapRowsFlushTime = Sys_Milliseconds();
@@ -359,6 +363,9 @@ void idCommonLocal::LogMapRows( int tics, bool concurrencyStats ) //puncho - P0
 	length += idStr::snPrintf( row + length, sizeof( row ) - length, ",%i,%i,%llu,%llu,%i,%i,%i", stats_frontend.c_fogPortalsMedium, stats_frontend.c_fogPortalsNeverCulled,
 							   ( unsigned long long )stats_frontend.usFogFE, ( unsigned long long )stats_frontend.usFogCasters, stats_frontend.c_fogChangedCasters, stats_frontend.c_fogRecords,
 							   stats_frontend.c_fogIdleViews );
+	// track G: the bloom chain and the tonemap block that contains it, in the header's order
+	length += idStr::snPrintf( row + length, sizeof( row ) - length, ",%llu,%llu", ( unsigned long long )GetRendererGpuBloomMicroseconds(),
+							   ( unsigned long long )GetRendererGpuToneMapPassMicroseconds() );
 	assert( length < ( int )sizeof( row ) - 1 );		// review CN1-3: about 3.65 KB at most since F7a; V6's 22 columns ( V6h: fogIdle ) add at most 22 x 21
 	row[length++] = '\n';
 	if( mapRowsUsed + length > ( int )sizeof( mapRowsBuffer ) )

@@ -6255,120 +6255,6 @@ idVec2 idRenderBackend::GetCurrentPixelOffset( int frameIndex ) const
 	return idVec2( 0, 0 );
 }
 
-// RB: FIXME currently not used
-void idRenderBackend::Bloom( const viewDef_t* _viewDef )
-{
-	if( _viewDef->is2Dgui || ( _viewDef->renderView.rdflags & RDF_IRRADIANCE ) )
-	{
-		return;
-	}
-
-	//OPTICK_EVENT( "Render_Bloom" );
-
-	nvrhi::ObjectType commandObject = nvrhi::ObjectTypes::D3D12_GraphicsCommandList;
-	if( deviceManager->GetGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN )
-	{
-		commandObject = nvrhi::ObjectTypes::VK_CommandBuffer;
-	}
-	OPTICK_GPU_CONTEXT( ( void* ) commandList->getNativeObject( commandObject ) );
-	OPTICK_GPU_EVENT( "Render_Bloom" );
-
-	renderLog.OpenMainBlock( MRB_BLOOM );
-	renderLog.OpenBlock( "Render_Bloom", colorBlue );
-
-	// BRIGHTPASS
-	renderLog.OpenBlock( "Brightpass" );
-
-	//Framebuffer::Unbind();
-	//globalFramebuffers.hdrQuarterFBO->Bind();
-
-	GL_State( /*GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO |*/ GLS_DEPTHMASK | GLS_DEPTHFUNC_ALWAYS | GLS_CULL_TWOSIDED );
-
-	int screenWidth = renderSystem->GetWidth();
-	int screenHeight = renderSystem->GetHeight();
-
-	// set the window clipping
-	GL_Viewport( 0, 0, screenWidth / 4, screenHeight / 4 );
-	GL_Scissor( 0, 0, screenWidth / 4, screenHeight / 4 );
-
-	globalFramebuffers.bloomRenderFBO[ 0 ]->Bind();
-
-	GL_SelectTexture( 0 );
-
-	globalImages->currentRenderHDRImage->Bind();
-
-	renderProgManager.BindShader_Brightpass();
-
-	float screenCorrectionParm[4];
-	screenCorrectionParm[0] = hdrKey;
-	screenCorrectionParm[1] = hdrAverageLuminance;
-	screenCorrectionParm[2] = hdrMaxLuminance;
-	screenCorrectionParm[3] = 1.0f;
-	SetFragmentParm( RENDERPARM_SCREENCORRECTIONFACTOR, screenCorrectionParm ); // rpScreenCorrectionFactor
-
-	float overbright[4];
-	{
-		if( r_hdrAutoExposure.GetBool() )
-		{
-			overbright[0] = r_hdrContrastDynamicThreshold.GetFloat();
-		}
-		else
-		{
-			overbright[0] = r_hdrContrastStaticThreshold.GetFloat();
-		}
-		overbright[1] = r_hdrContrastOffset.GetFloat();
-		overbright[2] = 0;
-		overbright[3] = 0;
-	}
-	SetFragmentParm( RENDERPARM_OVERBRIGHT, overbright ); // rpOverbright
-
-	// Draw
-	DrawElementsWithCounters( &unitSquareSurface );
-
-	renderLog.CloseBlock(); // Brightpass
-
-	renderLog.OpenBlock( "Bloom Ping Pong" );
-
-	// BLOOM PING PONG rendering
-	renderProgManager.BindShader_HDRGlareChromatic();
-
-	int j;
-	for( j = 0; j < r_hdrGlarePasses.GetInteger(); j++ )
-	{
-		int index = ( j + 1 ) % 2;
-		globalFramebuffers.bloomRenderFBO[ index ]->Bind();
-
-		commandList->clearTextureFloat( globalImages->bloomRenderImage[index]->GetTextureHandle(), nvrhi::AllSubresources, nvrhi::Color( 0.f, 0.f, 0.f, 1.f ) );
-
-		globalImages->bloomRenderImage[j % 2]->Bind();
-
-		DrawElementsWithCounters( &unitSquareSurface );
-	}
-
-	// add filtered glare back to main context
-	globalFramebuffers.ldrFBO->Bind();
-
-	ResetViewportAndScissorToDefaultCamera( _viewDef );
-
-	GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHMASK | GLS_DEPTHFUNC_ALWAYS );
-
-	renderProgManager.BindShader_Screen();
-
-	globalImages->bloomRenderImage[( j + 1 ) % 2]->Bind();
-
-	DrawElementsWithCounters( &unitSquareSurface );
-
-	renderLog.CloseBlock(); // Bloom Ping Pong
-
-	renderProgManager.Unbind();
-
-	GL_State( GLS_DEFAULT );
-
-	renderLog.CloseBlock(); // Render_Bloom
-	renderLog.CloseMainBlock(); // MRB_BLOOM
-}
-
-
 void idRenderBackend::DrawScreenSpaceAmbientOcclusion( const viewDef_t* _viewDef )
 {
 	if( !_viewDef->viewEntitys || _viewDef->is2Dgui )
@@ -7512,6 +7398,11 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 		renderLog.OpenMainBlock( MRB_TONE_MAP_PASS );
 		renderLog.OpenBlock( "Render_ToneMapPass", colorBlue );
 
+		// ---- TRACK G: this view's bloom, if it gets one: WantedForView says no for every view that does not
+		// ( mirrors, remote cameras, other render modes ), and the tonemap draw is then the one without bloom ----
+		toneMapPass->SetBloomPass( ( bloomPass != NULL && BloomPass::WantedForView( _viewDef ) ) ? bloomPass : NULL );
+		// ---- END TRACK G ----
+
 		ToneMappingParameters parms;
 		if( R_UseTemporalAA() )
 		{
@@ -7532,15 +7423,13 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 		}
 
 		renderLog.CloseBlock();
-		renderLog.CloseMainBlock();
+		// ---- TRACK G: named: the bloom's MRB_BLOOM block nests inside this one and idRenderLog keeps one
+		// current block, so an unnamed close after it would close the bloom's block a second time and leave
+		// this timer open. The tonemap block's time therefore INCLUDES the chain; the chain alone is MRB_BLOOM ----
+		renderLog.CloseMainBlock( MRB_TONE_MAP_PASS );
+		// ---- END TRACK G ----
 	}
 
-	//-------------------------------------------------
-	// bloom post processing
-	//-------------------------------------------------
-
-	// TODO implement bloom
-	//Bloom( _viewDef );
 	//puncho
 	if( concurrencyStats )
 	{
@@ -8293,22 +8182,9 @@ void idRenderBackend::CRTPostProcess()
 	{
 		OPTICK_GPU_EVENT( "Render_CRTPostFX" );
 
-#if CRT_QUARTER_RES
-		if( quarterRes )
-		{
-			// downscale to retro resolution
-			BlitParameters blitParms;
-			blitParms.sourceTexture = ( nvrhi::ITexture* )globalImages->ldrImage->GetTextureID();
-			blitParms.targetFramebuffer = globalFramebuffers.bloomRenderFBO[0]->GetApiObject();
-
-			blitParms.targetViewport = nvrhi::Viewport( renderSystem->GetWidth() / 4, renderSystem->GetHeight() / 4 );
-			commonPasses.BlitTexture( commandList, blitParms, &bindingCache );
-
-			GL_SelectTexture( 0 );
-			globalImages->bloomRenderImage[0]->Bind();
-		}
-		else
-#endif
+		// ---- TRACK G: the quarter-size CRT path ( CRT_QUARTER_RES, never compiled ) drew into the old
+		// bloom's quarter-size target; that target is gone and the path with it ----
+		// ---- END TRACK G ----
 		{
 			BlitParameters blitParms;
 			blitParms.sourceTexture = ( nvrhi::ITexture* )globalImages->ldrImage->GetTextureID();
