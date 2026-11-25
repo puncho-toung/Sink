@@ -32,9 +32,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "dmap.h"
 
 //puncho start - Phase 2C P2 (S5)
-idCVar dmap_brushBaseWindings( "dmap_brushBaseWindings", "1", CVAR_TOOL | CVAR_BOOL, "1 = a non-axial brush's windings are rebuilt from a square sized to the brush and clipped in a brush-local frame, so copies of one corner agree at any distance from the origin; 0 = stock windings from 2^18 squares at the plane foot" );
+idCVar dmap_brushBaseWindings( "dmap_brushBaseWindings", "1", CVAR_TOOL | CVAR_BOOL, "1 = a non-axial brush's windings, and the mid winding of every brush split, are made from a square sized to the brush and clipped in a brush-local frame, so copies of one corner agree at any distance from the origin (dmap_brushSourcePlanes and dmap_visibleHullFix act only with it); 0 = stock windings from 2^18 squares at the plane foot" );
 static int c_brushBaseWindingFallbacks;	// brushes whose local windings bounded nothing valid, in this process
-idCVar dmap_brushSourcePlanes( "dmap_brushSourcePlanes", "1", CVAR_TOOL | CVAR_BOOL, "with dmap_brushBaseWindings 1: a non-axial Valve 220 side's local plane is made in double from the map's three points when they lie within 0.01 of its stored plane; 0 = the stored float plane, moved to the local frame (a test switch: S5 without it is worse than stock far from the origin)" );
+idCVar dmap_brushSourcePlanes( "dmap_brushSourcePlanes", "1", CVAR_TOOL | CVAR_BOOL, "a test switch, with dmap_brushBaseWindings 1 only: a non-axial Valve 220 side's local plane is made in double from the map's three points when they lie within 0.02 of its stored plane; 0 = the stored float plane, moved to the local frame (on some content worse than stock far from the origin)" );
 //puncho end
 
 int		c_active_brushes;
@@ -230,54 +230,22 @@ LocalSourcePlane
 
 A plane made in float far from the origin is off by up to an ulp of its distance (about 0.001 at 16k), and faces that
 meet at a few degrees turn that into corner errors past the 1/32 weld. A non-axial side that still has the map's
-three points, each within 0.01 of the stored plane, gets its local plane (for p = c + q) from those points in double:
-the plane idPlane::FromPoints makes, without its rounding. Returns false, leaving `local` unset, otherwise (no points,
-an axial plane, points that do not define the stored plane, as in an entity with an origin, or collinear points).
+three points, each within BRUSHFRAME_SOURCE_PLANE_EPSILON of the stored plane, gets its local plane (for p = c + q)
+from those points in double: the plane idPlane::FromPoints makes, without its rounding (idBrushFrame::PlaneFromPoints,
+Phase 2C P2.1). The points are taken less the entity origin the parser took off before making the plane (Phase 2C P2.1,
+Opus A review: compared as written, every side of an entity with an origin was refused unless n.origin was below the
+tolerance, and then taken off by n.origin). Returns false, leaving `local` unset, otherwise (no points, an axial plane,
+points that do not define the stored plane, or collinear points).
 ==================
 */
-static bool LocalSourcePlane( const side_t& side, const idPlane& plane, const idVec3& centre, idPlane& local )
+static bool LocalSourcePlane( const side_t& side, const idPlane& plane, const idBrushFrame& frame, idPlane& local )
 {
-	int k;
-
-	if( !side.hasSourcePts || dmapSourceBrush == NULL || side.sourceSide < 0 || side.sourceSide >= dmapSourceBrush->GetNumSides()
-			|| plane.Type() < PLANETYPE_TRUEAXIAL )
+	if( !side.hasSourcePts || dmapSourceBrush == NULL || side.sourceSide < 0 || side.sourceSide >= dmapSourceBrush->GetNumSides() )
 	{
 		return false;
 	}
-	const idVec3* sourcePts = dmapSourceBrush->GetSide( side.sourceSide )->planepts;
-	double p[3][3];
-	for( k = 0; k < 3; k++ )
-	{
-		const double dist = ( ( double )plane[0] * ( double )sourcePts[k][0] + ( double )plane[1] * ( double )sourcePts[k][1] ) + ( double )plane[2] * ( double )sourcePts[k][2] + ( double )plane[3];
-		if( idMath::Fabs( ( float )dist ) > 0.01f )
-		{
-			return false;
-		}
-		p[k][0] = ( double )sourcePts[k][0] - ( double )centre[0];
-		p[k][1] = ( double )sourcePts[k][1] - ( double )centre[1];
-		p[k][2] = ( double )sourcePts[k][2] - ( double )centre[2];
-	}
-	// idPlane::FromPoints( p0, p1, p2 ): normal = ( p0 - p1 ) x ( p2 - p1 ), d = -normal . p1
-	const double u[3] = { p[0][0] - p[1][0], p[0][1] - p[1][1], p[0][2] - p[1][2] };
-	const double v[3] = { p[2][0] - p[1][0], p[2][1] - p[1][1], p[2][2] - p[1][2] };
-	double n[3] = { u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0] };
-	const double length = sqrt( n[0] * n[0] + n[1] * n[1] + n[2] * n[2] );
-	if( length < 1e-6 )
-	{
-		return false;
-	}
-	n[0] /= length;
-	n[1] /= length;
-	n[2] /= length;
-	if( n[0] * plane[0] + n[1] * plane[1] + n[2] * plane[2] < 0.99999 )
-	{
-		return false;
-	}
-	local[0] = ( float )n[0];
-	local[1] = ( float )n[1];
-	local[2] = ( float )n[2];
-	local[3] = ( float ) - ( n[0] * p[1][0] + n[1] * p[1][1] + n[2] * p[1][2] );
-	return true;
+	const idMapBrushSide* mapSide = dmapSourceBrush->GetSide( side.sourceSide );
+	return frame.PlaneFromPoints( mapSide->planepts, mapSide->GetOrigin(), plane, local );
 }
 //puncho end
 
@@ -313,19 +281,8 @@ static void CreateBrushWindingsLocal( uBrush_t* brush )
 	}
 
 	const idBounds stockBounds = brush->bounds;
-	idVec3 centre = stockBounds.GetCenter();
-	for( i = 0; i < 3; i++ )
-	{
-		centre[i] = idMath::Rint( centre[i] );
-	}
-	// a power of two at least the diagonal: a face point lies within diagonal / 2 + 0.87 of the local foot, inside
-	// the square's inscribed radius
-	const float diagonal = ( stockBounds[1] - stockBounds[0] ).Length();
-	float halfSize = 64.0f;
-	while( halfSize < diagonal && halfSize < MAX_WORLD_SIZE )
-	{
-		halfSize *= 2.0f;
-	}
+	idBrushFrame frame;	//puncho - Phase 2C P2.1: the frame rule is idlib's (geometry/BrushFrame.h)
+	frame.FromBounds( stockBounds );
 
 	// numSides <= MAX_BUILD_SIDES (512): at most 12 KB on the stack
 	idPlane* localPlanes = ( idPlane* ) _alloca16( numSides * sizeof( localPlanes[0] ) );
@@ -335,19 +292,17 @@ static void CreateBrushWindingsLocal( uBrush_t* brush )
 		const idPlane& plane = dmapGlobals.mapPlanes[brush->sides[i].planenum];
 		stockWindings[i] = brush->sides[i].winding;
 		//puncho - Phase 2C P2 (S5b): the side's own map points give an exact local plane when they still define it
-		if( dmap_brushSourcePlanes.GetBool() && LocalSourcePlane( brush->sides[i], plane, centre, localPlanes[i] ) )
+		if( dmap_brushSourcePlanes.GetBool() && LocalSourcePlane( brush->sides[i], plane, frame, localPlanes[i] ) )
 		{
 			continue;
 		}
-		const double dot = ( ( double )plane[0] * ( double )centre[0] + ( double )plane[1] * ( double )centre[1] ) + ( double )plane[2] * ( double )centre[2];
-		localPlanes[i] = plane;
-		localPlanes[i][3] = ( float )( ( double )plane[3] + dot );
+		localPlanes[i] = frame.MovePlane( plane );
 	}
 
 	for( i = 0; i < numSides; i++ )
 	{
 		idWinding* w = new idWinding;
-		w->BaseForPlane( localPlanes[i], halfSize );
+		w->BaseForPlane( localPlanes[i], frame.HalfSize() );
 		for( j = 0; j < numSides && w; j++ )
 		{
 			if( i == j )
@@ -362,10 +317,7 @@ static void CreateBrushWindingsLocal( uBrush_t* brush )
 		}
 		if( w )
 		{
-			for( j = 0; j < w->GetNumPoints(); j++ )
-			{
-				( *w )[j].ToVec3() = centre + ( *w )[j].ToVec3();
-			}
+			frame.ToWorld( *w );
 		}
 		brush->sides[i].winding = w;
 	}
@@ -797,17 +749,41 @@ void SplitBrush( uBrush_t* brush, int planenum, uBrush_t** front, uBrush_t** bac
 
 	// create a new winding from the split plane
 
-	w = new idWinding( plane );
-	for( i = 0; i < brush->numsides && w; i++ )
+	//puncho start - Phase 2C P2.1 (S5 in SplitBrush), Opus MAX review: from a 2^18 square the mid winding is off by up to
+	// about ulp(2^18) times the conditioning, which misfiled thin-wedge fragments at the forced block splits (air leaves
+	// marked opaque, whole face regions lost); here it is made in the brush's frame as CreateBrushWindingsLocal does
+	if( dmap_brushBaseWindings.GetBool() && !brush->bounds.IsCleared() )
 	{
-		idPlane& plane2 = dmapGlobals.mapPlanes[brush->sides[i].planenum ^ 1];
-		w = w->Clip( plane2, 0 ); // PLANESIDE_EPSILON);
+		idBrushFrame frame;
+		frame.FromBounds( brush->bounds );
+		w = new idWinding;
+		w->BaseForPlane( frame.MovePlane( plane ), frame.HalfSize() );
+		for( i = 0; i < brush->numsides && w; i++ )
+		{
+			w = w->Clip( frame.MovePlane( dmapGlobals.mapPlanes[brush->sides[i].planenum ^ 1] ), 0 );
+		}
+		if( w )
+		{
+			frame.ToWorld( *w );
+		}
 	}
+	else
+	{
+		w = new idWinding( plane );
+		for( i = 0; i < brush->numsides && w; i++ )
+		{
+			idPlane& plane2 = dmapGlobals.mapPlanes[brush->sides[i].planenum ^ 1];
+			w = w->Clip( plane2, 0 ); // PLANESIDE_EPSILON);
+		}
+	}
+	//puncho end
 
 	if( !w || w->IsTiny() )
 	{
 		// the brush isn't really split
 		int		side;
+
+		delete w;	//puncho - Phase 2C P2.1: a tiny mid winding was leaked here (stock)
 
 		side = BrushMostlyOnSide( brush, plane );
 		if( side == PSIDE_FRONT )
@@ -907,6 +883,7 @@ void SplitBrush( uBrush_t* brush, int planenum, uBrush_t** front, uBrush_t** bac
 			FreeBrush( b[1] );
 			*back = CopyBrush( brush );
 		}
+		delete midwinding;	//puncho - Phase 2C P2.1: it belongs to no brush on this path and was leaked (stock)
 		return;
 	}
 

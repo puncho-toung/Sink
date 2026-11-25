@@ -322,6 +322,7 @@ typedef struct
 
 extern dmapGlobals_t dmapGlobals;
 extern const idMapBrush* dmapSourceBrush;	//puncho - Phase 2C P2 (S5b): the map brush ParseBrush is turning into buildBrush, else NULL
+extern idCVar dmap_brushBaseWindings;	//puncho - Phase 2C P2.1: ubrush.cpp's; dmap_visibleHullFix (usurface.cpp) acts only with it
 
 extern idCVar dmap_maxSurfaceVerts;
 //puncho start - P2b.1.10g: dmap.cpp's; OptimizeGroupList counts its groups and the largest group's tris when

@@ -413,7 +413,7 @@ Adds non-opaque leaf fragments to the convex hull
 // meets there) has micro-edges whose directions are noise, and adding the next fragment then drops real hull points
 // (a third of a cone side lost). The convex hull of the fragments of a side none of which is in an opaque leaf is the
 // side's own winding; otherwise the hull is made once from all fragment points by a monotone chain in the plane.
-idCVar dmap_visibleHullFix( "dmap_visibleHullFix", "1", CVAR_TOOL | CVAR_BOOL, "1 = a side whose fragments are all in non-opaque leafs keeps its whole winding, others get a monotone-chain hull of their fragments; 0 = stock AddToConvexHull" );
+idCVar dmap_visibleHullFix( "dmap_visibleHullFix", "1", CVAR_TOOL | CVAR_BOOL, "a test switch, with dmap_brushBaseWindings 1 only: a side whose fragments are all in non-opaque leafs keeps its whole winding, others get a monotone-chain hull of their fragments; 0 = stock AddToConvexHull (with dmap_brushSourcePlanes on, worse than both off far from the origin)" );
 static bool				clipHitOpaque;
 static idList<idVec5>	clipHullPoints;
 
@@ -554,7 +554,7 @@ static void ClipSideByTree_r( idWinding* w, side_t* side, node_t* node )
 	{
 		clipHitOpaque = true;
 	}
-	else if( dmap_visibleHullFix.GetBool() )
+	else if( dmap_visibleHullFix.GetBool() && dmap_brushBaseWindings.GetBool() )	//puncho - Phase 2C P2.1: V1 follows S5
 	{
 		for( int k = 0; k < w->GetNumPoints(); k++ )
 		{
@@ -626,7 +626,7 @@ void ClipSidesByTree( uEntity_t* e )
 			clipHullPoints.SetNum( 0 );	//puncho - Phase 2C P2 (V1)
 			ClipSideByTree_r( w, side, e->tree->headnode );
 			//puncho start - Phase 2C P2 (V1), Opus A review: replace the incremental hull
-			if( side->visibleHull && dmap_visibleHullFix.GetBool() )
+			if( side->visibleHull && dmap_visibleHullFix.GetBool() && dmap_brushBaseWindings.GetBool() )	//puncho - Phase 2C P2.1: V1 follows S5
 			{
 				idWinding* fixed = clipHitOpaque ? MonotoneHull( clipHullPoints, dmapGlobals.mapPlanes[ side->planenum ].Normal() ) : side->winding->Copy();
 				if( fixed )

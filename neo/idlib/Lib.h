@@ -312,6 +312,7 @@ public:
 #include "geometry/JointTransform.h"
 #include "geometry/DrawVert.h"
 #include "geometry/Winding.h"
+#include "geometry/BrushFrame.h"	//puncho - Phase 2C P2.1
 #include "geometry/DecalProjection.h"
 #include "geometry/Winding2D.h"
 #include "geometry/Surface.h"

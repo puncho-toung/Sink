@@ -34,6 +34,10 @@ If you have questions concerning this license or the applicable additional terms
 
 int			c_faceLeafs;
 
+//puncho start - Phase 2C P2.1 (FaceBSP split epsilon)
+idCVar dmap_faceSplitFix( "dmap_faceSplitFix", "1", CVAR_TOOL | CVAR_BOOL, "1 = BuildFaceTree_r splits a face it classed as crossing the plane at the epsilon it classed it with (ON_EPSILON), so neither piece is lost; 0 = stock CLIP_EPSILON * 2, which drops a piece lying 0.1-0.2 beyond the plane: a thin leaf (a wedge between near-coplanar faces) then straddles that face and is marked opaque by the brush behind it, hiding visible faces" );
+//puncho end
+
 
 void RemovePortalFromNode( uPortal_t* portal, node_t* l );
 
@@ -632,7 +636,13 @@ void	BuildFaceTree_r( node_t* node, bspFace_t* list )
 
 		if( side == SIDE_CROSS )
 		{
-			split->w->Split( plane, CLIP_EPSILON * 2, &frontWinding, &backWinding );
+			//puncho start - Phase 2C P2.1: PlaneSide found points more than ON_EPSILON on both sides; a split at
+			// CLIP_EPSILON * 2 called the points of a piece lying 0.1-0.2 beyond the plane "on" and dropped that piece.
+			// SplitBrush (FilterBrushesIntoTree) still puts the brush's volume there (its threshold is 0.1), and the leaf,
+			// which no node then separates from that brush, is marked opaque: the air in a thin wedge between two
+			// near-coplanar faces became solid and the faces in it vanished (rock set: a boulder face, 1,410 units^2)
+			split->w->Split( plane, dmap_faceSplitFix.GetBool() ? ON_EPSILON : CLIP_EPSILON * 2, &frontWinding, &backWinding );
+			//puncho end
 			if( frontWinding )
 			{
 				newFace = AllocBspFace();
@@ -661,6 +671,13 @@ void	BuildFaceTree_r( node_t* node, bspFace_t* list )
 			split->next = childLists[1];
 			childLists[1] = split;
 		}
+		//puncho start - Phase 2C P2.1: a face on another plane within ON_EPSILON of this one goes to neither child; it
+		// was leaked (stock)
+		else
+		{
+			FreeBspFace( split );
+		}
+		//puncho end
 	}
 
 

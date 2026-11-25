@@ -3134,57 +3134,50 @@ idCVar cm_brushLocalWindings( "cm_brushLocalWindings", "1", CVAR_SYSTEM | CVAR_B
 ================
 CM_LocalSourcePlane
 
-As dmap's LocalSourcePlane (S5b): a non-axial Valve 220 side whose three map points, moved by -offset, each lie within
-0.01 of its plane gets its local plane (for p = c + q) from those points in double, without the float rounding of
-the stored plane (off by an ulp of its distance far from the origin). Returns false, leaving `local` unset,
-otherwise (another format, an axial plane, points that do not define the plane as in an entity with an origin,
-collinear points).
+As dmap's LocalSourcePlane (S5b): a non-axial Valve 220 side whose three map points, moved by -offset and by the entity
+origin the parser took off before making the plane (Phase 2C P2.1, Opus A review), each lie within
+BRUSHFRAME_SOURCE_PLANE_EPSILON of its plane gets its local plane (for p = c + q) from those points in double, without
+the float rounding of the stored plane (off by an ulp of its distance far from the origin); the rule is
+idBrushFrame::PlaneFromPoints (Phase 2C P2.1). Returns false, leaving `local` unset, otherwise (another format, an
+axial plane, points that do not define the plane, collinear points).
 ================
 */
-static bool CM_LocalSourcePlane( const idMapBrushSide* side, const idPlane& plane, const idVec3& offset, const idVec3& centre, idPlane& local )
+static bool CM_LocalSourcePlane( const idMapBrushSide* side, const idPlane& plane, const idVec3& offset, const idBrushFrame& frame, idPlane& local )
 {
-	int k;
+	if( side->GetProjectionType() != idMapBrushSide::PROJECTION_VALVE220 )
+	{
+		return false;
+	}
+	return frame.PlaneFromPoints( side->planepts, offset + side->GetOrigin(), plane, local );
+}
 
-	if( side->GetProjectionType() != idMapBrushSide::PROJECTION_VALVE220 || plane.Type() < PLANETYPE_TRUEAXIAL )
+/*
+================
+CM_SidePlanesAgree
+
+Phase 2C P2.1, Opus A review: two sides of one brush make one collision face when their stored planes agree within
+dmap's plane-set tolerances (F1c), or when they have the same material and their local planes agree within
+CM_NEAR_NORMAL_EPSILON per normal component and CM_DUP_DIST_EPSILON in distance and so lie within CM_MERGE_PLANE_EPSILON
+of each other everywhere in the brush (the frame's bounds hold the brush, so a brush point q has |q| <= diagonal / 2 +
+0.87 <= h / 2 + 1 in the frame, and the two planes differ there by at most |dn| |q| + |dd|). Clipped in float, two sides
+a few thousandths of a degree apart meet along an ill-conditioned edge whose ends land up to a unit off, and the gap
+between the two polygons let traces through (generated rock sets g_vi_s2, g_vq_s2: 230 and 409 probe rays).
+================
+*/
+#define CM_NEAR_NORMAL_EPSILON	0.0001f
+static bool CM_SidePlanesAgree( const idPlane& a, const idPlane& b, const idPlane& localA, const idPlane& localB, const float halfSize, const idMaterial* materialA, const idMaterial* materialB )
+{
+	if( a.Compare( b, CM_DUP_NORMAL_EPSILON, CM_DUP_DIST_EPSILON ) )
+	{
+		return true;
+	}
+	if( materialA != materialB || !localA.Compare( localB, CM_NEAR_NORMAL_EPSILON, CM_DUP_DIST_EPSILON ) )
 	{
 		return false;
 	}
-	double p[3][3];
-	for( k = 0; k < 3; k++ )
-	{
-		const double x = ( double )side->planepts[k][0] - ( double )offset[0];
-		const double y = ( double )side->planepts[k][1] - ( double )offset[1];
-		const double z = ( double )side->planepts[k][2] - ( double )offset[2];
-		const double dist = ( ( double )plane[0] * x + ( double )plane[1] * y ) + ( double )plane[2] * z + ( double )plane[3];
-		if( idMath::Fabs( ( float )dist ) > 0.01f )
-		{
-			return false;
-		}
-		p[k][0] = x - ( double )centre[0];
-		p[k][1] = y - ( double )centre[1];
-		p[k][2] = z - ( double )centre[2];
-	}
-	// idPlane::FromPoints( p0, p1, p2 ): normal = ( p0 - p1 ) x ( p2 - p1 ), d = -normal . p1
-	const double u[3] = { p[0][0] - p[1][0], p[0][1] - p[1][1], p[0][2] - p[1][2] };
-	const double v[3] = { p[2][0] - p[1][0], p[2][1] - p[1][1], p[2][2] - p[1][2] };
-	double n[3] = { u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0] };
-	const double length = sqrt( n[0] * n[0] + n[1] * n[1] + n[2] * n[2] );
-	if( length < 1e-6 )
-	{
-		return false;
-	}
-	n[0] /= length;
-	n[1] /= length;
-	n[2] /= length;
-	if( n[0] * plane[0] + n[1] * plane[1] + n[2] * plane[2] < 0.99999 )
-	{
-		return false;
-	}
-	local[0] = ( float )n[0];
-	local[1] = ( float )n[1];
-	local[2] = ( float )n[2];
-	local[3] = ( float ) - ( n[0] * p[1][0] + n[1] * p[1][1] + n[2] * p[1][2] );
-	return true;
+	const float dn = ( localA.Normal() - localB.Normal() ).Length();
+	const float dd = idMath::Fabs( localA[3] - localB[3] );
+	return dn * ( 0.5f * halfSize + 1.0f ) + dd <= CM_MERGE_PLANE_EPSILON;
 }
 
 /*
@@ -3195,17 +3188,15 @@ The brush's planes re-expressed for p = c + q: a Valve 220 side's from its map p
 other plane moved with the large terms summed in double.
 ================
 */
-static void CM_LocalPlanes( const idMapBrush* mapBrush, const idVec3& offset, const idPlane* planes, const int numPlanes, const idVec3& centre, idPlane* localPlanes )
+static void CM_LocalPlanes( const idMapBrush* mapBrush, const idVec3& offset, const idPlane* planes, const int numPlanes, const idBrushFrame& frame, idPlane* localPlanes )
 {
 	for( int i = 0; i < numPlanes; i++ )
 	{
-		if( CM_LocalSourcePlane( mapBrush->GetSide( i ), planes[i], offset, centre, localPlanes[i] ) )
+		if( CM_LocalSourcePlane( mapBrush->GetSide( i ), planes[i], offset, frame, localPlanes[i] ) )
 		{
 			continue;
 		}
-		const double dot = ( ( double )planes[i][0] * ( double )centre[0] + ( double )planes[i][1] * ( double )centre[1] ) + ( double )planes[i][2] * ( double )centre[2];
-		localPlanes[i] = planes[i];
-		localPlanes[i][3] = ( float )( ( double )planes[i][3] + dot );
+		localPlanes[i] = frame.MovePlane( planes[i] );
 	}
 }
 
@@ -3214,14 +3205,14 @@ static void CM_LocalPlanes( const idMapBrush* mapBrush, const idVec3& offset, co
 CM_BrushLocalFrame
 
 For a brush with a non-axial plane: the bounds of its stock windings (every side but the last, as ConvertBrush
-takes them), their rounded centre c, a base half size h (a power of two at least the bounds' diagonal) and the
-planes re-expressed for p = c + q, the large terms summed in double (a Valve 220 side's from its map points, as
-CM_LocalSourcePlane). `planes` are the brush's planes after the degeneracy fix and the move by -offset. Returns false,
-leaving the outputs unset, when every plane is axial (the stock clip is exact there) or the stock windings bound
-nothing.
+takes them), the frame they give (idBrushFrame::FromBounds: their rounded centre c, a base half size h, a power of two
+at least the bounds' diagonal) and the planes re-expressed for p = c + q, the large terms summed in double (a Valve 220
+side's from its map points, as CM_LocalSourcePlane). `planes` are the brush's planes after the degeneracy fix and the
+move by -offset. Returns false, leaving the outputs unset, when every plane is axial (the stock clip is exact there) or
+the stock windings bound nothing.
 ================
 */
-static bool CM_BrushLocalFrame( const idMapBrush* mapBrush, const idVec3& offset, const idPlane* planes, const int numPlanes, idVec3& centre, float& halfSize, idPlane* localPlanes )
+static bool CM_BrushLocalFrame( const idMapBrush* mapBrush, const idVec3& offset, const idPlane* planes, const int numPlanes, idBrushFrame& frame, idPlane* localPlanes )
 {
 	int i, j;
 
@@ -3261,18 +3252,8 @@ static bool CM_BrushLocalFrame( const idMapBrush* mapBrush, const idVec3& offset
 		return false;
 	}
 
-	centre = bounds.GetCenter();
-	for( i = 0; i < 3; i++ )
-	{
-		centre[i] = idMath::Rint( centre[i] );
-	}
-	const float diagonal = ( bounds[1] - bounds[0] ).Length();
-	halfSize = 64.0f;
-	while( halfSize < diagonal && halfSize < MAX_WORLD_SIZE )
-	{
-		halfSize *= 2.0f;
-	}
-	CM_LocalPlanes( mapBrush, offset, planes, numPlanes, centre, localPlanes );
+	frame.FromBounds( bounds );
+	CM_LocalPlanes( mapBrush, offset, planes, numPlanes, frame, localPlanes );
 	return true;
 }
 
@@ -3283,8 +3264,7 @@ struct cmBrushFrame_t
 {
 	const idMapBrush*	brush;
 	bool				local;
-	idVec3				centre;
-	float				halfSize;
+	idBrushFrame		frame;
 };
 static idList<cmBrushFrame_t> cm_brushFrames;
 //puncho end
@@ -3315,24 +3295,31 @@ void idCollisionModelManagerLocal::ConvertBrushSides( cm_model_t* model, const i
 	}
 
 	//puncho start - Phase 2C P2 (F1b): a non-axial brush's windings in a brush-local frame (ConvertBrush's, when it made it)
-	idVec3 localCentre;
-	float localHalfSize = 0.0f;
+	idBrushFrame localFrame;	//puncho - Phase 2C P2.1: the frame rule is idlib's (geometry/BrushFrame.h)
 	idPlane* localPlanes = ( idPlane* ) _alloca16( mapBrush->GetNumSides() * sizeof( localPlanes[0] ) );
 	bool local;
 	if( cm_brushLocalWindings.GetBool() && primitiveNum >= 0 && primitiveNum < cm_brushFrames.Num() && cm_brushFrames[primitiveNum].brush == mapBrush )
 	{
-		const cmBrushFrame_t& frame = cm_brushFrames[primitiveNum];
-		local = frame.local;
+		const cmBrushFrame_t& slot = cm_brushFrames[primitiveNum];
+		local = slot.local;
 		if( local )
 		{
-			localCentre = frame.centre;
-			localHalfSize = frame.halfSize;
-			CM_LocalPlanes( mapBrush, originOffset, planes, mapBrush->GetNumSides(), localCentre, localPlanes );
+			localFrame = slot.frame;
+			CM_LocalPlanes( mapBrush, originOffset, planes, mapBrush->GetNumSides(), localFrame, localPlanes );
 		}
 	}
 	else
 	{
-		local = cm_brushLocalWindings.GetBool() && CM_BrushLocalFrame( mapBrush, originOffset, planes, mapBrush->GetNumSides(), localCentre, localHalfSize, localPlanes );
+		local = cm_brushLocalWindings.GetBool() && CM_BrushLocalFrame( mapBrush, originOffset, planes, mapBrush->GetNumSides(), localFrame, localPlanes );
+	}
+	//puncho end
+	//puncho start - Phase 2C P2.1: each side's material, and whether the side made a polygon (CM_SidePlanesAgree's users)
+	const idMaterial** sideMaterials = ( const idMaterial** ) _alloca16( mapBrush->GetNumSides() * sizeof( sideMaterials[0] ) );
+	bool* kept = ( bool* ) _alloca16( mapBrush->GetNumSides() * sizeof( kept[0] ) );
+	for( i = 0; i < mapBrush->GetNumSides(); i++ )
+	{
+		sideMaterials[i] = declManager->FindMaterial( mapBrush->GetSide( i )->GetMaterial() );
+		kept[i] = false;
 	}
 	//puncho end
 
@@ -3350,9 +3337,12 @@ void idCollisionModelManagerLocal::ConvertBrushSides( cm_model_t* model, const i
 		{
 			//puncho start - Phase 2C P2 (F1c): a side whose plane repeats an earlier side's (collinear map points) makes no second polygon,
 			// and no side is clipped by a copy of its own plane (float noise kept or removed the polygon at random)
+			// Phase 2C P2.1, Opus A review: only an earlier side that made a polygon stands in for this one; with three
+			// near-coplanar sides A ~ B ~ C (A and C not agreeing) C was dropped for B, which had itself been dropped for A,
+			// and nothing covered C's part of the face
 			for( j = 0; j < i; j++ )
 			{
-				if( planes[j].Compare( planes[i], CM_DUP_NORMAL_EPSILON, CM_DUP_DIST_EPSILON ) && ( declManager->FindMaterial( mapBrush->GetSide( j )->GetMaterial() )->GetContentFlags() & CONTENTS_REMOVE_UTIL ) )
+				if( kept[j] && CM_SidePlanesAgree( planes[j], planes[i], localPlanes[j], localPlanes[i], localFrame.HalfSize(), sideMaterials[j], material ) )	//puncho - Phase 2C P2.1
 				{
 					break;
 				}
@@ -3362,19 +3352,16 @@ void idCollisionModelManagerLocal::ConvertBrushSides( cm_model_t* model, const i
 				continue;
 			}
 			//puncho end
-			w.BaseForPlane( -localPlanes[i], localHalfSize );
+			w.BaseForPlane( -localPlanes[i], localFrame.HalfSize() );
 			for( j = 0; j < mapBrush->GetNumSides() && w.GetNumPoints(); j++ )
 			{
-				if( i == j || planes[j].Compare( planes[i], CM_DUP_NORMAL_EPSILON, CM_DUP_DIST_EPSILON ) )	//puncho - Phase 2C P2 (F1c)
+				if( i == j || CM_SidePlanesAgree( planes[j], planes[i], localPlanes[j], localPlanes[i], localFrame.HalfSize(), sideMaterials[j], material ) )	//puncho - Phase 2C P2 (F1c), P2.1
 				{
 					continue;
 				}
 				w.ClipInPlace( -localPlanes[j], 0 );
 			}
-			for( j = 0; j < w.GetNumPoints(); j++ )
-			{
-				w[j].ToVec3() = localCentre + w[j].ToVec3();
-			}
+			localFrame.ToWorld( w );
 			// the tip of a cone or many-sided spire is cut by every side plane that meets there: a cluster of points closer
 			// than the cm vertex weld, which CreatePolygon turns into a repeated edge and drops the polygon silently
 			w.RemoveEqualPoints( VERTEX_EPSILON );	//puncho - Phase 2C P2 (F1c)
@@ -3396,6 +3383,7 @@ void idCollisionModelManagerLocal::ConvertBrushSides( cm_model_t* model, const i
 		if( w.GetNumPoints() )
 		{
 			PolygonFromWinding( model, &w, planes[i], material, primitiveNum );
+			kept[i] = true;	//puncho - Phase 2C P2.1
 		}
 	}
 }
@@ -3432,17 +3420,15 @@ void idCollisionModelManagerLocal::ConvertBrush( cm_model_t* model, const idMapB
 
 	//puncho start - Phase 2C P2 (F1b): a non-axial brush's bounds from windings in a brush-local frame; the frame is kept
 	// for ConvertBrushSides
-	idVec3 localCentre = vec3_origin;
-	float localHalfSize = 0.0f;
+	idBrushFrame localFrame;	//puncho - Phase 2C P2.1: the frame rule is idlib's (geometry/BrushFrame.h)
 	idPlane* localPlanes = ( idPlane* ) _alloca16( mapBrush->GetNumSides() * sizeof( localPlanes[0] ) );
-	const bool local = cm_brushLocalWindings.GetBool() && CM_BrushLocalFrame( mapBrush, originOffset, planes, mapBrush->GetNumSides(), localCentre, localHalfSize, localPlanes );
+	const bool local = cm_brushLocalWindings.GetBool() && CM_BrushLocalFrame( mapBrush, originOffset, planes, mapBrush->GetNumSides(), localFrame, localPlanes );
 	if( primitiveNum >= 0 && primitiveNum < cm_brushFrames.Num() )
 	{
-		cmBrushFrame_t& frame = cm_brushFrames[primitiveNum];
-		frame.brush = mapBrush;
-		frame.local = local;
-		frame.centre = localCentre;
-		frame.halfSize = localHalfSize;
+		cmBrushFrame_t& slot = cm_brushFrames[primitiveNum];
+		slot.brush = mapBrush;
+		slot.local = local;
+		slot.frame = localFrame;
 	}
 	//puncho end
 
@@ -3456,7 +3442,7 @@ void idCollisionModelManagerLocal::ConvertBrush( cm_model_t* model, const idMapB
 		//puncho start - Phase 2C P2 (F1b)
 		if( local )
 		{
-			w.BaseForPlane( -localPlanes[i], localHalfSize );
+			w.BaseForPlane( -localPlanes[i], localFrame.HalfSize() );
 			for( j = 0; j < mapBrush->GetNumSides() && w.GetNumPoints(); j++ )
 			{
 				if( i == j )
@@ -3467,7 +3453,7 @@ void idCollisionModelManagerLocal::ConvertBrush( cm_model_t* model, const idMapB
 			}
 			for( j = 0; j < w.GetNumPoints(); j++ )
 			{
-				bounds.AddPoint( localCentre + w[j].ToVec3() );
+				bounds.AddPoint( localFrame.Centre() + w[j].ToVec3() );
 			}
 			continue;
 		}
@@ -4565,9 +4551,10 @@ cm_model_t* idCollisionModelManagerLocal::CollisionModelForMapEntity( const idMa
 
 	//puncho start - Phase 2C P2 (F1b): one frame slot a primitive, filled by ConvertBrush, read by ConvertBrushSides
 	cm_brushFrames.SetNum( mapEnt->GetNumPrimitives() );
-	if( cm_brushFrames.Num() > 0 )
+	for( int k = 0; k < cm_brushFrames.Num(); k++ )	//puncho - Phase 2C P2.1: no memset over a class (GCC -Wclass-memaccess)
 	{
-		memset( cm_brushFrames.Ptr(), 0, cm_brushFrames.Num() * sizeof( cm_brushFrames[0] ) );
+		cm_brushFrames[k].brush = NULL;
+		cm_brushFrames[k].local = false;
 	}
 	//puncho end
 

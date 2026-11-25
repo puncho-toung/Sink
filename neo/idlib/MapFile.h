@@ -137,6 +137,14 @@ public:
 	void					ConvertToValve220Format( const idMat4& entityTransform, idStrList& textureCollections );
 	// RB end
 
+	//puncho start - Phase 2C P2.1: the entity origin the parser subtracted from planepts before making the plane
+	// (planepts keep the map's coordinates)
+	const idVec3&			GetOrigin() const
+	{
+		return origin;
+	}
+	//puncho end
+
 protected:
 	idStr					material;
 	idPlane					plane;
