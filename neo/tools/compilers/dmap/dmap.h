@@ -130,11 +130,13 @@ typedef struct
 typedef struct side_s
 {
 	int					planenum;
+	int					sourceSide;		//puncho - Phase 2C P2 (S5b): this side's index in dmapSourceBrush (in the padding after planenum)
 
 	const idMaterial* 	material;
 	textureVectors_t	texVec;
 	idVec2i				texSize;
 	bool				texValve220;	// RB
+	bool				hasSourcePts;	//puncho - Phase 2C P2 (S5b): a Valve 220 side whose map points sourceSide names (in the padding after texValve220)
 
 	idWinding* 			winding;		// only clipped to the other sides of the brush
 	idWinding* 			visibleHull;	// also clipped to the solid parts of the world
@@ -319,6 +321,7 @@ typedef struct
 } dmapGlobals_t;
 
 extern dmapGlobals_t dmapGlobals;
+extern const idMapBrush* dmapSourceBrush;	//puncho - Phase 2C P2 (S5b): the map brush ParseBrush is turning into buildBrush, else NULL
 
 extern idCVar dmap_maxSurfaceVerts;
 //puncho start - P2b.1.10g: dmap.cpp's; OptimizeGroupList counts its groups and the largest group's tris when

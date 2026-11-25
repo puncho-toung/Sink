@@ -148,6 +148,13 @@ static uint64 OptCountBytes( uint64 count, uint64 width )
 static bool IsTriangleValid( const optVertex_t* v1, const optVertex_t* v2, const optVertex_t* v3 );
 static bool IsTriangleDegenerate( const optVertex_t* v1, const optVertex_t* v2, const optVertex_t* v3 );
 
+//puncho start - F6: two optimizer faults that drop whole coplanar groups ( SplitOriginalEdgesAtCrossings, OptimizeIsland )
+idCVar dmap_optFix( "dmap_optFix", "1", CVAR_TOOL | CVAR_BOOL, "dmap optimizer fixes F6: an edge endpoint splits another edge only from inside it, and the final fill test also asks the outline's even-odd rule; 0 = stock" );
+static const optEdge_t*	optFillOutline;		// set around the final BuildOptTriangles; NULL = stock fill test only
+static int				c_optFixCrossings;	// endpoint crossings refused, per entity
+static int				c_optFixFills;		// triangles filled by the outline alone, per entity
+//puncho end
+
 static idRandom orandom;
 
 /*
@@ -1169,6 +1176,58 @@ static void LinkTriToEdge( optTri_t* optTri, optEdge_t* edge )
 	common->Error( "LinkTriToEdge: edge not found on tri" );
 }
 
+//puncho start - F6
+/*
+==================
+PointInsideOutline
+
+Even-odd rule against the outline edges ( a half-open crossing count along +x )
+==================
+*/
+static bool PointInsideOutline( const idVec3& p, const optEdge_t* outline )
+{
+	bool inside = false;
+	for( const optEdge_t* e = outline ; e ; e = e->islandLink )
+	{
+		const idVec3& a = e->v1->pv;
+		const idVec3& b = e->v2->pv;
+		if( ( a[1] > p[1] ) != ( b[1] > p[1] ) )
+		{
+			float x = a[0] + ( p[1] - a[1] ) * ( b[0] - a[0] ) / ( b[1] - a[1] );
+			if( x > p[0] )
+			{
+				inside = !inside;
+			}
+		}
+	}
+	return inside;
+}
+
+/*
+==================
+ClosedOutline
+
+The island's edges after CullUnusedVerts, if every vertex has an even number of them ( closed loops ), else NULL
+==================
+*/
+static const optEdge_t* ClosedOutline( optIsland_t* island )
+{
+	for( optVertex_t* ov = island->verts ; ov ; ov = ov->islandLink )
+	{
+		int degree = 0;
+		for( optEdge_t* e = ov->edges ; e ; e = ( e->v1 == ov ) ? e->v1link : e->v2link )
+		{
+			degree++;
+		}
+		if( degree & 1 )
+		{
+			return NULL;
+		}
+	}
+	return island->edges;
+}
+//puncho end
+
 /*
 ===============
 CreateOptTri
@@ -1306,6 +1365,13 @@ static void CreateOptTri( optVertex_t* first, optEdge_t* e1, optEdge_t* e2, optI
 	{
 		optTri->filled = true;
 	}
+	//puncho start - F6: see OptimizeIsland
+	else if( optFillOutline != NULL && PointInsideOutline( optTri->midpoint, optFillOutline ) )
+	{
+		optTri->filled = true;
+		c_optFixFills++;
+	}
+	//puncho end
 	else
 	{
 		optTri->filled = false;
@@ -1919,7 +1985,29 @@ void SplitOriginalEdgesAtCrossings( optimizeGroup_t* opt )
 								j, v3 - optVerts, v4 - optVerts, newVert - optVerts );
 			}
 #endif
-			if( newVert != v1 && newVert != v2 )
+			//puncho start - F6: when the crossing is an endpoint of one edge, it splits the other edge only from inside it.
+			// EdgesCross reports two disjoint colinear edges as crossing when float noise puts one endpoint exactly on
+			// the other's line; EdgeIntersection of the parallel lines then returns an endpoint ( f = 0 or 1 ), and
+			// splitting the far edge at it adds a fragment that runs over the edges between them, which
+			// RemoveIfColinear later takes for a collapsed sliver and deletes with the outline it overlaps
+			bool splitI = newVert != v1 && newVert != v2;
+			bool splitJ = newVert != v3 && newVert != v4;
+			if( dmap_optFix.GetBool() && splitI != splitJ )
+			{
+				if( splitI && !VertexBetween( newVert, v1, v2 ) )
+				{
+					splitI = false;
+					c_optFixCrossings++;
+				}
+				if( splitJ && !VertexBetween( newVert, v3, v4 ) )
+				{
+					splitJ = false;
+					c_optFixCrossings++;
+				}
+			}
+			//puncho end
+
+			if( splitI )	//puncho - F6
 			{
 				ReserveOptWorkingSet( sizeof( *cross ) );	//puncho - R1.4
 				cross = ( edgeCrossing_t* )Mem_ClearedAlloc( sizeof( *cross ), TAG_TOOLS );
@@ -1928,7 +2016,7 @@ void SplitOriginalEdgesAtCrossings( optimizeGroup_t* opt )
 				crossings[i] = cross;
 			}
 
-			if( newVert != v3 && newVert != v4 )
+			if( splitJ )	//puncho - F6
 			{
 				ReserveOptWorkingSet( sizeof( *cross ) );	//puncho - R1.4
 				cross = ( edgeCrossing_t* )Mem_ClearedAlloc( sizeof( *cross ), TAG_TOOLS );
@@ -2122,6 +2210,14 @@ static void OptimizeIsland( optIsland_t* island )
 	CullUnusedVerts( island );
 	DrawEdges( island );
 
+	//puncho start - F6: the edges left now are the outline of the filled region, and CombineColinearEdges treats them
+	// by the even-odd rule: it deletes coincident edge pairs as a collapsed sliver, which closes a sliver hole.
+	// The stock fill test below samples one point of each new triangle against the original triangles, where
+	// that hole is still open: a large triangle whose centroid lands in it was dropped whole. Fill also what
+	// the outline encloses. AddInteriorEdges only prepends to island->edges, so this list head stays the outline.
+	const optEdge_t* outline = dmap_optFix.GetBool() ? ClosedOutline( island ) : NULL;
+	//puncho end
+
 	// add new internal edges between the remaining exterior edges
 	// to give us a full triangulation again
 	AddInteriorEdges( island );
@@ -2129,7 +2225,9 @@ static void OptimizeIsland( optIsland_t* island )
 
 	// determine all the possible triangles, and decide if
 	// the are filled or empty
+	optFillOutline = outline;	//puncho - F6
 	BuildOptTriangles( island );
+	optFillOutline = NULL;	//puncho - F6
 
 	// make mapTri_t out of the filled optTri_t
 	RegenerateTriangles( island );
@@ -2350,8 +2448,17 @@ void	OptimizeEntity( uEntity_t* e )
 	int		i;
 
 	common->VerbosePrintf( "----- OptimizeEntity -----\n" );
+	c_optFixCrossings = 0;	//puncho - F6
+	c_optFixFills = 0;	//puncho - F6
+	optFillOutline = NULL;	//puncho - F6: an error inside the final BuildOptTriangles leaves it pointing at freed edges, and the engine's dmap command survives the error
 	for( i = 0 ; i < e->numAreas ; i++ )
 	{
 		OptimizeGroupList( e->areas[i].groups );
 	}
+	//puncho start - F6
+	if( c_optFixCrossings || c_optFixFills )
+	{
+		common->Printf( "dmap_optFix: %i endpoint crossings refused, %i triangles filled by the outline\n", c_optFixCrossings, c_optFixFills );
+	}
+	//puncho end
 }

@@ -66,6 +66,7 @@ static	uEntity_t*	uEntity;
 // brushes are parsed into a temporary array of sides,
 // which will have duplicates removed before the final brush is allocated
 static	uBrush_t*	buildBrush;
+const idMapBrush*	dmapSourceBrush;	//puncho - Phase 2C P2 (S5b): see dmap.h
 
 
 #define	NORMAL_EPSILON			0.00001f
@@ -374,6 +375,10 @@ static void ParseBrush( const idMapBrush* mapBrush, int primitiveNum )
 		// we only load this for the engine in the case we want to convert it to the Valve 220 format
 		if( s->texValve220 )
 		{
+			//puncho start - Phase 2C P2 (S5b): the points the plane was made from (before any entity origin was subtracted)
+			s->hasSourcePts = true;
+			s->sourceSide = i;	// the points stay in the map brush: side_t does not grow
+			//puncho end
 			s->texSize = ms->GetTextureSize();
 
 			idImage* image = s->material->GetEditorImage();
@@ -402,7 +407,9 @@ static void ParseBrush( const idMapBrush* mapBrush, int primitiveNum )
 	// get the content for the entire brush
 	SetBrushContents( buildBrush );
 
+	dmapSourceBrush = mapBrush;	//puncho - Phase 2C P2 (S5b): read by LocalSourcePlane through CreateBrushWindings
 	b = FinishBrush();
+	dmapSourceBrush = NULL;	//puncho - Phase 2C P2 (S5b)
 	if( !b )
 	{
 		return;

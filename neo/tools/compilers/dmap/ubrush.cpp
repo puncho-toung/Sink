@@ -31,6 +31,12 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "dmap.h"
 
+//puncho start - Phase 2C P2 (S5)
+idCVar dmap_brushBaseWindings( "dmap_brushBaseWindings", "1", CVAR_TOOL | CVAR_BOOL, "1 = a non-axial brush's windings are rebuilt from a square sized to the brush and clipped in a brush-local frame, so copies of one corner agree at any distance from the origin; 0 = stock windings from 2^18 squares at the plane foot" );
+static int c_brushBaseWindingFallbacks;	// brushes whose local windings bounded nothing valid, in this process
+idCVar dmap_brushSourcePlanes( "dmap_brushSourcePlanes", "1", CVAR_TOOL | CVAR_BOOL, "with dmap_brushBaseWindings 1: a non-axial Valve 220 side's local plane is made in double from the map's three points when they lie within 0.01 of its stored plane; 0 = the stored float plane, moved to the local frame (a test switch: S5 without it is worse than stock far from the origin)" );
+//puncho end
+
 int		c_active_brushes;
 
 int		c_nodes;
@@ -217,6 +223,175 @@ bool BoundBrush( uBrush_t* brush )
 	return true;
 }
 
+//puncho start - Phase 2C P2 (S5b)
+/*
+==================
+LocalSourcePlane
+
+A plane made in float far from the origin is off by up to an ulp of its distance (about 0.001 at 16k), and faces that
+meet at a few degrees turn that into corner errors past the 1/32 weld. A non-axial side that still has the map's
+three points, each within 0.01 of the stored plane, gets its local plane (for p = c + q) from those points in double:
+the plane idPlane::FromPoints makes, without its rounding. Returns false, leaving `local` unset, otherwise (no points,
+an axial plane, points that do not define the stored plane, as in an entity with an origin, or collinear points).
+==================
+*/
+static bool LocalSourcePlane( const side_t& side, const idPlane& plane, const idVec3& centre, idPlane& local )
+{
+	int k;
+
+	if( !side.hasSourcePts || dmapSourceBrush == NULL || side.sourceSide < 0 || side.sourceSide >= dmapSourceBrush->GetNumSides()
+			|| plane.Type() < PLANETYPE_TRUEAXIAL )
+	{
+		return false;
+	}
+	const idVec3* sourcePts = dmapSourceBrush->GetSide( side.sourceSide )->planepts;
+	double p[3][3];
+	for( k = 0; k < 3; k++ )
+	{
+		const double dist = ( ( double )plane[0] * ( double )sourcePts[k][0] + ( double )plane[1] * ( double )sourcePts[k][1] ) + ( double )plane[2] * ( double )sourcePts[k][2] + ( double )plane[3];
+		if( idMath::Fabs( ( float )dist ) > 0.01f )
+		{
+			return false;
+		}
+		p[k][0] = ( double )sourcePts[k][0] - ( double )centre[0];
+		p[k][1] = ( double )sourcePts[k][1] - ( double )centre[1];
+		p[k][2] = ( double )sourcePts[k][2] - ( double )centre[2];
+	}
+	// idPlane::FromPoints( p0, p1, p2 ): normal = ( p0 - p1 ) x ( p2 - p1 ), d = -normal . p1
+	const double u[3] = { p[0][0] - p[1][0], p[0][1] - p[1][1], p[0][2] - p[1][2] };
+	const double v[3] = { p[2][0] - p[1][0], p[2][1] - p[1][1], p[2][2] - p[1][2] };
+	double n[3] = { u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0] };
+	const double length = sqrt( n[0] * n[0] + n[1] * n[1] + n[2] * n[2] );
+	if( length < 1e-6 )
+	{
+		return false;
+	}
+	n[0] /= length;
+	n[1] /= length;
+	n[2] /= length;
+	if( n[0] * plane[0] + n[1] * plane[1] + n[2] * plane[2] < 0.99999 )
+	{
+		return false;
+	}
+	local[0] = ( float )n[0];
+	local[1] = ( float )n[1];
+	local[2] = ( float )n[2];
+	local[3] = ( float ) - ( n[0] * p[1][0] + n[1] * p[1][1] + n[2] * p[1][2] );
+	return true;
+}
+//puncho end
+
+//puncho start - Phase 2C P2 (S5)
+/*
+==================
+CreateBrushWindingsLocal
+
+Rebuilds the windings of a brush whose stock windings bound a valid volume. A stock winding starts from a 2^18
+square at the plane's foot, so the copies of one corner made on different sides land up to about ulp(2^18) times
+the conditioning apart, past the 1/32 weld: the cracks of steep brushes. Here each side starts from a square sized
+to the brush, at the projection of the brush's rounded centre c, and is clipped with the planes re-expressed for
+p = c + q (the large terms summed in double); only the final c + q rounds at world scale. A brush whose planes are
+all axial is left as it is (the stock clip is exact there). If the new windings do not bound a valid volume, the
+stock windings and bounds are kept.
+==================
+*/
+static void CreateBrushWindingsLocal( uBrush_t* brush )
+{
+	const int numSides = brush->numsides;
+	int i, j;
+
+	for( i = 0; i < numSides; i++ )
+	{
+		if( dmapGlobals.mapPlanes[brush->sides[i].planenum].Type() >= PLANETYPE_TRUEAXIAL )
+		{
+			break;
+		}
+	}
+	if( i == numSides )
+	{
+		return;
+	}
+
+	const idBounds stockBounds = brush->bounds;
+	idVec3 centre = stockBounds.GetCenter();
+	for( i = 0; i < 3; i++ )
+	{
+		centre[i] = idMath::Rint( centre[i] );
+	}
+	// a power of two at least the diagonal: a face point lies within diagonal / 2 + 0.87 of the local foot, inside
+	// the square's inscribed radius
+	const float diagonal = ( stockBounds[1] - stockBounds[0] ).Length();
+	float halfSize = 64.0f;
+	while( halfSize < diagonal && halfSize < MAX_WORLD_SIZE )
+	{
+		halfSize *= 2.0f;
+	}
+
+	// numSides <= MAX_BUILD_SIDES (512): at most 12 KB on the stack
+	idPlane* localPlanes = ( idPlane* ) _alloca16( numSides * sizeof( localPlanes[0] ) );
+	idWinding** stockWindings = ( idWinding** ) _alloca16( numSides * sizeof( stockWindings[0] ) );
+	for( i = 0; i < numSides; i++ )
+	{
+		const idPlane& plane = dmapGlobals.mapPlanes[brush->sides[i].planenum];
+		stockWindings[i] = brush->sides[i].winding;
+		//puncho - Phase 2C P2 (S5b): the side's own map points give an exact local plane when they still define it
+		if( dmap_brushSourcePlanes.GetBool() && LocalSourcePlane( brush->sides[i], plane, centre, localPlanes[i] ) )
+		{
+			continue;
+		}
+		const double dot = ( ( double )plane[0] * ( double )centre[0] + ( double )plane[1] * ( double )centre[1] ) + ( double )plane[2] * ( double )centre[2];
+		localPlanes[i] = plane;
+		localPlanes[i][3] = ( float )( ( double )plane[3] + dot );
+	}
+
+	for( i = 0; i < numSides; i++ )
+	{
+		idWinding* w = new idWinding;
+		w->BaseForPlane( localPlanes[i], halfSize );
+		for( j = 0; j < numSides && w; j++ )
+		{
+			if( i == j )
+			{
+				continue;
+			}
+			if( brush->sides[j].planenum == ( brush->sides[i].planenum ^ 1 ) )
+			{
+				continue;		// back side clipaway
+			}
+			w = w->Clip( -localPlanes[j], 0 );
+		}
+		if( w )
+		{
+			for( j = 0; j < w->GetNumPoints(); j++ )
+			{
+				( *w )[j].ToVec3() = centre + ( *w )[j].ToVec3();
+			}
+		}
+		brush->sides[i].winding = w;
+	}
+
+	const bool valid = BoundBrush( brush );
+	for( i = 0; i < numSides; i++ )
+	{
+		if( valid )
+		{
+			delete stockWindings[i];
+		}
+		else
+		{
+			delete brush->sides[i].winding;
+			brush->sides[i].winding = stockWindings[i];
+		}
+	}
+	if( !valid )
+	{
+		brush->bounds = stockBounds;
+		c_brushBaseWindingFallbacks++;
+		common->Printf( "dmap_brushBaseWindings: fallback on entity %d brush %d (process total %d)\n", brush->entitynum, brush->brushnum, c_brushBaseWindingFallbacks );
+	}
+}
+//puncho end
+
 /*
 ==================
 CreateBrushWindings
@@ -257,7 +432,17 @@ bool CreateBrushWindings( uBrush_t* brush )
 		side->winding = w;
 	}
 
-	return BoundBrush( brush );
+	//puncho start - Phase 2C P2 (S5): the stock verdict decides validity; a valid non-axial brush is then rebuilt
+	if( !BoundBrush( brush ) )
+	{
+		return false;
+	}
+	if( dmap_brushBaseWindings.GetBool() )
+	{
+		CreateBrushWindingsLocal( brush );
+	}
+	return true;
+	//puncho end
 }
 
 /*

@@ -407,6 +407,117 @@ ClipSideByTree_r
 Adds non-opaque leaf fragments to the convex hull
 ====================
 */
+
+//puncho start - Phase 2C P2 (V1), Opus A review: idWinding::AddToConvexHull classifies a point against unit edge directions with an
+// epsilon; a hull that holds near-coincident points (the tip of a cone or many-sided spire, cut by every side plane that
+// meets there) has micro-edges whose directions are noise, and adding the next fragment then drops real hull points
+// (a third of a cone side lost). The convex hull of the fragments of a side none of which is in an opaque leaf is the
+// side's own winding; otherwise the hull is made once from all fragment points by a monotone chain in the plane.
+idCVar dmap_visibleHullFix( "dmap_visibleHullFix", "1", CVAR_TOOL | CVAR_BOOL, "1 = a side whose fragments are all in non-opaque leafs keeps its whole winding, others get a monotone-chain hull of their fragments; 0 = stock AddToConvexHull" );
+static bool				clipHitOpaque;
+static idList<idVec5>	clipHullPoints;
+
+static idWinding* MonotoneHull( const idList<idVec5>& pts, const idVec3& normal )
+{
+	idVec3 u, unused;
+	normal.NormalVectors( u, unused );
+	const idVec3 v = normal.Cross( u );	// u x v = normal: counter clockwise in (u, v) is counter clockwise seen from the front
+	struct hp_t
+	{
+		double x, y;
+		int i;
+	};
+	idList<hp_t> p;
+	p.SetNum( pts.Num() );
+	for( int k = 0; k < pts.Num(); k++ )
+	{
+		const idVec3& q = pts[k].ToVec3();
+		p[k].x = ( double )q.x * u.x + ( double )q.y * u.y + ( double )q.z * u.z;
+		p[k].y = ( double )q.x * v.x + ( double )q.y * v.y + ( double )q.z * v.z;
+		p[k].i = k;
+	}
+	std::sort( p.Ptr(), p.Ptr() + p.Num(), []( const hp_t & a, const hp_t & b )
+	{
+		return a.x < b.x || ( a.x == b.x && a.y < b.y );
+	} );
+	// drop near-coincident points ( closer than 1/1024 )
+	idList<hp_t> q;
+	q.Resize( p.Num() );
+	int runStart = 0;	// q[runStart..] share q's last x exactly, in ascending y
+	for( int k = 0; k < p.Num(); k++ )
+	{
+		bool dup = false;
+		int m = q.Num() - 1;
+		if( m >= 0 && q[m].x == p[k].x )
+		{
+			// the run's y are <= p[k].y and ascending: if its last point is 1/1024 away or more, all of it is
+			dup = idMath::Fabs( ( float )( p[k].y - q[m].y ) ) < 1.0f / 1024.0f;
+			m = runStart - 1;
+		}
+		for( ; !dup && m >= 0 && p[k].x - q[m].x < 1.0 / 1024.0; m-- )
+		{
+			if( idMath::Fabs( ( float )( p[k].y - q[m].y ) ) < 1.0f / 1024.0f )
+			{
+				dup = true;
+			}
+		}
+		if( !dup )
+		{
+			if( q.Num() == 0 || q[q.Num() - 1].x != p[k].x )
+			{
+				runStart = q.Num();
+			}
+			q.Append( p[k] );
+		}
+	}
+	if( q.Num() < 3 )
+	{
+		return NULL;
+	}
+	auto cross = []( const hp_t & o, const hp_t & a, const hp_t & b )
+	{
+		return ( a.x - o.x ) * ( b.y - o.y ) - ( a.y - o.y ) * ( b.x - o.x );
+	};
+	idList<hp_t> h;
+	h.SetNum( 2 * q.Num() );
+	int n = 0;
+	for( int k = 0; k < q.Num(); k++ )
+	{
+		while( n >= 2 && cross( h[n - 2], h[n - 1], q[k] ) <= 0 )
+		{
+			n--;
+		}
+		h[n++] = q[k];
+	}
+	for( int k = q.Num() - 2, lower = n + 1; k >= 0; k-- )
+	{
+		while( n >= lower && cross( h[n - 2], h[n - 1], q[k] ) <= 0 )
+		{
+			n--;
+		}
+		h[n++] = q[k];
+	}
+	n--;	// the last point repeats the first
+	if( n < 3 )
+	{
+		return NULL;
+	}
+	idWinding* w = new idWinding( n );
+	for( int k = 0; k < n; k++ )
+	{
+		w->AddPoint( pts[h[k].i] );
+	}
+	// the side windings' order: the same normal as the side's plane
+	idVec3 wn;
+	float wd;
+	w->GetPlane( wn, wd );
+	if( wn * normal < 0.0f )
+	{
+		w->ReverseSelf();
+	}
+	return w;
+}
+//puncho end
 static void ClipSideByTree_r( idWinding* w, side_t* side, node_t* node )
 {
 	idWinding*		front, *back;
@@ -438,6 +549,23 @@ static void ClipSideByTree_r( idWinding* w, side_t* side, node_t* node )
 		return;
 	}
 
+	//puncho start - Phase 2C P2 (V1)
+	if( node->opaque )
+	{
+		clipHitOpaque = true;
+	}
+	else if( dmap_visibleHullFix.GetBool() )
+	{
+		for( int k = 0; k < w->GetNumPoints(); k++ )
+		{
+			if( clipHullPoints.Num() == clipHullPoints.NumAllocated() )
+			{
+				clipHullPoints.Resize( Max( 1024, 2 * clipHullPoints.NumAllocated() ) );	// doubling: Append alone grows by 16
+			}
+			clipHullPoints.Append( ( *w )[k] );
+		}
+	}
+	//puncho end
 	// if opaque leaf, don't add
 	if( !node->opaque )
 	{
@@ -494,7 +622,20 @@ void ClipSidesByTree( uEntity_t* e )
 			}
 			w = side->winding->Copy();
 			side->visibleHull = NULL;
+			clipHitOpaque = false;	//puncho - Phase 2C P2 (V1)
+			clipHullPoints.SetNum( 0 );	//puncho - Phase 2C P2 (V1)
 			ClipSideByTree_r( w, side, e->tree->headnode );
+			//puncho start - Phase 2C P2 (V1), Opus A review: replace the incremental hull
+			if( side->visibleHull && dmap_visibleHullFix.GetBool() )
+			{
+				idWinding* fixed = clipHitOpaque ? MonotoneHull( clipHullPoints, dmapGlobals.mapPlanes[ side->planenum ].Normal() ) : side->winding->Copy();
+				if( fixed )
+				{
+					delete side->visibleHull;
+					side->visibleHull = fixed;
+				}
+			}
+			//puncho end
 			// for debugging, we can choose to use the entire original side
 			// but we skip this if the side was completely clipped away
 			if( side->visibleHull && dmapGlobals.noClipSides )
@@ -504,6 +645,7 @@ void ClipSidesByTree( uEntity_t* e )
 			}
 		}
 	}
+	clipHullPoints.Clear();	//puncho - Phase 2C P2 (V1): the scratch list keeps no memory between entities
 }
 
 

@@ -65,8 +65,9 @@ public:
 	virtual void	Clear();
 
 	// huge winding for plane, the points go counter clockwise when facing the front of the plane
-	void			BaseForPlane( const idVec3& normal, const float dist );
+	void			BaseForPlane( const idVec3& normal, const float dist, const float halfSize = MAX_WORLD_SIZE );	//puncho - Phase 2C P2 (S5): halfSize = the square's half size
 	void			BaseForPlane( const idPlane& plane );
+	void			BaseForPlane( const idPlane& plane, const float halfSize );	//puncho - Phase 2C P2 (S5)
 
 	// splits the winding into a front and back winding, the winding itself stays unchanged
 	// returns a SIDE_?
@@ -284,6 +285,13 @@ ID_INLINE void idWinding::BaseForPlane( const idPlane& plane )
 {
 	BaseForPlane( plane.Normal(), plane.Dist() );
 }
+
+//puncho start - Phase 2C P2 (S5)
+ID_INLINE void idWinding::BaseForPlane( const idPlane& plane, const float halfSize )
+{
+	BaseForPlane( plane.Normal(), plane.Dist(), halfSize );
+}
+//puncho end
 
 ID_INLINE bool idWinding::EnsureAlloced( int n, bool keep )
 {

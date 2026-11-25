@@ -65,15 +65,15 @@ bool idWinding::ReAllocate( int n, bool keep )
 idWinding::BaseForPlane
 =============
 */
-void idWinding::BaseForPlane( const idVec3& normal, const float dist )
+void idWinding::BaseForPlane( const idVec3& normal, const float dist, const float halfSize )
 {
 	idVec3 org, vright, vup;
 
 	org = normal * dist;
 
 	normal.NormalVectors( vup, vright );
-	vup *= MAX_WORLD_SIZE;
-	vright *= MAX_WORLD_SIZE;
+	vup *= halfSize;	//puncho - Phase 2C P2 (S5): was MAX_WORLD_SIZE, the default of halfSize
+	vright *= halfSize;
 
 	EnsureAlloced( 4 );
 	numPoints = 4;
