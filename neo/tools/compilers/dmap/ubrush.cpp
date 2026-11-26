@@ -36,6 +36,9 @@ idCVar dmap_brushBaseWindings( "dmap_brushBaseWindings", "1", CVAR_TOOL | CVAR_B
 static int c_brushBaseWindingFallbacks;	// brushes whose local windings bounded nothing valid, in this process
 idCVar dmap_brushSourcePlanes( "dmap_brushSourcePlanes", "1", CVAR_TOOL | CVAR_BOOL, "a test switch, with dmap_brushBaseWindings 1 only: a non-axial Valve 220 side's local plane is made in double from the map's three points when they lie within 0.02 of its stored plane; 0 = the stored float plane, moved to the local frame (on some content worse than stock far from the origin)" );
 //puncho end
+//puncho start - Phase 2C P2.4
+idCVar dmap_mapPointsDouble( "dmap_mapPointsDouble", "1", CVAR_TOOL | CVAR_BOOL, "with dmap_brushSourcePlanes 1: a Valve 220 side's local plane is made from its map points as the map's text has them (the parser keeps them in double where float does not hold them); 0 = the points rounded to float, as in v0001.7l" );
+//puncho end
 
 int		c_active_brushes;
 
@@ -245,7 +248,11 @@ static bool LocalSourcePlane( const side_t& side, const idPlane& plane, const id
 		return false;
 	}
 	const idMapBrushSide* mapSide = dmapSourceBrush->GetSide( side.sourceSide );
-	return frame.PlaneFromPoints( mapSide->planepts, mapSide->GetOrigin(), plane, local );
+	//puncho start - Phase 2C P2.4: the points as the map's text has them
+	double points[3][3];
+	mapSide->GetPlanePoints( points, dmap_mapPointsDouble.GetBool() );
+	return frame.PlaneFromPoints( points, mapSide->GetOrigin(), plane, local );
+	//puncho end
 }
 //puncho end
 
@@ -260,7 +267,11 @@ static bool LocalSourcePlaneDouble( const side_t& side, const idPlane& plane, co
 		return false;
 	}
 	const idMapBrushSide* mapSide = dmapSourceBrush->GetSide( side.sourceSide );
-	return frame.PlaneFromPointsDouble( mapSide->planepts, mapSide->GetOrigin(), plane, local );
+	//puncho start - Phase 2C P2.4: the points as the map's text has them
+	double points[3][3];
+	mapSide->GetPlanePoints( points, dmap_mapPointsDouble.GetBool() );
+	return frame.PlaneFromPointsDouble( points, mapSide->GetOrigin(), plane, local );
+	//puncho end
 }
 
 /*

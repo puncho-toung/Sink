@@ -3129,6 +3129,9 @@ void idCollisionModelManagerLocal::ConvertPatch( cm_model_t* model, const idMapP
 #define CM_DUP_DIST_EPSILON		0.01f
 //puncho start - Phase 2C P2 (F1b)
 idCVar cm_brushLocalWindings( "cm_brushLocalWindings", "1", CVAR_SYSTEM | CVAR_BOOL, "1 = a non-axial brush's collision polygons and bounds are clipped from a square sized to the brush in a brush-local frame (as dmap_brushBaseWindings, a Valve 220 side's plane from its map points as dmap_brushSourcePlanes; duplicate side planes make one polygon), so copies of one corner merge at any distance from the origin; 0 = stock windings from 2^18 squares" );
+//puncho start - Phase 2C P2.4
+idCVar cm_mapPointsDouble( "cm_mapPointsDouble", "1", CVAR_SYSTEM | CVAR_BOOL, "with cm_brushLocalWindings 1: a Valve 220 side's local plane is made from its map points as the map's text has them (the parser keeps them in double where float does not hold them); 0 = the points rounded to float, as in v0001.7l" );
+//puncho end
 
 /*
 ================
@@ -3148,7 +3151,11 @@ static bool CM_LocalSourcePlane( const idMapBrushSide* side, const idPlane& plan
 	{
 		return false;
 	}
-	return frame.PlaneFromPoints( side->planepts, offset + side->GetOrigin(), plane, local );
+	//puncho start - Phase 2C P2.4: the points as the map's text has them
+	double points[3][3];
+	side->GetPlanePoints( points, cm_mapPointsDouble.GetBool() );
+	return frame.PlaneFromPoints( points, offset + side->GetOrigin(), plane, local );
+	//puncho end
 }
 
 /*
@@ -3223,10 +3230,17 @@ static void CM_LocalPlanesDouble( const idMapBrush* mapBrush, const idVec3& offs
 	for( int i = 0; i < numPlanes; i++ )
 	{
 		const idMapBrushSide* side = mapBrush->GetSide( i );
-		if( side->GetProjectionType() == idMapBrushSide::PROJECTION_VALVE220 && frame.PlaneFromPointsDouble( side->planepts, offset + side->GetOrigin(), planes[i], localPlanes[i] ) )
+		//puncho start - Phase 2C P2.4: the points as the map's text has them (only a Valve 220 side has points)
+		if( side->GetProjectionType() == idMapBrushSide::PROJECTION_VALVE220 )
 		{
-			continue;
+			double points[3][3];
+			side->GetPlanePoints( points, cm_mapPointsDouble.GetBool() );
+			if( frame.PlaneFromPointsDouble( points, offset + side->GetOrigin(), planes[i], localPlanes[i] ) )
+			{
+				continue;
+			}
 		}
+		//puncho end
 		localPlanes[i] = frame.MovePlaneDouble( planes[i] );
 	}
 }

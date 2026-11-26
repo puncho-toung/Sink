@@ -73,10 +73,11 @@ public:
 	idPlane			MovePlane( const idPlane& plane ) const;
 	// the local plane through the three points ( p - offset ), as idPlane::FromPoints makes it but in double, when the
 	// plane is non-axial and each point lies within BRUSHFRAME_SOURCE_PLANE_EPSILON of it; false, leaving `local` unset,
-	// otherwise (an axial plane, points that do not define the plane, collinear points)
-	bool			PlaneFromPoints( const idVec3 points[3], const idVec3& offset, const idPlane& plane, idPlane& local ) const;
+	// otherwise (an axial plane, points that do not define the plane, collinear points). The points are in double
+	// (Phase 2C P2.4: idMapBrushSide::GetPlanePoints, the map's float points widened or the text's points)
+	bool			PlaneFromPoints( const double points[3][3], const idVec3& offset, const idPlane& plane, idPlane& local ) const;	//puncho - Phase 2C P2.4: double points
 	// the same plane kept in double (Phase 2C P2.2): PlaneFromPoints is this rounded component by component
-	bool			PlaneFromPointsDouble( const idVec3 points[3], const idVec3& offset, const idPlane& plane, idDPlane& local ) const;	//puncho - Phase 2C P2.2
+	bool			PlaneFromPointsDouble( const double points[3][3], const idVec3& offset, const idPlane& plane, idDPlane& local ) const;	//puncho - Phase 2C P2.2, P2.4: double points
 	// MovePlane kept in double (Phase 2C P2.2): the float plane widened, then d + n.c
 	idDPlane		MovePlaneDouble( const idPlane& plane ) const;	//puncho - Phase 2C P2.2
 	// adds c back to every point of a winding made in the frame
@@ -126,7 +127,7 @@ ID_INLINE idPlane idBrushFrame::MovePlane( const idPlane& plane ) const
 	return local;
 }
 
-ID_INLINE bool idBrushFrame::PlaneFromPoints( const idVec3 points[3], const idVec3& offset, const idPlane& plane, idPlane& local ) const
+ID_INLINE bool idBrushFrame::PlaneFromPoints( const double points[3][3], const idVec3& offset, const idPlane& plane, idPlane& local ) const	//puncho - Phase 2C P2.4: double points
 {
 	//puncho start - Phase 2C P2.2: the double rule, rounded once per component (the same arithmetic as before)
 	idDPlane dlocal;
@@ -148,7 +149,7 @@ ID_INLINE idDPlane idBrushFrame::MovePlaneDouble( const idPlane& plane ) const
 }
 //puncho end
 
-ID_INLINE bool idBrushFrame::PlaneFromPointsDouble( const idVec3 points[3], const idVec3& offset, const idPlane& plane, idDPlane& local ) const	//puncho - Phase 2C P2.2: was PlaneFromPoints
+ID_INLINE bool idBrushFrame::PlaneFromPointsDouble( const double points[3][3], const idVec3& offset, const idPlane& plane, idDPlane& local ) const	//puncho - Phase 2C P2.2: was PlaneFromPoints; P2.4: double points
 {
 	if( plane.Type() < PLANETYPE_TRUEAXIAL )
 	{
@@ -157,9 +158,11 @@ ID_INLINE bool idBrushFrame::PlaneFromPointsDouble( const idVec3 points[3], cons
 	double p[3][3];
 	for( int k = 0; k < 3; k++ )
 	{
-		const double x = ( double )points[k][0] - ( double )offset[0];
-		const double y = ( double )points[k][1] - ( double )offset[1];
-		const double z = ( double )points[k][2] - ( double )offset[2];
+		//puncho start - Phase 2C P2.4: the points come in double (float points widened give the same sums as before)
+		const double x = points[k][0] - ( double )offset[0];
+		const double y = points[k][1] - ( double )offset[1];
+		const double z = points[k][2] - ( double )offset[2];
+		//puncho end
 		const double dist = ( ( double )plane[0] * x + ( double )plane[1] * y ) + ( double )plane[2] * z + ( double )plane[3];
 		if( idMath::Fabs( ( float )dist ) > BRUSHFRAME_SOURCE_PLANE_EPSILON )
 		{

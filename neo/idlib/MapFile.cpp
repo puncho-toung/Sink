@@ -161,6 +161,7 @@ void idMapBrushSide::ConvertToValve220Format( const idMat4& entityTransform, idS
 		planepts[j].y = w[j].y + origin.y;
 		planepts[j].z = w[j].z + origin.z;
 	}
+	ClearPlanePointsDouble();	//puncho - Phase 2C P2.4: new points
 
 	idVec3 texX, texY;
 
@@ -697,6 +698,42 @@ idMapBrush* idMapBrush::ParseQ3( idLexer& src, const idVec3& origin )
 	return brush;
 }
 
+//puncho start - Phase 2C P2.4
+/*
+=================
+idMapBrushSide::SetPlanePointsDouble
+
+A map point read in float is off by up to half an ulp of its coordinates (about 0.001 at 28k), so rotated content far
+from the origin is not the content at the origin moved. planepts keep the float points (the stored plane, the written
+map and every other reader see what they saw before); the points are kept in double as well, for the compilers
+(idMapBrushSide::GetPlanePoints: dmap's and the collision model's S5b planes, the AAS's planes), only where one of them
+is not planepts' value, so integer and float-exact points cost nothing: the pointer fits the side's allocation, which
+Mem_Alloc rounds to 16 bytes, and a side with double points allocates 72 bytes more (112 bytes of heap).
+=================
+*/
+void idMapBrushSide::SetPlanePointsDouble( const double points[3][3] )
+{
+	ClearPlanePointsDouble();
+	bool exact = true;
+	for( int k = 0; k < 3; k++ )
+	{
+		for( int j = 0; j < 3; j++ )
+		{
+			if( ( double )planepts[k][j] != points[k][j] )
+			{
+				exact = false;
+			}
+		}
+	}
+	if( exact )
+	{
+		return;
+	}
+	planeptsDouble = ( double( * )[3] )Mem_Alloc( sizeof( double[3][3] ), TAG_IDLIB );
+	memcpy( planeptsDouble, points, sizeof( double[3][3] ) );
+}
+//puncho end
+
 /*
 =================
 idMapBrush::ParseValve220
@@ -706,6 +743,7 @@ idMapBrush* idMapBrush::ParseValve220( idLexer& src, const idVec3& origin )
 {
 	float scale[2], rotate;
 	idVec3 planepts[3];
+	double points[3][3];	//puncho - Phase 2C P2.4
 	idToken token;
 	idList<idMapBrushSide*> sides;
 	idMapBrushSide*	side;
@@ -722,9 +760,10 @@ idMapBrush* idMapBrush::ParseValve220( idLexer& src, const idVec3& origin )
 		sides.Append( side );
 
 		// read the three point plane definition
-		if( !src.Parse1DMatrix( 3, planepts[0].ToFloatPtr() ) ||
-				!src.Parse1DMatrix( 3, planepts[1].ToFloatPtr() ) ||
-				!src.Parse1DMatrix( 3, planepts[2].ToFloatPtr() ) )
+		//puncho - Phase 2C P2.4: each number also as its text rounds to double, in points
+		if( !src.Parse1DMatrix( 3, planepts[0].ToFloatPtr(), points[0] ) ||
+				!src.Parse1DMatrix( 3, planepts[1].ToFloatPtr(), points[1] ) ||
+				!src.Parse1DMatrix( 3, planepts[2].ToFloatPtr(), points[2] ) )
 		{
 			src.Error( "idMapBrush::ParseValve220: unable to read brush side plane definition" );
 			sides.DeleteContents( true );
@@ -735,6 +774,7 @@ idMapBrush* idMapBrush::ParseValve220( idLexer& src, const idVec3& origin )
 		side->planepts[0] = planepts[0];
 		side->planepts[1] = planepts[1];
 		side->planepts[2] = planepts[2];
+		side->SetPlanePointsDouble( points );	//puncho - Phase 2C P2.4: kept where float does not hold the text's value
 
 		planepts[0] -= origin;
 		planepts[1] -= origin;
@@ -992,6 +1032,7 @@ void idMapBrush::SetPlanePointsFromWindings( const idVec3& origin, int entityNum
 			mapSide->planepts[0] = w[2].ToVec3() + origin;
 			mapSide->planepts[1] = w[1].ToVec3() + origin;
 			mapSide->planepts[2] = w[0].ToVec3() + origin;
+			mapSide->ClearPlanePointsDouble();	//puncho - Phase 2C P2.4: new points
 		}
 
 		// only used for debugging
@@ -3911,6 +3952,7 @@ bool idMapFile::ConvertToValve220Format( bool recalcPlanePoints )
 								{
 									side->planepts[k] = ( side->planepts[k] - mapPivot ) * rot + mapPivot;
 								}
+								side->ClearPlanePointsDouble();	//puncho - Phase 2C P2.4: the points turned in float are the side's points
 
 								// turn the texture with the face and shift it so it stays attached
 								for( int k = 0; k < 2; k++ )
@@ -4459,6 +4501,7 @@ idMapBrush* idMapBrush::MakeOriginBrush( const idVec3& origin, const idVec3& sca
 		side->planepts[0] *= transform;
 		side->planepts[1] *= transform;
 		side->planepts[2] *= transform;
+		side->ClearPlanePointsDouble();	//puncho - Phase 2C P2.4: the transformed float points are the side's points
 	}
 
 	return brush;

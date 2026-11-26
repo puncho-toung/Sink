@@ -87,7 +87,11 @@ class idMapBrushSide
 
 public:
 	idMapBrushSide();
-	~idMapBrushSide() { }
+	~idMapBrushSide();	//puncho - Phase 2C P2.4: frees the double points
+	//puncho start - Phase 2C P2.4: a side owns its double points, and nothing copies a side
+	idMapBrushSide( const idMapBrushSide& ) = delete;
+	idMapBrushSide& 		operator=( const idMapBrushSide& ) = delete;
+	//puncho end
 
 	const char* 			GetMaterial() const
 	{
@@ -145,6 +149,18 @@ public:
 	}
 	//puncho end
 
+	//puncho start - Phase 2C P2.4: the map points as the map's text has them
+	// keeps the side's map points in double, as the text has them, when one of them is not planepts' value (planepts
+	// are set first: the points as idLexer::ParseFloat reads them)
+	void					SetPlanePointsDouble( const double points[3][3] );
+	// forgets the double points: whoever changes planepts calls this (planepts then are the side's points)
+	void					ClearPlanePointsDouble();
+	// true when the side keeps its map points in double (float does not hold one of them)
+	bool					HasPlanePointsDouble() const;
+	// the map points in double: the kept points when textPrecision is set and the side has them, else planepts widened
+	void					GetPlanePoints( double points[3][3], const bool textPrecision ) const;
+	//puncho end
+
 protected:
 	idStr					material;
 	idPlane					plane;
@@ -159,6 +175,13 @@ public:
 	idVec2					texScale;
 	idVec2i					texSize;
 
+	//puncho start - Phase 2C P2.4
+private:
+	// the Valve 220 map points as their text rounds to double when one of them is not planepts' value, else NULL (72
+	// bytes of their own; the pointer takes the side from 184 to 192 bytes, which Mem_Alloc's 16-byte rounding allocated
+	// already)
+	double					( *planeptsDouble )[3];
+	//puncho end
 };
 
 ID_INLINE idMapBrushSide::idMapBrushSide()
@@ -175,7 +198,37 @@ ID_INLINE idMapBrushSide::idMapBrushSide()
 	texScale[1] = 1.0f;
 	texSize[0] = 32;
 	texSize[1] = 32;
+	planeptsDouble = NULL;	//puncho - Phase 2C P2.4
 }
+
+//puncho start - Phase 2C P2.4
+ID_INLINE idMapBrushSide::~idMapBrushSide()
+{
+	Mem_Free( planeptsDouble );
+}
+
+ID_INLINE void idMapBrushSide::ClearPlanePointsDouble()
+{
+	Mem_Free( planeptsDouble );
+	planeptsDouble = NULL;
+}
+
+ID_INLINE bool idMapBrushSide::HasPlanePointsDouble() const
+{
+	return planeptsDouble != NULL;
+}
+
+ID_INLINE void idMapBrushSide::GetPlanePoints( double points[3][3], const bool textPrecision ) const
+{
+	for( int k = 0; k < 3; k++ )
+	{
+		for( int j = 0; j < 3; j++ )
+		{
+			points[k][j] = ( textPrecision && planeptsDouble != NULL ) ? planeptsDouble[k][j] : ( double )planepts[k][j];
+		}
+	}
+}
+//puncho end
 
 
 class idMapBrush : public idMapPrimitive

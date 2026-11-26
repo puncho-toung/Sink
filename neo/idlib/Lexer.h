@@ -208,8 +208,13 @@ public:
 	// read a floating point number.  If errorFlag is NULL, a non-numeric token will
 	// issue an Error().  If it isn't NULL, it will issue a Warning() and set *errorFlag = true
 	float			ParseFloat( bool* errorFlag = NULL );
+	//puncho start - Phase 2C P2.4: ParseFloat's number, and in textValue the number as its text rounds to double
+	// (strtod: idToken's own double sums the digits with a rounding each, so it can be off a decimal float holds exactly)
+	float			ParseFloat( bool* errorFlag, double* textValue );
+	//puncho end
 	// parse matrices with floats
 	int				Parse1DMatrix( int x, float* m );
+	int				Parse1DMatrix( int x, float* m, double* textValues );	//puncho - Phase 2C P2.4: each number's text value too
 	// RB begin
 	int				Parse1DMatrixJSON( int x, float* m );
 	// RB end

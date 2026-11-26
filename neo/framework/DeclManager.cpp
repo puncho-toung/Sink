@@ -4738,6 +4738,7 @@ static idMapBrush* MakeUnitBrush( const idVec3& origin, const idVec3& scale, boo
 		side->planepts[0] *= transform;
 		side->planepts[1] *= transform;
 		side->planepts[2] *= transform;
+		side->ClearPlanePointsDouble();	//puncho - Phase 2C P2.4: the transformed float points are the side's points
 	}
 
 	return brush;
@@ -4769,6 +4770,7 @@ static idMapBrush* MakeCharBrush( const idVec3& brushOrigin, const idVec3& uvOri
 		side->planepts[0] += brushOrigin;
 		side->planepts[1] += brushOrigin;
 		side->planepts[2] += brushOrigin;
+		side->ClearPlanePointsDouble();	//puncho - Phase 2C P2.4: the moved float points are the side's points
 	}
 
 	// letter coordinates in the texture

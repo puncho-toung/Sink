@@ -1717,6 +1717,72 @@ float idLexer::ParseFloat( bool* errorFlag )
 	return token.GetFloatValue();
 }
 
+//puncho start - Phase 2C P2.4
+/*
+================
+idLexer::ParseFloat
+
+ParseFloat( errorFlag ) with the same tokens, messages and error handling, which also gives the number as its text
+rounds to double: a decimal number's text through strtod (as idDict and the cvars read numbers), any other number
+(an integer, 1.#INF and the like) as idToken's double. idToken::GetDoubleValue sums the digits of a decimal with a
+rounding each, so "892.4375", which float holds exactly, comes out 892.4374999999999.
+================
+*/
+static double TokenTextValue( idToken& token )
+{
+	if( token.type == TT_NUMBER && ( token.subtype & TT_FLOAT ) && !( token.subtype & ( TT_INFINITE | TT_INDEFINITE | TT_NAN ) ) )
+	{
+		return strtod( token.c_str(), NULL );
+	}
+	return token.GetDoubleValue();
+}
+
+float idLexer::ParseFloat( bool* errorFlag, double* textValue )
+{
+	idToken token;
+
+	*textValue = 0.0;
+	if( errorFlag )
+	{
+		*errorFlag = false;
+	}
+
+	if( !idLexer::ReadToken( &token ) )
+	{
+		if( errorFlag )
+		{
+			idLexer::Warning( "couldn't read expected floating point number" );
+			*errorFlag = true;
+		}
+		else
+		{
+			idLexer::Error( "couldn't read expected floating point number" );
+		}
+		return 0;
+	}
+	if( token.type == TT_PUNCTUATION && token == "-" )
+	{
+		idLexer::ExpectTokenType( TT_NUMBER, 0, &token );
+		*textValue = -TokenTextValue( token );
+		return -token.GetFloatValue();
+	}
+	else if( token.type != TT_NUMBER )
+	{
+		if( errorFlag )
+		{
+			idLexer::Warning( "expected float value, found '%s'", token.c_str() );
+			*errorFlag = true;
+		}
+		else
+		{
+			idLexer::Error( "expected float value, found '%s'", token.c_str() );
+		}
+	}
+	*textValue = TokenTextValue( token );
+	return token.GetFloatValue();
+}
+//puncho end
+
 /*
 ================
 idLexer::Parse1DMatrix
@@ -1742,6 +1808,27 @@ int idLexer::Parse1DMatrix( int x, float* m )
 	}
 	return true;
 }
+
+//puncho start - Phase 2C P2.4: Parse1DMatrix with each number's text value in textValues
+int idLexer::Parse1DMatrix( int x, float* m, double* textValues )
+{
+	if( !idLexer::ExpectTokenString( "(" ) )
+	{
+		return false;
+	}
+
+	for( int i = 0; i < x; i++ )
+	{
+		m[i] = idLexer::ParseFloat( NULL, &textValues[i] );
+	}
+
+	if( !idLexer::ExpectTokenString( ")" ) )
+	{
+		return false;
+	}
+	return true;
+}
+//puncho end
 
 // RB begin
 int idLexer::Parse1DMatrixJSON( int x, float* m )

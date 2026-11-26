@@ -379,6 +379,10 @@ int idAASBuild::ContentsForAAS( int contents )
 	return c;
 }
 
+//puncho start - Phase 2C P2.4
+static idCVar aas_mapPointsDouble( "aas_mapPointsDouble", "1", CVAR_TOOL | CVAR_BOOL, "1 = a Valve 220 side whose map points float does not hold takes its plane from the points as the map's text has them (the parser keeps them in double), rounded once, and its plane kept in double (aas_brushWindingsDouble) from them too; 0 = the planes from the points rounded to float, as in v0001.7l" );
+//puncho end
+
 /*
 ============
 idAASBuild::AddBrushForMapBrush
@@ -402,12 +406,30 @@ idBrushList idAASBuild::AddBrushesForMapBrush( const idMapBrush* mapBrush, const
 		contents |= mat->GetContentFlags();
 		plane = mapSide->GetPlane();
 		plane.FixDegeneracies( DEGENERATE_DIST_EPSILON );
-		sideList.Append( new idBrushSide( plane, -1 ) );
 		//puncho start - Phase 2C P2.2: a non-axial Valve 220 side whose map points define its plane keeps the plane
 		// made from those points in double (dmap's S5b rule, idBrushFrame::PlaneFromPoints): the stored float plane is off
 		// by an ulp of its distance far from the origin. The points are less the entity origin the parser took off
+		//puncho start - Phase 2C P2.4: the points as the map's text has them; a side whose points float does not hold
+		// takes its plane from them as well, rounded once: the stored plane was made in float from the rounded points, so
+		// rotated content far from the origin was not the content at the origin moved (66 maps, 11 rotated sets at 0, 28k
+		// and 30k, full pipeline: aas48 area spread 4.27 % in v0001.7l, 4.33 % with the text's points for the plane kept
+		// in double alone, 1.33 % with this; integer points keep their bytes, float holds them)
 		idDPlane dplane;
-		if( aas_brushWindingsDouble.GetBool() && mapSide->GetProjectionType() == idMapBrushSide::PROJECTION_VALVE220 && worldFrame.PlaneFromPointsDouble( mapSide->planepts, mapSide->GetOrigin(), plane, dplane ) )
+		bool sourcePlane = false;
+		if( mapSide->GetProjectionType() == idMapBrushSide::PROJECTION_VALVE220 )
+		{
+			double points[3][3];
+			mapSide->GetPlanePoints( points, aas_mapPointsDouble.GetBool() );
+			sourcePlane = worldFrame.PlaneFromPointsDouble( points, mapSide->GetOrigin(), plane, dplane );
+		}
+		if( sourcePlane && aas_mapPointsDouble.GetBool() && mapSide->HasPlanePointsDouble() )
+		{
+			plane = dplane.ToPlane();
+			plane.FixDegeneracies( DEGENERATE_DIST_EPSILON );
+		}
+		//puncho end
+		sideList.Append( new idBrushSide( plane, -1 ) );
+		if( aas_brushWindingsDouble.GetBool() && sourcePlane )	//puncho - Phase 2C P2.4: the plane made above
 		{
 			sideList[sideList.Num() - 1]->SetDPlane( dplane );
 		}
