@@ -404,6 +404,7 @@ bool FloodEntities( tree_t* tree );
 void FillOutside( uEntity_t* e );
 void FloodAreas( uEntity_t* e );
 void MakeTreePortals( tree_t* tree );
+void MakeTreePortals_r( node_t* node );	//puncho - Phase 2C P2.3: the leaf repair portalizes the node a leaf becomes
 void FreePortal( uPortal_t* p );
 bool Portal_Passable( uPortal_t*  p );
 

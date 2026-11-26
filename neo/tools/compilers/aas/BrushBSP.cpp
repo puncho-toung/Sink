@@ -47,6 +47,12 @@ If you have questions concerning this license or the applicable additional terms
 idCVar aas_mergeLeafFix( "aas_mergeLeafFix", "1", CVAR_TOOL | CVAR_BOOL, "1 = a leaf node merged away is kept, empty, until the merging ends, and every reference the tree still has to it is then replaced by the leaf node it was merged into; 0 = v0001.7k's merging, which can leave references to merged leaf nodes, deleted ones among them" );
 //puncho end
 
+//puncho start - Phase 2C P2.3: brush fragments in a sliver of their leaf
+idCVar aas_leafSliverFix( "aas_leafSliverFix", "1", CVAR_TOOL | CVAR_BOOL, "1 = a solid brush fragment gives its BSP leaf no contents when the leaf reaches less than a unit behind one of the fragment's sides and more than a unit in front of it and the fragment fills less than half the leaf: a sliver the BSP's split epsilon left in the leaf; water, cluster portal and obstacle fragments always give theirs; 0 = every fragment gives its contents, as in v0001.7l" );
+
+#define LEAF_SLIVER_DEPTH				1.0f
+//puncho end
+
 //puncho start - Phase 2C P2.2
 /*
 ============
@@ -749,6 +755,7 @@ idBrushBSP::idBrushBSP()
 {
 	root = outside = NULL;
 	numSplits = numPrunedSplits = 0;
+	numSliverFragments = 0;	//puncho - Phase 2C P2.3
 	brushMapContents = 0;
 	brushMap = NULL;
 }
@@ -1083,6 +1090,91 @@ void idBrushBSP::SetSplitterUsed( idBrushBSPNode* node, int planeNum )
 	}
 }
 
+//puncho start - Phase 2C P2.3
+/*
+============
+idBrushBSP::IsSliverFragment
+
+True when the leaf volume reaches less than LEAF_SLIVER_DEPTH behind the plane of one of the brush fragment's sides and
+more than that in front of it, and the fragment fills less than half the leaf. The fragment lies behind each of its
+sides, so it is then a sliver thinner than LEAF_SLIVER_DEPTH that the BSP left in the leaf: behind a side whose plane
+FindSplitter skipped because the part of the volume behind it vanishes under BRUSH_EPSILON, or behind a side a split
+used already, the fragment kept on the wrong side of the split plane within BRUSH_EPSILON. Its contents would make the
+whole leaf solid (P2.2 Opus MAX review, MAJOR 1: on vertex-edited terrain a 24 x 4 x 0.26 fragment made a leaf of 2.3
+million cubic units solid, a slab ~460 x 460 units whose top became floor 10-80 units above the ground; routes across
+it took a median 1.73 times as long). Dropped, the fragment opens nothing thicker than itself. A leaf the fragment fills
+half of, or that reaches no more than LEAF_SLIVER_DEPTH in front, keeps the contents: opened, such a thin leaf becomes
+an area with floor where the box has no room.
+============
+*/
+bool idBrushBSP::IsSliverFragment( const idBrush* volume, const idBrush* brush ) const
+{
+	int i, j, k;
+	const idWinding* w;
+	float d, maxFront, maxBack;
+
+	for( i = 0; i < brush->GetNumSides(); i++ )
+	{
+		const idPlane& plane = brush->GetSide( i )->GetPlane();
+
+		// how far the volume reaches in front of the plane and behind it, until it reaches too far behind
+		maxFront = maxBack = 0.0f;
+		for( j = 0; j < volume->GetNumSides() && maxBack > -LEAF_SLIVER_DEPTH; j++ )
+		{
+			w = volume->GetSide( j )->GetWinding();
+			if( !w )
+			{
+				continue;
+			}
+			for( k = 0; k < w->GetNumPoints() && maxBack > -LEAF_SLIVER_DEPTH; k++ )
+			{
+				d = plane.Distance( ( *w )[k].ToVec3() );
+				if( d > maxFront )
+				{
+					maxFront = d;
+				}
+				else if( d < maxBack )
+				{
+					maxBack = d;
+				}
+			}
+		}
+
+		if( maxBack > -LEAF_SLIVER_DEPTH && maxFront > LEAF_SLIVER_DEPTH )
+		{
+			return ( brush->GetVolume() < 0.5f * volume->GetVolume() );
+		}
+	}
+	return false;
+}
+
+/*
+============
+idBrushBSP::SetLeafContents
+
+idBrushBSPNode::SetContentsFromBrushes without the solid fragments IsSliverFragment finds. Only a fragment whose
+contents are AREACONTENTS_SOLID alone, apart from the bounding box bits from AREACONTENTS_BBOX_BIT up (AASBuild.cpp,
+idAASBuild::Build), can be a sliver: a thin water, cluster portal or obstacle fragment keeps its contents, so a cluster
+portal still separates its clusters.
+============
+*/
+void idBrushBSP::SetLeafContents( idBrushBSPNode* node )
+{
+	idBrush* brush;
+
+	node->contents = 0;
+	for( brush = node->brushList.Head(); brush; brush = brush->Next() )
+	{
+		if( ( brush->GetContents() & ( BIT( AREACONTENTS_BBOX_BIT ) - 1 ) ) == AREACONTENTS_SOLID && IsSliverFragment( node->volume, brush ) )
+		{
+			numSliverFragments++;
+			continue;
+		}
+		node->contents |= brush->GetContents();
+	}
+}
+//puncho end
+
 /*
 ============
 idBrushBSP::BuildBrushBSP_r
@@ -1099,7 +1191,16 @@ idBrushBSPNode* idBrushBSP::BuildBrushBSP_r( idBrushBSPNode* node, const idPlane
 	if( planeNum == -1 )
 	{
 
-		node->SetContentsFromBrushes();
+		//puncho start - Phase 2C P2.3: fragments in a sliver of the leaf give it no contents
+		if( aas_leafSliverFix.GetBool() )
+		{
+			SetLeafContents( node );
+		}
+		else
+		{
+			node->SetContentsFromBrushes();
+		}
+		//puncho end
 
 		if( brushMap && ( node->contents & brushMapContents ) )
 		{
@@ -1317,6 +1418,12 @@ void idBrushBSP::Build( idBrushList brushList, int skipContents,
 #endif
 
 	common->Printf( "\r%6d splits\n", numSplits );
+	//puncho start - Phase 2C P2.3
+	if( aas_leafSliverFix.GetBool() )
+	{
+		common->Printf( "%6d sliver fragments\n", numSliverFragments );
+	}
+	//puncho end
 
 	if( brushMap )
 	{

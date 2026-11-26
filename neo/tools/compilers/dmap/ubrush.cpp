@@ -687,6 +687,580 @@ int FilterBrushIntoTree_r( uBrush_t* b, node_t* node )
 }
 
 
+//puncho start - Phase 2C P2.3: the leaf repair
+/*
+==============================================================================
+
+LEAF REPAIR
+
+FaceBSP classes a face that crosses a node plane by less than ON_EPSILON (0.1) wholly on one side, while SplitBrush
+splits the face's brush when the brush fragment crosses the plane by 0.1 or more. At a corner made only by node planes
+(a thin wedge between near-coplanar faces) a fragment then lands in a leaf that its own sides never cut, and
+FilterBrushIntoTree_r marks the whole leaf opaque: the air in it and the faces on its boundary vanish from the .proc
+and, through the .proc tree, from the collision model (P2.2 inv B). Such a leaf is split by an own side of the fragment
+that cuts it, and its fragments are filtered again.
+
+SplitBrush also sends a brush that crosses a plane by less than 0.1 wholly to one side, so a thin leaf can lie inside a
+brush that left no fragment in it: opened, such a part is air inside solid (P2.2 Opus A: a sealed cave leaked). So the
+part of the leaf beyond a cutting side is opened only when it touches another leaf through a portal piece that
+SplitNodePortals keeps, and no opaque brush of the entity that has no fragment in the leaf holds a point of it
+more than LEAF_REPAIR_INSIDE_EPSILON behind every side (the planes the map wrote, in double); else the next
+cutting side is tried, and the leaf stays opaque when none is left. After the split, a child left without an opaque
+fragment is tested against every opaque brush of the entity and stays opaque when one holds a point of it.
+
+A part is held by a brush when the two share a point more than LEAF_REPAIR_INSIDE_EPSILON behind every side of the
+brush: the part's faces and corners are found by clipping a square on every plane of its path and of the tree's box by
+all the others (in double), a brush with a side that has every corner beyond it is apart, and for any other the faces of
+the part and the sides of the brush pulled in by the epsilon are clipped the same way: a winding left is a shared
+volume. A part that cannot be bounded this way counts as held. The portal windings are not used: they can reach up to
+CLIP_EPSILON beyond the leaf (MakeNodePortal clips them with it); sampled at its portal points, the wedge of air in
+front of a boulder face (g_vr_s5 brush 529) lay 0.021 inside the boulder, and sampled at its centroid and midpoints
+a part of an organic shell kept a point 0.115 inside a tile out of reach.
+
+==============================================================================
+*/
+idCVar dmap_leafRepair( "dmap_leafRepair", "1", CVAR_TOOL | CVAR_BOOL, "1 = a leaf made opaque only by brush fragments whose own sides cut it is split by such a side and its fragments filtered again, where no opaque brush of the entity holds a point of the part that opens; 0 = v0001.7l" );
+idCVar dmap_leafRepairPrint( "dmap_leafRepairPrint", "0", CVAR_TOOL | CVAR_BOOL, "1 = print every leaf repair and, for every child it opens, the planes of its path (REPAIR, CHILD and PATH lines, read by the gate's airchk)" );
+
+// a brush side cuts a leaf when the leaf's portal points reach this far beyond it (SplitBrush's threshold)
+#define LEAF_REPAIR_CUT_EPSILON		0.1f
+// a point lies inside a brush when it is this far behind every side: above the float error of a stored plane at
+// 64k (about 0.008), so a point on a node plane is not inside the brush whose side made the plane
+#define LEAF_REPAIR_INSIDE_EPSILON	0.02
+// a cutting side must have the leaf's portal points this far behind it (a part left for the fragment)
+#define LEAF_REPAIR_BEHIND_EPSILON	0.001f
+// the tree's bounds grown by this bound every part: MakeHeadnodePortals' box (SIDESPACE 8) holds every leaf, and a leaf
+// whose outside portal SplitNodePortals dropped as tiny would otherwise reach out without end
+#define LEAF_REPAIR_BOX_MARGIN		16.0
+// idWinding::IsTiny's edge length: SplitNodePortals drops a portal piece with fewer than three longer edges
+#define LEAF_REPAIR_EDGE_LENGTH		0.2
+// the cutting sides tried on one leaf
+#define LEAF_REPAIR_MAX_SIDES		16
+
+typedef struct leafRepair_s
+{
+	idList<const uBrush_t*>	brushes;	// the entity's opaque brushes
+	idList<int>				firstPlane;	// per brush its first plane in planes; one plane per side follows
+	idList<idDPlane>		planes;		// world planes in double, a Valve 220 side's from its map points
+	idList<idDPlane>		path;		// scratch: a part's portal planes and every plane above it, facing the part, unit length
+	idList<idDPlane>		faces;		// scratch: the planes of path that bound the part
+	idList<double>			points;		// scratch: the part's corners, three doubles a point
+	idList<idDPlane>		inner;		// scratch: a brush's sides pulled in by LEAF_REPAIR_INSIDE_EPSILON, facing inwards
+	idList<idDPlane>		both;		// scratch: faces and inner
+	idDPlane				box[6];		// the tree's bounds and LEAF_REPAIR_BOX_MARGIN, facing in
+	int						numBoxParts;	// for dmap_leafRepairPrint: parts that reached the box
+	int						numFlatParts;	// for dmap_leafRepairPrint: parts with a plane and its exact opposite on the path
+	int						numFewFaceParts;	// for dmap_leafRepairPrint: parts with fewer than four faces
+	int						numSplits;
+	int						numRefused;	// leafs left opaque: no cutting side leaves a part to open
+	int						numKept;	// children without an opaque fragment that a brush still holds
+} leafRepair_t;
+
+static bool LeafRepairPlaneOnPath( const node_t* leaf, int planenum )
+{
+	for( const node_t* n = leaf->parent; n != NULL; n = n->parent )
+	{
+		if( ( n->planenum & ~1 ) == ( planenum & ~1 ) )
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+// how far the leaf's portal points reach behind and beyond a plane
+static void LeafRepairExtent( const node_t* leaf, const idPlane& plane, float& dmin, float& dmax )
+{
+	dmin = idMath::INFINITUM;
+	dmax = -idMath::INFINITUM;
+	for( const uPortal_t* p = leaf->portals; p != NULL; p = p->next[ p->nodes[1] == leaf ] )
+	{
+		for( int i = 0; i < p->winding->GetNumPoints(); i++ )
+		{
+			const float d = plane.Distance( ( *p->winding )[i].ToVec3() );
+			dmin = Min( dmin, d );
+			dmax = Max( dmax, d );
+		}
+	}
+}
+
+// the own sides of the leaf's opaque fragments that cut it (plane numbers, the brush behind each); false when the leaf
+// holds no opaque fragment or one that no own side cuts (it fills the leaf)
+static bool LeafRepairCutSides( const node_t* leaf, idStaticList<int, LEAF_REPAIR_MAX_SIDES>& sides )
+{
+	sides.Clear();
+	bool opaque = false;
+	for( const uBrush_t* b = leaf->brushlist; b != NULL; b = b->next )
+	{
+		if( !b->opaque )
+		{
+			continue;
+		}
+		opaque = true;
+		bool cut = false;
+		for( int i = 0; i < b->numsides; i++ )
+		{
+			const side_t& s = b->sides[i];
+			if( s.material == NULL || s.winding == NULL || LeafRepairPlaneOnPath( leaf, s.planenum ) )
+			{
+				continue;
+			}
+			float dmin, dmax;
+			LeafRepairExtent( leaf, dmapGlobals.mapPlanes[s.planenum], dmin, dmax );
+			if( dmax > LEAF_REPAIR_CUT_EPSILON && dmin < -LEAF_REPAIR_BEHIND_EPSILON )
+			{
+				cut = true;
+				if( sides.Num() < LEAF_REPAIR_MAX_SIDES && sides.FindIndex( s.planenum ) < 0 )
+				{
+					sides.Append( s.planenum );
+				}
+			}
+		}
+		if( !cut )
+		{
+			return false;
+		}
+	}
+	return opaque;
+}
+
+// whether a portal of the leaf keeps a piece in front of the plane with three edges longer than LEAF_REPAIR_EDGE_LENGTH:
+// SplitNodePortals would keep it, and the part of the leaf in front would touch another leaf
+static bool LeafRepairTouches( const node_t* leaf, const idPlane& plane )
+{
+	idDPlane dplane;
+	dplane.FromPlane( plane );
+	for( const uPortal_t* p = leaf->portals; p != NULL; p = p->next[ p->nodes[1] == leaf ] )
+	{
+		idDWinding w;
+		w.FromWinding( *p->winding, vec3_origin );
+		if( !w.Clip( dplane, 0.0, false ) )
+		{
+			continue;
+		}
+		int edges = 0;
+		for( int i = 0; i < w.GetNumPoints(); i++ )
+		{
+			const double* a = w[i];
+			const double* b = w[( i + 1 ) % w.GetNumPoints()];
+			const double d[3] = { b[0] - a[0], b[1] - a[1], b[2] - a[2] };
+			if( d[0] * d[0] + d[1] * d[1] + d[2] * d[2] > LEAF_REPAIR_EDGE_LENGTH * LEAF_REPAIR_EDGE_LENGTH )
+			{
+				edges++;
+			}
+		}
+		if( edges >= 3 )
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+// the leaf's path into r.path, every plane facing the leaf: `extra` first when one is given (the part in front of it),
+// then the planes of its portals (the outside box's among them), then every plane above it, then the tree's box
+static void LeafRepairAddPathPlane( leafRepair_t& r, const idPlane& plane, bool front )
+{
+	idDPlane p;
+	p.FromPlane( plane );
+	// the float normal is unit only to float precision: a square at its foot would lie off the plane far out
+	const double scale = ( front ? 1.0 : -1.0 ) / sqrt( p.n[0] * p.n[0] + p.n[1] * p.n[1] + p.n[2] * p.n[2] );
+	p.n[0] *= scale;
+	p.n[1] *= scale;
+	p.n[2] *= scale;
+	p.d *= scale;
+	r.path.Append( p );
+}
+
+static void LeafRepairPath( leafRepair_t& r, const node_t* leaf, const idPlane* extra )
+{
+	r.path.SetNum( 0 );
+	if( extra != NULL )
+	{
+		LeafRepairAddPathPlane( r, *extra, true );
+	}
+	for( const uPortal_t* p = leaf->portals; p != NULL; p = p->next[ p->nodes[1] == leaf ] )
+	{
+		LeafRepairAddPathPlane( r, p->plane, p->nodes[0] == leaf );
+	}
+	const node_t* child = leaf;
+	for( const node_t* n = leaf->parent; n != NULL; child = n, n = n->parent )
+	{
+		LeafRepairAddPathPlane( r, dmapGlobals.mapPlanes[n->planenum], n->children[0] == child );
+	}
+	for( int i = 0; i < 6; i++ )
+	{
+		r.path.Append( r.box[i] );
+	}
+}
+
+static bool LeafRepairSamePlane( const idDPlane& a, const idDPlane& b )
+{
+	return a.n[0] == b.n[0] && a.n[1] == b.n[1] && a.n[2] == b.n[2] && a.d == b.d;
+}
+
+// whether the half spaces of planes share a volume: a square of half size MAX_WORLD_SIZE on each, clipped in double by
+// all the others, keeps a winding (a clip that overflows idDWinding counts as sharing)
+static bool LeafRepairEncloses( const idList<idDPlane>& planes )
+{
+	idDWinding w;
+	for( int i = 0; i < planes.Num(); i++ )
+	{
+		w.BaseForPlane( planes[i], MAX_WORLD_SIZE );
+		bool left = true;
+		for( int j = 0; j < planes.Num() && left; j++ )
+		{
+			if( j != i && !LeafRepairSamePlane( planes[j], planes[i] ) )
+			{
+				left = w.Clip( planes[j], 0.0, false );
+			}
+		}
+		if( w.Overflowed() || ( left && w.GetNumPoints() >= 3 ) )
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+// the faces and corners of the leaf, in front of `extra` too when one is given: a square of half size MAX_WORLD_SIZE on
+// every distinct plane of the path, clipped in double by all the others; the planes that keep a winding go to r.faces,
+// its points to r.points. Neither is filled (the part then counts as held) when a clip overflows idDWinding, when a
+// plane of the path meets its exact opposite (no volume), or when fewer than four planes keep a winding
+static void LeafRepairCorners( leafRepair_t& r, const node_t* leaf, const idPlane* extra )
+{
+	LeafRepairPath( r, leaf, extra );
+	r.faces.SetNum( 0 );
+	r.points.SetNum( 0 );
+	for( int i = 0; i < r.path.Num(); i++ )
+	{
+		const idDPlane flipped = -r.path[i];
+		for( int j = i + 1; j < r.path.Num(); j++ )
+		{
+			if( LeafRepairSamePlane( r.path[j], flipped ) )
+			{
+				r.numFlatParts++;
+				return;
+			}
+		}
+	}
+	bool reachedBox = false;
+	idDWinding w;
+	for( int i = 0; i < r.path.Num(); i++ )
+	{
+		int j;
+		for( j = 0; j < i && !LeafRepairSamePlane( r.path[j], r.path[i] ); j++ )
+		{
+		}
+		if( j < i )
+		{
+			continue;
+		}
+		w.BaseForPlane( r.path[i], MAX_WORLD_SIZE );
+		bool left = true;
+		for( j = 0; j < r.path.Num() && left; j++ )
+		{
+			if( !LeafRepairSamePlane( r.path[j], r.path[i] ) )
+			{
+				left = w.Clip( r.path[j], 0.0, false );
+			}
+		}
+		if( w.Overflowed() )
+		{
+			r.faces.SetNum( 0 );
+			r.points.SetNum( 0 );
+			return;
+		}
+		if( !left || w.GetNumPoints() < 3 )
+		{
+			continue;
+		}
+		r.faces.Append( r.path[i] );
+		for( int k = 0; k < w.GetNumPoints(); k++ )
+		{
+			r.points.Append( w[k][0] );
+			r.points.Append( w[k][1] );
+			r.points.Append( w[k][2] );
+		}
+		if( i >= r.path.Num() - 6 )
+		{
+			reachedBox = true;
+		}
+	}
+	if( r.faces.Num() < 4 )
+	{
+		r.faces.SetNum( 0 );
+		r.points.SetNum( 0 );
+		r.numFewFaceParts++;
+		return;
+	}
+	if( reachedBox )
+	{
+		r.numBoxParts++;
+	}
+}
+
+static void LeafRepairAddBrush( leafRepair_t& r, const uEntity_t* e, const uBrush_t* b )
+{
+	const idMapBrush* mapBrush = NULL;
+	if( e->mapEntity != NULL && b->brushnum >= 0 && b->brushnum < e->mapEntity->GetNumPrimitives() )
+	{
+		const idMapPrimitive* prim = e->mapEntity->GetPrimitive( b->brushnum );
+		if( prim->GetType() == idMapPrimitive::TYPE_BRUSH )
+		{
+			mapBrush = static_cast<const idMapBrush*>( prim );
+		}
+	}
+	const idBrushFrame world;	// centre at the origin: PlaneFromPointsDouble gives the world plane
+	r.brushes.Append( b );
+	r.firstPlane.Append( r.planes.Num() );
+	for( int i = 0; i < b->numsides; i++ )
+	{
+		const side_t& s = b->sides[i];
+		const idPlane& plane = dmapGlobals.mapPlanes[s.planenum];
+		idDPlane dplane;
+		bool exact = false;
+		if( mapBrush != NULL && s.hasSourcePts && s.sourceSide >= 0 && s.sourceSide < mapBrush->GetNumSides() )
+		{
+			// the points as the map's text has them when dmap_mapPointsDouble is on (Phase 2C P2.4)
+			const idMapBrushSide* mapSide = mapBrush->GetSide( s.sourceSide );
+			double points[3][3];
+			mapSide->GetPlanePoints( points, dmap_mapPointsDouble.GetBool() );
+			exact = world.PlaneFromPointsDouble( points, mapSide->GetOrigin(), plane, dplane );
+		}
+		if( !exact )
+		{
+			dplane.FromPlane( plane );
+			const double scale = 1.0 / sqrt( dplane.n[0] * dplane.n[0] + dplane.n[1] * dplane.n[1] + dplane.n[2] * dplane.n[2] );
+			dplane.n[0] *= scale;
+			dplane.n[1] *= scale;
+			dplane.n[2] *= scale;
+			dplane.d *= scale;
+		}
+		r.planes.Append( dplane );
+	}
+}
+
+// whether the part (its corners in r.points, its faces in r.faces) and the brush pulled in by LEAF_REPAIR_INSIDE_EPSILON
+// share a volume
+static bool LeafRepairMeets( leafRepair_t& r, int brush )
+{
+	const int first = r.firstPlane[brush];
+	const int numSides = r.brushes[brush]->numsides;
+	const int numPoints = r.points.Num() / 3;
+	r.inner.SetNum( 0 );
+	for( int i = 0; i < numSides; i++ )
+	{
+		// a side with every corner of the part beyond its pulled-in plane parts the two
+		const idDPlane& side = r.planes[first + i];
+		int j;
+		for( j = 0; j < numPoints && side.Distance( &r.points[j * 3] ) > -LEAF_REPAIR_INSIDE_EPSILON; j++ )
+		{
+		}
+		if( j == numPoints )
+		{
+			return false;
+		}
+		idDPlane in = -side;
+		in.d -= LEAF_REPAIR_INSIDE_EPSILON;
+		r.inner.Append( in );
+	}
+	r.both = r.faces;
+	r.both.Append( r.inner );
+	return LeafRepairEncloses( r.both );
+}
+
+// whether an opaque brush of the entity, other than the originals of the fragments in skip, holds a point of the part
+// whose corners r.points holds more than LEAF_REPAIR_INSIDE_EPSILON inside (a part without corners counts as held)
+static bool LeafRepairHeld( leafRepair_t& r, const uBrush_t* skip )
+{
+	const int numPoints = r.points.Num() / 3;
+	if( numPoints == 0 )
+	{
+		return true;
+	}
+	idBounds bounds;
+	bounds.Clear();
+	for( int i = 0; i < numPoints; i++ )
+	{
+		const double* p = &r.points[i * 3];
+		bounds.AddPoint( idVec3( ( float )p[0], ( float )p[1], ( float )p[2] ) );
+	}
+	bounds.ExpandSelf( LEAF_REPAIR_CUT_EPSILON );
+
+	for( int b = 0; b < r.brushes.Num(); b++ )
+	{
+		if( !r.brushes[b]->bounds.IntersectsBounds( bounds ) )
+		{
+			continue;
+		}
+		const uBrush_t* f = skip;
+		while( f != NULL && f->original != r.brushes[b] )
+		{
+			f = f->next;
+		}
+		if( f == NULL && LeafRepairMeets( r, b ) )
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+static void LeafRepair_r( leafRepair_t& r, node_t* node )
+{
+	if( node->planenum != PLANENUM_LEAF )
+	{
+		LeafRepair_r( r, node->children[0] );
+		LeafRepair_r( r, node->children[1] );
+		return;
+	}
+	if( !node->opaque || node->portals == NULL )
+	{
+		return;
+	}
+	idStaticList<int, LEAF_REPAIR_MAX_SIDES> sides;
+	if( !LeafRepairCutSides( node, sides ) )
+	{
+		return;
+	}
+
+	// the first cutting side whose far part touches another leaf and holds no point of a brush without a fragment here
+	int cut = -1;
+	for( int i = 0; i < sides.Num() && cut < 0; i++ )
+	{
+		const idPlane& plane = dmapGlobals.mapPlanes[sides[i]];
+		if( !LeafRepairTouches( node, plane ) )
+		{
+			continue;
+		}
+		LeafRepairCorners( r, node, &plane );
+		if( !LeafRepairHeld( r, node->brushlist ) )
+		{
+			cut = sides[i] & ~1;
+		}
+	}
+	if( cut < 0 )
+	{
+		r.numRefused++;
+		return;
+	}
+	r.numSplits++;
+	if( dmap_leafRepairPrint.GetBool() )
+	{
+		common->Printf( "REPAIR %i bounds %s %s cut %i\n", r.numSplits, node->bounds[0].ToString( 3 ), node->bounds[1].ToString( 3 ), cut );
+	}
+
+	// the leaf becomes a node on the side's plane, and its fragments go down again
+	uBrush_t* list = node->brushlist;
+	node->brushlist = NULL;
+	node->opaque = false;
+	node->planenum = cut;
+	for( int i = 0; i < 2; i++ )
+	{
+		node->children[i] = AllocNode();
+		node->children[i]->parent = node;
+		node->children[i]->planenum = PLANENUM_LEAF;
+		node->children[i]->bounds = node->bounds;
+	}
+	MakeTreePortals_r( node );
+	uBrush_t* next;
+	for( uBrush_t* b = list; b != NULL; b = next )
+	{
+		next = b->next;
+		b->next = NULL;
+		FilterBrushIntoTree_r( b, node );
+	}
+
+	for( int i = 0; i < 2; i++ )
+	{
+		node_t* child = node->children[i];
+		if( !child->opaque )
+		{
+			LeafRepairCorners( r, child, NULL );
+			if( LeafRepairHeld( r, NULL ) )
+			{
+				child->opaque = true;
+				r.numKept++;
+			}
+		}
+		if( dmap_leafRepairPrint.GetBool() )
+		{
+			common->Printf( "CHILD %i opaque %i bounds %s %s\n", i, child->opaque ? 1 : 0, child->bounds[0].ToString( 3 ), child->bounds[1].ToString( 3 ) );
+			if( !child->opaque )
+			{
+				LeafRepairPath( r, child, NULL );
+				for( int j = 0; j < r.path.Num(); j++ )
+				{
+					const idDPlane& p = r.path[j];
+					common->Printf( "PATH %.17g %.17g %.17g %.17g\n", p.n[0], p.n[1], p.n[2], p.d );
+				}
+			}
+		}
+		LeafRepair_r( r, child );
+	}
+}
+
+static void LeafRepair( uEntity_t* e )
+{
+	leafRepair_t r;
+	r.numSplits = 0;
+	r.numRefused = 0;
+	r.numKept = 0;
+	r.numBoxParts = 0;
+	r.numFlatParts = 0;
+	r.numFewFaceParts = 0;
+	const idBounds& bounds = e->tree->bounds;
+	for( int i = 0; i < 3; i++ )
+	{
+		idDPlane& low = r.box[i];
+		idDPlane& high = r.box[i + 3];
+		low.n[0] = low.n[1] = low.n[2] = 0.0;
+		high.n[0] = high.n[1] = high.n[2] = 0.0;
+		low.n[i] = 1.0;
+		low.d = LEAF_REPAIR_BOX_MARGIN - ( double )bounds[0][i];
+		high.n[i] = -1.0;
+		high.d = LEAF_REPAIR_BOX_MARGIN + ( double )bounds[1][i];
+	}
+
+	// sized once: idList grows by its granularity, and appending every side of a large map one by one is quadratic
+	int numBrushes = 0;
+	int numSides = 0;
+	for( const primitive_t* prim = e->primitives; prim != NULL; prim = prim->next )
+	{
+		if( prim->brush != NULL && prim->brush->opaque )
+		{
+			numBrushes++;
+			numSides += prim->brush->numsides;
+		}
+	}
+	r.brushes.Resize( numBrushes );
+	r.firstPlane.Resize( numBrushes );
+	r.planes.Resize( numSides );
+	r.path.SetGranularity( 256 );
+	r.faces.SetGranularity( 256 );
+	r.points.SetGranularity( 1024 );
+	r.inner.SetGranularity( 256 );
+	r.both.SetGranularity( 256 );
+	for( const primitive_t* prim = e->primitives; prim != NULL; prim = prim->next )
+	{
+		if( prim->brush != NULL && prim->brush->opaque )
+		{
+			LeafRepairAddBrush( r, e, prim->brush );
+		}
+	}
+	LeafRepair_r( r, e->tree->headnode );
+	if( r.numSplits > 0 || r.numRefused > 0 )
+	{
+		common->Printf( "leaf repair: entity %i, %i leafs split, %i children kept opaque, %i leafs left opaque\n", dmapGlobals.entityNum, r.numSplits, r.numKept, r.numRefused );
+	}
+	if( dmap_leafRepairPrint.GetBool() && ( r.numBoxParts > 0 || r.numFlatParts > 0 || r.numFewFaceParts > 0 ) )
+	{
+		common->Printf( "leaf repair parts: entity %i, %i reached the tree's box, %i flat, %i with fewer than four faces\n", dmapGlobals.entityNum, r.numBoxParts, r.numFlatParts, r.numFewFaceParts );
+	}
+}
+//puncho end
+
 /*
 =====================
 FilterBrushesIntoTree
@@ -719,6 +1293,13 @@ void FilterBrushesIntoTree( uEntity_t* e )
 		r = FilterBrushIntoTree_r( newb, e->tree->headnode );
 		c_clusters += r;
 	}
+
+	//puncho start - Phase 2C P2.3: the leaf repair
+	if( dmap_leafRepair.GetBool() )
+	{
+		LeafRepair( e );
+	}
+	//puncho end
 
 	common->VerbosePrintf( "%5i total brushes\n", c_unique );
 	common->VerbosePrintf( "%5i cluster references\n", c_clusters );

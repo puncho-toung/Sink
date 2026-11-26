@@ -259,6 +259,7 @@ private:
 	int						numSplits;
 	int						numGridCellSplits;
 	int						numPrunedSplits;
+	int						numSliverFragments;	//puncho - Phase 2C P2.3: fragments SetLeafContents kept from giving their leaf contents
 	int						numPortals;
 	int						solidLeafNodes;
 	int						outsideLeafNodes;
@@ -282,6 +283,8 @@ private:
 	int						BrushSplitterStats( const idBrush* brush, int planeNum, const idPlaneSet& planeList, bool* testedPlanes, struct splitterStats_s& stats );
 	int						FindSplitter( idBrushBSPNode* node, const idPlaneSet& planeList, bool* testedPlanes, struct splitterStats_s& bestStats );
 	void					SetSplitterUsed( idBrushBSPNode* node, int planeNum );
+	bool					IsSliverFragment( const idBrush* volume, const idBrush* brush ) const;	//puncho - Phase 2C P2.3
+	void					SetLeafContents( idBrushBSPNode* node );	//puncho - Phase 2C P2.3
 	idBrushBSPNode* 		BuildBrushBSP_r( idBrushBSPNode* node, const idPlaneSet& planeList, bool* testedPlanes, int skipContents );
 	idBrushBSPNode* 		ProcessGridCell( idBrushBSPNode* node, int skipContents );
 	void					BuildGrid_r( idList<idBrushBSPNode*>& gridCells, idBrushBSPNode* node );
