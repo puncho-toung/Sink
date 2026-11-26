@@ -774,13 +774,21 @@ idMapBrush* idMapBrush::ParseValve220( idLexer& src, const idVec3& origin )
 		side->planepts[0] = planepts[0];
 		side->planepts[1] = planepts[1];
 		side->planepts[2] = planepts[2];
-		side->SetPlanePointsDouble( points );	//puncho - Phase 2C P2.4: kept where float does not hold the text's value
 
 		planepts[0] -= origin;
 		planepts[1] -= origin;
 		planepts[2] -= origin;
 
 		side->plane.FromPoints( planepts[0], planepts[1], planepts[2] );
+
+		//puncho start - Phase 2C P2.6: an axial side keeps no double points (Opus E NOTE 2): idBrushFrame::PlaneFromPoints
+		// returns before it reads a point when the reader's plane is axial: the collision model's and the AAS's is this one,
+		// degeneracies fixed (axial stays axial); dmap's is its plane set's match (an earlier side's within NORMAL_EPSILON)
+		if( side->plane.Type() >= PLANETYPE_TRUEAXIAL )
+		{
+			side->SetPlanePointsDouble( points );	//puncho - Phase 2C P2.4: kept where float does not hold the text's value
+		}
+		//puncho end
 
 		// read the material
 		if( !src.ReadTokenOnLine( &token ) )

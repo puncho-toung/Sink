@@ -64,6 +64,33 @@ private:	// reachability
 	void					Reachability_WalkOffLedge( int areaNum );
 	void					BuildPairsFast();	//puncho - R5 speed
 
+	//puncho start - Phase 2C P2.6: a walk reachability across a single floor vertex
+	idList<int>				pointFirstVertex;	// per area ( and one more ): where its floor vertices start in pointVertices
+	idList<int>				pointVertices;		// every area's floor vertex numbers, ascending within the area
+	idList<int>				pointFirstEdge;		// per area ( and one more ): where its floor edges start in pointEdges
+	idList<int>				pointEdges;			// every area's floor edge numbers ( abs ), ascending within the area
+	idList<byte>			pointOpen;			// per vertex: 1 = the floor faces at it close the whole angle round it, 2 = a portal's face at it
+	idList<int>				pointVertexFirst;	// per vertex ( and one more ): where its floor faces start in pointVertexFaces
+	idList<int>				pointVertexFaces;	// every vertex's floor faces
+	idList<int>				pointVertexRun;		// beside pointVertexFaces: the face's run between portal faces, -1 = a portal's face
+	idList<int>				pointFaceArea;		// per face: the area whose floor it is ( the first that lists it )
+	int						numPointRefused;	// point contacts the pair loop refused ( for the log )
+	void					PointReachInit();
+	void					PointReachFree();
+	bool					FloorFaceSector( int faceNum, int vertexNum, double& start, double& span ) const;
+	bool					PointSameRun( int area1num, int area2num, int vertexNum ) const;
+	int						Reachability_FloorPoint( int area1num, int area2num );
+	idList<int>				stepGroup;			// per vertex: its group of near floor corners ( aas_stepNear ), -1 = none
+	idList<byte>			stepGroupOpen;		// per group: 1 = open ( StepNearInit )
+	idList<int>				stepFirstGroup;		// per area ( and one more ): where its groups start in stepGroups
+	idList<int>				stepGroups;			// every area's groups, ascending within the area
+	int						numStepRefused;		// near contacts the pair loop refused ( for the log )
+	int						numStepMade;		// near-point reachabilities made ( for the log )
+	void					StepNearInit( const idList<byte>& facePortal, const idList<byte>& faceAxial );
+	bool					GroupFaceSector( int faceNum, int group, double ax, double ay, double& start, double& span ) const;
+	int						Reachability_StepNear( int area1num, int area2num );
+	//puncho end
+
 };
 
 #endif /* !__AASREACH_H__ */

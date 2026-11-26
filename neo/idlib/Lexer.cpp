@@ -1717,6 +1717,206 @@ float idLexer::ParseFloat( bool* errorFlag )
 	return token.GetFloatValue();
 }
 
+//puncho start - Phase 2C P2.6: a decimal's text value without strtod
+/*
+================
+DecimalQuotient
+
+m / 10^k rounded to the nearest double, ties to even, as a correctly rounded strtod gives it, for 0 < m < 2^64 and
+0 <= k <= 19: the quotient of m * 2^s by 10^k in 128-bit integers with s such that it has 64 bits, rounded to 53 bits by
+its low 11 bits and the remainder. The result is normal (2^-64 < m / 10^k < 2^64), so it is exactly that 53-bit integer
+times a power of two. Returns false without 128-bit division (another compiler or processor).
+================
+*/
+#if defined( _MSC_VER ) && defined( _M_X64 )
+	#include <intrin.h>
+	#define DECIMAL_QUOTIENT_128
+#elif defined( __SIZEOF_INT128__ )
+	#define DECIMAL_QUOTIENT_128
+#endif
+
+static const uint64 decimalIntegerPowers[20] =
+{
+	1ULL, 10ULL, 100ULL, 1000ULL, 10000ULL, 100000ULL, 1000000ULL, 10000000ULL, 100000000ULL, 1000000000ULL,
+	10000000000ULL, 100000000000ULL, 1000000000000ULL, 10000000000000ULL, 100000000000000ULL, 1000000000000000ULL,
+	10000000000000000ULL, 100000000000000000ULL, 1000000000000000000ULL, 10000000000000000000ULL
+};
+
+// 10^0 .. 10^22: every one is exact in double
+static const double decimalPowers[23] =
+{
+	1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20,
+	1e21, 1e22
+};
+
+#if defined( DECIMAL_QUOTIENT_128 )
+static int DecimalBitLength( const uint64 x )
+{
+#if defined( _MSC_VER )
+	unsigned long index;
+	_BitScanReverse64( &index, x );
+	return ( int )index + 1;
+#else
+	return 64 - __builtin_clzll( x );
+#endif
+}
+
+// ( m * 2^shift ) / d and its remainder, for shift <= 127 and a quotient below 2^64
+static uint64 DecimalDivide( const uint64 m, const int shift, const uint64 d, uint64& remainder )
+{
+#if defined( _MSC_VER )
+	const uint64 high = ( shift == 0 ) ? 0 : ( ( shift < 64 ) ? ( m >> ( 64 - shift ) ) : ( m << ( shift - 64 ) ) );
+	const uint64 low = ( shift < 64 ) ? ( m << shift ) : 0;
+	unsigned __int64 r;
+	const uint64 q = _udiv128( high, low, d, &r );
+	remainder = r;
+	return q;
+#else
+	const unsigned __int128 n = ( unsigned __int128 )m << shift;
+	remainder = ( uint64 )( n % d );
+	return ( uint64 )( n / d );
+#endif
+}
+#endif
+
+static bool DecimalQuotient( const uint64 m, const int k, double& value )
+{
+#if defined( DECIMAL_QUOTIENT_128 )
+	const uint64 d = decimalIntegerPowers[k];
+	// with m and d shifted to 64 bits (mn, dn) the quotient is ( mn / dn ) * 2^( shift + bits of m - bits of d ), and
+	// 1/2 < mn / dn < 2: one more shift where mn < dn puts it in [2^63, 2^64)
+	const int bitsM = DecimalBitLength( m );
+	const int bitsD = DecimalBitLength( d );
+	int shift = 63 - bitsM + bitsD;
+	if( ( m << ( 64 - bitsM ) ) < ( d << ( 64 - bitsD ) ) )
+	{
+		shift++;
+	}
+	uint64 remainder;
+	const uint64 q = DecimalDivide( m, shift, d, remainder );
+	uint64 mantissa = q >> 11;
+	const uint64 rest = q & 0x7ff;
+	if( ( rest & 0x400 ) && ( ( rest & 0x3ff ) != 0 || remainder != 0 || ( mantissa & 1 ) != 0 ) )
+	{
+		mantissa++;
+	}
+	int exponent = 11 - shift;
+	if( mantissa == ( 1ULL << 53 ) )
+	{
+		mantissa >>= 1;
+		exponent++;
+	}
+	const uint64 bits = ( uint64 )( exponent + 1023 ) << 52;
+	double scale;
+	memcpy( &scale, &bits, sizeof( scale ) );
+	value = ( double )( int64 )mantissa * scale;
+	return true;
+#else
+	return false;
+#endif
+}
+
+/*
+================
+DecimalTextValue
+
+The double a decimal number's text rounds to, as strtod gives it in the C locale, for the text ReadNumber makes a
+TT_FLOAT token of (digits with one '.', then an exponent or not, or digits and an exponent; no sign) when its digits
+without the leading zeros fit 19 places (m) and the text's value is m * 10^e with m <= 2^53 and -22 <= e <= 22 (m and
+10^|e| are exact in double, and one division or multiplication rounds once: Clinger's fast path), or with
+-19 <= e < 0 (DecimalQuotient). TrenchBroom writes the shortest decimals that read back as its doubles, up to 17
+digits. Returns false for any other text (more digits, a larger exponent): the caller then calls strtod. Unlike strtod
+it does not read the C locale's decimal point (nothing sets a locale).
+================
+*/
+static bool DecimalTextValue( const char* text, double& value )
+{
+	uint64 m = 0;
+	int digits = 0;		// the digits in m: from the first one that is not 0
+	int fraction = 0;	// the digits after the '.'
+	bool point = false;
+	bool digit = false;
+	const char* p = text;
+	for( ; ; p++ )
+	{
+		const char c = *p;
+		if( c >= '0' && c <= '9' )
+		{
+			digit = true;
+			if( point )
+			{
+				fraction++;
+			}
+			if( m == 0 && c == '0' )
+			{
+				continue;
+			}
+			if( digits == 19 )
+			{
+				return false;
+			}
+			m = m * 10 + ( uint64 )( c - '0' );
+			digits++;
+		}
+		else if( c == '.' && !point )
+		{
+			point = true;
+		}
+		else
+		{
+			break;
+		}
+	}
+	if( !digit )
+	{
+		return false;
+	}
+	int exponent = 0;
+	if( *p == 'e' )
+	{
+		p++;
+		bool negative = false;
+		if( *p == '-' || *p == '+' )
+		{
+			negative = ( *p == '-' );
+			p++;
+		}
+		// without digits after the 'e' (and its sign) strtod reads the number before the 'e'
+		for( ; *p >= '0' && *p <= '9'; p++ )
+		{
+			if( exponent < 100000 )
+			{
+				exponent = exponent * 10 + ( *p - '0' );
+			}
+		}
+		if( negative )
+		{
+			exponent = -exponent;
+		}
+	}
+	if( *p != '\0' )
+	{
+		return false;
+	}
+	if( m == 0 )
+	{
+		value = 0.0;
+		return true;
+	}
+	const int e = exponent - fraction;	// the text's value is m * 10^e
+	if( m <= ( 1ULL << 53 ) && e >= -22 && e <= 22 )
+	{
+		value = ( e >= 0 ) ? ( double )( int64 )m * decimalPowers[e] : ( double )( int64 )m / decimalPowers[-e];
+		return true;
+	}
+	if( e < 0 && e >= -19 )
+	{
+		return DecimalQuotient( m, -e, value );
+	}
+	return false;
+}
+//puncho end
+
 //puncho start - Phase 2C P2.4
 /*
 ================
@@ -1732,6 +1932,14 @@ static double TokenTextValue( idToken& token )
 {
 	if( token.type == TT_NUMBER && ( token.subtype & TT_FLOAT ) && !( token.subtype & ( TT_INFINITE | TT_INDEFINITE | TT_NAN ) ) )
 	{
+		//puncho start - Phase 2C P2.6: strtod's value without strtod where integer arithmetic gives it (Opus E: strtod
+		// added 64 % to the game's parse of a decimal Valve 220 map)
+		double value;
+		if( DecimalTextValue( token.c_str(), value ) )
+		{
+			return value;
+		}
+		//puncho end
 		return strtod( token.c_str(), NULL );
 	}
 	return token.GetDoubleValue();

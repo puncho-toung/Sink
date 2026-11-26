@@ -42,6 +42,43 @@ const float		walkPathSampleDistance		= 8.0f;
 
 const int		maxFlyPathIterations		= 10;
 const float		maxFlyPathDistance			= 500.0f;
+
+//puncho start - Phase 2C P2.6 fix round A1 ( opus/A MINOR 1 )
+idCVar ai_edge0Walls( "ai_edge0Walls", "2", CVAR_GAME | CVAR_INTEGER, "a walk reachability without an edge ( P2.6's point and near-point reachabilities, edge 0 ) crosses at a corner that the wall edges round it close for the obstacle avoidance: 0 = they stay walls ( as before this switch ); 1 = a floor edge with an end within 1 unit ( and a step ) of such a reachability's start or end in the area is no wall; 2 = 1, and a flow field leads a body to that start before it steps across. Set before the first monster moves ( the wall cache keeps what it built )", 0, 2 );
+
+/*
+============
+EdgeAtEdge0Reach
+
+  Whether the floor edge has an end within 1 unit seen from above ( and maxStepHeight in height ) of the start of one
+  of the area's edge-0 walk reachabilities or the end of one that enters the area ( ai_edge0Walls ).
+============
+*/
+static bool EdgeAtEdge0Reach( const idAASFile* file, const aasArea_t* area, const int edgeNum )
+{
+	const aasEdge_t& edge = file->GetEdge( abs( edgeNum ) );
+	const float step = file->GetSettings().maxStepHeight;
+	for( int e = 0; e < 2; e++ )
+	{
+		const idVec3& v = file->GetVertex( edge.vertexNum[e] );
+		for( const idReachability* reach = area->reach; reach; reach = reach->next )
+		{
+			if( reach->travelType == TFL_WALK && reach->edgeNum == 0 && ( reach->start.ToVec2() - v.ToVec2() ).LengthSqr() <= 1.0f && idMath::Fabs( reach->start.z - v.z ) <= step )
+			{
+				return true;
+			}
+		}
+		for( const idReachability* reach = area->rev_reach; reach; reach = reach->rev_next )
+		{
+			if( reach->travelType == TFL_WALK && reach->edgeNum == 0 && ( reach->end.ToVec2() - v.ToVec2() ).LengthSqr() <= 1.0f && idMath::Fabs( reach->end.z - v.z ) <= step )
+			{
+				return true;
+			}
+		}
+	}
+	return false;
+}
+//puncho end
 const float		flyPathSampleDistance		= 8.0f;
 
 
@@ -790,6 +827,11 @@ int idAASLocal::GetWallEdges( int areaNum, const idBounds& bounds, int travelFla
 				{
 					continue;
 				}
+				//puncho - Phase 2C P2.6 fix round A1: no wall at the corner an edge-0 reachability crosses
+				if( ai_edge0Walls.GetInteger() >= 1 && EdgeAtEdge0Reach( file, area, edge1Num ) )
+				{
+					continue;
+				}
 
 				// test if the edge is already in the list
 				for( k = 0; k < numEdges; k++ )
@@ -993,6 +1035,11 @@ void idAASLocal::BuildAreaWalls( int areaNum, int travelFlags ) const
 				}
 			}
 			if( reach )
+			{
+				continue;
+			}
+			//puncho - Phase 2C P2.6 fix round A1: no wall at the corner an edge-0 reachability crosses
+			if( ai_edge0Walls.GetInteger() >= 1 && EdgeAtEdge0Reach( file, area, edge1Num ) )
 			{
 				continue;
 			}
@@ -1280,6 +1327,11 @@ bool idAASLocal::FlowFieldExit( int areaNum, const idVec3& origin, float radius,
 			else
 			{
 				cell.edge[0] = cell.edge[1] = reach->end;
+				//puncho - Phase 2C P2.6 fix round A1: ai_edge0Walls 2, the crossing is at the reachability's start
+				if( ai_edge0Walls.GetInteger() >= 2 )
+				{
+					cell.edge[0] = cell.edge[1] = reach->start;
+				}
 			}
 			cell.cross = reach->end - reach->start;
 			cell.cross.z = 0.0f;
@@ -1309,6 +1361,13 @@ bool idAASLocal::FlowFieldExit( int areaNum, const idVec3& origin, float radius,
 		along = edgeLen * 0.5f;
 	}
 	exit = cell.edge[0] + edgeDir * along + cell.cross * FLOW_EXIT_STEP;
+	//puncho start - Phase 2C P2.6 fix round A1: ai_edge0Walls 2, a body more than 16 units from an edge-0 crossing
+	// ( a point, the only exit without length ) is led to the point itself first
+	if( ai_edge0Walls.GetInteger() >= 2 && edgeLen == 0.0f && ( origin.ToVec2() - cell.edge[0].ToVec2() ).LengthSqr() > Square( 16.0f ) )
+	{
+		exit = cell.edge[0];
+	}
+	//puncho end
 	exitAreaNum = cell.toAreaNum;
 	return true;
 }

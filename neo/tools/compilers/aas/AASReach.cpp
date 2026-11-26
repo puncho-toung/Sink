@@ -35,10 +35,16 @@ If you have questions concerning this license or the applicable additional terms
 //puncho start - R5 speed
 #include "AASParallel.h"
 #include "AASReach_fast.h"
+#include <algorithm>	//puncho - Phase 2C P2.6: std::sort of the point reaches' lists
 
 idCVar aas_threads( "aas_threads", "0", CVAR_TOOL | CVAR_INTEGER, "threads of the AAS compiler's reachability pair loop: 0 = one a logical processor, 1 = no thread is started; changes no output", 0, 64 );
 idCVar aas_reachFast( "aas_reachFast", "1", CVAR_TOOL | CVAR_INTEGER, "reachability pair loop: 0 = every area against every area on one thread; 1 = the bounds test first, on a packed copy of the bounds, on aas_threads threads; changes no output", 0, 1 );
 idCVar aas_reachCheck( "aas_reachCheck", "1", CVAR_TOOL | CVAR_BOOL, "reachability pair loop with aas_reachFast: 1 = beside the loop the old bounds test is run for every pair of areas, and the compile ends with an error when an area that passes it is not among an area's candidates; 0 = no such check; changes no output" );
+//puncho - Phase 2C P2.6
+idCVar aas_stepNear( "aas_stepNear", "1", CVAR_TOOL | CVAR_BOOL, "1 = a walk reachability between two floor areas whose floor corners lie within 0.5 of each other seen from above but are not one vertex ( the corner of a step, or corners not welded ), where the floor faces round that point close the whole angle and lie within a step height of each other; 0 = none ( the files of aas_pointReach alone )" );
+idCVar aas_pointReach( "aas_pointReach", "1", CVAR_TOOL | CVAR_BOOL, "1 = a walk reachability between two floor areas that meet at one floor vertex and share no floor edge, where the floor faces at that vertex close the whole angle round it ( no wall, ledge or cluster portal at it ); 0 = none ( the files of builds before it )" );
+//puncho - Phase 2C P2.6 fix round A1
+idCVar aas_reachEndClamp( "aas_reachEndClamp", "1", CVAR_TOOL | CVAR_BOOL, "1 = a point or near-point reachability ends at most half way to the far side of the to-area's floor face along its bisector ( a sliver face narrower than 1 unit keeps the end on it ); 0 = always INSIDEUNITS_WALKEND in ( P2.6's files )" );
 #ifndef ID_RETAIL
 idCVar aas_fault( "aas_fault", "0", CVAR_TOOL | CVAR_INTEGER, "tests only, not in a retail build: plants a fault that a check of the AAS compiler must refuse. 1 = with aas_reachCheck 1 one candidate of the pair loop is taken away; 2 = one area of every cluster is left out of the flood's list; 3 = every entry of the area to portal table is one too high; 4 = an error is raised inside the pair loop on a thread that is not the calling thread; 5 = on the calling thread while the other threads run; 6 = as 4, a fatal error; 7 = with aas_reachCheck 1 the check's own copy of one area is changed", 0, 7 );
 #endif
@@ -1015,6 +1021,1082 @@ void idAASReach::FlagReachableAreas( idAASFileLocal* file )
 	common->Printf( "%6d reachable areas\n", numReachableAreas );
 }
 
+//puncho start - Phase 2C P2.6: a walk reachability across a single floor vertex
+static const double POINT_REACH_TWO_PI = 6.283185307179586;
+static const double POINT_REACH_MAX_GAP = 0.5 * POINT_REACH_TWO_PI / 360.0;		// the largest gap allowed round an open vertex
+static const double POINT_REACH_MAX_OVER = 5.0 * POINT_REACH_TWO_PI / 360.0;	// the most the faces' angles may add up over 2 pi
+
+//puncho start - Phase 2C P2.6 fix round A1
+/*
+================
+AAS_FaceRayExit
+
+  Seen from above, how far a ray from ( x, y ) along ( dx, dy ) ( unit ) runs inside the floor face before it meets an
+  edge of the face that does not pass through ( x, y ) itself; INFINITY when it meets none.
+================
+*/
+static double AAS_FaceRayExit( const idAASFileLocal* file, const int faceNum, const double x, const double y, const double dx, const double dy )
+{
+	const aasFace_t& face = file->GetFace( faceNum );
+	double best = idMath::INFINITUM;
+	for( int i = 0; i < face.numEdges; i++ )
+	{
+		const aasEdge_t& edge = file->GetEdge( abs( file->GetEdgeIndex( face.firstEdge + i ) ) );
+		const idVec3& a = file->GetVertex( edge.vertexNum[0] );
+		const idVec3& b = file->GetVertex( edge.vertexNum[1] );
+		const double ex = ( double )b.x - a.x, ey = ( double )b.y - a.y;
+		const double wx = ( double )a.x - x, wy = ( double )a.y - y;
+		const double den = dx * ey - dy * ex;
+		if( fabs( den ) < 1e-12 )
+		{
+			continue;	// parallel to the ray
+		}
+		const double t = ( wx * ey - wy * ex ) / den;	// along the ray
+		const double s = ( wx * dy - wy * dx ) / den;	// along the edge
+		if( t > 1e-6 && s >= -1e-9 && s <= 1.0 + 1e-9 && t < best )
+		{
+			best = t;
+		}
+	}
+	return best;
+}
+//puncho end
+
+/*
+================
+idAASReach::FloorFaceSector
+
+  The angle the floor face faceNum takes round its corner vertexNum, seen from above: start ( 0 to 2 pi ) and span
+  ( counter-clockwise ). Of the two arcs between the face's two edges at the corner it is the one holding the
+  direction to the middle of the face's corners ( the face is convex; a corner of 180 degrees, the vertex in the
+  middle of a straight side, has no shorter way round ). The edges are read without their sign. false when the face
+  does not have exactly two edges at the vertex or one of them has no length seen from above.
+================
+*/
+bool idAASReach::FloorFaceSector( int faceNum, int vertexNum, double& start, double& span ) const
+{
+	const aasFace_t& face = file->faces[faceNum];
+	const idVec3& v = file->vertices[vertexNum];
+	int i, numAt = 0, other[2] = { 0, 0 };
+	double cx = 0.0, cy = 0.0;
+
+	for( i = 0; i < face.numEdges; i++ )
+	{
+		const aasEdge_t& edge = file->edges[abs( file->edgeIndex[face.firstEdge + i] )];
+		cx += ( double )file->vertices[edge.vertexNum[0]].x + ( double )file->vertices[edge.vertexNum[1]].x;
+		cy += ( double )file->vertices[edge.vertexNum[0]].y + ( double )file->vertices[edge.vertexNum[1]].y;
+		if( edge.vertexNum[0] == vertexNum || edge.vertexNum[1] == vertexNum )
+		{
+			if( numAt < 2 )
+			{
+				other[numAt] = ( edge.vertexNum[0] == vertexNum ) ? edge.vertexNum[1] : edge.vertexNum[0];
+			}
+			numAt++;
+		}
+	}
+	if( numAt != 2 || face.numEdges < 3 )
+	{
+		return false;
+	}
+	// every corner is the end of two edges: the mean of all the ends is the mean of the corners
+	cx /= 2.0 * face.numEdges;
+	cy /= 2.0 * face.numEdges;
+
+	const idVec3& q = file->vertices[other[0]];
+	const idVec3& r = file->vertices[other[1]];
+	const double ux = ( double )q.x - v.x, uy = ( double )q.y - v.y;
+	const double wx = ( double )r.x - v.x, wy = ( double )r.y - v.y;
+	if( ux * ux + uy * uy < 1e-12 || wx * wx + wy * wy < 1e-12 )
+	{
+		return false;
+	}
+	const double au = atan2( uy, ux ), aw = atan2( wy, wx ), ac = atan2( cy - v.y, cx - v.x );
+	double s1 = aw - au, sc = ac - au;
+	while( s1 < 0.0 )
+	{
+		s1 += POINT_REACH_TWO_PI;
+	}
+	while( sc < 0.0 )
+	{
+		sc += POINT_REACH_TWO_PI;
+	}
+	if( sc <= s1 )
+	{
+		start = au;
+		span = s1;
+	}
+	else
+	{
+		start = aw;
+		span = POINT_REACH_TWO_PI - s1;
+	}
+	while( start < 0.0 )
+	{
+		start += POINT_REACH_TWO_PI;
+	}
+	while( start >= POINT_REACH_TWO_PI )
+	{
+		start -= POINT_REACH_TWO_PI;
+	}
+	return true;
+}
+
+/*
+================
+idAASReach::PointReachInit
+
+  Before the pair loop, on the calling thread, read-only for the loop's workers: every floor area's floor vertices
+  and floor edges ( ascending ), and for every vertex whether it is OPEN: the floor faces at it ( of every area with
+  floor ) close the whole angle round it, seen from above, so the floor goes on all round the vertex and a box can
+  cross it from any of these areas to any other. A vertex is not open when the faces leave a gap of more than
+  POINT_REACH_MAX_GAP ( a wall, a ledge, a drop, steep ground, a pinch between two solids: the faces of the areas
+  beyond do not reach the vertex ), when they overlap by more than POINT_REACH_MAX_OVER in all ( a fold: floor over
+  floor at the vertex ), when a face at it has not exactly two edges at it, or when every face at it is axial
+  ( level, its edges along x or y: the floors of an all-axial map, whose files stay as they were ). The small
+  allowances take the welding of StoreFile: corners up to VERTEX_EPSILON apart are one vertex.
+  A cluster portal's floor face at a vertex counts as floor for the angle but cuts the faces round the vertex into
+  RUNS ( pointVertexRun: the faces between two portal faces, in the order of their angles; -1 on a portal's face ):
+  a point reachability joins two areas of one run only, so it never goes round a portal, and the areas of a run are
+  joined already by the edge reachabilities between neighbouring faces: clustering ( which floods along every
+  reachability ) puts them in one cluster with or without it. The faces at the vertex are kept for the pair loop
+  ( pointVertexFirst, pointVertexFaces, pointFaceArea ) and pointOpen holds 1 = open, 2 = a portal face at it.
+================
+*/
+void idAASReach::PointReachInit()
+{
+	const int numAreas = file->areas.Num();
+	const int numVertices = file->vertices.Num();
+	const int numFaces = file->faces.Num();
+	int i, j, k, e, numVertexRefs, numEdgeRefs;
+	idList<int> scratch;
+	idList<int>& vertexFirst = pointVertexFirst;
+	idList<int>& vertexFaces = pointVertexFaces;
+	idList<byte> faceSeen, facePortal, faceAxial;
+
+	// how many floor corners and floor edges, so every list below is sized once
+	numVertexRefs = 0;
+	numEdgeRefs = 0;
+	for( i = 1; i < numAreas; i++ )
+	{
+		const aasArea_t& area = file->areas[i];
+		if( !( area.flags & AREA_FLOOR ) )
+		{
+			continue;
+		}
+		for( j = 0; j < area.numFaces; j++ )
+		{
+			const aasFace_t& face = file->faces[abs( file->faceIndex[area.firstFace + j] )];
+			if( face.flags & FACE_FLOOR )
+			{
+				numEdgeRefs += face.numEdges;
+				numVertexRefs += 2 * face.numEdges;
+			}
+		}
+	}
+
+	// every floor area's floor vertices and floor edges, ascending, each once
+	pointFirstVertex.SetNum( numAreas + 1 );
+	pointFirstEdge.SetNum( numAreas + 1 );
+	pointVertices.Resize( Max( 1, numVertexRefs ) );
+	pointVertices.SetNum( 0 );
+	pointEdges.Resize( Max( 1, numEdgeRefs ) );
+	pointEdges.SetNum( 0 );
+	faceSeen.SetNum( numFaces );
+	facePortal.SetNum( numFaces );
+	faceAxial.SetNum( numFaces );
+	pointFaceArea.SetNum( numFaces );
+	memset( pointFaceArea.Ptr(), 0, numFaces * sizeof( int ) );
+	memset( faceSeen.Ptr(), 0, numFaces * sizeof( byte ) );
+	memset( facePortal.Ptr(), 0, numFaces * sizeof( byte ) );
+	memset( faceAxial.Ptr(), 0, numFaces * sizeof( byte ) );
+	for( i = 0; i < numAreas; i++ )
+	{
+		const int firstVertex = pointVertices.Num();
+		const int firstEdge = pointEdges.Num();
+		pointFirstVertex[i] = firstVertex;
+		pointFirstEdge[i] = firstEdge;
+		const aasArea_t& area = file->areas[i];
+		if( i == 0 || !( area.flags & AREA_FLOOR ) )
+		{
+			continue;
+		}
+		for( j = 0; j < area.numFaces; j++ )
+		{
+			const int faceNum = abs( file->faceIndex[area.firstFace + j] );
+			const aasFace_t& face = file->faces[faceNum];
+			if( !( face.flags & FACE_FLOOR ) )
+			{
+				continue;
+			}
+			if( !faceSeen[faceNum] )
+			{
+				pointFaceArea[faceNum] = i;	// the first area that lists it
+			}
+			faceSeen[faceNum] = 1;
+			if( AreaIsClusterPortal( i ) )
+			{
+				facePortal[faceNum] = 1;
+			}
+			// axial: level, and every edge along x or y ( what an all-axial map's floors are )
+			const idVec3& normal = file->planeList[face.planeNum].Normal();
+			bool axial = ( normal.x == 0.0f && normal.y == 0.0f );
+			for( k = 0; k < face.numEdges && axial; k++ )
+			{
+				const aasEdge_t& edge = file->edges[abs( file->edgeIndex[face.firstEdge + k] )];
+				const idVec3& a = file->vertices[edge.vertexNum[0]];
+				const idVec3& b = file->vertices[edge.vertexNum[1]];
+				axial = ( a.x == b.x || a.y == b.y );
+			}
+			faceAxial[faceNum] = axial ? 1 : 0;
+			for( k = 0; k < face.numEdges; k++ )
+			{
+				e = abs( file->edgeIndex[face.firstEdge + k] );
+				pointEdges.Append( e );
+				pointVertices.Append( file->edges[e].vertexNum[0] );
+				pointVertices.Append( file->edges[e].vertexNum[1] );
+			}
+		}
+		std::sort( pointVertices.Ptr() + firstVertex, pointVertices.Ptr() + pointVertices.Num() );
+		pointVertices.SetNum( ( int )( std::unique( pointVertices.Ptr() + firstVertex, pointVertices.Ptr() + pointVertices.Num() ) - pointVertices.Ptr() ) );
+		std::sort( pointEdges.Ptr() + firstEdge, pointEdges.Ptr() + pointEdges.Num() );
+		pointEdges.SetNum( ( int )( std::unique( pointEdges.Ptr() + firstEdge, pointEdges.Ptr() + pointEdges.Num() ) - pointEdges.Ptr() ) );
+	}
+	pointFirstVertex[numAreas] = pointVertices.Num();
+	pointFirstEdge[numAreas] = pointEdges.Num();
+
+	// the floor faces at every vertex ( each face once, also when two areas list it )
+	vertexFirst.SetNum( numVertices + 1 );
+	memset( vertexFirst.Ptr(), 0, ( numVertices + 1 ) * sizeof( int ) );
+	for( i = 1; i < numFaces; i++ )
+	{
+		if( !faceSeen[i] )
+		{
+			continue;
+		}
+		const aasFace_t& face = file->faces[i];
+		for( k = 0; k < face.numEdges; k++ )
+		{
+			// the vertex that starts the edge in the face's order: every corner once ( StoreFile chains the edges )
+			const int edgeNum = file->edgeIndex[face.firstEdge + k];
+			vertexFirst[file->edges[abs( edgeNum )].vertexNum[INT32_SIGNBITSET( edgeNum )] + 1]++;
+		}
+	}
+	for( i = 0; i < numVertices; i++ )
+	{
+		vertexFirst[i + 1] += vertexFirst[i];
+	}
+	vertexFaces.SetNum( Max( 1, vertexFirst[numVertices] ) );
+	scratch.SetNum( numVertices + 1 );
+	memcpy( scratch.Ptr(), vertexFirst.Ptr(), ( numVertices + 1 ) * sizeof( int ) );
+	for( i = 1; i < numFaces; i++ )
+	{
+		if( !faceSeen[i] )
+		{
+			continue;
+		}
+		const aasFace_t& face = file->faces[i];
+		for( k = 0; k < face.numEdges; k++ )
+		{
+			const int edgeNum = file->edgeIndex[face.firstEdge + k];
+			vertexFaces[scratch[file->edges[abs( edgeNum )].vertexNum[INT32_SIGNBITSET( edgeNum )]]++] = i;
+		}
+	}
+
+	// which vertices are open, and the runs between portal faces
+	pointOpen.SetNum( Max( 1, numVertices ) );
+	memset( pointOpen.Ptr(), 0, pointOpen.Num() * sizeof( byte ) );
+	pointVertexRun.SetNum( vertexFaces.Num() );
+	memset( pointVertexRun.Ptr(), 0, pointVertexRun.Num() * sizeof( int ) );
+	idList<double> sectorStart, sectorSpan;
+	idList<int> order;
+	for( i = 0; i < numVertices; i++ )
+	{
+		const int first = vertexFirst[i], num = vertexFirst[i + 1] - first;
+		if( num < 2 )
+		{
+			continue;	// one floor face at it: no two areas meet there
+		}
+		bool open = true, axialOnly = true, portal = false;
+		double sum = 0.0;
+		sectorStart.SetNum( num );
+		sectorSpan.SetNum( num );
+		order.SetNum( num );
+		for( k = 0; k < num && open; k++ )
+		{
+			const int faceNum = vertexFaces[first + k];
+			if( !FloorFaceSector( faceNum, i, sectorStart[k], sectorSpan[k] ) )
+			{
+				open = false;
+			}
+			if( !faceAxial[faceNum] )
+			{
+				axialOnly = false;
+			}
+			if( facePortal[faceNum] )
+			{
+				portal = true;
+			}
+			sum += sectorSpan[k];
+			order[k] = k;
+		}
+		// a vertex whose floor faces are all axial is left as it was: an all-axial map's file does not change
+		if( !open || axialOnly || sum > POINT_REACH_TWO_PI + POINT_REACH_MAX_OVER )
+		{
+			continue;
+		}
+		// the largest gap: the sectors by their start, walked once round
+		const double* starts = sectorStart.Ptr();
+		std::sort( order.Ptr(), order.Ptr() + num, [starts]( const int a, const int b )
+		{
+			return starts[a] < starts[b] || ( starts[a] == starts[b] && a < b );
+		} );
+		double covered = sectorStart[order[0]] + sectorSpan[order[0]];
+		double gap = 0.0;
+		for( k = 1; k < num; k++ )
+		{
+			const int s = order[k];
+			if( sectorStart[s] - covered > gap )
+			{
+				gap = sectorStart[s] - covered;
+			}
+			if( sectorStart[s] + sectorSpan[s] > covered )
+			{
+				covered = sectorStart[s] + sectorSpan[s];
+			}
+		}
+		if( sectorStart[order[0]] + POINT_REACH_TWO_PI - covered > gap )
+		{
+			gap = sectorStart[order[0]] + POINT_REACH_TWO_PI - covered;
+		}
+		if( gap > POINT_REACH_MAX_GAP )
+		{
+			continue;
+		}
+		pointOpen[i] = 1;
+		if( portal )
+		{
+			// the runs: round from the first portal face in the order of the angles, a new run after each portal face
+			pointOpen[i] |= 2;
+			int p = 0, run = 0;
+			while( !facePortal[vertexFaces[first + order[p]]] )
+			{
+				p++;
+			}
+			for( k = 0; k < num; k++ )
+			{
+				const int s = order[( p + k ) % num];
+				if( facePortal[vertexFaces[first + s]] )
+				{
+					pointVertexRun[first + s] = -1;
+					run++;
+				}
+				else
+				{
+					pointVertexRun[first + s] = run;
+				}
+			}
+		}
+	}
+
+	//puncho - Phase 2C P2.6: the groups of near corners, while the face flags are here
+	if( aas_stepNear.GetBool() )
+	{
+		StepNearInit( facePortal, faceAxial );
+	}
+}
+
+/*
+================
+idAASReach::PointReachFree
+================
+*/
+void idAASReach::PointReachFree()
+{
+	pointFirstVertex.Clear();
+	pointVertices.Clear();
+	pointFirstEdge.Clear();
+	pointEdges.Clear();
+	pointOpen.Clear();
+	pointVertexFirst.Clear();
+	pointVertexFaces.Clear();
+	pointVertexRun.Clear();
+	pointFaceArea.Clear();
+	stepGroup.Clear();
+	stepGroupOpen.Clear();
+	stepFirstGroup.Clear();
+	stepGroups.Clear();
+}
+
+/*
+================
+idAASReach::PointSameRun
+
+  At a vertex with a portal's face: whether a face of area1 and a face of area2 at it lie in one run ( PointReachInit ).
+================
+*/
+bool idAASReach::PointSameRun( int area1num, int area2num, int vertexNum ) const
+{
+	const int first = pointVertexFirst[vertexNum], last = pointVertexFirst[vertexNum + 1];
+	for( int a = first; a < last; a++ )
+	{
+		if( pointFaceArea[pointVertexFaces[a]] != area1num || pointVertexRun[a] < 0 )
+		{
+			continue;
+		}
+		for( int b = first; b < last; b++ )
+		{
+			if( pointFaceArea[pointVertexFaces[b]] == area2num && pointVertexRun[b] == pointVertexRun[a] )
+			{
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+/*
+================
+idAASReach::Reachability_FloorPoint
+
+  A walk reachability from area1 to area2 when both have floor, neither is a cluster portal, their floor faces share
+  no edge and they share a floor vertex that is open ( PointReachInit ), in one run where a portal's face is at it:
+  the lowest such vertex. Every such pair at the vertex gets one, also two areas side by side ( not opposite ): the
+  router and the game's paths go from reachability to reachability, and the edge reachabilities between neighbours
+  start at the middle of their edge, often far from the vertex ( the corner-route gate's p95 rose from 1.04 to 1.47
+  when only opposite areas got one ).
+  It starts at the vertex and ends INSIDEUNITS_WALKEND into area2, along the middle of the angle of area2's first
+  floor face at the vertex, on that face's plane; travel time 1, as a walk across an edge. Its edge number is 0, no
+  edge: the game takes a walk reachability's edge as a floor edge that is no wall ( AAS_pathing.cpp GetWallEdges,
+  BuildAreaWalls compare it with the from-area's own floor edges, and an AAS file has no edge 0: StoreFile's first
+  edge is a dummy and GetFaceForPortal keeps no edge 0 ), so no wall goes; FlowFieldExit takes edge 0 as the point
+  reach->end, so the exit is FLOW_EXIT_STEP past the vertex along this reachability. Optimize keeps 0 as 0 ( an edge
+  of area2 would turn into 0 or a real number depending on the order of the areas ).
+  Reads only what PointReachInit made and the two areas: safe on the pair loop's workers.
+  1 = made, -1 = they meet at floor vertices and none is open ( refused ), 0 = no point contact.
+================
+*/
+int idAASReach::Reachability_FloorPoint( int area1num, int area2num )
+{
+	if( !AreaHasFloor( area1num ) || !AreaHasFloor( area2num ) )
+	{
+		return 0;
+	}
+
+	// a shared floor edge is the other reachabilities' case
+	const int* e1 = pointEdges.Ptr() + pointFirstEdge[area1num];
+	const int* e1End = pointEdges.Ptr() + pointFirstEdge[area1num + 1];
+	const int* e2 = pointEdges.Ptr() + pointFirstEdge[area2num];
+	const int* e2End = pointEdges.Ptr() + pointFirstEdge[area2num + 1];
+	while( e1 < e1End && e2 < e2End )
+	{
+		if( *e1 == *e2 )
+		{
+			return 0;
+		}
+		if( *e1 < *e2 )
+		{
+			e1++;
+		}
+		else
+		{
+			e2++;
+		}
+	}
+
+	// the lowest shared floor vertex that is open
+	const int* v1 = pointVertices.Ptr() + pointFirstVertex[area1num];
+	const int* v1End = pointVertices.Ptr() + pointFirstVertex[area1num + 1];
+	const int* v2 = pointVertices.Ptr() + pointFirstVertex[area2num];
+	const int* v2End = pointVertices.Ptr() + pointFirstVertex[area2num + 1];
+	int vertexNum = -1;
+	bool shared = false;
+	const bool portalArea = AreaIsClusterPortal( area1num ) || AreaIsClusterPortal( area2num );
+	while( v1 < v1End && v2 < v2End )
+	{
+		if( *v1 == *v2 )
+		{
+			shared = true;
+			if( !portalArea && ( pointOpen[*v1] & 1 ) && ( !( pointOpen[*v1] & 2 ) || PointSameRun( area1num, area2num, *v1 ) ) )
+			{
+				vertexNum = *v1;
+				break;
+			}
+			v1++;
+			v2++;
+		}
+		else if( *v1 < *v2 )
+		{
+			v1++;
+		}
+		else
+		{
+			v2++;
+		}
+	}
+	if( vertexNum < 0 )
+	{
+		return shared ? -1 : 0;
+	}
+
+	// area2's first floor face at the vertex ( in its face list ): the reachability ends along the middle of its angle,
+	// on its plane
+	const aasArea_t* area2 = &file->areas[area2num];
+	const idVec3& vertex = file->vertices[vertexNum];
+	idVec3 end = vertex;
+	int i;
+	for( i = 0; i < area2->numFaces; i++ )
+	{
+		const int faceNum = abs( file->faceIndex[area2->firstFace + i] );
+		const aasFace_t& face = file->faces[faceNum];
+		double start, span;
+		if( !( face.flags & FACE_FLOOR ) || !FloorFaceSector( faceNum, vertexNum, start, span ) )
+		{
+			continue;
+		}
+		const double a = start + 0.5 * span;
+		//puncho start - Phase 2C P2.6 fix round A1: on a sliver face the end stays on the face
+		double inside = INSIDEUNITS_WALKEND;
+		if( aas_reachEndClamp.GetBool() )
+		{
+			inside = Min( inside, 0.5 * AAS_FaceRayExit( file, faceNum, vertex.x, vertex.y, cos( a ), sin( a ) ) );
+		}
+		end.x = ( float )( vertex.x + inside * cos( a ) );
+		end.y = ( float )( vertex.y + inside * sin( a ) );
+		//puncho end
+		const idPlane& plane = file->planeList[face.planeNum];
+		if( idMath::Fabs( plane.Normal().z ) > 0.001f )
+		{
+			end.z = ( plane.Dist() - plane.Normal().x * end.x - plane.Normal().y * end.y ) / plane.Normal().z;
+		}
+		break;
+	}
+	if( i >= area2->numFaces )
+	{
+		return -1;	// an open vertex of area2 whose face did not give its angle: cannot happen, refused all the same
+	}
+
+	idReachability_Walk* walkReach = new idReachability_Walk();
+	walkReach->travelType = TFL_WALK;
+	walkReach->toAreaNum = area2num;
+	walkReach->fromAreaNum = area1num;
+	walkReach->start = vertex;
+	walkReach->end = end;
+	walkReach->edgeNum = 0;
+	walkReach->travelTime = 1;
+	AddReachabilityToArea( walkReach, area1num );
+	return 1;
+}
+/*
+================
+idAASReach::GroupFaceSector
+
+  As FloorFaceSector for a group of near corners ( StepNearInit ) taken as one point ( ax, ay ): the angle of the face
+  between its two edges that leave the group, each seen from its own corner in the group, the arc holding the
+  direction to the face's middle. false when the face has not exactly two edges leaving the group ( all its corners in
+  the group: a sliver smaller than the group ).
+================
+*/
+bool idAASReach::GroupFaceSector( int faceNum, int group, double ax, double ay, double& start, double& span ) const
+{
+	const aasFace_t& face = file->faces[faceNum];
+	int i, numOut = 0;
+	double dir[2] = { 0.0, 0.0 }, cx = 0.0, cy = 0.0;
+
+	for( i = 0; i < face.numEdges; i++ )
+	{
+		const aasEdge_t& edge = file->edges[abs( file->edgeIndex[face.firstEdge + i] )];
+		const idVec3& a = file->vertices[edge.vertexNum[0]];
+		const idVec3& b = file->vertices[edge.vertexNum[1]];
+		cx += ( double )a.x + ( double )b.x;
+		cy += ( double )a.y + ( double )b.y;
+		const bool inA = ( stepGroup[edge.vertexNum[0]] == group );
+		const bool inB = ( stepGroup[edge.vertexNum[1]] == group );
+		if( inA == inB )
+		{
+			continue;
+		}
+		const idVec3& from = inA ? a : b;
+		const idVec3& to = inA ? b : a;
+		if( numOut < 2 )
+		{
+			dir[numOut] = atan2( ( double )to.y - from.y, ( double )to.x - from.x );
+		}
+		numOut++;
+	}
+	if( numOut != 2 )
+	{
+		return false;
+	}
+	cx /= 2.0 * face.numEdges;
+	cy /= 2.0 * face.numEdges;
+	const double ac = atan2( cy - ay, cx - ax );
+	double s1 = dir[1] - dir[0], sc = ac - dir[0];
+	while( s1 < 0.0 )
+	{
+		s1 += POINT_REACH_TWO_PI;
+	}
+	while( sc < 0.0 )
+	{
+		sc += POINT_REACH_TWO_PI;
+	}
+	if( sc <= s1 )
+	{
+		start = dir[0];
+		span = s1;
+	}
+	else
+	{
+		start = dir[1];
+		span = POINT_REACH_TWO_PI - s1;
+	}
+	while( start < 0.0 )
+	{
+		start += POINT_REACH_TWO_PI;
+	}
+	while( start >= POINT_REACH_TWO_PI )
+	{
+		start -= POINT_REACH_TWO_PI;
+	}
+	return true;
+}
+
+/*
+================
+idAASReach::StepNearInit
+
+  From PointReachInit, when aas_stepNear is on: floor corners closer than STEP_NEAR_XY seen from above are joined into
+  GROUPS ( stepGroup per vertex, -1 = none; a group has two vertices at least ), and a group is OPEN when:
+  - it is at most STEP_NEAR_SIZE across, seen from above, and its corners lie within the file's maxStepHeight of each
+    other in height: every floor round the point is a step from every other, so a box can step from any of them onto
+    any other there ( the floors are the box's own positions: the AAS world is expanded by the box, so where they are
+    the box fits );
+  - the floor faces at its corners close the whole angle round it ( GroupFaceSector; the gap and overlap allowances of
+    the point reachability ): no wall, ledge, drop or pinch reaches the point, so the step does not end at a wall or
+    over a drop;
+  - no face at it belongs to a cluster portal, not every face at it is axial ( all-axial files stay as they were ),
+    and every face has exactly two edges leaving the group.
+  Per area: the groups its floor corners are in ( stepFirstGroup, stepGroups, ascending ).
+================
+*/
+static const double STEP_NEAR_XY = 0.5;		// corners this close seen from above are one point
+static const double STEP_NEAR_SIZE = 1.0;	// the widest group used, seen from above
+static const int STEP_NEAR_MAX_CORNERS = 16;	// the most corners a group used may have
+
+void idAASReach::StepNearInit( const idList<byte>& facePortal, const idList<byte>& faceAxial )
+{
+	const int numVertices = file->vertices.Num();
+	const int numAreas = file->areas.Num();
+	const float maxStep = file->GetSettings().maxStepHeight;
+	int i, k, n;
+
+	// the floor corners, by their cell of STEP_NEAR_XY seen from above ( cell x and y offset by 2^22 and packed in one
+	// number, so a neighbouring cell is that number +- 1 and +- 2^23 )
+	idList<int> parent;
+	parent.SetNum( Max( 1, numVertices ) );
+	for( i = 0; i < numVertices; i++ )
+	{
+		parent[i] = i;
+	}
+	idList<int> sorted;
+	sorted.Resize( Max( 1, numVertices ) );
+	sorted.SetNum( 0 );
+	idList<long long> cellOf;
+	cellOf.SetNum( Max( 1, numVertices ) );
+	for( i = 0; i < numVertices; i++ )
+	{
+		if( pointVertexFirst[i + 1] > pointVertexFirst[i] )
+		{
+			const long long cx = ( long long )floor( file->vertices[i].x / STEP_NEAR_XY ) + ( 1 << 22 );
+			const long long cy = ( long long )floor( file->vertices[i].y / STEP_NEAR_XY ) + ( 1 << 22 );
+			cellOf[i] = ( cx << 23 ) | cy;
+			sorted.Append( i );
+		}
+	}
+	const long long* cells = cellOf.Ptr();
+	std::sort( sorted.Ptr(), sorted.Ptr() + sorted.Num(), [cells]( const int a, const int b )
+	{
+		return cells[a] < cells[b] || ( cells[a] == cells[b] && a < b );
+	} );
+	auto findRoot = [&parent]( int v )
+	{
+		while( parent[v] != v )
+		{
+			parent[v] = parent[parent[v]];
+			v = parent[v];
+		}
+		return v;
+	};
+	// every pair of corners closer than STEP_NEAR_XY: in the same cell or a neighbouring one
+	for( k = 0; k < sorted.Num(); k++ )
+	{
+		const int v = sorted[k];
+		const idVec3& p = file->vertices[v];
+		for( int dx = -1; dx <= 1; dx++ )
+		{
+			for( int dy = -1; dy <= 1; dy++ )
+			{
+				const long long want = cells[v] + ( ( long long )dx << 23 ) + dy;
+				// the first corner of that cell
+				int lo = 0, hi = sorted.Num();
+				while( lo < hi )
+				{
+					const int mid = ( lo + hi ) / 2;
+					if( cells[sorted[mid]] < want )
+					{
+						lo = mid + 1;
+					}
+					else
+					{
+						hi = mid;
+					}
+				}
+				for( n = lo; n < sorted.Num() && cells[sorted[n]] == want; n++ )
+				{
+					const int w = sorted[n];
+					if( w <= v )
+					{
+						continue;
+					}
+					const double ddx = ( double )file->vertices[w].x - p.x, ddy = ( double )file->vertices[w].y - p.y;
+					if( ddx * ddx + ddy * ddy <= STEP_NEAR_XY * STEP_NEAR_XY )
+					{
+						const int rv = findRoot( v ), rw = findRoot( w );
+						if( rv != rw )
+						{
+							parent[Max( rv, rw )] = Min( rv, rw );
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// the groups, numbered in the order of their lowest vertex; their members
+	idList<int> size, groupOfRoot;
+	size.SetNum( Max( 1, numVertices ) );
+	groupOfRoot.SetNum( Max( 1, numVertices ) );
+	memset( size.Ptr(), 0, size.Num() * sizeof( int ) );
+	for( i = 0; i < numVertices; i++ )
+	{
+		groupOfRoot[i] = -1;
+		if( pointVertexFirst[i + 1] > pointVertexFirst[i] )
+		{
+			size[findRoot( i )]++;
+		}
+	}
+	int numGroups = 0;
+	stepGroup.SetNum( Max( 1, numVertices ) );
+	for( i = 0; i < numVertices; i++ )
+	{
+		stepGroup[i] = -1;
+		if( pointVertexFirst[i + 1] == pointVertexFirst[i] )
+		{
+			continue;
+		}
+		const int r = findRoot( i );
+		if( size[r] < 2 )
+		{
+			continue;
+		}
+		if( groupOfRoot[r] < 0 )
+		{
+			groupOfRoot[r] = numGroups++;
+		}
+		stepGroup[i] = groupOfRoot[r];
+	}
+	idList<int> groupFirst, groupMembers;
+	groupFirst.SetNum( numGroups + 1 );
+	memset( groupFirst.Ptr(), 0, ( numGroups + 1 ) * sizeof( int ) );
+	for( i = 0; i < numVertices; i++ )
+	{
+		if( stepGroup[i] >= 0 )
+		{
+			groupFirst[stepGroup[i] + 1]++;
+		}
+	}
+	for( k = 0; k < numGroups; k++ )
+	{
+		groupFirst[k + 1] += groupFirst[k];
+	}
+	groupMembers.SetNum( Max( 1, groupFirst[numGroups] ) );
+	idList<int> fill;
+	fill.SetNum( numGroups + 1 );
+	memcpy( fill.Ptr(), groupFirst.Ptr(), ( numGroups + 1 ) * sizeof( int ) );
+	for( i = 0; i < numVertices; i++ )
+	{
+		if( stepGroup[i] >= 0 )
+		{
+			groupMembers[fill[stepGroup[i]]++] = i;	// ascending: the vertices are walked in order
+		}
+	}
+
+	// which groups are open
+	stepGroupOpen.SetNum( Max( 1, numGroups ) );
+	memset( stepGroupOpen.Ptr(), 0, stepGroupOpen.Num() * sizeof( byte ) );
+	idList<int> faces, order;
+	idList<double> sectorStart, sectorSpan;
+	for( k = 0; k < numGroups; k++ )
+	{
+		const int first = groupFirst[k], num = groupFirst[k + 1] - first;
+		if( num > STEP_NEAR_MAX_CORNERS )
+		{
+			continue;
+		}
+		double ax = 0.0, ay = 0.0;
+		float zMin = idMath::INFINITUM, zMax = -idMath::INFINITUM;
+		bool open = true;
+		for( n = 0; n < num; n++ )
+		{
+			const idVec3& p = file->vertices[groupMembers[first + n]];
+			ax += p.x;
+			ay += p.y;
+			zMin = Min( zMin, p.z );
+			zMax = Max( zMax, p.z );
+			for( int m = 0; m < n; m++ )
+			{
+				const idVec3& q = file->vertices[groupMembers[first + m]];
+				const double ddx = ( double )p.x - q.x, ddy = ( double )p.y - q.y;
+				if( ddx * ddx + ddy * ddy > STEP_NEAR_SIZE * STEP_NEAR_SIZE )
+				{
+					open = false;
+				}
+			}
+		}
+		if( !open || zMax - zMin > maxStep )
+		{
+			continue;
+		}
+		ax /= num;
+		ay /= num;
+		// the floor faces at its corners, each once
+		faces.SetNum( 0 );
+		for( n = 0; n < num; n++ )
+		{
+			const int v = groupMembers[first + n];
+			for( int e = pointVertexFirst[v]; e < pointVertexFirst[v + 1]; e++ )
+			{
+				faces.Append( pointVertexFaces[e] );
+			}
+		}
+		std::sort( faces.Ptr(), faces.Ptr() + faces.Num() );
+		faces.SetNum( ( int )( std::unique( faces.Ptr(), faces.Ptr() + faces.Num() ) - faces.Ptr() ) );
+		const int numFacesHere = faces.Num();
+		sectorStart.SetNum( numFacesHere );
+		sectorSpan.SetNum( numFacesHere );
+		order.SetNum( numFacesHere );
+		bool axialOnly = true;
+		double sum = 0.0;
+		for( n = 0; n < numFacesHere && open; n++ )
+		{
+			if( facePortal[faces[n]] || !GroupFaceSector( faces[n], k, ax, ay, sectorStart[n], sectorSpan[n] ) )
+			{
+				open = false;
+				break;
+			}
+			if( !faceAxial[faces[n]] )
+			{
+				axialOnly = false;
+			}
+			sum += sectorSpan[n];
+			order[n] = n;
+		}
+		if( !open || numFacesHere < 2 || axialOnly || sum > POINT_REACH_TWO_PI + POINT_REACH_MAX_OVER )
+		{
+			continue;
+		}
+		const double* starts = sectorStart.Ptr();
+		std::sort( order.Ptr(), order.Ptr() + numFacesHere, [starts]( const int a, const int b )
+		{
+			return starts[a] < starts[b] || ( starts[a] == starts[b] && a < b );
+		} );
+		double covered = sectorStart[order[0]] + sectorSpan[order[0]];
+		double gap = 0.0;
+		for( n = 1; n < numFacesHere; n++ )
+		{
+			const int s = order[n];
+			gap = Max( gap, sectorStart[s] - covered );
+			covered = Max( covered, sectorStart[s] + sectorSpan[s] );
+		}
+		gap = Max( gap, sectorStart[order[0]] + POINT_REACH_TWO_PI - covered );
+		if( gap <= POINT_REACH_MAX_GAP )
+		{
+			stepGroupOpen[k] = 1;
+		}
+	}
+
+	// every floor area's groups, ascending
+	stepFirstGroup.SetNum( numAreas + 1 );
+	stepGroups.SetNum( 0 );
+	stepGroups.Resize( pointVertices.Num() );	//puncho - Phase 2C P2.6 (opus/B MINOR 1): sized once ( an area's groups are at most its floor corners ); Append alone grew it 16 at a time, copying it whole each time
+	for( i = 0; i < numAreas; i++ )
+	{
+		const int firstGroup = stepGroups.Num();
+		stepFirstGroup[i] = firstGroup;
+		for( n = pointFirstVertex[i]; n < pointFirstVertex[i + 1]; n++ )
+		{
+			if( stepGroup[pointVertices[n]] >= 0 )
+			{
+				stepGroups.Append( stepGroup[pointVertices[n]] );
+			}
+		}
+		std::sort( stepGroups.Ptr() + firstGroup, stepGroups.Ptr() + stepGroups.Num() );
+		stepGroups.SetNum( ( int )( std::unique( stepGroups.Ptr() + firstGroup, stepGroups.Ptr() + stepGroups.Num() ) - stepGroups.Ptr() ) );
+	}
+	stepFirstGroup[numAreas] = stepGroups.Num();
+}
+
+/*
+================
+idAASReach::Reachability_StepNear
+
+  A walk reachability from area1 to area2 when both have floor, neither is a cluster portal, their floor faces share
+  no edge, and both have floor corners in a group of near corners that is open ( StepNearInit ): the lowest such
+  group. The pair loop asks only when the point reachability made none; two areas that share a vertex whose own faces
+  leave a gap can still meet in an open group ( unwelded corners round it fill the gap ). It starts at area1's first corner in the group ( its
+  first floor face with one, in its face list ) and ends INSIDEUNITS_WALKEND into area2 from area2's corner, along the
+  middle of the angle of area2's first floor face at the group, on that face's plane. The height between them is a
+  step at most ( the group's height limit ); travel time 1, edge number 0, as the point reachability ( and for the same
+  reasons: no wall goes, the flow-field exit is past the point ).
+  1 = made, -1 = they have corners in a group and none is open ( refused ), 0 = no near contact.
+================
+*/
+int idAASReach::Reachability_StepNear( int area1num, int area2num )
+{
+	if( !AreaHasFloor( area1num ) || !AreaHasFloor( area2num ) )
+	{
+		return 0;
+	}
+	// a shared floor edge is another reachability's case
+	const int* a = pointEdges.Ptr() + pointFirstEdge[area1num];
+	const int* aEnd = pointEdges.Ptr() + pointFirstEdge[area1num + 1];
+	const int* b = pointEdges.Ptr() + pointFirstEdge[area2num];
+	const int* bEnd = pointEdges.Ptr() + pointFirstEdge[area2num + 1];
+	while( a < aEnd && b < bEnd )
+	{
+		if( *a == *b )
+		{
+			return 0;
+		}
+		( *a < *b ) ? a++ : b++;
+	}
+	// the lowest common group that is open
+	a = stepGroups.Ptr() + stepFirstGroup[area1num];
+	aEnd = stepGroups.Ptr() + stepFirstGroup[area1num + 1];
+	b = stepGroups.Ptr() + stepFirstGroup[area2num];
+	bEnd = stepGroups.Ptr() + stepFirstGroup[area2num + 1];
+	int group = -1;
+	bool common = false;
+	while( a < aEnd && b < bEnd )
+	{
+		if( *a == *b )
+		{
+			common = true;
+			if( stepGroupOpen[*a] )
+			{
+				group = *a;
+				break;
+			}
+			a++;
+			b++;
+		}
+		else
+		{
+			( *a < *b ) ? a++ : b++;
+		}
+	}
+	if( group < 0 )
+	{
+		return common ? -1 : 0;
+	}
+	if( AreaIsClusterPortal( area1num ) || AreaIsClusterPortal( area2num ) )
+	{
+		return -1;
+	}
+
+	// the group's point seen from above, for the angles
+	double ax = 0.0, ay = 0.0;
+	int num = 0;
+	idVec3 start = vec3_origin, corner2 = vec3_origin;
+	bool haveStart = false, haveEnd = false;
+	double endAngle = 0.0;
+	int endFace = 0;
+	for( int pass = 0; pass < 2; pass++ )
+	{
+		const aasArea_t& area = file->areas[pass == 0 ? area1num : area2num];
+		for( int f = 0; f < area.numFaces; f++ )
+		{
+			const int faceNum = abs( file->faceIndex[area.firstFace + f] );
+			const aasFace_t& face = file->faces[faceNum];
+			if( !( face.flags & FACE_FLOOR ) )
+			{
+				continue;
+			}
+			for( int e = 0; e < face.numEdges; e++ )
+			{
+				const int edgeNum = file->edgeIndex[face.firstEdge + e];
+				const int v = file->edges[abs( edgeNum )].vertexNum[INT32_SIGNBITSET( edgeNum )];
+				if( stepGroup[v] != group )
+				{
+					continue;
+				}
+				ax += file->vertices[v].x;
+				ay += file->vertices[v].y;
+				num++;
+				if( pass == 0 && !haveStart )
+				{
+					start = file->vertices[v];
+					haveStart = true;
+				}
+				if( pass == 1 && !haveEnd )
+				{
+					corner2 = file->vertices[v];
+					endFace = faceNum;
+					haveEnd = true;
+				}
+			}
+		}
+	}
+	if( !haveStart || !haveEnd )
+	{
+		return -1;	// cannot happen: both areas have corners in the group
+	}
+	ax /= num;
+	ay /= num;
+	double sectorStart, sectorSpan;
+	if( !GroupFaceSector( endFace, group, ax, ay, sectorStart, sectorSpan ) )
+	{
+		return -1;	// cannot happen in an open group
+	}
+	endAngle = sectorStart + 0.5 * sectorSpan;
+	idVec3 end = corner2;
+	//puncho start - Phase 2C P2.6 fix round A1: on a sliver face the end stays on the face
+	double inside = INSIDEUNITS_WALKEND;
+	if( aas_reachEndClamp.GetBool() )
+	{
+		inside = Min( inside, 0.5 * AAS_FaceRayExit( file, endFace, corner2.x, corner2.y, cos( endAngle ), sin( endAngle ) ) );
+	}
+	end.x = ( float )( corner2.x + inside * cos( endAngle ) );
+	end.y = ( float )( corner2.y + inside * sin( endAngle ) );
+	//puncho end
+	const idPlane& plane = file->planeList[file->faces[endFace].planeNum];
+	if( idMath::Fabs( plane.Normal().z ) > 0.001f )
+	{
+		end.z = ( plane.Dist() - plane.Normal().x * end.x - plane.Normal().y * end.y ) / plane.Normal().z;
+	}
+
+	idReachability_Walk* walkReach = new idReachability_Walk();
+	walkReach->travelType = TFL_WALK;
+	walkReach->toAreaNum = area2num;
+	walkReach->fromAreaNum = area1num;
+	walkReach->start = start;
+	walkReach->end = end;
+	walkReach->edgeNum = 0;
+	walkReach->travelTime = 1;
+	AddReachabilityToArea( walkReach, area1num );
+	return 1;
+}
+//puncho end - Phase 2C P2.6
+
 /*
 ================
 idAASReach::BuildPairsFast
@@ -1045,6 +2127,10 @@ void idAASReach::BuildPairsFast()
 	int n, reported = 0;
 	long long numCandidates = 0;
 	std::atomic<int> badArea( 0 ), badOther( 0 ), faultArea( 0 );
+	std::atomic<int> pointRefused( 0 );	//puncho - Phase 2C P2.6
+	const bool pointReach = aas_pointReach.GetBool();	//puncho - Phase 2C P2.6
+	std::atomic<int> stepRefused( 0 ), stepMade( 0 );	//puncho - Phase 2C P2.6
+	const bool stepNear = aas_stepNear.GetBool();	//puncho - Phase 2C P2.6
 	aasReachPack_t pack;
 	idList<int*> buffers;
 	idList<long long> counts;
@@ -1103,6 +2189,8 @@ void idAASReach::BuildPairsFast()
 		int i, j, k, num, missing;
 		int* candidates = workerBuffers[worker];
 		long long numRan = 0;	// the candidates this chunk ran
+		int numRefused = 0;		//puncho - Phase 2C P2.6: the point contacts this chunk refused
+		int numStepRefusedHere = 0, numStepMadeHere = 0;	//puncho - Phase 2C P2.6: its near contacts refused and made
 
 		for( i = ( first > 1 ) ? first : 1; i < last; i++ )
 		{
@@ -1193,9 +2281,32 @@ void idAASReach::BuildPairsFast()
 				{
 					continue;
 				}
+				//puncho start - Phase 2C P2.6: no edge contact made a reachability: a contact at one floor vertex, or at
+				// near corners
+				const int pointMade = pointReach ? Reachability_FloorPoint( i, j ) : 0;
+				if( pointMade < 0 )
+				{
+					numRefused++;
+				}
+				if( stepNear && pointMade <= 0 )
+				{
+					const int stepMade = Reachability_StepNear( i, j );
+					if( stepMade < 0 )
+					{
+						numStepRefusedHere++;
+					}
+					else if( stepMade > 0 )
+					{
+						numStepMadeHere++;
+					}
+				}
+				//puncho end
 			}
 		}
 		workerCounts[worker] += numRan;	// once a chunk: the slots of the workers lie in one cache line
+		pointRefused += numRefused;	//puncho - Phase 2C P2.6
+		stepRefused += numStepRefusedHere;
+		stepMade += numStepMadeHere;
 	},
 	[&]( const int done )
 	{
@@ -1215,6 +2326,9 @@ void idAASReach::BuildPairsFast()
 	{
 		numCandidates += counts[n];
 	}
+	numPointRefused += pointRefused.load();	//puncho - Phase 2C P2.6
+	numStepRefused += stepRefused.load();
+	numStepMade += stepMade.load();
 
 	// which path ran: the tests ask for this line. In the game it is also the one line this loop prints ( no percent
 	// while the workers run )
@@ -1265,6 +2379,16 @@ bool idAASReach::Build( const idMapFile* mapFile, idAASFileLocal* file )
 	file->DeleteReachabilities();
 
 	FlagReachableAreas( file );
+
+	//puncho start - Phase 2C P2.6: the floor vertices and edges of every area, and the open vertices, for the pair loop
+	numPointRefused = 0;
+	numStepRefused = 0;
+	numStepMade = 0;
+	if( aas_pointReach.GetBool() || aas_stepNear.GetBool() )
+	{
+		PointReachInit();
+	}
+	//puncho end
 
 	for( i = 1; i < file->areas.Num(); i++ )
 	{
@@ -1322,6 +2446,25 @@ bool idAASReach::Build( const idMapFile* mapFile, idAASFileLocal* file )
 			{
 				continue;
 			}
+			//puncho start - Phase 2C P2.6: as in BuildPairsFast
+			const int pointMade = aas_pointReach.GetBool() ? Reachability_FloorPoint( i, j ) : 0;
+			if( pointMade < 0 )
+			{
+				numPointRefused++;
+			}
+			if( aas_stepNear.GetBool() && pointMade <= 0 )
+			{
+				const int stepMade = Reachability_StepNear( i, j );
+				if( stepMade < 0 )
+				{
+					numStepRefused++;
+				}
+				else if( stepMade > 0 )
+				{
+					numStepMade++;
+				}
+			}
+			//puncho end
 		}
 
 		//Reachability_WalkOffLedge( i );
@@ -1346,8 +2489,11 @@ bool idAASReach::Build( const idMapFile* mapFile, idAASFileLocal* file )
 		}
 	}
 
+	PointReachFree();	//puncho - Phase 2C P2.6
+
 	file->LinkReversedReachability();
 
+	int numPointReach = 0;	//puncho - Phase 2C P2.6
 	//puncho start - R2 widening: the game refuses a file with an area over the cap (d3xp/ai/AAS_routing.cpp,
 	// CalculateAreaTravelTimes). The file is written all the same; every such area is named here
 	for( i = 1; i < file->areas.Num(); i++ )
@@ -1356,6 +2502,11 @@ bool idAASReach::Build( const idMapFile* mapFile, idAASFileLocal* file )
 		for( const idReachability* areaReach = file->areas[i].reach; areaReach; areaReach = areaReach->next )
 		{
 			numAreaReach++;
+			//puncho - Phase 2C P2.6: only a point or near-point reachability is a walk across edge 0
+			if( areaReach->travelType == TFL_WALK && areaReach->edgeNum == 0 )
+			{
+				numPointReach++;
+			}
 		}
 		numReachabilities += numAreaReach;	//puncho - R5 speed: counted here from the lists; AddReachabilityToArea no longer counts
 		if( numAreaReach > MAX_REACH_PER_AREA )
@@ -1366,6 +2517,15 @@ bool idAASReach::Build( const idMapFile* mapFile, idAASFileLocal* file )
 	//puncho end - R2 widening
 
 	common->Printf( "\r%6d reachabilities\n", numReachabilities );
+	//puncho - Phase 2C P2.6
+	if( aas_pointReach.GetBool() )
+	{
+		common->Printf( "%6d point reachabilities, %d point contacts refused\n", numPointReach - numStepMade, numPointRefused );
+	}
+	if( aas_stepNear.GetBool() )
+	{
+		common->Printf( "%6d near-point reachabilities, %d near contacts refused\n", numStepMade, numStepRefused );
+	}
 
 	return true;
 }

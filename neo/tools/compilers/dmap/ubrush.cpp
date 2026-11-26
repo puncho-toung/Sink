@@ -754,6 +754,20 @@ typedef struct leafRepair_s
 	int						numSplits;
 	int						numRefused;	// leafs left opaque: no cutting side leaves a part to open
 	int						numKept;	// children without an opaque fragment that a brush still holds
+	//puncho start - Phase 2C P2.6: a grid of the brushes' bounds for LeafRepairHeld (LeafRepairGridCandidates)
+	bool					gridBuilt;
+	int64					gridScanTests;	// the bounds tests of the scans of every brush before the grid was built
+	double					gridOrigin[3];
+	double					gridScale;		// cells per unit
+	int						gridSize[3];
+	int						gridCells;
+	idList<int>				gridFirst;		// per cell its first entry in gridBrushes, and the end after the last cell
+	idList<int>				gridBrushes;	// per cell the brushes whose bounds reach into it, in index order
+	idList<int>				gridLarge;		// brushes whose bounds reach into more than LEAF_REPAIR_GRID_MAX_CELLS cells
+	idList<int>				gridMark;		// per brush the query that took it last
+	int						gridQuery;
+	idList<int>				gridCandidates;	// scratch: a query's brushes, in index order
+	//puncho end
 } leafRepair_t;
 
 static bool LeafRepairPlaneOnPath( const node_t* leaf, int planenum )
@@ -1069,6 +1083,203 @@ static bool LeafRepairMeets( leafRepair_t& r, int brush, double inside )	//punch
 	return LeafRepairEncloses( r.both );
 }
 
+//puncho start - Phase 2C P2.6
+/*
+==================
+LeafRepairGridCandidates
+
+LeafRepairHeld tested the bounds of every opaque brush of the entity for each part (Opus E MINOR 2: 0.13 to 0.16 ms a
+repair on organic shells of 226 to 8,136 brushes, so brushes x repairs). Once the scans have made LEAF_REPAIR_GRID_AFTER
+times as many bounds tests as the entity has brushes (an entity with a few repairs, as om64k's, never builds a grid),
+the brushes go into a grid of cells about their mean size, each brush in every cell its bounds reach (a brush reaching
+into more than LEAF_REPAIR_GRID_MAX_CELLS cells is taken for every part). A brush whose bounds meet the part's bounds
+shares a point with them, and that point's cell lies in both cell ranges (the cell of a coordinate never decreases as
+it grows), so the brushes of the cells the part's bounds reach, sorted, are a superset of the brushes the scan found,
+in its order: LeafRepairHeld makes the same bounds test on each, and so the same LeafRepairMeets calls in the same
+order. Returns their number, or -1 for a scan of every brush (before the grid, a small entity, or a part whose bounds
+reach into more than an eighth of the cells).
+==================
+*/
+#define LEAF_REPAIR_GRID_AFTER			32
+#define LEAF_REPAIR_GRID_MIN_BRUSHES	64
+#define LEAF_REPAIR_GRID_MAX_CELLS		64
+
+// the grid cell of a coordinate on an axis
+static int LeafRepairGridCell( const leafRepair_t& r, const int axis, const float x )
+{
+	const double c = floor( ( ( double )x - r.gridOrigin[axis] ) * r.gridScale );
+	if( c < 0.0 )
+	{
+		return 0;
+	}
+	if( c >= ( double )r.gridSize[axis] )
+	{
+		return r.gridSize[axis] - 1;
+	}
+	return ( int )c;
+}
+
+// the cell ranges of bounds and how many cells they hold
+static int64 LeafRepairGridRange( const leafRepair_t& r, const idBounds& bounds, int lo[3], int hi[3] )
+{
+	int64 cells = 1;
+	for( int i = 0; i < 3; i++ )
+	{
+		lo[i] = LeafRepairGridCell( r, i, bounds[0][i] );
+		hi[i] = LeafRepairGridCell( r, i, bounds[1][i] );
+		cells *= ( hi[i] >= lo[i] ) ? ( hi[i] - lo[i] + 1 ) : 0;
+	}
+	return cells;
+}
+
+static void LeafRepairGridBuild( leafRepair_t& r )
+{
+	const int numBrushes = r.brushes.Num();
+	idBounds all;
+	all.Clear();
+	double size = 0.0;
+	int sized = 0;
+	for( int b = 0; b < numBrushes; b++ )
+	{
+		const idBounds& bb = r.brushes[b]->bounds;
+		if( bb[0][0] > bb[1][0] || bb[0][1] > bb[1][1] || bb[0][2] > bb[1][2] )
+		{
+			continue;	// cleared: in no cell (LeafRepairGridRange), so taken for every part
+		}
+		all.AddBounds( bb );
+		size += Max( Max( bb[1][0] - bb[0][0], bb[1][1] - bb[0][1] ), bb[1][2] - bb[0][2] );
+		sized++;
+	}
+	r.gridBuilt = true;
+	if( sized == 0 )
+	{
+		r.gridCells = 0;	// every query scans
+		return;
+	}
+	// cells of the brushes' mean size, larger where that would make more than four cells a brush
+	double cell = Max( size / sized, 1.0 );
+	for( ;; )
+	{
+		int64 cells = 1;
+		for( int i = 0; i < 3; i++ )
+		{
+			r.gridSize[i] = ( int )Min( ( double )( all[1][i] - all[0][i] ) / cell + 1.0, 1048576.0 );
+			cells *= r.gridSize[i];
+		}
+		if( cells <= 4 * ( int64 )numBrushes )
+		{
+			r.gridCells = ( int )cells;
+			break;
+		}
+		cell *= 1.5;
+	}
+	for( int i = 0; i < 3; i++ )
+	{
+		r.gridOrigin[i] = all[0][i];
+	}
+	r.gridScale = 1.0 / cell;
+
+	// count the brushes of each cell, then fill each cell's list in index order
+	r.gridFirst.AssureSize( r.gridCells + 1, 0 );
+	r.gridLarge.SetGranularity( 1024 );
+	r.gridCandidates.SetGranularity( 256 );
+	int lo[3], hi[3];
+	for( int pass = 0; pass < 2; pass++ )
+	{
+		for( int b = 0; b < numBrushes; b++ )
+		{
+			// (bounds that reach into no cell, cleared ones, are taken for every part as well)
+			const int64 cells = LeafRepairGridRange( r, r.brushes[b]->bounds, lo, hi );
+			if( cells > LEAF_REPAIR_GRID_MAX_CELLS || cells == 0 )
+			{
+				if( pass == 0 )
+				{
+					r.gridLarge.Append( b );
+				}
+				continue;
+			}
+			for( int z = lo[2]; z <= hi[2]; z++ )
+			{
+				for( int y = lo[1]; y <= hi[1]; y++ )
+				{
+					for( int x = lo[0]; x <= hi[0]; x++ )
+					{
+						const int c = ( z * r.gridSize[1] + y ) * r.gridSize[0] + x;
+						if( pass == 0 )
+						{
+							r.gridFirst[c + 1]++;
+						}
+						else
+						{
+							r.gridBrushes[r.gridFirst[c]++] = b;
+						}
+					}
+				}
+			}
+		}
+		if( pass == 0 )
+		{
+			for( int c = 0; c < r.gridCells; c++ )
+			{
+				r.gridFirst[c + 1] += r.gridFirst[c];
+			}
+			r.gridBrushes.SetNum( r.gridFirst[r.gridCells] );
+		}
+	}
+	// the fill moved each cell's start to the next cell's: move them back
+	for( int c = r.gridCells; c > 0; c-- )
+	{
+		r.gridFirst[c] = r.gridFirst[c - 1];
+	}
+	r.gridFirst[0] = 0;
+	r.gridMark.AssureSize( numBrushes, 0 );
+	r.gridQuery = 0;
+}
+
+static int LeafRepairGridCandidates( leafRepair_t& r, const idBounds& bounds )
+{
+	const int numBrushes = r.brushes.Num();
+	if( !r.gridBuilt )
+	{
+		if( numBrushes < LEAF_REPAIR_GRID_MIN_BRUSHES || r.gridScanTests < LEAF_REPAIR_GRID_AFTER * ( int64 )numBrushes )
+		{
+			r.gridScanTests += numBrushes;
+			return -1;
+		}
+		LeafRepairGridBuild( r );
+	}
+	int lo[3], hi[3];
+	if( r.gridCells == 0 || LeafRepairGridRange( r, bounds, lo, hi ) > r.gridCells / 8 )
+	{
+		return -1;
+	}
+	r.gridQuery++;
+	r.gridCandidates.SetNum( 0 );
+	for( int z = lo[2]; z <= hi[2]; z++ )
+	{
+		for( int y = lo[1]; y <= hi[1]; y++ )
+		{
+			for( int x = lo[0]; x <= hi[0]; x++ )
+			{
+				const int c = ( z * r.gridSize[1] + y ) * r.gridSize[0] + x;
+				for( int i = r.gridFirst[c]; i < r.gridFirst[c + 1]; i++ )
+				{
+					const int b = r.gridBrushes[i];
+					if( r.gridMark[b] != r.gridQuery )
+					{
+						r.gridMark[b] = r.gridQuery;
+						r.gridCandidates.Append( b );
+					}
+				}
+			}
+		}
+	}
+	r.gridCandidates.Append( r.gridLarge );
+	r.gridCandidates.SortWithTemplate( idSort_QuickDefault<int>() );
+	return r.gridCandidates.Num();
+}
+//puncho end
+
 // whether an opaque brush of the entity, other than the originals of the fragments in skip, holds a point of the part
 // whose corners r.points holds more than LEAF_REPAIR_INSIDE_EPSILON inside (a part without corners counts as held)
 static bool LeafRepairHeld( leafRepair_t& r, const uBrush_t* skip )
@@ -1087,8 +1298,13 @@ static bool LeafRepairHeld( leafRepair_t& r, const uBrush_t* skip )
 	}
 	bounds.ExpandSelf( LEAF_REPAIR_CUT_EPSILON );
 
-	for( int b = 0; b < r.brushes.Num(); b++ )
+	//puncho start - Phase 2C P2.6: the grid's brushes for these bounds, in index order, or every brush
+	const int numCandidates = LeafRepairGridCandidates( r, bounds );
+	const int numTests = ( numCandidates < 0 ) ? r.brushes.Num() : numCandidates;
+	for( int c = 0; c < numTests; c++ )
 	{
+		const int b = ( numCandidates < 0 ) ? c : r.gridCandidates[c];
+		//puncho end
 		if( !r.brushes[b]->bounds.IntersectsBounds( bounds ) )
 		{
 			continue;
@@ -1209,6 +1425,10 @@ static void LeafRepairInit( leafRepair_t& r, const uEntity_t* e )
 	r.numBoxParts = 0;
 	r.numFlatParts = 0;
 	r.numFewFaceParts = 0;
+	r.gridBuilt = false;	//puncho - Phase 2C P2.6: the grid is built on demand (LeafRepairGridCandidates)
+	r.gridScanTests = 0;
+	r.gridCells = 0;
+	r.gridQuery = 0;
 	const idBounds& bounds = e->tree->bounds;
 	for( int i = 0; i < 3; i++ )
 	{
