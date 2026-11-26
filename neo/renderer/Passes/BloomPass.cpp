@@ -36,39 +36,43 @@ If you have questions concerning this license or the applicable additional terms
 
 #include <limits>			// std::numeric_limits: the probe's NaN and infinity for the R11G11B10F decoder
 
-// r_bloom, the strength and the tail are a player's settings and are archived; the levels, the knee, the ceiling
-// and the debug value are a developer's tunables and are not, because an archived cvar is written to the config at
-// the first run, and a later change of its default then never reaches that machine. The strength and the tail have
-// external linkage for the System Options screen's two bars ( MenuScreen_Shell_SystemOptions.cpp )
-idCVar r_bloom( "r_bloom", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE | CVAR_NEW, "bloom: a chain of half-size levels of the HDR frame, mixed in by the tonemapper ( main view only )" );
-idCVar r_bloomStrength( "r_bloomStrength", "0.06", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE | CVAR_NEW, "bloom: the share of the picture that is its blur ( 0 = none, 1 = only the blur )", 0.0f, 1.0f );
-idCVar r_bloomTail( "r_bloomTail", "0.7", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE | CVAR_NEW, "bloom, mode 0: each level's weight against the one above; 1 = a wide inverse-square halo, 0.5 = a tight inverse-cube one ( the glow's is r_bloomGlowTail )", 0.25f, 1.0f );
+// r_bloom, the glow's brightness and its tail are a player's settings and are archived; the levels, the knee, the
+// ceiling, the threshold and the debug value are a developer's tunables and are not, because an archived cvar is
+// written to the config at the first run, and a later change of its default then never reaches that machine
+idCVar r_bloom( "r_bloom", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE | CVAR_NEW, "bloom: what is brighter than r_bloomThreshold glows: a chain of half-size levels of the HDR frame, added by the tonemapper ( main view only )" );
 static idCVar r_bloomLevels( "r_bloomLevels", "6", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "bloom: levels at 1080 lines; one more for each doubling of the view's height", 1, 9 );
 static idCVar r_bloomFireflyKnee( "r_bloomFireflyKnee", "256", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "bloom: a lone very bright pixel adds at most about a third of this ( in exposed units ) to a texel of the bloom's first level; 0 = off", 0.0f, 1024.0f );
 static idCVar r_bloomCeiling( "r_bloomCeiling", "256", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "bloom: the frame's values are held to this before they enter the bloom ( the brightest emitter is 64 ); 7000 = no ceiling but the bound that keeps the chain finite", 1.0f, 7000.0f );
-// WP-G3 ( the owner, 2026-11-25: "is there a way to get nice bloom/glow without blurring? I like how crisp the base
-// game is" ): the glow mode. Only what a pixel has ABOVE a brightness threshold enters the chain, and the chain is ADDED
+// The glow ( WP-G3; the owner, 2026-11-25: "is there a way to get nice bloom/glow without blurring? I like how crisp
+// the base game is" ): only what a pixel has ABOVE a brightness threshold enters the chain, and the chain is ADDED
 // to the frame, whose own weight stays 1: a pixel no glow reaches is the pixel of r_bloom 0, and no edge loses
-// contrast. r_bloomGlow and r_bloomGlowTail are a player's settings and archived; the mode, the threshold and its
-// knee are a developer's tunables and are not. The glow has its OWN tail ( review F1-5 ): while r_bloomTail served
-// both modes, a config saved by v0001.3r ( 0.7, the mix's ) set the glow's tail too. r_bloomMode, r_bloomGlow and
-// r_bloomGlowTail have external linkage for the System Options screen's two bars
-idCVar r_bloomMode( "r_bloomMode", "1", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "bloom: 0 = the mix ( a share of the picture is its blur ), 1 = the glow ( what is brighter than r_bloomThreshold glows, added on top of the untouched picture )", 0, 1 );
-idCVar r_bloomGlow( "r_bloomGlow", "0.24", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE | CVAR_NEW, "bloom, mode 1: the glow's brightness ( 0 = none; the System Options bar runs from 0 to 1 )", 0.0f, 4.0f );
-idCVar r_bloomGlowTail( "r_bloomGlowTail", "0.34", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE | CVAR_NEW, "bloom, mode 1: each level's weight against the one above ( the glow's tail; in this mode the System Options bar Bloom Tail sets it )", 0.25f, 1.0f );
-static idCVar r_bloomThreshold( "r_bloomThreshold", "1.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "bloom, mode 1: a pixel glows by what its largest channel has above this, in exposed units ( a lit wall is about 1, a lamp 2 to 8 )", 0.01f, 1024.0f );
-static idCVar r_bloomThresholdKnee( "r_bloomThresholdKnee", "0.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "bloom, mode 1: the soft knee round the threshold, as a share of it ( 0 = a hard edge )", 0.0f, 1.0f );
+// contrast. It is the bloom's only form since WP-G4 ( the owner, 2026-11-26: "remove the old bloom entirely" ): the
+// mix of v0001.3r, which swapped a share of the picture for its blur, went with its cvars r_bloomMode,
+// r_bloomStrength and r_bloomTail ( a config that still sets them makes three cvars nothing reads ). r_bloomGlow and
+// r_bloomGlowTail keep their names, so that a saved config keeps the player's look; they have external linkage for
+// the System Options screen's two bars ( MenuScreen_Shell_SystemOptions.cpp )
+idCVar r_bloomGlow( "r_bloomGlow", "0.24", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE | CVAR_NEW, "bloom: the glow's brightness ( 0 = none; the System Options bar Bloom Strength runs from 0 to 1 )", 0.0f, 4.0f );
+idCVar r_bloomGlowTail( "r_bloomGlowTail", "0.34", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE | CVAR_NEW, "bloom: each level's weight against the one above; 1 = a wide inverse-square halo, 0.5 = a tight inverse-cube one ( the System Options bar Bloom Tail sets it )", 0.25f, 1.0f );
+static idCVar r_bloomThreshold( "r_bloomThreshold", "1.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "bloom: a pixel glows by what its largest channel has above this, in exposed units ( a lit wall is about 1, a lamp 2 to 8 )", 0.01f, 1024.0f );
+static idCVar r_bloomThresholdKnee( "r_bloomThresholdKnee", "0.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "bloom: the soft knee round the threshold, as a share of it ( 0 = a hard edge )", 0.0f, 1.0f );
 // WP-G3, the distance tail ( the owner, 2026-11-25: "Everything having the same sized tail no matter how far away it is
 // seems kind of fake" ). A glow made in the eye is the same size at any distance; one made in the air is a size in the
-// world, wide when the lamp is near and small when it is far. In the glow mode a lamp nearer than r_bloomTailNear
+// world, wide when the lamp is near and small when it is far. A lamp nearer than r_bloomTailNear
 // keeps the whole tail the player set and one beyond r_bloomTailFar its core alone ( level 0 ). The switch is a
 // player's and archived ( review F1-7: the owner judges it by playing, and the choice must outlive the session );
 // the distances and the far share are a developer's tunables and are not
-static idCVar r_bloomTailDistance( "r_bloomTailDistance", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE | CVAR_NEW, "bloom, mode 1: a lamp's tail shrinks with the distance of the opaque surface at its pixels ( needs the hierarchical depth buffer, r_useHierarchicalDepthBuffer; a translucent emitter takes the distance of what is behind it )" );
-static idCVar r_bloomTailNear( "r_bloomTailNear", "128", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "bloom, mode 1: a lamp nearer than this many units keeps the whole tail", 0.0f, 65536.0f );
-static idCVar r_bloomTailFar( "r_bloomTailFar", "1024", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "bloom, mode 1: a lamp beyond this many units keeps only its core", 1.0f, 65536.0f );
-static idCVar r_bloomTailFarShare( "r_bloomTailFarShare", "0", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "bloom, mode 1: the share of its tail a lamp beyond r_bloomTailFar keeps ( 0 = the core alone )", 0.0f, 1.0f );
-static idCVar r_bloomDebug( "r_bloomDebug", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "bloom: 1 = the bloom alone, 2..9 = one level alone, 10 = one tap in the mix, 11/12/13 = a NaN / an Inf / a 65504 pixel put into the frame's centre", 0, 13 );
+static idCVar r_bloomTailDistance( "r_bloomTailDistance", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE | CVAR_NEW, "bloom: a lamp's tail shrinks with the distance of the opaque surface at its pixels ( needs the hierarchical depth buffer, r_useHierarchicalDepthBuffer; a translucent emitter takes the distance of what is behind it )" );
+static idCVar r_bloomTailNear( "r_bloomTailNear", "128", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "bloom: a lamp nearer than this many units keeps the whole tail", 0.0f, 65536.0f );
+static idCVar r_bloomTailFar( "r_bloomTailFar", "1024", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "bloom: a lamp beyond this many units keeps only its core", 1.0f, 65536.0f );
+static idCVar r_bloomTailFarShare( "r_bloomTailFarShare", "0", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "bloom: the share of its tail a lamp beyond r_bloomTailFar keeps ( 0 = the core alone )", 0.0f, 1.0f );
+// WP-G4, the view weapon ( the owner, 2026-11-26: "is there a way to fix the bloom so it stops haloing the weapons in
+// total darkness?" ). A lamp-lit weapon in the player's hands is the brightest thing in a dark room and fills a
+// good part of the picture, so its glow stood as a halo over the dark behind it. At 0 the weapon's own pixels are
+// black to the bloom: they give no light to any level. They are known by their depth ( BLOOM_WEAPON_DEPTH_* below ),
+// which the first pass reads from the hierarchical depth buffer: without that buffer the weapon glows like the
+// world. A developer's tunable, not archived
+static idCVar r_bloomViewWeapon( "r_bloomViewWeapon", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "bloom: 1 = the first-person weapon's lit pixels glow like the world's; 0 = they give no glow, so a lit weapon has no halo against the dark ( needs the hierarchical depth buffer, r_useHierarchicalDepthBuffer )" );
+static idCVar r_bloomDebug( "r_bloomDebug", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "bloom: 1 = the bloom alone, 2..9 = one level alone, 10 = one tap where the tonemapper reads the chain, 11/12/13 = a NaN / an Inf / a 65504 pixel put into the frame's centre", 0, 13 );
 
 // 1 forces the chain's format to RGBA16_FLOAT even where the device can draw into, blend into and filter
 // R11G11B10F ( to compare the two formats )
@@ -83,6 +87,23 @@ static const int BLOOM_PROBE_WAIT = 3;
 // chain's format ( 64512 ), so the ceiling may never be set above it
 static const float BLOOM_CEILING_MAX = 7000.0f;
 
+// The view weapon's depths ( WP-G4 ). The first-person weapon is drawn with idRenderMatrix::ApplyDepthHack, which
+// squeezes its projected z into the nearest quarter of the depth range: reversed, ndc' = 0.25 ndc + 0.75, above
+// 0.75; forward, 0.25 ndc, below 0.25. The world has such a depth only nearer than 4/3 of the near plane, where the
+// player's own bounds keep it from coming. The first pass's test is depth * SIGN > BOUND ( the forward pair has not
+// been run: the engine is built reversed ). Only idWeapon::PresentWeapon sets weaponDepthHack ( the weapon, the PDA,
+// the flashlight ), and only while g_useWeaponDepthHack is on: with that debug cvar at 0 the weapon has a world's
+// depth and glows. Under TAA the frame the bloom reads is the resolved one and the depth is this frame's: while the
+// world slides behind the weapon, a rim of history beside its silhouette gets through, measured at 0.2 to 0.6 % of
+// the weapon's light ( review OH1-F2; tools/taa_turn_g4.sh in the run folder )
+#if ID_REVERSED_Z
+static const float BLOOM_WEAPON_DEPTH_BOUND = 0.75f;
+static const float BLOOM_WEAPON_DEPTH_SIGN = 1.0f;
+#else
+static const float BLOOM_WEAPON_DEPTH_BOUND = -0.25f;
+static const float BLOOM_WEAPON_DEPTH_SIGN = -1.0f;
+#endif
+
 // counts the chains this pass and every earlier BloomPass made ( BloomMix::chainSerial ). A file-scope static, not
 // an in-class initializer
 static int bloomChainSerial = 0;
@@ -96,8 +117,8 @@ static bool bloomProbeRequested = false;
 BloomCvarFloat
 
 A float cvar of the pass, held to its range. Review O1-2: a NaN typed into a cvar passes the cvar's own range and
-idMath::ClampFloat ( every comparison with a NaN is false ) and would reach the mix's weights or the shader, and
-r_bloomGlow, r_bloomGlowTail, r_bloomStrength and r_bloomTail are archived, so it would come back at every launch.
+idMath::ClampFloat ( every comparison with a NaN is false ) and would reach the tonemap draw's weights or the
+shader, and r_bloomGlow and r_bloomGlowTail are archived, so it would come back at every launch.
 A value that is not a number is taken as the fallback
 ========================
 */
@@ -208,9 +229,9 @@ BloomPass::BloomPass( nvrhi::IDevice* device, CommonRenderPasses* commonPasses )
 	, m_ChainFresh( false )
 	, m_FirstSource( NULL )
 	, m_FirstExposure( NULL )
-	, m_FirstDistSource( NULL )
-	, m_FirstDistExposure( NULL )
-	, m_FirstDistDepth( NULL )
+	, m_FirstDepthSource( NULL )
+	, m_FirstDepthExposure( NULL )
+	, m_FirstDepthImage( NULL )
 	, m_PokeWarned( false )
 	, m_ProbeWait( 0 )
 {
@@ -227,21 +248,19 @@ BloomPass::BloomPass( nvrhi::IDevice* device, CommonRenderPasses* commonPasses )
 #endif
 
 	// The shaders are found here, at the pass's first use ( the fog's way ): a run with the bloom off never loads
-	// them. The four permutations of bloom_down are four entries: FindShader knows an entry by name, stage and
+	// them. The three permutations of bloom_down are three entries: FindShader knows an entry by name, stage and
 	// suffix, and the permutation inside the blob is picked by the macro list, whose names, values and order must
 	// equal the cfg line's
 	const idList<shaderMacro_t> downMacros = { { "FIRST", "0" } };
 	const idList<shaderMacro_t> firstMacros = { { "FIRST", "1" } };
-	const idList<shaderMacro_t> firstGlowMacros = { { "FIRST", "2" } };
-	const idList<shaderMacro_t> firstDistMacros = { { "FIRST", "3" } };
+	const idList<shaderMacro_t> firstDepthMacros = { { "FIRST", "2" } };
 	const idList<shaderMacro_t> noMacros;
 	m_DownPS = renderProgManager.GetShader( renderProgManager.FindShader( "builtin/post/bloom_down", SHADER_STAGE_FRAGMENT, "", downMacros, true, LAYOUT_DRAW_VERT ) );
 	m_DownFirstPS = renderProgManager.GetShader( renderProgManager.FindShader( "builtin/post/bloom_down", SHADER_STAGE_FRAGMENT, "_first", firstMacros, true, LAYOUT_DRAW_VERT ) );
-	m_DownFirstGlowPS = renderProgManager.GetShader( renderProgManager.FindShader( "builtin/post/bloom_down", SHADER_STAGE_FRAGMENT, "_glow", firstGlowMacros, true, LAYOUT_DRAW_VERT ) );
-	m_DownFirstDistPS = renderProgManager.GetShader( renderProgManager.FindShader( "builtin/post/bloom_down", SHADER_STAGE_FRAGMENT, "_dist", firstDistMacros, true, LAYOUT_DRAW_VERT ) );
+	m_DownFirstDepthPS = renderProgManager.GetShader( renderProgManager.FindShader( "builtin/post/bloom_down", SHADER_STAGE_FRAGMENT, "_depth", firstDepthMacros, true, LAYOUT_DRAW_VERT ) );
 	m_UpPS = renderProgManager.GetShader( renderProgManager.FindShader( "builtin/post/bloom_up", SHADER_STAGE_FRAGMENT, "", noMacros, true, LAYOUT_DRAW_VERT ) );
 	m_VS = renderProgManager.GetProgramInfo( BUILTIN_TONEMAPPING ).vs;		// the full-screen quad: four vertices, no inputs
-	if( !m_VS || !m_DownFirstPS || !m_DownFirstGlowPS || !m_DownPS || !m_UpPS )
+	if( !m_VS || !m_DownFirstPS || !m_DownPS || !m_UpPS )
 	{
 		// A missing blob file stops the engine in GetBytecode, and a missing permutation reaches the device's
 		// message callback at Error severity, which is a common->FatalError too: as for every builtin shader the
@@ -262,10 +281,10 @@ BloomPass::BloomPass( nvrhi::IDevice* device, CommonRenderPasses* commonPasses )
 	};
 	m_FirstLayout = device->createBindingLayout( firstLayoutDesc );
 
-	// WP-G3, the distance tail's first pass: the same and the frame's depth
-	nvrhi::BindingLayoutDesc firstDistLayoutDesc;
-	firstDistLayoutDesc.visibility = nvrhi::ShaderType::Pixel;
-	firstDistLayoutDesc.bindings =
+	// the first pass that reads the frame's depth too ( the distance tail, the view weapon ): the same and the depth
+	nvrhi::BindingLayoutDesc firstDepthLayoutDesc;
+	firstDepthLayoutDesc.visibility = nvrhi::ShaderType::Pixel;
+	firstDepthLayoutDesc.bindings =
 	{
 		nvrhi::BindingLayoutItem::PushConstants( 0, sizeof( BloomConstants ) ),
 		nvrhi::BindingLayoutItem::Texture_SRV( 0 ),
@@ -273,7 +292,7 @@ BloomPass::BloomPass( nvrhi::IDevice* device, CommonRenderPasses* commonPasses )
 		nvrhi::BindingLayoutItem::Texture_SRV( 2 ),
 		nvrhi::BindingLayoutItem::Sampler( 0 )
 	};
-	m_FirstDistLayout = device->createBindingLayout( firstDistLayoutDesc );
+	m_FirstDepthLayout = device->createBindingLayout( firstDepthLayoutDesc );
 
 	nvrhi::BindingLayoutDesc downUpLayoutDesc;
 	downUpLayoutDesc.visibility = nvrhi::ShaderType::Pixel;
@@ -315,20 +334,19 @@ void BloomPass::ReleaseChain()
 		m_ProbeStagings[i] = nullptr;
 	}
 	m_DownFirstPipeline = nullptr;
-	m_DownFirstGlowPipeline = nullptr;
 	m_DownPipeline = nullptr;
 	m_UpPipeline = nullptr;
 	m_FirstSet = nullptr;
 	m_FirstSource = NULL;
 	m_FirstExposure = NULL;
 	m_Wide = nullptr;
-	m_FirstDistFrame = nullptr;
-	m_DownFirstDistPipeline = nullptr;
+	m_FirstFrame = nullptr;
+	m_DownFirstDepthPipeline = nullptr;
 	m_DownWideSet = nullptr;
-	m_FirstDistSet = nullptr;
-	m_FirstDistSource = NULL;
-	m_FirstDistExposure = NULL;
-	m_FirstDistDepth = NULL;
+	m_FirstDepthSet = nullptr;
+	m_FirstDepthSource = NULL;
+	m_FirstDepthExposure = NULL;
+	m_FirstDepthImage = NULL;
 	m_ProbeUpStaging = nullptr;
 	m_ProbeFrameStaging = nullptr;
 	m_ProbeWait = 0;
@@ -413,36 +431,34 @@ bool BloomPass::CheckChain( int frameWidth, int frameHeight )
 	psoDesc.renderState.depthStencilState.stencilEnable = false;
 
 	psoDesc.bindingLayouts = { m_FirstLayout };
-	psoDesc.PS = m_DownFirstPS;
-	m_DownFirstPipeline = m_Device->createGraphicsPipeline( psoDesc, m_Frames[0] );
 
-	// WP-G3: the glow's first pass writes two targets, level 0 and the wide levels' source ( a texture of level 0's
-	// size ); level 1's reduction reads that source in the glow mode. The texture, the framebuffer of the two, the
-	// glow's first-pass pipeline and level 1's set are part of the chain ( tested with the pipelines below ). The
-	// distance tail's permutation has a pipeline of its own for the same framebuffer; where it cannot be made the
-	// tail is the same at every distance. A shader blob built from an older shader list has no FIRST 2 or 3 and
-	// stops the engine where the pass is made, as a missing permutation of any builtin shader does; "cannot be
-	// made" here means the device refusing the pipeline
+	// The first pass writes two targets, level 0 and the wide levels' source ( a texture of level 0's size ), which
+	// level 1's reduction reads. The texture, the framebuffer of the two, the first pass's pipeline and level 1's set
+	// are part of the chain ( tested with the pipelines below ). The permutation that reads the frame's depth has a
+	// pipeline of its own for the same framebuffer; where it cannot be made the tail is the same at every distance
+	// and the view weapon glows. A shader blob built from an older shader list has other permutations and stops the
+	// engine where the pass is made, as a missing permutation of any builtin shader does; "cannot be made" here means
+	// the device refusing the pipeline
 	desc.width = m_TexW[0];
 	desc.height = m_TexH[0];
 	desc.debugName = "Bloom/Wide";
 	m_Wide = m_Device->createTexture( desc );
 	if( m_Wide )
 	{
-		m_FirstDistFrame = m_Device->createFramebuffer( nvrhi::FramebufferDesc().addColorAttachment( m_Levels[0] ).addColorAttachment( m_Wide ) );
+		m_FirstFrame = m_Device->createFramebuffer( nvrhi::FramebufferDesc().addColorAttachment( m_Levels[0] ).addColorAttachment( m_Wide ) );
 	}
-	if( m_FirstDistFrame )
+	if( m_FirstFrame )
 	{
-		psoDesc.PS = m_DownFirstGlowPS;		// the mix's first-pass layout: the frame, the exposure buffer, a sampler
-		m_DownFirstGlowPipeline = m_Device->createGraphicsPipeline( psoDesc, m_FirstDistFrame );
-		if( m_DownFirstDistPS && m_FirstDistLayout )
+		psoDesc.PS = m_DownFirstPS;		// m_FirstLayout: the frame, the exposure buffer, a sampler
+		m_DownFirstPipeline = m_Device->createGraphicsPipeline( psoDesc, m_FirstFrame );
+		if( m_DownFirstDepthPS && m_FirstDepthLayout )
 		{
-			psoDesc.bindingLayouts = { m_FirstDistLayout };
-			psoDesc.PS = m_DownFirstDistPS;
-			m_DownFirstDistPipeline = m_Device->createGraphicsPipeline( psoDesc, m_FirstDistFrame );
-			if( !m_DownFirstDistPipeline )
+			psoDesc.bindingLayouts = { m_FirstDepthLayout };
+			psoDesc.PS = m_DownFirstDepthPS;
+			m_DownFirstDepthPipeline = m_Device->createGraphicsPipeline( psoDesc, m_FirstFrame );
+			if( !m_DownFirstDepthPipeline )
 			{
-				common->Warning( "BloomPass: the device could not make the distance tail's pipeline of a %d x %d frame, the tail is the same at every distance", frameWidth, frameHeight );
+				common->Warning( "BloomPass: the device could not make the first pass's depth pipeline of a %d x %d frame: the tail is the same at every distance and the view weapon glows", frameWidth, frameHeight );
 			}
 		}
 		nvrhi::BindingSetDesc wideSetDesc;
@@ -470,8 +486,9 @@ bool BloomPass::CheckChain( int frameWidth, int frameHeight )
 	m_UpPipeline = m_Device->createGraphicsPipeline( psoDesc, m_Frames[0] );
 
 	// the pass owns its sets ( not the backend's binding cache, whose sets would keep a dead chain's textures
-	// alive ): the down pass into level i reads level i - 1, the up pass into level i reads level i + 1
-	for( int i = 1; i < BLOOM_MAX_LEVELS; i++ )
+	// alive ): the down pass into level i reads level i - 1 ( level 1 reads m_Wide: m_DownWideSet ), the up pass into
+	// level i reads level i + 1
+	for( int i = 2; i < BLOOM_MAX_LEVELS; i++ )
 	{
 		nvrhi::BindingSetDesc setDesc;
 		setDesc.bindings =
@@ -496,8 +513,8 @@ bool BloomPass::CheckChain( int frameWidth, int frameHeight )
 
 	// the pipelines and the down and up sets must all stand too: a null one would be used by the next draw. As for
 	// the textures, the remembered size keeps the device from being asked again in every view
-	bool missing = !m_DownFirstPipeline || !m_DownFirstGlowPipeline || !m_DownWideSet || !m_DownPipeline || !m_UpPipeline;
-	for( int i = 1; i < BLOOM_MAX_LEVELS; i++ )
+	bool missing = !m_DownFirstPipeline || !m_DownWideSet || !m_DownPipeline || !m_UpPipeline;
+	for( int i = 2; i < BLOOM_MAX_LEVELS; i++ )
 	{
 		missing = missing || !m_DownSets[i];
 	}
@@ -508,7 +525,7 @@ bool BloomPass::CheckChain( int frameWidth, int frameHeight )
 	if( missing )
 	{
 		ReleaseChain();
-		common->Warning( "BloomPass: the device could not make the bloom chain's pipelines or the glow's second target of a %d x %d frame, no bloom until the frame size changes", frameWidth, frameHeight );
+		common->Warning( "BloomPass: the device could not make the bloom chain's pipelines or the first pass's second target of a %d x %d frame, no bloom until the frame size changes", frameWidth, frameHeight );
 		return false;
 	}
 	m_ChainFresh = true;		// Render clears every level once before the first draw touches it
@@ -553,16 +570,17 @@ bool BloomPass::CheckFirstSet( nvrhi::ITexture* sourceTexture, nvrhi::IBuffer* e
 
 /*
 ========================
-BloomPass::CheckFirstDistSet
+BloomPass::CheckFirstDepthSet
 
-WP-G3: the binding set of the first pass with the distance tail, CheckFirstSet's rule with a third object, the
-frame's depth ( the Hi-Z image, which the engine can make again too ). The caller has m_DownFirstDistPipeline,
-which is made only where m_FirstDistLayout stands, so the layout is not tested here
+The binding set of the first pass that reads the frame's depth ( the distance tail, the view weapon ): CheckFirstSet's
+rule with a third object, the
+frame's depth ( the Hi-Z image, which the engine can make again too ). The caller has m_DownFirstDepthPipeline,
+which is made only where m_FirstDepthLayout stands, so the layout is not tested here
 ========================
 */
-bool BloomPass::CheckFirstDistSet( nvrhi::ITexture* sourceTexture, nvrhi::IBuffer* exposureBuffer, nvrhi::ITexture* depthTexture )
+bool BloomPass::CheckFirstDepthSet( nvrhi::ITexture* sourceTexture, nvrhi::IBuffer* exposureBuffer, nvrhi::ITexture* depthTexture )
 {
-	if( m_FirstDistSet && m_FirstDistSource == sourceTexture && m_FirstDistExposure == exposureBuffer && m_FirstDistDepth == depthTexture )
+	if( m_FirstDepthSet && m_FirstDepthSource == sourceTexture && m_FirstDepthExposure == exposureBuffer && m_FirstDepthImage == depthTexture )
 	{
 		return true;
 	}
@@ -575,17 +593,17 @@ bool BloomPass::CheckFirstDistSet( nvrhi::ITexture* sourceTexture, nvrhi::IBuffe
 		nvrhi::BindingSetItem::Texture_SRV( 2, depthTexture ),
 		nvrhi::BindingSetItem::Sampler( 0, commonRenderPasses->m_LinearClampSampler )
 	};
-	m_FirstDistSet = m_Device->createBindingSet( setDesc, m_FirstDistLayout );
-	if( m_FirstDistSet == nullptr )
+	m_FirstDepthSet = m_Device->createBindingSet( setDesc, m_FirstDepthLayout );
+	if( m_FirstDepthSet == nullptr )
 	{
-		m_FirstDistSource = NULL;
-		m_FirstDistExposure = NULL;
-		m_FirstDistDepth = NULL;
+		m_FirstDepthSource = NULL;
+		m_FirstDepthExposure = NULL;
+		m_FirstDepthImage = NULL;
 		return false;
 	}
-	m_FirstDistSource = sourceTexture;
-	m_FirstDistExposure = exposureBuffer;
-	m_FirstDistDepth = depthTexture;
+	m_FirstDepthSource = sourceTexture;
+	m_FirstDepthExposure = exposureBuffer;
+	m_FirstDepthImage = depthTexture;
 	return true;
 }
 
@@ -752,7 +770,8 @@ BloomPass::ProbeRead
 
 Prints the probe: the view and its parameters as the probe's view saw them, the mean of the frame's view
 rectangle, then each level's rectangle and the mean of its texels after the down passes, then level 0's mean
-after the up passes times w0: the term the tonemapper adds. The means are worked out here in double, from the
+after the up passes times w0, and that times the glow's brightness: the term the tonemapper adds. The means are
+worked out here in double, from the
 staging textures decoded by the chain's ( or, for the frame, its own ) format. The frame's mean prints as
 -1 -1 -1 when the frame is not RGBA16_FLOAT and was not staged. The exposure buffer is not read back: the
 adapted luminance prints as -1.
@@ -761,11 +780,14 @@ adapted luminance prints as -1.
 void BloomPass::ProbeRead()
 {
 	const bool r11g11b10 = ( m_ChainFormat == nvrhi::Format::R11G11B10_FLOAT );
-	common->Printf( "bloomProbe: view %d %d %d %d levels %d strength %g tail %g w0 %g exposureScale %g knee %g debug %d ceiling %g\n",
-					m_ProbeView[0], m_ProbeView[1], m_ProbeView[2], m_ProbeView[3], m_ProbeLevels, m_ProbeStrength, m_ProbeTail,
+	common->Printf( "bloomProbe: view %d %d %d %d levels %d glow %g tail %g w0 %g exposureScale %g knee %g debug %d ceiling %g\n",
+					m_ProbeView[0], m_ProbeView[1], m_ProbeView[2], m_ProbeView[3], m_ProbeLevels, m_ProbeGlowGain, m_ProbeTail,
 					m_ProbeW0, m_ProbeExposureScale, m_ProbeKnee, m_ProbeDebug, m_ProbeCeiling );
-	common->Printf( "bloomProbe: glow mode %d gain %g threshold %g knee %g\n", m_ProbeGlowMode, m_ProbeGlowGain, m_ProbeThreshold, m_ProbeThresholdKnee );
+	common->Printf( "bloomProbe: threshold %g knee %g\n", m_ProbeThreshold, m_ProbeThresholdKnee );
 	common->Printf( "bloomProbe: tail distance %d near %g far %g share %g\n", m_ProbeTailDistance, m_ProbeTailNear, m_ProbeTailFar, m_ProbeTailFarShare );
+	// not "bloomProbe: view weapon ...": a reader that takes the last line beginning "bloomProbe: view " for the view
+	// line would take this one ( review OH1-F1 )
+	common->Printf( "bloomProbe: weapon left out %d\n", m_ProbeWeaponOut );
 	common->Printf( "bloomProbe: mix weights frame %.9g bloom %.9g\n", m_ProbeMixFrame, m_ProbeMixBloom );
 	common->Printf( "bloomProbe: format %s frame %d %d adapted -1\n",
 					r11g11b10 ? "R11G11B10_FLOAT" : "RGBA16_FLOAT", m_ProbeFrame[0], m_ProbeFrame[1] );
@@ -812,10 +834,7 @@ void BloomPass::ProbeRead()
 	BloomProbeMean( data, rowPitch, 0, 0, m_ProbeLevelW[0], m_ProbeLevelH[0], r11g11b10, mean );
 	m_Device->unmapStagingTexture( m_ProbeUpStaging );
 	common->Printf( "bloomProbe: term mean %.9g %.9g %.9g\n", mean[0] * m_ProbeW0, mean[1] * m_ProbeW0, mean[2] * m_ProbeW0 );
-	if( m_ProbeGlowMode == 1 )
-	{
-		common->Printf( "bloomProbe: glow term mean %.9g %.9g %.9g\n", mean[0] * m_ProbeW0 * m_ProbeGlowGain, mean[1] * m_ProbeW0 * m_ProbeGlowGain, mean[2] * m_ProbeW0 * m_ProbeGlowGain );
-	}
+	common->Printf( "bloomProbe: glow term mean %.9g %.9g %.9g\n", mean[0] * m_ProbeW0 * m_ProbeGlowGain, mean[1] * m_ProbeW0 * m_ProbeGlowGain, mean[2] * m_ProbeW0 * m_ProbeGlowGain );
 	common->Printf( "bloomProbe: done\n" );
 }
 
@@ -883,12 +902,9 @@ const BloomMix* BloomPass::Render( nvrhi::ICommandList* commandList, const viewD
 	{
 		debug = 0;
 	}
-	// ( a NaN: nothing mixed in, the default tail and ceiling; the knee's own test in the shader, k > 0, sends a
+	// ( a NaN: nothing added, the default tail and ceiling; the knee's own test in the shader, k > 0, sends a
 	// NaN to "off" )
-	// WP-G3: the mode is read first, because each mode has its own tail ( review F1-5 )
-	const bool glow = ( r_bloomMode.GetInteger() == 1 );
-	const float strength = BloomCvarFloat( r_bloomStrength, 0.0f, 1.0f, 0.0f );
-	const float tail = glow ? BloomCvarFloat( r_bloomGlowTail, 0.25f, 1.0f, 0.34f ) : BloomCvarFloat( r_bloomTail, 0.25f, 1.0f, 0.7f );
+	const float tail = BloomCvarFloat( r_bloomGlowTail, 0.25f, 1.0f, 0.34f );
 	const float knee = r_bloomFireflyKnee.GetFloat();
 	const float ceiling = BloomCvarFloat( r_bloomCeiling, 1.0f, BLOOM_CEILING_MAX, 256.0f );
 	// w0: the level 0 weight that makes the whole tail weigh s: ( 1 - tail ) / ( 1 - tail^N ), and 1 / N where the
@@ -896,28 +912,34 @@ const BloomMix* BloomPass::Render( nvrhi::ICommandList* commandList, const viewD
 	const float w0 = ( tail >= 0.9999f ) ? 1.0f / n : ( 1.0f - tail ) / ( 1.0f - powf( tail, n ) );
 	const float exposureScale = ::exp2f( r_exposure.GetFloat() );
 
-	// WP-G3, the glow mode: its first pass is another permutation, which reads the threshold; the mix's does not
+	// the glow's brightness, and the threshold the first pass reads
 	const float glowGain = BloomCvarFloat( r_bloomGlow, 0.0f, 4.0f, 0.0f );
-	const float threshold = glow ? BloomCvarFloat( r_bloomThreshold, 0.01f, 1024.0f, 1.5f ) : 0.0f;
+	const float threshold = BloomCvarFloat( r_bloomThreshold, 0.01f, 1024.0f, 1.5f );
 	const float thresholdKnee = threshold * BloomCvarFloat( r_bloomThresholdKnee, 0.0f, 1.0f, 0.5f );
 
-	// WP-G3: with nothing to mix in no chain is drawn and the tonemap pass takes its plain draw, so the bar's
-	// lowest notch draws nothing ( the chain stays allocated ). A probe and a debug view still get their chain
-	if( debug == 0 && !bloomProbeRequested && ( glow ? glowGain : strength ) <= 0.0f )
+	// with nothing to add no chain is drawn and the tonemap pass takes its plain draw, so the bar's lowest notch draws
+	// nothing ( the chain stays allocated ). A probe and a debug view still get their chain
+	if( debug == 0 && !bloomProbeRequested && glowGain <= 0.0f )
 	{
 		return NULL;
 	}
 
-	// WP-G3, the distance tail: in the glow mode, with a second level to narrow, its pipeline made, and this frame's
-	// depth at the frame's own size ( the Hi-Z image's mip 0, filled for every 3D view while R_UseHiZ ). Without any
-	// of them the glow's first pass is the one without a depth and the tail is the same at every distance
-	bool tailDistance = glow && r_bloomTailDistance.GetBool() && n >= 2 && m_DownFirstDistPipeline && R_UseHiZ();
-	if( tailDistance )
+	// The first pass that reads the frame's depth serves two things: the distance tail ( WP-G3; it needs a second
+	// level to narrow ) and the view weapon left out of the glow ( WP-G4 ). It is drawn when either is wanted, its
+	// pipeline is made, and this frame's depth is there at the frame's own size ( the Hi-Z image's mip 0, filled for
+	// every 3D view while R_UseHiZ ). Without any of them the first pass is the one without a depth: the tail is the
+	// same at every distance and the view weapon glows like the world
+	const bool wantTailDistance = r_bloomTailDistance.GetBool() && n >= 2;
+	const bool wantWeaponOut = !r_bloomViewWeapon.GetBool();
+	bool depthPass = ( wantTailDistance || wantWeaponOut ) && m_DownFirstDepthPipeline && R_UseHiZ();
+	if( depthPass )
 	{
 		nvrhi::ITexture* depthTexture = ( globalImages->hierarchicalZbufferImage != NULL ) ? globalImages->hierarchicalZbufferImage->GetTextureHandle().Get() : NULL;
-		tailDistance = depthTexture != NULL && depthTexture->getDesc().width == frameDesc.width && depthTexture->getDesc().height == frameDesc.height
-					   && CheckFirstDistSet( sourceTexture, exposureBuffer, depthTexture );
+		depthPass = depthTexture != NULL && depthTexture->getDesc().width == frameDesc.width && depthTexture->getDesc().height == frameDesc.height
+					   && CheckFirstDepthSet( sourceTexture, exposureBuffer, depthTexture );
 	}
+	const bool tailDistance = depthPass && wantTailDistance;
+	const bool weaponOut = depthPass && wantWeaponOut;
 	// a NaN typed into a cvar fails every comparison, so each value is taken only if it passes its own test
 	float tailNear = r_bloomTailNear.GetFloat();
 	if( !( tailNear >= 0.0f ) )
@@ -955,20 +977,29 @@ const BloomMix* BloomPass::Render( nvrhi::ICommandList* commandList, const viewD
 	constants.exposure.Set( exposureScale, r_hdrMinLuminance.GetFloat(), ceiling, threshold );
 	constants.tailDepth.Zero();
 	constants.tailDist.Zero();
-	if( tailDistance )
+	if( depthPass )
 	{
-		// the froxel fog's pair ( VolumetricFogPass: depthParms.zw ): a view distance is x / ( depth + y )
-		constants.tailDepth.Set( viewDef->projectionMatrix[3 * 4 + 2], viewDef->projectionMatrix[2 * 4 + 2], 0.0f, 0.0f );
-		constants.tailDist.Set( tailFar, 1.0f / ( tailFar - tailNear ), tailFarShare, 0.0f );
-		DrawLevel( commandList, m_DownFirstDistPipeline, m_FirstDistSet, m_FirstDistFrame, levelW[0], levelH[0], constants );
+		// the froxel fog's pair ( VolumetricFogPass: depthParms.zw ): a view distance is x / ( depth + y ). The view
+		// weapon's test is depth * w > z; with z 1 and w 0 no pixel passes it and the weapon glows like the world
+		constants.tailDepth.Set( viewDef->projectionMatrix[3 * 4 + 2], viewDef->projectionMatrix[2 * 4 + 2],
+								   weaponOut ? BLOOM_WEAPON_DEPTH_BOUND : 1.0f, weaponOut ? BLOOM_WEAPON_DEPTH_SIGN : 0.0f );
+		if( tailDistance )
+		{
+			constants.tailDist.Set( tailFar, 1.0f / ( tailFar - tailNear ), tailFarShare, 0.0f );
+		}
+		else
+		{
+			// no distance tail: a far share of 1 makes every pixel's nearness exactly 1, whatever its distance
+			constants.tailDist.Set( 0.0f, 0.0f, 1.0f, 0.0f );
+		}
+		DrawLevel( commandList, m_DownFirstDepthPipeline, m_FirstDepthSet, m_FirstFrame, levelW[0], levelH[0], constants );
 		constants.tailDepth.Zero();
 		constants.tailDist.Zero();
 	}
 	else
 	{
-		// the mix's thirteen bilinear taps into level 0, or the glow's same taps from thirty-six pixels thresholded one
-		// by one, into level 0 and the wide levels' source
-		DrawLevel( commandList, glow ? m_DownFirstGlowPipeline : m_DownFirstPipeline, m_FirstSet, glow ? m_FirstDistFrame : m_Frames[0], levelW[0], levelH[0], constants );
+		// the thirteen taps from thirty-six frame pixels thresholded one by one, into level 0 and the wide levels' source
+		DrawLevel( commandList, m_DownFirstPipeline, m_FirstSet, m_FirstFrame, levelW[0], levelH[0], constants );
 	}
 
 	// 4: the down passes, level i - 1 to level i
@@ -977,8 +1008,8 @@ const BloomMix* BloomPass::Render( nvrhi::ICommandList* commandList, const viewD
 		constants.srcRect.Set( 0.0f, 0.0f, ( float )levelW[i - 1], ( float )levelH[i - 1] );
 		constants.srcInvSize.Set( 1.0f / ( float )m_TexW[i - 1], 1.0f / ( float )m_TexH[i - 1], 0.0f, 0.0f );
 		constants.exposure.Zero();
-		// in the glow mode level 1 is reduced from the first pass's second target, the wide levels' source
-		DrawLevel( commandList, m_DownPipeline, ( glow && i == 1 ) ? m_DownWideSet : m_DownSets[i], m_Frames[i], levelW[i], levelH[i], constants );
+		// level 1 is reduced from the first pass's second target, the wide levels' source
+		DrawLevel( commandList, m_DownPipeline, ( i == 1 ) ? m_DownWideSet : m_DownSets[i], m_Frames[i], levelW[i], levelH[i], constants );
 	}
 
 	// 5: the probe's copies of the levels as the down passes left them
@@ -991,18 +1022,17 @@ const BloomMix* BloomPass::Render( nvrhi::ICommandList* commandList, const viewD
 		m_ProbeView[2] = vw;
 		m_ProbeView[3] = vh;
 		m_ProbeLevels = n;
-		m_ProbeStrength = strength;
 		m_ProbeTail = tail;
 		m_ProbeW0 = w0;
 		m_ProbeExposureScale = exposureScale;
 		m_ProbeKnee = knee;
 		m_ProbeCeiling = ceiling;
 		m_ProbeDebug = debug;
-		m_ProbeGlowMode = glow ? 1 : 0;
 		m_ProbeGlowGain = glowGain;
 		m_ProbeThreshold = threshold;
 		m_ProbeThresholdKnee = thresholdKnee;
 		m_ProbeTailDistance = tailDistance ? 1 : 0;
+		m_ProbeWeaponOut = weaponOut ? 1 : 0;
 		m_ProbeTailNear = tailNear;
 		m_ProbeTailFar = tailFar;
 		m_ProbeTailFarShare = tailFarShare;
@@ -1030,9 +1060,9 @@ const BloomMix* BloomPass::Render( nvrhi::ICommandList* commandList, const viewD
 
 	// 7: what the tonemap draw needs to mix the chain in
 	int level = 0;
-	// the mix swaps a share of the frame for the chain; the glow ( WP-G3 ) leaves the frame whole and adds the chain
-	float frameWeight = glow ? 1.0f : 1.0f - strength;
-	float bloomWeight = glow ? glowGain * w0 : strength * w0;
+	// the frame stays whole and the chain is added to it
+	float frameWeight = 1.0f;
+	float bloomWeight = glowGain * w0;
 	float oneTap = 0.0f;
 	if( debug == 1 )
 	{

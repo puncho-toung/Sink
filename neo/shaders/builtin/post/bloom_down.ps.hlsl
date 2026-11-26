@@ -2,20 +2,21 @@
 // rectangle, combined as five boxes ( an inner box of the four ( +-1, +-1 ) taps at weight 0.5 and four outer
 // boxes of four taps each at 0.125, the centre tap shared by all four outer boxes ). Its marginal along either
 // axis is [ 1 3 4 4 3 1 ] / 16 over six source texels ( the 2D kernel is not that row's outer product, but
-// like it is zero at every frequency a halving folds back ). The first pass of the chain ( FIRST 1, the frame
-// into level 0 ) does two things more: it scrubs every tap to the ceiling ( at most BLOOM_SCRUB_BOUND ),
-// killing NaNs and infinities before they can spread through a filtered tap, and it weights every tap by the
-// firefly knee, so a lone very bright pixel adds only about the knee to the bloom. Later passes ( FIRST 0 )
-// read already scrubbed levels and just filter. FIRST 1 is the MIX's first pass ( r_bloomMode 0 ). The GLOW's
-// ( WP-G3, r_bloomMode 1 ) is FIRST 2: it reads the footprint's thirty-six frame pixels one by one and thresholds
-// each by itself before the same thirteen taps are formed from them, because a threshold on a bilinear tap ( the
-// mean of four pixels ) depends on how a small lamp falls on the taps' grid, and its glow then pulses as it moves.
+// like it is zero at every frequency a halving folds back ). The passes after the first ( FIRST 0 ) read
+// already scrubbed levels and just filter. The first pass of the chain ( FIRST 1, the frame into level 0 ) is
+// the GLOW's ( WP-G3 ): it reads the footprint's thirty-six frame pixels one by one, scrubs each to the ceiling
+// ( at most BLOOM_SCRUB_BOUND ), killing NaNs and infinities before they can spread, and thresholds each by
+// itself before the same thirteen taps are formed from them, because a threshold on a bilinear tap ( the mean of
+// four pixels ) depends on how a small lamp falls on the taps' grid, and its glow then pulses as it moves; and
+// it weights every tap by the firefly knee, so a lone very bright pixel adds only about the knee to the bloom.
 // Two shorter forms were measured and dropped: the same footprint in a loop over local arrays ( the chain cost five
-// times the mix's ), and the texel's own four pixels alone ( cheap, but a two-by-two box is no filter: a small
-// lamp's halo jumped as it moved ).
-// Both write a second target, the wide levels' source, which level 1's reduction reads instead of level 0: the
-// texel's own four pixels' light under a box. FIRST 3 is FIRST 2 with the distance tail: each of the four pixels'
-// light times its own nearness.
+// times as much ), and the texel's own four pixels alone ( cheap, but a two-by-two box is no filter: a small
+// lamp's halo jumped as it moved ). A first pass on thirteen bilinear taps with no threshold was the MIX of
+// v0001.3r, removed by WP-G4.
+// The first pass writes a second target, the wide levels' source, which level 1's reduction reads instead of
+// level 0: the texel's own four pixels' light under a box. FIRST 2 is FIRST 1 reading the frame's depth too: a
+// pixel of the view weapon is black to the bloom ( WP-G4 ), and each of the four pixels' light enters the wide
+// levels' source times its own nearness ( the distance tail ).
 
 #include "vulkan.hlsli"
 #include "bloom_cb.h"
@@ -26,7 +27,7 @@ Texture2D t_Source : register( t0 );
 #if FIRST
 Buffer<uint> t_Exposure : register( t1 );
 #endif
-#if FIRST == 3
+#if FIRST == 2
 Texture2D<float> t_Depth : register( t2 );	// the frame's depth at full size ( the Hi-Z image's mip 0 )
 #endif
 SamplerState s_Linear : register( s0 );
@@ -53,12 +54,12 @@ float3 BloomScrub3( float3 v )
 	return float3( BloomScrub( v.r ), BloomScrub( v.g ), BloomScrub( v.b ) );
 }
 
-// The firefly knee's weight for a tap: k / ( k + L * E ), written so nothing divides by k. A tap of exposed
-// luminance L survives at most about knee/(knee+L*E) of itself, so a lone very bright pixel adds at most about
-// a third of the knee. k <= 0 turns the knee off: every weight is then 1, the plain filter on scrubbed taps
-float BloomKneeWeight( float3 c, float k, float E )
+// The firefly knee's weight for a tap of mean luminance L: k / ( k + L * E ), written so nothing divides by k. A
+// tap of exposed luminance L survives at most about knee/(knee+L*E) of itself, so a lone very bright pixel adds
+// at most about a third of the knee. k <= 0 turns the knee off: every weight is then 1, the plain filter on
+// scrubbed taps
+float BloomKneeWeightL( float L, float k, float E )
 {
-	const float L = dot( c, float3( 0.2126, 0.7152, 0.0722 ) );
 	return ( k > 0.0 ) ? k / ( k + L * E ) : 1.0;
 }
 
@@ -69,15 +70,12 @@ float3 BloomBox( float3 c0, float w0, float3 c1, float w1, float3 c2, float w2, 
 	return ( c0 * w0 + c1 * w1 + c2 * w2 + c3 * w3 ) / max( w0 + w1 + w2 + w3, 1e-30 );
 }
 
-#endif
-
-#if FIRST >= 2
-// WP-G3, the glow mode ( r_bloomMode 1 ): what of a frame pixel enters the chain. A pixel of exposed brightness B
+// The glow ( WP-G3 ): what of a frame pixel enters the chain. A pixel of exposed brightness B
 // ( its largest channel times E, the unit of the tonemapper's scaled luminance ) keeps the share of itself that
 // stands above the threshold T, with a soft knee of half-width K round T so that a surface crossing it does not
 // pop. The brightness is the largest channel, not the luminance, so that a saturated lamp ( a cyan panel, a red
-// light ) glows as readily as a white one of the same strength. The C++ sends T in exposure.w ( above 0 in this
-// mode ) and K in srcInvSize.z. E is finite ( held where it is made ) and the pixel is scrubbed, so B is finite
+// light ) glows as readily as a white one of the same strength. The C++ sends T in exposure.w ( above 0 )
+// and K in srcInvSize.z. E is finite ( held where it is made ) and the pixel is scrubbed, so B is finite
 // and the share lies in 0 .. 1
 float3 BloomGlowPixel( float3 c, float E )
 {
@@ -89,17 +87,11 @@ float3 BloomGlowPixel( float3 c, float E )
 	const float over = max( soft, B - T );
 	return c * saturate( over / max( B, 1e-5 ) );
 }
-
-// The firefly knee's weight of a tap from its mean luminance L: BloomKneeWeight's rule
-float BloomKneeWeightL( float L, float k, float E )
-{
-	return ( k > 0.0 ) ? k / ( k + L * E ) : 1.0;
-}
 #endif
 
-#if FIRST == 3
-// WP-G3, the distance tail. The glow's first pass writes two targets: level 0 with all of the light ( the core, which
-// every lamp keeps ) and the wide levels' source, which level 1's reduction reads instead of level 0. In FIRST 3 a
+#if FIRST == 2
+// WP-G3, the distance tail. The first pass writes two targets: level 0 with all of the light ( the core, which
+// every lamp keeps ) and the wide levels' source, which level 1's reduction reads instead of level 0. In FIRST 2 a
 // pixel's light enters that source times its NEARNESS: a lamp nearer than the near distance keeps the whole tail the
 // player set, one beyond the far distance the share in tailDist.z of it ( 0: its core alone ). The nearness is that
 // of the OPAQUE surface at each lit pixel ( the depth prepass's depth: a translucent emitter, a flame or a flare,
@@ -121,12 +113,24 @@ float BloomNearness( float deviceDepth )
 	const float d = BloomViewDistance( deviceDepth );
 	return lerp( g_Bloom.tailDist.z, 1.0, saturate( ( g_Bloom.tailDist.x - d ) * g_Bloom.tailDist.y ) );
 }
+
+// WP-G4, the view weapon ( the owner, 2026-11-26: the bloom was "haloing the weapons in total darkness" ): 1 for a
+// pixel of the world, 0 for one of the first-person weapon, which is then black to the bloom ( no light into any
+// level, no luminance into a tap's knee weight ). The weapon is drawn with idRenderMatrix::ApplyDepthHack, which
+// puts all of it in the nearest quarter of the depth range; the C++ sends that bound in tailDepth.z and the depth
+// convention's sign in tailDepth.w ( z 1 and w 0: no pixel is the weapon's, and the weapon glows like the world ).
+// A translucent surface in front of the weapon ( a muzzle flash over the barrel ) writes no depth and is left out
+// with it; over the world it glows
+float BloomWorldPixel( float deviceDepth )
+{
+	return ( deviceDepth * g_Bloom.tailDepth.w > g_Bloom.tailDepth.z ) ? 0.0 : 1.0;
+}
 #endif
 
 void main(
 	in float4 pos : SV_Position,
 	in float2 uv : UV,
-#if FIRST >= 2
+#if FIRST
 	out float4 o_rgba : SV_Target,
 	out float4 o_wide : SV_Target1 )
 #else
@@ -154,65 +158,13 @@ void main(
 	const float E = min( g_Bloom.exposure.x / max( adapted, 0.0001 ), 1.0e9 );
 	const float knee = g_Bloom.srcInvSize.w;
 
-#if FIRST == 1
-	// The thirteen taps, each fetched once, scrubbed right after its fetch, and weighted by the knee
-	float3 ctr = BloomFetch( t_Source, s_Linear, c, origin, size, invSize );
-	ctr = BloomScrub3( ctr );
-	const float wctr = BloomKneeWeight( ctr, knee, E );
-	float3 i00 = BloomFetch( t_Source, s_Linear, c + float2( -1.0, -1.0 ), origin, size, invSize );
-	i00 = BloomScrub3( i00 );
-	const float wi00 = BloomKneeWeight( i00, knee, E );
-	float3 i10 = BloomFetch( t_Source, s_Linear, c + float2( 1.0, -1.0 ), origin, size, invSize );
-	i10 = BloomScrub3( i10 );
-	const float wi10 = BloomKneeWeight( i10, knee, E );
-	float3 i01 = BloomFetch( t_Source, s_Linear, c + float2( -1.0, 1.0 ), origin, size, invSize );
-	i01 = BloomScrub3( i01 );
-	const float wi01 = BloomKneeWeight( i01, knee, E );
-	float3 i11 = BloomFetch( t_Source, s_Linear, c + float2( 1.0, 1.0 ), origin, size, invSize );
-	i11 = BloomScrub3( i11 );
-	const float wi11 = BloomKneeWeight( i11, knee, E );
-	float3 xm2 = BloomFetch( t_Source, s_Linear, c + float2( -2.0, 0.0 ), origin, size, invSize );
-	xm2 = BloomScrub3( xm2 );
-	const float wxm2 = BloomKneeWeight( xm2, knee, E );
-	float3 xp2 = BloomFetch( t_Source, s_Linear, c + float2( 2.0, 0.0 ), origin, size, invSize );
-	xp2 = BloomScrub3( xp2 );
-	const float wxp2 = BloomKneeWeight( xp2, knee, E );
-	float3 ym2 = BloomFetch( t_Source, s_Linear, c + float2( 0.0, -2.0 ), origin, size, invSize );
-	ym2 = BloomScrub3( ym2 );
-	const float wym2 = BloomKneeWeight( ym2, knee, E );
-	float3 yp2 = BloomFetch( t_Source, s_Linear, c + float2( 0.0, 2.0 ), origin, size, invSize );
-	yp2 = BloomScrub3( yp2 );
-	const float wyp2 = BloomKneeWeight( yp2, knee, E );
-	float3 xm2ym2 = BloomFetch( t_Source, s_Linear, c + float2( -2.0, -2.0 ), origin, size, invSize );
-	xm2ym2 = BloomScrub3( xm2ym2 );
-	const float wxm2ym2 = BloomKneeWeight( xm2ym2, knee, E );
-	float3 xp2ym2 = BloomFetch( t_Source, s_Linear, c + float2( 2.0, -2.0 ), origin, size, invSize );
-	xp2ym2 = BloomScrub3( xp2ym2 );
-	const float wxp2ym2 = BloomKneeWeight( xp2ym2, knee, E );
-	float3 xm2yp2 = BloomFetch( t_Source, s_Linear, c + float2( -2.0, 2.0 ), origin, size, invSize );
-	xm2yp2 = BloomScrub3( xm2yp2 );
-	const float wxm2yp2 = BloomKneeWeight( xm2yp2, knee, E );
-	float3 xp2yp2 = BloomFetch( t_Source, s_Linear, c + float2( 2.0, 2.0 ), origin, size, invSize );
-	xp2yp2 = BloomScrub3( xp2yp2 );
-	const float wxp2yp2 = BloomKneeWeight( xp2yp2, knee, E );
-
-	// The five boxes: the inner one of the four diagonals, and the four outer ones of two corners, two axis
-	// taps and the centre, whose single weight serves all four
-	const float3 inner = BloomBox( i00, wi00, i10, wi10, i01, wi01, i11, wi11 );
-	const float3 boxA = BloomBox( xm2ym2, wxm2ym2, ym2, wym2, xm2, wxm2, ctr, wctr );
-	const float3 boxB = BloomBox( ym2, wym2, xp2ym2, wxp2ym2, ctr, wctr, xp2, wxp2 );
-	const float3 boxC = BloomBox( xm2, wxm2, ctr, wctr, xm2yp2, wxm2yp2, yp2, wyp2 );
-	const float3 boxD = BloomBox( ctr, wctr, xp2, wxp2, yp2, wyp2, xp2yp2, wxp2yp2 );
-	o_rgba.rgb = 0.5 * inner + 0.125 * ( boxA + boxB + boxC + boxD );
-#else
-	// WP-G3, the glow's first pass ( FIRST 2, and FIRST 3 with the distance tail ). The mix's thirteen taps are each the
-	// mean of four frame pixels; here the footprint's thirty-six frame pixels are read one by one: pixel ( i, j ), named
-	// gij, is the one at c + ( i - 3, j - 3 ) in the rectangle's pixel indices ( the tap at c + d is the mean of the
-	// pixels c + d - 1 and c + d along either axis ), and a pixel beyond the rectangle is the rectangle's edge pixel.
-	// Each is scrubbed and thresholded BY ITSELF ( BloomGlowPixel ), and the thirteen taps and five boxes of the mix's first
-	// pass are then formed from the results: what passes the threshold is a sum over pixels, the same wherever a small
-	// lamp stands, behind the same filter. Written out as thirty-six named values, with no loop and no array: the loop
-	// over local arrays this first was cost five times the mix's whole chain
+	// The first pass. Each of the thirteen taps is the mean of four frame pixels, and the footprint's thirty-six frame
+	// pixels are read one by one: pixel ( i, j ), named gij, is the one at c + ( i - 3, j - 3 ) in the rectangle's pixel
+	// indices ( the tap at c + d is the mean of the pixels c + d - 1 and c + d along either axis ), and a pixel beyond
+	// the rectangle is the rectangle's edge pixel. Each is scrubbed and thresholded BY ITSELF ( BloomGlowPixel ), and the
+	// thirteen taps and five boxes are then formed from the results: what passes the threshold is a sum over pixels,
+	// the same wherever a small lamp stands, behind the same filter. Written out as thirty-six named values, with no
+	// loop and no array: the loop over local arrays this first was cost five times as much
 	const int2 base = int2( c ) - int2( 3, 3 );
 	const int2 last = int2( size ) - int2( 1, 1 );
 	const int2 org = int2( origin );
@@ -240,8 +192,24 @@ void main(
 		return;
 	}
 
+#if FIRST == 2
+	// WP-G4: the thirty-six pixels' depths, read behind the test above, so only where the footprint holds light. A
+	// pixel of the view weapon is black to the bloom: its light and its luminance are taken times 0, a world pixel's
+	// times 1 ( the same bits )
+#define BLOOM_DEPTH( i, j ) const float z##i##j = t_Depth.Load( int3( org + clamp( base + int2( i, j ), int2( 0, 0 ), last ), 0 ) )
+	BLOOM_DEPTH( 0, 0 ); BLOOM_DEPTH( 1, 0 ); BLOOM_DEPTH( 2, 0 ); BLOOM_DEPTH( 3, 0 ); BLOOM_DEPTH( 4, 0 ); BLOOM_DEPTH( 5, 0 );
+	BLOOM_DEPTH( 0, 1 ); BLOOM_DEPTH( 1, 1 ); BLOOM_DEPTH( 2, 1 ); BLOOM_DEPTH( 3, 1 ); BLOOM_DEPTH( 4, 1 ); BLOOM_DEPTH( 5, 1 );
+	BLOOM_DEPTH( 0, 2 ); BLOOM_DEPTH( 1, 2 ); BLOOM_DEPTH( 2, 2 ); BLOOM_DEPTH( 3, 2 ); BLOOM_DEPTH( 4, 2 ); BLOOM_DEPTH( 5, 2 );
+	BLOOM_DEPTH( 0, 3 ); BLOOM_DEPTH( 1, 3 ); BLOOM_DEPTH( 2, 3 ); BLOOM_DEPTH( 3, 3 ); BLOOM_DEPTH( 4, 3 ); BLOOM_DEPTH( 5, 3 );
+	BLOOM_DEPTH( 0, 4 ); BLOOM_DEPTH( 1, 4 ); BLOOM_DEPTH( 2, 4 ); BLOOM_DEPTH( 3, 4 ); BLOOM_DEPTH( 4, 4 ); BLOOM_DEPTH( 5, 4 );
+	BLOOM_DEPTH( 0, 5 ); BLOOM_DEPTH( 1, 5 ); BLOOM_DEPTH( 2, 5 ); BLOOM_DEPTH( 3, 5 ); BLOOM_DEPTH( 4, 5 ); BLOOM_DEPTH( 5, 5 );
+#undef BLOOM_DEPTH
+	// each pixel's light ( the share above the threshold ) and its luminance BEFORE the threshold
+#define BLOOM_LIT( i, j ) const float m##i##j = BloomWorldPixel( z##i##j ); const float3 g##i##j = BloomGlowPixel( v##i##j, E ) * m##i##j; const float l##i##j = dot( v##i##j, float3( 0.2126, 0.7152, 0.0722 ) ) * m##i##j
+#else
 	// each pixel's light ( the share above the threshold ) and its luminance BEFORE the threshold
 #define BLOOM_LIT( i, j ) const float3 g##i##j = BloomGlowPixel( v##i##j, E ); const float l##i##j = dot( v##i##j, float3( 0.2126, 0.7152, 0.0722 ) )
+#endif
 	BLOOM_LIT( 0, 0 ); BLOOM_LIT( 1, 0 ); BLOOM_LIT( 2, 0 ); BLOOM_LIT( 3, 0 ); BLOOM_LIT( 4, 0 ); BLOOM_LIT( 5, 0 );
 	BLOOM_LIT( 0, 1 ); BLOOM_LIT( 1, 1 ); BLOOM_LIT( 2, 1 ); BLOOM_LIT( 3, 1 ); BLOOM_LIT( 4, 1 ); BLOOM_LIT( 5, 1 );
 	BLOOM_LIT( 0, 2 ); BLOOM_LIT( 1, 2 ); BLOOM_LIT( 2, 2 ); BLOOM_LIT( 3, 2 ); BLOOM_LIT( 4, 2 ); BLOOM_LIT( 5, 2 );
@@ -251,7 +219,7 @@ void main(
 #undef BLOOM_LIT
 
 	// the thirteen taps, each the mean of its four pixels, and its knee weight from the pixels' luminance BEFORE the
-	// threshold, so the firefly bound means the same in both modes for level 0 ( review O3-9: the wide levels' source
+	// threshold, so the firefly bound is the knee's own for level 0 ( review O3-9: the wide levels' source
 	// below weighs each of its four pixels by itself, so a lone pixel brighter than the knee is cut harder in the
 	// tail than in the core )
 	const float3 ctr = 0.25 * ( g22 + g32 + g23 + g33 );
@@ -281,7 +249,7 @@ void main(
 	const float3 xp2yp2 = 0.25 * ( g44 + g54 + g45 + g55 );
 	const float wxp2yp2 = BloomKneeWeightL( 0.25 * ( l44 + l54 + l45 + l55 ), knee, E );
 
-	// the five boxes, as in the mix's first pass
+	// the five boxes
 	const float3 inner = BloomBox( i00, wi00, i10, wi10, i01, wi01, i11, wi11 );
 	const float3 boxA = BloomBox( xm2ym2, wxm2ym2, ym2, wym2, xm2, wxm2, ctr, wctr );
 	const float3 boxB = BloomBox( ym2, wym2, xp2ym2, wxp2ym2, ctr, wctr, xp2, wxp2 );
@@ -290,34 +258,24 @@ void main(
 	o_rgba.rgb = 0.5 * inner + 0.125 * ( boxA + boxB + boxC + boxD );
 	// The wide levels' source ( level 1 is reduced from it, not from level 0 ): the knee-weighted mean of the texel's OWN
 	// four pixels' light ( the centre block of the footprint ), each times its own nearness. Every frame pixel is in
-	// exactly one texel's four ( on an odd last row or column the four are two distinct pixels, as in the mix's
-	// clamped centre tap ), so the wide levels hold each pixel's light times that pixel's nearness wherever a lamp
+	// exactly one texel's four ( on an odd last row or column the four are two distinct pixels, the centre tap's
+	// clamped ones ), so the wide levels hold each pixel's light times that pixel's nearness wherever a lamp
 	// stands; this box is no filter by itself and is followed by level 1's thirteen taps. With every lit pixel near
-	// ( and in FIRST 2, where the nearness is 1 ) the two permutations write the same bits
+	// and none the view weapon's ( and in FIRST 1, where the nearness is 1 ) the two permutations write the same bits
 	float3 s22 = g22;
 	float3 s32 = g32;
 	float3 s23 = g23;
 	float3 s33 = g33;
-#if FIRST == 3
-	// Review O2-3: one test for the four pixels, and their four depths read together ( before, four tests one after
-	// the other, each waiting for its own read ). A texel whose own four pixels have no light reads no depth; a pixel
-	// without light among lit ones is 0 times a finite nearness, 0 as before
-	[branch]
-	if( max( max( max( g22.r, max( g22.g, g22.b ) ), max( g32.r, max( g32.g, g32.b ) ) ), max( max( g23.r, max( g23.g, g23.b ) ), max( g33.r, max( g33.g, g33.b ) ) ) ) > 0.0 )
-	{
-		const float d22 = t_Depth.Load( int3( org + clamp( base + int2( 2, 2 ), int2( 0, 0 ), last ), 0 ) );
-		const float d32 = t_Depth.Load( int3( org + clamp( base + int2( 3, 2 ), int2( 0, 0 ), last ), 0 ) );
-		const float d23 = t_Depth.Load( int3( org + clamp( base + int2( 2, 3 ), int2( 0, 0 ), last ), 0 ) );
-		const float d33 = t_Depth.Load( int3( org + clamp( base + int2( 3, 3 ), int2( 0, 0 ), last ), 0 ) );
-		s22 = g22 * BloomNearness( d22 );
-		s32 = g32 * BloomNearness( d32 );
-		s23 = g23 * BloomNearness( d23 );
-		s33 = g33 * BloomNearness( d33 );
-	}
+#if FIRST == 2
+	// each of the four pixels' light times its own nearness ( its depth was read above ). A pixel without light is 0
+	// times a finite nearness, 0
+	s22 = g22 * BloomNearness( z22 );
+	s32 = g32 * BloomNearness( z32 );
+	s23 = g23 * BloomNearness( z23 );
+	s33 = g33 * BloomNearness( z33 );
 #endif
 	o_wide.rgb = BloomBox( s22, BloomKneeWeightL( l22, knee, E ), s32, BloomKneeWeightL( l32, knee, E ), s23, BloomKneeWeightL( l23, knee, E ), s33, BloomKneeWeightL( l33, knee, E ) );
 	o_wide.a = 1.0;
-#endif
 #else
 	// The plain filter: the same thirteen taps with the boxes' means folded into their weights: the centre and
 	// the four diagonals 0.125 each, the four axis taps 0.0625 each ( two boxes ), the four corners 0.03125

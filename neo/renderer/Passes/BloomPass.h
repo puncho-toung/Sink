@@ -38,10 +38,11 @@ BloomPass ( track G of the renderer upgrade )
 
 The bloom of the main view: the HDR picture the tonemap pass is about to read ( the frame ) is reduced into a chain
 of half-size levels by full-screen pixel-shader draws: level 0 half the view's size and each further level half the
-one before. The levels are enlarged back with additive blending and added together, and a variant of the tonemap
-shader mixes level 0 into the frame before the exposure. No threshold, no history, nothing read back on the CPU
-( but by the console's bloomProbe ): every frame redraws the whole chain from the frame's own pixels, and nothing
-is kept between frames.
+one before. Only what a frame pixel has above a brightness threshold enters level 0 ( the glow ), and the view
+weapon's pixels enter nothing ( WP-G4 ). The levels are enlarged back with additive blending and added together,
+and a variant of the tonemap shader adds level 0 to the frame before the exposure. No history, nothing read back
+on the CPU ( but by the console's bloomProbe ): every frame redraws the whole chain from the frame's own pixels,
+and nothing is kept between frames.
 
 Level i's rectangle starts at ( 0, 0 ) of its texture and has the size ( w[i], h[i] ): the view's size halved i + 1
 times with halves rounded up. The level textures are sized by the frame texture the same way, so a view rectangle
@@ -87,7 +88,7 @@ private:
 	void				ReleaseChain();
 	bool				CheckChain( int frameWidth, int frameHeight );
 	bool				CheckFirstSet( nvrhi::ITexture* sourceTexture, nvrhi::IBuffer* exposureBuffer );
-	bool				CheckFirstDistSet( nvrhi::ITexture* sourceTexture, nvrhi::IBuffer* exposureBuffer, nvrhi::ITexture* depthTexture );
+	bool				CheckFirstDepthSet( nvrhi::ITexture* sourceTexture, nvrhi::IBuffer* exposureBuffer, nvrhi::ITexture* depthTexture );
 	void				DrawLevel( nvrhi::ICommandList* commandList, nvrhi::IGraphicsPipeline* pipeline, nvrhi::IBindingSet* bindingSet,
 								   nvrhi::IFramebuffer* framebuffer, int width, int height, const BloomConstants& constants );
 	void				PokeFrame( nvrhi::ICommandList* commandList, nvrhi::ITexture* frame, int centreX, int centreY, int debug );
@@ -104,14 +105,13 @@ private:
 	bool							m_Dead;			// a shader handle came back null from some cause: Render returns NULL for good ( a missing blob or permutation stops the engine as for every builtin shader, so this guards any other cause )
 
 	nvrhi::ShaderHandle				m_VS;			// the tonemapping program's vertex shader: four vertices, no inputs
-	nvrhi::ShaderHandle				m_DownFirstPS;	// builtin/post/bloom_down with FIRST 1: the mix's first pass
-	nvrhi::ShaderHandle				m_DownFirstGlowPS;	// builtin/post/bloom_down with FIRST 2 ( WP-G3: the glow's first pass, the footprint's pixels thresholded one by one )
-	nvrhi::ShaderHandle				m_DownFirstDistPS;	// builtin/post/bloom_down with FIRST 3 ( WP-G3: the glow's first pass with the distance tail's second target )
+	nvrhi::ShaderHandle				m_DownFirstPS;	// builtin/post/bloom_down with FIRST 1: the first pass, the footprint's pixels thresholded one by one
+	nvrhi::ShaderHandle				m_DownFirstDepthPS;	// builtin/post/bloom_down with FIRST 2: the first pass reading the frame's depth too ( the distance tail, the view weapon )
 	nvrhi::ShaderHandle				m_DownPS;		// builtin/post/bloom_down with FIRST 0
 	nvrhi::ShaderHandle				m_UpPS;			// builtin/post/bloom_up
 
 	nvrhi::BindingLayoutHandle		m_FirstLayout;	// push constants, the frame at t0, the exposure buffer at t1, a sampler
-	nvrhi::BindingLayoutHandle		m_FirstDistLayout;	// m_FirstLayout and the frame's depth at t2 ( WP-G3 )
+	nvrhi::BindingLayoutHandle		m_FirstDepthLayout;	// m_FirstLayout and the frame's depth at t2
 	nvrhi::BindingLayoutHandle		m_DownUpLayout;	// push constants, one level at t0, a sampler: the down and the up passes
 
 	// the chain: made by CheckChain for the frame texture's size, released when that size changes or the pass goes
@@ -122,27 +122,26 @@ private:
 	int								m_TexH[ BLOOM_MAX_LEVELS ];
 	nvrhi::TextureHandle			m_Levels[ BLOOM_MAX_LEVELS ];
 	nvrhi::FramebufferHandle		m_Frames[ BLOOM_MAX_LEVELS ];
-	nvrhi::GraphicsPipelineHandle	m_DownFirstPipeline;
-	nvrhi::GraphicsPipelineHandle	m_DownFirstGlowPipeline;	// WP-G3: the glow's first pass ( the mix's layout and set ) into m_FirstDistFrame's two targets
+	nvrhi::GraphicsPipelineHandle	m_DownFirstPipeline;	// the first pass ( m_FirstLayout, m_FirstSet ) into m_FirstFrame's two targets
 	nvrhi::GraphicsPipelineHandle	m_DownPipeline;
 	nvrhi::GraphicsPipelineHandle	m_UpPipeline;	// the only one that blends: ONE, ONE
-	nvrhi::BindingSetHandle			m_DownSets[ BLOOM_MAX_LEVELS ];	// the down pass into level i, reading level i - 1 ( i >= 1 )
+	nvrhi::BindingSetHandle			m_DownSets[ BLOOM_MAX_LEVELS ];	// the down pass into level i, reading level i - 1 ( i >= 2: level 1 reads m_Wide )
 	nvrhi::BindingSetHandle			m_UpSets[ BLOOM_MAX_LEVELS ];		// the up pass into level i, reading level i + 1
 	nvrhi::BindingSetHandle			m_FirstSet;		// made again whenever the frame texture or the exposure buffer changes
 	nvrhi::ITexture*				m_FirstSource;
 	nvrhi::IBuffer*					m_FirstExposure;
 
-	// WP-G3: the glow's first pass writes two targets, level 0 and the wide levels' source, which level 1 is reduced
-	// from in the glow mode. Made with the chain and part of it; the pipeline and set of the distance tail's
-	// permutation may be missing, and the tail is then the same at every distance
-	nvrhi::TextureHandle			m_Wide;			// level 0's size and format: the wide levels' source ( the glow mode's level 1 is reduced from it )
-	nvrhi::FramebufferHandle		m_FirstDistFrame;	// level 0 and m_Wide
-	nvrhi::GraphicsPipelineHandle	m_DownFirstDistPipeline;
+	// The first pass writes two targets, level 0 and the wide levels' source, which level 1 is reduced from. Made
+	// with the chain and part of it; the pipeline and set of the permutation that reads the frame's depth may be
+	// missing: the tail is then the same at every distance and the view weapon glows
+	nvrhi::TextureHandle			m_Wide;			// level 0's size and format: the wide levels' source ( level 1 is reduced from it )
+	nvrhi::FramebufferHandle		m_FirstFrame;	// level 0 and m_Wide
+	nvrhi::GraphicsPipelineHandle	m_DownFirstDepthPipeline;
 	nvrhi::BindingSetHandle			m_DownWideSet;	// the down pass into level 1, reading m_Wide
-	nvrhi::BindingSetHandle			m_FirstDistSet;	// made again whenever the frame texture, the exposure buffer or the depth image changes
-	nvrhi::ITexture*				m_FirstDistSource;
-	nvrhi::IBuffer*					m_FirstDistExposure;
-	nvrhi::ITexture*				m_FirstDistDepth;
+	nvrhi::BindingSetHandle			m_FirstDepthSet;	// made again whenever the frame texture, the exposure buffer or the depth image changes
+	nvrhi::ITexture*				m_FirstDepthSource;
+	nvrhi::IBuffer*					m_FirstDepthExposure;
+	nvrhi::ITexture*				m_FirstDepthImage;
 
 	BloomMix						m_Mix;			// what Render returns
 
@@ -158,18 +157,17 @@ private:
 	int								m_ProbeWait;	// bloom views until the copies are read; 0 = no probe under way
 	int								m_ProbeView[4];	// the probe's view rectangle and level count, captured with the copies
 	int								m_ProbeLevels;
-	float							m_ProbeStrength;
 	float							m_ProbeTail;
 	float							m_ProbeW0;
 	float							m_ProbeExposureScale;
 	float							m_ProbeKnee;
 	float							m_ProbeCeiling;
 	int								m_ProbeDebug;
-	int								m_ProbeGlowMode;
 	float							m_ProbeGlowGain;
 	float							m_ProbeThreshold;
 	float							m_ProbeThresholdKnee;
 	int								m_ProbeTailDistance;	// 1: the probed view was drawn with the distance tail
+	int								m_ProbeWeaponOut;		// 1: the probed view's first pass left the view weapon out
 	float							m_ProbeTailNear;
 	float							m_ProbeTailFar;
 	float							m_ProbeTailFarShare;

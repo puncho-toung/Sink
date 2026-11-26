@@ -42,21 +42,17 @@ extern idCVar r_lightScale;
 extern idCVar r_useSSR;
 extern idCVar r_viewDistance;
 extern idCVar r_distanceCull;
-extern idCVar r_bloomStrength;
-extern idCVar r_bloomTail;
 
-// Track G, the bloom's two bars ( 2026-11-25 ): r_bloomStrength and r_bloomTail ( in the glow mode r_bloomGlow and
-// r_bloomGlowTail: WP-G3 ) in whole notches, like the view
-// distance, so that a step always moves the value. A notch is a round number of hundredths, divided by 100 last,
-// which puts each default exactly on a notch ( 0.06 = notch 24; the mix's tail 0.7 = notch 60, the glow's 0.34 = notch 12 ): a step right and a step left give
-// the default's own float back, and leaving the screen then does not count as a change. The strength's bar ends at
-// 0.25, a quarter of the picture being its blur; the console still takes values up to 1, and the bar shows them full.
-// The round trip also rests on idStr( float ) keeping six decimals, which a notch's four need
-static const float BLOOM_STRENGTH_PER_NOTCH = 0.25f;	// in hundredths: notch 100 = 0.25
+// The bloom's two bars ( track G, 2026-11-25; the glow's since WP-G3, and since WP-G4 there is no other bloom ):
+// r_bloomGlow and r_bloomGlowTail in whole notches, like the view distance, so that a step always moves the value.
+// A notch is a round number of hundredths, divided by 100 last, which puts each default exactly on a notch ( the
+// glow 0.24 = notch 24, the tail 0.34 = notch 12 ): a step right and a step left give the default's own float back,
+// and leaving the screen then does not count as a change. The strength's bar ends at a glow of 1; the console still
+// takes values up to 4, and the bar shows them full. The round trip also rests on idStr( float ) keeping six
+// decimals, which a notch's four need
 static const float BLOOM_TAIL_AT_NOTCH_0 = 25.0f;		// in hundredths: 0.25, the cvar's lower bound
 static const float BLOOM_TAIL_PER_NOTCH = 0.75f;		// in hundredths: notch 100 = 1.0
-static const float BLOOM_GLOW_PER_NOTCH = 1.0f;			// WP-G3, r_bloomMode 1: in hundredths, notch 100 = r_bloomGlow 1 ( the default 0.24 is notch 24; the console takes up to 4 )
-extern idCVar r_bloomMode;
+static const float BLOOM_GLOW_PER_NOTCH = 1.0f;			// in hundredths: notch 100 = r_bloomGlow 1 ( the default 0.24 is notch 24; the console takes up to 4 )
 extern idCVar r_bloomGlow;
 extern idCVar r_bloomGlowTail;
 
@@ -67,12 +63,8 @@ BloomStrengthNotch
 */
 static int BloomStrengthNotch()
 {
-	if( r_bloomMode.GetInteger() == 1 )
-	{
-		// WP-G3, the glow mode: the bar is the glow's brightness, 0 to 1
-		return idMath::ClampInt( 0, 100, idMath::Ftoi( r_bloomGlow.GetFloat() * 100.0f / BLOOM_GLOW_PER_NOTCH + 0.5f ) );
-	}
-	return idMath::ClampInt( 0, 100, idMath::Ftoi( r_bloomStrength.GetFloat() * 100.0f / BLOOM_STRENGTH_PER_NOTCH + 0.5f ) );
+	// the bar is the glow's brightness, 0 to 1
+	return idMath::ClampInt( 0, 100, idMath::Ftoi( r_bloomGlow.GetFloat() * 100.0f / BLOOM_GLOW_PER_NOTCH + 0.5f ) );
 }
 
 /*
@@ -82,10 +74,7 @@ BloomTailNotch
 */
 static int BloomTailNotch()
 {
-	// WP-G3 ( review F1-5 ): each mode has its own tail on the one scale, the mix's r_bloomTail and the glow's
-	// r_bloomGlowTail; the bar shows and sets the tail of the mode that runs, as the strength's bar does
-	const float tail = ( r_bloomMode.GetInteger() == 1 ) ? r_bloomGlowTail.GetFloat() : r_bloomTail.GetFloat();
-	return idMath::ClampInt( 0, 100, idMath::Ftoi( ( tail * 100.0f - BLOOM_TAIL_AT_NOTCH_0 ) / BLOOM_TAIL_PER_NOTCH + 0.5f ) );
+	return idMath::ClampInt( 0, 100, idMath::Ftoi( ( r_bloomGlowTail.GetFloat() * 100.0f - BLOOM_TAIL_AT_NOTCH_0 ) / BLOOM_TAIL_PER_NOTCH + 0.5f ) );
 }
 
 /*
@@ -527,8 +516,6 @@ void idMenuScreen_Shell_SystemOptions::idMenuDataSource_SystemSettings::LoadData
 	originalPostProcessing = r_useFilmicPostFX.GetInteger();
 	originalCRTPostFX = r_useCRTPostFX.GetInteger();
 	// RB end
-	originalBloomStrength = r_bloomStrength.GetFloat();
-	originalBloomTail = r_bloomTail.GetFloat();
 	originalBloomGlow = r_bloomGlow.GetFloat();
 	originalBloomGlowTail = r_bloomGlowTail.GetFloat();
 
@@ -754,29 +741,14 @@ void idMenuScreen_Shell_SystemOptions::idMenuDataSource_SystemSettings::AdjustFi
 		case SYSTEM_FIELD_BLOOM_STRENGTH:
 		{
 			const int adjusted = idMath::ClampInt( 0, 100, BloomStrengthNotch() + adjustAmount );
-			if( r_bloomMode.GetInteger() == 1 )
-			{
-				// WP-G3, the glow mode: archived: the bar's place is saved on leaving the screen
-				r_bloomGlow.SetFloat( ( BLOOM_GLOW_PER_NOTCH * ( float )adjusted ) / 100.0f );
-			}
-			else
-			{
-				r_bloomStrength.SetFloat( ( BLOOM_STRENGTH_PER_NOTCH * ( float )adjusted ) / 100.0f );
-			}
+			// archived: the bar's place is saved on leaving the screen
+			r_bloomGlow.SetFloat( ( BLOOM_GLOW_PER_NOTCH * ( float )adjusted ) / 100.0f );
 			break;
 		}
 		case SYSTEM_FIELD_BLOOM_TAIL:
 		{
 			const int adjusted = idMath::ClampInt( 0, 100, BloomTailNotch() + adjustAmount );
-			const float tail = ( BLOOM_TAIL_AT_NOTCH_0 + BLOOM_TAIL_PER_NOTCH * ( float )adjusted ) / 100.0f;
-			if( r_bloomMode.GetInteger() == 1 )
-			{
-				r_bloomGlowTail.SetFloat( tail );
-			}
-			else
-			{
-				r_bloomTail.SetFloat( tail );
-			}
+			r_bloomGlowTail.SetFloat( ( BLOOM_TAIL_AT_NOTCH_0 + BLOOM_TAIL_PER_NOTCH * ( float )adjusted ) / 100.0f );
 			break;
 		}
 		case SYSTEM_FIELD_BRIGHTNESS:
@@ -1069,8 +1041,7 @@ bool idMenuScreen_Shell_SystemOptions::idMenuDataSource_SystemSettings::IsDataCh
 		return true;
 	}
 
-	if( originalBloomStrength != r_bloomStrength.GetFloat() || originalBloomTail != r_bloomTail.GetFloat() || originalBloomGlow != r_bloomGlow.GetFloat()
-			|| originalBloomGlowTail != r_bloomGlowTail.GetFloat() )
+	if( originalBloomGlow != r_bloomGlow.GetFloat() || originalBloomGlowTail != r_bloomGlowTail.GetFloat() )
 	{
 		return true;
 	}

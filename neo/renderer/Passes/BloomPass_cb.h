@@ -35,9 +35,9 @@ If you have questions concerning this license or the applicable additional terms
 struct BloomConstants
 {
 	idVec4	srcRect;		// xy the source rectangle's origin in source texels, zw its size in texels
-	idVec4	srcInvSize;		// xy 1 / the source TEXTURE's size; z the tail ( up ), the glow threshold's knee ( first pass, FIRST 2 and 3 ); w the firefly knee ( first pass; <= 0: off )
-	idVec4	exposure;		// first pass: x the exposure scale exp2( r_exposure ), y r_hdrMinLuminance, z the ceiling ( r_bloomCeiling ); w the glow threshold ( FIRST 2 and 3; 0 in the mix )
-	idVec4	tailDepth;	// first pass, FIRST 3 ( the distance tail ): xy the projection's two depth terms ( a view distance is x / ( depth + y ) ); zw 0
-	idVec4	tailDist;	// first pass, FIRST 3: x the far distance, y 1 / ( far - near ), z the share of its tail a far lamp keeps; w 0
+	idVec4	srcInvSize;		// xy 1 / the source TEXTURE's size; z the tail ( up ), the glow threshold's knee ( first pass ); w the firefly knee ( first pass; <= 0: off )
+	idVec4	exposure;		// first pass: x the exposure scale exp2( r_exposure ), y r_hdrMinLuminance, z the ceiling ( r_bloomCeiling ); w the glow threshold
+	idVec4	tailDepth;	// first pass, FIRST 2 ( with the frame's depth ): xy the projection's two depth terms ( a view distance is x / ( depth + y ) ); zw the view weapon's test: a pixel is the weapon's where depth * w > z ( z 1, w 0: none is )
+	idVec4	tailDist;	// first pass, FIRST 2: x the far distance, y 1 / ( far - near ), z the share of its tail a far lamp keeps ( 0, 0, 1: no distance tail, every nearness is 1 ); w 0
 };
 compile_time_assert( sizeof( BloomConstants ) == 80 );	// push constants: Vulkan promises 128 bytes, the D3D12 device manager 240
