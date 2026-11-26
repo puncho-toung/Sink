@@ -1377,6 +1377,8 @@ public:
 			SYSTEM_FIELD_FILMIC_POSTFX,
 			SYSTEM_FIELD_CRT_POSTFX,
 			// RB end
+			SYSTEM_FIELD_BLOOM_STRENGTH,	// track G: r_bloomStrength and r_bloomTail as bars
+			SYSTEM_FIELD_BLOOM_TAIL,
 			SYSTEM_FIELD_BRIGHTNESS,
 			SYSTEM_FIELD_VIEWDISTANCE,
 			SYSTEM_FIELD_VOLUME,
@@ -1420,6 +1422,10 @@ public:
 		int originalPostProcessing;
 		int originalCRTPostFX;
 		// RB end
+		float originalBloomStrength;
+		float originalBloomTail;
+		float originalBloomGlow;
+		float originalBloomGlowTail;
 
 		idList<vidMode_t>			modeList;
 	};

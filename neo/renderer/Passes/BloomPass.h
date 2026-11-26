@@ -87,6 +87,7 @@ private:
 	void				ReleaseChain();
 	bool				CheckChain( int frameWidth, int frameHeight );
 	bool				CheckFirstSet( nvrhi::ITexture* sourceTexture, nvrhi::IBuffer* exposureBuffer );
+	bool				CheckFirstDistSet( nvrhi::ITexture* sourceTexture, nvrhi::IBuffer* exposureBuffer, nvrhi::ITexture* depthTexture );
 	void				DrawLevel( nvrhi::ICommandList* commandList, nvrhi::IGraphicsPipeline* pipeline, nvrhi::IBindingSet* bindingSet,
 								   nvrhi::IFramebuffer* framebuffer, int width, int height, const BloomConstants& constants );
 	void				PokeFrame( nvrhi::ICommandList* commandList, nvrhi::ITexture* frame, int centreX, int centreY, int debug );
@@ -103,11 +104,14 @@ private:
 	bool							m_Dead;			// a shader handle came back null from some cause: Render returns NULL for good ( a missing blob or permutation stops the engine as for every builtin shader, so this guards any other cause )
 
 	nvrhi::ShaderHandle				m_VS;			// the tonemapping program's vertex shader: four vertices, no inputs
-	nvrhi::ShaderHandle				m_DownFirstPS;	// builtin/post/bloom_down with FIRST 1
+	nvrhi::ShaderHandle				m_DownFirstPS;	// builtin/post/bloom_down with FIRST 1: the mix's first pass
+	nvrhi::ShaderHandle				m_DownFirstGlowPS;	// builtin/post/bloom_down with FIRST 2 ( WP-G3: the glow's first pass, the footprint's pixels thresholded one by one )
+	nvrhi::ShaderHandle				m_DownFirstDistPS;	// builtin/post/bloom_down with FIRST 3 ( WP-G3: the glow's first pass with the distance tail's second target )
 	nvrhi::ShaderHandle				m_DownPS;		// builtin/post/bloom_down with FIRST 0
 	nvrhi::ShaderHandle				m_UpPS;			// builtin/post/bloom_up
 
 	nvrhi::BindingLayoutHandle		m_FirstLayout;	// push constants, the frame at t0, the exposure buffer at t1, a sampler
+	nvrhi::BindingLayoutHandle		m_FirstDistLayout;	// m_FirstLayout and the frame's depth at t2 ( WP-G3 )
 	nvrhi::BindingLayoutHandle		m_DownUpLayout;	// push constants, one level at t0, a sampler: the down and the up passes
 
 	// the chain: made by CheckChain for the frame texture's size, released when that size changes or the pass goes
@@ -119,6 +123,7 @@ private:
 	nvrhi::TextureHandle			m_Levels[ BLOOM_MAX_LEVELS ];
 	nvrhi::FramebufferHandle		m_Frames[ BLOOM_MAX_LEVELS ];
 	nvrhi::GraphicsPipelineHandle	m_DownFirstPipeline;
+	nvrhi::GraphicsPipelineHandle	m_DownFirstGlowPipeline;	// WP-G3: the glow's first pass ( the mix's layout and set ) into m_FirstDistFrame's two targets
 	nvrhi::GraphicsPipelineHandle	m_DownPipeline;
 	nvrhi::GraphicsPipelineHandle	m_UpPipeline;	// the only one that blends: ONE, ONE
 	nvrhi::BindingSetHandle			m_DownSets[ BLOOM_MAX_LEVELS ];	// the down pass into level i, reading level i - 1 ( i >= 1 )
@@ -126,6 +131,18 @@ private:
 	nvrhi::BindingSetHandle			m_FirstSet;		// made again whenever the frame texture or the exposure buffer changes
 	nvrhi::ITexture*				m_FirstSource;
 	nvrhi::IBuffer*					m_FirstExposure;
+
+	// WP-G3: the glow's first pass writes two targets, level 0 and the wide levels' source, which level 1 is reduced
+	// from in the glow mode. Made with the chain and part of it; the pipeline and set of the distance tail's
+	// permutation may be missing, and the tail is then the same at every distance
+	nvrhi::TextureHandle			m_Wide;			// level 0's size and format: the wide levels' source ( the glow mode's level 1 is reduced from it )
+	nvrhi::FramebufferHandle		m_FirstDistFrame;	// level 0 and m_Wide
+	nvrhi::GraphicsPipelineHandle	m_DownFirstDistPipeline;
+	nvrhi::BindingSetHandle			m_DownWideSet;	// the down pass into level 1, reading m_Wide
+	nvrhi::BindingSetHandle			m_FirstDistSet;	// made again whenever the frame texture, the exposure buffer or the depth image changes
+	nvrhi::ITexture*				m_FirstDistSource;
+	nvrhi::IBuffer*					m_FirstDistExposure;
+	nvrhi::ITexture*				m_FirstDistDepth;
 
 	BloomMix						m_Mix;			// what Render returns
 
@@ -148,6 +165,16 @@ private:
 	float							m_ProbeKnee;
 	float							m_ProbeCeiling;
 	int								m_ProbeDebug;
+	int								m_ProbeGlowMode;
+	float							m_ProbeGlowGain;
+	float							m_ProbeThreshold;
+	float							m_ProbeThresholdKnee;
+	int								m_ProbeTailDistance;	// 1: the probed view was drawn with the distance tail
+	float							m_ProbeTailNear;
+	float							m_ProbeTailFar;
+	float							m_ProbeTailFarShare;
+	float							m_ProbeMixFrame;
+	float							m_ProbeMixBloom;
 	int								m_ProbeFrame[2];	// the frame texture's size
 	int								m_ProbeLevelW[ BLOOM_MAX_LEVELS ];	// the probe's level rectangles
 	int								m_ProbeLevelH[ BLOOM_MAX_LEVELS ];
