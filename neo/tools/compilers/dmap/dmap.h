@@ -322,6 +322,7 @@ typedef struct
 
 extern dmapGlobals_t dmapGlobals;
 extern const idMapBrush* dmapSourceBrush;	//puncho - Phase 2C P2 (S5b): the map brush ParseBrush is turning into buildBrush, else NULL
+extern idCVar dmap_blockSplitFix;	//puncho - Phase 2C P2.5: facebsp.cpp's; LeakFill (ubrush.cpp) acts only with it
 extern idCVar dmap_brushBaseWindings;	//puncho - Phase 2C P2.1: ubrush.cpp's; dmap_visibleHullFix (usurface.cpp) acts only with it
 
 extern idCVar dmap_maxSurfaceVerts;
@@ -401,6 +402,7 @@ extern idList<interAreaPortal_t> interAreaPortals;
 
 bool PlaceOccupant( node_t* headnode, idVec3 origin, uEntity_t* occupant );
 bool FloodEntities( tree_t* tree );
+bool LeakFill( uEntity_t* e );	//puncho - Phase 2C P2.5: ubrush.cpp
 void FillOutside( uEntity_t* e );
 void FloodAreas( uEntity_t* e );
 void MakeTreePortals( tree_t* tree );

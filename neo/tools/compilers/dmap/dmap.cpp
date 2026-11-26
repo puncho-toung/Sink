@@ -224,7 +224,13 @@ bool ProcessModel( uEntity_t* e, bool floodFillWorld )
 	else if( ( floodFillWorld && !dmapGlobals.noFlood ) )
 	{
 		phaseStart = Sys_Milliseconds();
-		const bool enclosed = FloodEntities( e->tree );
+		//puncho start - Phase 2C P2.5: a leak through air that an opaque brush holds is closed, and the entities flood again
+		bool enclosed = FloodEntities( e->tree );
+		if( !enclosed && dmap_blockSplitFix.GetBool() )
+		{
+			enclosed = LeakFill( e );
+		}
+		//puncho end
 		DmapPhaseEnd( 4, phaseStart );
 		if( enclosed )
 		{

@@ -240,7 +240,7 @@ idAASBuild::GetFaceForPortal
 bool idAASBuild::GetFaceForPortal( idBrushBSPPortal* portal, int side, int* faceNum )
 {
 	int i, j, v1num;
-	int numFaceEdges, faceEdges[MAX_POINTS_ON_WINDING];
+	int numFaceEdges;	//puncho - Phase 2C P2.5: faceEdges is sized from the winding below
 	idWinding* w;
 	aasFace_t face;
 
@@ -258,6 +258,11 @@ bool idAASBuild::GetFaceForPortal( idBrushBSPPortal* portal, int side, int* face
 	}
 
 	w = portal->GetWinding();
+	//puncho start - Phase 2C P2.5: one edge per winding point. The stock array held MAX_POINTS_ON_WINDING (64) edges, and a
+	// portal on an AAS grid plane through turned outdoor terrain has up to 77 points: the writes ran past it and the compile
+	// ended in a stack-cookie abort (0xC0000409) in every version (P2.3 Opus MAX review, mx3_far)
+	int* faceEdges = ( int* ) _alloca16( Max( w->GetNumPoints(), 1 ) * sizeof( faceEdges[0] ) );
+	//puncho end
 	// turn the winding into a sequence of edges
 	numFaceEdges = 0;
 	v1num = -1;		// first vertex unknown

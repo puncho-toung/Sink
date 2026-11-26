@@ -37,6 +37,9 @@ int			c_faceLeafs;
 //puncho start - Phase 2C P2.1 (FaceBSP split epsilon)
 idCVar dmap_faceSplitFix( "dmap_faceSplitFix", "1", CVAR_TOOL | CVAR_BOOL, "1 = BuildFaceTree_r splits a face it classed as crossing the plane at the epsilon it classed it with (ON_EPSILON), so neither piece is lost; 0 = stock CLIP_EPSILON * 2, which drops a piece lying 0.1-0.2 beyond the plane: a thin leaf (a wedge between near-coplanar faces) then straddles that face and is marked opaque by the brush behind it, hiding visible faces" );
 //puncho end
+//puncho start - Phase 2C P2.5
+idCVar dmap_blockSplitFix( "dmap_blockSplitFix", "1", CVAR_TOOL | CVAR_BOOL, "1 = SelectSplitPlaneNum forces no block split on a plane that a node above has split on, and a leak whose path runs through air that an opaque brush holds is closed and the entities flood again (LeakFill, ubrush.cpp); 0 = v0001.7m: a block plane forced a second time made a leaf of no thickness that joined every leaf along the plane, and a brush piece SplitBrush dropped left air inside solid (organic shells leaked)" );
+//puncho end
 
 
 void RemovePortalFromNode( uPortal_t* portal, node_t* l );
@@ -273,6 +276,24 @@ int SelectSplitPlaneNum( node_t* node, bspFace_t* list )
 			plane[axis] = 1.0f;
 			plane[3] = -dist;
 			planenum = FindFloatPlane( plane );
+			//puncho start - Phase 2C P2.5: BuildFaceTree_r takes a plane within 0.001 of an axis as an exact bound of its
+			// children, so the back child of a near-axial face plane can get a bound past a block plane its node lies
+			// behind (sh_s1_0: below y = 0, a tile plane 0.99977 y + ... = 21.7 set the bound to 21.7). Forced again, that
+			// plane made a leaf of no thickness on its far side: no brush fragment reaches it, and its portals on the plane
+			// joined every leaf along it, inside and outside the shell
+			if( dmap_blockSplitFix.GetBool() )
+			{
+				const node_t* n = node->parent;
+				while( n != NULL && ( n->planenum & ~1 ) != ( planenum & ~1 ) )
+				{
+					n = n->parent;
+				}
+				if( n != NULL )
+				{
+					continue;
+				}
+			}
+			//puncho end
 			return planenum;
 		}
 	}

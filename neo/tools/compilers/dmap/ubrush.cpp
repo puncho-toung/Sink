@@ -1041,9 +1041,8 @@ static void LeafRepairAddBrush( leafRepair_t& r, const uEntity_t* e, const uBrus
 	}
 }
 
-// whether the part (its corners in r.points, its faces in r.faces) and the brush pulled in by LEAF_REPAIR_INSIDE_EPSILON
-// share a volume
-static bool LeafRepairMeets( leafRepair_t& r, int brush )
+// whether the part (its corners in r.points, its faces in r.faces) and the brush pulled in by `inside` share a volume
+static bool LeafRepairMeets( leafRepair_t& r, int brush, double inside )	//puncho - Phase 2C P2.5: the depth is the caller's (it was LEAF_REPAIR_INSIDE_EPSILON)
 {
 	const int first = r.firstPlane[brush];
 	const int numSides = r.brushes[brush]->numsides;
@@ -1054,7 +1053,7 @@ static bool LeafRepairMeets( leafRepair_t& r, int brush )
 		// a side with every corner of the part beyond its pulled-in plane parts the two
 		const idDPlane& side = r.planes[first + i];
 		int j;
-		for( j = 0; j < numPoints && side.Distance( &r.points[j * 3] ) > -LEAF_REPAIR_INSIDE_EPSILON; j++ )
+		for( j = 0; j < numPoints && side.Distance( &r.points[j * 3] ) > -inside; j++ )	//puncho - Phase 2C P2.5: was LEAF_REPAIR_INSIDE_EPSILON
 		{
 		}
 		if( j == numPoints )
@@ -1062,7 +1061,7 @@ static bool LeafRepairMeets( leafRepair_t& r, int brush )
 			return false;
 		}
 		idDPlane in = -side;
-		in.d -= LEAF_REPAIR_INSIDE_EPSILON;
+		in.d -= inside;	//puncho - Phase 2C P2.5: was LEAF_REPAIR_INSIDE_EPSILON
 		r.inner.Append( in );
 	}
 	r.both = r.faces;
@@ -1099,7 +1098,7 @@ static bool LeafRepairHeld( leafRepair_t& r, const uBrush_t* skip )
 		{
 			f = f->next;
 		}
-		if( f == NULL && LeafRepairMeets( r, b ) )
+		if( f == NULL && LeafRepairMeets( r, b, LEAF_REPAIR_INSIDE_EPSILON ) )	//puncho - Phase 2C P2.5: the depth passed
 		{
 			return true;
 		}
@@ -1201,9 +1200,9 @@ static void LeafRepair_r( leafRepair_t& r, node_t* node )
 	}
 }
 
-static void LeafRepair( uEntity_t* e )
+//puncho start - Phase 2C P2.5: the set-up is shared with the leak fill
+static void LeafRepairInit( leafRepair_t& r, const uEntity_t* e )
 {
-	leafRepair_t r;
 	r.numSplits = 0;
 	r.numRefused = 0;
 	r.numKept = 0;
@@ -1249,6 +1248,13 @@ static void LeafRepair( uEntity_t* e )
 			LeafRepairAddBrush( r, e, prim->brush );
 		}
 	}
+}
+
+static void LeafRepair( uEntity_t* e )
+{
+	leafRepair_t r;
+	LeafRepairInit( r, e );
+	//puncho end
 	LeafRepair_r( r, e->tree->headnode );
 	if( r.numSplits > 0 || r.numRefused > 0 )
 	{
@@ -1258,6 +1264,319 @@ static void LeafRepair( uEntity_t* e )
 	{
 		common->Printf( "leaf repair parts: entity %i, %i reached the tree's box, %i flat, %i with fewer than four faces\n", dmapGlobals.entityNum, r.numBoxParts, r.numFlatParts, r.numFewFaceParts );
 	}
+}
+//puncho end
+
+//puncho start - Phase 2C P2.5: the leak fill
+/*
+==============================================================================
+
+LEAK FILL
+
+SplitBrush gives a brush wholly to one side of a plane it crosses by less than 0.1 or whose mid winding is tiny (fewer
+than three edges longer than 0.2), and frees a piece of less than 1 unit^3. A fragment that earlier planes have cut thin
+(a block plane, the planes of the tiles beside it) then loses a piece that reaches into the leaf beyond: on the organic
+shells a wedge 0.2 thick and 55 long inside a tile (sp_s1_0, a tiny mid winding), a corner 0.41 deep of 0.015 units^3
+(sh_s11_30k, the volume rule), the thin overlap of two tiles that split their shared face along different diagonals
+(sh_s4_30k, both brushes cross the other's plane by less than 0.1). No fragment lands there, the leaf is air inside
+solid, and a sealed shell leaks through it.
+
+When the entities reach the outside, the leafs of the leak path (the chain LeakFile writes) are tried against the opaque
+brushes whose fragments are in the leafs beside them. A leaf whose corners (the leaf repair's, exact in double) lie
+within LEAF_REPAIR_INSIDE_EPSILON behind every side of such a brush (the map's planes in double) is marked opaque and
+given a copy of the brush as its fragment. A leaf the brush holds a point of more than LEAK_FILL_DEEP_EPSILON inside
+(the leaf repair's exact test) is split by a side of the brush, off its path, that its corners reach more than
+LEAF_REPAIR_INSIDE_EPSILON beyond; both parts are tried again, that brush first. A brush with a side on the leaf's path
+that has the leaf in front of it is not tried. The entities then flood again, until the map is sealed or no leaf of the
+path was filled. A map that does not leak is not changed.
+
+Filling every such leaf, on a leak path or not, was measured and not taken: where tiles overlap (so_s6_0, so_s2_0) a
+face crossing a filled leaf's plane at a shallow angle loses its part within ON_EPSILON in front of that plane to the
+filled leaf (ClipSideByTree_r), and see-through rays on those shells rose from 8 to 37.
+
+==============================================================================
+*/
+// a leaf the brush holds a point of this far inside is split by the brush's sides: above the float error of a stored
+// plane at 30k (about 0.004; the thin overlap of two tiles on sh_s4_30k is held 0.013 deep). At 64k that error (about
+// 0.008) can exceed it: a leaf of a leak path that only touches a brush is then split along the brush's planes and the
+// sliver behind them filled, which is the brush's own volume as the tree's planes bound it
+#define LEAK_FILL_DEEP_EPSILON		0.005
+// the brushes tried on one leaf
+#define LEAK_FILL_MAX_BRUSHES		32
+// floods after the first; each one follows a leak path that the passes before it left open
+#define LEAK_FILL_MAX_PASSES		64
+
+typedef struct leakFill_s
+{
+	leafRepair_t	r;			// the entity's opaque brushes, their planes, the repair's scratch lists
+	idHashIndex		hash;		// r.brushes by brushnum
+	int				numSplits;
+	int				numFilled;
+} leakFill_t;
+
+// the index of an original brush in r.brushes, -1 when it is not there
+static int LeakFillBrushIndex( const leakFill_t& f, const uBrush_t* b )
+{
+	for( int i = f.hash.First( b->brushnum ); i >= 0; i = f.hash.Next( i ) )
+	{
+		if( f.r.brushes[i] == b )
+		{
+			return i;
+		}
+	}
+	return -1;
+}
+
+// `first` (when >= 0), then the brushes of the opaque fragments in the leafs beside the leaf
+static void LeakFillCandidates( const leakFill_t& f, const node_t* leaf, int first, idStaticList<int, LEAK_FILL_MAX_BRUSHES>& brushes )
+{
+	brushes.Clear();
+	if( first >= 0 )
+	{
+		brushes.Append( first );
+	}
+	for( const uPortal_t* p = leaf->portals; p != NULL; p = p->next[ p->nodes[1] == leaf ] )
+	{
+		const node_t* other = p->nodes[ p->nodes[0] == leaf ];
+		for( const uBrush_t* b = other->brushlist; b != NULL; b = b->next )
+		{
+			if( !b->opaque || b->original == NULL )
+			{
+				continue;
+			}
+			const int i = LeakFillBrushIndex( f, b->original );
+			if( i >= 0 && brushes.Num() < LEAK_FILL_MAX_BRUSHES && brushes.FindIndex( i ) < 0 )
+			{
+				brushes.Append( i );
+			}
+		}
+	}
+}
+
+// whether a side of the brush is on the leaf's path with the leaf in front of it: the tree puts the leaf outside
+static bool LeakFillOutside( const leafRepair_t& r, const node_t* leaf, int brush )
+{
+	const uBrush_t* b = r.brushes[brush];
+	for( int i = 0; i < b->numsides; i++ )
+	{
+		const int planenum = b->sides[i].planenum;
+		const node_t* child = leaf;
+		for( const node_t* n = leaf->parent; n != NULL; child = n, n = n->parent )
+		{
+			if( ( n->planenum & ~1 ) == ( planenum & ~1 ) )
+			{
+				if( ( n->children[0] == child ) == ( n->planenum == planenum ) )
+				{
+					return true;
+				}
+				break;
+			}
+		}
+	}
+	return false;
+}
+
+static void LeakFill_r( leakFill_t& f, node_t* node, int first )
+{
+	if( node->planenum != PLANENUM_LEAF )
+	{
+		LeakFill_r( f, node->children[0], first );
+		LeakFill_r( f, node->children[1], first );
+		return;
+	}
+	if( node->opaque || node->portals == NULL )
+	{
+		return;
+	}
+	leafRepair_t& r = f.r;
+	idStaticList<int, LEAK_FILL_MAX_BRUSHES> brushes;
+	LeakFillCandidates( f, node, first, brushes );
+	bool corners = false;
+	for( int c = 0; c < brushes.Num(); c++ )
+	{
+		const int b = brushes[c];
+		if( LeakFillOutside( r, node, b ) )
+		{
+			continue;
+		}
+		if( !corners )
+		{
+			// a leaf that cannot be bounded is left as it is
+			LeafRepairCorners( r, node, NULL );
+			corners = true;
+			if( r.points.Num() == 0 )
+			{
+				return;
+			}
+		}
+
+		// whether every corner lies within the epsilon behind every side, else the first side off the path that a
+		// corner reaches more than that beyond
+		const uBrush_t* brush = r.brushes[b];
+		const int numPoints = r.points.Num() / 3;
+		bool inside = true;
+		int cut = -1;
+		for( int i = 0; i < brush->numsides; i++ )
+		{
+			const idDPlane& side = r.planes[r.firstPlane[b] + i];
+			int j;
+			for( j = 0; j < numPoints && side.Distance( &r.points[j * 3] ) <= LEAF_REPAIR_INSIDE_EPSILON; j++ )
+			{
+			}
+			if( j < numPoints )
+			{
+				inside = false;
+				if( cut < 0 && !LeafRepairPlaneOnPath( node, brush->sides[i].planenum ) )
+				{
+					cut = brush->sides[i].planenum & ~1;
+				}
+			}
+		}
+
+		if( inside )
+		{
+			uBrush_t* fragment = CopyBrush( const_cast<uBrush_t*>( brush ) );
+			fragment->next = node->brushlist;
+			node->brushlist = fragment;
+			node->opaque = true;
+			f.numFilled++;
+			return;
+		}
+		if( cut < 0 || !LeafRepairMeets( r, b, LEAK_FILL_DEEP_EPSILON ) )
+		{
+			continue;
+		}
+		// FilterMeshesIntoTree ran before the flood: a mesh areaportal's triangles would not reach the children
+		if( node->areaPortalTris != NULL )
+		{
+			continue;
+		}
+
+		// the leaf becomes a node on the side's plane, its fragments go down again, and both parts are tried again
+		f.numSplits++;
+		uBrush_t* list = node->brushlist;
+		node->brushlist = NULL;
+		node->planenum = cut;
+		for( int i = 0; i < 2; i++ )
+		{
+			node->children[i] = AllocNode();
+			node->children[i]->parent = node;
+			node->children[i]->planenum = PLANENUM_LEAF;
+			node->children[i]->bounds = node->bounds;
+		}
+		MakeTreePortals_r( node );
+		uBrush_t* next;
+		for( uBrush_t* fb = list; fb != NULL; fb = next )
+		{
+			next = fb->next;
+			fb->next = NULL;
+			FilterBrushIntoTree_r( fb, node );
+		}
+		LeakFill_r( f, node->children[0], b );
+		LeakFill_r( f, node->children[1], b );
+		return;
+	}
+}
+
+static void LeakFillClear_r( node_t* node )
+{
+	if( node->planenum != PLANENUM_LEAF )
+	{
+		LeakFillClear_r( node->children[0] );
+		LeakFillClear_r( node->children[1] );
+		return;
+	}
+	node->occupied = 0;
+	node->occupant = NULL;
+}
+
+/*
+==================
+LeakFill
+
+The entities have reached the outside: fill the leafs of the leak path that an opaque brush holds and flood again,
+until the map is sealed or a path has no such leaf. Returns whether the map is sealed.
+==================
+*/
+bool LeakFill( uEntity_t* e )
+{
+	tree_t* tree = e->tree;
+	if( !tree->outside_node.occupied )
+	{
+		// no entity in the open: nothing leaked
+		return false;
+	}
+	leakFill_t f;
+	LeafRepairInit( f.r, e );
+	f.numSplits = 0;
+	f.numFilled = 0;
+	f.hash.Clear( 4096, Max( f.r.brushes.Num(), 1 ) );
+	for( int i = 0; i < f.r.brushes.Num(); i++ )
+	{
+		f.hash.Add( f.r.brushes[i]->brushnum, i );
+	}
+
+	bool enclosed = false;
+	int floods = 0;
+	idList<node_t*> path;
+	for( int pass = 0; pass < LEAK_FILL_MAX_PASSES && !enclosed; pass++ )
+	{
+		// the leak path, as LeakFile follows it from the outside to an occupant
+		path.SetNum( 0 );
+		node_t* node = &tree->outside_node;
+		while( node->occupied > 1 )
+		{
+			node_t* next = NULL;
+			int best = node->occupied;
+			const uPortal_t* p = node->portals;
+			while( p != NULL )
+			{
+				const int s = ( p->nodes[0] == node );
+				node_t* other = p->nodes[s];
+				if( other->occupied && other->occupied < best )
+				{
+					next = other;
+					best = other->occupied;
+				}
+				p = p->next[!s];
+			}
+			if( next == NULL )
+			{
+				break;
+			}
+			node = next;
+			path.Append( node );
+		}
+
+		// an occupant's own leaf is left as it is: filled, it would put the entity in solid
+		const int numFilled = f.numFilled;
+		const int numSplits = f.numSplits;
+		for( int i = 0; i < path.Num(); i++ )
+		{
+			if( path[i]->occupant == NULL )
+			{
+				LeakFill_r( f, path[i], -1 );
+			}
+		}
+		if( f.numFilled == numFilled )
+		{
+			if( f.numSplits != numSplits )
+			{
+				// the leafs this pass split have no flood distances yet: flood again so that LeakFile follows the
+				// whole path. A split re-files only non-opaque fragments, but SplitNodePortals drops tiny portal
+				// pieces, so this flood can be the one that seals: its verdict is the answer
+				LeakFillClear_r( tree->headnode );
+				enclosed = FloodEntities( tree );
+				floods++;
+			}
+			break;
+		}
+		LeakFillClear_r( tree->headnode );
+		enclosed = FloodEntities( tree );
+		floods++;
+	}
+	common->Printf( "leak fill: entity %i, %i floods, %i leafs split, %i leafs filled, %s\n", dmapGlobals.entityNum, floods, f.numSplits, f.numFilled, enclosed ? "sealed" : "still leaking" );
+	return enclosed;
 }
 //puncho end
 
