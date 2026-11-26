@@ -42,6 +42,12 @@ struct TemporalAntiAliasingParameters
 	float clampingFactor = 1.0f;
 	float maxRadiance = 10000.f;
 	bool enableHistoryClamping = true;
+	// ---- TAA REPAIR ----
+	float motionFrameWeight = 0.1f;		// the new frame's weight under camera motion; at or below newFrameWeight it changes nothing
+	bool clampTakesCenter = false;		// the clamp's box takes in the pixel's own colour
+	bool fiveHistoryTaps = false;		// the history's Catmull-Rom read without its corner taps
+	float sharpen = 0.0f;				// what is shown is pushed this share from the mean of its nine; 0 = none
+	// ---- END TAA REPAIR ----
 };
 
 class TemporalAntiAliasingPass
@@ -50,6 +56,7 @@ private:
 	CommonRenderPasses* m_CommonPasses;
 
 	nvrhi::ShaderHandle m_TemporalAntiAliasingCS;
+	nvrhi::ShaderHandle m_TemporalAntiAliasingSharpenCS;	// TAA REPAIR: the permutation with the sharpening
 	nvrhi::SamplerHandle m_BilinearSampler;
 	nvrhi::BufferHandle m_TemporalAntiAliasingCB;
 
@@ -57,6 +64,7 @@ private:
 	nvrhi::BindingSetHandle m_ResolveBindingSet;
 	nvrhi::BindingSetHandle m_ResolveBindingSetPrevious;
 	nvrhi::ComputePipelineHandle m_ResolvePso;
+	nvrhi::ComputePipelineHandle m_ResolveSharpenPso;		// TAA REPAIR: run while the sharpening is above 0
 
 	uint32_t m_FrameIndex;
 	uint32_t m_StencilMask;

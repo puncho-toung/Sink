@@ -44,4 +44,10 @@ struct TemporalAntiAliasingConstants
 	float invPqC;
 
 	uint stencilMask;
+
+	// ---- TAA REPAIR ( the same three fields as in taa.cs.hlsl ) ----
+	float motionWeightAdd;
+	uint repairFlags;
+	float sharpen;
+	// ---- END TAA REPAIR ----
 };

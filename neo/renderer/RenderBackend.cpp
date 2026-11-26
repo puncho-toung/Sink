@@ -6237,6 +6237,12 @@ void idRenderBackend::TemporalAAPass( const viewDef_t* _viewDef )
 		r_taaMaxRadiance.GetFloat(),
 		r_taaEnableHistoryClamping.GetBool()
 	};
+	// ---- TAA REPAIR ----
+	params.motionFrameWeight = r_taaMotionFrameWeight.GetFloat();
+	params.clampTakesCenter = r_taaClampCenter.GetBool();
+	params.fiveHistoryTaps = r_taaHistoryTaps.GetInteger() <= 5;
+	params.sharpen = r_taaSharpen.GetFloat();
+	// ---- END TAA REPAIR ----
 	taaPass->TemporalResolve( commandList, params, prevViewsValid, _viewDef );
 	prevViewsValid = true;
 

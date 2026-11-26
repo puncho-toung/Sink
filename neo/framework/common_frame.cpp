@@ -198,6 +198,8 @@ void idCommonLocal::LogMapRows( int tics, bool concurrencyStats ) //puncho - P0
 			// includes gpuBloom: only the main view is timed, the backend switches the timers off for
 			// every other view )
 			mapRowsFile->Printf( ",gpuBloom,gpuToneMap" );
+			// TAA REPAIR: the motion-vector block and the temporal resolve ( 0 in a frame without TAA )
+			mapRowsFile->Printf( ",gpuMotionVectors,gpuTAA" );
 			mapRowsFile->Printf( "\n" );
 			//puncho end
 			mapRowsFlushTime = Sys_Milliseconds();
@@ -366,6 +368,9 @@ void idCommonLocal::LogMapRows( int tics, bool concurrencyStats ) //puncho - P0
 	// track G: the bloom chain and the tonemap block that contains it, in the header's order
 	length += idStr::snPrintf( row + length, sizeof( row ) - length, ",%llu,%llu", ( unsigned long long )GetRendererGpuBloomMicroseconds(),
 							   ( unsigned long long )GetRendererGpuToneMapPassMicroseconds() );
+	// TAA REPAIR: in the header's order
+	length += idStr::snPrintf( row + length, sizeof( row ) - length, ",%llu,%llu", ( unsigned long long )GetRendererGpuMotionVectorsMicroseconds(),
+							   ( unsigned long long )GetRendererGpuTAAMicroseconds() );
 	assert( length < ( int )sizeof( row ) - 1 );		// review CN1-3: about 3.65 KB at most since F7a; V6's 22 columns ( V6h: fogIdle ) add at most 22 x 21
 	row[length++] = '\n';
 	if( mapRowsUsed + length > ( int )sizeof( mapRowsBuffer ) )

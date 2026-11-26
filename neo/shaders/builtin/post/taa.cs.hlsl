@@ -48,6 +48,12 @@ struct TemporalAntiAliasingConstants
 	float invPqC;
 
 	uint stencilMask;
+
+	// ---- TAA REPAIR ----
+	float motionWeightAdd;		// added to the new frame's weight where the history is read half way between two of its pixels; 0 = as before
+	uint repairFlags;			// bit 0: the clamp's box takes in this pixel's own colour; bit 1: five history taps for nine
+	float sharpen;				// how far what is SHOWN is pushed from the mean of its nine; 0 = none
+	// ---- END TAA REPAIR ----
 };
 
 #if USE_PUSH_CONSTANTS
@@ -63,6 +69,11 @@ register( b0 )
 
 #ifndef SAMPLE_COUNT
 	#define SAMPLE_COUNT 1
+#endif
+
+// TAA REPAIR: the permutation with the sharpening of what is shown ( the pass uses it while r_taaSharpen is above 0 )
+#ifndef USE_SHARPEN
+	#define USE_SHARPEN 0
 #endif
 
 #if SAMPLE_COUNT == 1
@@ -151,6 +162,43 @@ float3 BicubicSampleCatmullRom( Texture2D tex, SamplerState samp, float2 sampleP
 
 	return max( 0, result );
 }
+
+// ---- TAA REPAIR: the same read without its four corner taps. A corner's weight is the product of two of the
+// filter's negative side lobes, at most 0.0055 of the sum each; the five taps left are divided by their own sum ----
+float3 BicubicSampleCatmullRom5( Texture2D tex, SamplerState samp, float2 samplePos, float2 invTextureSize )
+{
+	float2 tc = floor( samplePos - 0.5 ) + 0.5;
+	float2 f = saturate( samplePos - tc );
+	float2 f2 = f * f;
+	float2 f3 = f2 * f;
+
+	float2 w0 = f2 - 0.5 * ( f3 + f );
+	float2 w1 = 1.5 * f3 - 2.5 * f2 + 1;
+	float2 w3 = 0.5 * ( f3 - f2 );
+	float2 w2 = 1 - w0 - w1 - w3;
+
+	float2 w12 = w1 + w2;
+
+	float2 tc0 = ( tc - 1 ) * invTextureSize;
+	float2 tc12 = ( tc + w2 / w12 ) * invTextureSize;
+	float2 tc3 = ( tc + 2 ) * invTextureSize;
+
+	float wUp = w12.x * w0.y;
+	float wLeft = w0.x * w12.y;
+	float wMid = w12.x * w12.y;
+	float wRight = w3.x * w12.y;
+	float wDown = w12.x * w3.y;
+
+	float3 result =
+		tex.SampleLevel( samp, float2( tc12.x, tc0.y ), 0 ).rgb  * wUp +
+		tex.SampleLevel( samp, float2( tc0.x,  tc12.y ), 0 ).rgb * wLeft +
+		tex.SampleLevel( samp, float2( tc12.x, tc12.y ), 0 ).rgb * wMid +
+		tex.SampleLevel( samp, float2( tc3.x,  tc12.y ), 0 ).rgb * wRight +
+		tex.SampleLevel( samp, float2( tc12.x, tc3.y ), 0 ).rgb  * wDown;
+
+	return max( 0, result / ( wUp + wLeft + wMid + wRight + wDown ) );
+}
+// ---- END TAA REPAIR ----
 
 void Preload( int2 sharedID, int2 globalID )
 {
@@ -278,6 +326,18 @@ void main(
 	float3 colorMin = colorMoment1 - colorSigma;
 	float3 colorMax = colorMoment1 + colorSigma;
 
+	// ---- TAA REPAIR: the box takes in this pixel's own colour. A pixel that stands more than one deviation from
+	// the mean of its nine ( a line or a light one pixel wide, a texel of a fine texture ) lies outside the box of
+	// before, and its history was pulled to the box's edge every frame: it kept 0.9 of a deviation and a tenth of
+	// its own. A history between the edge and this frame's colour now stays. The result is never further from
+	// this frame's colour than before, channel by channel ----
+	if( ( g_TemporalAA.repairFlags & 1u ) != 0u )
+	{
+		colorMin = min( colorMin, thisPixelColor );
+		colorMax = max( colorMax, thisPixelColor );
+	}
+	// ---- END TAA REPAIR ----
+
 	// Sample the previous frame using the longest MV
 
 	longestMV *= g_TemporalAA.outputOverInputViewSize;
@@ -288,7 +348,17 @@ void main(
 			&& all( sourcePos.xy < g_TemporalAA.outputViewOrigin + g_TemporalAA.outputViewSize ) )
 	{
 #if USE_CATMULL_ROM_FILTER
-		float3 history = BicubicSampleCatmullRom( t_FeedbackInput, s_Sampler, sourcePos, g_TemporalAA.outputTextureSizeInv );
+		// ---- TAA REPAIR: five taps for nine ( bit 1 ) ----
+		float3 history;
+		if( ( g_TemporalAA.repairFlags & 2u ) != 0u )
+		{
+			history = BicubicSampleCatmullRom5( t_FeedbackInput, s_Sampler, sourcePos, g_TemporalAA.outputTextureSizeInv );
+		}
+		else
+		{
+			history = BicubicSampleCatmullRom( t_FeedbackInput, s_Sampler, sourcePos, g_TemporalAA.outputTextureSizeInv );
+		}
+		// ---- END TAA REPAIR ----
 #else
 		float3 history = t_FeedbackInput.SampleLevel( s_Sampler, sourcePos * g_TemporalAA.outputTextureSizeInv, 0 ).rgb;
 #endif
@@ -307,7 +377,14 @@ void main(
 		float2 distanceToLowResPixel = inputPos - float2( inputPosInt );
 		float upscalingFactor = g_TemporalAA.outputOverInputViewSize.x;
 		float sampleWeight = saturate( 1.0 - upscalingFactor * dot( distanceToLowResPixel, distanceToLowResPixel ) );
-		float blendWeight = saturate( max( motionWeight, sampleWeight ) * g_TemporalAA.newFrameWeight );
+		// ---- TAA REPAIR: a history read BETWEEN its pixels is softened by the filter, and nine tenths of the pixel
+		// are that read, frame after frame. The loss is none where the read falls on a pixel ( a still camera, a
+		// motion of whole pixels ) and greatest half way between two; the new frame's weight rises by that
+		// measure ( the larger of the two axes ) times motionWeightAdd. 0 = the weight of before, bit for bit ----
+		float2 readPlace = frac( longestMV );
+		float2 readLoss = 4.0 * readPlace * ( 1.0 - readPlace );
+		float blendWeight = saturate( max( motionWeight, sampleWeight ) * g_TemporalAA.newFrameWeight + max( readLoss.x, readLoss.y ) * g_TemporalAA.motionWeightAdd );
+		// ---- END TAA REPAIR ----
 
 		resultPQ = lerp( historyClamped, thisPixelColor, blendWeight );
 	}
@@ -318,6 +395,43 @@ void main(
 
 	float3 result = PQDecode( resultPQ );
 	//float3 result = resultPQ;
+
+	// ---- TAA REPAIR: a slight sharpening of what is SHOWN, at the owner's word. Where the pixel has a history, the
+	// resolved colour is pushed away from the mean of this frame's nine by the share `sharpen`, and held within
+	// what the nine and the resolved colour span, so no edge gets a rim brighter or darker than the frame itself
+	// has there. The HISTORY keeps the colour as resolved ( resultPQ below ): a sharpening that went back into the
+	// history would be sharpened again every frame.
+	// It is a permutation of its own ( USE_SHARPEN ), which the pass runs only while r_taaSharpen is above 0. Compiled
+	// into the one shader, even behind a branch that was not taken, these lines changed the rounding of the lines
+	// above in a few pixels of a frame ( one level, at most 24 pixels of two million ): without them in the
+	// program, r_taaSharpen 0 is the resolve of before bit for bit ----
+#if USE_SHARPEN
+	if( g_TemporalAA.newFrameWeight < 1.0 && all( sourcePos.xy > g_TemporalAA.outputViewOrigin )
+			&& all( sourcePos.xy < g_TemporalAA.outputViewOrigin + g_TemporalAA.outputViewSize ) )
+	{
+		float3 nineMean = 0;
+		float3 nineMin = 1e30;
+		float3 nineMax = -1e30;
+
+		[unroll]
+		for( int sy = 0; sy <= 2; sy++ )
+		{
+			[unroll]
+			for( int sx = 0; sx <= 2; sx++ )
+			{
+				float3 nineColor = s_ColorsAndLengths[inputPosShared.y + sy][inputPosShared.x + sx].rgb;
+				nineMean += nineColor;
+				nineMin = min( nineMin, nineColor );
+				nineMax = max( nineMax, nineColor );
+			}
+		}
+		nineMean /= 9.0;
+
+		float3 sharpened = resultPQ + ( resultPQ - nineMean ) * g_TemporalAA.sharpen;
+		result = PQDecode( clamp( sharpened, min( nineMin, resultPQ ), max( nineMax, resultPQ ) ) );
+	}
+#endif
+	// ---- END TAA REPAIR ----
 
 #if 0
 	// Show motion vectors

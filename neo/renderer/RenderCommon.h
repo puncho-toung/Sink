@@ -1635,6 +1635,12 @@ extern idCVar r_taaClampingFactor;
 extern idCVar r_taaNewFrameWeight;
 extern idCVar r_taaMaxRadiance;
 extern idCVar r_taaMotionVectors;
+// ---- TAA REPAIR ----
+extern idCVar r_taaClampCenter;
+extern idCVar r_taaMotionFrameWeight;
+extern idCVar r_taaHistoryTaps;
+extern idCVar r_taaSharpen;
+// ---- END TAA REPAIR ----
 
 extern idCVar r_useFilmicPostFX;
 extern idCVar r_useCRTPostFX;

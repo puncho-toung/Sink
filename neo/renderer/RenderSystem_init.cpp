@@ -343,6 +343,12 @@ idCVar r_taaClampingFactor( "r_taaClampingFactor", "1.0", CVAR_RENDERER | CVAR_F
 idCVar r_taaNewFrameWeight( "r_taaNewFrameWeight", "0.1", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "" );
 idCVar r_taaMaxRadiance( "r_taaMaxRadiance", "10000", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "" );
 idCVar r_taaMotionVectors( "r_taaMotionVectors", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "" );
+// ---- TAA REPAIR: 0, 0.1, 9 and 0 give the resolve of before, bit for bit ----
+idCVar r_taaClampCenter( "r_taaClampCenter", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "the history clamp's box takes in the pixel's own colour; 0 = the box of before" );
+idCVar r_taaMotionFrameWeight( "r_taaMotionFrameWeight", "0.25", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the new frame's weight where the history is read half way between two of its pixels ( a camera in motion ); higher = sharper in motion and less steady; at or below r_taaNewFrameWeight it changes nothing", 0.0f, 1.0f );
+idCVar r_taaHistoryTaps( "r_taaHistoryTaps", "5", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "bilinear taps of the history read: 9, or 5 ( the four corner taps left out )", 5, 9 );
+idCVar r_taaSharpen( "r_taaSharpen", "0.15", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "TAA's slight sharpening of what is shown ( never of the history ): the share by which a pixel is pushed from the mean of its nine, held within what the nine span; 0 = none", 0.0f, 2.0f );
+// ---- END TAA REPAIR ----
 
 idCVar r_useCRTPostFX( "r_useCRTPostFX", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER | CVAR_NEW, "RetroArch CRT shader: 1 = Matthias CRT, 1 = New Pixie, 2 = Zfast", 0, 3 );
 idCVar r_crtCurvature( "r_crtCurvature", "2", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "rounded borders" );
