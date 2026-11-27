@@ -2471,6 +2471,17 @@ void R_CreateStaticBuffersForAreaModel( idRenderModel* model, nvrhi::ICommandLis
 	const int numSurfaces = model->NumSurfaces();
 	static const int MAX_BLOCK_VERTS = 0x10000;
 	static const int MAX_BLOCK_INDEX_BYTES = VERTCACHE_SIZE_MASK & ~15;
+	//puncho start - renderer join v0001.3w: a STATIC handle's offset field counts STATIC_OFFSET_UNIT ( 16 ) bytes ( 2R R3.1,
+	// VertexCache.h ), so a surface's indexes in the block must start on a unit for its indexCache to say where. Each
+	// surface's run is padded to RUN_ALIGN indexes, a whole number of triangles and of units, with degenerate triangles
+	// ( its own last index repeated ); the surface still draws only its own numIndexes
+	static const int RUN_ALIGN = STATIC_BLOCK_RUN_ALIGN;		// shared with RB_JoinTouching ( RenderCommon.h )
+	compile_time_assert( RUN_ALIGN % 3 == 0 && ( RUN_ALIGN * sizeof( triIndex_t ) ) % STATIC_OFFSET_UNIT == 0 );
+	auto paddedRun = []( int numTriIndexes )
+	{
+		return ( ( numTriIndexes + RUN_ALIGN - 1 ) / RUN_ALIGN ) * RUN_ALIGN;
+	};
+	//puncho end
 	int first = 0;
 	while( first < numSurfaces )
 	{
@@ -2478,6 +2489,7 @@ void R_CreateStaticBuffersForAreaModel( idRenderModel* model, nvrhi::ICommandLis
 		if( !r_staticAreaBlocks.GetBool() || head->verts == NULL || head->indexes == NULL || head->numVerts <= 0 || head->numIndexes <= 0 )
 		{
 			R_CreateStaticBuffersForTri( *head, commandList );
+			vertexCache.FlushStaticUploads( commandList );		//puncho - static index (2R R3.3): behind each surface (renderer join v0001.3w)
 			first++;
 			continue;
 		}
@@ -2490,18 +2502,19 @@ void R_CreateStaticBuffersForAreaModel( idRenderModel* model, nvrhi::ICommandLis
 		{
 			const srfTriangles_t* tri = model->Surface( last )->geometry;
 			if( tri->verts == NULL || tri->indexes == NULL || tri->numVerts <= 0 || tri->numIndexes <= 0 ||
-					numVerts + tri->numVerts > MAX_BLOCK_VERTS || ( int )( ( numIndexes + tri->numIndexes ) * sizeof( triIndex_t ) ) > MAX_BLOCK_INDEX_BYTES )
+					numVerts + tri->numVerts > MAX_BLOCK_VERTS || ( int )( ( numIndexes + paddedRun( tri->numIndexes ) ) * sizeof( triIndex_t ) ) > MAX_BLOCK_INDEX_BYTES )	//puncho - renderer join v0001.3w: padded runs
 			{
 				break;
 			}
 			numVerts += tri->numVerts;
-			numIndexes += tri->numIndexes;
+			numIndexes += paddedRun( tri->numIndexes );		//puncho - renderer join v0001.3w
 		}
 		if( last == first )
 		{
 			// F7m ( review O1-S S-1 ): a surface alone past a block's limits keeps a block of its own ( and the
 			// allocation's own error, as before F7k ), so the loop moves on
 			R_CreateStaticBuffersForTri( *head, commandList );
+			vertexCache.FlushStaticUploads( commandList );		//puncho - static index (2R R3.3): behind each surface (renderer join v0001.3w)
 			first++;
 			continue;
 		}
@@ -2523,8 +2536,15 @@ void R_CreateStaticBuffersForAreaModel( idRenderModel* model, nvrhi::ICommandLis
 				{
 					indexes[n + k] = ( triIndex_t )( tri->indexes[k] + v );
 				}
+				//puncho start - renderer join v0001.3w: the run's pad, degenerate triangles of its own last vertex
+				const int padded = paddedRun( tri->numIndexes );
+				for( int k = tri->numIndexes; k < padded; k++ )
+				{
+					indexes[n + k] = indexes[n + tri->numIndexes - 1];
+				}
+				//puncho end
 				v += tri->numVerts;
-				n += tri->numIndexes;
+				n += padded;		//puncho - renderer join v0001.3w
 			}
 			const vertCacheHandle_t indexBlock = vertexCache.AllocStaticIndex( indexes, indexBytes, commandList );
 			const vertCacheHandle_t vertexBlock = vertexCache.AllocStaticVertex( verts, vertexBytes, commandList );
@@ -2537,11 +2557,18 @@ void R_CreateStaticBuffersForAreaModel( idRenderModel* model, nvrhi::ICommandLis
 			{
 				srfTriangles_t* tri = model->Surface( j )->geometry;
 				tri->ambientCache = vertexBlock;
-				tri->indexCache = indexBlock + ( ( vertCacheHandle_t )( n * sizeof( triIndex_t ) ) << VERTCACHE_OFFSET_SHIFT );
+				//puncho - renderer join v0001.3w: the offset in the handle's 16-byte units ( n is a whole number of RUN_ALIGN ); the size
+				// from the surface's first index to the block's end ( the block's size less its n indexes before ), so that the handles
+				// of one block end alike ( RB_JoinTouching )
+				tri->indexCache = indexBlock + ( ( vertCacheHandle_t )( n * sizeof( triIndex_t ) / STATIC_OFFSET_UNIT ) << VERTCACHE_OFFSET_SHIFT )
+								  - ( ( vertCacheHandle_t )( n * sizeof( triIndex_t ) ) << VERTCACHE_SIZE_SHIFT );
 				tri->staticBlockVertex = v;
 				v += tri->numVerts;
-				n += tri->numIndexes;
+				n += paddedRun( tri->numIndexes );		//puncho - renderer join v0001.3w
 			}
+			//puncho - static index (2R R3.3), carried into F7k's block loop: the list is executed whenever 32 MiB of static
+			// uploads wait in it, behind each block ( one area model of an outdoor map holds far more than that )
+			vertexCache.FlushStaticUploads( commandList );
 		}
 		first = last;
 	}

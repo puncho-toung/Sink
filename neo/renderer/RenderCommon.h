@@ -2127,6 +2127,15 @@ void				R_InitDrawSurfFromTri( drawSurf_t& ds, srfTriangles_t& tri, nvrhi::IComm
 void				R_CreateStaticBuffersForTri( srfTriangles_t& tri, nvrhi::ICommandList* commandList );
 // track F ( F7k ): a world area model's surfaces in shared static blocks ( tr_trisurf.cpp )
 void				R_CreateStaticBuffersForAreaModel( idRenderModel* model, nvrhi::ICommandList* commandList );
+//puncho start - track F ( F7k ) under 2R R3.1 ( renderer join v0001.3w ): in an area's static block each surface's indexes are
+// padded to a whole number of STATIC_BLOCK_RUN_ALIGN with degenerate triangles, so that each starts on a static handle's 16-byte
+// unit ( R_CreateStaticBuffersForAreaModel ); RB_JoinTouching draws across a pad inside one block
+const int STATIC_BLOCK_RUN_ALIGN = 24;
+ID_INLINE int R_StaticBlockRun( int numIndexes )
+{
+	return ( numIndexes + STATIC_BLOCK_RUN_ALIGN - 1 ) / STATIC_BLOCK_RUN_ALIGN * STATIC_BLOCK_RUN_ALIGN;
+}
+//puncho end
 
 // RB
 idVec3				R_ClosestPointPointTriangle( const idVec3& point, const idVec3& vertex1, const idVec3& vertex2, const idVec3& vertex3 );

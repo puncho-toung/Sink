@@ -1175,6 +1175,7 @@ void idRenderModelManagerLocal::EndLevelLoad()
 				transitionStaticUs += Sys_Microseconds() - uploadStart;
 				//puncho - static index (2R R3.3): the list is executed whenever 32 MiB of static uploads wait in it. Behind each
 				// surface, and not behind each model: one model (a large area of an outdoor map) can hold far more than that
+				// (renderer join v0001.3w: R_CreateStaticBuffersForAreaModel also flushes behind each of its blocks)
 				vertexCache.FlushStaticUploads( commandList );
 			}
 			else
@@ -1184,6 +1185,8 @@ void idRenderModelManagerLocal::EndLevelLoad()
 					const uint64 uploadStart = Sys_Microseconds();
 					R_CreateStaticBuffersForTri( *( model->Surface( j )->geometry ), commandList );
 					transitionStaticUs += Sys_Microseconds() - uploadStart;
+					//puncho - static index (2R R3.3), carried into F7k's loop of the other models: behind each surface
+					vertexCache.FlushStaticUploads( commandList );
 				}
 			}
 			vertexCache.staticSegmentModels[segment] += ( vertexCache.staticReports != reports ) ? 1 : 0;	//puncho - static arena (P2b.1.8)

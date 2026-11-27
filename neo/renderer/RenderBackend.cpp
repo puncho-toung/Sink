@@ -69,20 +69,28 @@ static bool RB_JoinTouching( const drawSurf_t* first, vertCacheHandle_t& runInde
 	{
 		return false;
 	}
-	const uint64 runFirst = ( runIndexCache >> VERTCACHE_OFFSET_SHIFT ) & VERTCACHE_OFFSET_MASK;
-	const uint64 nextFirst = ( next->indexCache >> VERTCACHE_OFFSET_SHIFT ) & VERTCACHE_OFFSET_MASK;
-	if( nextFirst == runFirst + ( uint64 )runNumIndexes * sizeof( triIndex_t ) )
+	//puncho start - renderer join v0001.3w: both offsets in bytes by the vertex cache's decoder ( a static handle's field counts 16-byte
+	// units, 2R R3.1 ). A block member's run is padded to STATIC_BLOCK_RUN_ALIGN indexes with degenerate triangles and its handle
+	// reaches to its block's end ( R_CreateStaticBuffersForAreaModel ): two handles that end alike are members of one block, and between
+	// them lies only the first one's pad, which the joined draw takes along. Every other pair joins only where its indexes touch exactly
+	const uint64 runFirst = ( uint64 )idVertexCache::CacheStaticOffsetBytes( runIndexCache );
+	const uint64 nextFirst = ( uint64 )idVertexCache::CacheStaticOffsetBytes( next->indexCache );
+	const bool oneBlock = runFirst + ( uint64 )idVertexCache::CacheSizeBytes( runIndexCache ) == nextFirst + ( uint64 )idVertexCache::CacheSizeBytes( next->indexCache );
+	const int runSpan = oneBlock ? R_StaticBlockRun( runNumIndexes ) : runNumIndexes;
+	const int nextSpan = oneBlock ? R_StaticBlockRun( next->numIndexes ) : next->numIndexes;
+	if( nextFirst == runFirst + ( uint64 )runSpan * sizeof( triIndex_t ) )
 	{
-		runNumIndexes += next->numIndexes;		// right after the run
+		runNumIndexes = runSpan + next->numIndexes;		// right after the run ( its last member's pad between )
 		return true;
 	}
-	if( nextFirst + ( uint64 )next->numIndexes * sizeof( triIndex_t ) == runFirst )
+	if( nextFirst + ( uint64 )nextSpan * sizeof( triIndex_t ) == runFirst )
 	{
-		runIndexCache = next->indexCache;		// right before it
-		runNumIndexes += next->numIndexes;
+		runIndexCache = next->indexCache;		// right before it ( next's pad between )
+		runNumIndexes += nextSpan;
 		return true;
 	}
 	return false;
+	//puncho end
 }
 extern DeviceManager* deviceManager;
 
