@@ -44,39 +44,242 @@ const int		maxFlyPathIterations		= 10;
 const float		maxFlyPathDistance			= 500.0f;
 
 //puncho start - Phase 2C P2.6 fix round A1 ( opus/A MINOR 1 )
-idCVar ai_edge0Walls( "ai_edge0Walls", "2", CVAR_GAME | CVAR_INTEGER, "a walk reachability without an edge ( P2.6's point and near-point reachabilities, edge 0 ) crosses at a corner that the wall edges round it close for the obstacle avoidance: 0 = they stay walls ( as before this switch ); 1 = a floor edge with an end within 1 unit ( and a step ) of such a reachability's start or end in the area is no wall; 2 = 1, and a flow field leads a body to that start before it steps across. Set before the first monster moves ( the wall cache keeps what it built )", 0, 2 );
+idCVar ai_edge0Walls( "ai_edge0Walls", "2", CVAR_GAME | CVAR_INTEGER, "a walk reachability without an edge ( P2.6's point and near-point reachabilities, edge 0 ) crosses at a corner that the wall edges round it close for the obstacle avoidance: 0 = they stay walls ( as before this switch ); 1 = a floor edge with an end within 1 unit ( and a step ) of such a reachability's start or end in the area is no wall ( ai_edge0WallProbe 1: only where floor lies beyond it, else it is cut back from the corner ); 2 = 1, and a flow field leads a body to that start before it steps across. Set before the first monster moves ( the wall cache keeps what it built )", 0, 2 );
 
 /*
 ============
-EdgeAtEdge0Reach
+EdgeEndsAtEdge0Reach
 
-  Whether the floor edge has an end within 1 unit seen from above ( and maxStepHeight in height ) of the start of one
-  of the area's edge-0 walk reachabilities or the end of one that enters the area ( ai_edge0Walls ).
+  Which ends of the floor edge ( bit 0 = vertexNum[0], bit 1 = vertexNum[1] ) lie within 1 unit seen from above ( and
+  maxStepHeight in height ) of the start of one of the area's edge-0 walk reachabilities or the end of one that enters
+  the area ( ai_edge0Walls ). Non-zero is P2.6's EdgeAtEdge0Reach.
 ============
 */
-static bool EdgeAtEdge0Reach( const idAASFile* file, const aasArea_t* area, const int edgeNum )
+static int EdgeEndsAtEdge0Reach( const idAASFile* file, const aasArea_t* area, const int edgeNum )
 {
 	const aasEdge_t& edge = file->GetEdge( abs( edgeNum ) );
 	const float step = file->GetSettings().maxStepHeight;
+	int ends = 0;
 	for( int e = 0; e < 2; e++ )
 	{
 		const idVec3& v = file->GetVertex( edge.vertexNum[e] );
-		for( const idReachability* reach = area->reach; reach; reach = reach->next )
+		for( const idReachability* reach = area->reach; reach && !( ends & ( 1 << e ) ); reach = reach->next )
 		{
 			if( reach->travelType == TFL_WALK && reach->edgeNum == 0 && ( reach->start.ToVec2() - v.ToVec2() ).LengthSqr() <= 1.0f && idMath::Fabs( reach->start.z - v.z ) <= step )
 			{
-				return true;
+				ends |= ( 1 << e );
 			}
 		}
-		for( const idReachability* reach = area->rev_reach; reach; reach = reach->rev_next )
+		for( const idReachability* reach = area->rev_reach; reach && !( ends & ( 1 << e ) ); reach = reach->rev_next )
 		{
 			if( reach->travelType == TFL_WALK && reach->edgeNum == 0 && ( reach->end.ToVec2() - v.ToVec2() ).LengthSqr() <= 1.0f && idMath::Fabs( reach->end.z - v.z ) <= step )
 			{
-				return true;
+				ends |= ( 1 << e );
+			}
+		}
+	}
+	return ends;
+}
+//puncho end
+
+//puncho start - Phase 2C P2.7 ( P2.6 final review MINOR 1 and NOTE 3 ): the walls at edge-0 corners and shared edges, built with the wall cache only
+idCVar ai_wallSharedEdges( "ai_wallSharedEdges", "1", CVAR_GAME | CVAR_BOOL, "a floor edge that a floor face of an area this area has a walk reachability to also has ( by edge number ) is no wall for the obstacle avoidance; 0 = it stays a wall unless a reachability names it ( v0001.7o ). Set before the first monster moves ( the wall cache keeps what it built )" );
+idCVar ai_edge0WallProbe( "ai_edge0WallProbe", "1", CVAR_GAME | CVAR_BOOL, "with ai_edge0Walls >= 1, a floor edge at an edge-0 corner is no wall only where the AAS has floor within a step beyond it all along ( probed every 8 units or less when the area's walls are built ); otherwise it stays a wall, cut back from the corner by ai_edge0WallCut or by the floor that runs on beyond the edge from the corner, the cut going on into the walls chained to it in the area; an edge the cuts leave less than 8 units of is no wall. 0 = every such edge is no wall ( v0001.7o ). Set before the first monster moves ( the wall cache keeps what it built )" );
+idCVar ai_edge0WallCut( "ai_edge0WallCut", "0", CVAR_GAME | CVAR_FLOAT, "ai_edge0WallProbe's cut: no wall within this many units of the corner; 0 = the half width of the AAS file's box plus 8 ( 32 for aas48, 55 for aas96 ): the widest body the file serves plus WallRepulsion's margin. Set before the first monster moves", 0.0f, 1024.0f );
+
+const float	EDGE0_WALL_MARGIN		= 8.0f;		// AI_crowd.cpp FLOW_WALL_MARGIN: a wall closer than the radius plus this pushes
+const float	EDGE0_WALL_PROBE_STEP	= 8.0f;		// the far-side samples along an edge are at most this far apart
+const float	EDGE0_WALL_PROBE_OUT	= 2.0f;		// and this far out of it
+const float	EDGE0_WALL_MIN_LEFT		= 8.0f;		// an edge the cuts leave less of is no wall: a stub shorter than the margin guards nothing	//puncho - Phase 2C P2.7 ( Fable reviewer 2 )
+
+/*
+============
+EdgeSharedWithWalkArea
+
+  Whether a floor face of an area this area has a walk reachability to has the edge ( ai_wallSharedEdges ). Two floor
+  faces with one edge meet along all of it at its height: the far side is floor the area walks to. The stock rule frees
+  only the one edge a reachability names; on organic maps the next area's floor often meets this one along several.
+============
+*/
+static bool EdgeSharedWithWalkArea( idAASFile* file, const aasArea_t* area, const int absEdgeNum, const int travelFlags )
+{
+	for( const idReachability* reach = area->reach; reach; reach = reach->next )
+	{
+		if( !( reach->travelType & travelFlags & TFL_WALK ) )
+		{
+			continue;
+		}
+		const aasArea_t& toArea = file->GetArea( reach->toAreaNum );
+		for( int i = 0; i < toArea.numFaces; i++ )
+		{
+			const aasFace_t& face = file->GetFace( abs( file->GetFaceIndex( toArea.firstFace + i ) ) );
+			if( !( face.flags & FACE_FLOOR ) )
+			{
+				continue;
+			}
+			for( int j = 0; j < face.numEdges; j++ )
+			{
+				if( abs( file->GetEdgeIndex( face.firstEdge + j ) ) == absEdgeNum )
+				{
+					return true;
+				}
 			}
 		}
 	}
 	return false;
+}
+
+/*
+============
+Edge0WallCutLength
+
+  ai_edge0WallCut, or the half width of the file's box plus WallRepulsion's margin: the file's widest body, so one
+  cache built at zero width serves every size ( GetWallQuads scales only the back corners ).
+============
+*/
+static float Edge0WallCutLength( const idAASFile* file )
+{
+	if( ai_edge0WallCut.GetFloat() > 0.0f )
+	{
+		return ai_edge0WallCut.GetFloat();
+	}
+	const idBounds& box = file->GetSettings().boundingBoxes[0];
+	return Max( Max( -box[0].x, box[1].x ), Max( -box[0].y, box[1].y ) ) + EDGE0_WALL_MARGIN;
+}
+
+/*
+============
+FloorBeyondEdge
+
+  Whether the AAS has floor within maxStepHeight of p ( a point of a floor edge ) EDGE0_WALL_PROBE_OUT out along out:
+  a trace down from 1 unit above p's height to a step below it, or, where that start is solid, from a step above p's
+  height down to 1 unit above it ( a step up ), that ends on a plane the AAS stands on. Solid a step up, open a step
+  down or a steeper plane is no floor.
+============
+*/
+static bool FloorBeyondEdge( const idAASFile* file, const idVec3& p, const idVec2& out )
+{
+	const idAASSettings& settings = file->GetSettings();
+	idVec3 start( p.x + out.x * EDGE0_WALL_PROBE_OUT, p.y + out.y * EDGE0_WALL_PROBE_OUT, p.z + 1.0f );
+	idVec3 end = start;
+	if( file->PointAreaNum( start ) != 0 )
+	{
+		end.z = p.z - settings.maxStepHeight - 1.0f;
+	}
+	else
+	{
+		start.z = p.z + settings.maxStepHeight + 1.0f;
+		if( file->PointAreaNum( start ) == 0 )
+		{
+			return false;
+		}
+	}
+	aasTrace_t trace;
+	if( !file->Trace( trace, start, end ) )
+	{
+		return false;
+	}
+	//puncho - Phase 2C P2.7 ( Opus reviewer A ): PointAreaNum puts a start less than ON_EPSILON in front of a plane in
+	// its front area, the trace on the plane's back: a start in solid hands back plane 0 unflipped. The solid is then
+	// right under the start: trace again from a little higher
+	if( trace.lastAreaNum == 0 )
+	{
+		start.z += 0.25f;
+		if( file->PointAreaNum( start ) == 0 || !file->Trace( trace, start, end ) || trace.lastAreaNum == 0 )
+		{
+			return false;
+		}
+	}
+	// the trace hands back the plane facing its start
+	return -( file->GetPlane( trace.planeNum ).Normal() * settings.gravityDir ) >= settings.minFloorCos;
+}
+
+/*
+============
+Edge0WallCuts
+
+  ai_edge0WallProbe: the far side of a floor edge of floorFace with corner ends ( EdgeEndsAtEdge0Reach's bits ),
+  sampled at most EDGE0_WALL_PROBE_STEP apart from 1 unit in from each end. Floor at every sample: no wall, false.
+  Otherwise true and the cut of the wall at each corner end, cuts[0] at the signed edge's start and cuts[1] at its end:
+  cutLength, or the floor run from that end ( to its last floor sample ) where that is longer; 0 at an end that is no
+  corner. A corner end probes only until its run ends; an edge with one corner end is probed only until it is a wall.
+============
+*/
+static bool Edge0WallCuts( const idAASFile* file, const aasFace_t& floorFace, const int edgeNum, const int ends, const float cutLength, float cuts[2] )
+{
+	const aasEdge_t& edge = file->GetEdge( abs( edgeNum ) );
+	const idVec3& v0 = file->GetVertex( edge.vertexNum[0] );
+	const idVec3& v1 = file->GetVertex( edge.vertexNum[1] );
+
+	// out of the face: away from the middle of its corners, seen from above
+	idVec2 middle( 0.0f, 0.0f );
+	int numCorners = 0;
+	for( int i = 0; i < floorFace.numEdges; i++ )
+	{
+		const aasEdge_t& faceEdge = file->GetEdge( abs( file->GetEdgeIndex( floorFace.firstEdge + i ) ) );
+		middle += file->GetVertex( faceEdge.vertexNum[0] ).ToVec2() + file->GetVertex( faceEdge.vertexNum[1] ).ToVec2();
+		numCorners += 2;
+	}
+	middle /= ( float )Max( 1, numCorners );
+	idVec2 dir = v1.ToVec2() - v0.ToVec2();
+	const float length = dir.Normalize();
+	idVec2 out( dir.y, -dir.x );
+	if( ( middle - ( v0.ToVec2() + v1.ToVec2() ) * 0.5f ) * out > 0.0f )
+	{
+		out = -out;
+	}
+
+	const int numSamples = Max( 2, ( int )idMath::Ceil( ( length - 2.0f ) / EDGE0_WALL_PROBE_STEP ) + 1 );
+	auto samplePos = [&]( int k ) -> float
+	{
+		return ( length <= 2.0f ) ? 0.5f * length : 1.0f + ( length - 2.0f ) * ( float )k / ( float )( numSamples - 1 );
+	};
+	auto floorAt = [&]( int k ) -> bool
+	{
+		const float t = ( length > 0.0f ) ? samplePos( k ) / length : 0.5f;
+		return FloorBeyondEdge( file, v0 + ( v1 - v0 ) * t, out );
+	};
+
+	// from vertexNum[0]: the floor run, and the first sample without floor ( numSamples: floor all along )
+	int first = 0;
+	float run0 = 0.0f;
+	while( first < numSamples && floorAt( first ) )
+	{
+		run0 = samplePos( first );
+		first++;
+	}
+	if( first == numSamples )
+	{
+		return false;
+	}
+	// from vertexNum[1], down to that sample
+	float run1 = 0.0f;
+	if( ends & 2 )
+	{
+		for( int k = numSamples - 1; k > first && floorAt( k ); k-- )
+		{
+			run1 = length - samplePos( k );
+		}
+	}
+	const float cut0 = ( ends & 1 ) ? Max( cutLength, run0 ) : 0.0f;
+	const float cut1 = ( ends & 2 ) ? Max( cutLength, run1 ) : 0.0f;
+	cuts[0] = ( edgeNum < 0 ) ? cut1 : cut0;
+	cuts[1] = ( edgeNum < 0 ) ? cut0 : cut1;
+	return true;
+}
+
+/*
+============
+CircleExit
+
+  How far along dir from p ( inside the circle of radius r around c ) a point leaves the circle.
+============
+*/
+static float CircleExit( const idVec2& p, const idVec2& dir, const idVec2& c, const float r )
+{
+	const idVec2 w = p - c;
+	const float b = w * dir;
+	return -b + idMath::Sqrt( Max( 0.0f, b * b - w.LengthSqr() + r * r ) );
 }
 //puncho end
 const float		flyPathSampleDistance		= 8.0f;
@@ -745,6 +948,8 @@ int idAASLocal::GetWallEdges( int areaNum, const idBounds& bounds, int travelFla
 	}
 
 	numEdges = 0;
+	//puncho - Phase 2C P2.7: with ai_wallSharedEdges or ai_edge0WallProbe the area's wall cache decides ( read once a query )
+	const bool cacheDecides = ai_wallSharedEdges.GetBool() || ( ai_edge0Walls.GetInteger() >= 1 && ai_edge0WallProbe.GetBool() );
 
 	//puncho start - R2 scale guards: the object's work arrays (SetupWallCache), not the stack, where 5 bytes an
 	// area overflowed near 200,000 areas. The visited marks are all zero between queries: a query clears the
@@ -827,8 +1032,32 @@ int idAASLocal::GetWallEdges( int areaNum, const idBounds& bounds, int travelFla
 				{
 					continue;
 				}
+				//puncho start - Phase 2C P2.7: with ai_wallSharedEdges or ai_edge0WallProbe the area's wall cache decides
+				// ( BuildAreaWalls, once an area: the probe does not run per query ), so the two lists agree; an edge the
+				// cache cut back from a corner is listed whole ( an edge list has no cut ); one it cut away, or that its
+				// SortWallEdges left out, or past MAX_AREA_WALL_EDGES, is not listed
+				if( cacheDecides )
+				{
+					if( areaWalls[curArea].travelFlags != travelFlags )
+					{
+						BuildAreaWalls( curArea, travelFlags );
+					}
+					const aasAreaWalls_t& walls = areaWalls[curArea];
+					for( k = 0; k < walls.numQuads; k++ )
+					{
+						if( wallQuads[walls.firstQuad + k].edgeNum == edge1Num )
+						{
+							break;
+						}
+					}
+					if( k == walls.numQuads )
+					{
+						continue;
+					}
+				}
+				//puncho end
 				//puncho - Phase 2C P2.6 fix round A1: no wall at the corner an edge-0 reachability crosses
-				if( ai_edge0Walls.GetInteger() >= 1 && EdgeAtEdge0Reach( file, area, edge1Num ) )
+				if( !cacheDecides && ai_edge0Walls.GetInteger() >= 1 && EdgeEndsAtEdge0Reach( file, area, edge1Num ) != 0 )	//puncho - P2.7: !cacheDecides
 				{
 					continue;
 				}
@@ -960,6 +1189,9 @@ idAASLocal::BuildAreaWalls
   made per edge, kept at zero agent width with the back corners' direction per unit of half width so one cache serves
   every monster size. A chain closes within the area only: an edge whose wall goes on in the next area is extended a
   unit at that end instead of mitred, as the stock build did where its list ended.
+  Phase 2C: no wall where a floor face of an area this one walks to has the edge ( ai_wallSharedEdges ), nor at an
+  edge-0 corner ( ai_edge0Walls ); there ai_edge0WallProbe frees the edge only where floor lies beyond it all along,
+  else cuts it back from the corner. With either switch on, GetWallEdges lists this cache's edges.
 ============
 */
 void idAASLocal::BuildAreaWalls( int areaNum, int travelFlags ) const
@@ -971,6 +1203,15 @@ void idAASLocal::BuildAreaWalls( int areaNum, int travelFlags ) const
 	const aasFace_t* face1, *face2;
 	idReachability* reach;
 	idVec3 start, end;
+	//puncho start - Phase 2C P2.7: an edge cut back from an edge-0 corner ( ai_edge0WallProbe ), the cut from its signed
+	// start and end; kept apart from edges[] by edge number until SortWallEdges has ordered them
+	int cutEdges[MAX_AREA_WALL_EDGES], numCutEdges;
+	float cutLens[MAX_AREA_WALL_EDGES][2], cuts[MAX_AREA_WALL_EDGES][2], lengths[MAX_AREA_WALL_EDGES];
+	const bool sharedEdges = ai_wallSharedEdges.GetBool();
+	const bool edge0Probe = ai_edge0Walls.GetInteger() >= 1 && ai_edge0WallProbe.GetBool();
+	const float cutLength = edge0Probe ? Edge0WallCutLength( file ) : 0.0f;
+	numCutEdges = 0;
+	//puncho end
 
 	area = &file->GetArea( areaNum );
 	numEdges = 0;
@@ -1038,10 +1279,26 @@ void idAASLocal::BuildAreaWalls( int areaNum, int travelFlags ) const
 			{
 				continue;
 			}
-			//puncho - Phase 2C P2.6 fix round A1: no wall at the corner an edge-0 reachability crosses
-			if( ai_edge0Walls.GetInteger() >= 1 && EdgeAtEdge0Reach( file, area, edge1Num ) )
+			//puncho start - Phase 2C P2.7: no wall where the floor of an area this one walks to meets this floor
+			if( sharedEdges && EdgeSharedWithWalkArea( file, area, absEdge1Num, travelFlags ) )
 			{
 				continue;
+			}
+			//puncho end
+			//puncho - Phase 2C P2.6 fix round A1: no wall at the corner an edge-0 reachability crosses
+			if( ai_edge0Walls.GetInteger() >= 1 )
+			{
+				const int ends = EdgeEndsAtEdge0Reach( file, area, edge1Num );
+				if( ends != 0 )
+				{
+					//puncho start - Phase 2C P2.7: only where floor lies beyond it; else the wall stays, cut at the corner
+					if( !edge0Probe || !Edge0WallCuts( file, *face1, edge1Num, ends, cutLength, cutLens[numCutEdges] ) )
+					{
+						continue;
+					}
+					cutEdges[numCutEdges++] = edge1Num;
+					//puncho end
+				}
 			}
 
 			edges[numEdges++] = edge1Num;
@@ -1059,20 +1316,95 @@ void idAASLocal::BuildAreaWalls( int areaNum, int travelFlags ) const
 		GetEdge( edges[i], start, end );
 		GetEdgeVertexNumbers( edges[i], verts[i] );
 		dirs[i] = end.ToVec2() - start.ToVec2();
-		dirs[i].Normalize();
+		lengths[i] = dirs[i].Normalize();	//puncho - Phase 2C P2.7: the length, for the cuts
+		cuts[i][0] = cuts[i][1] = 0.0f;	//puncho - Phase 2C P2.7
 	}
+
+	//puncho start - Phase 2C P2.7: each cut edge's cuts back on its place in the sorted list; then the cut goes on from
+	// the corner into the edges chained to it, while the edge before is cut away to its end and the chain is still
+	// inside the circle of cutLength around the corner ( a corner edge's own cut may be longer where floor lies
+	// beyond it; the chain is cut by the circle only ). An edge the cuts leave less than EDGE0_WALL_MIN_LEFT of is no wall
+	if( numCutEdges > 0 )
+	{
+		for( i = 0; i < numEdges; i++ )
+		{
+			for( k = 0; k < numCutEdges; k++ )
+			{
+				if( cutEdges[k] == edges[i] )
+				{
+					cuts[i][0] = cutLens[k][0];
+					cuts[i][1] = cutLens[k][1];
+					break;
+				}
+			}
+		}
+		for( k = 0; k < numCutEdges; k++ )
+		{
+			for( i = 0; i < numEdges && edges[i] != cutEdges[k]; i++ )
+			{
+			}
+			// SortWallEdges can leave an edge out of its list ( stock: chaining a sequence after sequence i does not move
+			// sequenceLast[i] on, so a later link from the old last drops the chain after it ): such an edge has no place to cut
+			if( i == numEdges )
+			{
+				continue;
+			}
+			GetEdge( edges[i], start, end );
+			// a corner at the start: on past the edge's end into the edges chained after it
+			if( cutLens[k][0] > 0.0f )
+			{
+				const idVec2 corner = start.ToVec2();
+				for( j = i; j < numEdges - 1 && verts[j][1] == verts[j + 1][0] && cuts[j][0] + cuts[j][1] >= lengths[j] - EDGE0_WALL_MIN_LEFT; j++ )
+				{
+					idVec3 nextStart, nextEnd;
+					GetEdge( edges[j + 1], nextStart, nextEnd );
+					if( ( nextStart.ToVec2() - corner ).LengthSqr() >= Square( cutLength ) )
+					{
+						break;
+					}
+					cuts[j + 1][0] = Max( cuts[j + 1][0], CircleExit( nextStart.ToVec2(), dirs[j + 1], corner, cutLength ) );
+				}
+			}
+			// a corner at the end: back past the edge's start into the edges chained before it
+			if( cutLens[k][1] > 0.0f )
+			{
+				const idVec2 corner = end.ToVec2();
+				for( j = i; j > 0 && verts[j - 1][1] == verts[j][0] && cuts[j][0] + cuts[j][1] >= lengths[j] - EDGE0_WALL_MIN_LEFT; j-- )
+				{
+					idVec3 prevStart, prevEnd;
+					GetEdge( edges[j - 1], prevStart, prevEnd );
+					if( ( prevEnd.ToVec2() - corner ).LengthSqr() >= Square( cutLength ) )
+					{
+						break;
+					}
+					cuts[j - 1][1] = Max( cuts[j - 1][1], CircleExit( prevEnd.ToVec2(), -dirs[j - 1], corner, cutLength ) );
+				}
+			}
+		}
+	}
+	auto cutAway = [&]( int n ) -> bool
+	{
+		return ( cuts[n][0] > 0.0f || cuts[n][1] > 0.0f ) && cuts[n][0] + cuts[n][1] >= lengths[n] - EDGE0_WALL_MIN_LEFT;
+	};
+	//puncho end
 
 	aasAreaWalls_t& walls = areaWalls[areaNum];
 	walls.firstQuad = wallQuads.Num();
-	walls.numQuads = numEdges;
+	walls.numQuads = 0;	//puncho - Phase 2C P2.7: counted below ( numEdges where no edge is cut away )
 	walls.travelFlags = travelFlags;
 
 	for( i = 0; i < numEdges; i++ )
 	{
+		//puncho - Phase 2C P2.7
+		if( cutAway( i ) )
+		{
+			continue;
+		}
 		GetEdge( edges[i], start, end );
 		edgeNormal.Set( dirs[i].y, -dirs[i].x );
 
 		aasCachedWallQuad_t& quad = wallQuads.Alloc();
+		walls.numQuads++;	//puncho - Phase 2C P2.7
 		quad.edgeNum = edges[i];
 		quad.verts[0] = end.ToVec2();
 		quad.verts[1] = start.ToVec2();
@@ -1081,7 +1413,13 @@ void idAASLocal::BuildAreaWalls( int areaNum, int travelFlags ) const
 		quad.back[0] = -edgeNormal;
 		quad.back[1] = -edgeNormal;
 		// a chained corner is mitred with the neighbour's normal, a free end is extended along the edge
-		if( i > 0 && verts[i - 1][1] == verts[i][0] )
+		//puncho - Phase 2C P2.7: a cut end stops square at its cut, unextended; no mitre across a cut or with an edge cut away
+		if( cuts[i][0] > 0.0f )
+		{
+			quad.verts[1] = start.ToVec2() + dirs[i] * cuts[i][0];
+			quad.verts[2] = quad.verts[1];
+		}
+		else if( i > 0 && verts[i - 1][1] == verts[i][0] && cuts[i - 1][1] == 0.0f && !cutAway( i - 1 ) )
 		{
 			quad.back[0] -= idVec2( dirs[i - 1].y, -dirs[i - 1].x );
 		}
@@ -1089,7 +1427,12 @@ void idAASLocal::BuildAreaWalls( int areaNum, int travelFlags ) const
 		{
 			quad.verts[1] -= dirs[i];
 		}
-		if( i < numEdges - 1 && verts[i][1] == verts[i + 1][0] )
+		if( cuts[i][1] > 0.0f )
+		{
+			quad.verts[0] = end.ToVec2() - dirs[i] * cuts[i][1];
+			quad.verts[3] = quad.verts[0];
+		}
+		else if( i < numEdges - 1 && verts[i][1] == verts[i + 1][0] && cuts[i + 1][0] == 0.0f && !cutAway( i + 1 ) )
 		{
 			quad.back[1] -= idVec2( dirs[i + 1].y, -dirs[i + 1].x );
 		}
