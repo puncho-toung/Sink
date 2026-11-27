@@ -163,6 +163,24 @@ private:
 	nvrhi::BindingSetHandle			m_ResolveSets[2];
 	nvrhi::BindingSetHandle			m_IntegrateSets[2];
 	int								m_ResolvedIndex;
+	// ---- WP-J21: the fog's glow ( the bloom's gate ). The inject's and the integrate's USE_GLOW forms also keep, per
+	// froxel, the luminance of the in-scatter's part that never glows, and its integral; the bloom's level-1 pass reads it
+	// beside the integrated volume ( backEnd.froxelNoGlowVolume ). Made with the volumes; the forms run only in a view under
+	// the gate with r_bloomFogGlow ( BloomPass::FogGlowWantedForView ) ----
+	nvrhi::TextureHandle			m_NoGlow;
+	nvrhi::TextureHandle			m_NoGlowIntegrated;
+	nvrhi::ShaderHandle				m_InjectGlowShader;
+	nvrhi::ShaderHandle				m_InjectGlowClearAirShader;
+	nvrhi::BindingLayoutHandle		m_InjectGlowLayout;
+	nvrhi::ComputePipelineHandle	m_InjectGlow;
+	nvrhi::ComputePipelineHandle	m_InjectGlowClearAir;
+	nvrhi::BindingSetHandle			m_InjectGlowSet;
+	kernel_t						m_IntegrateGlow;
+	nvrhi::BindingSetHandle			m_IntegrateGlowSets[2];
+	bool							m_GlowDead;			// a part could not be made: the fog gives no glow under the gate
+	bool							m_NoGlowFresh;		// the volumes were just made: the first glow view clears m_NoGlow
+	bool							m_GlowRendered;		// the last Render ran the glow forms ( Apply hands the volume to the bloom )
+	// ---- END WP-J21 ----
 	nvrhi::BufferHandle				m_PrevRecords;		// last fog view's light records, copied after its inject: their colours, flags and volumes
 	nvrhi::BufferHandle				m_MovedRecords;		// the indices in m_PrevRecords of this view's lights that moved, or whose share jumped
 	nvrhi::BufferHandle				m_CasterBounds;		// by record, 2 * FOG_CASTER_BOXES float4: where a caster that changed shadows ( froxelView_t::casterBoxes: up to FOG_CASTER_BOXES by record )

@@ -521,6 +521,9 @@ struct viewEntity_t
 
 	bool					skipMotionBlur;
 
+	renderBloomStyle_t		bloomStyle;				// WP-J27: the entity's own bloom, copied from its parms ( the stage loop reads it, not the entityDef )
+	bool					noGlow;					// WP-J21: renderEntity_t::noGlow, copied the same way ( review R2-N4 )
+
 	bool					weaponDepthHack;
 	float					modelDepthHack;
 

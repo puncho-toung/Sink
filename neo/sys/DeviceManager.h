@@ -117,6 +117,11 @@ struct DeviceCreationParameters
 	// F3 ( D51 ): the device runs wave intrinsics in a pixel shader ( default = off, decided during device init ).
 	// RenderProgs picks the forward programs' USE_WAVE_OPS row by it
 	bool waveOps = false;
+
+	// WP-J21: pipelines may give each colour target its own blend state and write mask ( Vulkan's independentBlend
+	// feature, enabled during device init where the device has it; always so in D3D12 ). The bloom's glow mask, a
+	// second target with its own state, is made only when this is true
+	bool independentBlend = true;
 };
 
 struct DefaultMessageCallback : public nvrhi::IMessageCallback
@@ -217,6 +222,12 @@ public:
 	bool GetWaveOpsSupported() const
 	{
 		return m_DeviceParams.waveOps;
+	}
+
+	// WP-J21: each colour target may have its own blend state and write mask
+	bool GetIndependentBlendSupported() const
+	{
+		return m_DeviceParams.independentBlend;
 	}
 
 	virtual nvrhi::ITexture* GetCurrentBackBuffer() = 0;

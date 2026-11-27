@@ -466,6 +466,12 @@ void VolumetricFogPass::ReleaseVolume()
 		backEnd.froxelVolume = backEnd.froxelDummyVolume;
 		backEnd.bindingCache.Clear();
 	}
+	// WP-J21: the bloom forgets the never-glowing integral with it
+	if( m_NoGlowIntegrated && backEnd.froxelNoGlowVolume == m_NoGlowIntegrated.Get() )
+	{
+		backEnd.froxelNoGlowVolume = NULL;
+		backEnd.froxelGlowView = false;
+	}
 }
 
 /*
@@ -729,6 +735,59 @@ void VolumetricFogPass::InitInject()
 	m_Inject.pipeline = m_Device->createComputePipeline( pipelineDesc );
 	pipelineDesc.CS = m_InjectClearAirShader;
 	m_InjectClearAir = m_Device->createComputePipeline( pipelineDesc );
+
+	// ---- WP-J21: the fog's glow, the inject's two USE_GLOW forms ( their layout is the inject's and the never-glowing
+	// volume at u2 ) and the integrate's ( the resolved volume and the never-glowing one in, the two integrals out ) ----
+	m_GlowDead = true;
+	m_NoGlowFresh = false;
+	m_GlowRendered = false;
+	// ShaderSample: the bloom's FIRST 5 reads the never-glowing volume through a linear sampler, which Vulkan does not
+	// promise for R32F ( review R1-9 )
+	const nvrhi::FormatSupport glowFormat = nvrhi::FormatSupport::Texture | nvrhi::FormatSupport::ShaderUavStore | nvrhi::FormatSupport::ShaderLoad
+											| nvrhi::FormatSupport::ShaderSample;
+	if( ( m_Device->queryFormatSupport( nvrhi::Format::R32_FLOAT ) & glowFormat ) == glowFormat )
+	{
+		const idList<shaderMacro_t> glowMacros = { { "FROXEL_CLEAR_AIR", "0" }, { "USE_GLOW", "1" } };
+		const idList<shaderMacro_t> glowClearAirMacros = { { "FROXEL_CLEAR_AIR", "1" }, { "USE_GLOW", "1" } };
+		m_InjectGlowShader = renderProgManager.GetShader( renderProgManager.FindShader( "builtin/volumetrics/froxel_inject", SHADER_STAGE_COMPUTE, "_glow", glowMacros, true, LAYOUT_DRAW_VERT ) );
+		m_InjectGlowClearAirShader = renderProgManager.GetShader( renderProgManager.FindShader( "builtin/volumetrics/froxel_inject", SHADER_STAGE_COMPUTE, "_clearAir_glow", glowClearAirMacros, true, LAYOUT_DRAW_VERT ) );
+		layoutDesc.bindings.push_back( nvrhi::BindingLayoutItem::Texture_UAV( 2 ) );
+		m_InjectGlowLayout = m_Device->createBindingLayout( layoutDesc );
+		if( m_InjectGlowLayout && m_InjectGlowShader && m_InjectGlowClearAirShader )
+		{
+			pipelineDesc.bindingLayouts = { m_InjectGlowLayout };
+			pipelineDesc.CS = m_InjectGlowShader;
+			m_InjectGlow = m_Device->createComputePipeline( pipelineDesc );
+			pipelineDesc.CS = m_InjectGlowClearAirShader;
+			m_InjectGlowClearAir = m_Device->createComputePipeline( pipelineDesc );
+		}
+		const idList<shaderMacro_t> integrateGlowMacros;
+		m_IntegrateGlow.shader = renderProgManager.GetShader( renderProgManager.FindShader( "builtin/volumetrics/froxel_integrate_glow", SHADER_STAGE_COMPUTE, "", integrateGlowMacros, true, LAYOUT_DRAW_VERT ) );
+		nvrhi::BindingLayoutDesc integrateDesc;
+		integrateDesc.visibility = nvrhi::ShaderType::Compute;
+		integrateDesc.bindings =
+		{
+			nvrhi::BindingLayoutItem::VolatileConstantBuffer( 1 ),
+			nvrhi::BindingLayoutItem::Texture_SRV( 0 ),
+			nvrhi::BindingLayoutItem::Texture_UAV( 0 ),
+			nvrhi::BindingLayoutItem::Texture_SRV( 1 ),
+			nvrhi::BindingLayoutItem::Texture_UAV( 1 )
+		};
+		m_IntegrateGlow.layout = m_Device->createBindingLayout( integrateDesc );
+		if( m_IntegrateGlow.layout && m_IntegrateGlow.shader )
+		{
+			nvrhi::ComputePipelineDesc integratePipelineDesc;
+			integratePipelineDesc.bindingLayouts = { m_IntegrateGlow.layout };
+			integratePipelineDesc.CS = m_IntegrateGlow.shader;
+			m_IntegrateGlow.pipeline = m_Device->createComputePipeline( integratePipelineDesc );
+		}
+		m_GlowDead = !m_InjectGlow || !m_InjectGlowClearAir || !m_IntegrateGlow.pipeline;
+	}
+	if( m_GlowDead )
+	{
+		common->Warning( "VolumetricFogPass: the fog's glow could not be made: under the bloom's gate the fog gives no glow" );
+	}
+	// ---- END WP-J21 ----
 }
 
 /*
@@ -793,6 +852,13 @@ bool VolumetricFogPass::CheckInjectSet()
 	};
 	m_Inject.bindingSet = m_Device->createBindingSet( injectDesc, m_Inject.layout );
 	memcpy( m_InjectSetKey, key, sizeof( key ) );
+	// WP-J21: the glow forms' set, the same and the never-glowing volume
+	m_InjectGlowSet = nullptr;
+	if( !m_GlowDead && m_NoGlow )
+	{
+		injectDesc.bindings.push_back( nvrhi::BindingSetItem::Texture_UAV( 2, m_NoGlow ) );
+		m_InjectGlowSet = m_Device->createBindingSet( injectDesc, m_InjectGlowLayout );
+	}
 	return m_Inject.bindingSet != nullptr;
 }
 
@@ -893,6 +959,36 @@ bool VolumetricFogPass::CheckVolumes( int gridWidth, int gridHeight, int gridSli
 
 	m_Inject.bindingSet = nullptr;			// it named the old injected volume
 
+	// ---- WP-J21: the fog's glow volumes and the integrate's glow sets; without them the fog gives no glow, and has its fog ----
+	m_NoGlow = nullptr;
+	m_NoGlowIntegrated = nullptr;
+	m_InjectGlowSet = nullptr;
+	m_IntegrateGlowSets[0] = nullptr;
+	m_IntegrateGlowSets[1] = nullptr;
+	if( !m_GlowDead )
+	{
+		nvrhi::TextureDesc glowDesc = m_Integrated->getDesc();
+		glowDesc.format = nvrhi::Format::R32_FLOAT;
+		glowDesc.isUAV = true;
+		glowDesc.isRenderTarget = false;
+		glowDesc.initialState = nvrhi::ResourceStates::UnorderedAccess;
+		glowDesc.keepInitialState = true;
+		glowDesc.debugName = "Fog/NoGlow";
+		m_NoGlow = m_Device->createTexture( glowDesc );
+		glowDesc.debugName = "Fog/NoGlowIntegrated";
+		m_NoGlowIntegrated = m_Device->createTexture( glowDesc );
+		if( m_NoGlow && m_NoGlowIntegrated )
+		{
+			m_NoGlowFresh = true;
+		}
+		else
+		{
+			m_NoGlow = nullptr;
+			m_NoGlowIntegrated = nullptr;
+		}
+	}
+	// ---- END WP-J21 ----
+
 	// V3: a set of each kernel for each turn of the two resolved volumes: in turn i the resolve writes m_Resolved[ i ]
 	// from the other one, and the integrate reads m_Resolved[ i ]
 	for( int i = 0; i < 2; i++ )
@@ -920,6 +1016,21 @@ bool VolumetricFogPass::CheckVolumes( int gridWidth, int gridHeight, int gridSli
 			nvrhi::BindingSetItem::Texture_UAV( 0, m_Integrated )
 		};
 		m_IntegrateSets[i] = m_Device->createBindingSet( integrateDesc, m_Integrate.layout );
+
+		// WP-J21: the integrate's glow form reads the never-glowing volume beside the resolved one
+		if( m_NoGlow )
+		{
+			nvrhi::BindingSetDesc integrateGlowDesc;
+			integrateGlowDesc.bindings =
+			{
+				nvrhi::BindingSetItem::ConstantBuffer( 1, m_ConstantBuffer ),
+				nvrhi::BindingSetItem::Texture_SRV( 0, m_Resolved[ i ] ),
+				nvrhi::BindingSetItem::Texture_UAV( 0, m_Integrated ),
+				nvrhi::BindingSetItem::Texture_SRV( 1, m_NoGlow ),
+				nvrhi::BindingSetItem::Texture_UAV( 1, m_NoGlowIntegrated )
+			};
+			m_IntegrateGlowSets[i] = m_Device->createBindingSet( integrateGlowDesc, m_IntegrateGlow.layout );
+		}
 	}
 
 	// V4: the media pass's set: the media list, the columns and the media volume, all the pass's own
@@ -1415,10 +1526,27 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 		commandList->dispatch( groupsX, groupsY, gridSlices );
 		ZoneEnd( commandList, FOG_ZONE_MEDIA );
 	}
+	// WP-J21: the glow forms, in a view under the bloom's gate with the fog's glow on and every part of them there
+	const bool glow = !m_GlowDead && m_InjectGlowSet && m_IntegrateGlowSets[ 1 - m_ResolvedIndex ] && BloomPass::FogGlowWantedForView( viewDef );
+	m_GlowRendered = glow;
+	if( glow && m_NoGlowFresh )
+	{
+		// a new volume holds whatever the allocation held, and the integrate reads every froxel the inject may skip
+		commandList->clearTextureFloat( m_NoGlow, nvrhi::AllSubresources, nvrhi::Color( 0.0f ) );
+		m_NoGlowFresh = false;
+	}
 	{
 		OPTICK_GPU_EVENT( "Fog_Inject" );
-		state.pipeline = clearAir ? m_InjectClearAir : m_Inject.pipeline;		// V8 ( B1 )
-		state.bindings = { m_Inject.bindingSet };
+		if( glow )
+		{
+			state.pipeline = clearAir ? m_InjectGlowClearAir : m_InjectGlow;		// WP-J21
+			state.bindings = { m_InjectGlowSet };
+		}
+		else
+		{
+			state.pipeline = clearAir ? m_InjectClearAir : m_Inject.pipeline;		// V8 ( B1 )
+			state.bindings = { m_Inject.bindingSet };
+		}
 		ZoneBegin( commandList, FOG_ZONE_INJECT );
 		commandList->setComputeState( state );
 		assert( !m_BoundsOn || clearAir );		// the box's dispatch is the clear-air permutation's ( review O2-13 )
@@ -1455,8 +1583,8 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 	{
 		// one thread per column: it walks the slices from the camera outward
 		OPTICK_GPU_EVENT( "Fog_Integrate" );
-		state.pipeline = m_Integrate.pipeline;
-		state.bindings = { m_IntegrateSets[ m_ResolvedIndex ] };
+		state.pipeline = glow ? m_IntegrateGlow.pipeline : m_Integrate.pipeline;		// WP-J21
+		state.bindings = { glow ? m_IntegrateGlowSets[ m_ResolvedIndex ] : m_IntegrateSets[ m_ResolvedIndex ] };
 		ZoneBegin( commandList, FOG_ZONE_INTEGRATE );
 		commandList->setComputeState( state );
 		commandList->dispatch( groupsX, groupsY, 1 );
@@ -2350,6 +2478,9 @@ void VolumetricFogPass::Apply( nvrhi::ICommandList* commandList, const viewDef_t
 
 	// from here on the engine's fog set binds this view's volume in place of the dummy
 	backEnd.froxelVolume = m_Integrated;
+	// WP-J21: and the bloom's level-1 pass reads the never-glowing integral where this view's Render made it
+	backEnd.froxelGlowView = m_GlowRendered;
+	backEnd.froxelNoGlowVolume = m_GlowRendered ? m_NoGlowIntegrated.Get() : NULL;
 	// V5: and the translucent draws after the apply fog themselves at their own depth ( D20, D83 ), until the end of
 	// the view's translucent shader passes
 	// ( review O1-3: also where the inject took fog lights, which the frontend did only with the cvar on: the fog pass skips

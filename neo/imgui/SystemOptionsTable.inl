@@ -147,6 +147,38 @@ static const optionChoice_t choicesFogQuality[] =
 static const char* NEEDS_DOOM3_MODE = "Needs the render mode Doom 3 ( Retro Looks ).";
 static const char* NEEDS_TAA = "Needs TAA.";
 static const char* NEEDS_BLOOM = "Needs Bloom on.";
+// ---- WP-J21, WP-J24: the bloom's gate and its convolution ----
+static const char* NEEDS_FFT = "Needs Fourier Bloom on.";
+static const char* NEEDS_EMITTERS = "Needs Bloom From set to Emitters and Fog.";	// WP-J27
+static const char* NEEDS_SPIKES = "Needs the Diffraction Spikes shape.";
+static const char* NEEDS_GLOW_SHAPE = "Needs the Inverse Square Glow shape.";
+
+static const optionChoice_t choicesBloomSource[] =
+{
+	{ 1, "Emitters and Fog" },
+	{ 0, "Everything Bright" },
+};
+
+static const optionChoice_t choicesBloomWeapon[] =
+{
+	{ -1, "As Bloom From" },
+	{ 1, "Glows" },
+	{ 0, "No Glow" },
+};
+
+static const optionChoice_t choicesBloomQuality[] =
+{
+	{ 0, "Low" },
+	{ 1, "Medium" },
+	{ 2, "High" },
+};
+
+static const optionChoice_t choicesBloomShape[] =
+{
+	{ 0, "Diffraction Spikes" },
+	{ 1, "Inverse Square Glow" },
+};
+// ---- END WP-J21, WP-J24 ----
 static const char* NEEDS_SHADOWS = "Needs Shadows on.";
 static const char* NEEDS_FOG = "Needs Volumetric Fog on.";
 
@@ -211,10 +243,48 @@ static void BuildTable()
 	AddSection( "Bloom", 0 );
 	Toggle( "Bloom", "r_bloom" ).Summary( "" ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
 	.Desc( "Bright lamps and emitters glow. Off is the crisp picture with no glow at all." );
+	Choice( "Bloom From", "r_bloomSource", choicesBloomSource ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
+	.Desc( "Emitters and Fog: only what gives light glows ( lamps, screens, fire, flashes, and fog a light lights ), by the same threshold and strength. Everything Bright: anything above the threshold glows, lit walls and highlights included." );
 	Slider( "Strength", "r_bloomGlow", 0.0f, 1.0f, 0.01f, "%.2f" ).Summary( "Strength" ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
 	.Desc( "How bright the glow is; 0 draws none. The owner's setting is 0.24." );
 	Slider( "Tail", "r_bloomGlowTail", 0.25f, 1.0f, 0.01f, "%.2f" ).Summary( "Tail" ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
-	.Desc( "How far the glow reaches: low is a tight glow, 1 a wide halo. The owner's setting is 0.34." );
+	.Desc( "How far the glow reaches: low is a tight glow, 1 a wide halo. The owner's setting is 0.34. Under Fourier Bloom: the shaped glow's share of the bloom ( a third at 0.34 ); Spike Length or Glow Radius sets its reach." );
+	Toggle( "Fourier Bloom", "r_bloomFFT" ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
+	.Desc( "The glow's tail is one convolution with a shaped kernel by a fast Fourier transform: diffraction spikes or an inverse-square glow. Off is the chain of half-size blurs." );
+	Choice( "Quality", "r_bloomFFTQuality", choicesBloomQuality ).Parent( "r_bloomFFT", V( 1 ), NEEDS_FFT ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
+	.Desc( "The convolution's field: Low is the fastest and softest, High the sharpest spikes, for screenshots ( about a tenth of a millisecond more than Medium ).");
+	Choice( "Shape", "r_bloomFFTShape", choicesBloomShape ).Parent( "r_bloomFFT", V( 1 ), NEEDS_FFT ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
+	.Desc( "Diffraction Spikes: the starburst a camera's aperture makes round a bright light. Inverse Square Glow: a soft round glow that falls off with distance." );
+	Slider( "Hot Boost", "r_bloomHotBoost", 0.0f, 8.0f, 0.1f, "%.1f stops" ).Parent( "r_bloomSource", V( 1 ), NEEDS_EMITTERS ).Parent( "r_bloomFFT", V( 1 ), NEEDS_FFT ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
+	.Desc( "Makes an emitter's hottest pixels this many stops brighter for the shaped glow alone, so its spikes or glow reach further; the light itself and its tight core do not change, and the HDR Whitepoint still holds. The same near and far. 0 is off; 3 by default. A light can have its own in the light editor's Bloom tab." );
+	Slider( "Hot Level", "r_bloomHotLevel", 1.0f, 64.0f, 0.1f, "%.1f" ).Flags( OPTF_LOG | OPTF_ADVANCED ).Parent( "r_bloomSource", V( 1 ), NEEDS_EMITTERS ).Parent( "r_bloomFFT", V( 1 ), NEEDS_FFT ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
+	.Desc( "How bright a pixel must be, in exposed units, to take the whole Hot Boost; from the threshold up to here the boost rises smoothly ( retail lamps are 2 to 3 )." );
+	Slider( "Padding", "r_bloomFFTPadding", 0.0f, 0.5f, 0.01f, "%.2f" ).Flags( OPTF_ADVANCED ).Parent( "r_bloomFFT", V( 1 ), NEEDS_FFT ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
+	.Desc( "The black margin round the picture the glow spreads into, which is how far it can reach: more reaches further with coarser spikes; 0 leaves the shaped glow its centre alone." );
+	Slider( "Exposure Bias", "r_bloomExposureBias", -5.0f, 5.0f, 0.1f, "%+.1f stops" ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
+	.Desc( "How bright the light that may glow is, before the threshold ( the picture itself does not change ): higher lets the faint parts of emitters glow too, lower only the brightest." );
+	Slider( "HDR Whitepoint", "r_bloomCeiling", 1.0f, 4096.0f, 1.0f, "%.0f" ).Flags( OPTF_LOG | OPTF_ADVANCED ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
+	.Desc( "The brightest value that enters the glow; brighter light is held to it. 256 keeps every lamp whole; at or under the threshold nothing glows." );
+	SliderInt( "Spikes", "r_bloomSpikes", 1, 7, 1, "%d" ).Parent( "r_bloomFFTShape", V( 0 ), NEEDS_SPIKES ).Parent( "r_bloomFFT", V( 1 ), NEEDS_FFT ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
+	.Desc( "The arms through each light: 3 gives six rays, as a six-bladed aperture does." );
+	Slider( "Spike Rotation", "r_bloomSpikeRotation", 0.0f, 1.0f, 0.01f, "%.2f" ).Parent( "r_bloomFFTShape", V( 0 ), NEEDS_SPIKES ).Parent( "r_bloomFFT", V( 1 ), NEEDS_FFT ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
+	.Desc( "Turns the star; 0 and 1 are the same." );
+	Slider( "Spike Length", "r_bloomSpikeRadius", 0.0f, 1.0f, 0.01f, "%.2f" ).Parent( "r_bloomFFTShape", V( 0 ), NEEDS_SPIKES ).Parent( "r_bloomFFT", V( 1 ), NEEDS_FFT ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
+	.Desc( "How far the arms reach: 0 short and tight to the light, 1 across the whole reach." );
+	Slider( "Spike Blur", "r_bloomSpikeBlur", 0.0f, 1.0f, 0.01f, "%.2f" ).Parent( "r_bloomFFTShape", V( 0 ), NEEDS_SPIKES ).Parent( "r_bloomFFT", V( 1 ), NEEDS_FFT ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
+	.Desc( "Softens the arms' edges." );
+	Slider( "Spike Spread", "r_bloomSpikeSpread", 0.0f, 1.0f, 0.01f, "%.2f" ).Parent( "r_bloomFFTShape", V( 0 ), NEEDS_SPIKES ).Parent( "r_bloomFFT", V( 1 ), NEEDS_FFT ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
+	.Desc( "Fans each arm out along its length: 0 thin lines." );
+	Slider( "Spike Ratio", "r_bloomSpikeRatio", -1.0f, 1.0f, 0.01f, "%+.2f" ).Parent( "r_bloomFFTShape", V( 0 ), NEEDS_SPIKES ).Parent( "r_bloomFFT", V( 1 ), NEEDS_FFT ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
+	.Desc( "Stretches the star across ( above 0 ) or up and down ( below 0 )." );
+	Slider( "Spike Ringing", "r_bloomSpikeRinging", 0.0f, 1.0f, 0.01f, "%.2f" ).Parent( "r_bloomFFTShape", V( 0 ), NEEDS_SPIKES ).Parent( "r_bloomFFT", V( 1 ), NEEDS_FFT ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
+	.Desc( "The bright and dark bands along each arm." );
+	Slider( "Spectral Shift", "r_bloomSpikeShift", 0.0f, 1.0f, 0.01f, "%.2f" ).Parent( "r_bloomFFTShape", V( 0 ), NEEDS_SPIKES ).Parent( "r_bloomFFT", V( 1 ), NEEDS_FFT ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
+	.Desc( "A rainbow along the arms: each colour's spikes a little longer or shorter, as light of each wavelength bends. The picture itself is not shifted." );
+	Slider( "Glow Radius", "r_bloomGlowRadius", 0.0f, 1.0f, 0.01f, "%.2f" ).Parent( "r_bloomFFTShape", V( 1 ), NEEDS_GLOW_SHAPE ).Parent( "r_bloomFFT", V( 1 ), NEEDS_FFT ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
+	.Desc( "How far the glow spreads round each light, as a share of the reach." );
+	Slider( "Glare", "r_bloomGlare", 0.0f, 1.0f, 0.01f, "%.2f" ).Parent( "r_bloomFFTShape", V( 1 ), NEEDS_GLOW_SHAPE ).Parent( "r_bloomFFT", V( 1 ), NEEDS_FFT ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
+	.Desc( "A tight bright core within the glow round each light." );
 	Slider( "Knee", "r_bloomFireflyKnee", 16.0f, 1024.0f, 16.0f, "%.0f" ).Flags( OPTF_LOG ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
 	.Desc( "Caps what a lone very bright pixel adds to the glow ( about a third of this ): lower stops sparkles and specks from blooming, too low dims real lamps." );
 	Slider( "Threshold", "r_bloomThreshold", 0.5f, 8.0f, 0.1f, "%.2f" ).Flags( OPTF_LOG ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
@@ -223,8 +293,8 @@ static void BuildTable()
 	.Desc( "A soft ramp round the threshold, as a share of it; 0 is a hard edge where surfaces pop into the glow." );
 	Toggle( "Distance Tail", "r_bloomTailDistance" ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
 	.Desc( "Far lamps get a smaller halo than near ones, as a glow in the air would; off gives every lamp the same tail." );
-	Toggle( "Weapon Glow", "r_bloomViewWeapon" ).Flags( OPTF_ADVANCED ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
-	.Desc( "On: the first-person weapon glows like the world, a halo against the dark. Off: it gives no glow, its lit parts and muzzle flash included." );
+	Choice( "Weapon Glow", "r_bloomViewWeapon", choicesBloomWeapon ).Flags( OPTF_ADVANCED ).Parent( "r_bloom", V( 1 ), NEEDS_BLOOM ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )
+	.Desc( "As Bloom From: under Emitters and Fog the weapon's own lights and its muzzle flash glow and its lit metal does not; under Everything Bright it gives no glow. Glows: like the world, a halo against the dark. No Glow: none at all." );
 
 	AddSection( "Post Effects", 0 );
 	Toggle( "Filmic Finish", "r_useFilmicPostFX" ).Summary( "Filmic" ).Parent( "r_renderMode", V( 0 ), NEEDS_DOOM3_MODE )

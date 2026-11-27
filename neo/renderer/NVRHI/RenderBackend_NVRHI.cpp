@@ -3417,6 +3417,10 @@ idRenderBackend::idRenderBackend()
 	ssaoPass = nullptr;
 	volumetricFogPass = nullptr;
 	bloomPass = nullptr;		// TRACK G: the bloom pass; GL_StartFrame makes it while r_bloom is on
+	glowGateView = false;		// WP-J21: set for each view where it binds _hdr
+	glowMaskWritten = false;
+	froxelGlowView = false;		// WP-J21: set by the fog's apply
+	froxelNoGlowVolume = NULL;
 	viewHistoryCut = false;
 	froxelFogTranslucent = false;	// TRACK V ( V5 )
 	froxelFogLightsTaken = false;	// TRACK V ( V5 )

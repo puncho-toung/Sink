@@ -686,6 +686,8 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 	vEntity->modelDepthHack = renderEntity->modelDepthHack;
 	vEntity->weaponDepthHack = renderEntity->weaponDepthHack;
 	vEntity->skipMotionBlur = renderEntity->skipMotionBlur;
+	vEntity->bloomStyle = renderEntity->bloomStyle;		// WP-J27: the source's own bloom, for the stage loop
+	vEntity->noGlow = renderEntity->noGlow;				// WP-J21: the glow switch, read there too
 
 	// the absolute matrix for the frontend, and the matrix relative to the render origin for the
 	// model view and the backend; at a zero origin both are the def's matrix

@@ -183,7 +183,8 @@ The fog's bits of a light's record, OR'd into it by R_LightListFlattenRecord; re
 R_LightListRecordFlags decided them. An ambient record carries the kind's bit, which says which of the two default
 falloff images the inject reads for it ( the stock ambient light material has the point light's ); the record is the
 fog's alone and is never listed. The light's own word on the fog is the spawnarg "volumetric"
-( renderLight_t::volumetricMode ); any other value reads as LIGHT_VOLUMETRIC_AUTO.
+( renderLight_t::volumetricMode ); any other value reads as LIGHT_VOLUMETRIC_AUTO. WP-J21: its word on the bloom is the
+spawnarg "emit_glow" ( renderLight_t::noGlow ): at 0 the record carries RLF_FOG_NOGLOW, and the fog it gives never glows.
 ====================
 */
 uint32 R_VolumetricFogRecordFlags( const viewLight_t* vLight, uint32 recordFlags )
@@ -202,6 +203,12 @@ uint32 R_VolumetricFogRecordFlags( const viewLight_t* vLight, uint32 recordFlags
 	{
 		flags |= RLF_FOG_OFF;
 	}
+	// ---- WP-J21: the emitter's switch ----
+	if( vLight->lightDef->parms.noGlow )
+	{
+		flags |= RLF_FOG_NOGLOW;
+	}
+	// ---- END WP-J21 ----
 	return flags;
 }
 

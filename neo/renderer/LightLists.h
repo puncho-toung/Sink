@@ -57,7 +57,9 @@ enum
 	RLF_FOG_NOSHADOW		= BIT( 10 ),	// V2: the froxel inject takes the light also where it has no placed shadow map ( D80 )
 	RLF_FOG_OFF				= BIT( 11 ),	// V2: the froxel inject leaves the light out
 	RLF_FOG_NOCASTER		= BIT( 12 ),	// V3: a light that casts shadows has no caster in the view and a shadow LOD: the froxel inject takes it unshadowed, times its fade ( row 50 )
-	RLF_FOG_CASTERMOVED		= BIT( 13 )		// V3: an entity among the light's casters changed this frame: the froxel fog's history is clipped where it shadows ( the fog's caster boxes )
+	RLF_FOG_CASTERMOVED		= BIT( 13 ),	// V3: an entity among the light's casters changed this frame: the froxel fog's history is clipped where it shadows ( the fog's caster boxes )
+	// bit 14 is WP-J11's, bits 15 to 25 WP-J16's
+	RLF_FOG_NOGLOW			= BIT( 26 )		// WP-J21: the light's spawnarg "emit_glow" 0 ( renderLight_t::noGlow ): its fog gives the bloom no glow
 };
 
 const int MAX_RECORD_LIGHTS = 1024;
@@ -79,7 +81,7 @@ struct alignas( 16 ) recordLight_t
 	idVec4		spotDir;			// xyz = cone axis ( a direction: the same in the map frame and the relative frame ), w = spot bias ( 1 = omni )
 	int			shadowRow;			// first row of this light's shadow rows; -1 = unshadowed
 	uint32		channelMask;		// bit 0 = default; spectrum lights set bit ( 1 + spectrum )
-	uint32		flags;				// RLF_SUN, RLF_POINT, RLF_PARALLEL, RLF_EMITTER, RLF_DEFAULT_TEXTURES ( D39 ), RLF_CLUSTERED ( may be listed, D40 ), RLF_AMBIENT and RLF_FOGLIGHT ( inject only, D26, D40 ), RLF_NOSPECULAR, RLF_MOVED_THIS_FRAME, RLF_FOG_NOSHADOW and RLF_FOG_OFF ( the inject's, V2 ), RLF_FOG_NOCASTER and RLF_FOG_CASTERMOVED ( the inject's, V3 )
+	uint32		flags;				// RLF_SUN, RLF_POINT, RLF_PARALLEL, RLF_EMITTER, RLF_DEFAULT_TEXTURES ( D39 ), RLF_CLUSTERED ( may be listed, D40 ), RLF_AMBIENT and RLF_FOGLIGHT ( inject only, D26, D40 ), RLF_NOSPECULAR, RLF_MOVED_THIS_FRAME, RLF_FOG_NOSHADOW and RLF_FOG_OFF ( the inject's, V2 ), RLF_FOG_NOCASTER and RLF_FOG_CASTERMOVED ( the inject's, V3 ), RLF_FOG_NOGLOW ( the bloom's, WP-J21 )
 	int			uniqueId;			// idRenderLightLocal::uniqueId ( world-monotonic, D44 ), copied by the frontend; the volumetrics history key
 	idVec4		lightProject[4];	// relative planes S, T, Q, falloff: the viewLight_t planes, unchanged ( already relative ) ( hasMatrix lights have no record, D57 )
 	idVec4		emitter[3];			// rpUser0..2 exactly as the interaction pass sets them: viewEmitter_t::parms[0..2], packed once per view by R_AddSingleLight; zero when !RLF_EMITTER //puncho - reconcile: emitter in place of the math light

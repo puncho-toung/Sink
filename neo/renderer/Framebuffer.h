@@ -150,6 +150,7 @@ struct globalFramebuffers_t
 	Framebuffer*				shadowAtlasFBO;
 	Framebuffer*				shadowFBO[MAX_SHADOWMAP_RESOLUTIONS][6];
 	Framebuffer*				hdrFBO;
+	Framebuffer*				hdrGlowFBO;		// WP-J21: _hdr with the glow mask as a second target; NULL under MSAA ( the gate is then off )
 	Framebuffer*				ldrFBO;
 	Framebuffer*				postProcFBO; // HDR16 used by 3D effects like heatHaze
 	Framebuffer*				taaMotionVectorsFBO;

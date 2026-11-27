@@ -424,6 +424,10 @@ private:
 	nvrhi::BufferHandle				froxelFogParms;			// volatile, sizeof( froxelFogParms_t ); zeroed at the start of every 3D view
 	nvrhi::TextureHandle			froxelDummyVolume;		// the 1x1x1 "no fog" volume; owned here for the backend's lifetime
 	nvrhi::TextureHandle			froxelVolume;			// the volume the fog set binds: the dummy until track V swaps in its own at a pass boundary
+	// WP-J21: the fog's glow. Set by the fog's apply where its Render ran the glow forms in this view, false again at the
+	// start of every 3D view; the bloom's level-1 pass reads froxelNoGlowVolume beside froxelVolume
+	bool							froxelGlowView;
+	nvrhi::ITexture*				froxelNoGlowVolume;
 	// ResetGraphicsStateCache() after the swap, because a binding set is re-patched only when GetCurrentBindingLayout runs again
 	bool							viewHistoryCut;			// H10: this main view's camera cut, decided once at the start of its draw
 	// ---- END X0 ----
@@ -528,6 +532,25 @@ private:
 	friend class BloomPass;
 	BloomPass*						bloomPass;
 	// ---- END TRACK G ----
+	// ---- WP-J21: the bloom's gate in the stage loop. glowGateView: this view's stage loops write the glow mask ( a main
+	// view drawn into _hdr, the gate on, _hdrGlow there ); glowMaskWritten: an emitting stage drew this view, so the mask
+	// was cleared and holds what passes the gate ( the bloom reads it ). Both are set where the view binds _hdr ----
+	bool							glowGateView;
+	bool							glowMaskWritten;
+	bool							GlowStagePasses( const idMaterial* shader, const shaderStage_t* pStage, const drawSurf_t* surf, uint64 stageGLState ) const;
+	// ---- END WP-J21 ----
+	// ---- WP-J27: the sources' own blooms ( renderBloomStyle_t ). An emitting stage of an entity with a style of its own writes
+	// its slot into the glow mask ( texture_color's glow twin: green = the luminance times the slot ); the bloom gives each slot
+	// its strength, its boost and, under the Fourier bloom, its kernel. Slot 0 is the view's. A style keeps its slot across
+	// frames while it is in view, so the bloom keeps its kernel; a style that finds every slot taken in this view takes the
+	// view's ( glowStyleOverflow counts them for bloomProbe ) ----
+	renderBloomStyle_t				glowStyles[ BLOOM_STYLE_SLOTS ];		// [0] unused ( the view's )
+	int							glowStyleView[ BLOOM_STYLE_SLOTS ];		// the glowStyleSerial of the last view that drew with the slot; 0 = never
+	int							glowStyleSerial;						// one a view under the gate
+	int							glowStyleOverflow;						// this view's styles that took the view's slot for want of one
+	float							glowStyleDrawSlot;						// the stage being drawn: its slot, sent in rpTexGen0Enabled.z ( 0 for every other draw )
+	int							GlowStyleSlot( const viewEntity_t* space, uint64 stageGLState );
+	// ---- END WP-J27 ----
 	TemporalAntiAliasingPass*		taaPass;
 
 	BindingCache					bindingCache;

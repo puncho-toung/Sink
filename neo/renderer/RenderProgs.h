@@ -637,6 +637,14 @@ enum
 	BUILTIN_PBR_INTERACTION_AMBIENT_FOG,
 	BUILTIN_PBR_INTERACTION_AMBIENT_SKINNED_FOG,
 	// ---- END TRACK V ----
+	// ---- WP-J21: the glow twins of the emitting stages' programs: the same light, and its luminance into the glow mask
+	// as a second output ( the bloom's gate ). Bound by the stage loop for a stage that passes the gate ----
+	BUILTIN_TEXTURE_VERTEXCOLOR_GLOW,
+	BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED_GLOW,
+	BUILTIN_TEXTURE_VERTEXCOLOR_FOG_GLOW,
+	BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED_FOG_GLOW,
+	BUILTIN_BINK_GLOW,
+	// ---- END WP-J21 ----
 
 	MAX_BUILTINS
 };
@@ -1357,6 +1365,45 @@ public:
 		}
 	}
 	// ---- END TRACK V ----
+
+	// ---- WP-J21: the glow twin of a builtin, -1 where it has none ( a stage drawn by another program writes no mask ) ----
+	static int	GlowTwin( int builtin )
+	{
+		switch( builtin )
+		{
+			case BUILTIN_TEXTURE_VERTEXCOLOR:
+				return BUILTIN_TEXTURE_VERTEXCOLOR_GLOW;
+			case BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED:
+				return BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED_GLOW;
+			case BUILTIN_TEXTURE_VERTEXCOLOR_FOG:
+				return BUILTIN_TEXTURE_VERTEXCOLOR_FOG_GLOW;
+			case BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED_FOG:
+				return BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED_FOG_GLOW;
+			case BUILTIN_BINK:
+				return BUILTIN_BINK_GLOW;
+			default:
+				return -1;
+		}
+	}
+
+	// swaps the program bound now for its glow twin; false where it has none
+	bool	BindShader_GlowTwin()
+	{
+		const int twin = GlowTwin( currentIndex );
+		if( twin < 0 )
+		{
+			return false;
+		}
+		BindShader_Builtin( twin );
+		return true;
+	}
+
+	// a program that writes the glow mask as its second output ( PipelineCache: the second target takes its blend )
+	static bool	IsGlowProgram( int program )
+	{
+		return program >= BUILTIN_TEXTURE_VERTEXCOLOR_GLOW && program <= BUILTIN_BINK_GLOW;
+	}
+	// ---- END WP-J21 ----
 
 	// the joints buffer should only be bound for vertex programs that use joints
 	bool		ShaderUsesJoints() const

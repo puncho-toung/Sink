@@ -2138,6 +2138,11 @@ void idRestoreGame::ReadRenderEntity( renderEntity_t& renderEntity )
 	renderEntity.maxVisDist = renderEntity.minVisPixels = 0.0f;
 	renderEntity.cullShadow = 0;
 	renderEntity.lodScale = 1.0f;
+	// WP-J21, WP-J27: neither is in the stream ( its format is unchanged ). An idLight sets both again from its dict, on its
+	// visual model in its Restore and on its modelTarget by an event once every object is restored; every other entity gets
+	// the defaults: it glows, with the view's bloom ( a cleared style )
+	renderEntity.noGlow = false;
+	memset( &renderEntity.bloomStyle, 0, sizeof( renderEntity.bloomStyle ) );
 	ReadModel( renderEntity.hModel );
 
 	ReadInt( renderEntity.entityNum );
@@ -2219,6 +2224,8 @@ void idRestoreGame::ReadRenderLight( renderLight_t& renderLight )
 	renderLight.fogAlbedo = 0.0f;			// V4: the same
 	renderLight.fogEmissionBias = 0.0f;	// V7: the same ( glow 1 )
 	renderLight.fogEdge = 0.0f;				// V7: the same ( hard sides )
+	renderLight.noGlow = false;				// WP-J21: the same ( emit_glow 1 )
+	memset( renderLight.glowPad, 0, sizeof( renderLight.glowPad ) );
 	ReadMat3( renderLight.axis );
 	ReadVec3( renderLight.origin );
 

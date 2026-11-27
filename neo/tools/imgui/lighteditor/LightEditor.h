@@ -54,6 +54,35 @@ enum ELightType
 	LIGHT_SUN
 };
 
+// WP-J27: a light's own bloom, the bloom_* keys ( the Bloom tab, every light; RenderWorld.h's BLOOM_KEY_* ). Every shape's
+// values are held, read and written whatever the shape, so the keys of the shape not chosen stay on the light and come back
+// when it is chosen again; the game reads only the chosen shape's ( idLight::ParseBloomStyle, whose defaults and clamps these
+// follow )
+class LightBloom
+{
+public:
+	int			shape;			// bloom_shape: BLOOM_STYLE_VIEW, BLOOM_STYLE_STAR or BLOOM_STYLE_GLOW
+	float		intensity;		// bloom_intensity, 0 to 4, 1 by default
+	bool		hotBoostOwn;	// bloom_hot_boost is on the light; without it the light takes the view's hot boost
+	float		hotBoost;		// bloom_hot_boost in stops, 0 to 8; written only where hotBoostOwn
+	int			spikes;			// star: bloom_spikes, the arms through the lamp, 1 to 7 ( n arms are 2n points ), 3 by default
+	float		spikeRotation;	// star: bloom_spike_rotation, 0 to 1, 0.5
+	float		spikeRadius;	// star: bloom_spike_radius, the arms' length, 0 to 1, 0
+	float		spikeBlur;		// star: bloom_spike_blur, the arms' width, 0 to 1, 0
+	float		spikeSpread;	// star: bloom_spike_spread, 0 to 1, 0
+	float		spikeRatio;		// star: bloom_spike_ratio, -1 to 1, 0
+	float		spikeRinging;	// star: bloom_spike_ringing, 0 to 1, 0.75
+	float		spikeShift;		// star: bloom_spike_shift, 0 to 1, 0.1
+	float		spikeFalloff;	// star: bloom_spike_falloff, 0 to 1, 0
+	float		glowRadius;		// glow: bloom_glow_radius, 0 to 1, 1
+	float		glare;			// glow: bloom_glare, 0 to 1, 0
+
+	void		Defaults();
+	void		FromDict( const idDict* e );
+	void		ToDict( idDict* e ) const;			// a key only where it is not its default, else "" ( deleted )
+	bool		Same( const LightBloom& other ) const;
+};
+
 class LightInfo
 {
 public:
@@ -92,6 +121,8 @@ public:
 	float		fogEmission;	// spawnarg "fog_emission", the glow, 0 to 8, 1 by default
 	float		fogEdge;		// spawnarg "fog_edge", soft sides in units, 0 = hard
 	int			volumetricMode;	// spawnarg "volumetric": 0 = automatic, 1 = always, 2 = never
+	bool		emitGlow;		// WP-J21: spawnarg "emit_glow", 1 by default: 0 = the light's fog and its visual model give no bloom glow ( the Bloom tab, every light )
+	LightBloom	bloom;			// WP-J27: the bloom_* keys ( the Bloom tab, every light )
 
 	emitterData_t	emitter;			// the emitter and emit_* keys; disabled on a texture light
 	bool		autoRange;			// emit_auto_range, read by the editors only
@@ -300,6 +331,7 @@ private:
 	void				LoadCurrentTexture();
 	void				SelectCurrentTexture();	// V7: the Texture tab's combo index of cur.strTexture, and its image
 	bool				DrawFogTab();
+	bool				DrawBloomTab();		// WP-J27
 	static bool			FogMaterialItemsGetter( void* data, int idx, const char** out_text );
 
 	void				TempApplyChanges();

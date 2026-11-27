@@ -217,6 +217,7 @@ void idGameEdit::ParseSpawnArgsToRenderLight( const idDict* args, renderLight_t*
 	renderLight->fogAlbedo = idMath::ClampFloat( 0.0f, 1.0f, args->GetFloat( "fog_albedo", "0" ) );
 	renderLight->fogEmissionBias = idMath::ClampFloat( 0.0f, 8.0f, args->GetFloat( "fog_emission", "1" ) ) - 1.0f;
 	renderLight->fogEdge = idMath::ClampFloat( 0.0f, 4096.0f, args->GetFloat( "fog_edge", "0" ) );
+	renderLight->noGlow = !args->GetBool( "emit_glow", "1" );		// WP-J21: the emitter's switch ( glowPad stays as the memset left it )
 	//puncho start - an emitter reads neither parallel ( the emitter branch sets it from the shape, and the
 	// emitter parse reads the key when it needs it ) nor texture, whose material is fixed below: a light
 	// that kept its texture key would otherwise load that material and its images for nothing ( G0
@@ -269,6 +270,105 @@ void idGameEdit::ParseSpawnArgsToRenderLight( const idDict* args, renderLight_t*
 	//puncho end
 }
 
+// ---- WP-J27: the light's own bloom ----
+
+// the float of a bloom key clamped to [ minValue, maxValue ]; false, and value left as it was, where the key is absent or not a
+// number. atof reads "nan" as a NaN, and idMath::ClampFloat would pass one through ( both its tests are false ), so a NaN takes
+// the key's default here
+static bool BloomKeyFloat( const idDict* args, const char* key, float minValue, float maxValue, float& value )
+{
+	const idKeyValue* kv = args->FindKey( key );
+	if( kv == NULL )
+	{
+		return false;
+	}
+	const float read = ( float )atof( kv->GetValue() );
+	if( IEEE_FLT_IS_NAN( read ) )
+	{
+		return false;
+	}
+	value = ( read < minValue ) ? minValue : ( ( read > maxValue ) ? maxValue : read );
+	return true;
+}
+
+// sets a fixture's glow switch and bloom style and presents the change; a fixture that has them already is left alone, so a
+// map whose lights keep the view's bloom presents nothing more than before
+static void SetFixtureBloom( idStaticEntity* fixture, bool noGlow, const renderBloomStyle_t& style )
+{
+	if( fixture == NULL )
+	{
+		return;
+	}
+	renderEntity_t* rent = fixture->GetRenderEntity();
+	if( rent->noGlow == noGlow && memcmp( &rent->bloomStyle, &style, sizeof( style ) ) == 0 )
+	{
+		return;
+	}
+	rent->noGlow = noGlow;
+	rent->bloomStyle = style;
+	fixture->BecomeActive( TH_UPDATEVISUALS );
+	fixture->Present();
+}
+
+/*
+================
+idLight::ParseBloomStyle
+
+WP-J27 ( the owner, 2026-11-27: lights have their own bloom settings, the regular unpointed glow or the stars with configurable
+points and widths ): a light's bloom from its bloom_* keys ( RenderWorld.h's BLOOM_KEY_* ), the light editor's Bloom tab and the
+FGD write them. bloom_shape 1 is a star, 2 a glow, anything else 0, the view's. A star or a glow starts from its System Options
+defaults and reads its own keys; the view's shape reads none of them, so every star and glow field stays 0 and two view styles
+compare equal byte for byte ( the stage loop finds a style's slot by memcmp ). The strength and the hot boost are read for every
+shape: bloom_intensity 0 to 4 ( 1 ), stored less 1; bloom_hot_boost 0 to 8 stops where the key is on the light, else the view's
+hot boost. Every value is clamped to its range; a NaN ( "nan" ) takes the key's default, and other text reads as 0, as atof
+reads it ( review R2-N10 )
+================
+*/
+void idLight::ParseBloomStyle( const idDict* args, renderBloomStyle_t& style )
+{
+	int shape = args->GetInt( BLOOM_KEY_SHAPE, "0" );
+	if( shape != BLOOM_STYLE_STAR && shape != BLOOM_STYLE_GLOW )
+	{
+		shape = BLOOM_STYLE_VIEW;
+	}
+	R_BloomStyleDefaults( style, shape );		// pad and the other shapes' fields 0
+
+	if( shape == BLOOM_STYLE_STAR )
+	{
+		const idKeyValue* spikes = args->FindKey( BLOOM_KEY_SPIKES );
+		if( spikes != NULL )
+		{
+			style.spikes = ( byte )idMath::ClampInt( 1, 7, atoi( spikes->GetValue() ) );
+		}
+		BloomKeyFloat( args, BLOOM_KEY_SPIKE_ROTATION, 0.0f, 1.0f, style.spikeRotation );
+		BloomKeyFloat( args, BLOOM_KEY_SPIKE_RADIUS, 0.0f, 1.0f, style.spikeRadius );
+		BloomKeyFloat( args, BLOOM_KEY_SPIKE_BLUR, 0.0f, 1.0f, style.spikeBlur );
+		BloomKeyFloat( args, BLOOM_KEY_SPIKE_SPREAD, 0.0f, 1.0f, style.spikeSpread );
+		BloomKeyFloat( args, BLOOM_KEY_SPIKE_RATIO, -1.0f, 1.0f, style.spikeRatio );
+		BloomKeyFloat( args, BLOOM_KEY_SPIKE_RINGING, 0.0f, 1.0f, style.spikeRinging );
+		BloomKeyFloat( args, BLOOM_KEY_SPIKE_SHIFT, 0.0f, 1.0f, style.spikeShift );
+		BloomKeyFloat( args, BLOOM_KEY_SPIKE_FALLOFF, 0.0f, 1.0f, style.spikeFalloff );
+	}
+	else if( shape == BLOOM_STYLE_GLOW )
+	{
+		BloomKeyFloat( args, BLOOM_KEY_GLOW_RADIUS, 0.0f, 1.0f, style.glowRadius );
+		BloomKeyFloat( args, BLOOM_KEY_GLARE, 0.0f, 1.0f, style.glare );
+	}
+
+	float intensity = 1.0f;
+	BloomKeyFloat( args, BLOOM_KEY_INTENSITY, 0.0f, 4.0f, intensity );
+	style.intensityBias = intensity - 1.0f;		// exactly 0 at 1, so the default stays the view's
+
+	// a hot boost of 0 on the light is its own 0, not the view's; a key that is not a number is as no key
+	float hotBoost = 0.0f;
+	if( BloomKeyFloat( args, BLOOM_KEY_HOT_BOOST, 0.0f, 8.0f, hotBoost ) )
+	{
+		style.hotBoostOwn = 1;
+		style.hotBoost = hotBoost;
+	}
+}
+// ---- END WP-J27 ----
+
 /*
 ================
 idLight::UpdateChangeableSpawnArgs
@@ -310,6 +410,11 @@ void idLight::UpdateChangeableSpawnArgs( const idDict* source )
 		renderEntity.referenceShader = renderLight.shader;
 	}
 	//puncho end
+
+	// WP-J21: an edited emit_glow reaches the visual model too ( UpdateVisuals below presents it )
+	renderEntity.noGlow = renderLight.noGlow;
+	// WP-J27: and the edited bloom keys; the fixture takes both when it is linked again below
+	ParseBloomStyle( source ? source : &spawnArgs, renderEntity.bloomStyle );
 
 	// D62: an edited radius and colour are what style and emit_effect scale from now on (a radius base
 	// left at the spawn radius made SharedThink undo a styled light's radius edit)
@@ -364,6 +469,7 @@ void idLight::UpdateChangeableSpawnArgs( const idDict* source )
 	localLightAxis = renderLight.axis * entAxis.Transpose();
 
 	// link func_static modelTarget
+	idStaticEntity* oldFixture = modelTarget.GetEntity();		// WP-J27
 	modelTarget = NULL;
 	const char* target = NULL;
 	if( source )
@@ -377,7 +483,17 @@ void idLight::UpdateChangeableSpawnArgs( const idDict* source )
 
 	if( target != NULL && target[0] != '\0' )
 	{
-		PostEventMS( &EV_Light_UpdateModelTarget, 0 );
+		PostEventMS( &EV_Light_UpdateModelTarget, 0 );		// WP-J27: which gives the fixture the light's glow switch and bloom style
+	}
+
+	// WP-J27: a fixture the light no longer names gives back the light's glow switch and bloom style ( a func_static has no keys
+	// for either, so it goes back to how it spawned: it glows, with the view's bloom ); the same fixture keeps them until the
+	// event above sets them again. Names compare as gameLocal.FindEntity compares them
+	if( oldFixture != NULL && ( target == NULL || idStr::Icmp( oldFixture->GetName(), target ) != 0 ) )
+	{
+		renderBloomStyle_t viewStyle;
+		R_BloomStyleDefaults( viewStyle, BLOOM_STYLE_VIEW );
+		SetFixtureBloom( oldFixture, false, viewStyle );
 	}
 	// RB end
 
@@ -502,6 +618,12 @@ void idLight::Restore( idRestoreGame* savefile )
 	renderLight.fogAlbedo = idMath::ClampFloat( 0.0f, 1.0f, spawnArgs.GetFloat( "fog_albedo", "0" ) );
 	renderLight.fogEmissionBias = idMath::ClampFloat( 0.0f, 8.0f, spawnArgs.GetFloat( "fog_emission", "1" ) ) - 1.0f;
 	renderLight.fogEdge = idMath::ClampFloat( 0.0f, 4096.0f, spawnArgs.GetFloat( "fog_edge", "0" ) );
+	// WP-J21: the same for emit_glow, on the light and its visual model ( idEntity::Restore read the model's entity without it;
+	// SetLightLevel below presents both )
+	renderLight.noGlow = !spawnArgs.GetBool( "emit_glow", "1" );
+	renderEntity.noGlow = renderLight.noGlow;
+	// WP-J27: the bloom keys alike ( ReadRenderEntity left the style cleared ); the fixture takes both below
+	ParseBloomStyle( &spawnArgs, renderEntity.bloomStyle );
 
 	//puncho start - emit_effect plays from the saved emitter block and needs no light_styles; its frame
 	// time is spawn data, so it comes back from the restored spawnArgs instead of the constructor's 100
@@ -532,6 +654,15 @@ void idLight::Restore( idRestoreGame* savefile )
 	if( savefile->GetBuildNumber() >= BUILD_NUMBER_SAVE_VERSION_LIGHT_MODELTARGET_CHANGE )
 	{
 		modelTarget.Restore( savefile );
+
+		// WP-J27: the fixture's own Restore reads its render entity from the stream, with a cleared style and noGlow 0, and it
+		// may come after this one; so the light gives it both once every object is restored, by the event that links it at
+		// spawn ( posted here as idMover::Restore posts EV_PostRestore; it links the same entity by its name ). A light whose
+		// save holds no link stays without one, as before
+		if( modelTarget.GetSpawnId() != 0 )
+		{
+			PostEventMS( &EV_Light_UpdateModelTarget, 0 );
+		}
 	}
 
 	//puncho start - a save from before emitters holds no broken emitter
@@ -594,6 +725,12 @@ void idLight::Spawn()
 	// also put the light texture on the model, so light flares
 	// can get the current intensity of the light
 	renderEntity.referenceShader = renderLight.shader;
+
+	// WP-J21: the light's visual model ( its "model", breakable or not ) follows the light's emit_glow: at 0 it writes no glow mask
+	renderEntity.noGlow = renderLight.noGlow;
+	// WP-J27: and it carries the light's own bloom ( idEntity::Spawn's parse left the style cleared, the view's ); a fixture
+	// takes both in Event_UpdateModelTarget
+	ParseBloomStyle( &spawnArgs, renderEntity.bloomStyle );
 
 	lightDefHandle = -1;		// no static version yet
 
@@ -1834,6 +1971,11 @@ bool idLight::ClientReceiveEvent( int event, int time, const idBitMsg& msg )
 RB idLight::Event_UpdateModelTarget
 
 connects this light to its original and separate brush/patch model
+
+WP-J27: the fixture is the light's visual model, so it takes the light's glow switch ( emit_glow ) and its bloom style as the
+light's own "model" does; a func_static has no keys of its own for either. This event makes the link at spawn, after a live
+edit of the light's keys and after a restore, each time once every entity exists ( and, at a restore, once the fixture's own
+Restore has read its render entity )
 ================
 */
 void idLight::Event_UpdateModelTarget()
@@ -1841,10 +1983,12 @@ void idLight::Event_UpdateModelTarget()
 	const char* target = spawnArgs.GetString( "modelTarget" );
 
 	idEntity* ent = gameLocal.FindEntity( target );
-	if( ent->IsType( idStaticEntity::Type ) )
+	if( ent != NULL && ent->IsType( idStaticEntity::Type ) )		// WP-J27: a name that finds no entity links nothing
 	{
 		modelTarget = static_cast<idStaticEntity*>( ent );
 
 		//ent->UpdateVisuals();
+
+		SetFixtureBloom( modelTarget.GetEntity(), renderLight.noGlow, renderEntity.bloomStyle );		// WP-J27
 	}
 }

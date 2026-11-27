@@ -18,7 +18,7 @@ struct BloomConstants
 	float4 srcInvSize;	// xy 1 / the source TEXTURE's size; z the tail ( up ), the glow threshold's knee ( first pass ); w the firefly knee ( first pass; <= 0: off )
 	float4 exposure;	// first pass: x the exposure scale exp2( r_exposure ), y r_hdrMinLuminance, z the ceiling ( r_bloomCeiling ); w the glow threshold
 	float4	tailDepth;	// first pass, FIRST 2 ( with the frame's depth ): xy the projection's two depth terms ( a view distance is x / ( depth + y ) ); zw the view weapon's test: a pixel is the weapon's where depth * w > z ( z 1, w 0: none is )
-	float4	tailDist;	// first pass, FIRST 2: x the far distance, y 1 / ( far - near ), z the share of its tail a far lamp keeps ( 0, 0, 1: no distance tail, every nearness is 1 ); w 0
+	float4	tailDist;	// first pass, FIRST 2: x the far distance, y 1 / ( far - near ), z the share of its tail a far lamp keeps ( 0, 0, 1: no distance tail, every nearness is 1 ); w ( FIRST 3, 4, WP-J27 ) 1 where the gate wrote a hot boost, else 0
 };
 
 #endif // BLOOM_CB_H

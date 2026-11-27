@@ -2780,6 +2780,13 @@ static const char* const FGD_VOLUMETRIC_CHOICES	= " =\n\t[\n"
 		"\t\t2 : \"Never\"\n"
 		"\t]\n";
 
+// WP-J27: the key bloom_shape ( renderBloomStyle_t::shape ), worded as the light editor's Bloom tab words it
+static const char* const FGD_BLOOM_SHAPE_CHOICES	= " =\n\t[\n"
+		"\t\t0 : \"As the view\"\n"
+		"\t\t1 : \"Star\"\n"
+		"\t\t2 : \"Glow\"\n"
+		"\t]\n";
+
 struct fgdLightKey_t
 {
 	const char*		key;
@@ -2809,6 +2816,23 @@ static const fgdLightKey_t FGD_LIGHT_KEYS[] =
 	{ "fog_albedo",				"float",	"0",					"Froxel fog, a fog light only: the share of its fog that scatters the lights and the ambient, 0 to 1 ( 0 = it scatters nothing, as the fog pass draws it; its glow is fog_emission )",	NULL },
 	{ "fog_emission",			"float",	"1",					"Froxel fog, a fog light only: how strongly its fog glows with the light's colour, 0 to 8 ( 1 = as the fog pass draws it; 0 = it only darkens and scatters )",	NULL },
 	{ "fog_edge",				"float",	"0",					"Froxel fog, a fog light only: soft sides: over this many units inside its volume's faces the fog thins to nothing, all but the fog plane's face ( an unrotated box's top, a projected light's far face ), which keeps its ramp, 0 to 4,096 ( 0 = hard sides )",	NULL },
+	{ "emit_glow",				"choices",	"1",					"Glow ( WP-J21 ): 0 = this light's fog and its visual model give no bloom glow",		FGD_BOOL_CHOICES },
+	// WP-J27: the light's own bloom ( idLight::ParseBloomStyle ), on its visual model and on its modelTarget fixture. A shape
+	// reads only its own keys; the editor keeps the other shape's keys on the light
+	{ "bloom_shape",			"choices",	"0",					"Bloom shape ( WP-J27 ): As the view = the System Options bloom shape and values; Star = diffraction spikes with this light's bloom_spike keys; Glow = the unpointed inverse-square glow with this light's bloom_glow_radius and bloom_glare. Needs Fourier Bloom on in System Options; any other value is As the view",	FGD_BLOOM_SHAPE_CHOICES },
+	{ "bloom_intensity",		"float",	"1",					"Bloom strength of this light, every shape: its light enters the bloom this many times, 0 to 4 ( 1 = as the view's ). Needs Bloom From set to Emitters and Fog",	NULL },
+	{ "bloom_hot_boost",		"float",	NULL,					"Bloom hot boost in stops, 0 to 8, every shape: brightens this light's hottest pixels for the Fourier bloom only, so its star or glow carries further. Without the key the light takes the view's hot boost; 0 is this light's own 0",	NULL },
+	{ "bloom_spikes",			"integer",	"3",					"Star: the arms through the lamp, 1 to 7; n arms are 2n points ( 3 = six points )",	NULL },
+	{ "bloom_spike_rotation",	"float",	"0.5",					"Star: turns the star, 0 to 1; 0 and 1 are the same",									NULL },
+	{ "bloom_spike_radius",		"float",	"0",					"Star: the arms' length, 0 to 1 ( 0 short and tight to the light, 1 the whole reach )",	NULL },
+	{ "bloom_spike_blur",		"float",	"0",					"Star: the arms' width, softening their edges, 0 to 1",									NULL },
+	{ "bloom_spike_spread",		"float",	"0",					"Star: fans each arm out along its length, 0 to 1 ( 0 = thin lines )",					NULL },
+	{ "bloom_spike_ratio",		"float",	"0",					"Star: stretches the star across ( above 0 ) or up and down ( below 0 ), -1 to 1",		NULL },
+	{ "bloom_spike_ringing",	"float",	"0.75",					"Star: the bright and dark bands along each arm, 0 to 1",								NULL },
+	{ "bloom_spike_shift",		"float",	"0.1",					"Star: spectral shift, a rainbow along the arms, 0 to 1",								NULL },
+	{ "bloom_spike_falloff",	"float",	"0",					"Star: the fall along the arms, 0 to 1 ( 0 = the plan's short fall; more carries the light further along the arms )",	NULL },
+	{ "bloom_glow_radius",		"float",	"1",					"Glow: how far the glow spreads round the light, a share of the reach, 0 to 1",			NULL },
+	{ "bloom_glare",			"float",	"0",					"Glow: a tight bright core within the glow, 0 to 1",									NULL },
 	{ "noshadows",				"choices",	"0",					"The light casts no shadows",															FGD_BOOL_CHOICES },
 	{ "nospecular",				"choices",	"0",					"The light adds no specular highlights, diffuse only",									FGD_BOOL_CHOICES },
 	//puncho start - the emitter block ( G0 section 2 ); EM_ParseAllFromDict reads each of these keys

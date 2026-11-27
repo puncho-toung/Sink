@@ -707,6 +707,13 @@ void idRenderBackend::PrepareStageTexturing( const shaderStage_t* pStage,  const
 		useTexGenParm[1] = ( float )fogKind;
 	}
 	// ---- END TRACK V ----
+	// WP-J27: a glow twin reads its style's slot from rpTexGen0Enabled.z, which no other program reads; set only for an
+	// emitting stage of a source with a style of its own ( the stage loop sets it for that draw alone ), so every other draw
+	// sends what it sent before ( review R2-N3 )
+	if( glowStyleDrawSlot > 0.0f )
+	{
+		useTexGenParm[2] = glowStyleDrawSlot;
+	}
 	SetVertexParm( RENDERPARM_TEXGEN_0_ENABLED, useTexGenParm );
 }
 
@@ -5162,6 +5169,7 @@ int idRenderBackend::DrawShaderPasses( const drawSurf_t* const* const drawSurfs,
 
 	currentSpace = ( const viewEntity_t* )1;	// using NULL makes /analyze think surf->space needs to be checked...
 	float currentGuiStereoOffset = 0.0f;
+	bool glowFramebufferBound = false;		// WP-J21: an emitting stage of this call bound _hdrGlow; _hdr is bound again at its end
 
 	int i = 0;
 	for( ; i < numDrawSurfs; i++ )
@@ -5590,6 +5598,29 @@ int idRenderBackend::DrawShaderPasses( const drawSurf_t* const* const drawSurfs,
 				}
 			}
 
+			// ---- WP-J21: a stage that passes the bloom's gate draws with its glow twin, which also adds its luminance to the
+			// glow mask, into _hdrGlow; the mask is cleared at the view's first such stage ( a clear ends the render
+			// pass ), and _hdrGlow stays bound to the end of this call. A stage whose program has no twin writes no mask ----
+			if( glowGateView && GlowStagePasses( shader, pStage, surf, stageGLState )
+					&& idRenderProgManager::GlowTwin( renderProgManager.CurrentProgram() ) >= 0 )
+			{
+				if( !glowMaskWritten )
+				{
+					glowMaskWritten = true;
+					commandList->clearTextureFloat( globalImages->glowMaskImage->GetTextureHandle(), nvrhi::AllSubresources, nvrhi::Color( 0.0f ) );
+					ResetGraphicsStateCache();
+				}
+				if( Framebuffer::GetActiveFramebuffer() != globalFramebuffers.hdrGlowFBO )
+				{
+					globalFramebuffers.hdrGlowFBO->Bind();
+					glowFramebufferBound = true;
+				}
+				renderProgManager.BindShader_GlowTwin();
+				// WP-J27: the source's own bloom, by its slot ( 0: the view's )
+				glowStyleDrawSlot = ( float )GlowStyleSlot( surf->space, stageGLState );
+			}
+			// ---- END WP-J21 ----
+
 			RB_SetVertexColorParms( svc );
 
 			// bind the texture
@@ -5606,6 +5637,7 @@ int idRenderBackend::DrawShaderPasses( const drawSurf_t* const* const drawSurfs,
 			GL_State( stageGLState );
 
 			PrepareStageTexturing( pStage, surf, fogKind );		// TRACK V ( V5e ): the blend kind for a fog twin
+			glowStyleDrawSlot = 0.0f;		// WP-J27: sent with this draw's parms; every later draw sends 0
 
 			// draw it
 			DrawElementsWithCounters( surf );
@@ -5631,8 +5663,111 @@ int idRenderBackend::DrawShaderPasses( const drawSurf_t* const* const drawSurfs,
 
 	GL_SelectTexture( 0 );
 
+	// WP-J21: the passes between and after the stage loop's calls draw into _hdr
+	if( glowFramebufferBound )
+	{
+		globalFramebuffers.hdrFBO->Bind();
+	}
+
 	renderLog.CloseBlock();
 	return i;
+}
+
+/*
+=========================
+idRenderBackend::GlowStagePasses
+
+WP-J21: true where an ambient stage of the stage loop passes the bloom's gate: its material's parse marked it
+( shaderStage_t::glowMark, idMaterial::Parse's rule ), or it is a stage of an in-world gui surface ( a screen emits ),
+unless the gui stage is one that never passes ( R_GlowStageNever with the state it draws with: a masked colour, a
+blend reading the destination's alpha, the picture already drawn, a dynamic render ... ) or its material or stage says
+"noGlow"; and never for an entity whose light switched its glow off ( emit_glow 0 on the light that owns the visual
+model )
+=========================
+*/
+bool idRenderBackend::GlowStagePasses( const idMaterial* shader, const shaderStage_t* pStage, const drawSurf_t* surf, uint64 stageGLState ) const
+{
+	// a light's visual model under the light's emit_glow 0 ( renderEntity_t::noGlow, copied into the view entity: the back
+	// end does not read the entityDef, which the game thread may change or free meanwhile; review R2-N4 )
+	if( surf->space->noGlow )
+	{
+		return false;
+	}
+	if( pStage->glowMark != GLOW_MARK_NONE )
+	{
+		return true;
+	}
+	if( !surf->space->isGuiSurface )
+	{
+		return false;
+	}
+	if( shader->GetGlowKey() == GLOW_KEY_NOGLOW || pStage->glowKey == GLOW_KEY_NOGLOW )
+	{
+		return false;
+	}
+	// review R1-7: the "never" list as the parse's, with the state the gui stage draws with
+	return !R_GlowStageNever( pStage, stageGLState );
+}
+
+/*
+=========================
+idRenderBackend::GlowStyleSlot
+
+WP-J27: the slot an emitting stage of this entity writes into the glow mask: 0 for the view's bloom, else the slot that holds
+the entity's style ( renderBloomStyle_t, copied into the view entity by the front end ). A style already in a slot keeps it;
+a new one takes a slot no stage of this view has drawn with, the longest unused first, so a style that stays in view keeps
+its slot, and the bloom its kernel, from frame to frame. Where this view has taken every slot, or the stage's blend reads a
+colour ( the mask's green would no longer be its luminance times the slot ), the stage takes the view's
+=========================
+*/
+int idRenderBackend::GlowStyleSlot( const viewEntity_t* space, uint64 stageGLState )
+{
+	if( space == NULL || R_BloomStyleIsView( space->bloomStyle ) )
+	{
+		return 0;
+	}
+	const uint64 src = stageGLState & GLS_SRCBLEND_BITS;
+	const uint64 dst = stageGLState & GLS_DSTBLEND_BITS;
+	if( src == GLS_SRCBLEND_DST_COLOR || src == GLS_SRCBLEND_ONE_MINUS_DST_COLOR || dst == GLS_DSTBLEND_SRC_COLOR || dst == GLS_DSTBLEND_ONE_MINUS_SRC_COLOR )
+	{
+		return 0;
+	}
+	int found = 0;
+	for( int i = 1; i < BLOOM_STYLE_SLOTS; i++ )
+	{
+		if( glowStyleView[i] != 0 && memcmp( &glowStyles[i], &space->bloomStyle, sizeof( renderBloomStyle_t ) ) == 0 )
+		{
+			found = i;
+			break;
+		}
+	}
+	if( found == 0 )
+	{
+		// a slot no style drew with in this view or the last: never used first, then the one unused longest. A style that
+		// held its slot in the last view keeps it, so with more styles in view than slots the same ones keep theirs and the
+		// newcomer takes the view's, whatever the draw order ( review R2-N6 )
+		int oldest = 0;
+		for( int i = 1; i < BLOOM_STYLE_SLOTS; i++ )
+		{
+			if( glowStyleView[i] != 0 && glowStyleView[i] >= glowStyleSerial - 1 )
+			{
+				continue;
+			}
+			if( oldest == 0 || glowStyleView[i] < glowStyleView[oldest] )
+			{
+				oldest = i;
+			}
+		}
+		if( oldest == 0 )
+		{
+			glowStyleOverflow++;
+			return 0;
+		}
+		found = oldest;
+		glowStyles[found] = space->bloomStyle;
+	}
+	glowStyleView[found] = glowStyleSerial;
+	return found;
 }
 
 /*
@@ -6778,6 +6913,7 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 		memset( &fogOff, 0, sizeof( fogOff ) );
 		commandList->writeBuffer( froxelFogParms, &fogOff, sizeof( fogOff ) );
 	}
+	froxelGlowView = false;		// WP-J21: until this view's fog apply says otherwise
 
 	// ugly but still faster than building the string
 	if( !is3D )
@@ -6871,6 +7007,24 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 	{
 		globalFramebuffers.ldrFBO->Bind();
 	}
+	// ---- WP-J21: the stage loops of a main view drawn into _hdr under the bloom's gate write the glow mask, from the
+	// view's first emitting stage on ( DrawShaderPasses ); every other view writes none ----
+	glowGateView = is3D && !( _viewDef->renderView.rdflags & RDF_IRRADIANCE ) && globalFramebuffers.hdrGlowFBO != NULL
+				   && BloomPass::GateWantedForView( _viewDef );
+	glowMaskWritten = false;
+	// ---- END WP-J21 ----
+	// WP-J27: a new view for the styles' slots ( a slot is this view's once a stage of it draws )
+	if( glowGateView )
+	{
+		if( ++glowStyleSerial <= 0 )
+		{
+			// after 2^31 views: every slot is free again
+			glowStyleSerial = 1;
+			memset( glowStyleView, 0, sizeof( glowStyleView ) );
+		}
+		glowStyleOverflow = 0;
+	}
+	glowStyleDrawSlot = 0.0f;
 
 	// Clear the depth buffer and clear the stencil to 128 for gui masking
 	{

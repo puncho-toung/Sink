@@ -1170,6 +1170,14 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 		{ BUILTIN_PBR_INTERACTION_AMBIENT_FOG, "builtin/lighting/interactionAmbient", "_PBR_fog", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_DRAW_INTERACTION_FOG ) }, { "USE_FROXEL_FOG", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_DRAW_INTERACTION_FOG },
 		{ BUILTIN_PBR_INTERACTION_AMBIENT_SKINNED_FOG, "builtin/lighting/interactionAmbient", "_skinned_PBR_fog", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_DRAW_INTERACTION_SKINNED_FOG ) }, { "USE_FROXEL_FOG", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_DRAW_INTERACTION_SKINNED_FOG },
 		// ---- END TRACK V ----
+		// ---- WP-J21: the glow twins ( keep the enum order ); USE_GLOW comes LAST, as the cfg's lines have it, so no existing
+		// permutation's macros change; each twin has its base's binding layout ----
+		{ BUILTIN_TEXTURE_VERTEXCOLOR_GLOW, "builtin/texture_color", "_glow", { { "USE_GPU_SKINNING", "0" }, {"USE_SRGB", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TEXTURE ) }, { "USE_GLOW", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_TEXTURE },
+		{ BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED_GLOW, "builtin/texture_color", "_skinned_glow", { { "USE_GPU_SKINNING", "1" }, {"USE_SRGB", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TEXTURE_SKINNED ) }, { "USE_GLOW", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_TEXTURE_SKINNED },
+		{ BUILTIN_TEXTURE_VERTEXCOLOR_FOG_GLOW, "builtin/texture_color", "_fog_glow", { { "USE_GPU_SKINNING", "0" }, {"USE_SRGB", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TEXTURE_FOG ) }, { "USE_FROXEL_FOG", "1" }, { "USE_GLOW", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_TEXTURE_FOG },
+		{ BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED_FOG_GLOW, "builtin/texture_color", "_skinned_fog_glow", { { "USE_GPU_SKINNING", "1" }, {"USE_SRGB", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TEXTURE_SKINNED_FOG ) }, { "USE_FROXEL_FOG", "1" }, { "USE_GLOW", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_TEXTURE_SKINNED_FOG },
+		{ BUILTIN_BINK_GLOW, "builtin/video/bink", "_glow", { {"USE_SRGB", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_BINK_VIDEO ) }, { "USE_GLOW", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_BINK_VIDEO },
+		// ---- END WP-J21 ----
 	};
 	int numBuiltins = sizeof( builtins ) / sizeof( builtins[0] );
 
@@ -1292,6 +1300,8 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 
 		// ---- TRACK V ( V5 ): the skinned fog twins, as their bases ----
 		renderProgs[builtinShaders[BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED_FOG]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED_GLOW]].usesJoints = true;			// WP-J21
+		renderProgs[builtinShaders[BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED_FOG_GLOW]].usesJoints = true;		// WP-J21
 		renderProgs[builtinShaders[BUILTIN_INTERACTION_SHADOW_MAPPING_SPOT_SKINNED_FOG]].usesJoints = true;
 		renderProgs[builtinShaders[BUILTIN_INTERACTION_SHADOW_MAPPING_POINT_SKINNED_FOG]].usesJoints = true;
 		renderProgs[builtinShaders[BUILTIN_INTERACTION_SHADOW_MAPPING_PARALLEL_SKINNED_FOG]].usesJoints = true;

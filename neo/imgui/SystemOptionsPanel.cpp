@@ -77,7 +77,7 @@ static constexpr int V( const int value )
 {
 	return 1 << ( value + 1 );
 }
-static const int MAX_PARENTS = 2;
+static const int MAX_PARENTS = 4;		// WP-J24: a spike's row has four ( its shape, the transform, the bloom, the render mode )
 
 enum specialOption_t
 {

@@ -196,6 +196,8 @@ void R_RenderSingleModel( viewEntity_t* vEntity, int& occluderTris )
 	vEntity->modelDepthHack = renderEntity->modelDepthHack;
 	vEntity->weaponDepthHack = renderEntity->weaponDepthHack;
 	vEntity->skipMotionBlur = renderEntity->skipMotionBlur;
+	vEntity->bloomStyle = renderEntity->bloomStyle;		// WP-J27: the source's own bloom, for the stage loop
+	vEntity->noGlow = renderEntity->noGlow;				// WP-J21: the glow switch, read there too
 
 	// the same two frames as R_AddSingleModel builds
 	const idVec3d& renderOrigin = viewDef->renderOrigin;

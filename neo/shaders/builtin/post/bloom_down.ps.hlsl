@@ -22,13 +22,32 @@
 #include "bloom_cb.h"
 #include "bloom.inc.hlsl"
 
+// the first pass's permutations ( 1 to 4 ) write two targets from the frame's pixels; 0 and 5 reduce a level by the plain
+// filter ( 5, WP-J21: level 1's, with the fog's glow added )
+#define BLOOM_FIRST_PASS ( FIRST >= 1 && FIRST <= 4 )
+
 // *INDENT-OFF*
 Texture2D t_Source : register( t0 );
 #if FIRST
 Buffer<uint> t_Exposure : register( t1 );
 #endif
-#if FIRST == 2
+#if FIRST == 2 || FIRST == 4
 Texture2D<float> t_Depth : register( t2 );	// the frame's depth at full size ( the Hi-Z image's mip 0 )
+#endif
+#if FIRST == 5
+// WP-J21, the fog's glow ( FIRST 5, level 1's reduction ): the Hi-Z image's mip 2 ( the farthest depth of each 4 x 4 of the
+// frame's pixels ), the resolved frame, the fog's never-glowing integral, and the fog set ( b1, t15, s5 ) as the fogged
+// shaders have it, here in this layout's one set
+Texture2D<float> t_HiZ : register( t2 );
+Texture2D t_Frame : register( t3 );
+Texture3D<float> t_NoGlowVolume : register( t4 );
+#define FROXEL_FOG_SET 0
+#include "froxel_fog.inc.hlsl"
+#endif
+#if FIRST >= 3 && FIRST <= 4
+// WP-J21, the bloom's gate: t_Source is the gate's output ( bloom_gate.cs.hlsl ), read through its tiles' flags, one a
+// 16 x 16 tile of the view: 0 where no mask lies within 8 pixels of the tile, whose pixels then hold nothing that passes
+Texture2D<uint> t_Flags : register( t3 );
 #endif
 SamplerState s_Linear : register( s0 );
 
@@ -89,7 +108,7 @@ float3 BloomGlowPixel( float3 c, float E )
 }
 #endif
 
-#if FIRST == 2
+#if FIRST == 2 || FIRST == 4
 // WP-G3, the distance tail. The first pass writes two targets: level 0 with all of the light ( the core, which
 // every lamp keeps ) and the wide levels' source, which level 1's reduction reads instead of level 0. In FIRST 2 a
 // pixel's light enters that source times its NEARNESS: a lamp nearer than the near distance keeps the whole tail the
@@ -127,10 +146,47 @@ float BloomWorldPixel( float deviceDepth )
 }
 #endif
 
+#if FIRST == 5
+// WP-J21: the never-glowing integral at a point of the fog view, read as FroxelFogSample reads the fog's own
+float BloomFogNoGlow( float2 screenUV, float viewDepth )
+{
+	if( froxelFogParms.fogParms.x <= 0.0 )
+	{
+		return 0.0;
+	}
+	const float s = FroxelFogSlice( viewDepth );
+	const float3 uvw = float3( min( screenUV * froxelFogParms.volumeParms.xy, froxelFogParms.reserved.zw ), ( max( s, 1.0 ) - 0.5 ) * froxelFogParms.volumeParms.w );
+	return t_NoGlowVolume.SampleLevel( s_FroxelLinearClamp, uvw, 0.0 ) * saturate( s );
+}
+#endif
+
+#if FIRST >= 3 && FIRST <= 4
+// WP-J21: a footprint pixel as the gate left it, rel in the view rectangle's pixels: the gate's est through a tile whose
+// flag is 1, else 0. What a tile of flag 0 holds from an earlier frame is never read
+float3 BloomGatedPixel( int2 rel, int2 org )
+{
+	return ( t_Flags.Load( int3( rel >> 4, 0 ) ) != 0u ) ? t_Source.Load( int3( org + rel, 0 ) ).rgb : float3( 0.0, 0.0, 0.0 );
+}
+
+// WP-J27, the hot-pixel boost: a pixel's light in the wide levels' source times the boost the gate wrote beside it ( its
+// alpha; 1 where its slot has none, so the light keeps its bits ), the boosted pixel held to the ceiling by one factor for
+// its three channels ( its colour kept ). The core, level 0, is not boosted
+float3 BloomBoosted( float3 light, int2 rel, int2 org )
+{
+	const float boost = ( t_Flags.Load( int3( rel >> 4, 0 ) ) != 0u ) ? t_Source.Load( int3( org + rel, 0 ) ).a : 1.0;
+	if( !( boost > 1.0 ) )
+	{
+		return light;
+	}
+	const float top = max( light.r, max( light.g, light.b ) );
+	return light * min( boost, g_Bloom.exposure.z / max( top, 1e-30 ) );
+}
+#endif
+
 void main(
 	in float4 pos : SV_Position,
 	in float2 uv : UV,
-#if FIRST
+#if BLOOM_FIRST_PASS
 	out float4 o_rgba : SV_Target,
 	out float4 o_wide : SV_Target1 )
 #else
@@ -143,7 +199,7 @@ void main(
 	const float2 size = g_Bloom.srcRect.zw;
 	const float2 invSize = g_Bloom.srcInvSize.xy;
 
-#if FIRST
+#if BLOOM_FIRST_PASS
 	// The exposure factor of the knee, once per pixel: the same factor ConvertToLDR applies to a luminance.
 	// The tonemap shader's own rule for a non-positive adapted luminance, written so that a NaN fails the test
 	// too and takes the fallback, and a floor under it: r_hdrMinLuminance has no range, and an E of Inf times
@@ -168,9 +224,28 @@ void main(
 	const int2 base = int2( c ) - int2( 3, 3 );
 	const int2 last = int2( size ) - int2( 1, 1 );
 	const int2 org = int2( origin );
+#if FIRST >= 3 && FIRST <= 4
+	// WP-J21: where no tile under the footprint holds light that passed the gate there is nothing to add ( the footprint
+	// spans at most two tiles an axis, so its corners' tiles are all of them )
+	{
+		const int2 lo = clamp( base, int2( 0, 0 ), last ) >> 4;
+		const int2 hi = clamp( base + int2( 5, 5 ), int2( 0, 0 ), last ) >> 4;
+		[branch]
+		if( ( t_Flags.Load( int3( lo, 0 ) ) | t_Flags.Load( int3( hi.x, lo.y, 0 ) ) | t_Flags.Load( int3( lo.x, hi.y, 0 ) ) | t_Flags.Load( int3( hi, 0 ) ) ) == 0u )
+		{
+			o_rgba = float4( 0.0, 0.0, 0.0, 1.0 );
+			o_wide = float4( 0.0, 0.0, 0.0, 1.0 );
+			return;
+		}
+	}
+#endif
 	// The thirty-six pixels, each loaded and scrubbed, and the largest channel among them
 	float top = 0.0;
+#if FIRST >= 3 && FIRST <= 4
+#define BLOOM_PIXEL( i, j ) const float3 v##i##j = BloomScrub3( BloomGatedPixel( clamp( base + int2( i, j ), int2( 0, 0 ), last ), org ) ); top = max( top, max( v##i##j.r, max( v##i##j.g, v##i##j.b ) ) )
+#else
 #define BLOOM_PIXEL( i, j ) const float3 v##i##j = BloomScrub3( t_Source.Load( int3( org + clamp( base + int2( i, j ), int2( 0, 0 ), last ), 0 ) ).rgb ); top = max( top, max( v##i##j.r, max( v##i##j.g, v##i##j.b ) ) )
+#endif
 	BLOOM_PIXEL( 0, 0 ); BLOOM_PIXEL( 1, 0 ); BLOOM_PIXEL( 2, 0 ); BLOOM_PIXEL( 3, 0 ); BLOOM_PIXEL( 4, 0 ); BLOOM_PIXEL( 5, 0 );
 	BLOOM_PIXEL( 0, 1 ); BLOOM_PIXEL( 1, 1 ); BLOOM_PIXEL( 2, 1 ); BLOOM_PIXEL( 3, 1 ); BLOOM_PIXEL( 4, 1 ); BLOOM_PIXEL( 5, 1 );
 	BLOOM_PIXEL( 0, 2 ); BLOOM_PIXEL( 1, 2 ); BLOOM_PIXEL( 2, 2 ); BLOOM_PIXEL( 3, 2 ); BLOOM_PIXEL( 4, 2 ); BLOOM_PIXEL( 5, 2 );
@@ -192,7 +267,7 @@ void main(
 		return;
 	}
 
-#if FIRST == 2
+#if FIRST == 2 || FIRST == 4
 	// WP-G4: the thirty-six pixels' depths, read behind the test above, so only where the footprint holds light. A
 	// pixel of the view weapon is black to the bloom: its light and its luminance are taken times 0, a world pixel's
 	// times 1 ( the same bits )
@@ -266,13 +341,25 @@ void main(
 	float3 s32 = g32;
 	float3 s23 = g23;
 	float3 s33 = g33;
-#if FIRST == 2
+#if FIRST == 2 || FIRST == 4
 	// each of the four pixels' light times its own nearness ( its depth was read above ). A pixel without light is 0
 	// times a finite nearness, 0
 	s22 = g22 * BloomNearness( z22 );
 	s32 = g32 * BloomNearness( z32 );
 	s23 = g23 * BloomNearness( z23 );
 	s33 = g33 * BloomNearness( z33 );
+#endif
+#if FIRST >= 3 && FIRST <= 4
+	// WP-J27: the four pixels' boost, after the nearness ( a far lamp's tail stays short ), where the gate wrote one
+	// ( tailDist.w 1 )
+	[branch]
+	if( g_Bloom.tailDist.w > 0.0 )
+	{
+		s22 = BloomBoosted( s22, clamp( base + int2( 2, 2 ), int2( 0, 0 ), last ), org );
+		s32 = BloomBoosted( s32, clamp( base + int2( 3, 2 ), int2( 0, 0 ), last ), org );
+		s23 = BloomBoosted( s23, clamp( base + int2( 2, 3 ), int2( 0, 0 ), last ), org );
+		s33 = BloomBoosted( s33, clamp( base + int2( 3, 3 ), int2( 0, 0 ), last ), org );
+	}
 #endif
 	o_wide.rgb = BloomBox( s22, BloomKneeWeightL( l22, knee, E ), s32, BloomKneeWeightL( l32, knee, E ), s23, BloomKneeWeightL( l23, knee, E ), s33, BloomKneeWeightL( l33, knee, E ) );
 	o_wide.a = 1.0;
@@ -296,6 +383,42 @@ void main(
 	o_rgba.rgb = 0.125 * ( ctr + i00 + i10 + i01 + i11 )
 	           + 0.0625 * ( xm2 + xp2 + ym2 + yp2 )
 	           + 0.03125 * ( xm2ym2 + xp2ym2 + xm2yp2 + xp2yp2 );
+#if FIRST == 5
+	// WP-J21, the fog's glow ( plan section 07, "The fog's glow", 3 ): light the fog scatters toward the eye glows, the part
+	// that never glows ( its ambient, its own term, a fog light's colour, lights at emit_glow 0 ) taken out. This level-1
+	// texel covers the view's pixels 4p to 4p + 3; the fog is read at the farthest depth of the sixteen ( the Hi-Z image's
+	// mip 2 ), which keeps a silhouette in fog steady, put through today's threshold at the exposure, held to the mean of
+	// the resolved frame there ( four bilinear taps ) and times r_bloomFogGlow. tailDepth: the view's origin in the frame
+	// and 1 / the frame's size; tailDist.x the factor
+	{
+		const float2 viewOrigin = g_Bloom.tailDepth.xy;
+		const float2 framePixel = viewOrigin + 4.0 * pos.xy;
+		// the binding is mip 2 alone; level 1 has ceil( ceil( H / 2 ) / 2 ) rows, mip 2 floor( H / 4 ): the last row or
+		// column is held to mip 2's ( review R1-5: 1023 lines read row 255 of 255 )
+		uint hizW, hizH;
+		t_HiZ.GetDimensions( hizW, hizH );
+		const int2 hizTexel = min( ( int2( viewOrigin ) >> 2 ) + int2( pos.xy ), int2( hizW, hizH ) - 1 );
+		const float deviceDepth = t_HiZ.Load( int3( hizTexel, 0 ) );
+		const float viewDepth = FroxelFogViewDepth( deviceDepth );
+		const float4 fog = FroxelFogSamplePixel( framePixel, viewDepth );
+		const float noGlow = BloomFogNoGlow( FroxelFogScreenUV( framePixel ), viewDepth );
+		const float lumS = dot( fog.rgb, float3( 0.2126, 0.7152, 0.0722 ) );
+		float adapted = asfloat( t_Exposure[0] );
+		if( !( adapted > 0.0 ) )
+		{
+			adapted = g_Bloom.exposure.y;
+		}
+		const float E = min( g_Bloom.exposure.x / max( adapted, 0.0001 ), 1.0e9 );
+		float3 glow = BloomScrub3( fog.rgb * max( 0.0, 1.0 - noGlow / max( lumS, 1e-20 ) ) );
+		glow = BloomGlowPixel( glow, E );
+		const float2 inv = g_Bloom.tailDepth.zw;
+		const float3 frameMean = 0.25 * ( t_Frame.SampleLevel( s_Linear, ( framePixel + float2( -1.0, -1.0 ) ) * inv, 0 ).rgb
+										  + t_Frame.SampleLevel( s_Linear, ( framePixel + float2( 1.0, -1.0 ) ) * inv, 0 ).rgb
+										  + t_Frame.SampleLevel( s_Linear, ( framePixel + float2( -1.0, 1.0 ) ) * inv, 0 ).rgb
+										  + t_Frame.SampleLevel( s_Linear, ( framePixel + float2( 1.0, 1.0 ) ) * inv, 0 ).rgb );
+		o_rgba.rgb += min( glow, BloomScrub3( frameMean ) ) * g_Bloom.tailDist.x;
+	}
+#endif
 #endif
 	o_rgba.a = 1.0;
 }

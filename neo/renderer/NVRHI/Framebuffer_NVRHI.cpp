@@ -147,6 +147,21 @@ void Framebuffer::ResizeFramebuffers( bool reloadImages )
 			.addColorAttachment( globalImages->currentRenderHDRImage->texture )
 			.setDepthAttachment( globalImages->currentDepthImage->texture ) );
 
+	// ---- WP-J21: the frame, the glow mask as a second target and the same depth: bound for the stage loop's calls in a
+	// main view under the bloom's gate, from the first emitting stage on. The mask is one sample; under MSAA the
+	// frame is not, and the gate is off; so too on a device whose pipelines cannot give the mask its own blend state
+	// ( Vulkan's independentBlend ) ----
+	globalFramebuffers.hdrGlowFBO = NULL;
+	if( globalImages->currentRenderHDRImage->texture->getDesc().sampleCount == 1 && deviceManager->GetIndependentBlendSupported() )
+	{
+		globalFramebuffers.hdrGlowFBO = new Framebuffer( "_hdrGlow",
+				nvrhi::FramebufferDesc()
+				.addColorAttachment( globalImages->currentRenderHDRImage->texture )
+				.addColorAttachment( globalImages->glowMaskImage->texture )
+				.setDepthAttachment( globalImages->currentDepthImage->texture ) );
+	}
+	// ---- END WP-J21 ----
+
 	globalFramebuffers.postProcFBO = new Framebuffer( "_postProc",
 			nvrhi::FramebufferDesc()
 			.addColorAttachment( globalImages->currentRenderImage->texture ) );
@@ -227,6 +242,7 @@ void Framebuffer::ReloadImages()
 	globalImages->taaFeedback1Image->Reload( false, backEnd.commandList );
 	globalImages->taaFeedback2Image->Reload( false, backEnd.commandList );
 	globalImages->taaResolvedImage->Reload( false, backEnd.commandList );
+	globalImages->glowMaskImage->Reload( false, backEnd.commandList );		// WP-J21
 
 	globalImages->smaaInputImage->Reload( false, backEnd.commandList );
 	globalImages->smaaEdgesImage->Reload( false, backEnd.commandList );
