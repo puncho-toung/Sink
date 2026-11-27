@@ -33,6 +33,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "dress.h"
 #include "dress_smooth_core.h"
 
+
 /*
 
   Smoothed vertex normals (Phase 2C P3, stage 2C-4a WP4.1). dmap gives every vertex of
@@ -43,7 +44,10 @@ If you have questions concerning this license or the applicable additional terms
   are the S4.1 core's (dress_smooth_core.h): corners link when an edge ray of each points
   the same way, so a T-junction the fix missed still links; a wedge whose faces share one
   plane keeps the stock bytes; the result does not depend on the order of the lists or on
-  how the optimizer triangulated a plane.
+  how the optimizer triangulated a plane. Then, unless dmap_smoothCuts is 0, a vertex that
+  a cut put inside a face or in the middle of an edge (a portal, a BSP split, a chunk line,
+  a T-junction) takes the lerp of the normals along the cut line or the edge, as the uncut
+  face would shade there (SmoothCuts, Phase 2C P3.1).
 
   The pass runs after FixGlobalTjunctions, the last pass that moves or adds vertices, for
   every entity. Only normals change: no vertex moves and no tri is added or removed, and
@@ -62,6 +66,7 @@ If you have questions concerning this license or the applicable additional terms
 */
 
 idCVar dmap_smooth( "dmap_smooth", "1", CVAR_TOOL | CVAR_BOOL, "0 = dmap ignores dmap_smoothAngle (the material keyword and the worldspawn key) and writes the stock normals" );
+idCVar dmap_smoothCuts( "dmap_smoothCuts", "1", CVAR_TOOL | CVAR_BOOL, "1 = a vertex a cut put inside a smoothed face or on a smoothed edge takes the lerp of the normals along the cut line or the edge (dmapsmooth::SmoothCuts); 0 = the plane normal or the two-face mean there, as before" );
 
 // must equal tritjunction.cpp's SNAP_FRACTIONS: FixGlobalTjunctions has put every vertex of a
 // non-discrete group on this grid, so xyz * SMOOTH_SNAP_FRACTIONS is an integer
@@ -242,6 +247,51 @@ static bool SmoothTriInput( const mapTri_t* tri, const idVec3& planeNormal, floa
 
 /*
 ====================
+SmoothBrushCorners
+
+The corners of the entity's brushes (their sides' windings, in the entity's frame like its
+tris) on the grid, three steps each. SmoothCuts keeps the wedges at these: a brush corner on a
+straight border looks like a cut to the mesh, and the brushwork's own vertices keep Smooth's
+value (the Fable consult, P3.1/consult, M1).
+====================
+*/
+static void SmoothBrushCorners( const uEntity_t* e, std::vector<int64_t>& corners )
+{
+	for( const primitive_t* prim = e->primitives; prim; prim = prim->next )
+	{
+		const uBrush_t* brush = prim->brush;
+		if( brush == NULL )
+		{
+			continue;
+		}
+		for( int i = 0; i < brush->numsides; i++ )
+		{
+			const idWinding* w = brush->sides[i].winding;
+			if( w == NULL )
+			{
+				continue;
+			}
+			for( int j = 0; j < w->GetNumPoints(); j++ )
+			{
+				int64_t key[3];
+				bool inside = true;
+				for( int axis = 0; axis < 3; axis++ )
+				{
+					const double step = floor( ( double )( *w )[j][axis] * SMOOTH_SNAP_FRACTIONS + 0.5 );
+					inside = inside && step <= SMOOTH_MAX_STEPS && step >= -SMOOTH_MAX_STEPS;
+					key[axis] = inside ? ( int64_t )step : 0;
+				}
+				if( inside )
+				{
+					corners.insert( corners.end(), key, key + 3 );
+				}
+			}
+		}
+	}
+}
+
+/*
+====================
 DressSmoothPostTjunction
 ====================
 */
@@ -321,12 +371,22 @@ void DressSmoothPostTjunction( uEntity_t* e )
 	}
 
 	dmapsmooth::Stats stats = {};
+	dmapsmooth::CutStats cutStats = {};
 	if( !tris.empty() )
 	{
 		std::vector<dmapsmooth::Corner> corners( tris.size() * 3 );
-		dmapsmooth::Smooth( tris.data(), ( uint32_t )tris.size(), corners.data(), &stats );
+		std::vector<uint32_t> wedgeIds( dmap_smoothCuts.GetBool() ? tris.size() * 3 : 0 );
+		dmapsmooth::Smooth( tris.data(), ( uint32_t )tris.size(), corners.data(), &stats, wedgeIds.empty() ? nullptr : wedgeIds.data() );
+		if( !wedgeIds.empty() )
+		{
+			std::vector<int64_t> brushCorners;
+			SmoothBrushCorners( e, brushCorners );
+			// duplicates stay: SmoothCuts hashes the corners and drops them there
+			dmapsmooth::SmoothCuts( tris.data(), ( uint32_t )tris.size(), wedgeIds.data(), stats.wedges,
+									brushCorners.empty() ? NULL : brushCorners.data(), ( uint32_t )( brushCorners.size() / 3 ), corners.data(), &cutStats );
+		}
 
-		// only the corners of wedges with more than one plane: the others keep their bytes
+		// only the corners whose value is not their plane's normal: the others keep their bytes
 		for( size_t i = 0; i < sources.size(); i++ )
 		{
 			for( int k = 0; k < 3; k++ )
@@ -342,12 +402,22 @@ void DressSmoothPostTjunction( uEntity_t* e )
 
 	// the world's line always, a brush model's in verbose mode only: a map can hold thousands of them
 	const char* format = "dmap smooth%s: %u tris %u corners %u wedges %u smoothed %u hard %u planarKept, %i tris beyond the bound, %i groups not brush sides left out\n";
+	const char* cutFormat = "dmap smooth cuts%s: %u wedges in a face, %u on a hard edge, %u on a crease, %u lines (%u wedges on brush edges only); %u kept at brush corners, %u ambiguous, %u demoted, %u short-ray copies, %u short rays stuck; %u moved, %u sweeps (%u unconverged)\n";
 	if( dmapGlobals.entityNum == 0 )
 	{
 		common->Printf( format, "", stats.tris, stats.corners, stats.wedges, stats.smoothed, stats.hardRays, stats.planarKept, numFar, numOtherGroups );
+		if( cutStats.lines > 0 || cutStats.keptAtBrushCorners > 0 || cutStats.shortCopies > 0 || cutStats.shortStuck > 0 )
+		{
+			common->Printf( cutFormat, "", cutStats.inFace, cutStats.onHardEdge, cutStats.onCrease, cutStats.lines, cutStats.brushEdgeOnly, cutStats.keptAtBrushCorners, cutStats.ambiguous, cutStats.demoted, cutStats.shortCopies, cutStats.shortStuck, cutStats.moved, cutStats.sweeps, cutStats.unconverged );
+		}
 	}
 	else
 	{
-		common->VerbosePrintf( format, va( " (entity %i)", dmapGlobals.entityNum ), stats.tris, stats.corners, stats.wedges, stats.smoothed, stats.hardRays, stats.planarKept, numFar, numOtherGroups );
+		const idStr entity = va( " (entity %i)", dmapGlobals.entityNum );
+		common->VerbosePrintf( format, entity.c_str(), stats.tris, stats.corners, stats.wedges, stats.smoothed, stats.hardRays, stats.planarKept, numFar, numOtherGroups );
+		if( cutStats.lines > 0 || cutStats.keptAtBrushCorners > 0 || cutStats.shortCopies > 0 || cutStats.shortStuck > 0 )
+		{
+			common->VerbosePrintf( cutFormat, entity.c_str(), cutStats.inFace, cutStats.onHardEdge, cutStats.onCrease, cutStats.lines, cutStats.brushEdgeOnly, cutStats.keptAtBrushCorners, cutStats.ambiguous, cutStats.demoted, cutStats.shortCopies, cutStats.shortStuck, cutStats.moved, cutStats.sweeps, cutStats.unconverged );
+		}
 	}
 }
