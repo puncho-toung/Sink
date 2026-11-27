@@ -590,6 +590,9 @@ void idLight::Restore( idRestoreGame* savefile )
 	// reads it only from BUILD_NUMBER_SAVE_VERSION_LIGHT_MODELTARGET_CHANGE on, and an older save leaves it NULL ( spawn id 0 )
 	if( modelTarget.GetSpawnId() != 0 )
 	{
+		//puncho - renderer join v0001.3w: idEvent::Restore ran before the objects' Restores, so a copy of this event the save held
+		// (a save made before the first frame after a load, as testSaveRoundTrip makes) is dropped; the event is idempotent
+		CancelEvents( &EV_Light_UpdateModelTarget );
 		PostEventMS( &EV_Light_UpdateModelTarget, 0 );
 	}
 

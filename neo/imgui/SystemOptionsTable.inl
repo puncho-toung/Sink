@@ -391,8 +391,10 @@ static void BuildTable()
 	.Desc( "Moves the fog's light samples inside each cell from frame to frame, so that the smoothing averages away the grid's blocks." );
 
 	AddSection( "View Distance", 1 );
-	Special( "View Distance", "r_viewDistance", "r_distanceCull", SPECIAL_VIEW_DISTANCE, 1024.0f, 8192.0f, 128.0f ).Summary( "" )
-	.Desc( "Full detail out to this radius in units; things and lights beyond it fade out. The top of the bar turns distance culling off." );
+	//puncho - renderer join v0001.3w: R7.2's range ( r_viewDistance 1024 to 65536, default 65536 with the distance cull on ) and
+	// its rule, as the SWF screen's view distance has it ( MenuScreen_Shell_SystemOptions.cpp ); was 1024 to 8192 in steps of 128
+	Special( "View Distance", "r_viewDistance", "r_distanceCull", SPECIAL_VIEW_DISTANCE, 1024.0f, 65536.0f, 512.0f ).Summary( "" )
+	.Desc( "Radius of full detail, 1024 to 65536 units. Beyond it lights fade out and objects vanish 15 percent farther." );
 	Slider( "Fade Width", "r_cullFadeFraction", 0.05f, 0.5f, 0.01f, "%.2f" ).Parent( "r_distanceCull", V( 1 ), "Needs a view distance below Unlimited." )
 	.Desc( "The width of the band past the view distance over which things fade out, as a share of the distance: wider hides the pop." );
 

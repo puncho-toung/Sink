@@ -85,7 +85,7 @@ enum specialOption_t
 	SPECIAL_DISPLAY_MODE,	// r_fullscreen and r_vidMode, from the Resolution screen's list
 	SPECIAL_RENDER_API,		// r_graphicsAPI, a string ( Windows )
 	SPECIAL_BRIGHTNESS,		// r_exposure 0 to 1 with r_lightScale 2 to 4, as a percentage
-	SPECIAL_VIEW_DISTANCE,	// r_viewDistance in units, with r_distanceCull 0 at the top of the bar
+	SPECIAL_VIEW_DISTANCE,	// r_viewDistance in units, the cull kept on ( R7.2; an archived r_distanceCull 0 shows at the top of the bar )
 	SPECIAL_VOLUME			// s_volume_dB as a percentage of loudness
 };
 
@@ -453,17 +453,10 @@ static void SpecialSet( const optionRow_t& row, optionState_t& state, float valu
 		}
 		case SPECIAL_VIEW_DISTANCE:
 		{
-			const float units = idMath::Rint( value );
-			if( units >= row.maxValue )
-			{
-				state.cvar->SetFloat( row.maxValue );
-				state.cvar2->SetBool( false );
-			}
-			else
-			{
-				state.cvar->SetFloat( units );
-				state.cvar2->SetBool( true );
-			}
+			//puncho - renderer join v0001.3w (R7.2): the whole bar keeps the distance cull on, the top too ( it cuts at 65536, and
+			// authored cull keys keep working ); an archived r_distanceCull 0 shows as the top until the bar is moved
+			state.cvar->SetFloat( idMath::Rint( value ) );
+			state.cvar2->SetBool( true );
 			break;
 		}
 		case SPECIAL_VOLUME:
