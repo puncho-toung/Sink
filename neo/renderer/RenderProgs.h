@@ -534,8 +534,6 @@ enum
 	BUILTIN_CRT_EASYMODE,
 	BUILTIN_SCREEN,
 	BUILTIN_TONEMAP,
-	BUILTIN_BRIGHTPASS,
-	BUILTIN_HDR_GLARE_CHROMATIC,
 	BUILTIN_HDR_DEBUG,
 
 	BUILTIN_SMAA_EDGE_DETECTION,
@@ -547,6 +545,7 @@ enum
 	BUILTIN_TAA_RESOLVE_MSAA_2X,
 	BUILTIN_TAA_RESOLVE_MSAA_4X,
 	BUILTIN_TAA_RESOLVE_MSAA_8X,
+	BUILTIN_TAA_RESOLVE_SHARPEN,		// TAA REPAIR: the resolve with the sharpening of what is shown ( USE_SHARPEN 1 )
 
 	BUILTIN_AMBIENT_OCCLUSION,
 	BUILTIN_AMBIENT_OCCLUSION_AND_OUTPUT,
@@ -638,6 +637,14 @@ enum
 	BUILTIN_PBR_INTERACTION_AMBIENT_FOG,
 	BUILTIN_PBR_INTERACTION_AMBIENT_SKINNED_FOG,
 	// ---- END TRACK V ----
+	// ---- WP-J21: the glow twins of the emitting stages' programs: the same light, and its luminance into the glow mask
+	// as a second output ( the bloom's gate ). Bound by the stage loop for a stage that passes the gate ----
+	BUILTIN_TEXTURE_VERTEXCOLOR_GLOW,
+	BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED_GLOW,
+	BUILTIN_TEXTURE_VERTEXCOLOR_FOG_GLOW,
+	BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED_FOG_GLOW,
+	BUILTIN_BINK_GLOW,
+	// ---- END WP-J21 ----
 
 	MAX_BUILTINS
 };
@@ -1120,16 +1127,6 @@ public:
 		BindShader_Builtin( BUILTIN_TONEMAP );
 	}
 
-	void	BindShader_Brightpass()
-	{
-		BindShader_Builtin( BUILTIN_BRIGHTPASS );
-	}
-
-	void	BindShader_HDRGlareChromatic()
-	{
-		BindShader_Builtin( BUILTIN_HDR_GLARE_CHROMATIC );
-	}
-
 	void	BindShader_HDRDebug()
 	{
 		BindShader_Builtin( BUILTIN_HDR_DEBUG );
@@ -1369,6 +1366,45 @@ public:
 	}
 	// ---- END TRACK V ----
 
+	// ---- WP-J21: the glow twin of a builtin, -1 where it has none ( a stage drawn by another program writes no mask ) ----
+	static int	GlowTwin( int builtin )
+	{
+		switch( builtin )
+		{
+			case BUILTIN_TEXTURE_VERTEXCOLOR:
+				return BUILTIN_TEXTURE_VERTEXCOLOR_GLOW;
+			case BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED:
+				return BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED_GLOW;
+			case BUILTIN_TEXTURE_VERTEXCOLOR_FOG:
+				return BUILTIN_TEXTURE_VERTEXCOLOR_FOG_GLOW;
+			case BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED_FOG:
+				return BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED_FOG_GLOW;
+			case BUILTIN_BINK:
+				return BUILTIN_BINK_GLOW;
+			default:
+				return -1;
+		}
+	}
+
+	// swaps the program bound now for its glow twin; false where it has none
+	bool	BindShader_GlowTwin()
+	{
+		const int twin = GlowTwin( currentIndex );
+		if( twin < 0 )
+		{
+			return false;
+		}
+		BindShader_Builtin( twin );
+		return true;
+	}
+
+	// a program that writes the glow mask as its second output ( PipelineCache: the second target takes its blend )
+	static bool	IsGlowProgram( int program )
+	{
+		return program >= BUILTIN_TEXTURE_VERTEXCOLOR_GLOW && program <= BUILTIN_BINK_GLOW;
+	}
+	// ---- END WP-J21 ----
+
 	// the joints buffer should only be bound for vertex programs that use joints
 	bool		ShaderUsesJoints() const
 	{
@@ -1451,8 +1487,23 @@ protected:
 private:
 	void		LoadShader( int index, rpStage_t stage );
 
-	// Reads the binary fileName and returns a ShaderBlob.
-	ShaderBlob	GetBytecode( const char* fileName );
+	// Reads the binary fileName and returns a ShaderBlob. V6: cacheSlot 0, 1, 2 ( vertex, pixel, compute ) lets a load pass
+	// keep the blob ( BlobCacheBegin ); -1 reads a blob the caller frees
+	ShaderBlob	GetBytecode( const char* fileName, int cacheSlot = -1 );
+	// ---- TRACK V ( V6, row 179 ): the load pass's blob cache. Init's loop over the builtins and LoadAllShaders keep the
+	// last blob read for each stage, so the rows of one file that follow each other read it once ( the 24 interactionSM
+	// rows two files once, not 48 times ); a shader loaded outside a load pass, or by another thread, reads and frees its
+	// blob as before ----
+	void		BlobCacheBegin();
+	void		BlobCacheEnd( const char* pass );
+	void		ReleaseBytecode( const ShaderBlob& blob );	// frees a blob unless the load pass keeps it
+	idStr		blobCacheName[3];	// by stage slot: the file of the kept blob, empty = none
+	ShaderBlob	blobCacheBlob[3];
+	uintptr_t	blobCacheThread;	// the thread of the load pass that keeps them; 0 = no load pass
+	int			blobCacheReads;		// the pass's files read, the blobs it took from the cache by stage slot, the bytes it read
+	int			blobCacheHits[3];
+	int64		blobCacheBytes;
+	// ---- END TRACK V ----
 
 	int builtinShaders[MAX_BUILTINS];
 	void BindShader_Builtin( int i )

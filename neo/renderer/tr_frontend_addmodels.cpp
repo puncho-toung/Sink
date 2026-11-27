@@ -342,6 +342,50 @@ static void R_GrowContactedLights( viewLight_t**& contactedLights, idInteraction
 	maxContactedLights = grown;
 }
 
+// ---- TRACK F: the lights of one surface ( F7, row 197 ( b ) ) ----
+/*
+===================
+R_SurfLightSlot
+
+Track F ( F7 ): the place in the entity's contacted lights of the light lightIndex, or -1 when the view has not
+brought it to this entity. slots holds ( light index << 32 ) | place for every contacted light with a live static
+interaction, sorted.
+===================
+*/
+static int R_SurfLightSlot( const uint64* slots, int numSlots, int lightIndex )
+{
+	int lo = 0;
+	int hi = numSlots - 1;
+	while( lo <= hi )
+	{
+		const int mid = ( lo + hi ) >> 1;
+		const int midLight = ( int )( slots[mid] >> 32 );
+		if( midLight < lightIndex )
+		{
+			lo = mid + 1;
+		}
+		else if( midLight > lightIndex )
+		{
+			hi = mid - 1;
+		}
+		else
+		{
+			return ( int )( uint32 )slots[mid];
+		}
+	}
+	return -1;
+}
+
+class idSort_SurfLightSlots : public idSort_Quick< uint64, idSort_SurfLightSlots >
+{
+public:
+	int Compare( const uint64& a, const uint64& b ) const
+	{
+		return ( a < b ) ? -1 : ( ( a > b ) ? 1 : 0 );
+	}
+};
+// ---- END TRACK F ----
+
 /*
 ===================
 R_AddSingleModel
@@ -360,6 +404,7 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 	// we will add all interaction surfs here, to be chained to the lights in later serial code
 	vEntity->drawSurfs = NULL;
 	vEntity->contactedCapHits = 0;
+	vEntity->surfLightPairs = 0;		// track F ( F7a )
 
 	// globals we really should pass in...
 	const viewDef_t* viewDef = tr.viewDef;
@@ -644,6 +689,8 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 	vEntity->modelDepthHack = renderEntity->modelDepthHack;
 	vEntity->weaponDepthHack = renderEntity->weaponDepthHack;
 	vEntity->skipMotionBlur = renderEntity->skipMotionBlur;
+	vEntity->bloomStyle = renderEntity->bloomStyle;		// WP-J27: the source's own bloom, for the stage loop
+	vEntity->noGlow = renderEntity->noGlow;				// WP-J21: the glow switch, read there too
 
 	// the absolute matrix for the frontend, and the matrix relative to the render origin for the
 	// model view and the backend; at a zero origin both are the def's matrix
@@ -685,6 +732,53 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 	const idVec3 eye = renderOrigin.IsZero() ? viewDef->renderView.vieworg : ( idVec3d( viewDef->renderView.vieworg ) - renderOrigin ).ToVec3();
 	R_GlobalPointToLocal( vEntity->modelMatrixRel, eye, vEntity->localViewOrigin );
 	const idVec3& localViewOrigin = vEntity->localViewOrigin;
+
+	// ---- TRACK F: each surface's own lights ( F7, row 197 ( b ) ) ----
+	// A contacted light with a live static interaction is in the list of exactly the surfaces it reaches
+	// ( entityDef->surfLights, Interaction.cpp ): each surface finds its own in staticSlots. The other contacted lights
+	// ( moved or made after the load, and every light of a model drawn at a lower level of detail, whose
+	// staticInteractions were cleared above ) are dynamicSlots, tested by every surface's bounds as before
+	// ( review CN1-1: not at a lower level of detail, whose model is a sibling with surfaces of its own )
+	const entitySurfLights_t* surfLights = ( lodLevel == 0 ) ? entityDef->surfLights : NULL;
+	if( surfLights != NULL && surfLights->numSurfaces != model->NumSurfaces() )
+	{
+		assert( false );		// the lists belong to the model the static interactions were made from
+		surfLights = NULL;
+	}
+	uint64 stackStaticSlots[STACK_CONTACTED_LIGHTS];
+	int stackDynamicSlots[STACK_CONTACTED_LIGHTS];
+	int stackWorkSlots[STACK_CONTACTED_LIGHTS];
+	const surfLightRef_t* stackWorkRefs[STACK_CONTACTED_LIGHTS];
+	uint64* staticSlots = stackStaticSlots;
+	int* dynamicSlots = stackDynamicSlots;
+	int* workSlots = stackWorkSlots;
+	const surfLightRef_t** workRefs = stackWorkRefs;
+	if( numContactedLights > STACK_CONTACTED_LIGHTS )
+	{
+		staticSlots = ( uint64* )R_FrameAlloc( numContactedLights * sizeof( uint64 ), FRAME_ALLOC_UNKNOWN );
+		dynamicSlots = ( int* )R_FrameAlloc( numContactedLights * sizeof( int ), FRAME_ALLOC_UNKNOWN );
+		workSlots = ( int* )R_FrameAlloc( numContactedLights * sizeof( int ), FRAME_ALLOC_UNKNOWN );
+		workRefs = ( const surfLightRef_t** )R_FrameAlloc( numContactedLights * sizeof( surfLightRef_t* ), FRAME_ALLOC_UNKNOWN );
+	}
+	int numStaticSlots = 0;
+	int numDynamicSlots = 0;
+	for( int i = 0; i < numContactedLights; i++ )
+	{
+		const idInteraction* interaction = staticInteractions[i];
+		if( surfLights != NULL && interaction > INTERACTION_EMPTY && interaction->staticInteraction )
+		{
+			staticSlots[numStaticSlots++] = ( ( uint64 )( uint32 )contactedLights[i]->lightDef->index << 32 ) | ( uint32 )i;
+		}
+		else
+		{
+			dynamicSlots[numDynamicSlots++] = i;
+		}
+	}
+	if( numStaticSlots > 1 )
+	{
+		idSort_SurfLightSlots().Sort( staticSlots, numStaticSlots );
+	}
+	// ---- END TRACK F ----
 
 	//---------------------------
 	// add all the model surfaces
@@ -1098,24 +1192,50 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 			}
 		}
 
+		// ---- TRACK F: the lights this surface's loop visits ( F7 ) ----
+		// A surface that can give neither a lit surface nor a shadow skips the loop ( review O2-10: the loop body's own
+		// tests, taken before it ). Else its own lights that this entity has from the view, then the dynamic ones.
+		// Each light comes once: a surface's list holds a light once, and a light is static or dynamic for the entity
+		int numWork = 0;
+		const bool surfaceMayLight = addInteractions && surfaceDirectlyVisible && shader->ReceivesLighting();
+		const bool surfaceMayShadow = ( shader->SurfaceCastsShadow() || ( r_forceShadowMapsOnAlphaTestedSurfaces.GetBool() && shader->Coverage() == MC_PERFORATED ) ) && !entityDef->parms.noShadow;
+		if( surfaceMayLight || surfaceMayShadow )
+		{
+			if( numStaticSlots > 0 )
+			{
+				const surfLightList_t& list = surfLights->lists[surfaceNum];
+				for( int i = 0; i < list.num && numWork < numStaticSlots; i++ )
+				{
+					const int slot = R_SurfLightSlot( staticSlots, numStaticSlots, list.refs[i].lightIndex );
+					if( slot >= 0 )
+					{
+						workSlots[numWork] = slot;
+						workRefs[numWork] = &list.refs[i];
+						numWork++;
+					}
+				}
+			}
+			for( int i = 0; i < numDynamicSlots; i++ )
+			{
+				workSlots[numWork] = dynamicSlots[i];
+				workRefs[numWork] = NULL;
+				numWork++;
+			}
+		}
+		vEntity->surfLightPairs += numWork;		// F7a's column: the pairs the loop below visits
+		// ---- END TRACK F ----
+
 		//----------------------------------------
 		// add all light interactions
 		//----------------------------------------
-		for( int contactedLight = 0; contactedLight < numContactedLights; contactedLight++ )
+		for( int work = 0; work < numWork; work++ )
 		{
-			viewLight_t* vLight = contactedLights[contactedLight];
+			viewLight_t* vLight = contactedLights[workSlots[work]];
 			const idRenderLightLocal* lightDef = vLight->lightDef;
-			const idInteraction* interaction = staticInteractions[contactedLight];
 
-			// check for a static interaction
-			surfaceInteraction_t* surfInter = NULL;
-			if( interaction > INTERACTION_EMPTY && interaction->staticInteraction )
-			{
-				// we have a static interaction that was calculated accurately
-				assert( model->NumSurfaces() == interaction->numSurfaces );
-				surfInter = &interaction->surfaces[surfaceNum];
-			}
-			else
+			// a static interaction that was calculated accurately, or NULL ( track F, F7: the surface's own ref )
+			const surfLightRef_t* surfInter = workRefs[work];
+			if( surfInter == NULL )
 			{
 				// try to do a more precise cull of this model surface to the light
 				if( R_CullModelBoundsToLight( lightDef, tri->bounds, entityDef->modelRenderMatrix ) )
@@ -1154,7 +1274,7 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 					// The tests above ( the spectrum, the static interaction's empty triangle list, the entity's interaction
 					// state ) all ran, so every exclusion the job applies is in the run. The shadow surface below is made
 					// either way: a listed pair keeps its caster ( D9 )
-					const int pairListed = ( shaderRegisters != NULL ) ? R_LightListTakePair( viewDef, vLight, shader, baseLinked ? baseDrawSurf : NULL, numContactedLights ) : LL_PAIR_LEGACY;
+					const int pairListed = ( shaderRegisters != NULL ) ? R_LightListTakePair( viewDef, vLight, shader, baseLinked ? baseDrawSurf : NULL, numWork ) : LL_PAIR_LEGACY;		// F7: the run sized by the surface ( review O2-11 )
 					// ---- END TRACK F ----
 					if( shaderRegisters != NULL && pairListed != LL_PAIR_LISTED )
 					{
@@ -1179,6 +1299,17 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 						}
 
 						lightDrawSurf->ambientCache = tri->ambientCache;
+						// track F ( F7k ): the block went stale and the surface's own vertexes were copied this frame: its light tris
+						// count from the block, so the surface's own indexes ( copied with them ) are drawn whole
+						if( surfInter != NULL && tri->staticBlockVertex > 0 && !vertexCache.CacheIsStatic( tri->ambientCache ) )
+						{
+							if( !vertexCache.CacheIsCurrent( tri->indexCache ) )
+							{
+								tri->indexCache = vertexCache.AllocIndex( tri->indexes, tri->numIndexes );
+							}
+							lightDrawSurf->numIndexes = tri->numIndexes;
+							lightDrawSurf->indexCache = tri->indexCache;
+						}
 						lightDrawSurf->frontEndGeo = tri;
 						lightDrawSurf->space = vEntity;
 						lightDrawSurf->material = shader;
@@ -1328,6 +1459,16 @@ void R_AddSingleModel( viewEntity_t* vEntity )
 					}
 
 					shadowDrawSurf->ambientCache = tri->ambientCache;
+					// track F ( F7k ): as the lit surface's: a stale block's surface draws its own indexes
+					if( surfInter != NULL && tri->staticBlockVertex > 0 && !vertexCache.CacheIsStatic( tri->ambientCache ) )
+					{
+						if( !vertexCache.CacheIsCurrent( tri->indexCache ) )
+						{
+							tri->indexCache = vertexCache.AllocIndex( tri->indexes, tri->numIndexes );
+						}
+						shadowDrawSurf->numIndexes = tri->numIndexes;
+						shadowDrawSurf->indexCache = tri->indexCache;
+					}
 					shadowDrawSurf->frontEndGeo = tri;
 					shadowDrawSurf->space = vEntity;
 					shadowDrawSurf->material = shader;
@@ -1550,6 +1691,7 @@ void R_AddModels()
 			}
 		}
 		tr.pc.c_contactedCapHits += vEntity->contactedCapHits;
+		tr.pc.c_surfLightPairs += vEntity->surfLightPairs;		// track F ( F7a )
 		tr.pc.c_lodEntities1 += vEntity->lodLevel == 1;
 		tr.pc.c_lodEntities2 += vEntity->lodLevel == 2;
 		tr.pc.c_lodEntities3 += vEntity->lodLevel == 3;

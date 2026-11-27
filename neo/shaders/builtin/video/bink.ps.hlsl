@@ -45,6 +45,9 @@ struct PS_IN {
 
 struct PS_OUT {
 	float4 color : SV_Target0;
+#if defined( USE_GLOW ) && USE_GLOW
+	float4 glow : SV_Target1;		// WP-J21: the glow mask ( texture_color.ps.hlsl )
+#endif
 };
 // *INDENT-ON*
 
@@ -68,4 +71,7 @@ void main( PS_IN fragment, out PS_OUT result )
 	color *= pc.rpColor;
 
 	result.color = sRGBAToLinearRGBA( color );
+#if defined( USE_GLOW ) && USE_GLOW
+	result.glow = float4( dot( result.color.rgb, float3( 0.2126, 0.7152, 0.0722 ) ), 0.0, 0.0, result.color.a );
+#endif
 }

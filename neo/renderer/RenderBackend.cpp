@@ -47,6 +47,43 @@ If you have questions concerning this license or the applicable additional terms
 #include "Passes/VolumetricFogPass_cb.h"		//puncho - reconcile: keep X0's per-view "fog off" write
 
 idCVar r_useNewSsaoPass( "r_useNewSSAOPass", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "use the new SSAO pass from Donut" );
+
+// track F ( F7k ): neighbouring draws of one static vertex block whose index ranges touch, drawn as one
+idCVar r_joinDraws( "r_joinDraws", "1", CVAR_RENDERER | CVAR_BOOL, "draw neighbouring surfaces of one static vertex block whose indexes touch as one draw ( the depth pre-pass, shadow maps, the G-buffer fill ); 0 = a draw each" );
+
+/*
+==================
+RB_JoinTouching
+
+Track F ( F7k ): next joins the run that starts with first ( its first index at runIndexCache's offset, runNumIndexes long )
+when both are static, of one vertex block ( the same ambientCache, so the same base vertex ), of one entity, without joints,
+and next's indexes lie right after the run's or right before them. The caller has checked that next draws in this pass
+with first's state. A joined draw holds the members' triangles, each as its own draw would; only the draw count changes.
+==================
+*/
+static bool RB_JoinTouching( const drawSurf_t* first, vertCacheHandle_t& runIndexCache, int& runNumIndexes, const drawSurf_t* next )
+{
+	if( !r_joinDraws.GetBool() || next->space != first->space || next->ambientCache != first->ambientCache ||
+			first->jointCache != 0 || next->jointCache != 0 || !vertexCache.CacheIsStatic( first->ambientCache ) ||
+			!vertexCache.CacheIsStatic( runIndexCache ) || !vertexCache.CacheIsStatic( next->indexCache ) )
+	{
+		return false;
+	}
+	const uint64 runFirst = ( runIndexCache >> VERTCACHE_OFFSET_SHIFT ) & VERTCACHE_OFFSET_MASK;
+	const uint64 nextFirst = ( next->indexCache >> VERTCACHE_OFFSET_SHIFT ) & VERTCACHE_OFFSET_MASK;
+	if( nextFirst == runFirst + ( uint64 )runNumIndexes * sizeof( triIndex_t ) )
+	{
+		runNumIndexes += next->numIndexes;		// right after the run
+		return true;
+	}
+	if( nextFirst + ( uint64 )next->numIndexes * sizeof( triIndex_t ) == runFirst )
+	{
+		runIndexCache = next->indexCache;		// right before it
+		runNumIndexes += next->numIndexes;
+		return true;
+	}
+	return false;
+}
 extern DeviceManager* deviceManager;
 
 //puncho - owned by lane P; captured once for each backend command frame.
@@ -670,6 +707,13 @@ void idRenderBackend::PrepareStageTexturing( const shaderStage_t* pStage,  const
 		useTexGenParm[1] = ( float )fogKind;
 	}
 	// ---- END TRACK V ----
+	// WP-J27: a glow twin reads its style's slot from rpTexGen0Enabled.z, which no other program reads; set only for an
+	// emitting stage of a source with a style of its own ( the stage loop sets it for that draw alone ), so every other draw
+	// sends what it sent before ( review R2-N3 )
+	if( glowStyleDrawSlot > 0.0f )
+	{
+		useTexGenParm[2] = glowStyleDrawSlot;
+	}
 	SetVertexParm( RENDERPARM_TEXGEN_0_ENABLED, useTexGenParm );
 }
 
@@ -1066,8 +1110,34 @@ void idRenderBackend::FillDepthBufferFast( drawSurf_t** drawSurfs, int numDrawSu
 		// must render with less-equal for Z-Cull to work properly
 		assert( ( GL_GetCurrentState() & GLS_DEPTHFUNC_BITS ) == GLS_DEPTHFUNC_LESS );
 
+		// track F ( F7k ): with the next opaque surfaces of its static vertex block whose indexes touch, as one draw; no
+		// material is compared because this loop sets no per-material state for an opaque surface ( the MVP of its space
+		// and the depth shader only: review O2-S S-7 )
+		vertCacheHandle_t runIndexCache = surf->indexCache;
+		int runNumIndexes = surf->numIndexes;
+		while( surfNum + 1 < numDrawSurfs )
+		{
+			const drawSurf_t* next = drawSurfs[ surfNum + 1 ];
+			const materialCoverage_t nextCoverage = next->material->Coverage();
+			if( nextCoverage == MC_TRANSLUCENT || nextCoverage == MC_PERFORATED || !RB_JoinTouching( surf, runIndexCache, runNumIndexes, next ) )
+			{
+				break;
+			}
+			surfNum++;
+		}
+
 		// draw it solid
-		DrawElementsWithCounters( surf );
+		if( runNumIndexes != surf->numIndexes )
+		{
+			drawSurf_t joined = *surf;
+			joined.indexCache = runIndexCache;
+			joined.numIndexes = runNumIndexes;
+			DrawElementsWithCounters( &joined );
+		}
+		else
+		{
+			DrawElementsWithCounters( surf );
+		}
 
 		renderLog.CloseBlock();
 	}
@@ -1792,18 +1862,6 @@ static void RB_SetupForFastPathInteractions( const idVec4& diffuseColor, const i
 	SetFragmentParm( RENDERPARM_SPECULARMODIFIER, specularColor.ToFloatPtr() );
 }
 
-//puncho start - E-R43-1 (2R R4.3 follow-up; Opus reviewer B): RenderInteractions' lists of one light's surfaces double when
-// they are full, from 1,024, so Append never grows them; growing by a fixed step was quadratic in the longest chain
-static ID_INLINE void R_AppendGrowing( idList< const drawSurf_t*, TAG_RENDER >& list, const drawSurf_t* surf )
-{
-	if( list.Num() == list.NumAllocated() )
-	{
-		list.Resize( Max( 1024, list.NumAllocated() * 2 ) );
-	}
-	list.Append( surf );
-}
-//puncho end
-
 /*
 =============
 idRenderBackend::RenderInteractions
@@ -1868,16 +1926,17 @@ void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const view
 	// are added single-threaded, and there is only a negligable amount
 	// of benefit to trying to sort by materials.
 	//---------------------------------
-	//puncho start - E-R43-1 (2R R4.3 follow-up): one light's lit surfaces go into two lists of the back end that grow. They
-	// were fixed lists of 2,048 and 256 (1,024 in BFG): a Release build left every surface above them unlit by the light
-	// without a word and an assert build ended, and an outdoor view under the sun has more than 2,048 sunlit surfaces in
-	// one chain. The lists keep their memory from light to light, double when they are full (R_AppendGrowing) and never
-	// shrink
-	idList< const drawSurf_t*, TAG_RENDER >& allSurfaces = interactionSurfaces;
-	idList< const drawSurf_t*, TAG_RENDER >& complexSurfaces = interactionComplexSurfaces;
+	// track F ( F7j ): no cap ( the idStaticLists of 2,048 and 256 dropped the rest of a light's surfaces unlit in a
+	// release build; a chunked floor under one light passes 256 ); the lists keep their memory between calls
+	idList< const drawSurf_t* >& allSurfaces = interactionSurfaces;
+	idList< const drawSurf_t* >& complexSurfaces = interactionComplexSurfaces;
+	if( allSurfaces.GetGranularity() != 1024 )		// F7m ( O1-S S-5, O2-S S-8 ): a light's first long chain grows in few steps;
+	{											// once, while empty ( SetGranularity resizes a list that holds memory )
+		allSurfaces.SetGranularity( 1024 );
+		complexSurfaces.SetGranularity( 1024 );
+	}
 	allSurfaces.SetNum( 0 );
 	complexSurfaces.SetNum( 0 );
-	//puncho end
 	for( const drawSurf_t* walk = surfList; walk != NULL; walk = walk->nextOnLight )
 	{
 		const idMaterial* surfaceShader = walk->material;
@@ -1901,16 +1960,16 @@ void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const view
 
 		if( surfaceShader->GetFastPathBumpImage() )
 		{
-			R_AppendGrowing( allSurfaces, walk );
+			allSurfaces.Append( walk );
 		}
 		else
 		{
-			R_AppendGrowing( complexSurfaces, walk );
+			complexSurfaces.Append( walk );
 		}
 	}
 	for( int i = 0; i < complexSurfaces.Num(); i++ )
 	{
-		R_AppendGrowing( allSurfaces, complexSurfaces[i] );
+		allSurfaces.Append( complexSurfaces[i] );
 	}
 
 	bool lightDepthBoundsDisabled = false;
@@ -2135,6 +2194,9 @@ void idRenderBackend::RenderInteractions( const drawSurf_t* surfList, const view
 			const float* surfaceRegs = surf->shaderRegisters;
 
 			inter.surf = surf;
+
+			// track F ( F7m, review O2-S S-1 ): this pass does not join draws: its lookahead, run for every lit draw, cost
+			// more on many-light maps than the joins of lights that keep chunks whole saved
 
 			// change the MVP matrix, view/light origin and light projection vectors if needed
 			if( surf->space != currentSpace )
@@ -2699,6 +2761,32 @@ void idRenderBackend::AmbientPass( const drawSurf_t* const* drawSurfs, int numDr
 
 		drawInteraction_t inter = {};
 		inter.surf = drawSurf;
+
+		// track F ( F7l ): in the G-buffer fill, the next surfaces of the same material and registers whose indexes touch
+		// in one static vertex block with this one draw with it, through either path ( r_skipInteractionFastPath is 1 by
+		// default: the slow path ); the fill reads no light list ( review SD3 )
+		drawSurf_t joined;
+		if( fillGbuffer && r_joinDraws.GetBool() )		// F7m: no lookahead when joining is off
+		{
+			vertCacheHandle_t runIndexCache = drawSurf->indexCache;
+			int runNumIndexes = drawSurf->numIndexes;
+			while( i + 1 < numDrawSurfs )
+			{
+				const drawSurf_t* next = drawSurfs[ i + 1 ];
+				if( next->material != surfaceMaterial || next->shaderRegisters != surfaceRegs || !RB_JoinTouching( drawSurf, runIndexCache, runNumIndexes, next ) )
+				{
+					break;
+				}
+				i++;
+			}
+			if( runNumIndexes != drawSurf->numIndexes )
+			{
+				joined = *drawSurf;
+				joined.indexCache = runIndexCache;
+				joined.numIndexes = runNumIndexes;
+				inter.surf = &joined;
+			}
+		}
 
 		inter.diffuseColor[0] = inter.diffuseColor[1] = inter.diffuseColor[2] = inter.diffuseColor[3] = 1;
 		inter.specularColor[0] = inter.specularColor[1] = inter.specularColor[2] = inter.specularColor[3] = 0;
@@ -3913,8 +4001,38 @@ void idRenderBackend::ShadowMapPassFast( const drawSurf_t* drawSurfs, viewLight_
 		// must render with less-equal for Z-Cull to work properly
 		assert( ( GL_GetCurrentState() & GLS_DEPTHFUNC_BITS ) == GLS_DEPTHFUNC_LESS );
 
+		// track F ( F7k ): with the next casters of its static vertex block whose indexes touch, each drawn into this side
+		// and opaque, as one draw; no material is compared because this loop sets no per-material state for an opaque
+		// caster ( the MVP of its space and the depth shader only: review O2-S S-7 )
+		const drawSurf_t* runFirst = drawSurf;
+		vertCacheHandle_t runIndexCache = drawSurf->indexCache;
+		int runNumIndexes = drawSurf->numIndexes;
+		while( drawSurf->nextOnLight != NULL )
+		{
+			const drawSurf_t* next = drawSurf->nextOnLight;
+			const int nextBits = ( casterBits != NULL && casterIndex + 1 < vLight->numShadowCasterBits ) ? casterBits[casterIndex + 1] : SCB_SIDE_MASK;
+			const bool nextDrawn = ( casterBits == NULL || ( nextBits & casterMask ) == casterWant ) && next->numIndexes > 0 && next->material != NULL &&
+								  next->material->Coverage() != MC_TRANSLUCENT && next->material->Coverage() != MC_PERFORATED;
+			if( !nextDrawn || !RB_JoinTouching( runFirst, runIndexCache, runNumIndexes, next ) )
+			{
+				break;
+			}
+			drawSurf = next;
+			casterIndex++;
+		}
+
 		// draw it solid
-		DrawElementsWithCounters( drawSurf , true );
+		if( runNumIndexes != runFirst->numIndexes )
+		{
+			drawSurf_t joined = *runFirst;
+			joined.indexCache = runIndexCache;
+			joined.numIndexes = runNumIndexes;
+			DrawElementsWithCounters( &joined , true );
+		}
+		else
+		{
+			DrawElementsWithCounters( runFirst , true );
+		}
 
 		renderLog.CloseBlock();
 	}
@@ -4440,6 +4558,10 @@ void idRenderBackend::ShadowAtlasPass( const viewDef_t* _viewDef )
 			if( imageFitsIntoAtlas )
 			{
 				pc.c_shadowAtlasFogOnlyLights++;
+			}
+			else
+			{
+				pc.c_shadowAtlasFogOnlyRefused++;		// V6 ( row 181 ): a light that lights only the fog and lost a place
 			}
 		}
 		else if( !imageFitsIntoAtlas )
@@ -5059,6 +5181,7 @@ int idRenderBackend::DrawShaderPasses( const drawSurf_t* const* const drawSurfs,
 
 	currentSpace = ( const viewEntity_t* )1;	// using NULL makes /analyze think surf->space needs to be checked...
 	float currentGuiStereoOffset = 0.0f;
+	bool glowFramebufferBound = false;		// WP-J21: an emitting stage of this call bound _hdrGlow; _hdr is bound again at its end
 
 	int i = 0;
 	for( ; i < numDrawSurfs; i++ )
@@ -5487,6 +5610,29 @@ int idRenderBackend::DrawShaderPasses( const drawSurf_t* const* const drawSurfs,
 				}
 			}
 
+			// ---- WP-J21: a stage that passes the bloom's gate draws with its glow twin, which also adds its luminance to the
+			// glow mask, into _hdrGlow; the mask is cleared at the view's first such stage ( a clear ends the render
+			// pass ), and _hdrGlow stays bound to the end of this call. A stage whose program has no twin writes no mask ----
+			if( glowGateView && GlowStagePasses( shader, pStage, surf, stageGLState )
+					&& idRenderProgManager::GlowTwin( renderProgManager.CurrentProgram() ) >= 0 )
+			{
+				if( !glowMaskWritten )
+				{
+					glowMaskWritten = true;
+					commandList->clearTextureFloat( globalImages->glowMaskImage->GetTextureHandle(), nvrhi::AllSubresources, nvrhi::Color( 0.0f ) );
+					ResetGraphicsStateCache();
+				}
+				if( Framebuffer::GetActiveFramebuffer() != globalFramebuffers.hdrGlowFBO )
+				{
+					globalFramebuffers.hdrGlowFBO->Bind();
+					glowFramebufferBound = true;
+				}
+				renderProgManager.BindShader_GlowTwin();
+				// WP-J27: the source's own bloom, by its slot ( 0: the view's )
+				glowStyleDrawSlot = ( float )GlowStyleSlot( surf->space, stageGLState );
+			}
+			// ---- END WP-J21 ----
+
 			RB_SetVertexColorParms( svc );
 
 			// bind the texture
@@ -5503,6 +5649,7 @@ int idRenderBackend::DrawShaderPasses( const drawSurf_t* const* const drawSurfs,
 			GL_State( stageGLState );
 
 			PrepareStageTexturing( pStage, surf, fogKind );		// TRACK V ( V5e ): the blend kind for a fog twin
+			glowStyleDrawSlot = 0.0f;		// WP-J27: sent with this draw's parms; every later draw sends 0
 
 			// draw it
 			DrawElementsWithCounters( surf );
@@ -5528,8 +5675,111 @@ int idRenderBackend::DrawShaderPasses( const drawSurf_t* const* const drawSurfs,
 
 	GL_SelectTexture( 0 );
 
+	// WP-J21: the passes between and after the stage loop's calls draw into _hdr
+	if( glowFramebufferBound )
+	{
+		globalFramebuffers.hdrFBO->Bind();
+	}
+
 	renderLog.CloseBlock();
 	return i;
+}
+
+/*
+=========================
+idRenderBackend::GlowStagePasses
+
+WP-J21: true where an ambient stage of the stage loop passes the bloom's gate: its material's parse marked it
+( shaderStage_t::glowMark, idMaterial::Parse's rule ), or it is a stage of an in-world gui surface ( a screen emits ),
+unless the gui stage is one that never passes ( R_GlowStageNever with the state it draws with: a masked colour, a
+blend reading the destination's alpha, the picture already drawn, a dynamic render ... ) or its material or stage says
+"noGlow"; and never for an entity whose light switched its glow off ( emit_glow 0 on the light that owns the visual
+model )
+=========================
+*/
+bool idRenderBackend::GlowStagePasses( const idMaterial* shader, const shaderStage_t* pStage, const drawSurf_t* surf, uint64 stageGLState ) const
+{
+	// a light's visual model under the light's emit_glow 0 ( renderEntity_t::noGlow, copied into the view entity: the back
+	// end does not read the entityDef, which the game thread may change or free meanwhile; review R2-N4 )
+	if( surf->space->noGlow )
+	{
+		return false;
+	}
+	if( pStage->glowMark != GLOW_MARK_NONE )
+	{
+		return true;
+	}
+	if( !surf->space->isGuiSurface )
+	{
+		return false;
+	}
+	if( shader->GetGlowKey() == GLOW_KEY_NOGLOW || pStage->glowKey == GLOW_KEY_NOGLOW )
+	{
+		return false;
+	}
+	// review R1-7: the "never" list as the parse's, with the state the gui stage draws with
+	return !R_GlowStageNever( pStage, stageGLState );
+}
+
+/*
+=========================
+idRenderBackend::GlowStyleSlot
+
+WP-J27: the slot an emitting stage of this entity writes into the glow mask: 0 for the view's bloom, else the slot that holds
+the entity's style ( renderBloomStyle_t, copied into the view entity by the front end ). A style already in a slot keeps it;
+a new one takes a slot no stage of this view has drawn with, the longest unused first, so a style that stays in view keeps
+its slot, and the bloom its kernel, from frame to frame. Where this view has taken every slot, or the stage's blend reads a
+colour ( the mask's green would no longer be its luminance times the slot ), the stage takes the view's
+=========================
+*/
+int idRenderBackend::GlowStyleSlot( const viewEntity_t* space, uint64 stageGLState )
+{
+	if( space == NULL || R_BloomStyleIsView( space->bloomStyle ) )
+	{
+		return 0;
+	}
+	const uint64 src = stageGLState & GLS_SRCBLEND_BITS;
+	const uint64 dst = stageGLState & GLS_DSTBLEND_BITS;
+	if( src == GLS_SRCBLEND_DST_COLOR || src == GLS_SRCBLEND_ONE_MINUS_DST_COLOR || dst == GLS_DSTBLEND_SRC_COLOR || dst == GLS_DSTBLEND_ONE_MINUS_SRC_COLOR )
+	{
+		return 0;
+	}
+	int found = 0;
+	for( int i = 1; i < BLOOM_STYLE_SLOTS; i++ )
+	{
+		if( glowStyleView[i] != 0 && memcmp( &glowStyles[i], &space->bloomStyle, sizeof( renderBloomStyle_t ) ) == 0 )
+		{
+			found = i;
+			break;
+		}
+	}
+	if( found == 0 )
+	{
+		// a slot no style drew with in this view or the last: never used first, then the one unused longest. A style that
+		// held its slot in the last view keeps it, so with more styles in view than slots the same ones keep theirs and the
+		// newcomer takes the view's, whatever the draw order ( review R2-N6 )
+		int oldest = 0;
+		for( int i = 1; i < BLOOM_STYLE_SLOTS; i++ )
+		{
+			if( glowStyleView[i] != 0 && glowStyleView[i] >= glowStyleSerial - 1 )
+			{
+				continue;
+			}
+			if( oldest == 0 || glowStyleView[i] < glowStyleView[oldest] )
+			{
+				oldest = i;
+			}
+		}
+		if( oldest == 0 )
+		{
+			glowStyleOverflow++;
+			return 0;
+		}
+		found = oldest;
+		glowStyles[found] = space->bloomStyle;
+	}
+	glowStyleView[found] = glowStyleSerial;
+	return found;
 }
 
 /*
@@ -6134,6 +6384,12 @@ void idRenderBackend::TemporalAAPass( const viewDef_t* _viewDef )
 		r_taaMaxRadiance.GetFloat(),
 		r_taaEnableHistoryClamping.GetBool()
 	};
+	// ---- TAA REPAIR ----
+	params.motionFrameWeight = r_taaMotionFrameWeight.GetFloat();
+	params.clampTakesCenter = r_taaClampCenter.GetBool();
+	params.fiveHistoryTaps = r_taaHistoryTaps.GetInteger() <= 5;
+	params.sharpen = r_taaSharpen.GetFloat();
+	// ---- END TAA REPAIR ----
 	taaPass->TemporalResolve( commandList, params, prevViewsValid, _viewDef );
 	prevViewsValid = true;
 
@@ -6151,120 +6407,6 @@ idVec2 idRenderBackend::GetCurrentPixelOffset( int frameIndex ) const
 
 	return idVec2( 0, 0 );
 }
-
-// RB: FIXME currently not used
-void idRenderBackend::Bloom( const viewDef_t* _viewDef )
-{
-	if( _viewDef->is2Dgui || ( _viewDef->renderView.rdflags & RDF_IRRADIANCE ) )
-	{
-		return;
-	}
-
-	//OPTICK_EVENT( "Render_Bloom" );
-
-	nvrhi::ObjectType commandObject = nvrhi::ObjectTypes::D3D12_GraphicsCommandList;
-	if( deviceManager->GetGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN )
-	{
-		commandObject = nvrhi::ObjectTypes::VK_CommandBuffer;
-	}
-	OPTICK_GPU_CONTEXT( ( void* ) commandList->getNativeObject( commandObject ) );
-	OPTICK_GPU_EVENT( "Render_Bloom" );
-
-	renderLog.OpenMainBlock( MRB_BLOOM );
-	renderLog.OpenBlock( "Render_Bloom", colorBlue );
-
-	// BRIGHTPASS
-	renderLog.OpenBlock( "Brightpass" );
-
-	//Framebuffer::Unbind();
-	//globalFramebuffers.hdrQuarterFBO->Bind();
-
-	GL_State( /*GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO |*/ GLS_DEPTHMASK | GLS_DEPTHFUNC_ALWAYS | GLS_CULL_TWOSIDED );
-
-	int screenWidth = renderSystem->GetWidth();
-	int screenHeight = renderSystem->GetHeight();
-
-	// set the window clipping
-	GL_Viewport( 0, 0, screenWidth / 4, screenHeight / 4 );
-	GL_Scissor( 0, 0, screenWidth / 4, screenHeight / 4 );
-
-	globalFramebuffers.bloomRenderFBO[ 0 ]->Bind();
-
-	GL_SelectTexture( 0 );
-
-	globalImages->currentRenderHDRImage->Bind();
-
-	renderProgManager.BindShader_Brightpass();
-
-	float screenCorrectionParm[4];
-	screenCorrectionParm[0] = hdrKey;
-	screenCorrectionParm[1] = hdrAverageLuminance;
-	screenCorrectionParm[2] = hdrMaxLuminance;
-	screenCorrectionParm[3] = 1.0f;
-	SetFragmentParm( RENDERPARM_SCREENCORRECTIONFACTOR, screenCorrectionParm ); // rpScreenCorrectionFactor
-
-	float overbright[4];
-	{
-		if( r_hdrAutoExposure.GetBool() )
-		{
-			overbright[0] = r_hdrContrastDynamicThreshold.GetFloat();
-		}
-		else
-		{
-			overbright[0] = r_hdrContrastStaticThreshold.GetFloat();
-		}
-		overbright[1] = r_hdrContrastOffset.GetFloat();
-		overbright[2] = 0;
-		overbright[3] = 0;
-	}
-	SetFragmentParm( RENDERPARM_OVERBRIGHT, overbright ); // rpOverbright
-
-	// Draw
-	DrawElementsWithCounters( &unitSquareSurface );
-
-	renderLog.CloseBlock(); // Brightpass
-
-	renderLog.OpenBlock( "Bloom Ping Pong" );
-
-	// BLOOM PING PONG rendering
-	renderProgManager.BindShader_HDRGlareChromatic();
-
-	int j;
-	for( j = 0; j < r_hdrGlarePasses.GetInteger(); j++ )
-	{
-		int index = ( j + 1 ) % 2;
-		globalFramebuffers.bloomRenderFBO[ index ]->Bind();
-
-		commandList->clearTextureFloat( globalImages->bloomRenderImage[index]->GetTextureHandle(), nvrhi::AllSubresources, nvrhi::Color( 0.f, 0.f, 0.f, 1.f ) );
-
-		globalImages->bloomRenderImage[j % 2]->Bind();
-
-		DrawElementsWithCounters( &unitSquareSurface );
-	}
-
-	// add filtered glare back to main context
-	globalFramebuffers.ldrFBO->Bind();
-
-	ResetViewportAndScissorToDefaultCamera( _viewDef );
-
-	GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHMASK | GLS_DEPTHFUNC_ALWAYS );
-
-	renderProgManager.BindShader_Screen();
-
-	globalImages->bloomRenderImage[( j + 1 ) % 2]->Bind();
-
-	DrawElementsWithCounters( &unitSquareSurface );
-
-	renderLog.CloseBlock(); // Bloom Ping Pong
-
-	renderProgManager.Unbind();
-
-	GL_State( GLS_DEFAULT );
-
-	renderLog.CloseBlock(); // Render_Bloom
-	renderLog.CloseMainBlock(); // MRB_BLOOM
-}
-
 
 void idRenderBackend::DrawScreenSpaceAmbientOcclusion( const viewDef_t* _viewDef )
 {
@@ -6783,6 +6925,7 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 		memset( &fogOff, 0, sizeof( fogOff ) );
 		commandList->writeBuffer( froxelFogParms, &fogOff, sizeof( fogOff ) );
 	}
+	froxelGlowView = false;		// WP-J21: until this view's fog apply says otherwise
 
 	// ugly but still faster than building the string
 	if( !is3D )
@@ -6876,6 +7019,24 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 	{
 		globalFramebuffers.ldrFBO->Bind();
 	}
+	// ---- WP-J21: the stage loops of a main view drawn into _hdr under the bloom's gate write the glow mask, from the
+	// view's first emitting stage on ( DrawShaderPasses ); every other view writes none ----
+	glowGateView = is3D && !( _viewDef->renderView.rdflags & RDF_IRRADIANCE ) && globalFramebuffers.hdrGlowFBO != NULL
+				   && BloomPass::GateWantedForView( _viewDef );
+	glowMaskWritten = false;
+	// ---- END WP-J21 ----
+	// WP-J27: a new view for the styles' slots ( a slot is this view's once a stage of it draws )
+	if( glowGateView )
+	{
+		if( ++glowStyleSerial <= 0 )
+		{
+			// after 2^31 views: every slot is free again
+			glowStyleSerial = 1;
+			memset( glowStyleView, 0, sizeof( glowStyleView ) );
+		}
+		glowStyleOverflow = 0;
+	}
+	glowStyleDrawSlot = 0.0f;
 
 	// Clear the depth buffer and clear the stencil to 128 for gui masking
 	{
@@ -7409,6 +7570,11 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 		renderLog.OpenMainBlock( MRB_TONE_MAP_PASS );
 		renderLog.OpenBlock( "Render_ToneMapPass", colorBlue );
 
+		// ---- TRACK G: this view's bloom, if it gets one: WantedForView says no for every view that does not
+		// ( mirrors, remote cameras, other render modes ), and the tonemap draw is then the one without bloom ----
+		toneMapPass->SetBloomPass( ( bloomPass != NULL && BloomPass::WantedForView( _viewDef ) ) ? bloomPass : NULL );
+		// ---- END TRACK G ----
+
 		ToneMappingParameters parms;
 		if( R_UseTemporalAA() )
 		{
@@ -7429,15 +7595,13 @@ void idRenderBackend::DrawViewInternal( const viewDef_t* _viewDef, const int ste
 		}
 
 		renderLog.CloseBlock();
-		renderLog.CloseMainBlock();
+		// ---- TRACK G: named: the bloom's MRB_BLOOM block nests inside this one and idRenderLog keeps one
+		// current block, so an unnamed close after it would close the bloom's block a second time and leave
+		// this timer open. The tonemap block's time therefore INCLUDES the chain; the chain alone is MRB_BLOOM ----
+		renderLog.CloseMainBlock( MRB_TONE_MAP_PASS );
+		// ---- END TRACK G ----
 	}
 
-	//-------------------------------------------------
-	// bloom post processing
-	//-------------------------------------------------
-
-	// TODO implement bloom
-	//Bloom( _viewDef );
 	//puncho
 	if( concurrencyStats )
 	{
@@ -8190,22 +8354,9 @@ void idRenderBackend::CRTPostProcess()
 	{
 		OPTICK_GPU_EVENT( "Render_CRTPostFX" );
 
-#if CRT_QUARTER_RES
-		if( quarterRes )
-		{
-			// downscale to retro resolution
-			BlitParameters blitParms;
-			blitParms.sourceTexture = ( nvrhi::ITexture* )globalImages->ldrImage->GetTextureID();
-			blitParms.targetFramebuffer = globalFramebuffers.bloomRenderFBO[0]->GetApiObject();
-
-			blitParms.targetViewport = nvrhi::Viewport( renderSystem->GetWidth() / 4, renderSystem->GetHeight() / 4 );
-			commonPasses.BlitTexture( commandList, blitParms, &bindingCache );
-
-			GL_SelectTexture( 0 );
-			globalImages->bloomRenderImage[0]->Bind();
-		}
-		else
-#endif
+		// ---- TRACK G: the quarter-size CRT path ( CRT_QUARTER_RES, never compiled ) drew into the old
+		// bloom's quarter-size target; that target is gone and the path with it ----
+		// ---- END TRACK G ----
 		{
 			BlitParameters blitParms;
 			blitParms.sourceTexture = ( nvrhi::ITexture* )globalImages->ldrImage->GetTextureID();

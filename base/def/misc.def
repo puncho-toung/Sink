@@ -34,7 +34,7 @@ entityDef light {
 	
 	"editor_material texture"		"light shader to use."
 	"editor_color color"			"light color"
-	"editor_var shaderParm3"	"shaderParm 3"
+	"editor_var shaderParm3"	"Fog light: the fog distance in units ( above 1; smaller is denser ). 0 to 1: a faint fog of 500 units with this strength. Other lights: the material's to read ( often a time scale )"
 	"editor_var shaderParm4"	"shaderParm 4"
 	"editor_var shaderParm5"	"shaderParm 5"
 	"editor_var shaderParm6"	"shaderParm 6"

@@ -143,21 +143,25 @@ void idRenderProgManager::LoadShader( shader_t& shader )
 {
 	idStr stage;
 	nvrhi::ShaderType shaderType{};
+	int cacheSlot = -1;		// TRACK V ( V6 ): the stage's slot in a load pass's blob cache
 
 	if( shader.stage == SHADER_STAGE_VERTEX )
 	{
 		stage = "vs";
 		shaderType = nvrhi::ShaderType::Vertex;
+		cacheSlot = 0;
 	}
 	else if( shader.stage == SHADER_STAGE_FRAGMENT )
 	{
 		stage = "ps";
 		shaderType = nvrhi::ShaderType::Pixel;
+		cacheSlot = 1;
 	}
 	else if( shader.stage == SHADER_STAGE_COMPUTE )
 	{
 		stage = "cs";
 		shaderType = nvrhi::ShaderType::Compute;
+		cacheSlot = 2;
 	}
 
 	idStr adjustedName = shader.name;
@@ -188,7 +192,7 @@ void idRenderProgManager::LoadShader( shader_t& shader )
 		common->FatalError( "Unsupported graphics api" );
 	}
 
-	ShaderBlob shaderBlob = GetBytecode( adjustedName );
+	ShaderBlob shaderBlob = GetBytecode( adjustedName, cacheSlot );
 
 	if( !shaderBlob.data )
 	{
@@ -228,7 +232,7 @@ void idRenderProgManager::LoadShader( shader_t& shader )
 	shader.handle = shaderHandle;
 
 	// SRS - Free the shader blob data, otherwise a leak will occur
-	Mem_Free( shaderBlob.data );
+	ReleaseBytecode( shaderBlob );		// TRACK V ( V6 ): unless the load pass keeps it
 }
 
 /*
@@ -236,8 +240,26 @@ void idRenderProgManager::LoadShader( shader_t& shader )
 idRenderProgManager::GetBytecode
 ================================================================================================
 */
-ShaderBlob idRenderProgManager::GetBytecode( const char* fileName )
+ShaderBlob idRenderProgManager::GetBytecode( const char* fileName, int cacheSlot )
 {
+	// ---- TRACK V ( V6, row 179 ): in a load pass, on its thread, the kept blob of this stage when it is this file ----
+	const bool cached = cacheSlot >= 0 && cacheSlot < 3 && blobCacheThread != 0 && blobCacheThread == Sys_GetCurrentThreadID();
+	if( cached )
+	{
+		if( blobCacheBlob[cacheSlot].data != NULL && blobCacheName[cacheSlot].Cmp( fileName ) == 0 )
+		{
+			blobCacheHits[cacheSlot]++;
+			return blobCacheBlob[cacheSlot];
+		}
+		if( blobCacheBlob[cacheSlot].data != NULL )
+		{
+			Mem_Free( blobCacheBlob[cacheSlot].data );     // another file of this stage: the kept blob goes
+			blobCacheBlob[cacheSlot] = ShaderBlob();
+			blobCacheName[cacheSlot].Clear();
+		}
+	}
+	// ---- END TRACK V ----
+
 	ShaderBlob blob;
 
 	blob.size = fileSystem->ReadFile( fileName, &blob.data );
@@ -247,7 +269,71 @@ ShaderBlob idRenderProgManager::GetBytecode( const char* fileName )
 		common->FatalError( "Couldn't read the binary file for shader %s", fileName );
 	}
 
+	// ---- TRACK V ( V6 ): the load pass keeps it ----
+	if( cached )
+	{
+		blobCacheName[cacheSlot] = fileName;
+		blobCacheBlob[cacheSlot] = blob;
+		blobCacheReads++;
+		blobCacheBytes += ( int64 )blob.size;
+	}
+	// ---- END TRACK V ----
+
 	return blob;
+}
+
+/*
+================================================================================================
+idRenderProgManager::ReleaseBytecode, BlobCacheBegin, BlobCacheEnd
+
+TRACK V ( V6, row 179 ): the load pass's blob cache. A pass ( Init's loop over the builtins, LoadAllShaders ) keeps, for
+each stage, the last blob it read, so that the shaders of one file that follow each other ( a builtin's rows differ only in
+their macros, which pick a permutation out of the same blob ) read the file once. It holds at most three blobs and only for
+the length of the pass, so nothing stays resident and a blob changed on disk is read by the next reloadShaders. It is the
+pass's thread's alone: a shader loaded on another thread, or outside a pass ( a material's program at a map load, a pass's
+first use ), reads and frees its blob as before.
+================================================================================================
+*/
+void idRenderProgManager::ReleaseBytecode( const ShaderBlob& blob )
+{
+	if( blobCacheThread != 0 && blobCacheThread == Sys_GetCurrentThreadID() )
+	{
+		for( int s = 0; s < 3; s++ )
+		{
+			if( blob.data == blobCacheBlob[s].data )
+			{
+				return;     // the pass keeps it
+			}
+		}
+	}
+	Mem_Free( blob.data );
+}
+
+void idRenderProgManager::BlobCacheBegin()
+{
+	assert( blobCacheThread == 0 );
+	blobCacheThread = Sys_GetCurrentThreadID();
+	blobCacheReads = 0;
+	memset( blobCacheHits, 0, sizeof( blobCacheHits ) );
+	blobCacheBytes = 0;
+}
+
+void idRenderProgManager::BlobCacheEnd( const char* pass )
+{
+	int64 kept = 0;
+	for( int s = 0; s < 3; s++ )
+	{
+		kept += ( int64 )blobCacheBlob[s].size;		// reviews QR4-1, O1-4: what the pass held at its end, before it goes
+		if( blobCacheBlob[s].data != NULL )
+		{
+			Mem_Free( blobCacheBlob[s].data );
+		}
+		blobCacheBlob[s] = ShaderBlob();
+		blobCacheName[s].Clear();
+	}
+	blobCacheThread = 0;
+	common->Printf( "shader blobs ( %s ): %d files read, reads saved by the pass's cache: vertex %d, pixel %d, compute %d; %lld bytes read; %lld bytes held at its end, freed\n",
+					pass, blobCacheReads, blobCacheHits[0], blobCacheHits[1], blobCacheHits[2], ( long long )blobCacheBytes, ( long long )kept );
 }
 
 /*

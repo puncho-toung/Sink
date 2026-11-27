@@ -42,7 +42,9 @@ static idCVar r_volumetricFogColumnPixels( "r_volumetricFogColumnPixels", "12", 
 static idCVar r_volumetricFogQuality( "r_volumetricFogQuality", "-1", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "the fog grid's quality: 0 low ( 16-pixel columns, 48 slices: at 1920 x 1080 0.39 M froxels, 19 MiB of volumes ), 1 medium ( 12, 64: 0.92 M, 44 MiB ), 2 high ( 8, 96: 3.1 M, 148 MiB ); a level takes at most 4 Mi froxels, about 200 MiB, widening its columns past them; -1 takes r_volumetricFogColumnPixels and r_volumetricFogSlices as set", -1, 2 );
 static idCVar r_volumetricFogSlices( "r_volumetricFogSlices", "64", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "the number of depth slices of the fog volume", 8, 256 );
 static idCVar r_volumetricFogFar( "r_volumetricFogFar", "3000", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the far end of the fog volume in units along the view axis; no fog is added beyond it", 64.0f, 65536.0f );
-static idCVar r_volumetricFogDistance( "r_volumetricFogDistance", "1500", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the global fog's distance D in units: the air is 99 percent opaque at D ( sigma_t = 4.632 / D ); 0 = no global fog; a distance above 0 counts as at least 0.1", 0.0f, 1000000.0f );
+// V6 ( row 158 ): no global fog by default; a map's media and its fog lights make the fog, and a gate or a test that wants the
+// global fog names its distance
+static idCVar r_volumetricFogDistance( "r_volumetricFogDistance", "0", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the global fog's distance D in units: the air is 99 percent opaque at D ( sigma_t = 4.632 / D ); 0 = no global fog ( the default: the fog comes from a map's media and fog lights ); a distance above 0 counts as at least 0.1", 0.0f, 1000000.0f );
 static idCVar r_volumetricFogAlbedo( "r_volumetricFogAlbedo", "0.9", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the global fog's scattering albedo: the share of the light the air takes out of a ray that it scatters and does not absorb", 0.0f, 1.0f );
 static idCVar r_volumetricFogFurnace( "r_volumetricFogFurnace", "0", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "test: above 0 the fog is the uniform test medium, lit by this radiance from every direction and by nothing else ( cut where the fog is so thick that the half-float volumes cannot hold the in-scatter )", 0.0f, 1000.0f );
 static idCVar r_volumetricFogAnisotropy( "r_volumetricFogAnisotropy", "0.4", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the fog's phase function ( Henyey-Greenstein g ): at 0 a light's fog is as bright from every side, above 0 it is brighter when looking toward the light, below 0 when looking along it", -0.9f, 0.9f );
@@ -75,6 +77,18 @@ static idCVar r_volumetricFogDustErode( "r_volumetricFogDustErode", "0", CVAR_RE
 static idCVar r_volumetricFogDustWarp( "r_volumetricFogDustWarp", "0", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "how far in units a curl field bends the dust's noise ( noise slot 1's warp, the noise in slot 2 and no erode ); 0 = none. The worldspawn's key fog_dust_warp", 0.0f, 1024.0f );
 static idCVar r_volumetricFogLights( "r_volumetricFogLights", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "Doom 3 fog lights as media in the froxel fog ( V4, D29 ); V5: the fog takes them in place of the fog pass where the translucents fog themselves ( r_volumetricFogTranslucent ) and the light's volume lies inside the fog's reach; the others keep the fog pass ( the HUD's FOGLIGHTS row )" );
 static idCVar r_volumetricFogLightRate( "r_volumetricFogLightRate", "2.3", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "a fog light's sigma_t times its fog distance D in the froxel fog: 2.3 fits the picture the fog pass draws ( the sRGB decode of its table ) over the screen and is its centre column's minimax ( 2.72 the centre's least squares ), 4.632 is its table's rate, 5.54 leaves 1/255 at D ( D21 )", 0.1f, 20.0f );
+// V6 ( row 182 ): the zones. The pass times its sky mask and each kernel with GPU timer queries of its own; the numbers are
+// NUM_FRAME_DATA frames old ( the render log's age ) and leave by fogProbe, the HUD's FOGZONES row and the map rows log
+static idCVar r_volumetricFogZones( "r_volumetricFogZones", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "GPU timer queries round the fog's sky mask and each of its kernels, and timers round the frontend's fog work, for fogProbe, the HUD's FOGZONES row and the map rows log; 0 = nothing is timed" );
+// V6 ( row 176 ): the band at the fog light's reach ( R_VolumetricFogLightReachBand, tr_frontend_volumetricfog.cpp )
+static idCVar r_volumetricFogLightReachBand( "r_volumetricFogLightReachBand", "0.1", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "a band of hysteresis at the fog's reach, as a share of it: a fog light the froxel fog did not take is taken only once its volume lies nearer than the reach less the band, and one it took is kept until its volume passes the reach, so a light near the fog's far end does not swap between the fog pass and the fog volume; 0 = the reach alone", 0.0f, 0.5f );
+// ---- TRACK V ( V6 ): the idle view ( bite V6h ). Fog is placed in volumes with bounds, as lights are: a view that holds
+// none builds nothing for it ----
+static idCVar r_volumetricFogIdle( "r_volumetricFogIdle", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "a view in which no fog light is taken and no other medium is set builds nothing for the froxel fog: no light records of its own, no list of changed shadow casters; 0 = every fog view builds them ( the path before V6h, for a paired timing )" );
+// ---- END TRACK V ----
+// V8: the fog's cost follows its volumes' bounds. B1: on V4's path a froxel with no medium returns early in the inject and
+// the resolve; the pictures are the same either way, so 0 is the other arm of every comparison and the way back
+static idCVar r_volumetricFogBounds( "r_volumetricFogBounds", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "the fog's cost follows its volumes' bounds ( V8 ): where a view's only media are its fog lights, a froxel with no medium skips the lights, their shadows and the history, which give it nothing, the kernels run only in the box of the fog lights' bounds, and the apply and the fog lookups skip the screen beside it; 0 = every froxel does the whole work and every fragment fetches ( the path before V8: the same picture, for comparison )" );
 static idCVar r_volumetricFogTestBox( "r_volumetricFogTestBox", "", CVAR_RENDERER | CVAR_NEW, "test: a box of fog, \"x y z  hx hy hz  D  vx vy vz\" in map units: its centre, its half extents, its distance D ( albedo 1 ) and a velocity per second of game time ( optional ); empty = none" );
 
 // coefficients are stored times this, which keeps thin, dim fog out of the half floats' subnormal range
@@ -194,11 +208,43 @@ float R_VolumetricFogLightRate()
 	return r_volumetricFogLightRate.GetFloat();
 }
 
+// V6 ( row 182 ): whether the zones and the frontend's fog timers run, for the frontend
+bool R_VolumetricFogZones()
+{
+	return r_volumetricFogZones.GetBool();
+}
+
+// V6 ( row 176 ): r_volumetricFogLightReachBand, for the frontend's reach verdict
+float R_VolumetricFogLightReachBand()
+{
+	return idMath::ClampFloat( 0.0f, 0.5f, r_volumetricFogLightReachBand.GetFloat() );
+}
+
+// V8: r_volumetricFogBounds, for the frontend: the list of the view's bounded media is made only with the switch on ( review CN2-1 )
+bool R_VolumetricFogBounds()
+{
+	return r_volumetricFogBounds.GetBool();
+}
+
 // V4: whether the global fog or a medium of the media pass scatters light ( the frontend's question, R_VolumetricFogMarkLights )
 bool R_VolumetricFogMediaScatter()
 {
 	return ( r_volumetricFogDistance.GetFloat() > 0.0f && r_volumetricFogAlbedo.GetFloat() > 0.0f ) || FroxelMediaScatter();
 }
+
+// ---- TRACK V ( V6 ): the idle view ( bite V6h ) ----
+// Whether a fog view may be idle: the cvars leave only the fog lights as a medium, so that FroxelHasMedium is
+// FroxelViewHasFogLight and the pass does nothing in a view without a fog light it takes. Every other term of
+// FroxelHasMedium must fail here: the global fog's distance ( not its albedo: air that only absorbs is drawn too ), the
+// media pass ( asked as FroxelMediaScatter asks the test box, by its string: an unreadable box counts as one, which only
+// keeps today's path ), the debug views. The frontend asks once a fog view and once a frame for the changed casters
+bool R_VolumetricFogMayIdle()
+{
+	return r_volumetricFogIdle.GetBool() && r_volumetricFogDistance.GetFloat() <= 0.0f && r_volumetricFogDebug.GetInteger() == 0
+		   && !( r_volumetricFogMedia.GetBool() && ( r_volumetricFogHeightDistance.GetFloat() > 0.0f || r_volumetricFogDustDistance.GetFloat() > 0.0f
+				 || r_volumetricFogTestBox.GetString()[0] != '\0' ) );
+}
+// ---- END TRACK V ----
 
 // V4: whether the view holds a fog light the inject takes ( record 0, the sun's slot, is never one: review O1-8 ). V5: the
 // records carry the frontend's verdict ( RLF_FOG_OFF ), so this is also the question of V4's path ( row 170 a )
@@ -270,6 +316,11 @@ VolumetricFogPass::VolumetricFogPass( nvrhi::IDevice* device, CommonRenderPasses
 	, m_ApplyColor( NULL )
 	, m_RenderedView( NULL )
 	, m_RenderedFogLights( false )
+	, m_BoundsOn( false )
+	, m_BoundsRect( 0.0f, 0.0f, 0.0f, 0.0f )
+	, m_BoundsFirstSlice( 0.0f )
+	, m_BoxMin()		// V8 ( B4; review CN4-3 )
+	, m_BoxMax()
 	, m_FogLightPath( false )
 	, m_SkyMask( NULL )
 	, m_SkyMaskView( NULL )
@@ -296,7 +347,20 @@ VolumetricFogPass::VolumetricFogPass( nvrhi::IDevice* device, CommonRenderPasses
 	, m_ProbeNumMedia( 0 )
 	, m_ProbeSkip( false )
 	, m_ProbeHistory( false )
+	, m_ZoneReadFrame( -1 )
 {
+	// V6: the zones' timer queries, made with the pass and freed with it ( the handles count their references )
+	compile_time_assert( FOG_ZONE_COUNT == sizeof( backEnd.pc.gpuFogZoneMicroSec ) / sizeof( backEnd.pc.gpuFogZoneMicroSec[0] ) );
+	for( int s = 0; s < NUM_FRAME_DATA; s++ )
+	{
+		for( int z = 0; z < FOG_ZONE_COUNT; z++ )
+		{
+			m_ZoneQueries[s][z] = device->createTimerQuery();
+			m_ZoneUsed[s][z] = false;
+		}
+		m_ZoneFrame[s] = -1000;		// no frame
+	}
+	memset( m_ZoneOpen, 0, sizeof( m_ZoneOpen ) );
 	memset( m_InjectSetKey, 0, sizeof( m_InjectSetKey ) );
 	memset( m_HistoryGrid, 0, sizeof( m_HistoryGrid ) );
 	memset( m_PrevFogBits, 0, sizeof( m_PrevFogBits ) );
@@ -402,6 +466,97 @@ void VolumetricFogPass::ReleaseVolume()
 		backEnd.froxelVolume = backEnd.froxelDummyVolume;
 		backEnd.bindingCache.Clear();
 	}
+	// WP-J21: the bloom forgets the never-glowing integral with it
+	if( m_NoGlowIntegrated && backEnd.froxelNoGlowVolume == m_NoGlowIntegrated.Get() )
+	{
+		backEnd.froxelNoGlowVolume = NULL;
+		backEnd.froxelGlowView = false;
+	}
+}
+
+/*
+========================
+VolumetricFogPass::ZonesRead
+
+V6 ( row 182 ): the zones of the frame slot this frame reuses, into backEnd.pc.gpuFogZoneMicroSec. Called at the top of
+DrawSkyMask and of Render, and runs once a frame: the sky mask is drawn first, and a read only in Render would wait on
+this frame's own sky query, which the GPU has not been handed yet. The slot's queries were made NUM_FRAME_DATA frames
+ago, so the GPU has done them and the read does not wait, as the render log's FetchGPUTimers reads its blocks. A slot
+last made in an older frame ( frames without a fog view in between ) is read to free its queries and gives 0, as does a
+zone that did not run in its frame. backEnd.pc is cleared at every swap, so a frame without a fog view reads 0 too. A query
+read is reset ( review CN1-1 asked for it; reviews O1-1, O2-1: not needed on either API, NVRHI's D3D12 command list re-arms
+every timer query it used at each submission, d3d12-commandlist.cpp:350; kept, harmless ), and a slot is read only when it
+was made in an older frame ( review CN1-3: tr.frameCount has one writer, the swap; should it ever stay or step back inside a
+backend frame, the read skips a query of this frame instead of waiting for one the GPU has not been handed )
+========================
+*/
+void VolumetricFogPass::ZonesRead()
+{
+	const int frame = tr.frameCount;
+	if( frame == m_ZoneReadFrame )
+	{
+		return;
+	}
+	m_ZoneReadFrame = frame;
+	const int slot = frame % ( int )NUM_FRAME_DATA;
+	const bool older = m_ZoneFrame[ slot ] < frame;
+	const bool current = ( m_ZoneFrame[ slot ] == frame - ( int )NUM_FRAME_DATA );
+	for( int z = 0; z < FOG_ZONE_COUNT; z++ )
+	{
+		uint64 microSec = 0;
+		if( m_ZoneUsed[ slot ][ z ] && older )
+		{
+			const double seconds = m_Device->getTimerQueryTime( m_ZoneQueries[ slot ][ z ] );
+			m_Device->resetTimerQuery( m_ZoneQueries[ slot ][ z ] );
+			m_ZoneUsed[ slot ][ z ] = false;
+			if( current )
+			{
+				microSec = ( uint64 )( seconds * 1000000.0 );
+			}
+		}
+		backEnd.pc.gpuFogZoneMicroSec[ z ] = microSec;
+	}
+	if( older )
+	{
+		m_ZoneFrame[ slot ] = frame;
+	}
+}
+
+/*
+========================
+VolumetricFogPass::ZoneBegin, ZoneEnd
+
+V6: a zone's two timestamps on the backend's command list, in this frame's slot ( ZonesRead ran first in the frame ). A
+zone whose slot is still taken, by a second fog view in one frame, is not timed: the first pair is, as the render log
+times only a block's first pair. The end follows its begin whatever the cvar does in between.
+========================
+*/
+void VolumetricFogPass::ZoneBegin( nvrhi::ICommandList* commandList, fogZone_t zone )
+{
+	if( !r_volumetricFogZones.GetBool() || !glConfig.timerQueryAvailable )
+	{
+		return;
+	}
+	assert( m_ZoneReadFrame == tr.frameCount );
+	const int slot = m_ZoneReadFrame % ( int )NUM_FRAME_DATA;
+	if( m_ZoneUsed[ slot ][ zone ] || m_ZoneOpen[ zone ] || !m_ZoneQueries[ slot ][ zone ] )		// review O1-10: a query the device could not make
+	{
+		return;
+	}
+	commandList->beginTimerQuery( m_ZoneQueries[ slot ][ zone ] );
+	m_ZoneOpen[ zone ] = true;
+}
+
+void VolumetricFogPass::ZoneEnd( nvrhi::ICommandList* commandList, fogZone_t zone )
+{
+	if( !m_ZoneOpen[ zone ] )
+	{
+		return;
+	}
+	const int slot = m_ZoneReadFrame % ( int )NUM_FRAME_DATA;
+	commandList->endTimerQuery( m_ZoneQueries[ slot ][ zone ] );
+	m_ZoneOpen[ zone ] = false;
+	m_ZoneUsed[ slot ][ zone ] = true;
 }
 
 /*
@@ -458,7 +613,8 @@ void VolumetricFogPass::InitResolve()
 		nvrhi::BindingLayoutItem::Sampler( 0 ),
 		nvrhi::BindingLayoutItem::Texture_UAV( 0 ),
 		nvrhi::BindingLayoutItem::Texture_SRV( 3 ),		// V4: last frame's marks
-		nvrhi::BindingLayoutItem::Texture_UAV( 1 )		// V4: this frame's
+		nvrhi::BindingLayoutItem::Texture_UAV( 1 ),		// V4: this frame's
+		nvrhi::BindingLayoutItem::Texture_SRV( 4 )		// V8 ( B4 ): the columns, for the skip mark outside the box
 	};
 	m_Resolve.layout = m_Device->createBindingLayout( layoutDesc );
 
@@ -539,8 +695,12 @@ t3; and the three light images of the forward layouts at t4 to t6, through the b
 */
 void VolumetricFogPass::InitInject()
 {
-	const idList<shaderMacro_t> noMacros;
-	m_Inject.shader = renderProgManager.GetShader( renderProgManager.FindShader( "builtin/volumetrics/froxel_inject", SHADER_STAGE_COMPUTE, "", noMacros, true, LAYOUT_DRAW_VERT ) );
+	// V8 ( B1 ): two permutations: FROXEL_CLEAR_AIR 0 is the code before V8, 1 returns early in clear air ( Render picks )
+	const idList<shaderMacro_t> plainMacros = { { "FROXEL_CLEAR_AIR", "0" } };
+	const idList<shaderMacro_t> clearAirMacros = { { "FROXEL_CLEAR_AIR", "1" } };
+	m_Inject.shader = renderProgManager.GetShader( renderProgManager.FindShader( "builtin/volumetrics/froxel_inject", SHADER_STAGE_COMPUTE, "", plainMacros, true, LAYOUT_DRAW_VERT ) );
+	// FindShader knows a permutation by its name's suffix, not by its macros
+	m_InjectClearAirShader = renderProgManager.GetShader( renderProgManager.FindShader( "builtin/volumetrics/froxel_inject", SHADER_STAGE_COMPUTE, "_clearAir", clearAirMacros, true, LAYOUT_DRAW_VERT ) );
 
 	nvrhi::BindingLayoutDesc layoutDesc;
 	layoutDesc.visibility = nvrhi::ShaderType::Compute;
@@ -573,6 +733,61 @@ void VolumetricFogPass::InitInject()
 	pipelineDesc.bindingLayouts = { m_Inject.layout };
 	pipelineDesc.CS = m_Inject.shader;
 	m_Inject.pipeline = m_Device->createComputePipeline( pipelineDesc );
+	pipelineDesc.CS = m_InjectClearAirShader;
+	m_InjectClearAir = m_Device->createComputePipeline( pipelineDesc );
+
+	// ---- WP-J21: the fog's glow, the inject's two USE_GLOW forms ( their layout is the inject's and the never-glowing
+	// volume at u2 ) and the integrate's ( the resolved volume and the never-glowing one in, the two integrals out ) ----
+	m_GlowDead = true;
+	m_NoGlowFresh = false;
+	m_GlowRendered = false;
+	// ShaderSample: the bloom's FIRST 5 reads the never-glowing volume through a linear sampler, which Vulkan does not
+	// promise for R32F ( review R1-9 )
+	const nvrhi::FormatSupport glowFormat = nvrhi::FormatSupport::Texture | nvrhi::FormatSupport::ShaderUavStore | nvrhi::FormatSupport::ShaderLoad
+											| nvrhi::FormatSupport::ShaderSample;
+	if( ( m_Device->queryFormatSupport( nvrhi::Format::R32_FLOAT ) & glowFormat ) == glowFormat )
+	{
+		const idList<shaderMacro_t> glowMacros = { { "FROXEL_CLEAR_AIR", "0" }, { "USE_GLOW", "1" } };
+		const idList<shaderMacro_t> glowClearAirMacros = { { "FROXEL_CLEAR_AIR", "1" }, { "USE_GLOW", "1" } };
+		m_InjectGlowShader = renderProgManager.GetShader( renderProgManager.FindShader( "builtin/volumetrics/froxel_inject", SHADER_STAGE_COMPUTE, "_glow", glowMacros, true, LAYOUT_DRAW_VERT ) );
+		m_InjectGlowClearAirShader = renderProgManager.GetShader( renderProgManager.FindShader( "builtin/volumetrics/froxel_inject", SHADER_STAGE_COMPUTE, "_clearAir_glow", glowClearAirMacros, true, LAYOUT_DRAW_VERT ) );
+		layoutDesc.bindings.push_back( nvrhi::BindingLayoutItem::Texture_UAV( 2 ) );
+		m_InjectGlowLayout = m_Device->createBindingLayout( layoutDesc );
+		if( m_InjectGlowLayout && m_InjectGlowShader && m_InjectGlowClearAirShader )
+		{
+			pipelineDesc.bindingLayouts = { m_InjectGlowLayout };
+			pipelineDesc.CS = m_InjectGlowShader;
+			m_InjectGlow = m_Device->createComputePipeline( pipelineDesc );
+			pipelineDesc.CS = m_InjectGlowClearAirShader;
+			m_InjectGlowClearAir = m_Device->createComputePipeline( pipelineDesc );
+		}
+		const idList<shaderMacro_t> integrateGlowMacros;
+		m_IntegrateGlow.shader = renderProgManager.GetShader( renderProgManager.FindShader( "builtin/volumetrics/froxel_integrate_glow", SHADER_STAGE_COMPUTE, "", integrateGlowMacros, true, LAYOUT_DRAW_VERT ) );
+		nvrhi::BindingLayoutDesc integrateDesc;
+		integrateDesc.visibility = nvrhi::ShaderType::Compute;
+		integrateDesc.bindings =
+		{
+			nvrhi::BindingLayoutItem::VolatileConstantBuffer( 1 ),
+			nvrhi::BindingLayoutItem::Texture_SRV( 0 ),
+			nvrhi::BindingLayoutItem::Texture_UAV( 0 ),
+			nvrhi::BindingLayoutItem::Texture_SRV( 1 ),
+			nvrhi::BindingLayoutItem::Texture_UAV( 1 )
+		};
+		m_IntegrateGlow.layout = m_Device->createBindingLayout( integrateDesc );
+		if( m_IntegrateGlow.layout && m_IntegrateGlow.shader )
+		{
+			nvrhi::ComputePipelineDesc integratePipelineDesc;
+			integratePipelineDesc.bindingLayouts = { m_IntegrateGlow.layout };
+			integratePipelineDesc.CS = m_IntegrateGlow.shader;
+			m_IntegrateGlow.pipeline = m_Device->createComputePipeline( integratePipelineDesc );
+		}
+		m_GlowDead = !m_InjectGlow || !m_InjectGlowClearAir || !m_IntegrateGlow.pipeline;
+	}
+	if( m_GlowDead )
+	{
+		common->Warning( "VolumetricFogPass: the fog's glow could not be made: under the bloom's gate the fog gives no glow" );
+	}
+	// ---- END WP-J21 ----
 }
 
 /*
@@ -637,6 +852,13 @@ bool VolumetricFogPass::CheckInjectSet()
 	};
 	m_Inject.bindingSet = m_Device->createBindingSet( injectDesc, m_Inject.layout );
 	memcpy( m_InjectSetKey, key, sizeof( key ) );
+	// WP-J21: the glow forms' set, the same and the never-glowing volume
+	m_InjectGlowSet = nullptr;
+	if( !m_GlowDead && m_NoGlow )
+	{
+		injectDesc.bindings.push_back( nvrhi::BindingSetItem::Texture_UAV( 2, m_NoGlow ) );
+		m_InjectGlowSet = m_Device->createBindingSet( injectDesc, m_InjectGlowLayout );
+	}
 	return m_Inject.bindingSet != nullptr;
 }
 
@@ -737,6 +959,36 @@ bool VolumetricFogPass::CheckVolumes( int gridWidth, int gridHeight, int gridSli
 
 	m_Inject.bindingSet = nullptr;			// it named the old injected volume
 
+	// ---- WP-J21: the fog's glow volumes and the integrate's glow sets; without them the fog gives no glow, and has its fog ----
+	m_NoGlow = nullptr;
+	m_NoGlowIntegrated = nullptr;
+	m_InjectGlowSet = nullptr;
+	m_IntegrateGlowSets[0] = nullptr;
+	m_IntegrateGlowSets[1] = nullptr;
+	if( !m_GlowDead )
+	{
+		nvrhi::TextureDesc glowDesc = m_Integrated->getDesc();
+		glowDesc.format = nvrhi::Format::R32_FLOAT;
+		glowDesc.isUAV = true;
+		glowDesc.isRenderTarget = false;
+		glowDesc.initialState = nvrhi::ResourceStates::UnorderedAccess;
+		glowDesc.keepInitialState = true;
+		glowDesc.debugName = "Fog/NoGlow";
+		m_NoGlow = m_Device->createTexture( glowDesc );
+		glowDesc.debugName = "Fog/NoGlowIntegrated";
+		m_NoGlowIntegrated = m_Device->createTexture( glowDesc );
+		if( m_NoGlow && m_NoGlowIntegrated )
+		{
+			m_NoGlowFresh = true;
+		}
+		else
+		{
+			m_NoGlow = nullptr;
+			m_NoGlowIntegrated = nullptr;
+		}
+	}
+	// ---- END WP-J21 ----
+
 	// V3: a set of each kernel for each turn of the two resolved volumes: in turn i the resolve writes m_Resolved[ i ]
 	// from the other one, and the integrate reads m_Resolved[ i ]
 	for( int i = 0; i < 2; i++ )
@@ -751,7 +1003,8 @@ bool VolumetricFogPass::CheckVolumes( int gridWidth, int gridHeight, int gridSli
 			nvrhi::BindingSetItem::Sampler( 0, commonRenderPasses->m_LinearClampSampler ),
 			nvrhi::BindingSetItem::Texture_UAV( 0, m_Resolved[ i ] ),
 			nvrhi::BindingSetItem::Texture_SRV( 3, m_Mark[ 1 - i ] ),
-			nvrhi::BindingSetItem::Texture_UAV( 1, m_Mark[ i ] )
+			nvrhi::BindingSetItem::Texture_UAV( 1, m_Mark[ i ] ),
+			nvrhi::BindingSetItem::Texture_SRV( 4, m_Columns )		// V8 ( B4 )
 		};
 		m_ResolveSets[i] = m_Device->createBindingSet( resolveDesc, m_Resolve.layout );
 
@@ -763,6 +1016,21 @@ bool VolumetricFogPass::CheckVolumes( int gridWidth, int gridHeight, int gridSli
 			nvrhi::BindingSetItem::Texture_UAV( 0, m_Integrated )
 		};
 		m_IntegrateSets[i] = m_Device->createBindingSet( integrateDesc, m_Integrate.layout );
+
+		// WP-J21: the integrate's glow form reads the never-glowing volume beside the resolved one
+		if( m_NoGlow )
+		{
+			nvrhi::BindingSetDesc integrateGlowDesc;
+			integrateGlowDesc.bindings =
+			{
+				nvrhi::BindingSetItem::ConstantBuffer( 1, m_ConstantBuffer ),
+				nvrhi::BindingSetItem::Texture_SRV( 0, m_Resolved[ i ] ),
+				nvrhi::BindingSetItem::Texture_UAV( 0, m_Integrated ),
+				nvrhi::BindingSetItem::Texture_SRV( 1, m_NoGlow ),
+				nvrhi::BindingSetItem::Texture_UAV( 1, m_NoGlowIntegrated )
+			};
+			m_IntegrateGlowSets[i] = m_Device->createBindingSet( integrateGlowDesc, m_IntegrateGlow.layout );
+		}
 	}
 
 	// V4: the media pass's set: the media list, the columns and the media volume, all the pass's own
@@ -797,6 +1065,7 @@ state cache behind it.
 */
 void VolumetricFogPass::DrawSkyMask( nvrhi::ICommandList* commandList, const viewDef_t* viewDef )
 {
+	ZonesRead();				// V6: once a frame, before any zone of the frame begins
 	m_SkyMask = NULL;
 	m_SkyMaskView = NULL;
 
@@ -848,6 +1117,7 @@ void VolumetricFogPass::DrawSkyMask( nvrhi::ICommandList* commandList, const vie
 	}
 	nvrhi::ITexture* mask = targetDesc.colorAttachments[0].texture;
 
+	ZoneBegin( commandList, FOG_ZONE_SKY );		// V6: the clear and the draws
 	// cleared only when it holds marks, or when this pass does not know what it holds ( a mask taken over )
 	if( !m_SkyMaskEmpty )
 	{
@@ -893,6 +1163,7 @@ void VolumetricFogPass::DrawSkyMask( nvrhi::ICommandList* commandList, const vie
 	{
 		previous->Bind();
 	}
+	ZoneEnd( commandList, FOG_ZONE_SKY );
 
 	m_SkyMask = mask;
 	m_SkyMaskView = viewDef;
@@ -909,6 +1180,7 @@ furnace radiance alone; the resolve copies.
 */
 void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_t* viewDef )
 {
+	ZonesRead();				// V6: once a frame ( DrawSkyMask's call came first where the view has a sky mask )
 	m_RenderedView = NULL;
 
 	// a probe's copy is read some fog views after it was made
@@ -1202,6 +1474,23 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 	m_NumMedia = mediaPath ? BuildMedia( commandList, viewDef, numMovedBoxes ) : 0;
 	constants.mediaParms.Set( ( m_NumMedia > 0 ) ? 1.0f : 0.0f, furnace ? r_volumetricFogFurnace.GetFloat() : 0.0f, mediaPath ? 1.0f : 0.0f, ( float )m_NumMedia );
 	constants.mediaParms2.Set( ( float )numMovedBoxes, r_volumetricFogLightRate.GetFloat() * FROXEL_STORE_SCALE, 1.0f / FROXEL_FOGLIGHT_RAMP, takeFogLights ? 1.0f : 0.0f );
+	// V8 ( B1 ): clear air returns early where the view's media are its fog lights alone ( no global fog, no medium of the media
+	// pass, no furnace ), on V4's path, where a froxel with no medium resolves to clear air whatever its lights and history say.
+	// The inject then runs its permutation with the early return ( FROXEL_CLEAR_AIR 1 ), the resolve its return; everywhere else
+	// the inject runs the code before V8 ( the return's mere presence slowed its lights' loop: 14 us of lights200p under the global
+	// fog ), and the resolve's and the integrate's tests of the switch and the box are uniform and pass ( review O2-12 )
+	const bool clearAir = r_volumetricFogBounds.GetBool() && mediaPath && !furnace && sigmaT <= 0.0f && m_NumMedia == 0;
+	constants.boundsParms.Set( clearAir ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f );
+	// V8 ( B0 ): the box of the view's bounded media, where B1's clear air holds ( the fog lights the only medium, V4's path: clear air
+	// resolves to clear air whatever the history holds ) and no debug view reads the volume
+	m_BoundsOn = clearAir && r_volumetricFogDebug.GetInteger() == 0;
+	BoundsBox( viewDef, constants, viewWidth, viewHeight, fillWidth, fillHeight );
+	// V8 ( B4 ): the kernels follow the box where the view is bounded ( boxMin.w ); an empty box where no fog light is taken
+	if( m_BoundsOn )
+	{
+		constants.boxMin.Set( ( float )m_BoxMin[0], ( float )m_BoxMin[1], ( float )m_BoxMin[2], 1.0f );
+		constants.boxMax.Set( ( float )m_BoxMax[0], ( float )m_BoxMax[1], ( float )m_BoxMax[2], 0.0f );
+	}
 	commandList->writeBuffer( m_ConstantBuffer, &constants, sizeof( constants ) );
 
 	const int groupsX = ( fillWidth + 7 ) / 8;
@@ -1221,8 +1510,10 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 		};
 		state.pipeline = m_ColumnsKernel.pipeline;
 		state.bindings = { backEnd.bindingCache.GetOrCreateBindingSet( columnsDesc, m_ColumnsKernel.layout ) };
+		ZoneBegin( commandList, FOG_ZONE_COLUMNS );
 		commandList->setComputeState( state );
 		commandList->dispatch( fillWidth, fillHeight, 1 );
+		ZoneEnd( commandList, FOG_ZONE_COLUMNS );
 	}
 	if( m_NumMedia > 0 )
 	{
@@ -1230,15 +1521,47 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 		OPTICK_GPU_EVENT( "Fog_Media" );
 		state.pipeline = m_MediaKernel.pipeline;
 		state.bindings = { m_MediaKernel.bindingSet };
+		ZoneBegin( commandList, FOG_ZONE_MEDIA );
 		commandList->setComputeState( state );
 		commandList->dispatch( groupsX, groupsY, gridSlices );
+		ZoneEnd( commandList, FOG_ZONE_MEDIA );
+	}
+	// WP-J21: the glow forms, in a view under the bloom's gate with the fog's glow on and every part of them there
+	const bool glow = !m_GlowDead && m_InjectGlowSet && m_IntegrateGlowSets[ 1 - m_ResolvedIndex ] && BloomPass::FogGlowWantedForView( viewDef );
+	m_GlowRendered = glow;
+	if( glow && m_NoGlowFresh )
+	{
+		// a new volume holds whatever the allocation held, and the integrate reads every froxel the inject may skip
+		commandList->clearTextureFloat( m_NoGlow, nvrhi::AllSubresources, nvrhi::Color( 0.0f ) );
+		m_NoGlowFresh = false;
 	}
 	{
 		OPTICK_GPU_EVENT( "Fog_Inject" );
-		state.pipeline = m_Inject.pipeline;
-		state.bindings = { m_Inject.bindingSet };
+		if( glow )
+		{
+			state.pipeline = clearAir ? m_InjectGlowClearAir : m_InjectGlow;		// WP-J21
+			state.bindings = { m_InjectGlowSet };
+		}
+		else
+		{
+			state.pipeline = clearAir ? m_InjectClearAir : m_Inject.pipeline;		// V8 ( B1 )
+			state.bindings = { m_Inject.bindingSet };
+		}
+		ZoneBegin( commandList, FOG_ZONE_INJECT );
 		commandList->setComputeState( state );
-		commandList->dispatch( groupsX, groupsY, gridSlices );
+		assert( !m_BoundsOn || clearAir );		// the box's dispatch is the clear-air permutation's ( review O2-13 )
+		if( !m_BoundsOn )
+		{
+			commandList->dispatch( groupsX, groupsY, gridSlices );
+		}
+		else if( m_BoxMin[0] <= m_BoxMax[0] && m_BoxMin[1] <= m_BoxMax[1] && m_BoxMin[2] <= m_BoxMax[2] )
+		{
+			// V8 ( B4 ): the box's thread groups alone, its first column and row rounded down to a multiple of 8 ( the kernel adds
+			// the same origin to its ids: boxMin ); the groups' margin beyond the box ( up to 7 columns and rows ) is written as the
+			// whole work writes it ( review CN4-4 ); an empty box dispatches nothing
+			commandList->dispatch( ( m_BoxMax[0] - ( m_BoxMin[0] & ~7 ) ) / 8 + 1, ( m_BoxMax[1] - ( m_BoxMin[1] & ~7 ) ) / 8 + 1, m_BoxMax[2] - m_BoxMin[2] + 1 );
+		}
+		ZoneEnd( commandList, FOG_ZONE_INJECT );
 	}
 	// V3: this view's records are last frame's for the next fog view ( after the inject, which read the old ones )
 	const int allRecords = ( llv != NULL && viewDef->recordLights != NULL ) ? Min( viewDef->numRecordLights, MAX_RECORD_LIGHTS ) : 0;
@@ -1252,16 +1575,20 @@ void VolumetricFogPass::Render( nvrhi::ICommandList* commandList, const viewDef_
 		OPTICK_GPU_EVENT( "Fog_Resolve" );
 		state.pipeline = m_Resolve.pipeline;
 		state.bindings = { m_ResolveSets[ m_ResolvedIndex ] };
+		ZoneBegin( commandList, FOG_ZONE_RESOLVE );
 		commandList->setComputeState( state );
 		commandList->dispatch( groupsX, groupsY, gridSlices );
+		ZoneEnd( commandList, FOG_ZONE_RESOLVE );
 	}
 	{
 		// one thread per column: it walks the slices from the camera outward
 		OPTICK_GPU_EVENT( "Fog_Integrate" );
-		state.pipeline = m_Integrate.pipeline;
-		state.bindings = { m_IntegrateSets[ m_ResolvedIndex ] };
+		state.pipeline = glow ? m_IntegrateGlow.pipeline : m_Integrate.pipeline;		// WP-J21
+		state.bindings = { glow ? m_IntegrateGlowSets[ m_ResolvedIndex ] : m_IntegrateSets[ m_ResolvedIndex ] };
+		ZoneBegin( commandList, FOG_ZONE_INTEGRATE );
 		commandList->setComputeState( state );
 		commandList->dispatch( groupsX, groupsY, 1 );
+		ZoneEnd( commandList, FOG_ZONE_INTEGRATE );
 	}
 	// what the next fog view's history is made of
 	m_HistoryValid = true;
@@ -1891,6 +2218,174 @@ void VolumetricFogPass::ProbeRead()
 
 	// the GPU time of the fog's two blocks as the engine last measured them ( the HUD's "Volumetrics" and "Fog apply" )
 	common->Printf( "fogprobe: GPU microseconds: Volumetrics %d, Fog apply %d\n", ( int )commonLocal.GetRendererGpuVolumetricsMicroseconds(), ( int )commonLocal.GetRendererGpuVolumetricsApplyMicroseconds() );
+	// V6 ( row 182 ): the zones of the same frame, and the block less its five kernels ( the records' copy, the probe's copies,
+	// the gaps ); both NUM_FRAME_DATA frames old, so a cvar flipped on shows zeros for the first frames ( review CN1-5 )
+	if( r_volumetricFogZones.GetBool() )
+	{
+		const uint64* zone = commonLocal.GetRendererGpuFogZoneMicroseconds();
+		const int kernels = ( int )( zone[ FOG_ZONE_COLUMNS ] + zone[ FOG_ZONE_MEDIA ] + zone[ FOG_ZONE_INJECT ] + zone[ FOG_ZONE_RESOLVE ] + zone[ FOG_ZONE_INTEGRATE ] );
+		const int block = ( int )commonLocal.GetRendererGpuVolumetricsMicroseconds();
+		common->Printf( "fogprobe: GPU zones: sky %d, columns %d, media %d, inject %d, resolve %d, integrate %d; kernels %d of Volumetrics %d, other %d\n",
+						( int )zone[ FOG_ZONE_SKY ], ( int )zone[ FOG_ZONE_COLUMNS ], ( int )zone[ FOG_ZONE_MEDIA ], ( int )zone[ FOG_ZONE_INJECT ], ( int )zone[ FOG_ZONE_RESOLVE ],
+						( int )zone[ FOG_ZONE_INTEGRATE ], kernels, block, block - kernels );
+	}
+}
+
+/*
+========================
+VolumetricFogPass::BoundsBox
+
+V8 ( B0, B2, B4; CF1 sections 1 and 5 ): where the view's bounded media can be seen, for the fog set's lookup and the apply's
+scissor ( B2 ) and the kernels' box ( B4 ). Called by Render once the kernels' constants are set, with m_BoundsOn saying whether
+the view may be bounded at all. The froxels that can hold a medium are those whose centre lies in a listed box
+( froxelView_t::fogBounds: the fog lights the frontend left to the froxel fog; the inject takes a fog light's medium at the
+froxel's centre ); every other froxel resolves to clear air, so a clear column integrates to exactly ( 0, 0, 0, 1 ), and so do
+the slices in front of the nearest box. A listed box is cut by a plane across the view in front of every froxel's centre
+( V8f, review O2-8: before, a corner less than a unit in front of the eye left the view unbounded ); its part beyond the plane
+is a convex solid in front of the eye, whose columns, rows and slices are those of its vertices: the box's corners beyond the
+plane and the points where its twelve edges cross it ( the kernels' own ray, inverted, and the slice along the view axis ).
+The rectangle in the fog view's screen UV holds the columns and rows the vertices' rays reach and two more each side; the
+first slice is the nearest vertex's less one. Every fog light the inject takes must have its entry
+( its record's index ), or nothing is bounded: the frontend and the pass read the cvars a frame apart, and the take mask may
+hold fewer records than the frontend's list
+========================
+*/
+void VolumetricFogPass::BoundsBox( const viewDef_t* viewDef, const froxelConstants_t& constants, int viewWidth, int viewHeight, int fillWidth, int fillHeight )
+{
+	const froxelView_t* fv = viewDef->froxelView;
+	const int numBounds = ( fv != NULL && fv->fogBounds != NULL ) ? fv->numFogBounds : 0;
+	if( m_BoundsOn )
+	{
+		// every fog light the inject takes ( its bit in the take mask ) has its entry; the entries are in ascending records
+		const int maskRecords = Min( Min( ( int )constants.gridSize.w, viewDef->numRecordLights ), MAX_RECORD_LIGHTS );
+		int entry = 0;
+		for( int r = 1; r < maskRecords && m_BoundsOn; r++ )
+		{
+			if( ( constants.takeMask[r >> 5] & ( 1u << ( r & 31 ) ) ) == 0 || ( viewDef->recordLights[r].flags & RLF_FOGLIGHT ) == 0 )
+			{
+				continue;
+			}
+			while( entry < numBounds && ( int )fv->fogBounds[2 * entry].w < r )
+			{
+				entry++;
+			}
+			m_BoundsOn = ( entry < numBounds && ( int )fv->fogBounds[2 * entry].w == r );
+		}
+	}
+	if( !m_BoundsOn )
+	{
+		return;
+	}
+	const idVec3 eye( constants.viewOrigin.x, constants.viewOrigin.y, constants.viewOrigin.z );
+	const idVec3 forward( constants.viewForward.x, constants.viewForward.y, constants.viewForward.z );
+	const idVec3 right( constants.viewRight.x, constants.viewRight.y, constants.viewRight.z );
+	const idVec3 up( constants.viewUp.x, constants.viewUp.y, constants.viewUp.z );
+	if( !( constants.rayParms.x > 0.0f && constants.rayParms.y > 0.0f ) )
+	{
+		m_BoundsOn = false;				// a degenerate projection ( review QR3-b ): no column can be found
+		return;
+	}
+	// V8f ( review O2-8 ): the plane that cuts the boxes, at half the first slice's centre: every froxel's centre ( FroxelCentre,
+	// where the inject takes a fog light's medium ) lies beyond it
+	const float clipDepth = 0.5f * FROXEL_SLICE_BIAS * ( idMath::Exp( 0.5f * m_SliceStep ) - 1.0f );
+	float columnMin = idMath::INFINITUM, columnMax = -idMath::INFINITUM;
+	float rowMin = idMath::INFINITUM, rowMax = -idMath::INFINITUM;
+	float nearest = idMath::INFINITUM;
+	float farthest = 0.0f;		// V8 ( B4 )
+	int numPoints = 0;
+	for( int i = 0; i < numBounds; i++ )
+	{
+		const idVec4& lo = fv->fogBounds[2 * i];
+		const idVec4& hi = fv->fogBounds[2 * i + 1];
+		idVec3 corner[8];
+		float cornerDepth[8];
+		for( int c = 0; c < 8; c++ )
+		{
+			corner[c] = idVec3( ( c & 1 ) ? hi.x : lo.x, ( c & 2 ) ? hi.y : lo.y, ( c & 4 ) ? hi.z : lo.z ) - eye;
+			cornerDepth[c] = corner[c] * forward;
+		}
+		// the vertices of the box's part beyond the plane: its corners there and its edges' crossings ( at most 8 + 12 )
+		idVec3 point[20];
+		float pointDepth[20];
+		int n = 0;
+		for( int c = 0; c < 8; c++ )
+		{
+			if( cornerDepth[c] >= clipDepth )
+			{
+				point[n] = corner[c];
+				pointDepth[n] = cornerDepth[c];
+				n++;
+			}
+			for( int axis = 1; axis < 8; axis <<= 1 )
+			{
+				const int d = c | axis;
+				if( d != c && ( cornerDepth[c] >= clipDepth ) != ( cornerDepth[d] >= clipDepth ) )
+				{
+					const float t = ( clipDepth - cornerDepth[c] ) / ( cornerDepth[d] - cornerDepth[c] );
+					point[n] = corner[c] + t * ( corner[d] - corner[c] );
+					pointDepth[n] = clipDepth;
+					n++;
+				}
+			}
+		}
+		for( int p = 0; p < n; p++ )
+		{
+			const idVec3& v = point[p];
+			const float depth = pointDepth[p];
+			// the kernels' ray: lateral = ( column + 0.5 ) * rayParms.xy - rayParms.zw, ray = forward + lateral.x right - lateral.y up
+			const float column = ( ( v * right ) / depth + constants.rayParms.z ) / constants.rayParms.x;
+			const float row = ( -( v * up ) / depth + constants.rayParms.w ) / constants.rayParms.y;
+			columnMin = Min( columnMin, column );
+			columnMax = Max( columnMax, column );
+			rowMin = Min( rowMin, row );
+			rowMax = Max( rowMax, row );
+			nearest = Min( nearest, depth );
+			farthest = Max( farthest, depth );
+		}
+		numPoints += n;
+	}
+	if( numPoints == 0 )
+	{
+		// no fog light taken ( a view the pass runs for another reason ), or every one nearer than the plane: no froxel holds a
+		// medium, the rectangle is empty
+		m_BoundsRect.Set( 2.0f, 2.0f, -1.0f, -1.0f );
+		m_BoundsFirstSlice = 0.0f;
+		m_BoxMin[0] = m_BoxMin[1] = m_BoxMin[2] = 1;		// V8 ( B4 ): an empty box
+		m_BoxMax[0] = m_BoxMax[1] = m_BoxMax[2] = 0;
+		return;
+	}
+	// a vertex near the plane may lie far beside the view: its column and row are held a few past the fill region, so that the
+	// conversions below stay in range ( review O1-5, O2-9; a bound within the region, or beyond it, is where it was )
+	columnMin = idMath::ClampFloat( -8.0f, fillWidth + 8.0f, columnMin );
+	columnMax = idMath::ClampFloat( -8.0f, fillWidth + 8.0f, columnMax );
+	rowMin = idMath::ClampFloat( -8.0f, fillHeight + 8.0f, rowMin );
+	rowMax = idMath::ClampFloat( -8.0f, fillHeight + 8.0f, rowMax );
+	// the columns whose centres ( column + 0.5 ) the vertices' rays can reach, less two and more two. A pixel left of the
+	// rectangle reads columns up to c0 and one right of it from c1 on ( the lookup's linear filter between two columns,
+	// review CN2-4 ); floor and ceil already keep that footprint off every column a medium's centre can be in, so the two are
+	// margin ( review O1-4; the list's entries round apart from the records' planes, O1-6 )
+	const float c0 = idMath::Floor( columnMin - 0.5f ) - 2.0f;
+	const float c1 = idMath::Ceil( columnMax - 0.5f ) + 2.0f;
+	const float r0 = idMath::Floor( rowMin - 0.5f ) - 2.0f;
+	const float r1 = idMath::Ceil( rowMax - 0.5f ) + 2.0f;
+	const float columnPixels = ( float )m_ColumnPixels;
+	m_BoundsRect.Set( ( c0 + 0.5f ) * columnPixels / viewWidth, ( r0 + 0.5f ) * columnPixels / viewHeight,
+					  ( c1 + 0.5f ) * columnPixels / viewWidth, ( r1 + 0.5f ) * columnPixels / viewHeight );
+	// the slice of the nearest vertex ( FroxelSliceOf ); a froxel whose centre is in a box lies in that slice or beyond
+	const float first = idMath::Floor( idMath::Log( 1.0f + nearest / FROXEL_SLICE_BIAS ) / m_SliceStep );
+	m_BoundsFirstSlice = Max( 0.0f, first - 1.0f );
+
+	// V8 ( B4 ): the box in froxels: the columns, rows and slices whose centres can lie in a listed box, padded by one, so that
+	// every froxel that holds a medium has its six neighbours ( the resolve's clip ) inside it; clipped to the fill region
+	const float last = idMath::Ceil( idMath::Log( 1.0f + farthest / FROXEL_SLICE_BIAS ) / m_SliceStep );
+	const int boxLo[3] = { ( int )idMath::Floor( columnMin - 0.5f ) - 1, ( int )idMath::Floor( rowMin - 0.5f ) - 1, ( int )first - 1 };
+	const int boxHi[3] = { ( int )idMath::Ceil( columnMax - 0.5f ) + 1, ( int )idMath::Ceil( rowMax - 0.5f ) + 1, ( int )last + 1 };
+	const int boxEnd[3] = { fillWidth - 1, fillHeight - 1, m_GridSlices - 1 };
+	for( int a = 0; a < 3; a++ )
+	{
+		m_BoxMin[a] = Max( 0, boxLo[a] );
+		m_BoxMax[a] = Min( boxEnd[a], boxHi[a] );
+	}
 }
 
 /*
@@ -1968,10 +2463,24 @@ void VolumetricFogPass::Apply( nvrhi::ICommandList* commandList, const viewDef_t
 	parms.depthParms.Set( FROXEL_SLICE_BIAS, m_SliceStep, viewDef->projectionMatrix[3 * 4 + 2], viewDef->projectionMatrix[2 * 4 + 2] );
 	parms.fogParms.Set( 1.0f, ( float )r_volumetricFogDebug.GetInteger(), ( float )viewDef->viewport.x1, ( float )viewDef->viewport.y1 );
 	parms.reserved.Set( 1.0f / viewWidth, 1.0f / viewHeight, ( m_ViewGridWidth - 0.5f ) / m_GridWidth, ( m_ViewGridHeight - 0.5f ) / m_GridHeight );
+	// V8 ( B2 ): where the view's bounded media can be seen ( BoundsBox ); zeros test nothing
+	if( m_BoundsOn )
+	{
+		parms.boundsRect = m_BoundsRect;
+		parms.boundsParms.Set( 1.0f, m_BoundsFirstSlice, 0.0f, 0.0f );
+	}
+	else
+	{
+		parms.boundsRect.Zero();
+		parms.boundsParms.Zero();
+	}
 	commandList->writeBuffer( backEnd.froxelFogParms, &parms, sizeof( parms ) );
 
 	// from here on the engine's fog set binds this view's volume in place of the dummy
 	backEnd.froxelVolume = m_Integrated;
+	// WP-J21: and the bloom's level-1 pass reads the never-glowing integral where this view's Render made it
+	backEnd.froxelGlowView = m_GlowRendered;
+	backEnd.froxelNoGlowVolume = m_GlowRendered ? m_NoGlowIntegrated.Get() : NULL;
 	// V5: and the translucent draws after the apply fog themselves at their own depth ( D20, D83 ), until the end of
 	// the view's translucent shader passes
 	// ( review O1-3: also where the inject took fog lights, which the frontend did only with the cvar on: the fog pass skips
@@ -1999,7 +2508,19 @@ void VolumetricFogPass::Apply( nvrhi::ICommandList* commandList, const viewDef_t
 	state.framebuffer = m_ApplyTarget;
 	state.bindings = { bindingSet };
 	state.viewport.addViewport( viewport );
-	state.viewport.addScissorRect( nvrhi::Rect( viewport ) );
+	// V8 ( B2 ): outside the rectangle the apply would add nothing and keep the picture ( the lookup returns ( 0, 0, 0, 1 ) there ):
+	// the pixels whose centres lie in it, a pixel more each side; an empty rectangle keeps one pixel, which adds nothing
+	nvrhi::Rect scissor( viewport );
+	if( m_BoundsOn )
+	{
+		const int x0 = Max( 0, ( int )idMath::Floor( m_BoundsRect.x * viewWidth - 0.5f ) - 1 );
+		const int x1 = Min( viewWidth - 1, ( int )idMath::Ceil( m_BoundsRect.z * viewWidth - 0.5f ) + 1 );
+		const int y0 = Max( 0, ( int )idMath::Floor( m_BoundsRect.y * viewHeight - 0.5f ) - 1 );
+		const int y1 = Min( viewHeight - 1, ( int )idMath::Ceil( m_BoundsRect.w * viewHeight - 0.5f ) + 1 );
+		scissor = ( x0 <= x1 && y0 <= y1 ) ? nvrhi::Rect( viewDef->viewport.x1 + x0, viewDef->viewport.x1 + x1 + 1, viewDef->viewport.y1 + y0, viewDef->viewport.y1 + y1 + 1 )
+				  : nvrhi::Rect( viewDef->viewport.x1, viewDef->viewport.x1 + 1, viewDef->viewport.y1, viewDef->viewport.y1 + 1 );
+	}
+	state.viewport.addScissorRect( scissor );
 	commandList->setGraphicsState( state );
 
 	nvrhi::DrawArguments args;

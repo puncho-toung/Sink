@@ -326,6 +326,9 @@ float idConsoleLocal::DrawFPS( float y )
 	const uint64 rendererGPUForwardTime = commonLocal.GetRendererGpuForwardPassMicroseconds() + commonLocal.GetRendererGpuForwardTranslucentMicroseconds();
 	const uint64 rendererGPUVolumetricsTime = commonLocal.GetRendererGpuVolumetricsMicroseconds();
 	const uint64 rendererGPUFogApplyTime = commonLocal.GetRendererGpuVolumetricsApplyMicroseconds();
+	// ---- TRACK G: the bloom chain's GPU time ----
+	const uint64 rendererGPUBloomTime = commonLocal.GetRendererGpuBloomMicroseconds();
+	// ---- END TRACK G ----
 	// ---- END X0 ----
 	// ---- TRACK S: HUD values ----
 	// ---- END TRACK S ----
@@ -731,6 +734,11 @@ float idConsoleLocal::DrawFPS( float y )
 		ImGui::TextColored( rendererGPUForwardTime > maxTime ? colorRed : colorWhite,			"                    Forward:      %5llu us", rendererGPUForwardTime );
 		ImGui::TextColored( rendererGPUVolumetricsTime > maxTime ? colorRed : colorWhite,		"                    Volumetrics:  %5llu us", rendererGPUVolumetricsTime );
 		ImGui::TextColored( rendererGPUFogApplyTime > maxTime ? colorRed : colorWhite,			"                    Fog apply:    %5llu us", rendererGPUFogApplyTime );
+		// ---- TRACK G: the bloom chain's time; it is also inside the PostFX row above, because the
+		// tonemap block holds the chain ( only the main view is timed: the backend switches the timers
+		// off for every other view ) ----
+		ImGui::TextColored( rendererGPUBloomTime > maxTime ? colorRed : colorWhite,			"                    Bloom:        %5llu us", rendererGPUBloomTime );
+		// ---- END TRACK G ----
 		// ---- END X0 ----
 		// ---- TRACK S: HUD rows ----
 		// S3b: the shadow cache's capacity line ( only while the cache runs: r_shadowCache 2 ). Cached units
@@ -793,6 +801,16 @@ float idConsoleLocal::DrawFPS( float y )
 			const int fogOnlyPercentage = idMath::Ftoi( 100.0f * ( commonLocal.stats_backend.c_shadowAtlasFogOnlyTexels / ( float )Square( r_shadowMapAtlasSize.GetInteger() ) ) );
 			ImGui::TextColored( colorLtGrey, "FOGATLAS: fog-only lights:%i usage:%2i%% surface lights refused:%i",
 								commonLocal.stats_backend.c_shadowAtlasFogOnlyLights, fogOnlyPercentage, commonLocal.stats_backend.c_shadowAtlasSurfaceRefused );
+		}
+		// V6 ( row 182 ): the fog's zones ( r_volumetricFogZones 1 ), by FOG_ZONE_*: the sky mask, the five kernels, and the
+		// Volumetrics block less the kernels
+		if( froxelFogOn && cvarSystem->GetCVarBool( "r_volumetricFogZones" ) )
+		{
+			const uint64* zone = commonLocal.stats_backend.gpuFogZoneMicroSec;
+			const int64 other = ( int64 )rendererGPUVolumetricsTime - ( int64 )( zone[1] + zone[2] + zone[3] + zone[4] + zone[5] );
+			ImGui::TextColored( colorLtGrey, "FOGZONES: sky:%llu col:%llu media:%llu inject:%llu resolve:%llu integ:%llu other:%lld",
+								( unsigned long long )zone[0], ( unsigned long long )zone[1], ( unsigned long long )zone[2], ( unsigned long long )zone[3],
+								( unsigned long long )zone[4], ( unsigned long long )zone[5], ( long long )other );
 		}
 		// ---- END TRACK V ----
 		ImGui::TextColored( frameBusyTime > maxTime || rendererGPUTime > maxTime ? colorRed : colorWhite, "Total:   %5lld us   Total:        %5lld us", frameBusyTime, rendererGPUTime );

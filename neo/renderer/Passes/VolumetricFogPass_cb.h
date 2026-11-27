@@ -38,8 +38,11 @@ struct froxelFogParms_t
 	idVec4	depthParms;		// xy = the slices' bias S and step, as froxelConstants_t::sliceParms.xy; zw = the projection's depth terms: distance = z / ( depth + w )
 	idVec4	fogParms;		// x = 1 where the fog is on, y = the apply's debug view ( r_volumetricFogDebug ), zw = the fog view's first pixel
 	idVec4	reserved;		// xy = 1 / the fog view's size in pixels, zw = the volume UV of the view's last column and row: the lookup stays inside the view's grid
+	// V8 ( B2 ): where the view's bounded media can be seen. Zeros ( the fog-off parms ) test nothing
+	idVec4	boundsRect;		// xy = the top-left, zw = the bottom-right corner, in the fog view's screen UV, of the rectangle outside which the lookup reads only clear air ( the columns and rows a medium's centre can be in and two more each side, BoundsBox )
+	idVec4	boundsParms;	// x = 1 where the lookup tests the rectangle and the first slice, y = the slice coordinate nearer than which it reads only clear air ( the box's first slice, less one ), zw = 0
 };
-compile_time_assert( sizeof( froxelFogParms_t ) == 64 );
+compile_time_assert( sizeof( froxelFogParms_t ) == 96 );
 
 // The kernels' constants: shaders/builtin/volumetrics/froxel_grid.inc.hlsl has the same struct, lane for lane.
 struct froxelConstants_t
@@ -70,8 +73,13 @@ struct froxelConstants_t
 	// V4: the media
 	idVec4	mediaParms;		// x = 1 where the inject reads the media volume ( the media pass ran ), y = the furnace radiance ( a test input ), z = 1 on V4's path ( r_volumetricFogMedia: the resolve's medium per froxel and the mark volume ), w = the media in the view's list
 	idVec4	mediaParms2;	// x = the media that moved, came or went ( four boxes each in m_MediaMoved ), y = the fog lights' rate times the store scale, z = 1 / the fog lights' enter ramp, w = 1 where the inject takes fog lights ( V4b )
+	// V8: the fog's cost follows its volumes' bounds ( r_volumetricFogBounds )
+	idVec4	boundsParms;	// x = 1 where a froxel with no medium returns early in the resolve and the inject runs its permutation FROXEL_CLEAR_AIR 1 ( B1: the view's media are its fog lights alone, V4's path ), yzw = 0
+	// V8 ( B4 ): the box of the view's bounded media in froxels, padded by one ( BoundsBox )
+	idVec4	boxMin;			// xyz = its first column, row and slice, w = 1 where the inject runs over it alone and the resolve and the integrate skip its outside
+	idVec4	boxMax;			// xyz = its last column, row and slice ( inclusive ), w = 0
 };
-compile_time_assert( sizeof( froxelConstants_t ) == 640 );
+compile_time_assert( sizeof( froxelConstants_t ) == 688 );
 
 // V4: one medium of the media pass ( shaders/builtin/volumetrics/froxel_media.inc.hlsl has the same struct, lane for lane ):
 // the height fog, the dust, the test box, and track M's volumes later. The pass writes at most FOG_MEDIA_MAX a view into

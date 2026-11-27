@@ -27,6 +27,9 @@
 #include "renderer/RenderCommon.h"
 #include "TonemapPass.h"
 #include "TonemapPass_cb.h"
+// ---- TRACK G: the bloom pass whose chain the bloom variant of the draw mixes in ----
+#include "BloomPass.h"
+// ---- END TRACK G ----
 
 #include <sys/DeviceManager.h>
 extern DeviceManager* deviceManager;
@@ -39,6 +42,12 @@ TonemapPass::TonemapPass()
 	, pcEnabledHistogram( false )
 	, pcEnabledExposure( false )
 	, pcEnabledTonemap( false )
+	// ---- TRACK G: no bloom pass until the backend gives one; the variant's handles wait for the first mix ----
+	, bloomPass( NULL )
+	, bloomChainSerial( 0 )
+	, pcEnabledBloom( false )
+	, numConstantBufferVersions( 0 )
+	// ---- END TRACK G ----
 {
 }
 
@@ -62,6 +71,10 @@ void TonemapPass::Init( nvrhi::DeviceHandle _device, CommonRenderPasses* _common
 	pcEnabledHistogram = histogramShaderInfo.usesPushConstants;
 	pcEnabledExposure = exposureShaderInfo.usesPushConstants;
 	pcEnabledTonemap = tonemapShaderInfo.usesPushConstants;
+
+	// ---- TRACK G: kept for the bloom variant's volatile buffer, made at the first draw that has a mix ----
+	numConstantBufferVersions = _params.numConstantBufferVersions;
+	// ---- END TRACK G ----
 
 	if( !pcEnabledHistogram || !pcEnabledExposure || !pcEnabledTonemap )
 	{
@@ -247,8 +260,26 @@ void TonemapPass::Render(
 	const ToneMappingParameters& params,
 	const viewDef_t* viewDef,
 	nvrhi::ITexture* sourceTexture,
-	nvrhi::FramebufferHandle _targetFb )
+	nvrhi::FramebufferHandle _targetFb,
+	const BloomMix* bloom )
 {
+	// ---- TRACK G: with a mix the bloom variant draws, in its own function; without one everything below is
+	// the path without bloom, untouched. A missing bloom blob or permutation stops the engine as for every
+	// builtin shader; the null pipeline test only guards a null handle from any other cause ----
+	if( bloom != NULL )
+	{
+		if( !bloomRenderPipeline )
+		{
+			InitBloom( _targetFb );
+		}
+		if( bloomRenderPipeline )
+		{
+			RenderBloom( commandList, params, viewDef, sourceTexture, _targetFb, bloom );
+			return;
+		}
+	}
+	// ---- END TRACK G ----
+
 	size_t renderHash = std::hash<nvrhi::ITexture*>()( sourceTexture );
 	nvrhi::BindingSetHandle renderBindingSet;
 	for( int i = renderBindingHash.First( renderHash ); i != -1; i = renderBindingHash.Next( i ) )
@@ -334,13 +365,235 @@ void TonemapPass::Render(
 	}
 }
 
+// ---- TRACK G: the bloom variant of the tonemap draw ----
+
+/*
+========================
+TonemapPass::InitBloom
+
+Makes the bloom variant at the first draw that has a mix: the plain layout plus the bloom level at t3, the
+128-byte constants as push constants where the device takes them ( 128 is Vulkan's guaranteed push-constant size
+and under D3D12's 240, so the bool that gates the 80-byte struct gates this one too wherever the device offers
+less ), the pixel shader found by name as the fog pass finds its kernels ( the vertex shader stays the
+tonemapping program's ), and the pipeline against the framebuffer the draw is given. A missing blob or
+permutation stops the engine as for every builtin shader; a null shader handle from any other cause leaves the
+pipeline null and the draw goes without bloom, and the layout standing keeps this from being tried again in
+every frame.
+========================
+*/
+void TonemapPass::InitBloom( nvrhi::IFramebuffer* sampleFramebuffer )
+{
+	if( bloomBindingLayout != nullptr )
+	{
+		return;
+	}
+
+	pcEnabledBloom = pcEnabledTonemap && sizeof( ToneMappingBloomConstants ) <= deviceManager->GetMaxPushConstantSize();
+
+	nvrhi::BindingLayoutDesc layoutDesc;
+	layoutDesc.visibility = nvrhi::ShaderType::Pixel;
+	if( pcEnabledBloom )
+	{
+		layoutDesc.bindings =
+		{
+			nvrhi::BindingLayoutItem::PushConstants( 0, sizeof( ToneMappingBloomConstants ) ),
+			nvrhi::BindingLayoutItem::Texture_SRV( 0 ),
+			nvrhi::BindingLayoutItem::TypedBuffer_SRV( 1 ),
+			nvrhi::BindingLayoutItem::Texture_SRV( 2 ),
+			nvrhi::BindingLayoutItem::Texture_SRV( 3 ),
+			nvrhi::BindingLayoutItem::Sampler( 0 )
+		};
+	}
+	else
+	{
+		layoutDesc.bindings =
+		{
+			nvrhi::BindingLayoutItem::VolatileConstantBuffer( 0 ),
+			nvrhi::BindingLayoutItem::Texture_SRV( 0 ),
+			nvrhi::BindingLayoutItem::TypedBuffer_SRV( 1 ),
+			nvrhi::BindingLayoutItem::Texture_SRV( 2 ),
+			nvrhi::BindingLayoutItem::Texture_SRV( 3 ),
+			nvrhi::BindingLayoutItem::Sampler( 0 )
+		};
+
+		nvrhi::BufferDesc constantBufferDesc;
+		constantBufferDesc.byteSize = sizeof( ToneMappingBloomConstants );
+		constantBufferDesc.debugName = "ToneMappingBloomConstants";
+		constantBufferDesc.isConstantBuffer = true;
+		constantBufferDesc.isVolatile = true;
+		constantBufferDesc.maxVersions = numConstantBufferVersions;
+		toneMappingBloomCb = device->createBuffer( constantBufferDesc );
+	}
+	bloomBindingLayout = device->createBindingLayout( layoutDesc );
+
+	const idList<shaderMacro_t> bloomMacros = { { "HISTOGRAM_BINS", "256" }, { "SOURCE_ARRAY", "0" }, { "QUAD_Z", "0" }, { "USE_PUSH_CONSTANTS", pcEnabledBloom ? "1" : "0" } };
+	bloomShader = renderProgManager.GetShader( renderProgManager.FindShader( "builtin/post/tonemapping_bloom", SHADER_STAGE_FRAGMENT, "", bloomMacros, true, LAYOUT_DRAW_VERT ) );
+	if( !bloomShader )
+	{
+		return;		// the program manager has printed why the blob or the permutation is missing
+	}
+
+	auto tonemapShaderInfo = renderProgManager.GetProgramInfo( BUILTIN_TONEMAPPING );
+
+	nvrhi::GraphicsPipelineDesc pipelineDesc;
+	pipelineDesc.primType = nvrhi::PrimitiveType::TriangleStrip;
+	pipelineDesc.VS = tonemapShaderInfo.vs;
+	pipelineDesc.PS = bloomShader;
+	pipelineDesc.bindingLayouts = { bloomBindingLayout };
+
+	pipelineDesc.renderState.rasterState.setCullNone();
+	pipelineDesc.renderState.depthStencilState.depthTestEnable = false;
+	pipelineDesc.renderState.depthStencilState.stencilEnable = false;
+
+	bloomRenderPipeline = device->createGraphicsPipeline( pipelineDesc, sampleFramebuffer );
+}
+
+/*
+========================
+TonemapPass::ReleaseBloomSets
+
+Empties the bloom variant's set list and its hash. A set holds a reference to the level it names, so a set
+left in the list would keep a dead chain's level alive ( memory, nothing worse ); emptying the list lets the
+old chain's levels go as soon as the chain is replaced.
+The backend calls this where it deletes the bloom pass on the cvar; RenderBloom calls it when the mix's chain
+serial differs from the one the list was filled under.
+========================
+*/
+void TonemapPass::ReleaseBloomSets()
+{
+	bloomBindingSets.Clear();
+	bloomBindingHash.Clear();
+}
+
+/*
+========================
+TonemapPass::RenderBloom
+
+The draw without bloom, with the chain mixed in: the bloom pipeline, a binding set held for the pair of the source
+texture and the level texture, and the 128-byte constants - the base filled exactly as the plain constants are,
+then the mix, the rectangle and the scale. The set list goes when the chain's serial changes: a set must never
+outlive the chain whose level it names, nor keep a dead level alive.
+========================
+*/
+void TonemapPass::RenderBloom(
+	nvrhi::ICommandList* commandList,
+	const ToneMappingParameters& params,
+	const viewDef_t* viewDef,
+	nvrhi::ITexture* sourceTexture,
+	nvrhi::FramebufferHandle _targetFb,
+	const BloomMix* bloom )
+{
+	if( bloom->chainSerial != bloomChainSerial )
+	{
+		ReleaseBloomSets();
+		bloomChainSerial = bloom->chainSerial;
+	}
+
+	size_t renderHash = std::hash<nvrhi::ITexture*>()( sourceTexture );
+	nvrhi::BindingSetHandle bloomBindingSet;
+	for( int i = bloomBindingHash.First( renderHash ); i != -1; i = bloomBindingHash.Next( i ) )
+	{
+		nvrhi::BindingSetHandle bindingSet = bloomBindingSets[i];
+		// the lookup compares both textures, not the source alone: the level sits at bindings[4] behind the
+		// exposure buffer and the color LUT, in both the push-constant and the buffer form of the set
+		if( sourceTexture == bindingSet->getDesc()->bindings[1].resourceHandle
+			&& bloom->texture == bindingSet->getDesc()->bindings[4].resourceHandle )
+		{
+			bloomBindingSet = bindingSet;
+			break;
+		}
+	}
+
+	if( !bloomBindingSet )
+	{
+		nvrhi::BindingSetDesc bindingSetDesc;
+		if( pcEnabledBloom )
+		{
+			bindingSetDesc.bindings =
+			{
+				nvrhi::BindingSetItem::PushConstants( 0, sizeof( ToneMappingBloomConstants ) ),
+				nvrhi::BindingSetItem::Texture_SRV( 0, sourceTexture ),
+				nvrhi::BindingSetItem::TypedBuffer_SRV( 1, exposureBuffer ),
+				nvrhi::BindingSetItem::Texture_SRV( 2, colorLut->GetTextureHandle() ),
+				nvrhi::BindingSetItem::Texture_SRV( 3, bloom->texture ),
+				nvrhi::BindingSetItem::Sampler( 0, commonPasses->m_LinearClampSampler )
+			};
+		}
+		else
+		{
+			bindingSetDesc.bindings =
+			{
+				nvrhi::BindingSetItem::ConstantBuffer( 0, toneMappingBloomCb ),
+				nvrhi::BindingSetItem::Texture_SRV( 0, sourceTexture ),
+				nvrhi::BindingSetItem::TypedBuffer_SRV( 1, exposureBuffer ),
+				nvrhi::BindingSetItem::Texture_SRV( 2, colorLut->GetTextureHandle() ),
+				nvrhi::BindingSetItem::Texture_SRV( 3, bloom->texture ),
+				nvrhi::BindingSetItem::Sampler( 0, commonPasses->m_LinearClampSampler )
+			};
+		}
+		bloomBindingSet = device->createBindingSet( bindingSetDesc, bloomBindingLayout );
+		bloomBindingSets.Append( bloomBindingSet );
+		bloomBindingHash.Add( renderHash, bloomBindingSets.Num() - 1 );
+	}
+
+	{
+		nvrhi::GraphicsState state;
+		state.pipeline = bloomRenderPipeline;
+		state.framebuffer = _targetFb;
+		state.bindings = { bloomBindingSet };
+		nvrhi::Viewport viewport{ ( float )viewDef->viewport.x1,
+								  ( float )viewDef->viewport.x2 + 1,
+								  ( float )viewDef->viewport.y1,
+								  ( float )viewDef->viewport.y2 + 1,
+								  viewDef->viewport.zmin,
+								  viewDef->viewport.zmax };
+		state.viewport.addViewportAndScissorRect( viewport );
+
+		bool enableColorLUT = params.enableColorLUT && colorLutSize > 0;
+
+		ToneMappingBloomConstants toneMappingBloomConstants = {};
+		toneMappingBloomConstants.base.exposureScale = ::exp2f( r_exposure.GetFloat() );
+		toneMappingBloomConstants.base.whitePointInvSquared = 1.f / powf( params.whitePoint, 2.f );
+		toneMappingBloomConstants.base.minAdaptedLuminance = r_hdrMinLuminance.GetFloat();
+		toneMappingBloomConstants.base.maxAdaptedLuminance = r_hdrMaxLuminance.GetFloat();
+		toneMappingBloomConstants.base.sourceSlice = 0;
+		toneMappingBloomConstants.base.colorLUTTextureSize = enableColorLUT ? idVec2( colorLutSize * colorLutSize, colorLutSize ) : idVec2( 0.f, 0.f );
+		toneMappingBloomConstants.base.colorLUTTextureSizeInv = enableColorLUT ? 1.f / toneMappingBloomConstants.base.colorLUTTextureSize : idVec2( 0.f, 0.f );
+		toneMappingBloomConstants.bloomMix = bloom->mix;
+		toneMappingBloomConstants.bloomRect = bloom->rect;
+		toneMappingBloomConstants.bloomScale = bloom->scale;
+
+		if( !pcEnabledBloom )
+		{
+			commandList->writeBuffer( toneMappingBloomCb, &toneMappingBloomConstants, sizeof( toneMappingBloomConstants ) );
+		}
+
+		commandList->setGraphicsState( state );
+
+		if( pcEnabledBloom )
+		{
+			commandList->setPushConstants( &toneMappingBloomConstants, sizeof( toneMappingBloomConstants ) );
+		}
+
+		nvrhi::DrawArguments args;
+		args.instanceCount = 1;
+		args.vertexCount = 4;
+		commandList->draw( args );
+	}
+}
+
+// ---- END TRACK G ----
+
 void TonemapPass::SimpleRender( nvrhi::ICommandList* commandList, const ToneMappingParameters& params, const viewDef_t* viewDef, nvrhi::ITexture* sourceTexture, nvrhi::FramebufferHandle _fbHandle )
 {
 	commandList->beginMarker( "ToneMapping" );
 	ResetHistogram( commandList );
 	AddFrameToHistogram( commandList, viewDef, sourceTexture );
 	ComputeExposure( commandList, params );
-	Render( commandList, params, viewDef, sourceTexture, _fbHandle );
+	// ---- TRACK G: the chain is built between the exposure and the draw, from the very texture the draw reads ----
+	const BloomMix* mix = ( bloomPass != NULL ) ? bloomPass->Render( commandList, viewDef, sourceTexture, exposureBuffer ) : NULL;
+	Render( commandList, params, viewDef, sourceTexture, _fbHandle, mix );
+	// ---- END TRACK G ----
 	commandList->endMarker();
 }
 

@@ -27,6 +27,11 @@
 
 #include "CommonPasses.h"
 
+// ---- TRACK G: the bloom pass and what its chain hands the tonemap draw ( Passes/BloomPass.h ) ----
+class BloomPass;
+struct BloomMix;
+// ---- END TRACK G ----
+
 struct ToneMappingParameters
 {
 	float histogramLowPercentile = 0.8f;
@@ -56,7 +61,7 @@ public:
 
 	void Init( nvrhi::DeviceHandle deviceHandle, CommonRenderPasses* commonPasses, const CreateParameters& params, nvrhi::IFramebuffer* _sampleFramebuffer );
 
-	void Render( nvrhi::ICommandList* commandList, const ToneMappingParameters& params, const viewDef_t* viewDef, nvrhi::ITexture* sourceTexture, nvrhi::FramebufferHandle _targetFb );
+	void Render( nvrhi::ICommandList* commandList, const ToneMappingParameters& params, const viewDef_t* viewDef, nvrhi::ITexture* sourceTexture, nvrhi::FramebufferHandle _targetFb, const BloomMix* bloom = NULL );	// TRACK G: with a mix the bloom variant of the pixel shader draws; NULL is the draw without bloom
 
 	void SimpleRender( nvrhi::ICommandList* commandList, const ToneMappingParameters& params, const viewDef_t* viewDef, nvrhi::ITexture* sourceTexture, nvrhi::FramebufferHandle _fbHandle );
 
@@ -65,11 +70,29 @@ public:
 		return isLoaded;
 	}
 
+	// ---- TRACK G: the bloom pass whose chain this pass's bloom variant mixes in. The pointer is not owned:
+	// the backend sets it before every tonemap block, NULL for a view without bloom ----
+	void SetBloomPass( BloomPass* pass )
+	{
+		bloomPass = pass;
+	}
+
+	// empty the bloom variant's binding-set list and its hash: a set must never outlive the chain whose level
+	// it names, nor keep a dead level alive; the backend calls this where it deletes the bloom pass on the cvar
+	void ReleaseBloomSets();
+	// ---- END TRACK G ----
+
 private:
 	void ResetExposure( nvrhi::ICommandList* commandList, float initialExposure );
 	void ResetHistogram( nvrhi::ICommandList* commandList );
 	void AddFrameToHistogram( nvrhi::ICommandList* commandList, const viewDef_t* viewDef, nvrhi::ITexture* sourceTexture );
 	void ComputeExposure( nvrhi::ICommandList* commandList, const ToneMappingParameters& params );
+
+	// ---- TRACK G: the bloom variant of the draw, made at the first draw that has a mix ( a run with
+	// r_bloom 0 makes none ) ----
+	void InitBloom( nvrhi::IFramebuffer* sampleFramebuffer );
+	void RenderBloom( nvrhi::ICommandList* commandList, const ToneMappingParameters& params, const viewDef_t* viewDef, nvrhi::ITexture* sourceTexture, nvrhi::FramebufferHandle _targetFb, const BloomMix* bloom );
+	// ---- END TRACK G ----
 
 	bool                            isLoaded;
 	idImage*                        colorLut;
@@ -96,6 +119,20 @@ private:
 	bool                            pcEnabledHistogram = false;	// true if push constants are used for Histogram
 	bool                            pcEnabledExposure = false;	// true if push constants are used for Exposure
 	bool                            pcEnabledTonemap = false;	// true if push constants are used for Tonemap
+	// ---- TRACK G: the bloom variant: the pass whose chain is mixed in ( not owned, NULL until the backend
+	// gives one ), its shader, layout, pipeline and 128-byte constants, and its binding sets looked up by the
+	// source texture and the level texture together ----
+	BloomPass*                      bloomPass;
+	nvrhi::ShaderHandle             bloomShader;
+	nvrhi::BindingLayoutHandle      bloomBindingLayout;
+	nvrhi::GraphicsPipelineHandle   bloomRenderPipeline;
+	nvrhi::BufferHandle             toneMappingBloomCb;         // the 128-byte constants, when push constants are off
+	idList<nvrhi::BindingSetHandle> bloomBindingSets;
+	idHashIndex                     bloomBindingHash;
+	int                             bloomChainSerial;           // the chain the set list was filled under; a new one empties the list
+	bool                            pcEnabledBloom = false;     // true if push constants are used for the bloom variant
+	uint32_t                        numConstantBufferVersions;  // _params' count, kept for the bloom variant's buffer made later
+	// ---- END TRACK G ----
 };
 
 #endif

@@ -34,6 +34,12 @@ If you have questions concerning this license or the applicable additional terms
 #include "Common_local.h"
 #include "Prefetch.h"
 #include "../renderer/Image.h"
+#include "../imgui/SystemOptionsPanel.h"
+
+// System Options panel ( 2026-11-26 ): the panel writes cvars from Draw, which runs in the game thread beside the
+// render backend when com_smp is on; while it is open the frame runs synchronously, as it does for the editors. Chosen
+// once a frame, because the three places that act on it must agree and the panel can close inside Draw
+static bool frameSynchronous = true;
 
 // RB begin
 #if defined(USE_DOOMCLASSIC)
@@ -301,6 +307,20 @@ void idCommonLocal::LogMapRows( int tics, bool concurrencyStats ) //puncho - P0
 			{
 				mapRowsFile->Printf( ",jl%i_execUs,jl%i_wallUs,jl%i_waitUs,jl%i_jobs,jl%i_submits", i, i, i, i, i );
 			}
+			// track F ( F7a ): the model jobs' wall time and pairs; the GPU times of the frame's first depth pre-pass,
+			// forward pass and shadow atlas pass ( one frame old, as usGPU; a subview's, when a subview draws first, F7i O2-11 )
+			mapRowsFile->Printf( ",usAddModels,surfLightPairs,gpuDepth,gpuFwd,gpuShadow" );
+			// track V ( V6, rows 181, 182, 158 ): the fog's two blocks and its zones ( r_volumetricFogZones 1 ), the atlas's fog
+			// counts, the fog lights, the fog portals, the frontend's fog work
+			mapRowsFile->Printf( ",gpuFog,gpuFogApply,gpuFogSky,gpuFogCol,gpuFogMedia,gpuFogInject,gpuFogResolve,gpuFogInteg" );
+			mapRowsFile->Printf( ",fogOnlyLights,fogOnlyTexels,fogOnlyRefused,surfaceRefused,fogLightsFroxel,fogLightsFogPass,fogUnfogged" );
+			mapRowsFile->Printf( ",fogPortals,fogPortalsNoCull,usFogFE,usFogCasters,fogChangedCasters,fogRecords,fogIdle" );
+			// track G: the bloom chain's GPU time and the tonemap block that contains it ( gpuToneMap
+			// includes gpuBloom: only the main view is timed, the backend switches the timers off for
+			// every other view )
+			mapRowsFile->Printf( ",gpuBloom,gpuToneMap" );
+			// TAA REPAIR: the motion-vector block and the temporal resolve ( 0 in a frame without TAA )
+			mapRowsFile->Printf( ",gpuMotionVectors,gpuTAA" );
 			mapRowsFile->Printf( "\n" );
 			//puncho end
 			mapRowsFlushTime = Sys_Milliseconds();
@@ -391,7 +411,7 @@ void idCommonLocal::LogMapRows( int tics, bool concurrencyStats ) //puncho - P0
 		g.dungeonTransitions, g.dungeonRefused, g.dungeonInhibited, g.dungeonPrefetches,
 		stats_frontend.c_generateMd5	//puncho - P2b.0.1g: md5Skins, one frame behind like every stats_frontend column; a plain int incremented from parallel R_AddSingleModel jobs
 	};
-	char row[4096]; //puncho - P0: room for the appended per-pass and shadow columns
+	char row[8192]; //puncho - P0: room for the appended per-pass and shadow columns ( V6: and the fog's 22 )
 	int length = 0;
 	for( int i = 0; i < ( int )( sizeof( values ) / sizeof( values[0] ) ); i++ )
 	{
@@ -453,6 +473,27 @@ void idCommonLocal::LogMapRows( int tics, bool concurrencyStats ) //puncho - P0
 		}
 	}
 	//puncho end
+	length += idStr::snPrintf( row + length, sizeof( row ) - length, ",%llu,%i,%llu,%llu,%llu", ( unsigned long long )stats_frontend.usAddModels,		// track F ( F7a )
+							   stats_frontend.c_surfLightPairs, ( unsigned long long )GetRendererGpuEarlyZMicroseconds(),
+							   ( unsigned long long )GetRendererGpuForwardPassMicroseconds(), ( unsigned long long )GetRendererGpuShadowAtlasPassMicroseconds() );
+	// track V ( V6 ): the fog's columns, in the header's order
+	const uint64* fogZone = stats_backend.gpuFogZoneMicroSec;
+	length += idStr::snPrintf( row + length, sizeof( row ) - length, ",%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu", ( unsigned long long )GetRendererGpuVolumetricsMicroseconds(),
+							   ( unsigned long long )GetRendererGpuVolumetricsApplyMicroseconds(), ( unsigned long long )fogZone[0], ( unsigned long long )fogZone[1],
+							   ( unsigned long long )fogZone[2], ( unsigned long long )fogZone[3], ( unsigned long long )fogZone[4], ( unsigned long long )fogZone[5] );
+	length += idStr::snPrintf( row + length, sizeof( row ) - length, ",%i,%i,%i,%i,%i,%i,%i", stats_backend.c_shadowAtlasFogOnlyLights, stats_backend.c_shadowAtlasFogOnlyTexels,
+							   stats_backend.c_shadowAtlasFogOnlyRefused, stats_backend.c_shadowAtlasSurfaceRefused, stats_backend.c_fogLightsFroxel, stats_backend.c_fogLightsFogPass,
+							   stats_backend.c_fogStagesUnfogged );
+	length += idStr::snPrintf( row + length, sizeof( row ) - length, ",%i,%i,%llu,%llu,%i,%i,%i", stats_frontend.c_fogPortalsMedium, stats_frontend.c_fogPortalsNeverCulled,
+							   ( unsigned long long )stats_frontend.usFogFE, ( unsigned long long )stats_frontend.usFogCasters, stats_frontend.c_fogChangedCasters, stats_frontend.c_fogRecords,
+							   stats_frontend.c_fogIdleViews );
+	// track G: the bloom chain and the tonemap block that contains it, in the header's order
+	length += idStr::snPrintf( row + length, sizeof( row ) - length, ",%llu,%llu", ( unsigned long long )GetRendererGpuBloomMicroseconds(),
+							   ( unsigned long long )GetRendererGpuToneMapPassMicroseconds() );
+	// TAA REPAIR: in the header's order
+	length += idStr::snPrintf( row + length, sizeof( row ) - length, ",%llu,%llu", ( unsigned long long )GetRendererGpuMotionVectorsMicroseconds(),
+							   ( unsigned long long )GetRendererGpuTAAMicroseconds() );
+	assert( length < ( int )sizeof( row ) - 1 );		// review CN1-3: about 3.65 KB at most since F7a; V6's 22 columns ( V6h: fogIdle ) add at most 22 x 21
 	row[length++] = '\n';
 	if( mapRowsUsed + length > ( int )sizeof( mapRowsBuffer ) )
 	{
@@ -638,7 +679,7 @@ gameReturn_t idGameThread::RunGameAndDraw( int numGameFrames_, idUserCmdMgr& use
 
 	// start the thread going
 	// foresthale 2014-05-12: also check com_editors as many of them are not particularly thread-safe (editLights for example)
-	if( !com_smp.GetBool() || com_editors != 0 )
+	if( frameSynchronous )
 	{
 		// run it in the main thread so PIX profiling catches everything
 		Run();
@@ -826,7 +867,12 @@ void idCommonLocal::Draw()
 			renderSystem->SetColor( colorBlack );
 			renderSystem->DrawStretchPic( 0, 0, renderSystem->GetVirtualWidth(), renderSystem->GetVirtualHeight(), 0, 0, 1, 1, whiteMaterial );
 		}
-		game->Shell_Render();
+		// while the System Options panel shows the game through ( Preview held, or a section being adjusted ), the pause
+		// menu is not drawn ( nor updated: the panel takes every event meanwhile ), so that the picture shows undimmed
+		if( !( gameDraw && SystemOptions::HidesShell() ) )
+		{
+			game->Shell_Render();
+		}
 	}
 	else if( mapSpawned )
 	{
@@ -1165,7 +1211,8 @@ void idCommonLocal::Frame()
 		const emptyCommand_t* renderCommands = NULL;
 
 		// foresthale 2014-05-12: also check com_editors as many of them are not particularly thread-safe (editLights for example)
-		if( com_smp.GetBool() && com_editors == 0 )
+		frameSynchronous = !com_smp.GetBool() || com_editors != 0 || SystemOptions::IsOpen();
+		if( !frameSynchronous )
 		{
 			renderCommands = renderSystem->SwapCommandBuffers( &time_frontend, &time_backend, &time_moc, &time_gpu, &stats_backend, &stats_frontend );
 		}
@@ -1459,7 +1506,7 @@ void idCommonLocal::Frame()
 		frameTiming.startRenderTime = Sys_Microseconds();
 
 		// foresthale 2014-05-12: also check com_editors as many of them are not particularly thread-safe (editLights for example)
-		if( !com_smp.GetBool() || com_editors != 0 )
+		if( frameSynchronous )
 		{
 			// in non-smp mode, run the commands we just generated, instead of
 			// frame-delayed ones from a background thread

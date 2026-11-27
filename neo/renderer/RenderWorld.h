@@ -118,6 +118,89 @@ ID_INLINE void SIMD_INIT_LAST_JOINT( idJointMat* joints, int numJoints )
 
 typedef bool( *deferredEntityCallback_t )( renderEntity_s*, const renderView_s* );
 
+// ---- WP-J27 ( the owner, 2026-11-27: "make lights have their own bloom settings under a tab in the light editor, so that
+// bloom per emissive source is configurable, because I sometimes want the regular unpointed glow, and sometimes I want the
+// stars with configurable points/widths" ): one source's bloom. idLight fills it from its bloom_* keys and sets it on its
+// visual model and on its modelTarget; the stage loop reads it where the model's emitting stages draw, and the bloom gives
+// that light its own kernel, strength and boost ( BloomPass, under the gate; the shape under the Fourier bloom ). A cleared
+// style ( memset 0, as every render entity starts ) is the view's bloom: shape 0, strength 1, the view's boost ----
+enum
+{
+	BLOOM_STYLE_VIEW	= 0,		// the view's shape and values ( System Options )
+	BLOOM_STYLE_STAR	= 1,		// diffraction spikes, the source's own values
+	BLOOM_STYLE_GLOW	= 2			// the inverse-square glow, unpointed, the source's own values
+};
+
+struct renderBloomStyle_t
+{
+	byte		shape;				// BLOOM_STYLE_*
+	byte		spikes;				// star: the arms through the lamp, 1 to 7 ( n arms are 2n points ); 0 for any other shape
+	byte		hotBoostOwn;		// 1: hotBoost is the source's own; 0: the view's r_bloomHotBoost
+	byte		pad;				// always 0
+	float		intensityBias;		// the source's light enters the bloom times ( 1 + intensityBias ), 0 to 4 times; stored less 1 so a cleared style is 1
+	float		hotBoost;			// stops, 0 to 8: how much brighter the source's hottest pixels enter the transform; read where hotBoostOwn is 1
+	// the star's values, each the System Options row of the same name with its range; 0 for any other shape
+	float		spikeRotation;		// 0 to 1
+	float		spikeRadius;		// 0 to 1: the arms' length
+	float		spikeBlur;			// 0 to 1: the arms' width at the lamp
+	float		spikeSpread;		// 0 to 1
+	float		spikeRatio;			// -1 to 1
+	float		spikeRinging;		// 0 to 1
+	float		spikeShift;			// 0 to 1
+	float		spikeFalloff;		// 0 to 1 ( 0: the plan's fall )
+	// the glow's values; 0 for any other shape
+	float		glowRadius;			// 0 to 1
+	float		glare;				// 0 to 1
+};
+
+// the keys ( idLight's spawnargs; the light editor's Bloom tab and the FGD write them ). A key that is absent takes the
+// default below, which is the System Options row's own default ( BloomPass.cpp's cvars )
+#define BLOOM_KEY_SHAPE				"bloom_shape"			// 0 the view's, 1 star, 2 glow
+#define BLOOM_KEY_INTENSITY			"bloom_intensity"		// 1
+#define BLOOM_KEY_HOT_BOOST			"bloom_hot_boost"		// absent: the view's
+#define BLOOM_KEY_SPIKES			"bloom_spikes"			// 3
+#define BLOOM_KEY_SPIKE_ROTATION	"bloom_spike_rotation"	// 0.5
+#define BLOOM_KEY_SPIKE_RADIUS		"bloom_spike_radius"	// 0
+#define BLOOM_KEY_SPIKE_BLUR		"bloom_spike_blur"		// 0
+#define BLOOM_KEY_SPIKE_SPREAD		"bloom_spike_spread"	// 0
+#define BLOOM_KEY_SPIKE_RATIO		"bloom_spike_ratio"		// 0
+#define BLOOM_KEY_SPIKE_RINGING		"bloom_spike_ringing"	// 0.75
+#define BLOOM_KEY_SPIKE_SHIFT		"bloom_spike_shift"		// 0.1
+#define BLOOM_KEY_SPIKE_FALLOFF		"bloom_spike_falloff"	// 0
+#define BLOOM_KEY_GLOW_RADIUS		"bloom_glow_radius"		// 1
+#define BLOOM_KEY_GLARE				"bloom_glare"			// 0
+
+// a style of the given shape at the keys' defaults: the view's for BLOOM_STYLE_VIEW ( the cleared style ), the System Options
+// rows' defaults for a star or a glow
+ID_INLINE void R_BloomStyleDefaults( renderBloomStyle_t& style, int shape )
+{
+	memset( &style, 0, sizeof( style ) );
+	if( shape == BLOOM_STYLE_STAR )
+	{
+		style.shape = BLOOM_STYLE_STAR;
+		style.spikes = 3;
+		style.spikeRotation = 0.5f;
+		style.spikeRinging = 0.75f;
+		style.spikeShift = 0.1f;
+	}
+	else if( shape == BLOOM_STYLE_GLOW )
+	{
+		style.shape = BLOOM_STYLE_GLOW;
+		style.glowRadius = 1.0f;
+	}
+}
+
+// the styles a view can tell apart: slot 0 is the view's, so three sources' own at once ( the glow mask's green carries the
+// slot; shaders/builtin/post/bloom_fft_cb.h has the same number )
+#define BLOOM_STYLE_SLOTS 4
+
+// true where the style is the view's bloom in every respect ( no slot of its own in the stage loop )
+ID_INLINE bool R_BloomStyleIsView( const renderBloomStyle_t& style )
+{
+	return style.shape == BLOOM_STYLE_VIEW && style.intensityBias == 0.0f && style.hotBoostOwn == 0;
+}
+// ---- END WP-J27 ----
+
 
 typedef struct renderEntity_s
 {
@@ -193,6 +276,7 @@ typedef struct renderEntity_s
 	// this automatically implies noShadow
 	bool					noOverlays;				// force no overlays on this model
 	bool					skipMotionBlur;			// Mask out this object during motion blur
+	bool					noGlow;					// WP-J21: the model writes no glow mask, so none of its stages reaches the bloom; set by idLight on its visual model from the light's spawnarg "emit_glow" 0 ( a cleared entity glows ); it takes one of the two bytes before forceUpdate, so the struct keeps its size
 	int						forceUpdate;			// force an update (NOTE: not a bool to keep this struct a multiple of 4 bytes)
 	int						timeGroup;
 	int						xrayIndex;
@@ -200,6 +284,7 @@ typedef struct renderEntity_s
 	float					minVisPixels;
 	int						cullShadow;
 	float					lodScale;
+	renderBloomStyle_t		bloomStyle;				// WP-J27: the source's own bloom ( a light's bloom_* keys, on its visual model and its modelTarget ); a cleared one is the view's
 } renderEntity_t;
 
 
@@ -229,7 +314,13 @@ typedef struct renderLight_s
 	bool					primarySun;			// spawnarg "primarySun": this parallel light is the map's sun ( D42, D73 )
 	byte					forwardMode;		// spawnarg "forward": 0 = default, 1 = force the light list, 2 = force legacy
 	byte					volumetricMode;		// spawnarg "volumetric": 0 = default ( the froxel fog takes the light where its shadow is known ), 1 = also where it has no shadow map, 2 = never
-	float					fogAlbedo;			// spawnarg "fog_albedo" ( V4 ): a fog light's scattering albedo in the froxel fog, 0 to 1; 0 = its fog only darkens and shines with its colour, as the fog pass draws it
+	// ---- WP-J21: the emitter's switch, a full group of its own so the redundant-update memcmp sees no gap ----
+	bool					noGlow;				// spawnarg "emit_glow" 0: the light's fog never glows in the bloom ( RLF_FOG_NOGLOW ) and its visual model writes no glow mask ( renderEntity_t::noGlow ); stored inverted so that a cleared render light glows, the default 1
+	byte					glowPad[3];			// always 0, as a cleared render light has it
+	// ---- END WP-J21 ----
+	float					fogAlbedo;			// spawnarg "fog_albedo" ( V4 ): a fog light's scattering albedo in the froxel fog, 0 to 1: the share of its fog that scatters the lights and the ambient; 0 = it scatters nothing, as the fog pass draws it
+	float					fogEmissionBias;	// spawnarg "fog_emission" ( V7 ) minus 1: how strongly a fog light's froxel fog glows with its colour, 0 to 8, 1 by default ( as the fog pass draws it ); stored less 1 so that a cleared render light keeps the default
+	float					fogEdge;			// spawnarg "fog_edge" ( V7 ): soft sides: within this many units of a fog light's faces, all but its fog plane's ( an unrotated box's top, a projected light's far face ), its froxel fog thins to nothing; 0 = hard sides, up to 4,096
 	idVec3					lightRadius;		// xyz radius for point lights
 	idVec3					lightCenter;		// offset the lighting direction for shading and
 	// shadows, relative to origin

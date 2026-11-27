@@ -28,6 +28,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "precompiled.h"
 #pragma hdrstop
 #include "../Game_local.h"
+#include "../../imgui/SystemOptionsPanel.h"
 
 const static int NUM_SETTING_OPTIONS = 8;
 
@@ -253,7 +254,12 @@ bool idMenuScreen_Shell_Settings::HandleAction( idWidgetAction& action, const id
 				}
 				case SETTING_CMD_SYSTEM:
 				{
-					menuData->SetNextScreen( SHELL_AREA_SYSTEM_OPTIONS, MENU_TRANSITION_SIMPLE );
+					// the System Options panel opens over this screen, which keeps the focus for when it closes; the
+					// SWF list is the fallback where ImGui is not up
+					if( !SystemOptions::Open() )
+					{
+						menuData->SetNextScreen( SHELL_AREA_SYSTEM_OPTIONS, MENU_TRANSITION_SIMPLE );
+					}
 					break;
 				}
 #if VR_OPTIONS

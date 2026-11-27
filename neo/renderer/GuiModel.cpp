@@ -398,18 +398,48 @@ void idGuiModel::EmitImGui( ImDrawData* drawData )
 
 	ImGuiIO& io = ImGui::GetIO();
 
+	// System Options panel ( 2026-11-26 ): each command emits only the vertices its indices reach, rebased to the
+	// first of them. It used to emit the list's whole vertex buffer once a command, so a window with many clip
+	// rectangles ( one an input box ) multiplied its vertices past MAX_VERTS; and a command that found no room
+	// left the index offset behind, so that every later command drew the wrong triangles
+	static idList<triIndex_t> rebasedIndexes;
+
 	for( int a = 0; a < drawData->CmdListsCount; a++ )
 	{
 		const ImDrawList* cmd_list = drawData->CmdLists[a];
 		const ImDrawIdx* indexBufferOffset = &cmd_list->IdxBuffer.front();
 
-		int numVerts = cmd_list->VtxBuffer.size();
-
 		for( int b = 0; b < cmd_list->CmdBuffer.size(); b++ )
 		{
 			const ImDrawCmd* pcmd = &cmd_list->CmdBuffer[b];
+			const ImDrawIdx* cmdIndexes = indexBufferOffset;
+			indexBufferOffset += pcmd->ElemCount;
 
-			int numIndexes = pcmd->ElemCount;
+			if( pcmd->UserCallback )
+			{
+				pcmd->UserCallback( cmd_list, pcmd );
+				continue;
+			}
+
+			const int numIndexes = pcmd->ElemCount;
+			if( numIndexes == 0 )
+			{
+				continue;
+			}
+
+			int firstVert = cmdIndexes[0];
+			int lastVert = cmdIndexes[0];
+			for( int i = 1; i < numIndexes; i++ )
+			{
+				firstVert = Min( firstVert, ( int )cmdIndexes[i] );
+				lastVert = Max( lastVert, ( int )cmdIndexes[i] );
+			}
+			const int numVerts = lastVert - firstVert + 1;
+			rebasedIndexes.SetNum( numIndexes );
+			for( int i = 0; i < numIndexes; i++ )
+			{
+				rebasedIndexes[i] = ( triIndex_t )( cmdIndexes[i] - firstVert );
+			}
 
 			// support more than just the imGui Font texture
 			const idMaterial* mat = tr.imgGuiMaterial;
@@ -429,35 +459,26 @@ void idGuiModel::EmitImGui( ImDrawData* drawData )
 				1.0f
 			};
 
-			idDrawVert* verts = AllocTris( numVerts, indexBufferOffset, numIndexes, mat, tr.currentGLState, STEREO_DEPTH_TYPE_NONE, clipRect );
+			idDrawVert* verts = AllocTris( numVerts, rebasedIndexes.Ptr(), numIndexes, mat, tr.currentGLState, STEREO_DEPTH_TYPE_NONE, clipRect );
 			if( verts == NULL )
 			{
 				continue;
 			}
 
-			if( pcmd->UserCallback )
+			for( int j = 0; j < numVerts; j++ )
 			{
-				pcmd->UserCallback( cmd_list, pcmd );
+				const ImDrawVert* imVert = &cmd_list->VtxBuffer[firstVert + j];
+
+				ALIGNTYPE16 idDrawVert tempVert;
+
+				//tempVert.xyz = idVec3( imVert->pos.x, imVert->pos.y, 0.0f );
+				tempVert.xyz.ToVec2() = idVec2( imVert->pos.x, imVert->pos.y ).Scale( scaleToVirtual );
+				tempVert.xyz.z = 0.0f;
+				tempVert.SetTexCoord( imVert->uv.x, imVert->uv.y );
+				tempVert.SetColor( imVert->col );
+
+				WriteDrawVerts16( &verts[j], &tempVert, 1 );
 			}
-			else
-			{
-				for( int j = 0; j < numVerts; j++ )
-				{
-					const ImDrawVert* imVert = &cmd_list->VtxBuffer[j];
-
-					ALIGNTYPE16 idDrawVert tempVert;
-
-					//tempVert.xyz = idVec3( imVert->pos.x, imVert->pos.y, 0.0f );
-					tempVert.xyz.ToVec2() = idVec2( imVert->pos.x, imVert->pos.y ).Scale( scaleToVirtual );
-					tempVert.xyz.z = 0.0f;
-					tempVert.SetTexCoord( imVert->uv.x, imVert->uv.y );
-					tempVert.SetColor( imVert->col );
-
-					WriteDrawVerts16( &verts[j], &tempVert, 1 );
-				}
-			}
-
-			indexBufferOffset += pcmd->ElemCount;
 		}
 	}
 }

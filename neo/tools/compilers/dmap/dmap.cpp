@@ -401,7 +401,7 @@ void DmapHelp()
 //puncho end - P2b.3.8
 		"noFlood                = skip area flooding = bad performance\n"
 		"blockSize <x> <y> <z>  = cut BSP along these dimensions or disable with 0 0 0\n"
-		"chunkGrid <size>       = experimental: cut the world's lit surfaces on this grid, a power of two from 128 to 1024, or 0 for no cut (default: the worldspawn key chunkGrid, else 0)\n"
+		"chunkGrid <size>       = cut the world's lit surfaces on this grid, a power of two from 128 to 1024, or 0 for no cut (default: the worldspawn key chunkGrid, else 512)\n"
 		"obj                    = export BSP render surfaces as .obj file\n"
 		"debug                  = export BSP portals and other details as .obj files\n"
 		//puncho - SB1a (R-SB1a-6)
@@ -444,7 +444,7 @@ void ResetDmapGlobals()
 	dmapGlobals.drawflag = false;
 	dmapGlobals.bspAlternateSplitWeights = false;
 	dmapGlobals.blockSize = idVec3( 1024.0f, 1024.0f, 1024.0f );	// default block size for splitting
-	dmapGlobals.chunkGrid = -1;	// renderer upgrade F6: not given; the worldspawn key chunkGrid decides, else no cut ( dress_chunk.cpp )
+	dmapGlobals.chunkGrid = -1;	// renderer upgrade F6, F7: not given; the worldspawn key chunkGrid decides, else 512 ( dress_chunk.cpp )
 	dmapGlobals.totalInlinedModels = 0;
 }
 

@@ -1326,6 +1326,373 @@ void R_DeriveTangentsWithoutNormals( srfTriangles_t* tri, bool useMikktspace )
 
 /*
 ===================
+R_HalfFloatStep
+
+Track F ( F7e ): the step of a half float near x ( 2^-14 below the normals ). F32toF16 truncates the mantissa, so a
+value stored and read back is within one step below it.
+===================
+*/
+static float R_HalfFloatStep( float x )
+{
+	const float a = fabs( x );
+	if( a < 6.103515625e-5f )
+	{
+		return 6.103515625e-5f;
+	}
+	int e;
+	frexpf( a, &e );					// a = m * 2^e, m in [ 0.5, 1 )
+	return ldexpf( 1.0f, e - 11 );		// 10 mantissa bits below the leading one at 2^( e - 1 )
+}
+
+/*
+===================
+R_DeriveAreaTangents
+
+Track F ( F7e, row 202 ): the tangents of a world area, derived across its surfaces. A chunked area holds a vertex of a
+seam once in each surface that meets there, and R_DeriveTangentsWithoutNormals sums only the faces of a vertex's own
+surface, so the copies turned apart and the light showed a line along the seam. Here every face adds its tangent and
+bitangent ( as R_DeriveTangentsWithoutNormals makes them ), weighted by its corner angle at the vertex, into an
+accumulator shared by every copy of the vertex in the area: the same position bits, the same stored normal, the same
+material, the same texture handedness, and texture coordinates equal up to whole tiles ( ParseModel moves each surface's
+islands by whole tiles ), within 1/256 of a tile plus the half-float step of each ( review CN2-1: both are stored
+truncated at their own magnitude ). A cut does not change the corner angles at a vertex ( the pieces' angles add up to the
+face's ), so a chunked area gets the tangents of its unchunked compile at the vertices both have, and the vertices a
+T-junction fix added are covered too. The sum is projected on the vertex's own normal and made unit length, as before;
+copies with the same normal bytes and the same sum store the same bytes. A face with no area or no texture area adds
+nothing; a vertex no face adds to keeps the tangent FinishSurfaces gave it ( review CN2-7 ). Surfaces whose material asks
+for MikkTSpace or unsmoothed tangents keep theirs. Called by ParseModel after FinishSurfaces, before the binary cache is
+written.
+===================
+*/
+void R_DeriveAreaTangents( idRenderModel* model )
+{
+	const int numSurfaces = model->NumSurfaces();
+
+	// one numbering for the vertices of every surface that takes part
+	idTempArray<int> firstVert( numSurfaces );
+	int numVerts = 0;
+	for( int s = 0; s < numSurfaces; s++ )
+	{
+		const modelSurface_t* surf = model->Surface( s );
+		const srfTriangles_t* tri = surf->geometry;
+		firstVert[s] = -1;
+		if( tri == NULL || tri->numVerts <= 0 || tri->numIndexes <= 0 || surf->shader == NULL ||
+				surf->shader->UseMikkTSpace() || surf->shader->UseUnsmoothedTangents() )
+		{
+			continue;
+		}
+		firstVert[s] = numVerts;
+		numVerts += tri->numVerts;
+	}
+	if( numVerts == 0 )
+	{
+		return;
+	}
+
+	// each vertex's texture handedness: the sign of the texture area of the first face that uses it
+	// ( FinishSurfaces gave a vertex shared by faces of both signs a copy for each, R_DuplicateMirroredVertexes )
+	idTempArray<signed char> handed( numVerts );
+	memset( handed.Ptr(), 0, numVerts );
+	for( int s = 0; s < numSurfaces; s++ )
+	{
+		if( firstVert[s] < 0 )
+		{
+			continue;
+		}
+		const srfTriangles_t* tri = model->Surface( s )->geometry;
+		for( int i = 0; i + 2 < tri->numIndexes; i += 3 )
+		{
+			const idVec2 aST = tri->verts[tri->indexes[i + 0]].GetTexCoord();
+			const idVec2 bST = tri->verts[tri->indexes[i + 1]].GetTexCoord();
+			const idVec2 cST = tri->verts[tri->indexes[i + 2]].GetTexCoord();
+			const float area = ( bST[0] - aST[0] ) * ( cST[1] - aST[1] ) - ( bST[1] - aST[1] ) * ( cST[0] - aST[0] );
+			if( fabs( area ) < 1e-20f )
+			{
+				continue;
+			}
+			for( int j = 0; j < 3; j++ )
+			{
+				signed char& h = handed[firstVert[s] + tri->indexes[i + j]];
+				if( h == 0 )
+				{
+					h = ( area > 0.0f ) ? 1 : -1;
+				}
+			}
+		}
+	}
+
+	// the copies of one vertex: a hash over the position bits, the normal bytes and the material, sized to the vertices
+	// ( review CN2-2: a fixed table made the scan quadratic on a large area ), then the texture handedness and the texture
+	// coordinates up to whole tiles. A class keeps a pointer to its first copy, its material and its handedness
+	idTempArray<int> classOf( numVerts );
+	idTempArray<const idDrawVert*> classVert( numVerts );
+	idTempArray<const idMaterial*> classMaterial( numVerts );
+	idTempArray<signed char> classHanded( numVerts );
+	idHashIndex hash( idMath::CeilPowerOfTwo( Max( numVerts, 1024 ) ), numVerts );
+	int numClasses = 0;
+	for( int s = 0; s < numSurfaces; s++ )
+	{
+		if( firstVert[s] < 0 )
+		{
+			continue;
+		}
+		const modelSurface_t* surf = model->Surface( s );
+		const srfTriangles_t* tri = surf->geometry;
+		for( int v = 0; v < tri->numVerts; v++ )
+		{
+			const idDrawVert& dv = tri->verts[v];
+			const signed char h = handed[firstVert[s] + v];
+			unsigned int bits[3];
+			memcpy( bits, dv.xyz.ToFloatPtr(), sizeof( bits ) );
+			unsigned int normalBits;
+			memcpy( &normalBits, dv.normal, sizeof( normalBits ) );
+			const int key = ( int )( bits[0] * 73856093u ^ bits[1] * 19349663u ^ bits[2] * 83492791u ^ normalBits ^
+									 ( unsigned int )( ( uintptr_t )surf->shader >> 4 ) );
+			const idVec2 st = dv.GetTexCoord();
+			int found = -1;
+			for( int c = hash.First( key ); c != -1; c = hash.Next( c ) )
+			{
+				const idDrawVert& ov = *classVert[c];
+				// F7i ( review O1-1 ): copies whose faces turn the texture another way ( a texture seam whose corner st agree
+				// by whole tiles ) stay apart: their own tangents, per surface, still in the vertices here, point apart
+				if( classMaterial[c] != surf->shader || classHanded[c] != h ||
+						memcmp( ov.xyz.ToFloatPtr(), dv.xyz.ToFloatPtr(), sizeof( bits ) ) != 0 ||
+						memcmp( ov.normal, dv.normal, sizeof( normalBits ) ) != 0 ||
+						ov.GetTangent() * dv.GetTangent() < 0.5f )
+				{
+					continue;
+				}
+				const idVec2 ost = ov.GetTexCoord();
+				float ds = st[0] - ost[0];
+				float dt = st[1] - ost[1];
+				ds -= floorf( ds + 0.5f );
+				dt -= floorf( dt + 0.5f );
+				const float tolS = ( 1.0f / 256.0f ) + R_HalfFloatStep( st[0] ) + R_HalfFloatStep( ost[0] );
+				const float tolT = ( 1.0f / 256.0f ) + R_HalfFloatStep( st[1] ) + R_HalfFloatStep( ost[1] );
+				if( fabs( ds ) <= tolS && fabs( dt ) <= tolT )
+				{
+					found = c;
+					break;
+				}
+			}
+			if( found < 0 )
+			{
+				found = numClasses++;
+				classVert[found] = &dv;
+				classMaterial[found] = surf->shader;
+				classHanded[found] = h;
+				hash.Add( key, found );
+			}
+			classOf[firstVert[s] + v] = found;
+		}
+	}
+
+	// every face into the shared sums, weighted by its corner angles
+	idTempArray<idVec3> tangentSum( numClasses );
+	idTempArray<idVec3> bitangentSum( numClasses );
+	for( int c = 0; c < numClasses; c++ )
+	{
+		tangentSum[c].Zero();
+		bitangentSum[c].Zero();
+	}
+	for( int s = 0; s < numSurfaces; s++ )
+	{
+		if( firstVert[s] < 0 )
+		{
+			continue;
+		}
+		const srfTriangles_t* tri = model->Surface( s )->geometry;
+		for( int i = 0; i + 2 < tri->numIndexes; i += 3 )
+		{
+			const idDrawVert* a = tri->verts + tri->indexes[i + 0];
+			const idDrawVert* b = tri->verts + tri->indexes[i + 1];
+			const idDrawVert* c = tri->verts + tri->indexes[i + 2];
+
+			const idVec2 aST = a->GetTexCoord();
+			const idVec2 bST = b->GetTexCoord();
+			const idVec2 cST = c->GetTexCoord();
+
+			float d0[5];
+			d0[0] = b->xyz[0] - a->xyz[0];
+			d0[1] = b->xyz[1] - a->xyz[1];
+			d0[2] = b->xyz[2] - a->xyz[2];
+			d0[3] = bST[0] - aST[0];
+			d0[4] = bST[1] - aST[1];
+
+			float d1[5];
+			d1[0] = c->xyz[0] - a->xyz[0];
+			d1[1] = c->xyz[1] - a->xyz[1];
+			d1[2] = c->xyz[2] - a->xyz[2];
+			d1[3] = cST[0] - aST[0];
+			d1[4] = cST[1] - aST[1];
+
+			const float area = d0[3] * d1[4] - d0[4] * d1[3];
+			if( fabs( area ) < 1e-20f )
+			{
+				continue;		// no texture area: no tangent, as R_DeriveTangentsWithoutNormals
+			}
+
+			// the corner angles; a face with no area in space adds nothing
+			const idVec3 corner[3] = { a->xyz, b->xyz, c->xyz };
+			float angle[3];
+			bool flat = false;
+			for( int j = 0; j < 3; j++ )
+			{
+				const idVec3 u = corner[( j + 1 ) % 3] - corner[j];
+				const idVec3 w = corner[( j + 2 ) % 3] - corner[j];
+				const float crossLength = u.Cross( w ).Length();
+				if( crossLength <= 1e-6f * u.Length() * w.Length() )
+				{
+					flat = true;
+					break;
+				}
+				angle[j] = idMath::ATan( crossLength, u * w );
+			}
+			if( flat )
+			{
+				continue;
+			}
+
+			// the face's tangent and bitangent exactly as R_DeriveTangentsWithoutNormals makes them, the sign of the
+			// texture area included where USE_INVA is defined ( F7h: it is, in this file )
+#ifdef USE_INVA
+			const float inva = ( area < 0.0f ) ? -1.0f : 1.0f;
+#else
+			const float inva = 1.0f;
+#endif
+			idVec3 faceTangent;
+			faceTangent[0] = ( d0[0] * d1[4] - d0[4] * d1[0] ) * inva;
+			faceTangent[1] = ( d0[1] * d1[4] - d0[4] * d1[1] ) * inva;
+			faceTangent[2] = ( d0[2] * d1[4] - d0[4] * d1[2] ) * inva;
+			faceTangent.Normalize();
+
+			idVec3 faceBitangent;
+			faceBitangent[0] = ( d0[3] * d1[0] - d0[0] * d1[3] ) * inva;
+			faceBitangent[1] = ( d0[3] * d1[1] - d0[1] * d1[3] ) * inva;
+			faceBitangent[2] = ( d0[3] * d1[2] - d0[2] * d1[3] ) * inva;
+			faceBitangent.Normalize();
+
+			for( int j = 0; j < 3; j++ )
+			{
+				const int cls = classOf[firstVert[s] + tri->indexes[i + j]];
+				tangentSum[cls] += faceTangent * angle[j];
+				bitangentSum[cls] += faceBitangent * angle[j];
+			}
+		}
+	}
+
+	// each copy: the sum projected on its own normal, unit length, as R_DeriveTangentsWithoutNormals; a copy no face
+	// added to keeps the tangent FinishSurfaces gave it
+	for( int s = 0; s < numSurfaces; s++ )
+	{
+		if( firstVert[s] < 0 )
+		{
+			continue;
+		}
+		srfTriangles_t* tri = model->Surface( s )->geometry;
+		for( int v = 0; v < tri->numVerts; v++ )
+		{
+			const int cls = classOf[firstVert[s] + v];
+			if( tangentSum[cls].LengthSqr() == 0.0f )
+			{
+				continue;
+			}
+			idVec3 normal = tri->verts[v].GetNormal();
+			normal.Normalize();
+
+			idVec3 tangent = tangentSum[cls];
+			tangent -= ( tangent * normal ) * normal;
+			tangent.Normalize();
+
+			idVec3 bitangent = bitangentSum[cls];
+			bitangent -= ( bitangent * normal ) * normal;
+			bitangent.Normalize();
+
+			tri->verts[v].SetTangent( tangent );
+			tri->verts[v].SetBiTangent( bitangent );
+		}
+		tri->tangentsCalculated = true;
+	}
+}
+
+/*
+===================
+R_CountAreaTangentSeams
+
+Track F ( F7e, review CN2-3 ): for r_areaTangentsLog, after either derivation. The vertex copies of a world area that
+another surface holds at the same position, with the same normal bytes and material ( a chunk seam's two sides, and also
+a hard texture seam, which may rightly differ ), and how many of them store tangent bytes that differ from that other
+copy's. With r_areaTangents 0 it counts the seams the per-surface derivation leaves; with 1 what remains.
+===================
+*/
+void R_CountAreaTangentSeams( const idRenderModel* model, int* numCopies, int* numDiffer )
+{
+	*numCopies = 0;
+	*numDiffer = 0;
+	int numVerts = 0;
+	for( int s = 0; s < model->NumSurfaces(); s++ )
+	{
+		const srfTriangles_t* tri = model->Surface( s )->geometry;
+		numVerts += ( tri != NULL ) ? tri->numVerts : 0;
+	}
+	if( numVerts == 0 )
+	{
+		return;
+	}
+	idTempArray<const idDrawVert*> firstOf( numVerts );
+	idTempArray<int> surfaceOf( numVerts );
+	idTempArray<const idMaterial*> materialOf( numVerts );
+	idHashIndex hash( idMath::CeilPowerOfTwo( Max( numVerts, 1024 ) ), numVerts );
+	int num = 0;
+	for( int s = 0; s < model->NumSurfaces(); s++ )
+	{
+		const modelSurface_t* surf = model->Surface( s );
+		const srfTriangles_t* tri = surf->geometry;
+		if( tri == NULL )
+		{
+			continue;
+		}
+		for( int v = 0; v < tri->numVerts; v++ )
+		{
+			const idDrawVert& dv = tri->verts[v];
+			unsigned int bits[3];
+			memcpy( bits, dv.xyz.ToFloatPtr(), sizeof( bits ) );
+			unsigned int normalBits;
+			memcpy( &normalBits, dv.normal, sizeof( normalBits ) );
+			const int key = ( int )( bits[0] * 73856093u ^ bits[1] * 19349663u ^ bits[2] * 83492791u ^ normalBits ^
+									 ( unsigned int )( ( uintptr_t )surf->shader >> 4 ) );
+			int found = -1;
+			for( int c = hash.First( key ); c != -1; c = hash.Next( c ) )
+			{
+				if( materialOf[c] == surf->shader && memcmp( firstOf[c]->xyz.ToFloatPtr(), bits, sizeof( bits ) ) == 0 &&
+						memcmp( firstOf[c]->normal, dv.normal, sizeof( normalBits ) ) == 0 )
+				{
+					found = c;
+					break;
+				}
+			}
+			if( found < 0 )
+			{
+				firstOf[num] = &dv;
+				surfaceOf[num] = s;
+				materialOf[num] = surf->shader;
+				hash.Add( key, num );
+				num++;
+			}
+			else if( surfaceOf[found] != s )
+			{
+				( *numCopies )++;
+				if( memcmp( firstOf[found]->tangent, dv.tangent, sizeof( dv.tangent ) ) != 0 )
+				{
+					( *numDiffer )++;
+				}
+			}
+		}
+	}
+}
+
+/*
+===================
 R_BuildDominantTris
 
 Find the largest triangle that uses each vertex
@@ -2070,6 +2437,7 @@ void R_CreateStaticBuffersForTri( srfTriangles_t& tri, nvrhi::ICommandList* comm
 	//puncho end
 	tri.indexCache = 0;
 	tri.ambientCache = 0;
+	tri.staticBlockVertex = 0;		// track F ( F7k ): a block of its own
 
 	// index cache
 	if( tri.indexes != NULL )
@@ -2081,6 +2449,101 @@ void R_CreateStaticBuffersForTri( srfTriangles_t& tri, nvrhi::ICommandList* comm
 	if( tri.verts != NULL )
 	{
 		tri.ambientCache = vertexCache.AllocStaticVertex( tri.verts, tri.numVerts * sizeof( tri.verts[0] ), commandList );
+	}
+}
+
+idCVar r_staticAreaBlocks( "r_staticAreaBlocks", "1", CVAR_RENDERER | CVAR_BOOL, "upload a world area's surfaces in shared static blocks, so the backend can draw neighbouring surfaces as one ( r_joinDraws ); 0 = a block each surface; read at a level's load" );
+
+/*
+===================
+R_CreateStaticBuffersForAreaModel
+
+Track F ( F7k ): a world area model's surfaces uploaded in blocks: the vertexes of consecutive surfaces back to back in one
+static vertex allocation, their indexes in one static index allocation, each surface's indexes rebased by its first vertex
+in the block ( the GPU copy only: tri->indexes stay the surface's own, for the CPU's readers ). A block holds at most 65,536
+vertexes ( 16-bit indexes ) and 4 MB of indexes ( a handle's size field ). Each surface's ambientCache is the block's vertex
+handle, its indexCache the block's index handle moved to its own first index ( as GuiModel.cpp's sub-ranges ), and
+staticBlockVertex its first vertex in the block. A surface without vertexes or indexes keeps a block of its own.
+===================
+*/
+void R_CreateStaticBuffersForAreaModel( idRenderModel* model, nvrhi::ICommandList* commandList )
+{
+	const int numSurfaces = model->NumSurfaces();
+	static const int MAX_BLOCK_VERTS = 0x10000;
+	static const int MAX_BLOCK_INDEX_BYTES = VERTCACHE_SIZE_MASK & ~15;
+	int first = 0;
+	while( first < numSurfaces )
+	{
+		srfTriangles_t* head = model->Surface( first )->geometry;
+		if( !r_staticAreaBlocks.GetBool() || head->verts == NULL || head->indexes == NULL || head->numVerts <= 0 || head->numIndexes <= 0 )
+		{
+			R_CreateStaticBuffersForTri( *head, commandList );
+			first++;
+			continue;
+		}
+
+		// the block: surfaces [ first, last ), each with vertexes and indexes
+		int numVerts = 0;
+		int numIndexes = 0;
+		int last = first;
+		for( ; last < numSurfaces; last++ )
+		{
+			const srfTriangles_t* tri = model->Surface( last )->geometry;
+			if( tri->verts == NULL || tri->indexes == NULL || tri->numVerts <= 0 || tri->numIndexes <= 0 ||
+					numVerts + tri->numVerts > MAX_BLOCK_VERTS || ( int )( ( numIndexes + tri->numIndexes ) * sizeof( triIndex_t ) ) > MAX_BLOCK_INDEX_BYTES )
+			{
+				break;
+			}
+			numVerts += tri->numVerts;
+			numIndexes += tri->numIndexes;
+		}
+		if( last == first )
+		{
+			// F7m ( review O1-S S-1 ): a surface alone past a block's limits keeps a block of its own ( and the
+			// allocation's own error, as before F7k ), so the loop moves on
+			R_CreateStaticBuffersForTri( *head, commandList );
+			first++;
+			continue;
+		}
+
+		// the block's upload test as one call: a kept block's first surface holds its handles ( the preflight measures here )
+		const int indexBytes = numIndexes * ( int )sizeof( triIndex_t );
+		const int vertexBytes = numVerts * ( int )sizeof( idDrawVert );
+		if( vertexCache.StaticUploadNeeded( head->indexCache, indexBytes, head->ambientCache, vertexBytes ) )
+		{
+			idDrawVert* verts = ( idDrawVert* )Mem_Alloc16( vertexBytes, TAG_TEMP );
+			triIndex_t* indexes = ( triIndex_t* )Mem_Alloc16( ALIGN( indexBytes, 16 ), TAG_TEMP );
+			int v = 0;
+			int n = 0;
+			for( int j = first; j < last; j++ )
+			{
+				const srfTriangles_t* tri = model->Surface( j )->geometry;
+				memcpy( verts + v, tri->verts, tri->numVerts * sizeof( idDrawVert ) );
+				for( int k = 0; k < tri->numIndexes; k++ )
+				{
+					indexes[n + k] = ( triIndex_t )( tri->indexes[k] + v );
+				}
+				v += tri->numVerts;
+				n += tri->numIndexes;
+			}
+			const vertCacheHandle_t indexBlock = vertexCache.AllocStaticIndex( indexes, indexBytes, commandList );
+			const vertCacheHandle_t vertexBlock = vertexCache.AllocStaticVertex( verts, vertexBytes, commandList );
+			Mem_Free16( indexes );
+			Mem_Free16( verts );
+
+			v = 0;
+			n = 0;
+			for( int j = first; j < last; j++ )
+			{
+				srfTriangles_t* tri = model->Surface( j )->geometry;
+				tri->ambientCache = vertexBlock;
+				tri->indexCache = indexBlock + ( ( vertCacheHandle_t )( n * sizeof( triIndex_t ) ) << VERTCACHE_OFFSET_SHIFT );
+				tri->staticBlockVertex = v;
+				v += tri->numVerts;
+				n += tri->numIndexes;
+			}
+		}
+		first = last;
 	}
 }
 

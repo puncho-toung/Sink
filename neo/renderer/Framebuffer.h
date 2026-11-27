@@ -32,7 +32,6 @@ If you have questions concerning this license or the applicable additional terms
 #define __FRAMEBUFFER_H__
 
 static const int MAX_SHADOWMAP_RESOLUTIONS = 5;
-static const int MAX_BLOOM_BUFFERS = 2;
 static const int MAX_GLOW_BUFFERS = 2;
 static const int MAX_SSAO_BUFFERS = 2;
 static const int MAX_HIERARCHICAL_ZBUFFERS = 6; // native resolution + 5 MIP LEVELS
@@ -151,12 +150,12 @@ struct globalFramebuffers_t
 	Framebuffer*				shadowAtlasFBO;
 	Framebuffer*				shadowFBO[MAX_SHADOWMAP_RESOLUTIONS][6];
 	Framebuffer*				hdrFBO;
+	Framebuffer*				hdrGlowFBO;		// WP-J21: _hdr with the glow mask as a second target; NULL under MSAA ( the gate is then off )
 	Framebuffer*				ldrFBO;
 	Framebuffer*				postProcFBO; // HDR16 used by 3D effects like heatHaze
 	Framebuffer*				taaMotionVectorsFBO;
 	Framebuffer*				taaResolvedFBO;
 	Framebuffer*				envprobeFBO;
-	Framebuffer*				bloomRenderFBO[MAX_BLOOM_BUFFERS];
 	Framebuffer*				glowFBO[MAX_GLOW_BUFFERS];	// unused
 	Framebuffer*				transparencyFBO;			// unused
 	Framebuffer*				ambientOcclusionFBO[MAX_SSAO_BUFFERS];

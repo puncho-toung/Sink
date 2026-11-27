@@ -151,6 +151,12 @@ idRenderModel* idRenderWorldLocal::ReadBinaryModel( idFile* fileIn )
 
 extern idCVar binaryLoadRenderModels;
 
+// track F ( F7e, row 202 ): a world area's tangents derived across its surfaces ( R_DeriveAreaTangents ), so the copies of a
+// vertex on a chunk seam hold the same tangent; 0 = per surface, as before. The binary cache's version says which it
+// holds ( 5 across an area, 4 per surface; F7i, review O1-2 ): beside its .proc, a cache of the other kind is parsed again
+idCVar r_areaTangents( "r_areaTangents", "1", CVAR_RENDERER | CVAR_BOOL, "derive a world area's tangents across its surfaces, so a seam's two copies of a vertex agree; 0 = per surface" );
+idCVar r_areaTangentsLog( "r_areaTangentsLog", "0", CVAR_RENDERER | CVAR_BOOL, "print, per world area at load, the vertex copies another surface holds at the same place and how many differ in tangent" );
+
 /*
 ================
 R_AreaNumForModelName
@@ -485,6 +491,19 @@ idRenderModel* idRenderWorldLocal::ParseModel( idLexer* src, const char* mapName
 
 	// RB: FIXME add check for mikktspace
 	model->FinishSurfaces( false );
+
+	// track F ( F7e, row 202 ): a world area's tangents across its surfaces, before the binary cache keeps them
+	if( areaNum >= 0 && r_areaTangents.GetBool() )
+	{
+		R_DeriveAreaTangents( model );
+	}
+	if( areaNum >= 0 && r_areaTangentsLog.GetBool() )
+	{
+		int copies = 0;
+		int differ = 0;
+		R_CountAreaTangentSeams( model, &copies, &differ );
+		common->Printf( "area tangents: %s: %i surfaces, %i vertex copies another surface holds at the same position, normal and material, %i of them with other tangent bytes ( r_areaTangents %i )\n", model->Name(), model->NumSurfaces(), copies, differ, r_areaTangents.GetInteger() );
+	}
 
 	if( fileOut != NULL && model->SupportsBinaryModel() && binaryLoadRenderModels.GetBool() )
 	{
@@ -1012,11 +1031,13 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 	static const byte BPROC_VERSION_BFG = 1;
 	static const byte BPROC_VERSION_MOC_DATA = 2;
 	static const byte BPROC_VERSION_AREA_CHUNKS = 4;
-	static const byte BPROC_VERSION = BPROC_VERSION_AREA_CHUNKS;
+	static const byte BPROC_VERSION_AREA_TANGENTS = 5;		// track F ( F7e ): a world area's tangents across its surfaces
+	static const byte BPROC_VERSION = BPROC_VERSION_AREA_TANGENTS;
 
 
 	static const unsigned int BPROC_MAGIC_BFG = ( 'P' << 24 ) | ( 'R' << 16 ) | ( 'O' << 8 ) | BPROC_VERSION_BFG;
 	static const unsigned int BPROC_MAGIC_MOC_DATA = ( 'P' << 24 ) | ( 'R' << 16 ) | ( 'O' << 8 ) | BPROC_VERSION_MOC_DATA;
+	static const unsigned int BPROC_MAGIC_AREA_CHUNKS = ( 'P' << 24 ) | ( 'R' << 16 ) | ( 'O' << 8 ) | BPROC_VERSION_AREA_CHUNKS;		// track F ( F7e )
 	static const unsigned int BPROC_MAGIC = ( 'P' << 24 ) | ( 'R' << 16 ) | ( 'O' << 8 ) | BPROC_VERSION;
 	bool loaded = false;
 	idFileLocal file( fileSystem->OpenFileReadMemory( generatedFileName ) );
@@ -1030,8 +1051,12 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 		// is trusted like every other cache (the BRM and BCM loaders). Otherwise an old cache beside a .proc
 		// is stale, the version bump is what makes it stale: the .proc is parsed again (opaque white verts)
 		// and the cache rewritten
-		const bool oldCache = ( magic == BPROC_MAGIC_BFG || magic == BPROC_MAGIC_MOC_DATA );
-		if( magic == BPROC_MAGIC || ( oldCache && ( fileSystem->InProductionMode() || currentTimeStamp == FILE_NOT_FOUND_TIMESTAMP ) ) )
+		// track F ( F7e, review CN2-4 ): a version 4 cache too, with its tangents of before F7e: content packaged with one and
+		// no .proc would otherwise not load after the bump to 5
+		// F7i ( review O1-2 ): version 5 holds the tangents across an area, 4 per surface; the other kind is an old cache
+		const unsigned int currentMagic = r_areaTangents.GetBool() ? BPROC_MAGIC : BPROC_MAGIC_AREA_CHUNKS;
+		const bool oldCache = magic != currentMagic && ( magic == BPROC_MAGIC_BFG || magic == BPROC_MAGIC_MOC_DATA || magic == BPROC_MAGIC_AREA_CHUNKS || magic == BPROC_MAGIC );
+		if( magic == currentMagic || ( oldCache && ( fileSystem->InProductionMode() || currentTimeStamp == FILE_NOT_FOUND_TIMESTAMP ) ) )
 		{
 			file->ReadBig( numEntries );
 			file->ReadString( mapName );
@@ -1059,7 +1084,8 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 					localModels.Append( lastModel );
 
 					// the chunk origin and absolute bounds ParseModel wrote after the blob; an old cache has none
-					if( magic == BPROC_MAGIC )
+					// ( track F, F7e: a version 4 cache has them too )
+					if( magic == BPROC_MAGIC || magic == BPROC_MAGIC_AREA_CHUNKS )
 					{
 						idVec3 chunkOrigin;
 						idBounds absBounds;
@@ -1105,7 +1131,7 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 
 			// an old cache's area models kept their absolute vertices: chunk origin 0, and the absolute
 			// bounds are the model's own, as before chunk origins
-			if( loaded && magic != BPROC_MAGIC )
+			if( loaded && magic != BPROC_MAGIC && magic != BPROC_MAGIC_AREA_CHUNKS )		// track F ( F7e ): a version 4 cache has its chunks
 			{
 				for( int i = 0; i < localModels.Num(); i++ )
 				{
@@ -1163,7 +1189,7 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 		idFileLocal outputFile( fileSystem->OpenFileWrite( generatedFileName, "fs_basepath" ) );
 		if( outputFile != NULL )
 		{
-			int magic = BPROC_MAGIC;
+			int magic = r_areaTangents.GetBool() ? BPROC_MAGIC : BPROC_MAGIC_AREA_CHUNKS;		// F7i ( review O1-2 )
 			outputFile->WriteBig( magic );
 			outputFile->WriteBig( numEntries );
 			outputFile->WriteString( mapName );
@@ -1229,7 +1255,7 @@ bool idRenderWorldLocal::InitFromMap( const char* name )
 		if( outputFile != NULL )
 		{
 			outputFile->Seek( 0, FS_SEEK_SET );
-			int magic = BPROC_MAGIC;
+			int magic = r_areaTangents.GetBool() ? BPROC_MAGIC : BPROC_MAGIC_AREA_CHUNKS;		// F7i ( review O1-2 )
 			outputFile->WriteBig( magic );
 			outputFile->WriteBig( numEntries );
 		}

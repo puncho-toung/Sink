@@ -24,6 +24,11 @@
 
 #include "vulkan.hlsli"
 #include "tonemapping_cb.h"
+// ---- TRACK G: the bloom chain's clamped fetch and B-spline, for the BLOOM variant ----
+#if defined( BLOOM )
+#include "bloom.inc.hlsl"
+#endif
+// ---- END TRACK G ----
 
 // *INDENT-OFF*
 #if SOURCE_ARRAY
@@ -35,6 +40,11 @@ Buffer<uint> t_Exposure : register(t1);
 
 Texture2D t_ColorLUT : register(t2);
 SamplerState s_ColorLUTSampler : register(s0);
+// ---- TRACK G: the bloom level the mix reads, for the BLOOM variant ----
+#if defined( BLOOM )
+Texture2D t_Bloom : register( t3 );
+#endif
+// ---- END TRACK G ----
 
 #if USE_PUSH_CONSTANTS
 VK_PUSH_CONSTANT ConstantBuffer<ToneMappingConstants> g_ToneMapping : register( b0 );
@@ -113,6 +123,31 @@ void main(
 #else
 	float4 HdrColor = t_Source[pos.xy];
 #endif
+	// ---- TRACK G: the bloom chain mixed into the HDR frame before the exposure. The frame's
+	// weight and the bloom's are bloomMix.x and bloomMix.y; the screen pixel centre P reads the level at
+	// ( P - viewOrigin ) * bloomScale.x, that scale being 0.5 / 2^level, and the fetch's 1 / the level's
+	// TEXTURE size is bloomScale.zw: the texture may be larger than the rectangle it holds a view of ( the
+	// view can be smaller than the frame ), so the size comes in with the constants instead of being read
+	// off the texture. The level's rectangle is bloomRect.zw at the origin ( 0, 0 ) of its own texture, and
+	// bloomRect.zw is only the clamp's bound. bloomMix.z, the level, is not read by this shader: the
+	// C++ binds the level's texture and has folded 2^level into bloomScale.x. With bloomMix.w, one
+	// bilinear tap replaces the B-spline
+#if defined( BLOOM )
+	const float2 bloomT = ( pos.xy - g_ToneMapping.bloomRect.xy ) * g_ToneMapping.bloomScale.x;
+	// a real branch, not a ?: - before HLSL 2021 a ternary evaluates both of its sides, and after it a compiler may
+	// still fetch both and select: the point of the switch is to leave one of the two fetch groups out
+	float3 bloom;
+	if( g_ToneMapping.bloomMix.w != 0.0 )
+	{
+		bloom = BloomFetch( t_Bloom, s_ColorLUTSampler, bloomT, float2( 0.0, 0.0 ), g_ToneMapping.bloomRect.zw, g_ToneMapping.bloomScale.zw );
+	}
+	else
+	{
+		bloom = BloomBSpline( t_Bloom, s_ColorLUTSampler, bloomT, float2( 0.0, 0.0 ), g_ToneMapping.bloomRect.zw, g_ToneMapping.bloomScale.zw );
+	}
+	HdrColor.rgb = HdrColor.rgb * g_ToneMapping.bloomMix.x + bloom * g_ToneMapping.bloomMix.y;
+#endif
+	// ---- END TRACK G ----
 	o_rgba.rgb = ConvertToLDR( HdrColor.rgb );
 	o_rgba.a = HdrColor.a;
 

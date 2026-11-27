@@ -66,6 +66,20 @@ extern idCVar r_volumetricFog;
 
 struct froxelView_t;			// opaque; track V defines it later
 
+// V6 ( row 182 ): the zones, GPU timer queries the pass keeps round its sky mask and each kernel ( r_volumetricFogZones ).
+// The render log's main blocks are nearly all taken ( RenderLog.h ) and Optick is off in the build, so the pass times
+// itself. backEndCounters_t::gpuFogZoneMicroSec is indexed by these
+enum fogZone_t
+{
+	FOG_ZONE_SKY,			// DrawSkyMask's clear and draws, in no main block
+	FOG_ZONE_COLUMNS,		// the kernels, in the block MRB_VOLUMETRICS
+	FOG_ZONE_MEDIA,
+	FOG_ZONE_INJECT,
+	FOG_ZONE_RESOLVE,
+	FOG_ZONE_INTEGRATE,
+	FOG_ZONE_COUNT
+};
+
 class VolumetricFogPass
 {
 public:
@@ -101,6 +115,10 @@ private:
 	void	ProbeStage( nvrhi::ICommandList* commandList, nvrhi::ITexture* color, const viewDef_t* viewDef );
 	void	ProbeRead();
 	void	ProbeReadMedia( const byte* data, size_t rowPitch );	// V4: ProbeRead's columns where the media pass ran
+	void	ZonesRead();												// V6: once a frame, the zones of the slot this frame reuses, into backEnd.pc
+	void	ZoneBegin( nvrhi::ICommandList* commandList, fogZone_t zone );	// V6: a zone's two timestamps, while r_volumetricFogZones is on
+	void	ZoneEnd( nvrhi::ICommandList* commandList, fogZone_t zone );
+	void	BoundsBox( const viewDef_t* viewDef, const froxelConstants_t& constants, int viewWidth, int viewHeight, int fillWidth, int fillHeight );	// V8 ( B0, B2, B4 ): the box of the view's bounded media
 
 	nvrhi::DeviceHandle				m_Device;
 	CommonRenderPasses*				commonRenderPasses;
@@ -126,6 +144,9 @@ private:
 	nvrhi::TextureHandle			m_Mark[2];			// V4: 1 where the inject skipped the froxel, in step with m_Resolved ( the resolve writes mark i in turn i, reads the other )
 
 	kernel_t						m_Inject;			// its layout is its own ( InitInject ) and its set is made by CheckInjectSet
+	// V8 ( B1 ): the inject's permutation FROXEL_CLEAR_AIR 1, which returns early in clear air: m_Inject's layout and set
+	nvrhi::ShaderHandle				m_InjectClearAirShader;
+	nvrhi::ComputePipelineHandle	m_InjectClearAir;
 	kernel_t						m_Resolve;			// V3: its set is one of m_ResolveSets, by turns
 	kernel_t						m_Integrate;		// V3: its set is one of m_IntegrateSets, by turns
 	kernel_t						m_ColumnsKernel;	// V3: the farthest surface of each column; its set comes from the engine's binding cache
@@ -142,6 +163,24 @@ private:
 	nvrhi::BindingSetHandle			m_ResolveSets[2];
 	nvrhi::BindingSetHandle			m_IntegrateSets[2];
 	int								m_ResolvedIndex;
+	// ---- WP-J21: the fog's glow ( the bloom's gate ). The inject's and the integrate's USE_GLOW forms also keep, per
+	// froxel, the luminance of the in-scatter's part that never glows, and its integral; the bloom's level-1 pass reads it
+	// beside the integrated volume ( backEnd.froxelNoGlowVolume ). Made with the volumes; the forms run only in a view under
+	// the gate with r_bloomFogGlow ( BloomPass::FogGlowWantedForView ) ----
+	nvrhi::TextureHandle			m_NoGlow;
+	nvrhi::TextureHandle			m_NoGlowIntegrated;
+	nvrhi::ShaderHandle				m_InjectGlowShader;
+	nvrhi::ShaderHandle				m_InjectGlowClearAirShader;
+	nvrhi::BindingLayoutHandle		m_InjectGlowLayout;
+	nvrhi::ComputePipelineHandle	m_InjectGlow;
+	nvrhi::ComputePipelineHandle	m_InjectGlowClearAir;
+	nvrhi::BindingSetHandle			m_InjectGlowSet;
+	kernel_t						m_IntegrateGlow;
+	nvrhi::BindingSetHandle			m_IntegrateGlowSets[2];
+	bool							m_GlowDead;			// a part could not be made: the fog gives no glow under the gate
+	bool							m_NoGlowFresh;		// the volumes were just made: the first glow view clears m_NoGlow
+	bool							m_GlowRendered;		// the last Render ran the glow forms ( Apply hands the volume to the bloom )
+	// ---- END WP-J21 ----
 	nvrhi::BufferHandle				m_PrevRecords;		// last fog view's light records, copied after its inject: their colours, flags and volumes
 	nvrhi::BufferHandle				m_MovedRecords;		// the indices in m_PrevRecords of this view's lights that moved, or whose share jumped
 	nvrhi::BufferHandle				m_CasterBounds;		// by record, 2 * FOG_CASTER_BOXES float4: where a caster that changed shadows ( froxelView_t::casterBoxes: up to FOG_CASTER_BOXES by record )
@@ -171,6 +210,12 @@ private:
 
 	const viewDef_t*				m_RenderedView;		// the view Render() filled the volumes for: its apply alone may read them
 	bool							m_RenderedFogLights;	// V5: and whether its inject took fog lights
+	// V8 ( B0, B2 ): and where its bounded media can be seen ( BoundsBox ): the fog set's rectangle and first slice, for its apply
+	bool							m_BoundsOn;			// the rectangle and the first slice hold ( no map-wide medium, every fog light taken has its entry )
+	idVec4							m_BoundsRect;		// froxelFogParms_t::boundsRect
+	float							m_BoundsFirstSlice;	// froxelFogParms_t::boundsParms.y
+	int								m_BoxMin[3];		// V8 ( B4 ): the box in froxels ( columns, rows, slices; inclusive ), padded by one; empty where the first passes the last
+	int								m_BoxMax[3];
 	bool							m_FogLightPath;		// V5f: a view since the last camera cut took fog lights: V4's path holds
 
 	// the sky mask: 1 where the fog view shows a sky surface, which the apply fogs as infinitely far ( D52 ). The
@@ -219,6 +264,15 @@ private:
 	fogMedium_t						m_ProbeMediaList[ FOG_MEDIA_MAX ];	// the media list of the probe's view, and its count: the list of the view it reads in is another
 	int								m_ProbeNumMedia;
 	bool							m_ProbeSkip;		// the skip was on: past a column's reach the GPU holds the global fog alone, and there is no closed form
+
+	// V6 ( row 182 ): the zones. A slot per frame of NUM_FRAME_DATA, by tr.frameCount ( the swap moves it before the backend
+	// runs, so it stays the same through one backend frame ); a slot's queries are read when the slot comes round again,
+	// NUM_FRAME_DATA frames later, as the render log reads its blocks
+	nvrhi::TimerQueryHandle			m_ZoneQueries[ NUM_FRAME_DATA ][ FOG_ZONE_COUNT ];
+	bool							m_ZoneUsed[ NUM_FRAME_DATA ][ FOG_ZONE_COUNT ];	// ended and not read yet ( the render log's timerUsed )
+	bool							m_ZoneOpen[ FOG_ZONE_COUNT ];	// begun in this frame and not ended yet
+	int								m_ZoneFrame[ NUM_FRAME_DATA ];	// the frame each slot's queries were made in
+	int								m_ZoneReadFrame;	// the frame ZonesRead last ran in
 };
 
 #endif // RENDERER_PASSES_VOLUMETRICFOGPASS_H_

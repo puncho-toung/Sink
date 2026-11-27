@@ -206,6 +206,10 @@ public:
 	}
 	//puncho end
 
+	// WP-J27: a light's own bloom from its bloom_* keys ( RenderWorld.h's BLOOM_KEY_* ); the light sets it on its visual model and
+	// on its modelTarget
+	static void		ParseBloomStyle( const idDict* args, renderBloomStyle_t& style );
+
 	enum
 	{
 		EVENT_BECOMEBROKEN = idEntity::EVENT_MAXEVENTS,

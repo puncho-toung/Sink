@@ -28,6 +28,10 @@
 //   0  every record: the reference
 // In all three the bits pass the take mask first: a bit per record that the pass sets where the fog can take the
 // record's light at all ( R_FogCanTakeRecord, renderer/VolumetricFog.h ). A record without a bit is not read.
+// V8 ( B1 ): the permutation FROXEL_CLEAR_AIR 1 ( r_volumetricFogBounds, where a view's only media are its fog lights, on V4's
+// path ) returns before the lights in a froxel whose medium is nothing: what it would store is clear air whatever its lights
+// give. Its test gathers the fog lights' medium once more, into a sum of its own ( FroxelGatherFogLights ); the kernel after
+// the test, and the whole of the permutation 0, is the code before V8.
 // Under the furnace radiance ( a test input of the pass ) the record count and the ambient lanes are zero, and what is
 // written is the uniform medium alone.
 
@@ -58,6 +62,11 @@ Texture2D<float>				t_Columns			: register( t11 );	// V3: the farthest surface o
 StructuredBuffer<float4>		t_CasterBounds		: register( t12 );	// V3: by record, the boxes where a caster that changed shadows ( froxelView_t; RLF_FOG_CASTERMOVED )
 Texture3D<float4>				t_Media				: register( t13 );	// V4: sigma_s ( rgb ) and sigma_t per froxel, times the store scale ( froxel_media.cs.hlsl )
 StructuredBuffer<float4>		t_MediaMoved		: register( t14 );	// V4: by medium that moved, its last and its present bounds in this view's relative frame ( min, max, min, max )
+#if defined( USE_GLOW ) && USE_GLOW
+// WP-J21, the fog's glow: the luminance of the part of what is stored in u_Injected that never glows ( the ambient, the
+// medium's own term, the fog lights' emission, and the light of lights at emit_glow 0 ), in the same units and scale
+VK_IMAGE_FORMAT( "r32f" ) RWTexture3D<float> u_NoGlow : register( u2 );
+#endif
 // *INDENT-ON*
 
 #include "builtin/volumetrics/froxel_lights.inc.hlsl"
@@ -101,9 +110,83 @@ bool FroxelGroupMisses( uint r, uint2 groupId, float viewDepth )
 	return FroxelGroupMissesSphere( t_LightRecords[ r ].originInvRadiusSq, groupId, viewDepth, froxel.jitter.xy );
 }
 
+#if FROXEL_CLEAR_AIR
+// V8 ( B1 ): the fog lights' medium at a froxel's centre, gathered as main() gathers it ( the same records in the same order,
+// the same group test, under the Z-bins V4g's walk through the centre's tile and bin ), for clear air's test alone: main()
+// gathers it again where the test does not return, so that the lights' loop keeps the registers it had ( review CN1-1's cost
+// of the reference ways stands: they walk the words once more )
+void FroxelGatherFogLights( uint2 froxelId, uint2 groupId, float viewDepth, float3 centre, float centreDepth, inout FROXEL_FOG fog )
+{
+	const uint numRecords = uint( froxel.gridSize.w );
+	if( numRecords <= 1 || froxel.mediaParms2.w <= 0.0 )
+	{
+		return;			// only the inject that takes fog lights has their bits
+	}
+	uint cullMode = uint( froxel.viewRight.w );
+	if( cullMode == 2 && viewDepth < froxel.binParms.w )
+	{
+		cullMode = 1;
+	}
+	const uint wordsPerTile = uint( froxel.tileParms.w );
+	bool clip = false;		// where the test returns, the history's clip changes nothing
+	if( cullMode == 2 )
+	{
+		const uint2 centrePixel = uint2( ( float2( froxelId.xy ) + 0.5 ) * froxel.binParms.z );
+		const uint2 centreTile = min( centrePixel / uint( froxel.tileParms.x ), uint2( froxel.tileParms.yz ) - 1 );
+		const uint centreBase = ( centreTile.y * uint( froxel.tileParms.y ) + centreTile.x ) * wordsPerTile;
+		const uint fogRange = t_LightBins[ uint( clamp( centreDepth * froxel.binParms.x, 0.0, froxel.binParms.y - 1.0 ) ) ].z;
+		const uint fogLo = fogRange & 0xFFFFu;
+		const uint fogHi = fogRange >> 16;
+		if( fogLo <= fogHi )
+		{
+			for( uint w = fogLo / 32; w <= fogHi / 32; w++ )
+			{
+				uint bits = t_LightTileBits[ centreBase + w ] & FroxelWordMask( w, fogLo, fogHi ) & froxel.takeMask[ w >> 2 ][ w & 3 ];
+				while( bits != 0 )
+				{
+					const uint r = w * 32 + firstbitlow( bits );
+					bits &= bits - 1;
+					if( ( t_LightRecords[ r ].flags & RLF_FOGLIGHT ) != 0 )
+					{
+						FroxelAddFogLight( r, centre, fog, clip );
+					}
+				}
+			}
+		}
+	}
+	else
+	{
+		for( uint w = 0; w < wordsPerTile; w++ )
+		{
+			uint bits = FroxelWordMask( w, 1, numRecords - 1 ) & froxel.takeMask[ w >> 2 ][ w & 3 ];
+			while( bits != 0 )
+			{
+				const uint r = w * 32 + firstbitlow( bits );
+				bits &= bits - 1;
+				if( ( t_LightRecords[ r ].flags & RLF_FOGLIGHT ) != 0
+						&& ( cullMode == 0 || !FroxelGroupMissesSphere( t_LightRecords[ r ].originInvRadiusSq, groupId, centreDepth, float2( 0.0, 0.0 ) ) ) )
+				{
+					FroxelAddFogLight( r, centre, fog, clip );
+				}
+			}
+		}
+	}
+}
+#endif
+
 [numthreads( 8, 8, 1 )]
 void main( uint3 froxelId : SV_DispatchThreadID, uint3 groupId : SV_GroupID )
 {
+#if FROXEL_CLEAR_AIR
+	// V8 ( B4 ): where the kernels follow the box ( boxMin.w ) the pass dispatches the box's thread groups alone, from its first
+	// column and row rounded down to a multiple of 8 ( so the groups and their group tests are today's ) and its first slice
+	if( froxel.boxMin.w > 0.0 )
+	{
+		const uint3 origin = uint3( uint( froxel.boxMin.x ) & ~7u, uint( froxel.boxMin.y ) & ~7u, uint( froxel.boxMin.z ) );
+		froxelId += origin;
+		groupId += uint3( origin.xy / 8, origin.z );
+	}
+#endif
 	if( any( froxelId >= uint3( froxel.gridSize.xyz ) ) )
 	{
 		return;
@@ -115,6 +198,11 @@ void main( uint3 froxelId : SV_DispatchThreadID, uint3 groupId : SV_GroupID )
 		// ( review O2-5: on V4's path the resolve stores clear air for it and reads only its neighbours' in-scatter )
 		u_Injected[ froxelId ] = ( froxel.mediaParms.z > 0.0 ) ? float4( 0.0, 0.0, 0.0, 0.0 ) : froxel.medium;
 		u_State[ froxelId ] = float4( 0.0, 0.0, 0.0, 3.0 );
+#if defined( USE_GLOW ) && USE_GLOW
+		// WP-J21 ( review R1-4 ): the resolve stores clear air here, so nothing of it never glows either; a stale value
+		// would enter the integral beyond the column's reach
+		u_NoGlow[ froxelId ] = 0.0;
+#endif
 		return;
 	}
 
@@ -137,8 +225,43 @@ void main( uint3 froxelId : SV_DispatchThreadID, uint3 groupId : SV_GroupID )
 	const float3 centre = FroxelCentre( froxelId );
 	const float centreDepth = FroxelSliceFar( float( froxelId.z ) - 0.5 );
 
+	// V8 ( B1 ): clear air returns early ( r_volumetricFogBounds, on V4's path alone ). Where the froxel's medium is nothing - no
+	// sigma_t, no sigma_s, no glow of a fog light, no furnace share - what this kernel stores below is ( 0, 0, 0, 0 ) whatever the
+	// lights give ( sigma_s times them ), and its light change is 0 ( sigma_s times the change; a fog light's change of glow comes
+	// only with its sigma_t ). The resolve then gives clear air whatever its history holds, and returns before reading it. The
+	// state's alpha written here is 0 where the whole work could give 1 or 2: the resolve reads it for the mark ( 1 only for a
+	// skipped froxel, state 3, which this return never writes ) and, where the injected value is not 0, for the history
+	// ( review QR1-1 ). The media volume's arm of the test stands for track M: the pass runs this permutation only where the
+	// media pass made no medium, and the constant is read ( review QR1-2 ). Only in the permutation FROXEL_CLEAR_AIR 1, which
+	// the pass runs where the view's media are its fog lights alone: the return's mere presence slowed the lights' loop
+	// elsewhere ( 14 us of lights200p under the global fog )
+#if FROXEL_CLEAR_AIR
+	{
+		FROXEL_FOG fogHere = ( FROXEL_FOG )0;
+		FroxelGatherFogLights( froxelId.xy, groupId.xy, viewDepth, centre, centreDepth, fogHere );
+		const float4 medium = ( froxel.mediaParms.x > 0.0 ) ? t_Media[ froxelId ] : float4( froxel.viewOrigin.www, froxel.medium.a );
+		if( medium.a == 0.0 && fogHere.sigmaT == 0.0 && all( medium.rgb == 0.0 ) && fogHere.sigmaS == 0.0 && all( fogHere.emission == 0.0 )
+				&& ( froxel.mediaParms.x > 0.0 || all( froxel.medium.rgb == 0.0 ) ) )
+		{
+			u_Injected[ froxelId ] = float4( 0.0, 0.0, 0.0, 0.0 );
+			u_State[ froxelId ] = float4( 0.0, 0.0, 0.0, 0.0 );
+#if defined( USE_GLOW ) && USE_GLOW
+			u_NoGlow[ froxelId ] = 0.0;
+#endif
+			return;
+		}
+	}
+#endif
+
 	// what falls through the sample to be scattered toward the camera: the ambient light, then the records
 	float3 light = FroxelAmbient( -s.toEye );
+#if defined( USE_GLOW ) && USE_GLOW
+	// WP-J21: the light that never glows, taken without the jitter where it can be: the ambient in the direction of the
+	// froxel's centre, then the ambient records ( RLF_AMBIENT ) and the records of lights at emit_glow 0
+	// ( RLF_FOG_NOGLOW ), which come jittered, the sun's among them ( review R1-2 )
+	float3 noGlowLight = FroxelAmbient( normalize( centre - froxel.viewOrigin.xyz ) );
+	const uint noGlowFlags = RLF_FOG_NOGLOW | RLF_AMBIENT;
+#endif
 	float3 change = float3( 0.0, 0.0, 0.0 );		// V3: the light change since last frame, in the same units
 	bool clip = false;
 	FROXEL_FOG fog = ( FROXEL_FOG )0;				// V4: the fog lights' medium ( FroxelAddFogLight )
@@ -147,7 +270,16 @@ void main( uint3 froxelId : SV_DispatchThreadID, uint3 groupId : SV_GroupID )
 	if( numRecords > 0 && ( froxel.takeMask[0].x & 1u ) != 0 )
 	{
 		// record 0 is the sun's and is in no bin and no tile word; the mask has no bit for an empty slot
+#if defined( USE_GLOW ) && USE_GLOW
+		const float3 lightBefore = light;
 		FroxelAddRecord( 0, s, light, change, clip );
+		if( ( t_LightRecords[ 0 ].flags & noGlowFlags ) != 0 )
+		{
+			noGlowLight += light - lightBefore;
+		}
+#else
+		FroxelAddRecord( 0, s, light, change, clip );
+#endif
 	}
 	if( numRecords > 1 )
 	{
@@ -221,7 +353,16 @@ void main( uint3 froxelId : SV_DispatchThreadID, uint3 groupId : SV_GroupID )
 					{
 						continue;
 					}
+#if defined( USE_GLOW ) && USE_GLOW
+					const float3 lightBefore = light;
 					FroxelAddRecord( r, s, light, change, clip );
+					if( ( t_LightRecords[ r ].flags & noGlowFlags ) != 0 )
+					{
+						noGlowLight += light - lightBefore;
+					}
+#else
+					FroxelAddRecord( r, s, light, change, clip );
+#endif
 				}
 			}
 		}
@@ -265,16 +406,25 @@ void main( uint3 froxelId : SV_DispatchThreadID, uint3 groupId : SV_GroupID )
 	float3 sigmaS = froxel.viewOrigin.www;
 	float sigmaT = froxel.medium.a;
 	float3 inScatter;
+#if defined( USE_GLOW ) && USE_GLOW
+	float3 noGlow;		// WP-J21: inScatter's part that never glows, summed beside it
+#endif
 	if( froxel.mediaParms.z > 0.0 && froxel.mediaParms.x > 0.0 )
 	{
 		const float4 m = t_Media[ froxelId ];
 		sigmaS = m.rgb;
 		sigmaT = m.a;
 		inScatter = sigmaS * ( froxel.mediaParms.y + light );
+#if defined( USE_GLOW ) && USE_GLOW
+		noGlow = sigmaS * ( froxel.mediaParms.y + noGlowLight );		// WP-J21: the furnace and the ambient never glow
+#endif
 	}
 	else
 	{
 		inScatter = froxel.medium.rgb + froxel.viewOrigin.w * light;
+#if defined( USE_GLOW ) && USE_GLOW
+		noGlow = froxel.medium.rgb + froxel.viewOrigin.w * noGlowLight;	// WP-J21: the medium's own term and the ambient
+#endif
 	}
 	// V4: the fog lights' medium ( D81 ): their sigma_t, their grey sigma_s, which scatters the light, and their colour's
 	// emission; nothing unless the inject takes fog lights ( mediaParms2.w, on V4's path alone )
@@ -283,16 +433,27 @@ void main( uint3 froxelId : SV_DispatchThreadID, uint3 groupId : SV_GroupID )
 	{
 		sigmaS += fog.sigmaS;
 		inScatter += fog.sigmaS * light + fog.emission;
+#if defined( USE_GLOW ) && USE_GLOW
+		noGlow += fog.sigmaS * noGlowLight + fog.emission;		// WP-J21: a fog light's own colour never glows ( row 337 )
+#endif
 		// past the store's bound sigma_t is scaled down, and sigma_s and the in-scatter with it, so that the albedo stays at most 1
 		// ( review O1-12 )
 		cap = min( 1.0, froxel.viewUp.w / max( sigmaT + fog.sigmaT, 1e-20 ) );
 		sigmaT = ( sigmaT + fog.sigmaT ) * cap;
 		sigmaS *= cap;
 		inScatter *= cap;
+#if defined( USE_GLOW ) && USE_GLOW
+		noGlow *= cap;
+#endif
 	}
 	const float largest = max( inScatter.r, max( inScatter.g, inScatter.b ) );
 	const float storeScale = min( 1.0, froxel.viewUp.w / max( largest, 1e-20 ) );
 	u_Injected[ froxelId ] = float4( inScatter * storeScale, sigmaT );
+#if defined( USE_GLOW ) && USE_GLOW
+	// WP-J21: the part that never glows, by the same sums with the light that never glows, scaled as the in-scatter is,
+	// as a luminance and at most the in-scatter's own
+	u_NoGlow[ froxelId ] = min( dot( noGlow * storeScale, float3( 0.2126, 0.7152, 0.0722 ) ), dot( inScatter * storeScale, float3( 0.2126, 0.7152, 0.0722 ) ) );
+#endif
 
 	// V3: the lights of last frame whose fog the history holds where this frame's records cannot say how it changed,
 	// tested at the froxel's centre in last frame's relative frame: inside the last volume of a light that vanished the

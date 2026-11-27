@@ -38,6 +38,8 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "../sound/sound.h"
 
+#include "../imgui/SystemOptionsPanel.h"
+
 #include <sys/DeviceManager.h>
 extern DeviceManager* deviceManager;
 
@@ -436,6 +438,7 @@ void idCommonLocal::WriteConfigToFile( const char* filename )
 
 	idKeyInput::WriteBindings( f );
 	cvarSystem->WriteFlaggedVariables( CVAR_ARCHIVE, "set", f );
+	SystemOptions::WriteConfig( f );	// the panel's settings that are not archived, as setSystemOption lines
 	fileSystem->CloseFile( f );
 }
 
@@ -1851,6 +1854,31 @@ idCommonLocal::ProcessEvent
 */
 bool idCommonLocal::ProcessEvent( const sysEvent_t* event )
 {
+	// the System Options panel is modal over the shell: the console and an open dialog ( a display mode's
+	// accept-or-revert timer ) come first, then it takes every event, Esc included, which below would close the
+	// pause menu under it
+	if( SystemOptions::IsOpen() )
+	{
+		if( console->Active() && event->evType == SE_KEY && event->evValue == K_ESCAPE && event->evValue2 == 1 )
+		{
+			console->Close();
+			return true;
+		}
+		if( console->ProcessEvent( event, false ) )
+		{
+			return true;
+		}
+		if( Dialog().IsDialogActive() )
+		{
+			Dialog().HandleDialogEvent( event );
+			return true;
+		}
+	}
+	if( SystemOptions::HandleEvent( event ) )
+	{
+		return true;
+	}
+
 	// hitting escape anywhere brings up the menu
 	if( game && game->IsInGame() )
 	{

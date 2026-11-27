@@ -356,7 +356,8 @@ idInteraction::idInteraction
 idInteraction::idInteraction()
 {
 	numSurfaces				= 0;
-	surfaces				= NULL;
+	litSurfaces				= NULL;
+	numLitSurfaces			= 0;
 	entityDef				= NULL;
 	lightDef				= NULL;
 	lightNext				= NULL;
@@ -388,7 +389,8 @@ idInteraction* idInteraction::AllocAndLink( idRenderEntityLocal* edef, idRenderL
 	interaction->entityDef = edef;
 
 	interaction->numSurfaces = -1;		// not checked yet
-	interaction->surfaces = NULL;
+	interaction->litSurfaces = NULL;
+	interaction->numLitSurfaces = 0;
 
 	// link at the start of the entity's list
 	interaction->lightNext = ldef->firstInteraction;
@@ -427,6 +429,100 @@ idInteraction* idInteraction::AllocAndLink( idRenderEntityLocal* edef, idRenderL
 
 /*
 ===============
+R_SurfLightsAdd
+
+Track F ( F7 ): puts one light into the list of one surface of an entity, making the entity's table with its first
+light. A list grows by doubling from four refs. Called on the main thread only ( the load, and the slices of the later
+interactions after the frame's jobs ended ). Returns false when the light was not put in ( F7i, review QR1-F2: only in a
+build in which Error returns ).
+===============
+*/
+static bool R_SurfLightsAdd( idRenderEntityLocal* def, int numSurfaces, int surfaceNum, const surfLightRef_t& ref )
+{
+	entitySurfLights_t* table = def->surfLights;
+	if( table == NULL )
+	{
+		table = ( entitySurfLights_t* )R_ClearedStaticAlloc( sizeof( entitySurfLights_t ) + ( numSurfaces - 1 ) * sizeof( surfLightList_t ) );
+		table->numSurfaces = numSurfaces;
+		def->surfLights = table;
+	}
+	if( table->numSurfaces != numSurfaces || surfaceNum < 0 || surfaceNum >= numSurfaces )
+	{
+		// the model's surfaces changed under lights that are still in: a model change frees every interaction first
+		common->Error( "R_SurfLightsAdd: surface %i of %i, the table has %i", surfaceNum, numSurfaces, table->numSurfaces );
+		return false;		// F7g: for a build in which Error returns
+	}
+	surfLightList_t& list = table->lists[surfaceNum];
+	if( list.num == list.max )
+	{
+		const int grown = ( list.max == 0 ) ? 4 : list.max * 2;
+		surfLightRef_t* refs = ( surfLightRef_t* )R_StaticAlloc( grown * sizeof( surfLightRef_t ) );
+		if( list.num > 0 )
+		{
+			memcpy( refs, list.refs, list.num * sizeof( surfLightRef_t ) );
+		}
+		if( list.refs != NULL )
+		{
+			R_StaticFree( list.refs );
+		}
+		list.refs = refs;
+		list.max = grown;
+	}
+	list.refs[list.num++] = ref;
+	table->numRefs++;
+	return true;
+}
+
+/*
+===============
+R_SurfLightsRemove
+
+Track F ( F7 ): takes one light out of the lists of the surfaces it was put into ( the interaction's litSurfaces ). A
+list keeps its order; an emptied list gives its memory back, and the table goes with the entity's last ref, so the
+entity needs nothing of its own freed when its interactions are.
+===============
+*/
+static void R_SurfLightsRemove( idRenderEntityLocal* def, int lightIndex, const int* surfaceNums, int count )
+{
+	entitySurfLights_t* table = def->surfLights;
+	if( table == NULL )
+	{
+		assert( count == 0 );
+		return;
+	}
+	for( int i = 0; i < count; i++ )
+	{
+		assert( surfaceNums[i] >= 0 && surfaceNums[i] < table->numSurfaces );
+		surfLightList_t& list = table->lists[surfaceNums[i]];
+		int j = 0;
+		while( j < list.num && list.refs[j].lightIndex != lightIndex )
+		{
+			j++;
+		}
+		assert( j < list.num );		// put in by the same interaction
+		if( j == list.num )
+		{
+			continue;
+		}
+		memmove( &list.refs[j], &list.refs[j + 1], ( list.num - j - 1 ) * sizeof( surfLightRef_t ) );
+		list.num--;
+		table->numRefs--;
+		if( list.num == 0 )
+		{
+			R_StaticFree( list.refs );
+			list.refs = NULL;
+			list.max = 0;
+		}
+	}
+	if( table->numRefs == 0 )
+	{
+		R_StaticFree( table );		// every list is empty, so none holds memory
+		def->surfLights = NULL;
+	}
+}
+
+/*
+===============
 idInteraction::FreeSurfaces
 
 Frees the surfaces, but leaves the interaction linked in, so it
@@ -438,11 +534,14 @@ void idInteraction::FreeSurfaces()
 	// anything regenerated is no longer an optimized static version
 	this->staticInteraction = false;
 
-	if( this->surfaces != NULL )
+	// track F ( F7 ): out of the lists of the surfaces this light reached
+	if( this->litSurfaces != NULL )
 	{
-		R_StaticFree( this->surfaces );
-		this->surfaces = NULL;
+		R_SurfLightsRemove( this->entityDef, this->lightDef->index, this->litSurfaces, this->numLitSurfaces );
+		R_StaticFree( this->litSurfaces );
+		this->litSurfaces = NULL;
 	}
+	this->numLitSurfaces = 0;
 	this->numSurfaces = -1;
 }
 
@@ -595,6 +694,15 @@ Called by idRenderWorldLocal::GenerateAllInteractions
 */
 void idInteraction::CreateStaticInteraction( nvrhi::ICommandList* commandList )
 {
+	// track F ( F7 ): a light is in the lists once; an interaction made again is taken out first
+	if( litSurfaces != NULL )
+	{
+		R_SurfLightsRemove( entityDef, lightDef->index, litSurfaces, numLitSurfaces );
+		R_StaticFree( litSurfaces );
+		litSurfaces = NULL;
+	}
+	numLitSurfaces = 0;
+
 	// note that it is a static interaction
 	staticInteraction = true;
 	const idRenderModel* model = entityDef->parms.hModel;
@@ -614,12 +722,12 @@ void idInteraction::CreateStaticInteraction( nvrhi::ICommandList* commandList )
 	}
 
 	//
-	// create slots for each of the model's surfaces
+	// track F ( F7 ): this light goes into the list of each surface it reaches; the numbers of those surfaces are
+	// kept to take it out again
 	//
 	numSurfaces = model->NumSurfaces();
-	surfaces = ( surfaceInteraction_t* )R_ClearedStaticAlloc( sizeof( *surfaces ) * numSurfaces );
-
-	bool interactionGenerated = false;
+	idTempArray<int> lit( numSurfaces );
+	int numLit = 0;
 
 	// check each surface in the model
 	for( int c = 0 ; c < model->NumSurfaces() ; c++ )
@@ -647,8 +755,6 @@ void idInteraction::CreateStaticInteraction( nvrhi::ICommandList* commandList )
 			continue;
 		}
 
-		surfaceInteraction_t* sint = &surfaces[c];
-
 		// generate a set of indexes for the lit surfaces, culling away triangles that are
 		// not at least partially inside the light
 		if( shader->ReceivesLighting() )
@@ -657,10 +763,36 @@ void idInteraction::CreateStaticInteraction( nvrhi::ICommandList* commandList )
 			if( lightTris != NULL )
 			{
 				// make a static index cache
-				sint->numLightTrisIndexes = lightTris->numIndexes;
-				sint->lightTrisIndexCache = vertexCache.AllocStaticIndex( lightTris->indexes, lightTris->numIndexes * sizeof( lightTris->indexes[0] ), commandList );
+				surfLightRef_t ref;
+				ref.lightIndex = lightDef->index;
+				ref.numLightTrisIndexes = lightTris->numIndexes;
+				// track F ( F7c ): a light that keeps every triangle keeps them in the surface's own order
+				// ( R_CreateInteractionLightTris only drops triangles ), so it draws the surface's own static indexes,
+				// uploaded at the level's load; a subset is copied
+				if( lightTris->numIndexes == tri->numIndexes && vertexCache.CacheIsStatic( tri->indexCache ) && vertexCache.CacheIsCurrent( tri->indexCache ) )
+				{
+					ref.lightTrisIndexCache = tri->indexCache;
+				}
+				else if( tri->staticBlockVertex > 0 )
+				{
+					// track F ( F7k ): the surface's static vertexes sit in its area's block, which its static indexes count
+					// from: the copy counts from there too ( into a temporary: lightTris may share the surface's own indexes )
+					idTempArray<triIndex_t> rebased( ( lightTris->numIndexes + 7 ) & ~7 );		// F7m ( O1-S S-3 ): whole 16-byte lines
+					for( int k = 0; k < lightTris->numIndexes; k++ )
+					{
+						rebased[k] = ( triIndex_t )( lightTris->indexes[k] + tri->staticBlockVertex );
+					}
+					ref.lightTrisIndexCache = vertexCache.AllocStaticIndex( rebased.Ptr(), lightTris->numIndexes * sizeof( triIndex_t ), commandList );
+				}
+				else
+				{
+					ref.lightTrisIndexCache = vertexCache.AllocStaticIndex( lightTris->indexes, lightTris->numIndexes * sizeof( lightTris->indexes[0] ), commandList );
+				}
+				if( R_SurfLightsAdd( entityDef, numSurfaces, c, ref ) )		// F7i: only a surface it was put into ( QR1-F2 )
+				{
+					lit[numLit++] = c;
+				}
 
-				interactionGenerated = true;
 				R_FreeStaticTriSurf( lightTris );
 				//puncho - static index (2R R3.3): the list is executed whenever 32 MiB of light tris wait in it. Here, behind each
 				// lit surface: one interaction (a large area model under one light) can make far more than that
@@ -670,10 +802,14 @@ void idInteraction::CreateStaticInteraction( nvrhi::ICommandList* commandList )
 	}
 
 	// if none of the surfaces generated anything, don't even bother checking?
-	if( !interactionGenerated )
+	if( numLit == 0 )
 	{
 		MakeEmpty();
+		return;
 	}
+	litSurfaces = ( int* )R_StaticAlloc( numLit * sizeof( int ) );
+	memcpy( litSurfaces, lit.Ptr(), numLit * sizeof( int ) );
+	numLitSurfaces = numLit;
 }
 
 /*
@@ -693,6 +829,12 @@ void R_ShowInteractionMemory_f( const idCmdArgs& args )
 	int shadowTriIndexes = 0;
 	int maxInteractionsForEntity = 0;
 	int maxInteractionsForLight = 0;
+	int64 tableBytes = 0;			// track F ( F7 )
+	int64 slotBytesBefore = 0;
+	int64 tableRefs = 0;
+	int64 sharedRefs = 0;			// track F ( F7c )
+	int64 sharedBytes = 0;
+	int64 copiedBytes = 0;
 
 	for( int i = 0; i < tr.primaryWorld->lightDefs.Num(); i++ )
 	{
@@ -749,20 +891,60 @@ void R_ShowInteractionMemory_f( const idCmdArgs& args )
 				continue;
 			}
 
-			for( int j = 0; j < inter->numSurfaces; j++ )
+			// track F ( F7 ): this light's refs, found in the lists of the surfaces it reached ( F7g, review CN1-4: an
+			// interaction with lit surfaces has the table, while it holds refs; tested anyway )
+			for( int j = 0; j < inter->numLitSurfaces && def->surfLights != NULL; j++ )
 			{
-				surfaceInteraction_t* srf = &inter->surfaces[j];
-
-				if( srf->numLightTrisIndexes )
+				const surfLightList_t& list = def->surfLights->lists[inter->litSurfaces[j]];
+				for( int k = 0; k < list.num; k++ )
 				{
-					lightTris++;
-					lightTriIndexes += srf->numLightTrisIndexes;
+					if( list.refs[k].lightIndex == inter->lightDef->index && list.refs[k].numLightTrisIndexes )
+					{
+						lightTris++;
+						lightTriIndexes += list.refs[k].numLightTrisIndexes;
+					}
 				}
 			}
 		}
 		if( numInteractionsForEntity > maxInteractionsForEntity )
 		{
 			maxInteractionsForEntity = numInteractionsForEntity;
+		}
+
+		// track F ( F7 ): the surfaces' lists and what the slots of before would have held; F7c: the refs that draw
+		// their surface's own indexes, and the index bytes copied and not copied
+		if( def->surfLights != NULL )
+		{
+			const entitySurfLights_t* table = def->surfLights;
+			const idRenderModel* model = def->parms.hModel;
+			tableBytes += sizeof( entitySurfLights_t ) + ( table->numSurfaces - 1 ) * sizeof( surfLightList_t );
+			for( int s = 0; s < table->numSurfaces; s++ )
+			{
+				tableBytes += table->lists[s].max * sizeof( surfLightRef_t );
+				const srfTriangles_t* tri = ( model != NULL && s < model->NumSurfaces() ) ? model->Surface( s )->geometry : NULL;
+				for( int k = 0; k < table->lists[s].num; k++ )
+				{
+					const surfLightRef_t& ref = table->lists[s].refs[k];
+					if( tri != NULL && ref.lightTrisIndexCache == tri->indexCache )
+					{
+						sharedRefs++;
+						sharedBytes += ref.numLightTrisIndexes * sizeof( triIndex_t );
+					}
+					else
+					{
+						copiedBytes += ref.numLightTrisIndexes * sizeof( triIndex_t );
+					}
+				}
+			}
+			tableRefs += table->numRefs;
+		}
+		for( idInteraction* inter = def->firstInteraction; inter != NULL; inter = inter->entityNext )
+		{
+			if( inter->litSurfaces != NULL )
+			{
+				tableBytes += inter->numLitSurfaces * sizeof( int );
+				slotBytesBefore += inter->numSurfaces * 16;		// sizeof the surfaceInteraction_t of before F7
+			}
 		}
 	}
 
@@ -772,4 +954,6 @@ void R_ShowInteractionMemory_f( const idCmdArgs& args )
 	common->Printf( "%5i indexes in %5i shadow tris\n", shadowTriIndexes, shadowTris );
 	common->Printf( "%i maxInteractionsForEntity\n", maxInteractionsForEntity );
 	common->Printf( "%i maxInteractionsForLight\n", maxInteractionsForLight );
+	common->Printf( "surface light lists: %lld refs in %lld bytes ( the slots of before F7: at least %lld bytes )\n", tableRefs, tableBytes, slotBytesBefore );		// track F ( F7 )
+	common->Printf( "light tris indexes: %lld refs draw their surface's own ( %lld bytes not copied ), %lld bytes copied\n", sharedRefs, sharedBytes, copiedBytes );		// track F ( F7c )
 }

@@ -122,6 +122,11 @@ struct DeviceCreationParameters
 	// Zero on APIs that keep no versioned storage.
 	uint32_t volatileConstantBufferAlignment = 0;
 	//puncho end
+
+	// WP-J21: pipelines may give each colour target its own blend state and write mask ( Vulkan's independentBlend
+	// feature, enabled during device init where the device has it; always so in D3D12 ). The bloom's glow mask, a
+	// second target with its own state, is made only when this is true
+	bool independentBlend = true;
 };
 
 struct DefaultMessageCallback : public nvrhi::IMessageCallback
@@ -247,6 +252,11 @@ public:
 		return m_DeviceParams.volatileConstantBufferAlignment;
 	}
 	//puncho end
+	// WP-J21: each colour target may have its own blend state and write mask
+	bool GetIndependentBlendSupported() const
+	{
+		return m_DeviceParams.independentBlend;
+	}
 
 	virtual nvrhi::ITexture* GetCurrentBackBuffer() = 0;
 	virtual nvrhi::ITexture* GetBackBuffer( uint32_t index ) = 0;

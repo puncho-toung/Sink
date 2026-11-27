@@ -32,6 +32,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "BFGimgui.h"
 #include "ImGuizmo.h"
+#include "SystemOptionsPanel.h"
 #include "renderer/RenderCommon.h"
 #include "renderer/RenderBackend.h"
 
@@ -100,6 +101,8 @@ namespace
 bool	g_IsInit = false;
 double	g_Time = 0.0f;
 bool	g_MousePressed[5] = { false, false, false, false, false };
+bool	g_MouseMasked[5] = { false, false, false, false, false };	// held at ForgetMouse: up for ImGui until released
+int		g_ContextGeneration = 0;
 float	g_MouseWheel = 0.0f;
 ImVec2	g_MousePos = ImVec2( -1.0f, -1.0f ); //{-1.0f, -1.0f};
 ImVec2	g_DisplaySize = ImVec2( 0.0f, 0.0f ); //{0.0f, 0.0f};
@@ -243,12 +246,12 @@ void SetClipboardText( void*, const char* text )
 
 bool ShowWindows()
 {
-	return ( ImGuiTools::AreEditorsActive() || imgui_showDemoWindow.GetBool() || com_showFPS.GetInteger() > 1 );
+	return ( ImGuiTools::AreEditorsActive() || imgui_showDemoWindow.GetBool() || com_showFPS.GetInteger() > 1 || SystemOptions::IsOpen() );
 }
 
 bool UseInput()
 {
-	return ( ImGuiTools::ReleaseMouseForTools() || imgui_showDemoWindow.GetBool() );
+	return ( ImGuiTools::ReleaseMouseForTools() || imgui_showDemoWindow.GetBool() || SystemOptions::IsOpen() );
 }
 
 void StyleGruvboxDark()
@@ -683,6 +686,7 @@ bool Init( int windowWidth, int windowHeight )
 	IMGUI_CHECKVERSION();
 
 	ImGui::CreateContext();
+	g_ContextGeneration++;
 
 	ImGuiIO& io = ImGui::GetIO();
 
@@ -702,8 +706,13 @@ bool Init( int windowWidth, int windowHeight )
 	io.KeyMap[ImGuiKey_Backspace] = K_BACKSPACE;
 	io.KeyMap[ImGuiKey_Enter] = K_ENTER;
 	io.KeyMap[ImGuiKey_Escape] = K_ESCAPE;
+	io.KeyMap[ImGuiKey_Space] = K_SPACE;
+	io.KeyMap[ImGuiKey_KeypadEnter] = K_KP_ENTER;	// keyboard navigation's Activate ( the System Options panel turns it on ); it asserts without
 
 	FillCharKeys( io.KeyMap );
+
+	// the System Options panel's faces, after the default font, which stays the tools' font ( index 0 )
+	SystemOptions::AddFonts( io.Fonts );
 
 	g_DisplaySize.x = windowWidth;
 	g_DisplaySize.y = windowHeight;
@@ -842,6 +851,22 @@ void ResetInputLatches()
 	ImGui::GetIO().ClearInputKeys();
 }
 
+int ContextGeneration()
+{
+	return g_ContextGeneration;
+}
+
+void ForgetMouse()
+{
+	g_MousePos = ImVec2( -FLT_MAX, -FLT_MAX );
+	for( int i = 0; i < 5; ++i )
+	{
+		g_MouseMasked[i] = g_MousePressed[i] || usercmdGen->KeyState( K_MOUSE1 + i ) == 1;
+		g_MousePressed[i] = false;
+	}
+	g_MouseWheel = 0.0f;
+}
+
 bool InjectMouseWheel( int delta )
 {
 	if( IsInitialized() && UseInput() && delta != 0 )
@@ -880,7 +905,13 @@ void NewFrame()
 		// so we don't miss click-release events that are shorter than 1 frame.
 		for( int i = 0; i < 5; ++i )
 		{
-			io.MouseDown[i] = g_MousePressed[i] || usercmdGen->KeyState( K_MOUSE1 + i ) == 1;
+			bool down = g_MousePressed[i] || usercmdGen->KeyState( K_MOUSE1 + i ) == 1;
+			if( g_MouseMasked[i] )
+			{
+				g_MouseMasked[i] = down;	// stays masked while that press is still held
+				down = false;
+			}
+			io.MouseDown[i] = down;
 			//g_MousePressed[i] = false;
 		}
 
@@ -935,6 +966,8 @@ void Render()
 		ImGui::DockSpaceOverViewport( NULL, dockspaceFlags, NULL );
 
 		ImGuiTools::DrawToolWindows();
+
+		SystemOptions::Draw();
 
 		if( imgui_showDemoWindow.GetBool() )
 		{

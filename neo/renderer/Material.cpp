@@ -129,6 +129,7 @@ void idMaterial::CommonInit()
 	suppressInSubview = false;
 	refCount = 0;
 	portalSky = false;
+	glowKey = GLOW_KEY_NONE;		// WP-J21
 	fastPathBumpImage = NULL;
 	fastPathDiffuseImage = NULL;
 	fastPathSpecularImage = NULL;
@@ -2117,6 +2118,21 @@ void idMaterial::ParseStage( idLexer& src, const textureRepeat_t trpDefault )
 			ss->drawStateBits |= GLS_DEPTHMASK;
 			continue;
 		}
+		// ---- WP-J21: the bloom's gate, a stage word: "glow" opens this stage, "noGlow" shuts it ----
+		if( !token.Icmp( "glow" ) )
+		{
+			if( ss->glowKey != GLOW_KEY_NOGLOW )
+			{
+				ss->glowKey = GLOW_KEY_GLOW;
+			}
+			continue;
+		}
+		if( !token.Icmp( "noGlow" ) )
+		{
+			ss->glowKey = GLOW_KEY_NOGLOW;
+			continue;
+		}
+		// ---- END WP-J21 ----
 		if( !token.Icmp( "alphaTest" ) )
 		{
 			ss->hasAlphaTest = true;
@@ -2678,6 +2694,22 @@ void idMaterial::ParseMaterial( idLexer& src )
 			portalSky = true;
 			continue;
 		}
+		// ---- WP-J21: the bloom's gate, a material word: "glow" opens every ambient stage the rule does not shut for
+		// good, "noGlow" shuts them all ( it wins over any "glow" ) ----
+		else if( !token.Icmp( "glow" ) )
+		{
+			if( glowKey != GLOW_KEY_NOGLOW )
+			{
+				glowKey = GLOW_KEY_GLOW;
+			}
+			continue;
+		}
+		else if( !token.Icmp( "noGlow" ) )
+		{
+			glowKey = GLOW_KEY_NOGLOW;
+			continue;
+		}
+		// ---- END WP-J21 ----
 		// noSelfShadow
 		else if( !token.Icmp( "noSelfShadow" ) )
 		{
@@ -3100,6 +3132,216 @@ idMaterial::Parse
 Parses the current material definition and finds all necessary images.
 =========================
 */
+/*
+================================================================================================
+
+WP-J21: the bloom's gate in the material. The owner, 2026-11-27: "I told you to lock bloom behind a material
+key/emissive materials and fog so it doesn't automatically make the game glowing and blurry. It can keep the same shape
+it has, it just needs to be gated and not applied automatically to every bright surface." A stage passes the gate when
+its material or the stage carries the word "glow", or when it is emissive by this rule, made conservative because the
+owner's complaint is a game that glows by itself: where the rule is in doubt the stage does not pass, and "glow" lets
+it in; "noGlow", on the material or the stage, shuts it. Some stages never pass, key or not: they show light that was
+reflected or already drawn ( plan section 07, "The lock" ). An in-world gui surface passes in the stage loop, which
+knows the surface is a gui's.
+
+================================================================================================
+*/
+
+/*
+========================
+R_GlowDoubtName
+
+A name that speaks of smoke, dust, steam, fog, mist, haze, cloud or beams: an additive stage so named is in doubt
+( a puff of smoke is not a lamp ) and does not pass without the key
+========================
+*/
+static bool R_GlowDoubtName( const char* name )
+{
+	static const char* const words[] = { "smoke", "dust", "steam", "fog", "mist", "haze", "cloud", "beam" };
+	if( name == NULL )
+	{
+		return false;
+	}
+	idStr lower( name );
+	lower.ToLower();
+	for( int i = 0; i < ( int )( sizeof( words ) / sizeof( words[0] ) ); i++ )
+	{
+		if( lower.Find( words[i] ) >= 0 )
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+/*
+========================
+R_GlowStageNever
+
+True where a stage never passes the bloom's gate, key or not: a program of its own; a masked colour channel ( glass1's
+maskcolor stage ); a reflection or the screen as texgen; a blend that reads the destination's alpha; the picture
+already drawn, the depth, or a dynamic render ( mirrors, xray, remote cameras ). drawStateBits: the state the stage
+draws with ( the parse's, or the in-world gui path's, review R1-7 )
+========================
+*/
+bool R_GlowStageNever( const shaderStage_t* stage, uint64 drawStateBits )
+{
+	if( stage->newStage != NULL )
+	{
+		return true;
+	}
+	if( drawStateBits & ( GLS_REDMASK | GLS_GREENMASK | GLS_BLUEMASK ) )
+	{
+		return true;
+	}
+	switch( stage->texture.texgen )
+	{
+		case TG_REFLECT_CUBE:
+		case TG_REFLECT_CUBE2:
+		case TG_SCREEN:
+		case TG_SCREEN2:
+		case TG_GLASSWARP:
+			return true;
+		default:
+			break;
+	}
+	const uint64 src = drawStateBits & GLS_SRCBLEND_BITS;
+	const uint64 dst = drawStateBits & GLS_DSTBLEND_BITS;
+	if( src == GLS_SRCBLEND_DST_ALPHA || src == GLS_SRCBLEND_ONE_MINUS_DST_ALPHA
+			|| dst == GLS_DSTBLEND_DST_ALPHA || dst == GLS_DSTBLEND_ONE_MINUS_DST_ALPHA )
+	{
+		return true;
+	}
+	const idImage* image = stage->texture.image;
+	if( stage->texture.dynamic != DI_STATIC
+			|| ( image != NULL && ( image == globalImages->originalCurrentRenderImage || image == globalImages->currentRenderImage
+									|| image == globalImages->currentDepthImage ) ) )
+	{
+		return true;
+	}
+	return false;
+}
+
+/*
+========================
+R_GlowStageMark
+
+The glow mark of one parsed stage ( glowMark_t ). lit: the material has a lighting stage; doubtName: the material's name
+is in doubt ( R_GlowDoubtName ); materialKey: the material's own word
+========================
+*/
+static int R_GlowStageMark( const shaderStage_t* stage, bool lit, bool doubtName, int materialKey )
+{
+	// only the stage loop's stages write the mask
+	if( stage->lighting != SL_AMBIENT )
+	{
+		return GLOW_MARK_NONE;
+	}
+	if( R_GlowStageNever( stage, stage->drawStateBits ) )
+	{
+		return GLOW_MARK_NONE;
+	}
+	const uint64 src = stage->drawStateBits & GLS_SRCBLEND_BITS;
+	const uint64 dst = stage->drawStateBits & GLS_DSTBLEND_BITS;
+	const idImage* image = stage->texture.image;
+
+	// the words: "noGlow" wins over "glow"
+	if( stage->glowKey == GLOW_KEY_NOGLOW || materialKey == GLOW_KEY_NOGLOW )
+	{
+		return GLOW_MARK_NONE;
+	}
+	if( stage->glowKey == GLOW_KEY_GLOW || materialKey == GLOW_KEY_GLOW )
+	{
+		return GLOW_MARK_KEY;
+	}
+
+	// the rule: a video, an additive stage of a lit material, an additive stage of an unlit one not named for smoke or the
+	// like. In doubt and shut: an opaque unlit stage ( fullbright faces, but also cards and black fills ), a sky, a blend.
+	// A sky passes with the word only ( review R1-11: the section puts it "in doubt", not "never" )
+	if( stage->texture.texgen == TG_SKYBOX_CUBE || stage->texture.texgen == TG_WOBBLESKY_CUBE )
+	{
+		return GLOW_MARK_NONE;
+	}
+	if( stage->texture.cinematic )
+	{
+		return GLOW_MARK_VIDEO;
+	}
+	if( src != GLS_SRCBLEND_ONE || dst != GLS_DSTBLEND_ONE )
+	{
+		return GLOW_MARK_NONE;
+	}
+	if( lit )
+	{
+		return GLOW_MARK_SELFLIT;
+	}
+	if( doubtName || ( image != NULL && R_GlowDoubtName( image->GetName() ) ) )
+	{
+		return GLOW_MARK_NONE;
+	}
+	return GLOW_MARK_UNLIT_ADD;
+}
+
+/*
+========================
+listGlowSources
+
+Every material that passes the bloom's gate, with each passing stage and the line of the rule it passes by, into
+glow_sources.txt ( the save path's base folder ) and a count to the console. Without an argument the materials parsed
+so far ( those the map uses ); "all" parses every material first, which loads its images
+========================
+*/
+CONSOLE_COMMAND( listGlowSources, "writes glow_sources.txt: each material that passes the bloom's gate and why ( \"all\" parses every material first )", NULL )
+{
+	static const char* const reasons[] = { "none", "key", "self-lit additive", "unlit additive", "video" };
+	const bool all = ( args.Argc() > 1 && !idStr::Icmp( args.Argv( 1 ), "all" ) );
+	idFile* file = fileSystem->OpenFileWrite( "glow_sources.txt" );
+	int counts[5] = { 0, 0, 0, 0, 0 };
+	int materials = 0;
+	int parsed = 0;
+	const int num = declManager->GetNumDecls( DECL_MATERIAL );
+	for( int i = 0; i < num; i++ )
+	{
+		const idDecl* decl = declManager->DeclByIndex( DECL_MATERIAL, i, all );
+		if( decl == NULL || decl->GetState() != DS_PARSED )
+		{
+			continue;
+		}
+		parsed++;
+		const idMaterial* material = static_cast<const idMaterial*>( decl );
+		bool any = false;
+		for( int s = 0; s < material->GetNumStages(); s++ )
+		{
+			const shaderStage_t* stage = material->GetStage( s );
+			if( stage->glowMark == GLOW_MARK_NONE || stage->glowMark > GLOW_MARK_VIDEO )
+			{
+				continue;
+			}
+			counts[ stage->glowMark ]++;
+			if( !any )
+			{
+				any = true;
+				materials++;
+				if( file != NULL )
+				{
+					file->Printf( "%s\n", material->GetName() );
+				}
+			}
+			if( file != NULL )
+			{
+				file->Printf( "\tstage %d: %s ( %s )\n", s, reasons[ stage->glowMark ], ( stage->texture.image != NULL ) ? stage->texture.image->GetName() : "no image" );
+			}
+		}
+	}
+	if( file != NULL )
+	{
+		file->Printf( "\n%d of %d parsed materials pass; stages: key %d, self-lit additive %d, unlit additive %d, video %d\n",
+					  materials, parsed, counts[1], counts[2], counts[3], counts[4] );
+		fileSystem->CloseFile( file );
+	}
+	common->Printf( "listGlowSources: %d of %d parsed materials pass; stages: key %d, self-lit additive %d, unlit additive %d, video %d; written to glow_sources.txt\n",
+					materials, parsed, counts[1], counts[2], counts[3], counts[4] );
+}
+
 bool idMaterial::Parse( const char* text, const int textLength, bool allowBinaryVersion )
 {
 	idLexer	src;
@@ -3319,6 +3561,13 @@ bool idMaterial::Parse( const char* text, const int textLength, bool allowBinary
 			sort += hash * 0.01;
 		}
 	*/
+
+	// ---- WP-J21: each stage's glow mark, by the conservative rule ( R_GlowStageMark ) ----
+	for( i = 0 ; i < numStages ; i++ )
+	{
+		pd->parseStages[i].glowMark = ( byte )R_GlowStageMark( &pd->parseStages[i], numStages != numAmbientStages, R_GlowDoubtName( GetName() ), glowKey );
+	}
+	// ---- END WP-J21 ----
 
 	if( numStages )
 	{

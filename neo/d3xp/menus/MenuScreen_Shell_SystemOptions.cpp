@@ -43,6 +43,40 @@ extern idCVar r_useSSR;
 extern idCVar r_viewDistance;
 extern idCVar r_distanceCull;
 
+// The bloom's two bars ( track G, 2026-11-25; the glow's since WP-G3, and since WP-G4 there is no other bloom ):
+// r_bloomGlow and r_bloomGlowTail in whole notches, like the view distance, so that a step always moves the value.
+// A notch is a round number of hundredths, divided by 100 last, which puts each default exactly on a notch ( the
+// glow 0.24 = notch 24, the tail 0.34 = notch 12 ): a step right and a step left give the default's own float back,
+// and leaving the screen then does not count as a change. The strength's bar ends at a glow of 1; the console still
+// takes values up to 4, and the bar shows them full. The round trip also rests on idStr( float ) keeping six
+// decimals, which a notch's four need
+static const float BLOOM_TAIL_AT_NOTCH_0 = 25.0f;		// in hundredths: 0.25, the cvar's lower bound
+static const float BLOOM_TAIL_PER_NOTCH = 0.75f;		// in hundredths: notch 100 = 1.0
+static const float BLOOM_GLOW_PER_NOTCH = 1.0f;			// in hundredths: notch 100 = r_bloomGlow 1 ( the default 0.24 is notch 24; the console takes up to 4 )
+extern idCVar r_bloomGlow;
+extern idCVar r_bloomGlowTail;
+
+/*
+========================
+BloomStrengthNotch
+========================
+*/
+static int BloomStrengthNotch()
+{
+	// the bar is the glow's brightness, 0 to 1
+	return idMath::ClampInt( 0, 100, idMath::Ftoi( r_bloomGlow.GetFloat() * 100.0f / BLOOM_GLOW_PER_NOTCH + 0.5f ) );
+}
+
+/*
+========================
+BloomTailNotch
+========================
+*/
+static int BloomTailNotch()
+{
+	return idMath::ClampInt( 0, 100, idMath::Ftoi( ( r_bloomGlowTail.GetFloat() * 100.0f - BLOOM_TAIL_AT_NOTCH_0 ) / BLOOM_TAIL_PER_NOTCH + 0.5f ) );
+}
+
 /*
 ========================
 idMenuScreen_Shell_SystemOptions::Initialize
@@ -177,6 +211,25 @@ void idMenuScreen_Shell_SystemOptions::Initialize( idMenuHandler* data )
 	control->AddEventAction( WIDGET_EVENT_PRESS ).Set( WIDGET_ACTION_COMMAND, idMenuDataSource_SystemSettings::SYSTEM_FIELD_CRT_POSTFX );
 	options->AddChild( control );
 	// RB end
+
+	// track G: the bloom's strength and tail. A row's place here is its field's place in systemSettingFields_t
+	control = new( TAG_SWF ) idMenuWidget_ControlButton();
+	control->SetOptionType( OPTION_SLIDER_BAR );
+	control->SetLabel( "Bloom Strength" );
+	control->SetDescription( "How much of the picture is the glow around bright things. The lowest notch shows none." );
+	control->SetDataSource( &systemData, idMenuDataSource_SystemSettings::SYSTEM_FIELD_BLOOM_STRENGTH );
+	control->SetupEvents( 2, options->GetChildren().Num() );
+	control->AddEventAction( WIDGET_EVENT_PRESS ).Set( WIDGET_ACTION_COMMAND, idMenuDataSource_SystemSettings::SYSTEM_FIELD_BLOOM_STRENGTH );
+	options->AddChild( control );
+
+	control = new( TAG_SWF ) idMenuWidget_ControlButton();
+	control->SetOptionType( OPTION_SLIDER_BAR );
+	control->SetLabel( "Bloom Tail" );
+	control->SetDescription( "How far the glow reaches: low is a tight glow, high is a wide halo." );
+	control->SetDataSource( &systemData, idMenuDataSource_SystemSettings::SYSTEM_FIELD_BLOOM_TAIL );
+	control->SetupEvents( 2, options->GetChildren().Num() );
+	control->AddEventAction( WIDGET_EVENT_PRESS ).Set( WIDGET_ACTION_COMMAND, idMenuDataSource_SystemSettings::SYSTEM_FIELD_BLOOM_TAIL );
+	options->AddChild( control );
 
 	control = new( TAG_SWF ) idMenuWidget_ControlButton();
 	control->SetOptionType( OPTION_SLIDER_BAR );
@@ -463,6 +516,8 @@ void idMenuScreen_Shell_SystemOptions::idMenuDataSource_SystemSettings::LoadData
 	originalPostProcessing = r_useFilmicPostFX.GetInteger();
 	originalCRTPostFX = r_useCRTPostFX.GetInteger();
 	// RB end
+	originalBloomGlow = r_bloomGlow.GetFloat();
+	originalBloomGlowTail = r_bloomGlowTail.GetFloat();
 
 	const int fullscreen = r_fullscreen.GetInteger();
 	if( fullscreen > 0 )
@@ -683,6 +738,19 @@ void idMenuScreen_Shell_SystemOptions::idMenuDataSource_SystemSettings::AdjustFi
 			break;
 		}
 		// RB end
+		case SYSTEM_FIELD_BLOOM_STRENGTH:
+		{
+			const int adjusted = idMath::ClampInt( 0, 100, BloomStrengthNotch() + adjustAmount );
+			// archived: the bar's place is saved on leaving the screen
+			r_bloomGlow.SetFloat( ( BLOOM_GLOW_PER_NOTCH * ( float )adjusted ) / 100.0f );
+			break;
+		}
+		case SYSTEM_FIELD_BLOOM_TAIL:
+		{
+			const int adjusted = idMath::ClampInt( 0, 100, BloomTailNotch() + adjustAmount );
+			r_bloomGlowTail.SetFloat( ( BLOOM_TAIL_AT_NOTCH_0 + BLOOM_TAIL_PER_NOTCH * ( float )adjusted ) / 100.0f );
+			break;
+		}
 		case SYSTEM_FIELD_BRIGHTNESS:
 		{
 			const float percent = LinearAdjust( r_exposure.GetFloat(), 0.0f, 1.0f, 0.0f, 100.0f );
@@ -892,6 +960,12 @@ idSWFScriptVar idMenuScreen_Shell_SystemOptions::idMenuDataSource_SystemSettings
 		case SYSTEM_FIELD_AMBIENT_BRIGHTNESS:
 			return LinearAdjust( r_forceAmbient.GetFloat(), 0.0f, 1.0f, 0.0f, 100.0f );
 
+		case SYSTEM_FIELD_BLOOM_STRENGTH:
+			return ( float )BloomStrengthNotch();
+
+		case SYSTEM_FIELD_BLOOM_TAIL:
+			return ( float )BloomTailNotch();
+
 		case SYSTEM_FIELD_BRIGHTNESS:
 			return LinearAdjust( r_exposure.GetFloat(), 0.0f, 1.0f, 0.0f, 100.0f );
 
@@ -964,6 +1038,11 @@ bool idMenuScreen_Shell_SystemOptions::idMenuDataSource_SystemSettings::IsDataCh
 	}
 
 	if( originalCRTPostFX != r_useCRTPostFX.GetInteger() )
+	{
+		return true;
+	}
+
+	if( originalBloomGlow != r_bloomGlow.GetFloat() || originalBloomGlowTail != r_bloomGlowTail.GetFloat() )
 	{
 		return true;
 	}

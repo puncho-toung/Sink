@@ -348,6 +348,7 @@ public:
 	areaReference_t* 		entityRefs;				// chain of all references
 	idInteraction* 			firstInteraction;		// doubly linked list
 	idInteraction* 			lastInteraction;
+	entitySurfLights_t* 	surfLights;				// track F ( F7 ): each surface's lights, while any has one ( Interaction.cpp )
 
 	bool					needsPortalSky;
 };
@@ -530,6 +531,9 @@ struct viewEntity_t
 
 	bool					skipMotionBlur;
 
+	renderBloomStyle_t		bloomStyle;				// WP-J27: the entity's own bloom, copied from its parms ( the stage loop reads it, not the entityDef )
+	bool					noGlow;					// WP-J21: renderEntity_t::noGlow, copied the same way ( review R2-N4 )
+
 	bool					weaponDepthHack;
 	//puncho - E-R4-3 (L-D1): the definition's xrayIndex (0 to 2), copied at the top of R_AddSingleModel (it was copied in the
 	// serial portal walk, one more cache line of every definition there): the back end must not read entityDef, which a game
@@ -560,6 +564,7 @@ struct viewEntity_t
 	int					mocVerts;
 	int					mocTests;
 	int					mocCulled;
+	int					surfLightPairs;			// track F ( F7a ): pairs this entity's light loops visited, summed after the jobs
 
 	//puncho - model-job output only; pairs and total are derived at the serial merge.
 	int					shadowSideHist[6];
@@ -1503,7 +1508,6 @@ extern idCVar r_emitterEarlyOut;			// emitter pixels the light cannot reach skip
 extern idCVar r_skipStaticInteractions;		// skip interactions created at level load
 extern idCVar r_skipDynamicInteractions;	// skip interactions created after level load
 extern idCVar r_skipPostProcess;			// skip all post-process renderings
-extern idCVar r_skipBloom;					// Admer: skip bloom
 extern idCVar r_skipSuppress;				// ignore the per-view suppressions
 extern idCVar r_skipInteractions;			// skip all light/surface interaction drawing
 extern idCVar r_skipFrontEnd;				// bypasses all front end work, but 2D gui rendering still draws
@@ -1612,15 +1616,10 @@ extern idCVar r_shadowMapOccluderFacing;
 extern idCVar r_shadowMapRegularDepthBiasScale;
 extern idCVar r_shadowMapSunDepthBiasScale;
 
-extern idCVar r_hdrAutoExposure;
 extern idCVar r_hdrAdaptionRate;
 extern idCVar r_hdrMinLuminance;
 extern idCVar r_hdrMaxLuminance;
 extern idCVar r_hdrKey;
-extern idCVar r_hdrContrastDynamicThreshold;
-extern idCVar r_hdrContrastStaticThreshold;
-extern idCVar r_hdrContrastOffset;
-extern idCVar r_hdrGlarePasses;
 extern idCVar r_hdrDebug;
 
 extern idCVar r_ldrContrastThreshold;
@@ -1655,6 +1654,12 @@ extern idCVar r_taaClampingFactor;
 extern idCVar r_taaNewFrameWeight;
 extern idCVar r_taaMaxRadiance;
 extern idCVar r_taaMotionVectors;
+// ---- TAA REPAIR ----
+extern idCVar r_taaClampCenter;
+extern idCVar r_taaMotionFrameWeight;
+extern idCVar r_taaHistoryTaps;
+extern idCVar r_taaSharpen;
+// ---- END TAA REPAIR ----
 
 extern idCVar r_useFilmicPostFX;
 extern idCVar r_useCRTPostFX;
@@ -2101,6 +2106,8 @@ void				R_RemoveUnusedVerts( srfTriangles_t* tri );
 void				R_RangeCheckIndexes( const srfTriangles_t* tri );
 void				R_CreateVertexNormals( srfTriangles_t* tri );		// also called by dmap
 void				R_CleanupTriangles( srfTriangles_t* tri, bool createNormals, bool identifySilEdges, bool useUnsmoothedTangents, bool useMikktspace );
+void				R_DeriveAreaTangents( idRenderModel* model );	// track F ( F7e ): a world area's tangents across its surfaces
+void				R_CountAreaTangentSeams( const idRenderModel* model, int* numCopies, int* numDiffer );	// track F ( F7e ): for r_areaTangentsLog
 void				R_ReverseTriangles( srfTriangles_t* tri );
 
 // Only deals with vertexes and indexes, not silhouettes, planes, etc.
@@ -2118,6 +2125,8 @@ void				R_InitDrawSurfFromTri( drawSurf_t& ds, srfTriangles_t& tri, nvrhi::IComm
 // For static surfaces, the indexes, ambient, and shadow buffers can be pre-created at load
 // time, rather than being re-created each frame in the frame temporary buffers.
 void				R_CreateStaticBuffersForTri( srfTriangles_t& tri, nvrhi::ICommandList* commandList );
+// track F ( F7k ): a world area model's surfaces in shared static blocks ( tr_trisurf.cpp )
+void				R_CreateStaticBuffersForAreaModel( idRenderModel* model, nvrhi::ICommandList* commandList );
 
 // RB
 idVec3				R_ClosestPointPointTriangle( const idVec3& point, const idVec3& vertex1, const idVec3& vertex2, const idVec3& vertex3 );

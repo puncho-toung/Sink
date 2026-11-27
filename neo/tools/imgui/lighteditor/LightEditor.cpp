@@ -89,6 +89,147 @@ static void CopyPrefixKeys( const idDict& from, idDict& to, const char* prefix )
 	}
 }
 
+// ---- WP-J21: emit_glow is every light's key ( read as the fog keys are ), not one of the emitter block's, though it shares
+// the block's prefix: a light that has it carries no emitter block for it, and the Emitter tab does not take it for a kept
+// block. Cancel and the checkpoints copy it with the prefix keys, which puts back exactly what the light had ----
+static const char* const LIGHT_EMIT_GLOW_KEY = "emit_glow";
+
+// true when d has a key that starts with prefix other than emit_glow
+static bool HasEmitterBlockKey( const idDict& d, const char* prefix )
+{
+	for( const idKeyValue* kv = d.MatchPrefix( prefix ); kv != NULL; kv = d.MatchPrefix( prefix, kv ) )
+	{
+		if( kv->GetKey().Icmp( LIGHT_EMIT_GLOW_KEY ) != 0 )
+		{
+			return true;
+		}
+	}
+	return false;
+}
+// ---- END WP-J21 ----
+
+// ---- WP-J27: the light's own bloom, the bloom_* keys ( LightBloom ). They start with bloom_, so none is an emitter block key,
+// and Cancel and the checkpoints need nothing beyond ToDict for them: it writes or deletes every one of them ----
+
+// the float of a bloom key clamped to [ minValue, maxValue ], as idLight::ParseBloomStyle reads it; false, and value left as it
+// was, where the key is absent or not a number ( idMath::ClampFloat would pass a NaN through )
+static bool LightBloomKeyFloat( const idDict* d, const char* key, float minValue, float maxValue, float& value )
+{
+	const idKeyValue* kv = d->FindKey( key );
+	if( kv == NULL )
+	{
+		return false;
+	}
+	const float read = ( float )atof( kv->GetValue() );
+	if( IEEE_FLT_IS_NAN( read ) )
+	{
+		return false;
+	}
+	value = ( read < minValue ) ? minValue : ( ( read > maxValue ) ? maxValue : read );
+	return true;
+}
+
+// a float bloom key written where it is not its default, else deleted
+static void LightBloomSetFloat( idDict* d, const char* key, float value, float defaultValue )
+{
+	if( value != defaultValue )
+	{
+		d->Set( key, idStr( value ) );
+	}
+	else
+	{
+		d->Set( key, "" );
+	}
+}
+
+// the keys' defaults: the view's shape, strength 1, the view's hot boost, and the System Options rows' defaults for the star's
+// and the glow's values ( R_BloomStyleDefaults )
+void LightBloom::Defaults()
+{
+	renderBloomStyle_t star;
+	renderBloomStyle_t glow;
+	R_BloomStyleDefaults( star, BLOOM_STYLE_STAR );
+	R_BloomStyleDefaults( glow, BLOOM_STYLE_GLOW );
+
+	shape = BLOOM_STYLE_VIEW;
+	intensity = 1.0f;
+	hotBoostOwn = false;
+	hotBoost = 0.0f;
+	spikes = star.spikes;
+	spikeRotation = star.spikeRotation;
+	spikeRadius = star.spikeRadius;
+	spikeBlur = star.spikeBlur;
+	spikeSpread = star.spikeSpread;
+	spikeRatio = star.spikeRatio;
+	spikeRinging = star.spikeRinging;
+	spikeShift = star.spikeShift;
+	spikeFalloff = star.spikeFalloff;
+	glowRadius = glow.glowRadius;
+	glare = glow.glare;
+}
+
+// every shape's keys, with idLight::ParseBloomStyle's defaults and clamps: a shape other than 1 or 2 is the view's, a value
+// that is not a number its key's default, and a hot boost that is not a number as no key
+void LightBloom::FromDict( const idDict* e )
+{
+	Defaults();
+
+	const int shapeRead = e->GetInt( BLOOM_KEY_SHAPE, "0" );
+	shape = ( shapeRead == BLOOM_STYLE_STAR || shapeRead == BLOOM_STYLE_GLOW ) ? shapeRead : BLOOM_STYLE_VIEW;
+	LightBloomKeyFloat( e, BLOOM_KEY_INTENSITY, 0.0f, 4.0f, intensity );
+	hotBoostOwn = LightBloomKeyFloat( e, BLOOM_KEY_HOT_BOOST, 0.0f, 8.0f, hotBoost );
+
+	const idKeyValue* spikesKey = e->FindKey( BLOOM_KEY_SPIKES );
+	if( spikesKey != NULL )
+	{
+		spikes = idMath::ClampInt( 1, 7, atoi( spikesKey->GetValue() ) );
+	}
+	LightBloomKeyFloat( e, BLOOM_KEY_SPIKE_ROTATION, 0.0f, 1.0f, spikeRotation );
+	LightBloomKeyFloat( e, BLOOM_KEY_SPIKE_RADIUS, 0.0f, 1.0f, spikeRadius );
+	LightBloomKeyFloat( e, BLOOM_KEY_SPIKE_BLUR, 0.0f, 1.0f, spikeBlur );
+	LightBloomKeyFloat( e, BLOOM_KEY_SPIKE_SPREAD, 0.0f, 1.0f, spikeSpread );
+	LightBloomKeyFloat( e, BLOOM_KEY_SPIKE_RATIO, -1.0f, 1.0f, spikeRatio );
+	LightBloomKeyFloat( e, BLOOM_KEY_SPIKE_RINGING, 0.0f, 1.0f, spikeRinging );
+	LightBloomKeyFloat( e, BLOOM_KEY_SPIKE_SHIFT, 0.0f, 1.0f, spikeShift );
+	LightBloomKeyFloat( e, BLOOM_KEY_SPIKE_FALLOFF, 0.0f, 1.0f, spikeFalloff );
+	LightBloomKeyFloat( e, BLOOM_KEY_GLOW_RADIUS, 0.0f, 1.0f, glowRadius );
+	LightBloomKeyFloat( e, BLOOM_KEY_GLARE, 0.0f, 1.0f, glare );
+}
+
+// a key only where it is not its default, deleted where it is ( as the fog keys ), every shape's; bloom_hot_boost only where
+// the light has its own, where 0 is written too
+void LightBloom::ToDict( idDict* e ) const
+{
+	LightBloom defaults;
+	defaults.Defaults();
+
+	e->Set( BLOOM_KEY_SHAPE, ( shape != BLOOM_STYLE_VIEW ) ? idStr( shape ).c_str() : "" );
+	LightBloomSetFloat( e, BLOOM_KEY_INTENSITY, intensity, defaults.intensity );
+	e->Set( BLOOM_KEY_HOT_BOOST, hotBoostOwn ? idStr( hotBoost ).c_str() : "" );
+	e->Set( BLOOM_KEY_SPIKES, ( spikes != defaults.spikes ) ? idStr( spikes ).c_str() : "" );
+	LightBloomSetFloat( e, BLOOM_KEY_SPIKE_ROTATION, spikeRotation, defaults.spikeRotation );
+	LightBloomSetFloat( e, BLOOM_KEY_SPIKE_RADIUS, spikeRadius, defaults.spikeRadius );
+	LightBloomSetFloat( e, BLOOM_KEY_SPIKE_BLUR, spikeBlur, defaults.spikeBlur );
+	LightBloomSetFloat( e, BLOOM_KEY_SPIKE_SPREAD, spikeSpread, defaults.spikeSpread );
+	LightBloomSetFloat( e, BLOOM_KEY_SPIKE_RATIO, spikeRatio, defaults.spikeRatio );
+	LightBloomSetFloat( e, BLOOM_KEY_SPIKE_RINGING, spikeRinging, defaults.spikeRinging );
+	LightBloomSetFloat( e, BLOOM_KEY_SPIKE_SHIFT, spikeShift, defaults.spikeShift );
+	LightBloomSetFloat( e, BLOOM_KEY_SPIKE_FALLOFF, spikeFalloff, defaults.spikeFalloff );
+	LightBloomSetFloat( e, BLOOM_KEY_GLOW_RADIUS, glowRadius, defaults.glowRadius );
+	LightBloomSetFloat( e, BLOOM_KEY_GLARE, glare, defaults.glare );
+}
+
+// field by field: hotBoost counts only where the light has its own
+bool LightBloom::Same( const LightBloom& other ) const
+{
+	return shape == other.shape && intensity == other.intensity && hotBoostOwn == other.hotBoostOwn
+		   && ( !hotBoostOwn || hotBoost == other.hotBoost ) && spikes == other.spikes && spikeRotation == other.spikeRotation
+		   && spikeRadius == other.spikeRadius && spikeBlur == other.spikeBlur && spikeSpread == other.spikeSpread
+		   && spikeRatio == other.spikeRatio && spikeRinging == other.spikeRinging && spikeShift == other.spikeShift
+		   && spikeFalloff == other.spikeFalloff && glowRadius == other.glowRadius && glare == other.glare;
+}
+// ---- END WP-J27 ----
+
 // applies the prefix keys of d to to, as idGameEdit::EntityChangeSpawnArgs applies them ("" deletes)
 static void ApplyPrefixKeys( idDict& to, const idDict& d, const char* prefix )
 {
@@ -488,6 +629,7 @@ static void SwitchToEmitter( LightInfo& light, const idDict& spawnArgs )
 	idDict block;
 	CopyPrefixKeys( spawnArgs, block, "emit" );
 	block.Delete( "emitter" );
+	block.Delete( LIGHT_EMIT_GLOW_KEY );		// WP-J21: not the block's; the light keeps it as it is ( LightInfo::emitGlow )
 
 	bool keptAutoRange = false;
 	if( block.GetNumKeyVals() > 0 )
@@ -574,6 +716,77 @@ static bool EffectItemsGetter( void* /*data*/, int idx, const char** outText )
 	*outText = "<Invalid Index!>";
 	return false;
 }
+
+// ---- TRACK V ( V7 ): the Fog tab's helpers ( package plan section 3.3 ). A fog light's density is its fog distance D,
+// the key shaderParm3 above 1: Density 0 to 100 is logarithmic over D 8,192 to 32 ( 50 is D 512, next to the engine's
+// 500; every 12.5 halve D ). Written without a light in their arguments so that track M's panel can call them ----
+static const float FOG_DENSITY_FAR = 8192.0f;		// D at density 0
+static const float FOG_DENSITY_NEAR = 32.0f;		// D at density 100
+
+float LightFogDensityToDistance( float density )
+{
+	return FOG_DENSITY_FAR * idMath::Pow( FOG_DENSITY_NEAR / FOG_DENSITY_FAR, idMath::ClampFloat( 0.0f, 100.0f, density ) / 100.0f );
+}
+
+float LightFogDistanceToDensity( float distance )
+{
+	return idMath::ClampFloat( 0.0f, 100.0f, 100.0f * idMath::Log( Max( distance, 1.0f ) / FOG_DENSITY_FAR ) / idMath::Log( FOG_DENSITY_NEAR / FOG_DENSITY_FAR ) );
+}
+
+// the faint form: a shaderParm3 of at most 1 that is not 1 is no distance but a strength, at the engine's 500 units
+static bool LightFogFaint( float parm3 )
+{
+	return parm3 <= 1.0f && parm3 != 1.0f;
+}
+
+// "Make it a fog light": the stock fog material on a texture light ( an emitter switched as the Texture tab switches it )
+static void LightMakeFogLight( LightInfo& light )
+{
+	if( light.emitter.enabled )
+	{
+		SwitchToTexture( light );
+	}
+	light.strTexture = "fogs/basicFog";
+}
+
+// the light's material is a fog light ( the renderer's own test, idMaterial::IsFogLight: fogs/pitFog is a blend light )
+static bool LightIsFogLight( const LightInfo& light )
+{
+	if( light.emitter.enabled || light.strTexture.Length() == 0 )
+	{
+		return false;
+	}
+	const idMaterial* material = declManager->FindMaterial( light.strTexture, false );
+	return material != NULL && material->IsFogLight();
+}
+
+bool DrawFogDensityControls( float& distance, float rate )
+{
+	bool changed = false;
+	float density = LightFogDistanceToDensity( distance );
+	if( ImGui::SliderFloat( "Density", &density, 0.0f, 100.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp ) )
+	{
+		distance = idMath::Rint( LightFogDensityToDistance( density ) );	// review O2-7: whole units in the map
+		changed = true;
+	}
+	float typed = distance;
+	if( ImGui::InputFloat( "Distance", &typed, 0.0f, 0.0f, "%.0f units", ImGuiInputTextFlags_EnterReturnsTrue ) )		// review CN3-9: on Enter, not per keystroke
+	{
+		distance = idMath::ClampFloat( 2.0f, 30000.0f, typed );
+		changed = true;
+	}
+	// what the froxel fog leaves of the light behind it, at the rate the inject uses ( r_volumetricFogLightRate )
+	const float left = 100.0f * idMath::Exp( -rate );
+	ImGui::TextWrapped( "Classic fog: opaque at %.0f units. Volumetric fog: %.1f %% of the light is left after %.0f units, %.2f %% after %.0f.",
+						distance, left, distance, left * left / 100.0f, 2.0f * distance );
+	return changed;
+}
+
+bool DrawFogAlbedoControl( float& albedo )
+{
+	return ImGui::SliderFloat( "Albedo", &albedo, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp );
+}
+// ---- END TRACK V ----
 
 // the Emitter tab's controls; returns true when they changed the light
 static bool DrawEmitterControls( LightInfo& light )
@@ -757,6 +970,15 @@ void LightInfo::Defaults()
 	lightStyle = -1;
 	primarySun = false;
 	forwardMode = 0;
+	fogParm3 = 1.0f;
+	fogParm3Read = "";
+	fogParm3Edited = false;
+	fogAlbedo = 0.0f;
+	fogEmission = 1.0f;
+	fogEdge = 0.0f;
+	volumetricMode = 0;
+	emitGlow = true;			// WP-J21
+	bloom.Defaults();			// WP-J27
 
 	hasLightOrigin = false;
 	angles.Zero();
@@ -778,6 +1000,16 @@ void LightInfo::RestoreKept( const LightInfo& kept )
 	emitter = kept.emitter;
 	autoRange = kept.autoRange;
 	hasEmitterBlock = kept.hasEmitterBlock;
+	// V7: the fog keys too, as the editor kept them before it knew them
+	fogParm3 = kept.fogParm3;
+	fogParm3Read = kept.fogParm3Read;
+	fogParm3Edited = kept.fogParm3Edited;
+	fogAlbedo = kept.fogAlbedo;
+	fogEmission = kept.fogEmission;
+	fogEdge = kept.fogEdge;
+	volumetricMode = kept.volumetricMode;
+	emitGlow = kept.emitGlow;	// WP-J21: and the emitter's switch with them
+	bloom = kept.bloom;			// WP-J27: and the light's own bloom
 
 	// G0 9 (DP-E3-05): an emitter's shape switch keeps its shadow and specular switches; a texture
 	// light's type switch resets them, as it always has
@@ -854,6 +1086,15 @@ void LightInfo::FromDict( const idDict* e )
 	bool isParallel = e->GetBool( "parallel" );
 	primarySun = e->GetBool( "primarySun" );
 	forwardMode = idMath::ClampInt( 0, 2, e->GetInt( "forward", 0 ) );
+	fogParm3 = e->GetFloat( "shaderParm3", "1" );
+	fogParm3Read = e->GetString( "shaderParm3", "" );
+	fogParm3Edited = false;
+	fogAlbedo = idMath::ClampFloat( 0.0f, 1.0f, e->GetFloat( "fog_albedo", "0" ) );
+	fogEmission = idMath::ClampFloat( 0.0f, 8.0f, e->GetFloat( "fog_emission", "1" ) );
+	fogEdge = idMath::ClampFloat( 0.0f, 4096.0f, e->GetFloat( "fog_edge", "0" ) );
+	volumetricMode = idMath::ClampInt( 0, 2, e->GetInt( "volumetric", 0 ) );
+	emitGlow = e->GetBool( LIGHT_EMIT_GLOW_KEY, "1" );		// WP-J21: as idGameEdit::ParseSpawnArgsToRenderLight reads it
+	bloom.FromDict( e );									// WP-J27: as idLight::ParseBloomStyle reads them, every shape's keys
 
 	if( !e->GetVector( "_color", "", color ) )
 	{
@@ -919,7 +1160,7 @@ void LightInfo::FromDict( const idDict* e )
 	// writes them all back ( DP-EC-01 )
 	EM_ParseAllFromDict( e, &emitter );
 	autoRange = e->GetBool( "emit_auto_range", "1" );
-	hasEmitterBlock = ( e->MatchPrefix( "emit" ) != NULL );
+	hasEmitterBlock = HasEmitterBlockKey( *e, "emit" );		// WP-J21: emit_glow alone is no block
 
 	if( emitter.enabled )
 	{
@@ -1167,6 +1408,31 @@ void LightInfo::ToDict( idDict* e )
 		e->Set( "forward", DELETE_VAL );
 	}
 
+	// V7: a fog key only where it is not its default, deleted where it is, as forward; shaderParm3 is the density the Fog tab
+	// set on a fog light, else its text as read ( on another light the material's, often a time scale; none stays none ), so a
+	// Cancel, a revert to a checkpoint or a material change puts back what the light had ( reviews O2-1 to O2-3 )
+	e->Set( "fog_albedo", ( fogAlbedo > 0.0f ) ? idStr( fogAlbedo ).c_str() : DELETE_VAL );
+	e->Set( "fog_emission", ( fogEmission != 1.0f ) ? idStr( fogEmission ).c_str() : DELETE_VAL );
+	e->Set( "fog_edge", ( fogEdge > 0.0f ) ? idStr( fogEdge ).c_str() : DELETE_VAL );
+	if( volumetricMode == 1 || volumetricMode == 2 )
+	{
+		e->SetInt( "volumetric", volumetricMode );
+	}
+	else
+	{
+		e->Set( "volumetric", DELETE_VAL );
+	}
+	e->Set( LIGHT_EMIT_GLOW_KEY, emitGlow ? DELETE_VAL : "0" );		// WP-J21: as the fog keys, on every light
+	bloom.ToDict( e );											// WP-J27: alike, every shape's keys
+	if( fogParm3Edited && LightIsFogLight( *this ) )
+	{
+		e->Set( "shaderParm3", idStr( fogParm3 ) );
+	}
+	else
+	{
+		e->Set( "shaderParm3", fogParm3Read.c_str() );
+	}
+
 	e->Set( "rotation", DELETE_VAL );
 	e->Set( "light_rotation", DELETE_VAL );
 
@@ -1391,6 +1657,7 @@ public:
 void LightEditor::LoadLightTextures()
 {
 	textureNames.Clear();
+	fogMaterialNames.Clear();
 
 	int count = declManager->GetNumDecls( DECL_MATERIAL );
 
@@ -1406,6 +1673,10 @@ void LightEditor::LoadLightTextures()
 		{
 			// actually load the material
 			const idMaterial* material = declManager->FindMaterial( matName, false );
+			if( material != NULL && material->IsFogLight() )
+			{
+				fogMaterialNames.Append( matName );	// V7: every fog light under lights/ and fogs/, whatever its editor image
+			}
 			if( material != NULL )
 			{
 				// check if the material has textures or is just a leftover from the development
@@ -1424,6 +1695,7 @@ void LightEditor::LoadLightTextures()
 	}
 
 	textureNames.SortWithTemplate( idSort_textureNames() );
+	fogMaterialNames.SortWithTemplate( idSort_textureNames() );
 }
 
 // static
@@ -1472,6 +1744,304 @@ void LightEditor::LoadCurrentTexture()
 			}
 		}
 	}
+}
+
+// V7: the Texture tab's combo index of cur.strTexture ( 0 is "<No Texture>" ), and its image
+void LightEditor::SelectCurrentTexture()
+{
+	currentTextureIndex = 0;
+	for( int i = 0; i < textureNames.Num(); i++ )
+	{
+		if( textureNames[i].Icmp( cur.strTexture ) == 0 )
+		{
+			currentTextureIndex = i + 1;
+			break;
+		}
+	}
+	LoadCurrentTexture();
+}
+
+// static
+bool LightEditor::FogMaterialItemsGetter( void* data, int idx, const char** outText )
+{
+	LightEditor* self = static_cast<LightEditor*>( data );
+	if( idx < 0 || idx >= self->fogMaterialNames.Num() )
+	{
+		*outText = "<Invalid Index!>";
+		return false;
+	}
+	*outText = self->fogMaterialNames[idx].c_str();
+	return true;
+}
+
+/*
+================
+LightEditor::DrawFogTab
+
+V7 ( rows 155, 175, 156, 241, 211 ): the Fog tab. Not a kind: opening it changes nothing on the light, and it leaves
+tabShowsEmitter alone ( LightKind's request logic sees the Emitter and Texture tabs only ). On a fog light: which fog draws it
+and why ( track V's R_VolumetricFogLightStatus, worded here ), a session switch on r_volumetricFog, the fog material, the
+density, the albedo, the glow, soft sides and "Drawn by"; on any other light a button that makes it one. ( WP-J27: the
+emitter's switch "Bloom glow", emit_glow, moved to the Bloom tab. ) Returns true when a control changed the light.
+================
+*/
+bool LightEditor::DrawFogTab()
+{
+	bool changed = false;
+
+	if( !LightIsFogLight( cur ) )
+	{
+		ImGui::TextWrapped( "This light is not a fog light." );
+		if( ImGui::Button( "Make it a fog light" ) )
+		{
+			LightMakeFogLight( cur );		// an emitter becomes a texture light: the tab bar then shows the Texture tab
+			SelectCurrentTexture();
+			changed = true;
+		}
+		return changed;
+	}
+
+	// which fog draws the light
+	const bool fogOn = cvarSystem->GetCVarBool( "r_volumetricFog" );
+	if( !fogOn )
+	{
+		ImGui::TextWrapped( "The volumetric fog is off. This light is drawn by the classic fog pass: only Colour and Density show. Albedo, Glow and Soft sides show with the volumetric fog on." );
+	}
+	else
+	{
+		const char* why = NULL;
+		switch( R_VolumetricFogLightStatus( gameEdit->EntityGetLightDefHandle( lightEntity ) ) )
+		{
+			case FOGLIGHT_STATUS_FROXEL:		why = NULL; break;
+			case FOGLIGHT_STATUS_UNKNOWN:		why = "-"; break;
+			case FOGLIGHT_STATUS_NOT_FOGLIGHT:	why = "!"; break;	// reviews QR2 F-1, QR3-4, O2-6, CN4-1: worded below, no fog draws it
+			case FOGLIGHT_STATUS_LIGHTS_OFF:	why = "the volumetric fog takes no fog lights ( r_volumetricFogLights, r_volumetricFogMedia or r_volumetricFogTranslucent off, or the furnace on )"; break;	// reviews O2-10, O1-11
+			case FOGLIGHT_STATUS_NO_STAGE:		why = "its material has no stage"; break;
+			case FOGLIGHT_STATUS_SPECTRUM:		why = "its material is of another colour spectrum"; break;
+			case FOGLIGHT_STATUS_MATRIX:		why = "its material moves its texture"; break;
+			case FOGLIGHT_STATUS_PARALLEL:		why = "it is a parallel light"; break;
+			case FOGLIGHT_STATUS_NEVER:			why = "this light says \"Classic fog pass only\""; break;
+			case FOGLIGHT_STATUS_STRENGTH:		why = "its strength is 0"; break;
+			case FOGLIGHT_STATUS_REACH:			why = "it is farther than the fog's reach from the eye"; break;
+			default:							why = ""; break;
+		}
+		if( why == NULL )
+		{
+			ImGui::TextWrapped( "Drawn by the volumetric fog." );
+		}
+		else if( why[0] == '\0' )
+		{
+			ImGui::TextWrapped( "Not in the last view: no fog draws it now." );
+		}
+		else if( why[0] == '!' )
+		{
+			ImGui::TextWrapped( "No fog draws it: its material in the game is not a fog light now ( a script set another, or a new material shows next frame )." );
+		}
+		else if( why[0] == '-' )
+		{
+			ImGui::TextWrapped( "The light has no render light now ( switched off? ): no fog draws it." );	// review CN3-8
+		}
+		else
+		{
+			ImGui::TextWrapped( "Drawn by the classic fog pass, because %s.", why );
+		}
+	}
+	bool preview = fogOn;
+	if( ImGui::Checkbox( "Preview with the volumetric fog", &preview ) )
+	{
+		cvarSystem->SetCVarBool( "r_volumetricFog", preview );	// for the session: the cvar is not archived
+	}
+
+	// the fog material: fog lights only
+	int fogIndex = -1;
+	for( int i = 0; i < fogMaterialNames.Num(); i++ )
+	{
+		if( fogMaterialNames[i].Icmp( cur.strTexture ) == 0 )
+		{
+			fogIndex = i;
+			break;
+		}
+	}
+	if( ImGui::Combo( "Fog material", &fogIndex, FogMaterialItemsGetter, this, fogMaterialNames.Num() ) && fogIndex >= 0 )
+	{
+		cur.strTexture = fogMaterialNames[fogIndex];
+		SelectCurrentTexture();
+		changed = true;
+	}
+
+	// the density: the key shaderParm3, where the material's first stage takes its alpha from it
+	const idMaterial* material = declManager->FindMaterial( cur.strTexture, false );
+	const shaderStage_t* stage = ( material != NULL && material->GetNumStages() > 0 ) ? material->GetStage( 0 ) : NULL;
+	ImGui::SeparatorText( "Density" );
+	if( stage == NULL || stage->color.registers[3] != EXP_REG_PARM3 )
+	{
+		ImGui::TextWrapped( "This material sets its own fog distance: the light's density does not change it." );
+	}
+	else
+	{
+		static const char* forms[] = { "Distance", "Faint ( fixed 500 units )" };
+		int form = LightFogFaint( cur.fogParm3 ) ? 1 : 0;
+		if( ImGui::Combo( "Form", &form, forms, IM_ARRAYSIZE( forms ) ) )
+		{
+			cur.fogParm3 = ( form == 0 ) ? 500.0f : 0.5f;
+			cur.fogParm3Edited = true;
+			changed = true;
+		}
+		if( form == 0 )
+		{
+			float distance = ( cur.fogParm3 > 1.0f ) ? cur.fogParm3 : 500.0f;		// DEFAULT_FOG_DISTANCE: an alpha of at most 1
+			if( DrawFogDensityControls( distance, cvarSystem->GetCVarFloat( "r_volumetricFogLightRate" ) ) )
+			{
+				cur.fogParm3 = distance;
+				cur.fogParm3Edited = true;
+				changed = true;
+			}
+		}
+		else
+		{
+			float strength = Max( cur.fogParm3, 0.0f );
+			if( ImGui::SliderFloat( "Strength", &strength, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp ) )
+			{
+				cur.fogParm3 = strength;
+				cur.fogParm3Edited = true;
+				changed = true;
+			}
+		}
+	}
+
+	// the medium in the volumetric fog
+	ImGui::SeparatorText( "In the volumetric fog" );
+	changed |= DrawFogAlbedoControl( cur.fogAlbedo );
+	float glow = cur.fogEmission;
+	if( ImGui::SliderFloat( "Glow", &glow, 0.0f, 2.0f, "%.2f" ) )		// ctrl+click types up to 8
+	{
+		cur.fogEmission = idMath::ClampFloat( 0.0f, 8.0f, glow );
+		changed = true;
+	}
+	float edge = cur.fogEdge;
+	if( ImGui::SliderFloat( "Soft sides", &edge, 0.0f, 256.0f, "%.0f units" ) )		// ctrl+click types up to 4,096
+	{
+		cur.fogEdge = idMath::ClampFloat( 0.0f, 4096.0f, edge );
+		changed = true;
+	}
+	const bool colourIsParms = stage != NULL && stage->color.registers[0] == EXP_REG_PARM0 && stage->color.registers[1] == EXP_REG_PARM1
+							   && stage->color.registers[2] == EXP_REG_PARM2;
+	ImGui::TextWrapped( colourIsParms ? "The colour tints the glow only. Set it under Color above." : "This material ignores the light's colour." );
+
+	// row 51 for a fog light: its two meaningful values; a light that says "volumetric" 1 shows it as a third entry, kept until
+	// another is chosen ( review CN3-6 )
+	static const char* drawnBy[] = { "Automatic", "Classic fog pass only", "Always ( as Automatic for a fog light )" };
+	int drawn = ( cur.volumetricMode == 2 ) ? 1 : ( cur.volumetricMode == 1 ) ? 2 : 0;
+	if( ImGui::Combo( "Drawn by", &drawn, drawnBy, ( cur.volumetricMode == 1 ) ? 3 : 2 ) )
+	{
+		cur.volumetricMode = ( drawn == 1 ) ? 2 : ( drawn == 2 ) ? 1 : 0;
+		changed = true;
+	}
+	return changed;
+}
+
+// WP-J27: a Bloom tab slider with its tooltip. AlwaysClamp keeps a typed value in its range, as the editor's other sliders; a
+// value typed as "nan" takes the key's default ( a clamp passes a NaN through )
+static bool LightBloomSlider( const char* label, float& value, float minValue, float maxValue, float defaultValue, const char* format, const char* tooltip )
+{
+	const bool changed = ImGui::SliderFloat( label, &value, minValue, maxValue, format, ImGuiSliderFlags_AlwaysClamp );
+	ImGui::SetItemTooltip( "%s", tooltip );
+	if( changed && IEEE_FLT_IS_NAN( value ) )
+	{
+		value = defaultValue;
+	}
+	return changed;
+}
+
+/*
+================
+LightEditor::DrawBloomTab
+
+WP-J27 ( the owner, 2026-11-27: "make lights have their own bloom settings under a tab in the light editor, so that bloom per
+emissive source is configurable, because I sometimes want the regular unpointed glow, and sometimes I want the stars with
+configurable points/widths" ): the Bloom tab, on every light. Not a kind, as the Fog tab: opening it changes nothing on the
+light, it asks for no tab and leaves tabShowsEmitter alone. A line on where each value shows, the emitter's switch "Bloom glow"
+( emit_glow, moved here from the Fog tab ), the shape ( As the view, Star, Glow ), the strength, the light's own hot boost, then
+the chosen shape's values; the other shape's values stay on the light ( LightBloom ). Every label carries a "##bloom" id, so
+none shares an ImGui id with another tab's control of the same name. Returns true when a control changed the light.
+================
+*/
+bool LightEditor::DrawBloomTab()
+{
+	bool changed = false;
+	LightBloom& bloom = cur.bloom;
+	LightBloom defaults;
+	defaults.Defaults();
+
+	ImGui::TextWrapped( "Shape and hot boost show under Fourier Bloom ( System Options, Bloom ); Strength with Bloom From set to Emitters and Fog." );
+
+	changed |= ImGui::Checkbox( "Bloom glow##bloomEmitGlow", &cur.emitGlow );
+	ImGui::SetItemTooltip( "Off ( emit_glow 0 ): this light's fog and its visual model give no bloom glow." );
+
+	static const char* shapes[] = { "As the view", "Star", "Glow" };		// BLOOM_STYLE_VIEW, BLOOM_STYLE_STAR, BLOOM_STYLE_GLOW
+	int shape = idMath::ClampInt( BLOOM_STYLE_VIEW, BLOOM_STYLE_GLOW, bloom.shape );
+	if( ImGui::Combo( "Shape##bloomShape", &shape, shapes, IM_ARRAYSIZE( shapes ) ) )
+	{
+		bloom.shape = idMath::ClampInt( BLOOM_STYLE_VIEW, BLOOM_STYLE_GLOW, shape );
+		changed = true;
+	}
+	ImGui::SetItemTooltip( "bloom_shape. As the view: the System Options bloom shape and values. Star: diffraction spikes with this light's own points and widths. Glow: the regular unpointed glow with this light's own radius and glare. The values of the shape not chosen stay on the light." );
+
+	changed |= LightBloomSlider( "Strength##bloomStrength", bloom.intensity, 0.0f, 4.0f, defaults.intensity, "%.2f",
+								 "bloom_intensity: this light enters the bloom this many times, 0 to 4; 1 is as the view's." );
+
+	changed |= ImGui::Checkbox( "Own hot boost##bloomHotBoostOwn", &bloom.hotBoostOwn );
+	ImGui::SetItemTooltip( "Off: no bloom_hot_boost, the light takes the view's hot boost. On: the light's own, 0 included." );
+	if( bloom.hotBoostOwn )
+	{
+		changed |= LightBloomSlider( "Hot boost##bloomHotBoost", bloom.hotBoost, 0.0f, 8.0f, defaults.hotBoost, "%.2f stops",
+									 "bloom_hot_boost: brightens the light's hottest pixels for the Fourier bloom only, so its star or glow carries further; it replaces the view's hot boost ( System Options, Hot Boost ) for this light." );
+	}
+
+	if( bloom.shape == BLOOM_STYLE_STAR )
+	{
+		ImGui::SeparatorText( "Star" );
+
+		// the key is the arms through the lamp; each arm is two points of the star
+		static const char* points[] = { "2 points", "4 points", "6 points", "8 points", "10 points", "12 points", "14 points" };
+		int arms = idMath::ClampInt( 1, 7, bloom.spikes ) - 1;
+		if( ImGui::Combo( "Points##bloomSpikes", &arms, points, IM_ARRAYSIZE( points ) ) )
+		{
+			bloom.spikes = idMath::ClampInt( 0, 6, arms ) + 1;
+			changed = true;
+		}
+		ImGui::SetItemTooltip( "bloom_spikes: the arms through the lamp, 1 to 7; each arm is two points ( 3 arms, 6 points, by default )." );
+
+		changed |= LightBloomSlider( "Rotation##bloomSpikeRotation", bloom.spikeRotation, 0.0f, 1.0f, defaults.spikeRotation, "%.2f",
+									 "bloom_spike_rotation: turns the star; 0 and 1 are the same." );
+		changed |= LightBloomSlider( "Length##bloomSpikeRadius", bloom.spikeRadius, 0.0f, 1.0f, defaults.spikeRadius, "%.2f",
+									 "bloom_spike_radius: how far the arms reach: 0 short and tight to the light, 1 the whole reach." );
+		changed |= LightBloomSlider( "Width##bloomSpikeBlur", bloom.spikeBlur, 0.0f, 1.0f, defaults.spikeBlur, "%.2f",
+									 "bloom_spike_blur: the arms' width, softening their edges." );
+		changed |= LightBloomSlider( "Spread##bloomSpikeSpread", bloom.spikeSpread, 0.0f, 1.0f, defaults.spikeSpread, "%.2f",
+									 "bloom_spike_spread: fans each arm out along its length; 0 is thin lines." );
+		changed |= LightBloomSlider( "Ratio##bloomSpikeRatio", bloom.spikeRatio, -1.0f, 1.0f, defaults.spikeRatio, "%+.2f",
+									 "bloom_spike_ratio: stretches the star across ( above 0 ) or up and down ( below 0 )." );
+		changed |= LightBloomSlider( "Ringing##bloomSpikeRinging", bloom.spikeRinging, 0.0f, 1.0f, defaults.spikeRinging, "%.2f",
+									 "bloom_spike_ringing: the bright and dark bands along each arm." );
+		changed |= LightBloomSlider( "Spectral shift##bloomSpikeShift", bloom.spikeShift, 0.0f, 1.0f, defaults.spikeShift, "%.2f",
+									 "bloom_spike_shift: a rainbow along the arms, each colour's spikes a little longer or shorter." );
+		changed |= LightBloomSlider( "Fall-off##bloomSpikeFalloff", bloom.spikeFalloff, 0.0f, 1.0f, defaults.spikeFalloff, "%.2f",
+									 "bloom_spike_falloff: 0 is the plan's short fall; more carries the light further along the arms." );
+	}
+	else if( bloom.shape == BLOOM_STYLE_GLOW )
+	{
+		ImGui::SeparatorText( "Glow" );
+		changed |= LightBloomSlider( "Radius##bloomGlowRadius", bloom.glowRadius, 0.0f, 1.0f, defaults.glowRadius, "%.2f",
+									 "bloom_glow_radius: how far the glow spreads round the light, a share of the reach." );
+		changed |= LightBloomSlider( "Glare##bloomGlare", bloom.glare, 0.0f, 1.0f, defaults.glare, "%.2f",
+									 "bloom_glare: a tight bright core within the glow." );
+	}
+	else
+	{
+		ImGui::TextWrapped( "This light takes the System Options bloom shape and values." );
+	}
+	return changed;
 }
 
 void LightEditor::LoadLightStyles()
@@ -3094,6 +3664,20 @@ void LightEditor::Draw()
 				ImGui::EndTabItem();
 			}
 
+			// V7: the Fog tab ( DrawFogTab ): not a kind; it asks for no tab and leaves tabShowsEmitter alone
+			if( ImGui::BeginTabItem( "Fog" ) )
+			{
+				changes |= DrawFogTab();
+				ImGui::EndTabItem();
+			}
+
+			// WP-J27: the Bloom tab ( DrawBloomTab ): not a kind either; it asks for no tab and leaves tabShowsEmitter alone
+			if( ImGui::BeginTabItem( "Bloom" ) )
+			{
+				changes |= DrawBloomTab();
+				ImGui::EndTabItem();
+			}
+
 			ImGui::EndTabBar();
 		}
 
@@ -3105,6 +3689,14 @@ void LightEditor::Draw()
 		// X0: the mapper's override of the lighting path ( track F ); Auto writes no key
 		static const char* forwardPathOptions[] = { "Auto", "Forward list", "Legacy" };
 		changes |= ImGui::Combo( "Lighting path", &cur.forwardMode, forwardPathOptions, IM_ARRAYSIZE( forwardPathOptions ) );
+
+		// V7 ( row 51 ): the light in the froxel fog, the key volumetric; a fog light's own choice is its Fog tab's "Drawn by"
+		if( !LightIsFogLight( cur ) )
+		{
+			ImGui::SeparatorText( "Volumetric fog" );
+			static const char* volumetricOptions[] = { "Automatic", "Always", "Never" };
+			changes |= ImGui::Combo( "Light in the fog", &cur.volumetricMode, volumetricOptions, IM_ARRAYSIZE( volumetricOptions ) );
+		}
 
 		// TODO: allow multiple lights selected at the same time + "apply different" button?
 		//       then only the changed attribute (e.g. color) would be set to all lights,
@@ -5494,7 +6086,7 @@ static void SelfTestEmitterKeys( LightSelfTest& test )
 	textureLight.FromDict( &texture );
 	idDict textureWritten;
 	textureLight.ToDict( &textureWritten );
-	test.Check( !textureLight.emitter.enabled && textureWritten.MatchPrefix( "emit" ) == NULL,
+	test.Check( !textureLight.emitter.enabled && !HasEmitterBlockKey( textureWritten, "emit" ),		// WP-J21: emit_glow is no emitter key
 				"texture light: no emitter key is written for a light that has none" );
 
 	// the Texture tab on an emitter: emitter "0", every emit_* key left in place
@@ -5503,7 +6095,7 @@ static void SelfTestEmitterKeys( LightSelfTest& test )
 	SwitchToTexture( switched );
 	idDict switchedWritten;
 	switched.ToDict( &switchedWritten );
-	test.Check( idStr::Cmp( switchedWritten.GetString( "emitter" ), "0" ) == 0 && switchedWritten.MatchPrefix( "emit_" ) == NULL,
+	test.Check( idStr::Cmp( switchedWritten.GetString( "emitter" ), "0" ) == 0 && !HasEmitterBlockKey( switchedWritten, "emit_" ),		// WP-J21: as above
 				"Texture tab: an emitter writes emitter 0 and leaves its emit_* keys on the light" );
 
 	// RV-C-ET-14: a phase that rounds to zero is written "0", never "-0"
@@ -6602,6 +7194,350 @@ static void SelfTestOpenMode( LightSelfTest& test )
 	test.Check( opensHidden && opensEasy && !editor.IsOpen(), "Open: le_startEasy 0 shows nothing until a pick, 1 opens easy mode" );
 }
 
+// V7: the Fog tab's keys ( round trips, defaults, another light's shaderParm3 ), its density mapping, its material list,
+// and a type switch that keeps the keys
+static void SelfTestFogKeys( LightSelfTest& test )
+{
+	LightInfo first;
+	LightInfo second;
+	idDict written;
+
+	idDict fog;
+	fog.Set( "classname", "light" );
+	fog.Set( "light_radius", "128 128 128" );
+	fog.Set( "texture", "fogs/basicFog" );
+	fog.Set( "_color", "0.3 0.35 0.4" );
+	fog.Set( "shaderParm3", "600" );
+	fog.Set( "fog_albedo", "0.6" );
+	fog.Set( "fog_emission", "0.5" );
+	fog.Set( "fog_edge", "64" );
+	fog.Set( "volumetric", "2" );
+	const bool fogSame = SelfTestRoundTrip( fog, first, second, written );
+	test.Check( fogSame && idStr::Cmp( written.GetString( "fog_albedo" ), "0.6" ) == 0 && idStr::Cmp( written.GetString( "fog_emission" ), "0.5" ) == 0
+				&& idStr::Cmp( written.GetString( "fog_edge" ), "64" ) == 0 && idStr::Cmp( written.GetString( "volumetric" ), "2" ) == 0
+				&& first.fogParm3 == 600.0f && first.fogAlbedo == 0.6f && first.fogEmission == 0.5f && first.fogEdge == 64.0f && first.volumetricMode == 2
+				&& second.fogAlbedo == first.fogAlbedo && second.fogEmission == first.fogEmission && second.fogEdge == first.fogEdge
+				&& second.volumetricMode == first.volumetricMode && idStr::Cmp( written.GetString( "shaderParm3" ), "600" ) == 0,
+				"V7 FK-01: each fog key round trips; shaderParm3 is written back as read when the Fog tab did not change it" );
+
+	idDict plain;
+	plain.Set( "classname", "light" );
+	plain.Set( "light_radius", "128 128 128" );
+	plain.Set( "texture", "fogs/basicFog" );
+	plain.Set( "fog_albedo", "0" );
+	plain.Set( "fog_emission", "1" );
+	plain.Set( "fog_edge", "0" );
+	plain.Set( "volumetric", "0" );
+	SelfTestRoundTrip( plain, first, second, written );
+	test.Check( SelfTestDeletes( written, "fog_albedo" ) && SelfTestDeletes( written, "fog_emission" ) && SelfTestDeletes( written, "fog_edge" )
+				&& SelfTestDeletes( written, "volumetric" ), "V7 FK-02: a default writes no key and deletes a stale one" );
+
+	idDict texture;
+	texture.Set( "classname", "light" );
+	texture.Set( "light_radius", "128 128 128" );
+	texture.Set( "texture", "lights/squarelight1" );
+	texture.Set( "shaderParm3", "0.25" );
+	SelfTestRoundTrip( texture, first, second, written );
+	bool textureKept = idStr::Cmp( written.GetString( "shaderParm3" ), "0.25" ) == 0;
+	// review CN4-3: a density edit flagged on a light that is no fog light writes nothing new ( QR3-1 )
+	first.fogParm3 = 300.0f;
+	first.fogParm3Edited = true;
+	written.Clear();
+	first.ToDict( &written );
+	textureKept &= idStr::Cmp( written.GetString( "shaderParm3" ), "0.25" ) == 0;
+	idDict emitter;
+	emitter.Set( "classname", "light" );
+	emitter.Set( "emitter", "1" );
+	emitter.Set( "emit_shape", "omni" );
+	emitter.Set( "light_radius", "200 200 200" );
+	emitter.Set( "shaderParm3", "7" );
+	SelfTestRoundTrip( emitter, first, second, written );
+	test.Check( textureKept && idStr::Cmp( written.GetString( "shaderParm3" ), "7" ) == 0, "V7 FK-03: a texture light's and an emitter's shaderParm3 is written back as read, never changed" );
+
+	first.FromDict( &fog );
+	first.fogParm3 = 250.0f;
+	first.fogParm3Edited = true;
+	written.Clear();
+	first.ToDict( &written );
+	test.Check( idStr::Cmp( written.GetString( "shaderParm3" ), "250" ) == 0, "V7 FK-04: a density changed in the Fog tab writes shaderParm3" );
+
+	idDict faint = fog;
+	faint.Set( "shaderParm3", "0.5" );
+	SelfTestRoundTrip( faint, first, second, written );
+	first.fogParm3Edited = true;
+	written.Clear();
+	first.ToDict( &written );
+	test.Check( first.fogParm3 == 0.5f && LightFogFaint( first.fogParm3 ) && !LightFogFaint( 1.0f ) && !LightFogFaint( 600.0f )
+				&& idStr::Cmp( written.GetString( "shaderParm3" ), "0.5" ) == 0, "V7 FK-05: a shaderParm3 of 0.5 opens in the Faint form and comes back as 0.5" );
+
+	test.Check( idMath::Fabs( LightFogDensityToDistance( 0.0f ) - 8192.0f ) < 0.05f && idMath::Fabs( LightFogDensityToDistance( 50.0f ) - 512.0f ) < 0.05f
+				&& idMath::Fabs( LightFogDensityToDistance( 100.0f ) - 32.0f ) < 0.05f && idMath::Fabs( LightFogDistanceToDensity( 8192.0f ) ) < 0.01f
+				&& idMath::Fabs( LightFogDistanceToDensity( 512.0f ) - 50.0f ) < 0.01f && idMath::Fabs( LightFogDistanceToDensity( 32.0f ) - 100.0f ) < 0.01f,
+				"V7 FK-06: the density slider and the distance are inverses at 0, 50 and 100 ( 8,192, 512, 32 )" );
+
+	const idMaterial* basicFog = declManager->FindMaterial( "fogs/basicFog", false );
+	const idMaterial* pitFog = declManager->FindMaterial( "fogs/pitFog", false );
+	test.Check( basicFog != NULL && basicFog->IsFogLight() && pitFog != NULL && !pitFog->IsFogLight(),
+				"V7 FK-07: the fog material test ( IsFogLight, which LoadLightTextures' fog list uses ) takes fogs/basicFog and not fogs/pitFog" );
+
+	first.FromDict( &fog );
+	first.DefaultProjected();
+	test.Check( first.fogParm3 == 600.0f && first.fogAlbedo == 0.6f && first.fogEmission == 0.5f && first.fogEdge == 64.0f && first.volumetricMode == 2,
+				"V7 FK-08: a type switch keeps the fog keys" );
+
+	// review CN3-4: "Make it a fog light" writes the texture ( and an emitter's kind ) and no fog key, no shaderParm3
+	// review O2-5: the whole written dict before and after; only the texture may differ
+	texture.Set( "fog_albedo", "0.3" );
+	first.FromDict( &texture );
+	idDict before;
+	first.ToDict( &before );
+	LightMakeFogLight( first );
+	written.Clear();
+	first.ToDict( &written );
+	bool onlyTexture = written.GetNumKeyVals() == before.GetNumKeyVals();
+	for( int i = 0; i < written.GetNumKeyVals(); i++ )
+	{
+		const idKeyValue* kv = written.GetKeyVal( i );
+		onlyTexture &= kv->GetKey().Icmp( "texture" ) == 0 || idStr::Cmp( before.GetString( kv->GetKey() ), kv->GetValue() ) == 0;
+	}
+	const bool textureMade = idStr::Cmp( written.GetString( "texture" ), "fogs/basicFog" ) == 0 && onlyTexture;
+	first.FromDict( &emitter );
+	LightMakeFogLight( first );
+	written.Clear();
+	first.ToDict( &written );
+	test.Check( textureMade && !first.emitter.enabled && idStr::Cmp( written.GetString( "texture" ), "fogs/basicFog" ) == 0
+				&& idStr::Cmp( written.GetString( "shaderParm3" ), "7" ) == 0 && LightIsFogLight( first ),
+				"V7 FK-09: Make it a fog light changes a texture light's texture alone, makes an emitter a texture light with the fog material, shaderParm3 as read" );
+
+	// reviews CN3-1, O2-1: Cancel writes original.ToDict: a light without shaderParm3 that the tab edits gets the key removed
+	// again; after a save ( original = cur ) the saved density stays
+	idDict bare = fog;
+	bare.Delete( "shaderParm3" );
+	LightInfo original;
+	original.FromDict( &bare );
+	first = original;
+	first.fogParm3 = 300.0f;
+	first.fogParm3Edited = true;
+	written.Clear();
+	original.ToDict( &written );
+	const bool cancelRemoves = SelfTestDeletes( written, "shaderParm3" );
+	original = first;
+	written.Clear();
+	original.ToDict( &written );
+	test.Check( cancelRemoves && idStr::Cmp( written.GetString( "shaderParm3" ), "300" ) == 0,
+				"V7 FK-10: Cancel removes a density the light did not have, and keeps one saved before it" );
+
+	// review O2-5: volumetric 1 round trips
+	idDict always = fog;
+	always.Set( "volumetric", "1" );
+	test.Check( SelfTestRoundTrip( always, first, second, written ) && first.volumetricMode == 1 && idStr::Cmp( written.GetString( "volumetric" ), "1" ) == 0,
+				"V7 FK-11: volumetric 1 is read and written back" );
+
+	// ---- WP-J21: the emitter's switch, emit_glow, round trips on a fog light and on a texture light, where it makes no
+	// emitter block; its default writes no key; a type switch keeps it ----
+	idDict noGlowFog = fog;
+	noGlowFog.Set( "emit_glow", "0" );
+	const bool noGlowFogSame = SelfTestRoundTrip( noGlowFog, first, second, written );
+	test.Check( noGlowFogSame && !first.emitGlow && !second.emitGlow && idStr::Cmp( written.GetString( "emit_glow" ), "0" ) == 0,
+				"WP-J21 FK-12: emit_glow 0 is read and written back on a fog light" );
+
+	idDict noGlowTexture = texture;
+	noGlowTexture.Set( "emit_glow", "0" );
+	const bool noGlowTextureSame = SelfTestRoundTrip( noGlowTexture, first, second, written );
+	const bool noBlock = !first.hasEmitterBlock && !first.emitter.enabled && !second.emitGlow && !HasEmitterBlockKey( written, "emit" );
+	LightInfo seeded;
+	seeded.FromDict( &noGlowTexture );
+	SwitchToEmitter( seeded, noGlowTexture );
+	LightInfo seededPlain;
+	seededPlain.FromDict( &texture );
+	SwitchToEmitter( seededPlain, texture );
+	test.Check( noGlowTextureSame && noBlock && idStr::Cmp( written.GetString( "emit_glow" ), "0" ) == 0 && !seeded.emitGlow
+				&& memcmp( &seeded.emitter, &seededPlain.emitter, sizeof( seeded.emitter ) ) == 0,
+				"WP-J21 FK-13: on a texture light emit_glow 0 round trips and is no emitter block; the Emitter tab seeds the light as without it" );
+
+	idDict glowing = fog;
+	glowing.Set( "emit_glow", "1" );
+	SelfTestRoundTrip( glowing, first, second, written );
+	test.Check( first.emitGlow && second.emitGlow && SelfTestDeletes( written, "emit_glow" ),
+				"WP-J21 FK-14: emit_glow 1, the default, writes no key and deletes a stale one" );
+
+	first.FromDict( &noGlowFog );
+	first.DefaultProjected();
+	test.Check( !first.emitGlow, "WP-J21 FK-15: a type switch keeps emit_glow" );
+	// ---- END WP-J21 ----
+
+	// ---- WP-J27: the light's own bloom, the bloom_* keys ( LightBloom ): defaults write no key and delete stale ones; a star and
+	// a glow round trip and keep the other shape's keys; the hot boost is the light's own only with its key; clamps and values
+	// that are not numbers read as idLight::ParseBloomStyle reads them; a type switch and the kind tabs keep the keys; they are
+	// no emitter block; Cancel takes them off a light that had none; a shape switch keeps the other shape's values ----
+	static const char* const bloomKeys[] =
+	{
+		BLOOM_KEY_SHAPE, BLOOM_KEY_INTENSITY, BLOOM_KEY_HOT_BOOST, BLOOM_KEY_SPIKES, BLOOM_KEY_SPIKE_ROTATION, BLOOM_KEY_SPIKE_RADIUS,
+		BLOOM_KEY_SPIKE_BLUR, BLOOM_KEY_SPIKE_SPREAD, BLOOM_KEY_SPIKE_RATIO, BLOOM_KEY_SPIKE_RINGING, BLOOM_KEY_SPIKE_SHIFT,
+		BLOOM_KEY_SPIKE_FALLOFF, BLOOM_KEY_GLOW_RADIUS, BLOOM_KEY_GLARE
+	};
+	static const int numBloomKeys = sizeof( bloomKeys ) / sizeof( bloomKeys[ 0 ] );
+
+	idDict bloomDefaults = texture;
+	bloomDefaults.Set( BLOOM_KEY_SHAPE, "0" );
+	bloomDefaults.Set( BLOOM_KEY_INTENSITY, "1" );
+	bloomDefaults.Set( BLOOM_KEY_SPIKES, "3" );
+	bloomDefaults.Set( BLOOM_KEY_SPIKE_ROTATION, "0.5" );
+	bloomDefaults.Set( BLOOM_KEY_SPIKE_RADIUS, "0" );
+	bloomDefaults.Set( BLOOM_KEY_SPIKE_BLUR, "0" );
+	bloomDefaults.Set( BLOOM_KEY_SPIKE_SPREAD, "0" );
+	bloomDefaults.Set( BLOOM_KEY_SPIKE_RATIO, "0" );
+	bloomDefaults.Set( BLOOM_KEY_SPIKE_RINGING, "0.75" );
+	bloomDefaults.Set( BLOOM_KEY_SPIKE_SHIFT, "0.1" );
+	bloomDefaults.Set( BLOOM_KEY_SPIKE_FALLOFF, "0" );
+	bloomDefaults.Set( BLOOM_KEY_GLOW_RADIUS, "1" );
+	bloomDefaults.Set( BLOOM_KEY_GLARE, "0" );
+	SelfTestRoundTrip( bloomDefaults, first, second, written );
+	bool bloomAllDeleted = true;
+	for( int i = 0; i < numBloomKeys; i++ )
+	{
+		bloomAllDeleted &= SelfTestDeletes( written, bloomKeys[ i ] );
+	}
+	LightBloom viewBloom;
+	viewBloom.Defaults();
+	test.Check( bloomAllDeleted && first.bloom.Same( viewBloom ) && second.bloom.Same( viewBloom ),
+				"WP-J27 FK-16: every bloom key at its default writes no key and deletes a stale one" );
+
+	idDict bloomStar = texture;
+	bloomStar.Set( BLOOM_KEY_SHAPE, "1" );
+	bloomStar.Set( BLOOM_KEY_INTENSITY, "2.5" );
+	bloomStar.Set( BLOOM_KEY_SPIKES, "5" );
+	bloomStar.Set( BLOOM_KEY_SPIKE_ROTATION, "0.25" );
+	bloomStar.Set( BLOOM_KEY_SPIKE_RADIUS, "0.6" );
+	bloomStar.Set( BLOOM_KEY_SPIKE_BLUR, "0.3" );
+	bloomStar.Set( BLOOM_KEY_SPIKE_SPREAD, "0.2" );
+	bloomStar.Set( BLOOM_KEY_SPIKE_RATIO, "-0.4" );
+	bloomStar.Set( BLOOM_KEY_SPIKE_RINGING, "0.5" );
+	bloomStar.Set( BLOOM_KEY_SPIKE_SHIFT, "0.3" );
+	bloomStar.Set( BLOOM_KEY_SPIKE_FALLOFF, "0.7" );
+	bloomStar.Set( BLOOM_KEY_GLOW_RADIUS, "0.4" );		// the glow's: it stays on a star
+	const bool starSame = SelfTestRoundTrip( bloomStar, first, second, written );
+	const LightBloom& star = first.bloom;
+	test.Check( starSame && star.Same( second.bloom ) && star.shape == BLOOM_STYLE_STAR && star.intensity == 2.5f && star.spikes == 5
+				&& star.spikeRotation == 0.25f && star.spikeRadius == 0.6f && star.spikeBlur == 0.3f && star.spikeSpread == 0.2f
+				&& star.spikeRatio == -0.4f && star.spikeRinging == 0.5f && star.spikeShift == 0.3f && star.spikeFalloff == 0.7f
+				&& star.glowRadius == 0.4f && idStr::Cmp( written.GetString( BLOOM_KEY_SHAPE ), "1" ) == 0
+				&& idStr::Cmp( written.GetString( BLOOM_KEY_SPIKES ), "5" ) == 0 && idStr::Cmp( written.GetString( BLOOM_KEY_SPIKE_RATIO ), "-0.4" ) == 0
+				&& idStr::Cmp( written.GetString( BLOOM_KEY_GLOW_RADIUS ), "0.4" ) == 0,
+				"WP-J27 FK-17: a star with every value set round trips; the glow's key stays on it" );
+	LightBloom starBloom = first.bloom;
+
+	idDict bloomGlow = texture;
+	bloomGlow.Set( BLOOM_KEY_SHAPE, "2" );
+	bloomGlow.Set( BLOOM_KEY_INTENSITY, "0.5" );
+	bloomGlow.Set( BLOOM_KEY_GLOW_RADIUS, "0.5" );
+	bloomGlow.Set( BLOOM_KEY_GLARE, "0.25" );
+	bloomGlow.Set( BLOOM_KEY_SPIKES, "6" );		// the star's: it stays on a glow
+	const bool glowSame = SelfTestRoundTrip( bloomGlow, first, second, written );
+	test.Check( glowSame && first.bloom.Same( second.bloom ) && first.bloom.shape == BLOOM_STYLE_GLOW && first.bloom.intensity == 0.5f
+				&& first.bloom.glowRadius == 0.5f && first.bloom.glare == 0.25f && first.bloom.spikes == 6
+				&& idStr::Cmp( written.GetString( BLOOM_KEY_SHAPE ), "2" ) == 0 && idStr::Cmp( written.GetString( BLOOM_KEY_GLARE ), "0.25" ) == 0
+				&& idStr::Cmp( written.GetString( BLOOM_KEY_SPIKES ), "6" ) == 0,
+				"WP-J27 FK-18: a glow round trips; the star's key stays on it" );
+
+	SelfTestRoundTrip( texture, first, second, written );
+	const bool hotAbsent = !first.bloom.hotBoostOwn && !second.bloom.hotBoostOwn && SelfTestDeletes( written, BLOOM_KEY_HOT_BOOST );
+	idDict hotZero = texture;
+	hotZero.Set( BLOOM_KEY_HOT_BOOST, "0" );
+	SelfTestRoundTrip( hotZero, first, second, written );
+	bool hotOwn = first.bloom.hotBoostOwn && first.bloom.hotBoost == 0.0f && second.bloom.hotBoostOwn && second.bloom.hotBoost == 0.0f
+				  && idStr::Cmp( written.GetString( BLOOM_KEY_HOT_BOOST ), "0" ) == 0;
+	first.bloom.hotBoostOwn = false;		// the tab's "Own hot boost" unticked
+	written.Clear();
+	first.ToDict( &written );
+	hotOwn &= SelfTestDeletes( written, BLOOM_KEY_HOT_BOOST );
+	idDict hotHigh = texture;
+	hotHigh.Set( BLOOM_KEY_HOT_BOOST, "12" );
+	SelfTestRoundTrip( hotHigh, first, second, written );
+	const bool hotClamped = first.bloom.hotBoostOwn && first.bloom.hotBoost == 8.0f && idStr::Cmp( written.GetString( BLOOM_KEY_HOT_BOOST ), "8" ) == 0;
+	idDict hotNan = texture;
+	hotNan.Set( BLOOM_KEY_HOT_BOOST, "nan" );
+	SelfTestRoundTrip( hotNan, first, second, written );
+	const bool hotNanView = !first.bloom.hotBoostOwn && SelfTestDeletes( written, BLOOM_KEY_HOT_BOOST );
+	test.Check( hotAbsent && hotOwn && hotClamped && hotNanView,
+				"WP-J27 FK-19: without bloom_hot_boost the light takes the view's; 0 present is its own 0; unticking deletes it; 12 is 8; nan is as no key" );
+
+	idDict bloomWild = texture;
+	bloomWild.Set( BLOOM_KEY_SHAPE, "5" );
+	bloomWild.Set( BLOOM_KEY_INTENSITY, "nan" );
+	bloomWild.Set( BLOOM_KEY_SPIKES, "9" );
+	bloomWild.Set( BLOOM_KEY_SPIKE_ROTATION, "nan" );
+	bloomWild.Set( BLOOM_KEY_SPIKE_RATIO, "-3" );
+	bloomWild.Set( BLOOM_KEY_GLARE, "2" );
+	first.FromDict( &bloomWild );
+	bool wildRead = first.bloom.shape == BLOOM_STYLE_VIEW && first.bloom.intensity == 1.0f && first.bloom.spikes == 7
+					&& first.bloom.spikeRotation == 0.5f && first.bloom.spikeRatio == -1.0f && first.bloom.glare == 1.0f;
+	bloomWild.Set( BLOOM_KEY_SHAPE, "-1" );
+	bloomWild.Set( BLOOM_KEY_INTENSITY, "6" );
+	bloomWild.Set( BLOOM_KEY_SPIKES, "0" );
+	first.FromDict( &bloomWild );
+	wildRead &= first.bloom.shape == BLOOM_STYLE_VIEW && first.bloom.intensity == 4.0f && first.bloom.spikes == 1;
+	test.Check( wildRead, "WP-J27 FK-20: a shape other than 1 or 2 is the view's, a value out of range is clamped, one that is not a number takes its default" );
+
+	first.FromDict( &bloomStar );
+	first.DefaultProjected();
+	const bool typeKept = first.bloom.Same( starBloom );
+	LightInfo kind;
+	kind.FromDict( &bloomStar );
+	SwitchToEmitter( kind, bloomStar );
+	idDict kindWritten;
+	kind.ToDict( &kindWritten );
+	const bool toEmitterKept = kind.emitter.enabled && kind.bloom.Same( starBloom ) && idStr::Cmp( kindWritten.GetString( BLOOM_KEY_SHAPE ), "1" ) == 0
+							   && idStr::Cmp( kindWritten.GetString( BLOOM_KEY_SPIKES ), "5" ) == 0;
+	SwitchToTexture( kind );
+	kindWritten.Clear();
+	kind.ToDict( &kindWritten );
+	const bool toTextureKept = !kind.emitter.enabled && kind.bloom.Same( starBloom ) && idStr::Cmp( kindWritten.GetString( BLOOM_KEY_SHAPE ), "1" ) == 0
+							   && idStr::Cmp( kindWritten.GetString( BLOOM_KEY_SPIKES ), "5" ) == 0;
+	test.Check( typeKept && toEmitterKept && toTextureKept, "WP-J27 FK-21: a type switch, the Emitter tab and the Texture tab keep the bloom keys" );
+
+	first.FromDict( &bloomStar );
+	written.Clear();
+	first.ToDict( &written );
+	LightInfo seededStar;
+	seededStar.FromDict( &bloomStar );
+	SwitchToEmitter( seededStar, bloomStar );
+	LightInfo seededBare;
+	seededBare.FromDict( &texture );
+	SwitchToEmitter( seededBare, texture );
+	test.Check( !first.hasEmitterBlock && !first.emitter.enabled && !HasEmitterBlockKey( bloomStar, "emit" ) && !HasEmitterBlockKey( written, "emit" )
+				&& memcmp( &seededStar.emitter, &seededBare.emitter, sizeof( seededStar.emitter ) ) == 0,
+				"WP-J27 FK-22: the bloom keys are no emitter block; the Emitter tab seeds a light as without them" );
+
+	LightInfo bareOriginal;
+	bareOriginal.FromDict( &texture );
+	first = bareOriginal;
+	first.bloom = starBloom;
+	first.bloom.hotBoostOwn = true;
+	first.bloom.hotBoost = 2.0f;
+	idDict edited = texture;
+	written.Clear();
+	first.ToDict( &written );
+	SelfTestMerge( edited, written );		// the live preview
+	const bool editApplied = edited.FindKey( BLOOM_KEY_SHAPE ) != NULL && edited.FindKey( BLOOM_KEY_HOT_BOOST ) != NULL;
+	written.Clear();
+	bareOriginal.ToDict( &written );
+	SelfTestMerge( edited, written );		// Cancel
+	test.Check( editApplied && edited.MatchPrefix( "bloom_" ) == NULL, "WP-J27 FK-23: Cancel takes every bloom key off a light that had none" );
+
+	first.FromDict( &bloomStar );
+	first.bloom.shape = BLOOM_STYLE_GLOW;		// the tab's Shape combo
+	written.Clear();
+	first.ToDict( &written );
+	idDict switched = bloomStar;
+	SelfTestMerge( switched, written );
+	second.FromDict( &switched );
+	const bool glowChosen = second.bloom.shape == BLOOM_STYLE_GLOW && idStr::Cmp( written.GetString( BLOOM_KEY_SHAPE ), "2" ) == 0;
+	second.bloom.shape = BLOOM_STYLE_STAR;
+	test.Check( glowChosen && second.bloom.Same( starBloom ), "WP-J27 FK-24: a shape switch keeps the other shape's values on the light; switching back restores them" );
+	// ---- END WP-J27 ----
+}
+
 #endif // !ID_RETAIL
 
 } //namespace ImGuiTools
@@ -6625,6 +7561,7 @@ CONSOLE_COMMAND( le_selfTest, "checks the easy-mode light geometry contracts and
 	ImGuiTools::SelfTestEmitterCosts( test );
 	//puncho end
 	ImGuiTools::SelfTestOpenMode( test );
+	ImGuiTools::SelfTestFogKeys( test );		// V7
 
 	common->Printf( "le_selfTest: %d checks, %d passed, %d failed\n", test.run, test.run - test.failed, test.failed );
 }

@@ -287,7 +287,39 @@ typedef struct
 
 	stencilStage_t*     stencilStage;
 	newShaderStage_t*	newStage;			// vertex / fragment program based stage
+
+	// ---- WP-J21: the bloom's gate ----
+	byte				glowKey;			// the stage's own word: GLOW_KEY_NONE, GLOW_KEY_GLOW ( "glow" ) or GLOW_KEY_NOGLOW ( "noGlow" )
+	byte				glowMark;			// set at the end of the parse: GLOW_MARK_NONE, or why the stage passes the gate ( glowMark_t )
+	// ---- END WP-J21 ----
 } shaderStage_t;
+
+// ---- WP-J21: the bloom's gate ( the owner, 2026-11-27: "lock bloom behind a material key/emissive materials and fog so it
+// doesn't automatically make the game glowing and blurry" ). A stage whose mark is not GLOW_MARK_NONE writes the glow mask in
+// its own draw, and only what the mask vouches for reaches the bloom. idMaterial::Parse decides the mark by the conservative
+// rule of WP-J21 ( where the rule is in doubt a stage does not pass; the word "glow" lets it in, "noGlow" keeps it out ); an
+// in-world gui surface passes at draw time ( the stage loop knows the surface is a gui's ) ----
+enum glowKey_t
+{
+	GLOW_KEY_NONE,
+	GLOW_KEY_GLOW,
+	GLOW_KEY_NOGLOW
+};
+
+enum glowMark_t
+{
+	GLOW_MARK_NONE,			// does not pass: lit light, or in doubt, or never ( a reflection, a picture already drawn, a masked colour )
+	GLOW_MARK_KEY,			// the word "glow" on the stage or the material
+	GLOW_MARK_SELFLIT,		// an additive ambient stage of a material with a lighting stage: self-illumination
+	GLOW_MARK_UNLIT_ADD,	// an additive stage of an unlit material not named for smoke, dust or the like: fire, flares, flashes
+	GLOW_MARK_VIDEO			// a video stage: a screen emits
+};
+
+// true where a stage never passes the gate, key or not ( a program of its own, a masked colour channel, a reflection or
+// the screen as texgen, a blend reading the destination's alpha, the picture already drawn, the depth, a dynamic
+// render ), with drawStateBits the state it draws with: the parse's mark and the in-world gui path both ask it
+bool R_GlowStageNever( const shaderStage_t* stage, uint64 drawStateBits );
+// ---- END WP-J21 ----
 
 typedef enum
 {
@@ -955,6 +987,11 @@ public:
 	{
 		return portalSky;
 	};
+	// WP-J21: the material's own glow word ( glowKey_t ); each stage's mark is in shaderStage_t::glowMark
+	int					GetGlowKey() const
+	{
+		return glowKey;
+	};
 	void				AddReference();
 
 	// motorsep 11-23-2014; material LOD keys that define what LOD iteration the surface falls into
@@ -1091,6 +1128,7 @@ private:
 	bool				suppressInSubview;
 	bool				portalSky;
 	int					refCount;
+	int					glowKey;			// WP-J21: the material's word, glowKey_t
 };
 
 typedef idList<const idMaterial*, TAG_MATERIAL> idMatList;

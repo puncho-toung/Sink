@@ -287,13 +287,14 @@ struct FROXEL_FOG
 // distance ( CN4-2: the fog pass's opacity is then at most Linear( share ) at any depth; the medium reaches that opacity at
 // D and goes on thickening past it, review O1-1 ). The density rises from 0 at the fog plane to full mediaParms2.z^-1 units below it ( the fog
 // pass's enter ramp: 8 texels of its enter image at FOG_SCALE 0.001, 125 units ); sigma_t is the rate over D
-// ( mediaParms2.y, times the store scale ). The albedo's share scatters the lights and the ambient; the rest shines with
-// the light's colour as fog.ps.hlsl draws it ( clamped, decoded from sRGB ), so at albedo 0 a deep, long ray reads
-// colour * ( 1 - T ), the fog pass's blend. The fog plane is the light's far clip plane, unit length, in the relative
-// frame, negative inside. While the history holds last frame's fog: a fog light
-// that is new, moved or changed its colour by more than historyParms.z of the larger clips it, and its emission's change
-// is the colour's change in this frame's medium. position is the froxel's centre in the relative frame ( V4g: the medium
-// is taken there, not at the inject's jittered sample, review F1-1 )
+// ( mediaParms2.y, times the store scale ). The albedo's share scatters the lights and the ambient; the fog also shines
+// with the light's colour as fog.ps.hlsl draws it ( clamped, decoded from sRGB ), times its glow ( V7, row 156: the
+// spawnarg "fog_emission" in emitter[1].y, 1 by default, independent of the albedo ), so at glow 1 a deep, long ray
+// reads colour * ( 1 - T ) plus what it scatters, the fog pass's blend at albedo 0. The fog plane is the light's far
+// clip plane, unit length, in the relative frame, negative inside. While the history holds last frame's fog: a fog light
+// that is new, moved or changed its colour or its glow by more than historyParms.z of the larger clips it, and its
+// emission's change is the change of colour x glow in this frame's medium. position is the froxel's centre in the
+// relative frame ( V4g: the medium is taken there, not at the inject's jittered sample, review F1-1 )
 void FroxelAddFogLight( uint r, float3 position, inout FROXEL_FOG fog, inout bool clip )
 {
 	const float4 P = float4( position, 1.0 );
@@ -312,17 +313,31 @@ void FroxelAddFogLight( uint r, float3 position, inout FROXEL_FOG fog, inout boo
 	// 1 for a share of 1 ( a distance alpha ). mediaParms2.y * sliceParms.z is the rate ( the store scale cancels )
 	const float shareOpacity = sRGBToLinearRGB( L.emitter[1].xxx ).x;
 	const float share = min( 1.0, -log( max( 1.0 - shareOpacity, 1e-6 ) ) / ( froxel.mediaParms2.y * froxel.sliceParms.z ) );
-	const float density = saturate( -height * froxel.mediaParms2.z ) * share;
-	if( density <= 0.0 )
+	float density = saturate( -height * froxel.mediaParms2.z ) * share;
+	// V7 ( row 241 ): soft sides, track M's edge rule: within emitter[1].z units of the faces but the fog plane the density
+	// falls to 0 at the face, smoothstep( 0, 1, d / width ), d / width the distance to the nearest of them in widths ( the plane
+	// values times the record's lanes, the planes' inverse lengths over the width, R_VolumetricFogLightRecord ); inside the
+	// volume, so the bounds hold
+	const float edgeWidth = L.emitter[1].z;
+	if( edgeWidth > 0.0 )
+	{
+		const float faceS = min( projS * L.emitter[2].x, ( projQ - projS ) * L.emitter[2].y );
+		const float faceT = min( projT * L.emitter[2].z, ( projQ - projT ) * L.emitter[2].w );
+		density *= smoothstep( 0.0, 1.0, min( min( faceS, faceT ), fallS * L.emitter[1].w ) );	// the lanes are in widths ( review O1-8 )
+	}
+	// review CN2-1: with soft sides a froxel on a face has no density, and must still reach the clip below when the width
+	// changed; it adds zeros
+	if( density <= 0.0 && edgeWidth <= 0.0 )
 	{
 		return;
 	}
 	const float sigmaT = froxel.mediaParms2.y / max( L.color.w, 1.0 ) * density;		// D is 500 or an alpha above 1: the max guards a record nobody filled
 	const float albedo = saturate( L.ids.w );
+	const float glow = max( L.emitter[1].y, 0.0 );
 	const float3 colour = sRGBToLinearRGB( L.color.rgb );
 	fog.sigmaT += sigmaT;
 	fog.sigmaS += albedo * sigmaT;
-	fog.emission += colour * ( sigmaT * ( 1.0 - albedo ) );
+	fog.emission += colour * ( sigmaT * glow );
 	if( froxel.jitter.w > 0.0 )
 	{
 		const int prev = int( L.ids.z );
@@ -331,10 +346,16 @@ void FroxelAddFogLight( uint r, float3 position, inout FROXEL_FOG fog, inout boo
 		const float prevDistance = isNew ? L.color.w : t_PrevRecords[ prev ].color.w;
 		const float prevShare = isNew ? L.emitter[1].x : t_PrevRecords[ prev ].emitter[1].x;
 		const float prevAlbedo = isNew ? L.ids.w : t_PrevRecords[ prev ].ids.w;
-		fog.emissionChange += ( colour - prevColour ) * ( sigmaT * ( 1.0 - albedo ) );
+		// a previous record of another kind ( an emitter that became a fog light ) holds another lane here: the colour's and
+		// the glow's clips below cut its history ( reviews CN1-2, QR1 F2 )
+		const float prevGlow = isNew ? glow : max( t_PrevRecords[ prev ].emitter[1].y, 0.0 );
+		const float prevEdge = isNew ? edgeWidth : t_PrevRecords[ prev ].emitter[1].z;
+		fog.emissionChange += ( colour * glow - prevColour * prevGlow ) * sigmaT;
 		// a fog light's D or alpha share can change without a def update ( a material's expression ): it clips as a colour does
-		// ( review O1-5 ); so does a changed albedo ( the light editor's key: V4g, review F1-10 )
+		// ( review O1-5 ); so does a changed albedo ( the light editor's key: V4g, review F1-10 ), a glow changed by more
+		// than a colour may change and a changed soft side ( V7 )
 		if( isNew || ( L.flags & RLF_MOVED_THIS_FRAME ) != 0 || any( abs( colour - prevColour ) > froxel.historyParms.z * max( colour, prevColour ) )
+				|| abs( glow - prevGlow ) > froxel.historyParms.z * max( glow, prevGlow ) || edgeWidth != prevEdge
 				|| abs( L.color.w - prevDistance ) > froxel.historyParms.z * max( L.color.w, prevDistance ) || abs( L.emitter[1].x - prevShare ) > froxel.historyParms.z || L.ids.w != prevAlbedo )
 		{
 			clip = true;

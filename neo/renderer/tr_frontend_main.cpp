@@ -256,6 +256,9 @@ extern bool verifySortKeys;
 void R_VerifyPrintSortKeys( const viewDef_t* viewDef, drawSurf_t* const* drawSurfs, const uint64* keys, const int numDrawSurfs );
 //puncho end
 
+// track F ( F7j ): the opaque surfaces of a world area model sorted as one block at the area's depth ( see below )
+idCVar r_sortAreaSurfaces( "r_sortAreaSurfaces", "1", CVAR_RENDERER | CVAR_BOOL, "sort the opaque surfaces of a world area together at the area's depth, in the model's order, so neighbouring chunks draw one after another; 0 = each surface at its own depth" );
+
 /*
 =================
 R_SortDrawSurfs
@@ -293,7 +296,14 @@ static void R_SortDrawSurfs( drawSurf_t** drawSurfs, const int numDrawSurfs )
 		{
 			float min = 0.0f;
 			float max = 1.0f;
-			idRenderMatrix::DepthBoundsForBounds( min, max, drawSurfs[i]->space->mvp, drawSurfs[i]->frontEndGeo->bounds );
+			// track F ( F7j ): an opaque surface of a world area model takes its area's depth, so the area's surfaces stay
+			// together in submission order ( the model's surface order, reversed ): neighbouring chunks of one material
+			// draw one after another in the depth-equal passes and the frame changes state less. Between areas, and for
+			// every other surface, the order is as before
+			const idRenderEntityLocal* def = drawSurfs[i]->space->entityDef;
+			const bool areaOrder = r_sortAreaSurfaces.GetBool() && drawSurfs[i]->sort == SS_OPAQUE && def != NULL &&
+								   def->parms.hModel != NULL && def->parms.hModel->IsStaticWorldModel();
+			idRenderMatrix::DepthBoundsForBounds( min, max, drawSurfs[i]->space->mvp, areaOrder ? def->localReferenceBounds : drawSurfs[i]->frontEndGeo->bounds );
 #if ID_REVERSED_Z
 			// the nearest point is the maximum depth; 1 - it keeps today's descending order
 			dist = idMath::Ftoui16( ( 1.0f - max ) * 0xFFFF );
@@ -1088,7 +1098,9 @@ void R_RenderView( viewDef_t* parms )
 	R_NumberRecordLights();		// F1: numbers the lights that get a record ( a view with lists, or the fog's records )
 
 	// adds ambient surfaces and create any necessary interaction surfaces to add to the light lists
+	const uint64 addModelsStart = Sys_Microseconds();		// track F ( F7a ): like usAddLights
 	R_AddModels();
+	tr.pc.usAddModels += Sys_Microseconds() - addModelsStart;
 
 	// build up the GUIs on world surfaces
 	R_AddInGameGuis( tr.viewDef->drawSurfs, tr.viewDef->numDrawSurfs );

@@ -1008,7 +1008,10 @@ bool DeviceManager_VK::createDevice()
 						  .setGeometryShader( actualDeviceFeatures2.features.geometryShader )
 						  .setFillModeNonSolid( actualDeviceFeatures2.features.fillModeNonSolid )
 						  .setImageCubeArray( true )
-						  .setDualSrcBlend( true );
+						  .setDualSrcBlend( true )
+						  // WP-J21: the _hdrGlow pipelines give the glow mask its own blend and write mask
+						  .setIndependentBlend( actualDeviceFeatures2.features.independentBlend );
+	m_DeviceParams.independentBlend = ( actualDeviceFeatures2.features.independentBlend != VK_FALSE );
 
 	auto vulkan12features = vk::PhysicalDeviceVulkan12Features()
 							.setDescriptorIndexing( true )

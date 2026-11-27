@@ -39,6 +39,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "Passes/MipMapGenPass.h"
 #include "Passes/SsaoPass.h"
 #include "Passes/TonemapPass.h"
+// ---- TRACK G: the bloom of the main view; the member beside toneMapPass below ----
+#include "Passes/BloomPass.h"
+// ---- END TRACK G ----
 #include "Passes/TemporalAntiAliasingPass.h"
 #include "Passes/VolumetricFogPass.h"
 
@@ -216,6 +219,9 @@ private:
 										  const float guiStereoScreenOffset, const int stereoEye, const bool stopAtFar );
 
 	void				RenderInteractions( const drawSurf_t* surfList, const viewLight_t* vLight, int depthFunc, bool performStencilTest, bool useLightDepthBounds, const interactionSort_t sortFilter );
+	// track F ( F7j ): RenderInteractions' lists of a light's lit surfaces, emptied per call, their memory kept
+	idList< const drawSurf_t* >	interactionSurfaces;
+	idList< const drawSurf_t* >	interactionComplexSurfaces;
 
 	// RB
 	void				AmbientPass( const drawSurf_t* const* drawSurfs, int numDrawSurfs, bool fillGbuffer );
@@ -234,9 +240,6 @@ private:
 
 	void				DrawMotionVectors();
 	void				TemporalAAPass( const viewDef_t* _viewDef );
-
-	// RB: outdated HDR stuff
-	void				Bloom( const viewDef_t* viewDef );
 
 	void				DrawScreenSpaceAmbientOcclusion( const viewDef_t* _viewDef );
 	void				DrawScreenSpaceAmbientOcclusion2( const viewDef_t* _viewDef );
@@ -403,10 +406,7 @@ private:
 
 	// RB begin
 	// TODO remove
-	float				hdrAverageLuminance;
-	float				hdrMaxLuminance;
 	float				hdrTime;
-	float				hdrKey;
 
 	// quad-tree for managing tiles within tiled shadow map
 	TileMap				tileMap;
@@ -434,12 +434,6 @@ private:
 	// other, and each has used the array before it returns
 	idList<const drawSurf_t*, TAG_RENDER>	perforatedScratch;
 
-	//puncho - E-R43-1 (2R R4.3 follow-up): RenderInteractions' lists of one light's lit surfaces, the fast-path ones and
-	// the complex ones; they were fixed lists of 2,048 and 256 on the stack. They double when they are full and never
-	// shrink. RenderInteractions never runs inside itself, and is done with them before it returns
-	idList<const drawSurf_t*, TAG_RENDER>	interactionSurfaces;
-	idList<const drawSurf_t*, TAG_RENDER>	interactionComplexSurfaces;
-
 	Framebuffer*					currentFrameBuffer;
 	Framebuffer*					lastFrameBuffer;
 	nvrhi::CommandListHandle		commandList;
@@ -450,6 +444,10 @@ private:
 	nvrhi::BufferHandle				froxelFogParms;			// volatile, sizeof( froxelFogParms_t ); zeroed at the start of every 3D view
 	nvrhi::TextureHandle			froxelDummyVolume;		// the 1x1x1 "no fog" volume; owned here for the backend's lifetime
 	nvrhi::TextureHandle			froxelVolume;			// the volume the fog set binds: the dummy until track V swaps in its own at a pass boundary
+	// WP-J21: the fog's glow. Set by the fog's apply where its Render ran the glow forms in this view, false again at the
+	// start of every 3D view; the bloom's level-1 pass reads froxelNoGlowVolume beside froxelVolume
+	bool							froxelGlowView;
+	nvrhi::ITexture*				froxelNoGlowVolume;
 	// ResetGraphicsStateCache() after the swap, because a binding set is re-patched only when GetCurrentBindingLayout runs again
 	bool							viewHistoryCut;			// H10: this main view's camera cut, decided once at the start of its draw
 	// ---- END X0 ----
@@ -550,6 +548,30 @@ private:
 	// ---- END TRACK V ----
 	MipMapGenPass*					hiZGenPass;
 	TonemapPass*					toneMapPass;
+	// ---- TRACK G: the bloom of the main view; made and deleted by the backend's GL_StartFrame and ClearCaches ----
+	// the bloom's direct NVRHI draws count themselves in the concurrency stats, as the fog's do
+	friend class BloomPass;
+	BloomPass*						bloomPass;
+	// ---- END TRACK G ----
+	// ---- WP-J21: the bloom's gate in the stage loop. glowGateView: this view's stage loops write the glow mask ( a main
+	// view drawn into _hdr, the gate on, _hdrGlow there ); glowMaskWritten: an emitting stage drew this view, so the mask
+	// was cleared and holds what passes the gate ( the bloom reads it ). Both are set where the view binds _hdr ----
+	bool							glowGateView;
+	bool							glowMaskWritten;
+	bool							GlowStagePasses( const idMaterial* shader, const shaderStage_t* pStage, const drawSurf_t* surf, uint64 stageGLState ) const;
+	// ---- END WP-J21 ----
+	// ---- WP-J27: the sources' own blooms ( renderBloomStyle_t ). An emitting stage of an entity with a style of its own writes
+	// its slot into the glow mask ( texture_color's glow twin: green = the luminance times the slot ); the bloom gives each slot
+	// its strength, its boost and, under the Fourier bloom, its kernel. Slot 0 is the view's. A style keeps its slot across
+	// frames while it is in view, so the bloom keeps its kernel; a style that finds every slot taken in this view takes the
+	// view's ( glowStyleOverflow counts them for bloomProbe ) ----
+	renderBloomStyle_t				glowStyles[ BLOOM_STYLE_SLOTS ];		// [0] unused ( the view's )
+	int							glowStyleView[ BLOOM_STYLE_SLOTS ];		// the glowStyleSerial of the last view that drew with the slot; 0 = never
+	int							glowStyleSerial;						// one a view under the gate
+	int							glowStyleOverflow;						// this view's styles that took the view's slot for want of one
+	float							glowStyleDrawSlot;						// the stage being drawn: its slot, sent in rpTexGen0Enabled.z ( 0 for every other draw )
+	int							GlowStyleSlot( const viewEntity_t* space, uint64 stageGLState );
+	// ---- END WP-J27 ----
 	TemporalAntiAliasingPass*		taaPass;
 
 	BindingCache					bindingCache;

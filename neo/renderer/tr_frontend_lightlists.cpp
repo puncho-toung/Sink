@@ -1126,11 +1126,21 @@ void R_NumberRecordLights()
 	// ---- TRACK V ( V2 ): the froxel fog's switch ( renderer/VolumetricFog.h ): how far its inject reads this view's
 	// records, 0 = not at all. While it reads them, the records, the bins and the tile bits are built with the lists
 	// off as well; they list nothing ( llv->lists stays the lists' own switch ) ----
-	const float fogReach = R_VolumetricFogBeginView( viewDef );
+	bool fogIdle = false;		// V6 ( bite V6h ): the reach is 0 because the view holds nothing the fog draws
+	const float fogReach = R_VolumetricFogBeginView( viewDef, fogIdle );
 	wantRecords = wantRecords || fogReach > 0.0f;
 	// ---- END TRACK V ----
 	if( !wantRecords )
 	{
+		// ---- TRACK V ( V6, bite V6h ): an idle fog view without records. Before V6h every fog view built records while
+		// the fog was on, so R_LightListHistory moved the stamp each frame and the pass's history ended with the first
+		// view it did not draw. This view moves no stamp: without this line the next fog view's prevFrame would still
+		// name the last view the pass drew, and with a still camera the pass would read a history from before the gap ----
+		if( fogIdle )
+		{
+			lightListPrevFrame = 0;
+		}
+		// ---- END TRACK V ----
 		return;
 	}
 
@@ -1288,8 +1298,8 @@ H3, in R_AddSingleModel's contacted-light loop, where the lit drawSurf_t of ( su
 model job. LL_PAIR_LISTED: the pair is listed on the base surface and the caller makes no lit surface ( it still
 makes the shadow surface ). LL_PAIR_LEGACY: the caller's code runs as it always did. LL_PAIR_TWIN ( the difference
 view ): listed, and the caller makes the lit surface too and marks it. baseDrawSurf is NULL when the surface was
-not linked to the view ( a deform made other surfaces ). maxLights is the entity's contacted-light count, which
-bounds the run. The job reads the view's tables, final since the first hook, and writes only its own surface.
+not linked to the view ( a deform made other surfaces ). maxLights bounds the run: since F7 the surface's own
+count of lights to visit ( review O2-11 ). The job reads the view's tables, final since the first hook, and writes only its own surface.
 
 The forward pass draws a surface once, with one bump, one diffuse and one specular image and no texture matrix or
 vertex colour: the materials the engine keeps fast-path images for ( idMaterial::SetFastPathImages; the property,
@@ -1365,12 +1375,19 @@ void R_LightListFinishSurface( const viewDef_t* viewDef, drawSurf_t* baseDrawSur
 	shape.origin.y = m[1] * b[0].x + m[5] * b[0].y + m[9] * b[0].z + m[13];
 	shape.origin.z = -( m[2] * b[0].x + m[6] * b[0].y + m[10] * b[0].z + m[14] );		// view space: +z forward
 	shape.numEdges = 0;
-	bool thin = false;
+	// F7 ( review CN2-6 ): only a surface thin on exactly one axis is a plane. One thin on two or three ( a sliver a cut
+	// left, a point ) is sampled as its box: as a plane it got an edge of nearly no length, and the normal of the two
+	// edges, which the samples are weighed by, came out of rounding or as NaN
+	int thinAxes = 0;
 	for( int a = 0; a < 3; a++ )
 	{
-		if( size[a] < 1.0f && !thin )
+		thinAxes += ( size[a] < 1.0f ) ? 1 : 0;
+	}
+	for( int a = 0; a < 3; a++ )
+	{
+		if( thinAxes == 1 && size[a] < 1.0f )
 		{
-			thin = true;														// the chunk's plane: the bounds say it, nothing was stored
+			// the chunk's plane: the bounds say it, nothing was stored
 			continue;
 		}
 		shape.edges[shape.numEdges].x = m[a * 4 + 0] * size[a];

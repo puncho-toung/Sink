@@ -3,6 +3,7 @@
 
 Doom 3 BFG Edition GPL Source Code
 Copyright (C) 1993-2012 id Software LLC, a ZeniMax Media company.
+Copyright (C) 2014 Robert Beckebans
 
 This file is part of the Doom 3 BFG Edition GPL Source Code ("Doom 3 BFG Edition Source Code").
 
@@ -26,34 +27,17 @@ If you have questions concerning this license or the applicable additional terms
 ===========================================================================
 */
 
-#include "global_inc.hlsl"
-#include "renderParmSet1.inc.hlsl"
+#pragma once
 
-
-// *INDENT-OFF*
-struct VS_IN
+// The bloom draws' constants, sent as push constants by BloomPass. shaders/builtin/post/bloom_cb.h has the same
+// struct, member for member ( the tonemap pass's ToneMappingConstants and renderer/Passes/TonemapPass_cb.h are the
+// model for keeping the two twins ).
+struct BloomConstants
 {
-	float4 position	: POSITION;
-	float2 texcoord	: TEXCOORD0;
-	float4 normal	: NORMAL;
-	float4 tangent	: TANGENT;
-	float4 color	: COLOR0;
-	float4 color2	: COLOR1;
+	idVec4	srcRect;		// xy the source rectangle's origin in source texels, zw its size in texels
+	idVec4	srcInvSize;		// xy 1 / the source TEXTURE's size; z the tail ( up ), the glow threshold's knee ( first pass ); w the firefly knee ( first pass; <= 0: off )
+	idVec4	exposure;		// first pass: x the exposure scale exp2( r_exposure ), y r_hdrMinLuminance, z the ceiling ( r_bloomCeiling ); w the glow threshold
+	idVec4	tailDepth;	// first pass, FIRST 2 ( with the frame's depth ): xy the projection's two depth terms ( a view distance is x / ( depth + y ) ); zw the view weapon's test: a pixel is the weapon's where depth * w > z ( z 1, w 0: none is )
+	idVec4	tailDist;	// first pass, FIRST 2: x the far distance, y 1 / ( far - near ), z the share of its tail a far lamp keeps ( 0, 0, 1: no distance tail, every nearness is 1 ); w ( FIRST 3, 4, WP-J27 ) 1 where the gate wrote a hot boost, else 0
 };
-
-struct VS_OUT {
-	float4 position : SV_Position;
-	float2 texcoord0 : TEXCOORD0_centroid;
-};
-// *INDENT-ON*
-
-void main( VS_IN vertex, out VS_OUT result )
-{
-	result.position = vertex.position;
-
-	//result.position.x = vertex.position; //dot4( vertex.position, pc.rpMVPmatrixX );
-	//result.position.y = dot4( vertex.position, pc.rpMVPmatrixY );
-	//result.position.z = dot4( vertex.position, pc.rpMVPmatrixZ );
-	//result.position.w = dot4( vertex.position, pc.rpMVPmatrixW );
-	result.texcoord0 =  vertex.texcoord;
-}
+compile_time_assert( sizeof( BloomConstants ) == 80 );	// push constants: Vulkan promises 128 bytes, the D3D12 device manager 240

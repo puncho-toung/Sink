@@ -41,6 +41,8 @@ static const uint RLF_FOG_NOSHADOW		= 1u << 10;	// the froxel inject takes the l
 static const uint RLF_FOG_OFF			= 1u << 11;	// the froxel inject leaves the light out
 static const uint RLF_FOG_NOCASTER		= 1u << 12;	// a light with no caster in the view: the froxel inject takes it unshadowed, times its fade
 static const uint RLF_FOG_CASTERMOVED	= 1u << 13;	// an entity among the light's casters changed this frame: the froxel fog's history is clipped where it shadows
+// bit 14 is WP-J11's, bits 15 to 25 WP-J16's
+static const uint RLF_FOG_NOGLOW		= 1u << 26;	// WP-J21: the light's emit_glow 0: its fog gives the bloom no glow
 
 // rpSurfLights.w, the features of a draw's run ( LLF_* of the light-list core )
 static const uint LLF_SHADOWED			= 1u << 0;

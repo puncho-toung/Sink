@@ -149,7 +149,6 @@ idCVar r_skipStaticInteractions( "r_skipStaticInteractions", "0", CVAR_RENDERER 
 idCVar r_skipDynamicInteractions( "r_skipDynamicInteractions", "0", CVAR_RENDERER | CVAR_BOOL, "skip interactions created after level load" );
 idCVar r_skipSuppress( "r_skipSuppress", "0", CVAR_RENDERER | CVAR_BOOL, "ignore the per-view suppressions" );
 idCVar r_skipPostProcess( "r_skipPostProcess", "0", CVAR_RENDERER | CVAR_BOOL, "skip all post-process renderings except bloom" );
-idCVar r_skipBloom( "r_skipBloom", "0", CVAR_RENDERER | CVAR_BOOL, "Skip bloom" );
 idCVar r_skipInteractions( "r_skipInteractions", "0", CVAR_RENDERER | CVAR_BOOL, "skip all light/surface interaction drawing" );
 idCVar r_skipDynamicTextures( "r_skipDynamicTextures", "0", CVAR_RENDERER | CVAR_BOOL, "don't dynamically create textures" );
 idCVar r_skipCopyTexture( "r_skipCopyTexture", "0", CVAR_RENDERER | CVAR_BOOL, "do all rendering, but don't actually copyTexSubImage2D" );
@@ -304,15 +303,10 @@ idCVar r_shadowMapRegularDepthBiasScale( "r_shadowMapRegularDepthBiasScale", "0.
 idCVar r_shadowMapSunDepthBiasScale( "r_shadowMapSunDepthBiasScale", "0.999", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "shadowmap bias to fight shadow acne for cascaded shadow mapping with parallel lights" );
 
 // RB: HDR parameters
-idCVar r_hdrAutoExposure( "r_hdrAutoExposure", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "EXPENSIVE: enables adapative HDR tone mapping otherwise the exposure is derived by r_exposure" );
 idCVar r_hdrAdaptionRate( "r_hdrAdaptionRate", "1", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "The rate of adapting the hdr exposure value`. Defaulted to a second." );
 idCVar r_hdrMinLuminance( "r_hdrMinLuminance", "0.02", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "" );
 idCVar r_hdrMaxLuminance( "r_hdrMaxLuminance", "0.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "" );
 idCVar r_hdrKey( "r_hdrKey", "0.015", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "magic exposure key that works well with Doom 3 maps" );
-idCVar r_hdrContrastDynamicThreshold( "r_hdrContrastDynamicThreshold", "2", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "if auto exposure is on, all pixels brighter than this cause HDR bloom glares" );
-idCVar r_hdrContrastStaticThreshold( "r_hdrContrastStaticThreshold", "3", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "if auto exposure is off, all pixels brighter than this cause HDR bloom glares" );
-idCVar r_hdrContrastOffset( "r_hdrContrastOffset", "100", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "" );
-idCVar r_hdrGlarePasses( "r_hdrGlarePasses", "8", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "how many times the bloom blur is rendered offscreen. number should be even" );
 idCVar r_hdrDebug( "r_hdrDebug", "0", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "show scene luminance as heat map" );
 
 idCVar r_ldrContrastThreshold( "r_ldrContrastThreshold", "1.1", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "" );
@@ -349,6 +343,12 @@ idCVar r_taaClampingFactor( "r_taaClampingFactor", "1.0", CVAR_RENDERER | CVAR_F
 idCVar r_taaNewFrameWeight( "r_taaNewFrameWeight", "0.1", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "" );
 idCVar r_taaMaxRadiance( "r_taaMaxRadiance", "10000", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "" );
 idCVar r_taaMotionVectors( "r_taaMotionVectors", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "" );
+// ---- TAA REPAIR: 0, 0.1, 9 and 0 give the resolve of before, bit for bit ----
+idCVar r_taaClampCenter( "r_taaClampCenter", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_NEW, "the history clamp's box takes in the pixel's own colour; 0 = the box of before" );
+idCVar r_taaMotionFrameWeight( "r_taaMotionFrameWeight", "0.25", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "the new frame's weight where the history is read half way between two of its pixels ( a camera in motion ); higher = sharper in motion and less steady; at or below r_taaNewFrameWeight it changes nothing", 0.0f, 1.0f );
+idCVar r_taaHistoryTaps( "r_taaHistoryTaps", "5", CVAR_RENDERER | CVAR_INTEGER | CVAR_NEW, "bilinear taps of the history read: 9, or 5 ( the four corner taps left out )", 5, 9 );
+idCVar r_taaSharpen( "r_taaSharpen", "0.15", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "TAA's slight sharpening of what is shown ( never of the history ): the share by which a pixel is pushed from the mean of its nine, held within what the nine span; 0 = none", 0.0f, 2.0f );
+// ---- END TAA REPAIR ----
 
 idCVar r_useCRTPostFX( "r_useCRTPostFX", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER | CVAR_NEW, "RetroArch CRT shader: 1 = Matthias CRT, 1 = New Pixie, 2 = Zfast", 0, 3 );
 idCVar r_crtCurvature( "r_crtCurvature", "2", CVAR_RENDERER | CVAR_FLOAT | CVAR_NEW, "rounded borders" );

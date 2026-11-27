@@ -620,9 +620,9 @@ public:
 	idImage*			ldrImage;						// tonemapped result which can be used for further post processing
 	idImage*			taaMotionVectorsImage;			// motion vectors for TAA projection
 	idImage*			taaResolvedImage;
+	idImage*			glowMaskImage;					// WP-J21: the bloom's gate, RG16F at the frame's size: what the emitting stages drew ( their luminance ) in the main view
 	idImage*			taaFeedback1Image;
 	idImage*			taaFeedback2Image;
-	idImage*			bloomRenderImage[2];
 	idImage*			envprobeHDRImage;
 	idImage*			envprobeDepthImage;
 	idImage*			heatmap5Image;

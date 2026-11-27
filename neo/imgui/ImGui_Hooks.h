@@ -67,6 +67,13 @@ bool	RightMouseActive();
 // the game's usercmd state; for input routing changes (the light editor's mode switch)
 void	ResetInputLatches();
 
+// System Options panel: forget where the mouse was and ignore the buttons held now until they are released; the
+// panel opens on a press, which would otherwise count as a click at the place the mouse had when ImGui last saw it
+void	ForgetMouse();
+
+// counts the contexts Init made: a renderer restart destroys ImGui and makes a new one, maybe at the same address
+int		ContextGeneration();
+
 } //namespace ImGuiHook
 
 

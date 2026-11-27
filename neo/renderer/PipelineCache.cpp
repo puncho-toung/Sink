@@ -355,6 +355,34 @@ void PipelineCache::GetRenderState( uint64 stateBits, PipelineKey key, nvrhi::Re
 
 	renderState.blendState.setRenderTarget( 0, renderTarget );
 
+	// ---- WP-J21: the glow mask, the second target of _hdrGlow, the one framebuffer with two colour attachments the stage
+	// loop draws into ( only in a main view under the bloom's gate; no pipeline of another framebuffer changes ). A glow
+	// twin writes its luminance there with the colour's own blend, so an additive stage adds it, an opaque one replaces
+	// it and a gui screen blends it by its alpha. Where a colour channel is masked, or a factor reads the destination
+	// ( it would read the mask ), and for every program that is not a glow twin, the mask is left as it is ----
+	if( key.framebuffer != NULL && key.framebuffer->GetApiObject()->getDesc().colorAttachments.size() > 1 )
+	{
+		const uint64 src = stateBits & GLS_SRCBLEND_BITS;
+		const uint64 dst = stateBits & GLS_DSTBLEND_BITS;
+		const bool readsDestination = src == GLS_SRCBLEND_DST_COLOR || src == GLS_SRCBLEND_ONE_MINUS_DST_COLOR
+									  || src == GLS_SRCBLEND_DST_ALPHA || src == GLS_SRCBLEND_ONE_MINUS_DST_ALPHA
+									  || dst == GLS_DSTBLEND_DST_ALPHA || dst == GLS_DSTBLEND_ONE_MINUS_DST_ALPHA;
+		const bool masked = ( stateBits & ( GLS_REDMASK | GLS_GREENMASK | GLS_BLUEMASK ) ) != 0;
+		nvrhi::BlendState::RenderTarget glowTarget = renderTarget;
+		if( idRenderProgManager::IsGlowProgram( key.program ) && !masked && !readsDestination )
+		{
+			// WP-J27: green carries the source's style slot ( the luminance times the slot )
+			glowTarget.setColorWriteMask( nvrhi::ColorMask::Red | nvrhi::ColorMask::Green );
+		}
+		else
+		{
+			glowTarget.disableBlend();
+			glowTarget.setColorWriteMask( nvrhi::ColorMask( 0 ) );
+		}
+		renderState.blendState.setRenderTarget( 1, glowTarget );
+	}
+	// ---- END WP-J21 ----
+
 
 	auto& depthStencilState = renderState.depthStencilState;
 

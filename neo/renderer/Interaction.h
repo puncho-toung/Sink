@@ -64,16 +64,36 @@ struct srfCullInfo_t
 };
 
 
-// Pre-generated shadow volumes from dmap are not present in surfaceInteraction_t,
-// they are added separately.
-struct surfaceInteraction_t
+// ---- TRACK F: each surface keeps its own lights ( F7, row 197 ( b ) ) ----
+// Until F7 an interaction held one slot for every surface of its entity, so a light that touched one chunk of a world
+// area paid a slot for every chunk of it, and the frame's walk visited every surface for every light. Now each surface
+// of an entity keeps the list of the lights that reach it ( entitySurfLights_t on the entity, made and freed in
+// Interaction.cpp ), and the interaction keeps the numbers of the surfaces it put itself into, to take itself out again.
+// Pre-generated shadow volumes from dmap are not present here; they are added separately.
+struct surfLightRef_t						// 16 bytes: one light that reaches one surface
 {
+	int						lightIndex;		// idRenderLightLocal::index
 	// The vertexes for light tris will always come from ambient triangles.
 	// For interactions created at load time, the indexes will be uniquely
 	// generated in static vertex memory.
 	int						numLightTrisIndexes;
 	vertCacheHandle_t		lightTrisIndexCache;
 };
+
+struct surfLightList_t						// 16 bytes: the lights of one surface, in the order they were put in
+{
+	surfLightRef_t*			refs;			// static memory, grows by doubling from four
+	int						num;
+	int						max;
+};
+
+struct entitySurfLights_t					// idRenderEntityLocal::surfLights, while any surface of the entity has a light
+{
+	int						numSurfaces;	// of the model the static interactions were made from
+	int						numRefs;		// over every list; the table is freed when it falls to zero
+	surfLightList_t			lists[1];		// numSurfaces of them
+};
+// ---- END TRACK F ----
 
 
 class idRenderEntityLocal;
@@ -87,11 +107,11 @@ public:
 	// -1 = an untested interaction
 	int						numSurfaces;
 
-	// if there is a whole-entity optimized shadow hull, it will
-	// be present as a surfaceInteraction_t with a NULL ambientTris, but
-	// possibly having a shader to specify the shadow sorting order
-	// (FIXME: actually try making shadow hulls?  we never did.)
-	surfaceInteraction_t* 	surfaces;
+	// track F ( F7 ): the surfaces of entityDef this light reaches, ascending; each holds this light in its list of
+	// entityDef->surfLights. NULL when the interaction is not static or reaches no surface ( the count first, beside
+	// numSurfaces: the class keeps its 72 bytes, F7i, review O1-4 )
+	int						numLitSurfaces;
+	int*					litSurfaces;
 
 	// get space from here, if NULL, it is a pre-generated shadow volume from dmap
 	idRenderEntityLocal* 	entityDef;
@@ -112,7 +132,7 @@ public:
 	// and fragmentation
 	static idInteraction* 	AllocAndLink( idRenderEntityLocal* edef, idRenderLightLocal* ldef );
 
-	// unlinks from the entity and light, frees all surfaceInteractions,
+	// unlinks from the entity and light, takes this light out of the entity's surface lists ( F7 ),
 	// and puts it back on the free list
 	void					UnlinkAndFree();
 

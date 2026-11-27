@@ -48,6 +48,10 @@ struct PS_IN {
 
 struct PS_OUT {
 	float4 color : SV_Target0;
+#if defined( USE_GLOW ) && USE_GLOW
+	// WP-J21: the glow twin's second output, the glow mask: the stage's luminance with its alpha, blended as the colour is
+	float4 glow : SV_Target1;
+#endif
 };
 // *INDENT-ON*
 
@@ -67,6 +71,15 @@ void main( in PS_IN fragment, out PS_OUT result )
 
 #if defined( USE_FROXEL_FOG ) && USE_FROXEL_FOG
 	// V5: the stage seen through the fog to its own depth, by the blend kind the stage loop set in rpTexGen0Enabled.y
-	result.color = FroxelFogTranslucent( result.color, FroxelFogSamplePixel( fragment.position.xy, FroxelFogViewDepth( fragment.position.z ) ), pc.rpTexGen0Enabled.y );
+	result.color = FroxelFogTranslucent( result.color, FroxelFogSamplePixel( fragment.position.xy, FroxelFogPixelViewDepth( fragment.position ) ), pc.rpTexGen0Enabled.y );
+#endif
+
+#if defined( USE_GLOW ) && USE_GLOW
+	// WP-J21: after the colour is final ( fogged too: the fog in front of a lamp dims its glow as it dims the lamp ). WP-J27: the
+	// green is the luminance times 2^slot, the source's style slot ( rpTexGen0Enabled.z, 0 for the view's bloom ), so the gate
+	// reads the slot back as log2( green / red ); both blend alike, so the ratio holds under the stage's blend, and two slots
+	// blended in a pixel give a ratio between powers of two, which the gate reads as the view's ( review R2-F2 )
+	const float glowLuma = dot( result.color.rgb, float3( 0.2126, 0.7152, 0.0722 ) );
+	result.glow = float4( glowLuma, glowLuma * exp2( pc.rpTexGen0Enabled.z ), 0.0, result.color.a );
 #endif
 }

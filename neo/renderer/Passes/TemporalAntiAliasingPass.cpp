@@ -183,6 +183,16 @@ void TemporalAntiAliasingPass::Init(
 		pipelineDesc.bindingLayouts = { m_ResolveBindingLayout };
 
 		m_ResolvePso = device->createComputePipeline( pipelineDesc );
+
+		// ---- TAA REPAIR: the same pipeline with the sharpening's permutation ( one sample a pixel; the unused MSAA
+		// forms have none ). Its layout and its constants are the resolve's ----
+		m_TemporalAntiAliasingSharpenCS = renderProgManager.GetProgramInfo( BUILTIN_TAA_RESOLVE_SHARPEN ).cs;
+		if( m_TemporalAntiAliasingSharpenCS )
+		{
+			pipelineDesc.CS = m_TemporalAntiAliasingSharpenCS;
+			m_ResolveSharpenPso = device->createComputePipeline( pipelineDesc );
+		}
+		// ---- END TAA REPAIR ----
 	}
 }
 
@@ -215,6 +225,11 @@ void TemporalAntiAliasingPass::TemporalResolve(
 	taaConstants.newFrameWeight = feedbackIsValid ? params.newFrameWeight : 1.0f;
 	taaConstants.pqC = idMath::ClampFloat( 1e-4f, 1e8f, params.maxRadiance );
 	taaConstants.invPqC = 1.f / taaConstants.pqC;
+	// ---- TAA REPAIR: what the weight gains at full motion, never negative; the two flags ----
+	taaConstants.motionWeightAdd = Max( 0.0f, params.motionFrameWeight - params.newFrameWeight );
+	taaConstants.repairFlags = ( params.clampTakesCenter ? 1u : 0u ) | ( params.fiveHistoryTaps ? 2u : 0u );
+	taaConstants.sharpen = Max( 0.0f, params.sharpen );
+	// ---- END TAA REPAIR ----
 
 	if( !pcEnabled )
 	{
@@ -222,7 +237,8 @@ void TemporalAntiAliasingPass::TemporalResolve(
 	}
 
 	nvrhi::ComputeState state;
-	state.pipeline = m_ResolvePso;
+	// TAA REPAIR: the sharpening's permutation only while it is asked for; at 0 the program of before runs
+	state.pipeline = ( taaConstants.sharpen > 0.0f && m_ResolveSharpenPso ) ? m_ResolveSharpenPso : m_ResolvePso;
 	state.bindings = { m_ResolveBindingSet };
 
 	commandList->setComputeState( state );

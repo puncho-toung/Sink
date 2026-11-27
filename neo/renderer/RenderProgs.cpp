@@ -71,6 +71,12 @@ idRenderProgManager::idRenderProgManager()
 */
 idRenderProgManager::idRenderProgManager()
 {
+	// ---- TRACK V ( V6 ): no load pass ----
+	blobCacheThread = 0;
+	blobCacheReads = 0;
+	memset( blobCacheHits, 0, sizeof( blobCacheHits ) );
+	blobCacheBytes = 0;
+	// ---- END TRACK V ----
 }
 
 /*
@@ -94,7 +100,7 @@ static void R_ReloadShaders( const idCmdArgs& args )
 }
 
 // ---- TRACK F ( F3, D51 ): the forward programs' wave row ----
-idCVar r_forwardWaveOps( "r_forwardWaveOps", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_INIT | CVAR_NEW, "the forward pass's Z-bin loop uses wave intrinsics where the device runs them in a pixel shader; 0 = the row without them ( read when the render programs are made: at start-up and by vid_restart )" );
+idCVar r_forwardWaveOps( "r_forwardWaveOps", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_INIT | CVAR_NEW, "the forward pass's Z-bin loop uses wave intrinsics where the device runs them in a pixel shader; 0 = the row without them ( read when the render programs are made, at start-up: vid_restart does not remake them )" );
 // ---- END TRACK F ----
 
 /*
@@ -1144,8 +1150,6 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 
 		{ BUILTIN_SCREEN, "builtin/post/screen", "", { { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TEXGEN ) } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_TEXGEN },
 		{ BUILTIN_TONEMAP, "builtin/post/tonemap", "", { { "BRIGHTPASS", "0" }, { "HDR_DEBUG", "0"}, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_POST_PROCESS ) } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_POST_PROCESS },
-		{ BUILTIN_BRIGHTPASS, "builtin/post/tonemap", "_brightpass", { { "BRIGHTPASS", "1" }, { "HDR_DEBUG", "0"}, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_POST_PROCESS ) } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_POST_PROCESS },
-		{ BUILTIN_HDR_GLARE_CHROMATIC, "builtin/post/hdr_glare_chromatic", "", { { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_POST_PROCESS ) } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_POST_PROCESS },
 		{ BUILTIN_HDR_DEBUG, "builtin/post/tonemap", "_debug", { { "BRIGHTPASS", "0" }, { "HDR_DEBUG", "1"}, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_POST_PROCESS ) } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_POST_PROCESS },
 
 		{ BUILTIN_SMAA_EDGE_DETECTION, "builtin/post/SMAA_edge_detection", "", { { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_SMAA_EDGE_DETECTION ) } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_SMAA_EDGE_DETECTION },
@@ -1156,10 +1160,12 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 		{ BUILTIN_TAA_MOTION_VECTORS, "builtin/post/motionBlur", "_vectors", { { "VECTORS_ONLY", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TAA_MOTION_VECTORS ) } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_TAA_MOTION_VECTORS },
 
 		// RB: without access to the renderpass code itself we don't know wether we need the push constants or constant buffer versions
-		{ BUILTIN_TAA_RESOLVE, "builtin/post/taa", "", { { "SAMPLE_COUNT", "1" }, { "USE_CATMULL_ROM_FILTER", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TAA_RESOLVE ) } }, false, SHADER_STAGE_COMPUTE, LAYOUT_UNKNOWN, BINDING_LAYOUT_TAA_RESOLVE },
-		{ BUILTIN_TAA_RESOLVE_MSAA_2X, "builtin/post/taa", "_msaa2x", { { "SAMPLE_COUNT", "2" }, { "USE_CATMULL_ROM_FILTER", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TAA_RESOLVE ) } }, false, SHADER_STAGE_COMPUTE, LAYOUT_UNKNOWN, BINDING_LAYOUT_TAA_RESOLVE },
-		{ BUILTIN_TAA_RESOLVE_MSAA_4X, "builtin/post/taa", "_msaa4x", { { "SAMPLE_COUNT", "4" }, { "USE_CATMULL_ROM_FILTER", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TAA_RESOLVE ) } }, false, SHADER_STAGE_COMPUTE, LAYOUT_UNKNOWN, BINDING_LAYOUT_TAA_RESOLVE },
-		{ BUILTIN_TAA_RESOLVE_MSAA_8X, "builtin/post/taa", "_msaa8x", { { "SAMPLE_COUNT", "8" }, { "USE_CATMULL_ROM_FILTER", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TAA_RESOLVE ) } }, false, SHADER_STAGE_COMPUTE, LAYOUT_UNKNOWN, BINDING_LAYOUT_TAA_RESOLVE },
+		{ BUILTIN_TAA_RESOLVE, "builtin/post/taa", "", { { "SAMPLE_COUNT", "1" }, { "USE_CATMULL_ROM_FILTER", "1" }, { "USE_SHARPEN", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TAA_RESOLVE ) } }, false, SHADER_STAGE_COMPUTE, LAYOUT_UNKNOWN, BINDING_LAYOUT_TAA_RESOLVE },
+		{ BUILTIN_TAA_RESOLVE_MSAA_2X, "builtin/post/taa", "_msaa2x", { { "SAMPLE_COUNT", "2" }, { "USE_CATMULL_ROM_FILTER", "1" }, { "USE_SHARPEN", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TAA_RESOLVE ) } }, false, SHADER_STAGE_COMPUTE, LAYOUT_UNKNOWN, BINDING_LAYOUT_TAA_RESOLVE },
+		{ BUILTIN_TAA_RESOLVE_MSAA_4X, "builtin/post/taa", "_msaa4x", { { "SAMPLE_COUNT", "4" }, { "USE_CATMULL_ROM_FILTER", "1" }, { "USE_SHARPEN", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TAA_RESOLVE ) } }, false, SHADER_STAGE_COMPUTE, LAYOUT_UNKNOWN, BINDING_LAYOUT_TAA_RESOLVE },
+		{ BUILTIN_TAA_RESOLVE_MSAA_8X, "builtin/post/taa", "_msaa8x", { { "SAMPLE_COUNT", "8" }, { "USE_CATMULL_ROM_FILTER", "1" }, { "USE_SHARPEN", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TAA_RESOLVE ) } }, false, SHADER_STAGE_COMPUTE, LAYOUT_UNKNOWN, BINDING_LAYOUT_TAA_RESOLVE },
+		// TAA REPAIR: the same resolve with the sharpening of what is shown; the pass picks it while r_taaSharpen is above 0
+		{ BUILTIN_TAA_RESOLVE_SHARPEN, "builtin/post/taa", "_sharpen", { { "SAMPLE_COUNT", "1" }, { "USE_CATMULL_ROM_FILTER", "1" }, { "USE_SHARPEN", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TAA_RESOLVE ) } }, false, SHADER_STAGE_COMPUTE, LAYOUT_UNKNOWN, BINDING_LAYOUT_TAA_RESOLVE },
 
 		{ BUILTIN_AMBIENT_OCCLUSION, "builtin/SSAO/AmbientOcclusion_AO", "", { { "BRIGHTPASS", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_DRAW_AO ) } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_DRAW_AO },
 		{ BUILTIN_AMBIENT_OCCLUSION_AND_OUTPUT, "builtin/SSAO/AmbientOcclusion_AO", "_write", { { "BRIGHTPASS", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_DRAW_AO ) } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_DRAW_AO },
@@ -1259,11 +1265,20 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 		{ BUILTIN_PBR_INTERACTION_AMBIENT_FOG, "builtin/lighting/interactionAmbient", "_PBR_fog", { { "USE_GPU_SKINNING", "0" }, { "USE_PBR", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_DRAW_INTERACTION_FOG ) }, { "USE_FROXEL_FOG", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_DRAW_INTERACTION_FOG },
 		{ BUILTIN_PBR_INTERACTION_AMBIENT_SKINNED_FOG, "builtin/lighting/interactionAmbient", "_skinned_PBR_fog", { { "USE_GPU_SKINNING", "1" }, { "USE_PBR", "1" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_DRAW_INTERACTION_SKINNED_FOG ) }, { "USE_FROXEL_FOG", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_DRAW_INTERACTION_SKINNED_FOG },
 		// ---- END TRACK V ----
+		// ---- WP-J21: the glow twins ( keep the enum order ); USE_GLOW comes LAST, as the cfg's lines have it, so no existing
+		// permutation's macros change; each twin has its base's binding layout ----
+		{ BUILTIN_TEXTURE_VERTEXCOLOR_GLOW, "builtin/texture_color", "_glow", { { "USE_GPU_SKINNING", "0" }, {"USE_SRGB", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TEXTURE ) }, { "USE_GLOW", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_TEXTURE },
+		{ BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED_GLOW, "builtin/texture_color", "_skinned_glow", { { "USE_GPU_SKINNING", "1" }, {"USE_SRGB", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TEXTURE_SKINNED ) }, { "USE_GLOW", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_TEXTURE_SKINNED },
+		{ BUILTIN_TEXTURE_VERTEXCOLOR_FOG_GLOW, "builtin/texture_color", "_fog_glow", { { "USE_GPU_SKINNING", "0" }, {"USE_SRGB", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TEXTURE_FOG ) }, { "USE_FROXEL_FOG", "1" }, { "USE_GLOW", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_TEXTURE_FOG },
+		{ BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED_FOG_GLOW, "builtin/texture_color", "_skinned_fog_glow", { { "USE_GPU_SKINNING", "1" }, {"USE_SRGB", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_TEXTURE_SKINNED_FOG ) }, { "USE_FROXEL_FOG", "1" }, { "USE_GLOW", "1" } }, true, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_TEXTURE_SKINNED_FOG },
+		{ BUILTIN_BINK_GLOW, "builtin/video/bink", "_glow", { {"USE_SRGB", "0" }, { "USE_PUSH_CONSTANTS", usePushConstants( BINDING_LAYOUT_BINK_VIDEO ) }, { "USE_GLOW", "1" } }, false, SHADER_STAGE_DEFAULT, LAYOUT_DRAW_VERT, BINDING_LAYOUT_BINK_VIDEO },
+		// ---- END WP-J21 ----
 	};
 	int numBuiltins = sizeof( builtins ) / sizeof( builtins[0] );
 
 	renderProgs.SetNum( numBuiltins );
 
+	BlobCacheBegin();		// TRACK V ( V6, row 179 ): the rows of one file read it once
 	for( int i = 0; i < numBuiltins; i++ )
 	{
 		renderProg_t& prog = renderProgs[i];
@@ -1323,6 +1338,7 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 			LoadComputeProgram( i, cIndex );
 		}
 	}
+	BlobCacheEnd( "start-up" );		// TRACK V ( V6 )
 
 	r_pbrDebug.ClearModified();
 
@@ -1379,6 +1395,8 @@ void idRenderProgManager::Init( nvrhi::IDevice* device )
 
 		// ---- TRACK V ( V5 ): the skinned fog twins, as their bases ----
 		renderProgs[builtinShaders[BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED_FOG]].usesJoints = true;
+		renderProgs[builtinShaders[BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED_GLOW]].usesJoints = true;			// WP-J21
+		renderProgs[builtinShaders[BUILTIN_TEXTURE_VERTEXCOLOR_SKINNED_FOG_GLOW]].usesJoints = true;		// WP-J21
 		renderProgs[builtinShaders[BUILTIN_INTERACTION_SHADOW_MAPPING_SPOT_SKINNED_FOG]].usesJoints = true;
 		renderProgs[builtinShaders[BUILTIN_INTERACTION_SHADOW_MAPPING_POINT_SKINNED_FOG]].usesJoints = true;
 		renderProgs[builtinShaders[BUILTIN_INTERACTION_SHADOW_MAPPING_PARALLEL_SKINNED_FOG]].usesJoints = true;
@@ -1408,10 +1426,12 @@ idRenderProgManager::LoadAllShaders()
 */
 void idRenderProgManager::LoadAllShaders()
 {
+	BlobCacheBegin();		// TRACK V ( V6, row 179 ): the shaders of one file that follow each other read it once
 	for( int i = 0; i < shaders.Num(); i++ )
 	{
 		LoadShader( i, shaders[i].stage );
 	}
+	BlobCacheEnd( "reloadShaders" );		// TRACK V ( V6 )
 
 	for( int i = 0; i < renderProgs.Num(); ++i )
 	{

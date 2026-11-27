@@ -34,7 +34,7 @@ If you have questions concerning this license or the applicable additional terms
 
 /*
 
-  World-surface chunking ( dmap -chunkGrid, renderer upgrade package F6 )
+  World-surface chunking ( dmap -chunkGrid, renderer upgrade packages F6 and F7 )
 
   The renderer gives every drawn surface the list of lights that touch it, and a surface
   whose list is long takes the slower per-pixel path. A wall of 4,096 units in a lit
@@ -52,12 +52,12 @@ If you have questions concerning this license or the applicable additional terms
   again, and before FixGlobalTjunctions, which repairs the T-junctions the cut leaves
   where a neighbouring group was not cut at the same point.
 
-  Off unless asked for, and experimental: by the dmap option -chunkGrid, else by the
-  worldspawn key chunkGrid ( the same values ). Measured on F6's fixtures at 256
-  ( plans/renderer-upgrade/f6-2026-11-20 ), the forward pass moved by -2 to +6 % ( 161 to
-  157, 258 to 266, 649 to 687 microseconds on the three fixtures ), while the frontend's
-  time and the shadow draws grew with the surface count: no measure shows a gain, so a
-  map opts in.
+  On by default at a grid of CHUNK_DEFAULT_GRID ( 512; the owner's ruling of 2026-11-21 for
+  monolithic architecture of 8,000 units, package F7 ): the dmap option -chunkGrid, else
+  the worldspawn key chunkGrid ( the same values ), else 512; 0 for no cut. F6 measured no
+  gain at 256 on flat fixtures ( plans/renderer-upgrade/f6-2026-11-20 ); F7 made the
+  renderer's per-frame work follow each surface's own lights ( Interaction.cpp, the
+  surface light lists ) and its tangents agree across a seam ( R_DeriveAreaTangents ).
 
   Left alone:
   - discrete materials ( guis, mirrors, deforms, decal macros ): FixGlobalTjunctions skips
@@ -66,6 +66,9 @@ If you have questions concerning this license or the applicable additional terms
     DressDecalsPostTjunction: dress_decal.cpp refuses a material that is not discrete
   - materials that receive no light: no light list to shorten, only draws to add
   - noFragment materials: their author asked dmap to break them only at area boundaries
+  - translucent materials ( row 196 ): the pieces of a cut may overlap within 1/16 of a
+    plane ( below ), which blends twice there; their edges against cut walls are mended by
+    FixGlobalTjunctions like any group that is not discrete
 
   The cut interpolates every vertex attribute itself ( position, texture coordinates,
   normal, colour, colour2, and the tangent fields, though dmap writes none and the .proc
@@ -82,17 +85,24 @@ If you have questions concerning this license or the applicable additional terms
   it, so no piece is thinner than the T-junction fix's snap. Two or more corners in a row
   within that margin go to both sides too, so the two pieces overlap within 1/16 of the
   plane: a sliver of most faces, but a wide band of a face nearly parallel to the plane
-  ( review F1-4: 15 % of such a tri ). Invisible on an opaque surface, a double blend on a
-  lit translucent one; counted ( review O1-4; a rule by the neighbours would cut a shared
-  edge differently in its two tris ).
+  ( review F1-4: 15 % of such a tri ). Invisible on an opaque surface; since F7 a lit
+  translucent material is never cut, but a stage that blends on a lit material of opaque
+  coverage ( a glow added over its lit stages ) is drawn twice in the band ( review CN3-1 );
+  counted ( review O1-4; a rule by the neighbours would cut a shared edge differently in
+  its two tris ).
 
   The seams against the groups the pass does not cut: FixGlobalTjunctions repairs them for
   every group that is not discrete. A discrete group it skips, so where a grid plane meets
   the edge a cut group shares with a discrete one ( the wall around a gui panel ), the cut
   group gets a corner the discrete group's edge lacks. ChunkRepairDiscreteEdges splits that
   edge at that corner ( the tri in two, every attribute interpolated, the group still one
-  surface with its own merge group ), except for a material with a deform, whose quads a
-  deform reads: those corners are counted and left.
+  surface with its own merge group ). A deform that works per vertex ( expand, move,
+  turbulent ) is split too. A gui or a subview takes its axes or its plane from its first
+  tri, so after a split the tri of the largest texture area is written first ( the last
+  of the group's list: the output writes a group's tris in reverse ). A deform that reads
+  quads, islands or the whole tri set ( sprite, tube, flare, eyeball, the particles ) is
+  left: those corners are counted ( a split would lose the surface, stop the game or change
+  its particles; review CN3 ).
 
   The dress contract ( dress.cpp ): the walk takes each eligible group's tris and bins
   them by cell; the new groups are put into the areas only after the walk. No randomness.
@@ -164,6 +174,9 @@ static const float	CHUNK_EDGE_EPSILON = 1.0f / 64.0f;
 // ( review O1-1: a cycle between two planes must end even if a rule above has a hole; review F1-2: a cap
 // of depth stopped an edge longer than 32 cells )
 static const int	CHUNK_REPAIR_MAX_SPLITS = 4096;
+
+// the grid when neither the dmap option nor the worldspawn key gives one ( renderer upgrade F7, row 191 )
+static const int	CHUNK_DEFAULT_GRID = 512;
 static int			numRepairsCapped;
 
 // discrete edge splits not made because a half would turn over
@@ -763,12 +776,63 @@ static int ChunkSplitDiscreteTri( mapTri_t* tri, float grid, const chunkCutPoint
 
 /*
 ====================
+ChunkLargestTriFirst
+
+F7 ( review O2-12 ): a gui takes its texture axes, a subview its plane, from the first tri of its surface
+( R_SurfaceToTextureAxis, R_PlaneForSurface ), and a repair split can leave a sliver there. Every tri of such a flat
+panel gives the same axes and plane, so the tri of the largest texture area is made the one the runtime reads: the
+LAST of the group's list, because the output writes a group's tris in reverse ( CopyTriList in output.cpp's
+WriteOutputSurfaces prepends each copy ). The group's own first tri: a surface merged from several groups of one
+material and merge group, or split by dmap_maxSurfaceVerts, starts as it did before ( review CN3-3 ).
+====================
+*/
+static void ChunkLargestTriFirst( optimizeGroup_t* group )
+{
+	mapTri_t* best = NULL;
+	mapTri_t* bestPrev = NULL;
+	float bestArea = -1.0f;
+	mapTri_t* prev = NULL;
+	mapTri_t* tail = NULL;
+	for( mapTri_t* tri = group->triList; tri; prev = tri, tri = tri->next )
+	{
+		const idVec2 a = tri->v[0].GetTexCoord();
+		const idVec2 b = tri->v[1].GetTexCoord();
+		const idVec2 c = tri->v[2].GetTexCoord();
+		const float area = idMath::Fabs( ( b.x - a.x ) * ( c.y - a.y ) - ( b.y - a.y ) * ( c.x - a.x ) );
+		if( area > bestArea )
+		{
+			bestArea = area;
+			best = tri;
+			bestPrev = prev;
+		}
+		tail = tri;
+	}
+	if( best == NULL || best == tail )
+	{
+		return;
+	}
+	if( bestPrev != NULL )
+	{
+		bestPrev->next = best->next;
+	}
+	else
+	{
+		group->triList = best->next;
+	}
+	tail->next = best;
+	best->next = NULL;
+}
+
+/*
+====================
 ChunkRepairDiscreteEdges
 
 The world's discrete groups: each edge a corner of the cut lies on is split there, the
-group's tris kept in their order. A material with a deform reads its quads, and a gui or a
-subview takes its axes or its plane from its first tri, so for those the tris that have
-such an edge are only counted ( the T-junction stays ). Returns the splits made; numLeft
+group's tris kept in their order. A gui or a subview takes its axes or its plane from its
+first tri, so after a split its tri of the largest texture area is moved to be written
+first ( ChunkLargestTriFirst, F7 ). A deform that reads quads, islands or the whole tri set
+is left: its tris that have such an edge are only counted ( the T-junction stays ); a
+deform per vertex ( expand, move, turbulent ) is split. Returns the splits made; numLeft
 gets the tris left with a T-junction.
 ====================
 */
@@ -788,7 +852,10 @@ static int ChunkRepairDiscreteEdges( uEntity_t* e, float grid, const chunkCutPoi
 			{
 				continue;
 			}
-			if( group->material->Deform() != DFRM_NONE || group->material->HasGui() || group->material->GetSort() == SS_SUBVIEW )
+			// F7 ( row 193, scout SC4 ): a deform that works per vertex ( expand, move, turbulent ) keeps both halves'
+			// vertices, so it is split; one that reads quads, islands or the whole tri set is left and counted
+			const deform_t deform = group->material->Deform();
+			if( deform != DFRM_NONE && deform != DFRM_EXPAND && deform != DFRM_MOVE && deform != DFRM_TURB )
 			{
 				mapTri_t** none = NULL;
 				for( mapTri_t* tri = group->triList; tri; tri = tri->next )
@@ -801,12 +868,18 @@ static int ChunkRepairDiscreteEdges( uEntity_t* e, float grid, const chunkCutPoi
 			mapTri_t* out = NULL;
 			mapTri_t** tail = &out;
 			mapTri_t* next;
+			const int splitsBefore = numSplits;
 			for( mapTri_t* tri = group->triList; tri; tri = next )
 			{
 				next = tri->next;
 				numSplits += ChunkSplitDiscreteTri( tri, grid, cuts, true, tail );
 			}
 			group->triList = out;
+			// F7: a gui's axes and a subview's plane come from the first tri; only a group that was split is reordered
+			if( numSplits > splitsBefore && ( group->material->HasGui() || group->material->GetSort() == SS_SUBVIEW ) )
+			{
+				ChunkLargestTriFirst( group );
+			}
 		}
 	}
 	return numSplits;
@@ -905,6 +978,11 @@ static bool ChunkEligible( const optimizeGroup_t* group )
 	{
 		return false;
 	}
+	// F7 ( row 196 ): a lit translucent surface stays whole; pieces that overlap at a cut would blend twice
+	if( group->material->Coverage() == MC_TRANSLUCENT )
+	{
+		return false;
+	}
 	return true;
 }
 
@@ -919,24 +997,25 @@ void DressChunkWorldSurfaces( uEntity_t* e )
 	numSplitsRefused = 0;
 	numSplitsOverlapping = 0;
 
-	// the option wins; without it the map's own key decides, and without that nothing is cut
+	// the option wins; without it the map's own key decides, and without that the default grid ( F7, row 191 )
 	int gridSize = dmapGlobals.chunkGrid;
 	bool asked = gridSize >= 0;
 	if( gridSize < 0 )
 	{
-		const char* key = e->mapEntity->epairs.GetString( "chunkGrid", "0" );
+		const char* key = e->mapEntity->epairs.GetString( "chunkGrid", va( "%i", CHUNK_DEFAULT_GRID ) );
 		asked = e->mapEntity->epairs.FindKey( "chunkGrid" ) != NULL;
 		gridSize = atoi( key );
 		// only the number itself, as for the option ( dmap.cpp )
 		if( idStr::Cmp( va( "%i", gridSize ), key ) != 0 || ( gridSize != 0 && ( gridSize < 128 || gridSize > 1024 || !idMath::IsPowerOfTwo( gridSize ) ) ) )
 		{
-			common->Warning( "worldspawn chunkGrid '%s': not a power of two from 128 to 1024 or 0, world surfaces not chunked", key );
-			gridSize = 0;
+			common->Warning( "worldspawn chunkGrid '%s': not a power of two from 128 to 1024 or 0, the default %i is used", key, CHUNK_DEFAULT_GRID );
+			gridSize = CHUNK_DEFAULT_GRID;
 		}
 	}
 	if( gridSize == 0 )
 	{
-		// a compile that never asked prints nothing ( review O1-11 )
+		// review O1-11's quiet compile: since F7's default of 512, a grid of 0 is reached only when asked ( the option
+		// or the key ); a compile that never asked chunks at the default and prints its summary
 		if( asked )
 		{
 			common->Printf( "chunkGrid 0: world surfaces not chunked\n" );
@@ -1206,7 +1285,7 @@ void DressChunkWorldSurfaces( uEntity_t* e )
 
 	common->Printf( "chunkGrid %i: %i world groups chunked into %i groups, %i merge groups; %i tris, %i of them cut, %i after ( %i fan tris dropped )\n",
 					gridSize, numGroups, numChunkGroups, chunkMergeGroups.Num(), numTrisIn, numTrisCut, numTrisOut, numTrisDropped );
-	common->Printf( "chunkGrid %i: %i discrete edges split at the cut's corners, %i tris of deform, gui or subview materials left with one\n",
+	common->Printf( "chunkGrid %i: %i discrete edges split at the cut's corners, %i tris of sprite, tube, flare, eyeball or particle deforms left with one\n",
 					gridSize, numDiscreteSplits, numDiscreteLeft );
 	if( worstArea >= 0 )
 	{
@@ -1214,16 +1293,13 @@ void DressChunkWorldSurfaces( uEntity_t* e )
 		common->Printf( "chunkGrid %i: the largest area, %i: %i surfaces x %i map lights = %lld surface-light pairs\n", gridSize, worstArea, worstSurfaces, worstLights, ( long long )pairs );
 		if( pairs > 100000 )
 		{
-			common->Warning( "chunkGrid %i: area %i has %lld surface-light pairs; the renderer walks them every frame the area is seen, and its static interactions hold 16 bytes each: a coarser grid, or none", gridSize, worstArea, ( long long )pairs );
+			// F7i ( reviews O1-7, O2-5 ): an upper bound since F7, where each surface keeps only the lights that reach it
+			common->Printf( "chunkGrid %i: area %i: at most %lld surface-light pairs ( each surface keeps only the lights that reach it )\n", gridSize, worstArea, ( long long )pairs );
 		}
-	}
-	if( numDiscreteLeft > 0 )
-	{
-		common->Warning( "chunkGrid %i: %i tris of deform, gui or subview materials keep a T-junction where the cut met their edge", gridSize, numDiscreteLeft );
 	}
 	if( numSplitsOverlapping > 0 )
 	{
-		common->Printf( "chunkGrid %i: %i cuts with two or more corners in a row within 1/16 of the plane: their pieces overlap there ( a double blend on a lit translucent surface )\n", gridSize, numSplitsOverlapping );
+		common->Printf( "chunkGrid %i: %i cuts with two or more corners in a row within 1/16 of the plane: their pieces overlap there ( a stage that blends on a lit material is drawn twice in the band )\n", gridSize, numSplitsOverlapping );
 	}
 	if( numSplitsRefused > 0 )
 	{

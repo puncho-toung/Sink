@@ -54,6 +54,35 @@ enum ELightType
 	LIGHT_SUN
 };
 
+// WP-J27: a light's own bloom, the bloom_* keys ( the Bloom tab, every light; RenderWorld.h's BLOOM_KEY_* ). Every shape's
+// values are held, read and written whatever the shape, so the keys of the shape not chosen stay on the light and come back
+// when it is chosen again; the game reads only the chosen shape's ( idLight::ParseBloomStyle, whose defaults and clamps these
+// follow )
+class LightBloom
+{
+public:
+	int			shape;			// bloom_shape: BLOOM_STYLE_VIEW, BLOOM_STYLE_STAR or BLOOM_STYLE_GLOW
+	float		intensity;		// bloom_intensity, 0 to 4, 1 by default
+	bool		hotBoostOwn;	// bloom_hot_boost is on the light; without it the light takes the view's hot boost
+	float		hotBoost;		// bloom_hot_boost in stops, 0 to 8; written only where hotBoostOwn
+	int			spikes;			// star: bloom_spikes, the arms through the lamp, 1 to 7 ( n arms are 2n points ), 3 by default
+	float		spikeRotation;	// star: bloom_spike_rotation, 0 to 1, 0.5
+	float		spikeRadius;	// star: bloom_spike_radius, the arms' length, 0 to 1, 0
+	float		spikeBlur;		// star: bloom_spike_blur, the arms' width, 0 to 1, 0
+	float		spikeSpread;	// star: bloom_spike_spread, 0 to 1, 0
+	float		spikeRatio;		// star: bloom_spike_ratio, -1 to 1, 0
+	float		spikeRinging;	// star: bloom_spike_ringing, 0 to 1, 0.75
+	float		spikeShift;		// star: bloom_spike_shift, 0 to 1, 0.1
+	float		spikeFalloff;	// star: bloom_spike_falloff, 0 to 1, 0
+	float		glowRadius;		// glow: bloom_glow_radius, 0 to 1, 1
+	float		glare;			// glow: bloom_glare, 0 to 1, 0
+
+	void		Defaults();
+	void		FromDict( const idDict* e );
+	void		ToDict( idDict* e ) const;			// a key only where it is not its default, else "" ( deleted )
+	bool		Same( const LightBloom& other ) const;
+};
+
 class LightInfo
 {
 public:
@@ -82,6 +111,18 @@ public:
 	int			lightStyle;		// RBDOOM specific, saved to map as "style"
 	bool		primarySun;		// spawnarg "primarySun": this sun is the map's primary sun ( D42, D73 )
 	int			forwardMode;	// spawnarg "forward": 0 = auto, 1 = forward list, 2 = legacy
+	// V7: the fog keys ( the Fog tab; volumetric also in the Misc options ). shaderParm3 is a fog light's distance ( above 1 )
+	// or its faint strength ( 0 to 1 ), 1 when absent; ToDict writes the tab's value for a fog light the tab edited
+	// ( fogParm3Edited ), else the key's text as read ( fogParm3Read ): on another light it is the material's to read
+	float		fogParm3;
+	idStr		fogParm3Read;	// the key's text as read, empty when the light had none: ToDict writes it back unless the tab edited a fog light's density
+	bool		fogParm3Edited;
+	float		fogAlbedo;		// spawnarg "fog_albedo", 0 to 1
+	float		fogEmission;	// spawnarg "fog_emission", the glow, 0 to 8, 1 by default
+	float		fogEdge;		// spawnarg "fog_edge", soft sides in units, 0 = hard
+	int			volumetricMode;	// spawnarg "volumetric": 0 = automatic, 1 = always, 2 = never
+	bool		emitGlow;		// WP-J21: spawnarg "emit_glow", 1 by default: 0 = the light's fog and its visual model give no bloom glow ( the Bloom tab, every light )
+	LightBloom	bloom;			// WP-J27: the bloom_* keys ( the Bloom tab, every light )
 
 	emitterData_t	emitter;			// the emitter and emit_* keys; disabled on a texture light
 	bool		autoRange;			// emit_auto_range, read by the editors only
@@ -98,6 +139,14 @@ public:
 	void		FromDict( const idDict* e );
 	void		ToDict( idDict* e );
 };
+
+// V7: the Fog tab's controls without a light in their arguments, for track M's panel too ( WP-M1 ): Density ( 0 to 100,
+// logarithmic over a fog distance of 8,192 to 32 units ) and Distance, bound to one distance, with a line that says what is
+// left of the light behind the fog at the medium's rate; and the scattering albedo. Each returns true on a change
+float		LightFogDensityToDistance( float density );
+float		LightFogDistanceToDensity( float distance );
+bool		DrawFogDensityControls( float& distance, float rate );
+bool		DrawFogAlbedoControl( float& albedo );
 
 // D24 / plan 3.5: one light committed in this session, keyed by entityName. The locator part
 // (isNew .. indexHint) is resolved once, at the light's first commit.
@@ -192,6 +241,7 @@ private:
 	idEntity*			lightEntity;
 
 	idList<idStr>		textureNames;
+	idList<idStr>		fogMaterialNames;	// V7: the fog light materials the Fog tab lists
 	int					currentTextureIndex;
 	idImage*			currentTexture;
 	const idMaterial*	currentTextureMaterial;
@@ -279,6 +329,10 @@ private:
 	void				LoadLightTextures();
 	static bool			TextureItemsGetter( void* data, int idx, const char** out_text );
 	void				LoadCurrentTexture();
+	void				SelectCurrentTexture();	// V7: the Texture tab's combo index of cur.strTexture, and its image
+	bool				DrawFogTab();
+	bool				DrawBloomTab();		// WP-J27
+	static bool			FogMaterialItemsGetter( void* data, int idx, const char** out_text );
 
 	void				TempApplyChanges();
 	bool				SaveChanges( bool flushNow, bool onlyThisLight );

@@ -84,6 +84,8 @@ static const float FROXEL_FOGLIGHT_RAMP	= 125.0f;
 bool	R_VolumetricFogTakesFogLights();
 bool	R_VolumetricFogSwapsFogLights();		// V5: the cvars under which the froxel fog takes fog lights in place of the fog pass
 float	R_VolumetricFogLightRate();				// V5: r_volumetricFogLightRate, the fog light's sigma_t times its distance
+bool	R_VolumetricFogZones();					// V6 ( row 182 ): r_volumetricFogZones, under which the pass and the frontend time the fog's work
+float	R_VolumetricFogLightReachBand();			// V6 ( row 176 ): the band of hysteresis at the reach, a share of it ( 0 .. 0.5 )
 // V5 ( D21, D29 ): the fog light of a view light that the froxel fog took in this view: its record, the light's own
 // ( viewLight_t::recordNumber; record 0 is the sun's slot ), still on for the fog. FogAllLights skips the fog pass for it
 ID_INLINE bool R_FroxelFogTookFogLight( const viewDef_t* viewDef, const viewLight_t* vLight )
@@ -101,6 +103,8 @@ ID_INLINE bool R_ViewLightLightsOnlyFog( const viewLight_t* vLight )
 		   && vLight->globalInteractions == NULL && vLight->translucentInteractions == NULL;
 }
 bool	R_VolumetricFogMediaScatter();		// V4: the global fog or a medium of the media pass scatters light ( defined beside the fog's cvars )
+bool	R_VolumetricFogMayIdle();			// V6 ( V6h ): the cvars leave only the fog lights as a medium: a fog view without one it takes is idle
+bool	R_VolumetricFogBounds();			// V8: r_volumetricFogBounds, for the frontend's list of the view's bounded media ( review CN2-1 )
 // V4: whether a fog light the inject takes scatters light ( its albedo, ids.w, above 0 ). Where nothing scatters, the lights
 // are not taken at all: a fog light at albedo 0 only darkens and shines ( review O1-2 ). Record 0, the sun's slot, is never a
 // fog light the inject takes ( review QR3-1 )
@@ -126,10 +130,16 @@ const int FOG_CASTER_BOXES = 4;			// FROXEL_CASTER_BOXES of shaders/builtin/volu
 struct froxelView_t
 {
 	idVec4*		casterBoxes;		// [ records * 2 * FOG_CASTER_BOXES ] or NULL
+	// V8 ( B0 ): the view's bounded media ( R_VolumetricFogBoundsList ): entry i is ( min, max ) at fogBounds[ 2 i ] in the
+	// relative frame, a unit wider each way than its light's bounds, the w of its min the record's index, the w of its max 1
+	// where the medium scatters ( read by nothing yet: B3's flag, a record for the final review; review QR4-2 ). Outside their
+	// union a view without a map-wide medium holds clear air ( the pass's box, VolumetricFogPass::BoundsBox )
+	idVec4*		fogBounds;			// [ 2 * numFogBounds ] or NULL
+	int			numFogBounds;
 };
 
 // The hooks, in the order the light lists' frontend calls them ( tr_frontend_volumetricfog.cpp )
-float	R_VolumetricFogBeginView( const viewDef_t* viewDef );									// R_NumberRecordLights: the fog's switch; returns the reach, 0 = the fog reads no records in this view
+float	R_VolumetricFogBeginView( const viewDef_t* viewDef, bool& idle );						// R_NumberRecordLights: the fog's switch; returns the reach, 0 = the fog reads no records in this view; V6: idle = 0 because the view holds nothing the fog draws
 uint32	R_VolumetricFogRecordFlags( const viewLight_t* vLight, uint32 recordFlags );			// R_LightListFlattenRecord: the fog's bits of a record
 void	R_VolumetricFogLightRecord( const viewLight_t* vLight, uint32 recordFlags, recordLight_t& rec );	// R_LightListFlattenRecord, V4: a fog light's albedo ( ids.w ), its fog plane and its alpha's share ( the emitter lanes )
 void	R_VolumetricFogMarkLights( lightListView_t* llv, recordLight_t* records, float fogReach );	// R_NumberRecordLights: viewLight_t::fogRelevant; V5: a fog light beyond the fog's reach keeps the fog pass

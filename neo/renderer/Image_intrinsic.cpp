@@ -325,11 +325,6 @@ static void R_HDR_RGBA16FImage_ResQuarter( idImage* image, nvrhi::ICommandList* 
 	image->GenerateImage( NULL, renderSystem->GetWidth() / 4, renderSystem->GetHeight() / 4, TF_NEAREST, TR_CLAMP, TD_RGBA16F, nullptr, true );
 }
 
-static void R_HDR_RGBA16FImage_ResQuarter_Linear( idImage* image, nvrhi::ICommandList* commandList )
-{
-	image->GenerateImage( NULL, renderSystem->GetWidth() / 4, renderSystem->GetHeight() / 4, TF_LINEAR, TR_CLAMP, TD_LOOKUP_TABLE_RGBA, nullptr, true );
-}
-
 static void R_HDR_RGBA16FImage_Res64( idImage* image, nvrhi::ICommandList* commandList )
 {
 	image->GenerateImage( NULL, 64, 64, TF_NEAREST, TR_CLAMP, TD_RGBA16F, nullptr, true );
@@ -1130,14 +1125,12 @@ void idImageManager::CreateIntrinsicImages()
 
 	taaMotionVectorsImage = ImageFromFunction( "_taaMotionVectors", R_HDR_RG16FImage_ResNative ); // RB: could be shared with _currentNormals.zw
 	taaResolvedImage = ImageFromFunction( "_taaResolved", R_HDR_RGBA16FImage_ResNative_UAV );
+	glowMaskImage = ImageFromFunction( "_glowMask", R_HDR_RG16FImage_ResNative );		// WP-J21
 	taaFeedback1Image = ImageFromFunction( "_taaFeedback1", R_HDR_RGBA16FImage_ResNative_UAV );
 	taaFeedback2Image = ImageFromFunction( "_taaFeedback2", R_HDR_RGBA16FImage_ResNative_UAV );
 
 	envprobeHDRImage = globalImages->ImageFromFunction( "_envprobeHDR", R_EnvprobeImage_HDR );
 	envprobeDepthImage = ImageFromFunction( "_envprobeDepth", R_EnvprobeImage_Depth );
-
-	bloomRenderImage[0] = globalImages->ImageFromFunction( "_bloomRender0", R_HDR_RGBA16FImage_ResQuarter_Linear );
-	bloomRenderImage[1] = globalImages->ImageFromFunction( "_bloomRender1", R_HDR_RGBA16FImage_ResQuarter_Linear );
 
 	//glowImage[0] = globalImages->ImageFromFunction( "_glowImage0", R_RGBA8Image_ResGui );
 	//glowImage[1] = globalImages->ImageFromFunction( "_glowImage1", R_RGBA8Image_ResGui );

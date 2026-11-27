@@ -1092,6 +1092,22 @@ void idGameEdit::EntityChangeSpawnArgs( idEntity* ent, const idDict* newArgs )
 
 /*
 ================
+idGameEdit::EntityGetLightDefHandle
+
+V7: the render light def of a light entity, -1 for any other ( the light editor's Fog tab asks the renderer about it )
+================
+*/
+qhandle_t idGameEdit::EntityGetLightDefHandle( const idEntity* ent ) const
+{
+	if( ent != NULL && ent->IsType( idLight::Type ) )
+	{
+		return static_cast<const idLight*>( ent )->GetLightDefHandle();
+	}
+	return -1;
+}
+
+/*
+================
 idGameEdit::EntityUpdateVisuals
 ================
 */

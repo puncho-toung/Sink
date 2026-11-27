@@ -61,6 +61,7 @@ idRenderEntityLocal::idRenderEntityLocal()
 	entityRefs				= NULL;
 	firstInteraction		= NULL;
 	lastInteraction			= NULL;
+	surfLights				= NULL;		// track F ( F7 )
 	needsPortalSky			= false;
 }
 

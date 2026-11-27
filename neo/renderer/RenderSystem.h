@@ -239,9 +239,16 @@ struct performanceCounters_t
 	// ---- TRACK V: volumetric fog counters ----
 	int		c_fogPortalsMedium;			// V5f ( F1-3 ): fog portals the medium's rule decided ( a fog light the froxel fog may take )
 	int		c_fogPortalsNeverCulled;	// V5f: and of those, the portals it does not cull at any distance
+	uint64	usFogFE;					// V6 ( row 158 ): wall time of the fog's view work ( R_VolumetricFogMarkLights, R_VolumetricFogShadowFlags past its early returns, V6h's FogViewTakesFogLight; not the records' building, which is track F's: reviews QR2-1, O2-4 ), r_volumetricFogZones 1
+	uint64	usFogCasters;				// V6: wall time inside R_VolumetricFogCasterChanged over the frame ( the game thread ), r_volumetricFogZones 1
+	int		c_fogChangedCasters;		// V6: the changed casters' list when the views read it, at most 512; 513 = it overflowed
+	int		c_fogRecords;				// V6: light records built only because the fog's reach was above 0 ( RLF_CLUSTERED clear, or every record with the lists off ), over the frame's views
+	int		c_fogIdleViews;				// V6 ( V6h ): fog views that built nothing for the fog: no fog light taken, no other medium set
 	// ---- END TRACK V ----
 	uint64	usFindView;
 	uint64	usAddLights;
+	uint64	usAddModels;		// track F ( F7a ): R_AddModels, its jobs and the merge, summed over the frame's views
+	int		c_surfLightPairs;	// track F ( F7a ): surface-and-light pairs the model jobs' light loops visited
 	uint64	mocMicroSec;
 	uint64	frontEndMicroSec;	// sum of time in all RE_RenderScene's in a frame
 
@@ -365,6 +372,8 @@ struct backEndCounters_t
 	int		c_shadowAtlasFogOnlyTexels;	// V5: and the texels of those places
 	int		c_shadowAtlasSurfaceRefused;	// V5: lights with surfaces that the atlas refused a place ( one side or more )
 	int		c_fogStagesUnfogged;		// V5f ( F1-1 ): stages drawn after the apply without a fog twin where the fog lights were the froxel fog's
+	int		c_shadowAtlasFogOnlyRefused;	// V6 ( row 181 ): lights that light only the fog and that the atlas refused a place ( one side or more )
+	uint64	gpuFogZoneMicroSec[ 6 ];	// V6 ( row 182 ): the fog pass's zones by FOG_ZONE_* ( renderer/Passes/VolumetricFogPass.h ): sky mask, columns, media, inject, resolve, integrate; r_volumetricFogZones 1
 	// ---- END TRACK V ----
 	uint64	gpuMicroSec;
 
@@ -595,6 +604,25 @@ void R_ScreenshotFilename( int& lastNumber, const char* base, idStr& fileName );
 // ---- TRACK V ( V4 ): the froxel fog's media of a map from its worldspawn's keys; the game calls it at every spawn and
 // restore of the worldspawn ( renderer/tr_frontend_volumetricfog.cpp ) ----
 void R_VolumetricFogMapKeys( const idDict& worldspawnArgs );
+// V7: which fog draws a fog light, and why, for the light editor's Fog tab ( R_VolumetricFogLightStatus, the light def of
+// the last fog view's world by its handle; the editor words the answer )
+enum fogLightStatus_t
+{
+	FOGLIGHT_STATUS_FROXEL,			// the froxel fog draws it
+	FOGLIGHT_STATUS_UNKNOWN,		// no such light def in the last fog view's world
+	FOGLIGHT_STATUS_NOT_FOGLIGHT,	// its material is not a fog light
+	FOGLIGHT_STATUS_FOG_OFF,		// r_volumetricFog 0: the fog pass draws every fog light
+	FOGLIGHT_STATUS_LIGHTS_OFF,		// the froxel fog takes no fog lights ( r_volumetricFogLights, its media or its translucent fog off, the furnace )
+	FOGLIGHT_STATUS_NO_STAGE,		// its material has no stage
+	FOGLIGHT_STATUS_SPECTRUM,		// its material is of another spectrum
+	FOGLIGHT_STATUS_MATRIX,			// its material moves its texture
+	FOGLIGHT_STATUS_PARALLEL,		// a parallel light
+	FOGLIGHT_STATUS_NEVER,			// "volumetric" 2: the classic fog pass only
+	FOGLIGHT_STATUS_STRENGTH,		// its stage's alpha is 0
+	FOGLIGHT_STATUS_REACH,			// its volume reached past the fog's reach from the last fog view's eye
+	FOGLIGHT_STATUS_NOT_IN_VIEW		// not asked in the last fog view
+};
+fogLightStatus_t R_VolumetricFogLightStatus( qhandle_t lightDefHandle );
 // ---- END TRACK V ----
 
 #endif /* !__RENDERER_H__ */
