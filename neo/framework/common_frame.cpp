@@ -34,6 +34,12 @@ If you have questions concerning this license or the applicable additional terms
 #include "Common_local.h"
 #include "Prefetch.h"
 #include "../renderer/Image.h"
+#include "../imgui/SystemOptionsPanel.h"
+
+// System Options panel ( 2026-11-26 ): the panel writes cvars from Draw, which runs in the game thread beside the
+// render backend when com_smp is on; while it is open the frame runs synchronously, as it does for the editors. Chosen
+// once a frame, because the three places that act on it must agree and the panel can close inside Draw
+static bool frameSynchronous = true;
 
 // RB begin
 #if defined(USE_DOOMCLASSIC)
@@ -516,7 +522,7 @@ gameReturn_t idGameThread::RunGameAndDraw( int numGameFrames_, idUserCmdMgr& use
 
 	// start the thread going
 	// foresthale 2014-05-12: also check com_editors as many of them are not particularly thread-safe (editLights for example)
-	if( !com_smp.GetBool() || com_editors != 0 )
+	if( frameSynchronous )
 	{
 		// run it in the main thread so PIX profiling catches everything
 		Run();
@@ -704,7 +710,12 @@ void idCommonLocal::Draw()
 			renderSystem->SetColor( colorBlack );
 			renderSystem->DrawStretchPic( 0, 0, renderSystem->GetVirtualWidth(), renderSystem->GetVirtualHeight(), 0, 0, 1, 1, whiteMaterial );
 		}
-		game->Shell_Render();
+		// while the System Options panel shows the game through ( Preview held, or a section being adjusted ), the pause
+		// menu is not drawn ( nor updated: the panel takes every event meanwhile ), so that the picture shows undimmed
+		if( !( gameDraw && SystemOptions::HidesShell() ) )
+		{
+			game->Shell_Render();
+		}
 	}
 	else if( mapSpawned )
 	{
@@ -1017,7 +1028,8 @@ void idCommonLocal::Frame()
 		const emptyCommand_t* renderCommands = NULL;
 
 		// foresthale 2014-05-12: also check com_editors as many of them are not particularly thread-safe (editLights for example)
-		if( com_smp.GetBool() && com_editors == 0 )
+		frameSynchronous = !com_smp.GetBool() || com_editors != 0 || SystemOptions::IsOpen();
+		if( !frameSynchronous )
 		{
 			renderCommands = renderSystem->SwapCommandBuffers( &time_frontend, &time_backend, &time_moc, &time_gpu, &stats_backend, &stats_frontend );
 		}
@@ -1297,7 +1309,7 @@ void idCommonLocal::Frame()
 		frameTiming.startRenderTime = Sys_Microseconds();
 
 		// foresthale 2014-05-12: also check com_editors as many of them are not particularly thread-safe (editLights for example)
-		if( !com_smp.GetBool() || com_editors != 0 )
+		if( frameSynchronous )
 		{
 			// in non-smp mode, run the commands we just generated, instead of
 			// frame-delayed ones from a background thread
