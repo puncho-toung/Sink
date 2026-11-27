@@ -39,19 +39,25 @@ If you have questions concerning this license or the applicable additional terms
 	scatter, smoothing, tessellation) and puts into the areas of the world.
 
 	ProcessModel calls the three dispatchers at fixed points of the pass order.
-	Each pass lives in its own file (dress_decal.cpp, dress_chunk.cpp, later
-	dress_scatter.cpp, dress_smooth.cpp, dress_tess.cpp); dress.cpp holds only the dispatchers,
+	Each pass lives in its own file (dress_decal.cpp, dress_chunk.cpp, dress_smooth.cpp,
+	dress_color.cpp, later dress_scatter.cpp, dress_tess.cpp); dress.cpp holds only the dispatchers,
 	the checks that warn about dmap_* material keywords no pass reads and
-	map-only entities no pass bakes, and DressSeed.
+	map-only entities no pass bakes, DressParseNumbers and DressSeed.
 
 	A pass collects the tris it generates and inserts them (AddMapTriToAreas, or
 	whole groups, as dress_chunk.cpp does)
 	only after its walk of the areas is done, see the contract in dress.cpp.
 
-	World entity only: every dispatcher returns at once for any other entity.
+	World entity only, except the smoothing pass and the colour generators: they
+	only rewrite the normals and colours of tris already there, and DressAreasPostTjunction
+	runs them for every entity, so brush models smooth and colour like the world.
 
 ===============================================================================
 */
+
+// at the start of every dmap run, before any map is loaded: the passes that keep state over
+// the entities of one compile reset it here (DressSmoothReset, DressColorReset)
+void	DressBeginCompile();
 
 // between PutPrimitivesInAreas and Prelight: what a pass adds here is carved by the
 // static light frustums and optimized together with the brush geometry
@@ -83,6 +89,31 @@ void	DressDecalsPostTjunction( uEntity_t* e );
 // group of its own, so each is written as its own surface; FixGlobalTjunctions, which runs next,
 // repairs the seams against the groups not cut
 void	DressChunkWorldSurfaces( uEntity_t* e );
+
+// the smoothing pass (dress_smooth.cpp), from DressAreasPostTjunction for every entity: the
+// tris of every material whose own dmap_smoothAngle, else the worldspawn key dmap_smoothAngle,
+// asks for it get the angle-weighted mean of the face normals that meet at a vertex within
+// the angle (dress_smooth_core.h); only normals change. Only groups made of brush sides alone
+// take part (optimizeGroup_t::notBrushSides). The cvar dmap_smooth 0 turns it off
+void	DressSmoothPostTjunction( uEntity_t* e );
+void	DressSmoothReset();
+
+// the class of the compile-time vertex colour volumes (base/def/func.def)
+static const char* const FUNC_VERTEXCOLOR_CLASSNAME = "func_vertexcolor";
+
+// the colour generators (dress_color.cpp), from DressAreasPostTjunction for every entity
+// after the smoothing pass: every non-discrete group of a material with a dmap_colorGen
+// keyword (slope, volume) is written with vertex colour, computed per vertex from its
+// written normal and position and the func_vertexcolor brushes; only colours change. The
+// cvar dmap_colorGen 0 turns it off
+void	DressColorPostTjunction( uEntity_t* e );
+void	DressColorReset();
+
+// the numbers of a dmap keyword's argument text (dmapKeyword_t::args: the lexer's tokens
+// joined by single spaces, so "-0.5" arrives as "- 0.5"; parentheses around a vector are
+// skipped). Returns how many it read into values, or -1 when a word is neither a number
+// nor "-", "(" or ")", or when there are more than maxValues numbers
+int		DressParseNumbers( const char* text, float* values, int maxValues );
 
 // a seed for idRandom::SetSeed derived from map content only: the map entity index, the
 // primitive index inside that entity and a side (brush side, patch or mesh triangle) index.

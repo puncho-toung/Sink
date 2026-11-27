@@ -776,6 +776,7 @@ bool Dmap( const idCmdArgs& args ) //puncho - TC1: command errors follow cleanup
 	start = Sys_Milliseconds();
 
 	memset( dmapPhaseMS, 0, sizeof( dmapPhaseMS ) );
+	DressBeginCompile();	//puncho - Phase 2C P3: the dress passes' per-compile state
 	dmapOptimizeGroups = 0;
 	dmapMaxGroupTris = 0;
 	//puncho start - R1.4: an earlier compile may have left a group open

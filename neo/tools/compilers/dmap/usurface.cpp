@@ -46,7 +46,7 @@ creating a new one if needed.
 The entire list is assumed to come from the same planar primitive
 ===============
 */
-static void AddTriListToArea( uEntity_t* e, mapTri_t* triList, int planeNum, int areaNum, textureVectors_t* texVec )
+static void AddTriListToArea( uEntity_t* e, mapTri_t* triList, int planeNum, int areaNum, textureVectors_t* texVec, bool brushSide )	//puncho - Phase 2C P3: brushSide
 {
 	uArea_t*		area;
 	optimizeGroup_t*	group;
@@ -108,6 +108,14 @@ static void AddTriListToArea( uEntity_t* e, mapTri_t* triList, int planeNum, int
 		group->stBase = triList->stBase;	//puncho - camera-relative dmap st
 		area->groups = group;
 	}
+
+	//puncho start - Phase 2C P3: only groups made of brush sides alone get smoothed normals (dress_smooth.cpp); not part of the
+	// group key, so the groups and every byte stay as they were
+	if( !brushSide )
+	{
+		group->notBrushSides = true;
+	}
+	//puncho end
 
 	group->triList = MergeTriLists( group->triList, triList );
 }
@@ -699,7 +707,7 @@ void ClipTriIntoTree_r( idWinding* w, mapTri_t* originalTri, uEntity_t* e, node_
 
 		TexVecForTri( &texVec, originalTri );
 
-		AddTriListToArea( e, list, planeNum, node->area, &texVec );
+		AddTriListToArea( e, list, planeNum, node->area, &texVec, false );	//puncho - Phase 2C P3
 	}
 
 	delete w;
@@ -819,7 +827,7 @@ static void PutWindingIntoAreas_r( uEntity_t* e, const idWinding* w, side_t* sid
 
 				// put in single area
 				tri = TriListForSide( side, w );
-				AddTriListToArea( e, tri, side->planenum, area, &side->texVec );
+				AddTriListToArea( e, tri, side->planenum, area, &side->texVec, true );	//puncho - Phase 2C P3
 				return;
 			}
 		}
@@ -849,7 +857,7 @@ static void PutWindingIntoAreas_r( uEntity_t* e, const idWinding* w, side_t* sid
 		mapTri_t*	tri;
 
 		tri = TriListForSide( side, w );
-		AddTriListToArea( e, tri, side->planenum, node->area, &side->texVec );
+		AddTriListToArea( e, tri, side->planenum, node->area, &side->texVec, true );	//puncho - Phase 2C P3
 	}
 }
 
@@ -904,7 +912,7 @@ void AddMapTriToAreas( mapTri_t* tri, uEntity_t* e )
 
 		TexVecForTri( &texVec, newTri );
 
-		AddTriListToArea( e, newTri, planeNum, area, &texVec );
+		AddTriListToArea( e, newTri, planeNum, area, &texVec, false );	//puncho - Phase 2C P3
 	}
 	else
 	{

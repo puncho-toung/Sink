@@ -31,6 +31,20 @@ entityDef func_decal {
 	"parallel"				"0"
 }
 
+entityDef func_vertexcolor {
+	"editor_color"			"0.5 1 0.5"
+	"editor_mins"			"?"
+	"editor_maxs"			"?"
+	"editor_usage"			"Compile-time vertex colour volume: dmap tints the vertices inside its brushes of every material that says 'dmap_colorGen volume', in map order. 'mode' replace blends toward '_color', add adds it; 'falloff' fades the tint in over that many units inside the brush faces (0 = hard edge). The interaction reads the vertex colour's rgb. Never spawned in game, no collision."
+	"editor_color _color"	"r g b [a], 0 to 1 (alpha 1 when left out)"
+	"editor_float falloff"	"units inside the brush over which the tint fades in, 0 = hard (default 0)"
+	"editor_var mode"		"replace or add (default replace)"
+	"dmapOnly"				"1"
+	"_color"				"1 1 1 1"
+	"falloff"				"0"
+	"mode"					"replace"
+}
+
 entityDef func_mover {
 	"editor_color"				"0 .5 .8"
 	"editor_mins"				"?"

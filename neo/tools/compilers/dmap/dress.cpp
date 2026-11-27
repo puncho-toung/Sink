@@ -46,16 +46,21 @@ If you have questions concerning this license or the applicable additional terms
   Randomness comes from idRandom seeded with DressSeed, never from the order of
   a list.
 
+  A pass that inserts whole groups made from scratch (memset) sets
+  optimizeGroup_t::notBrushSides when its tris are not brush sides, or the smoothing
+  pass takes them as brush faces; a group copied from another (the chunk pass, light
+  carving) keeps its source's flag.
+
 */
 
-// the dmap_* material keywords some dress pass reads, NULL terminated. Empty until the
-// passes land: the scatter pass adds dmap_surfaceModel, dmap_foliage and dmap_smoothAngle,
-// the tessellation pass dmap_tessSize and dmap_colorGen
-static const char* const dressKeywords[] = { NULL };
+// the dmap_* material keywords some dress pass reads, NULL terminated: dmap_smoothAngle
+// (dress_smooth.cpp) and dmap_colorGen (dress_color.cpp). The scatter pass will add
+// dmap_surfaceModel and dmap_foliage, the tessellation pass dmap_tessSize
+static const char* const dressKeywords[] = { "dmap_smoothAngle", "dmap_colorGen", NULL };
 
 // the classes of map-only (dmapOnly) entities some dress pass bakes, NULL terminated. The
 // passes match the classname exactly: a def that inherits one of them is not baked
-static const char* const dressEntityClasses[] = { FUNC_DECAL_CLASSNAME, NULL };
+static const char* const dressEntityClasses[] = { FUNC_DECAL_CLASSNAME, FUNC_VERTEXCOLOR_CLASSNAME, NULL };
 
 // the classes of map-only entities that no dress pass bakes because another reader takes their keys
 // straight from the .map: the map graph's landmarks, carry volumes and landings (the game, at map
@@ -191,6 +196,17 @@ static void DressCheckMapOnlyEntities()
 
 /*
 ====================
+DressBeginCompile
+====================
+*/
+void DressBeginCompile()
+{
+	DressSmoothReset();
+	DressColorReset();
+}
+
+/*
+====================
 DressAreasPreOptimize
 
 Between PutPrimitivesInAreas and Prelight. Passes collect first and insert after
@@ -244,12 +260,77 @@ above.
 */
 void DressAreasPostTjunction( uEntity_t* e )
 {
+	// every entity: they only rewrite normals and colours, so brush models smooth and colour
+	// like the world. The colours read the smoothed normals, so smoothing goes first
+	DressSmoothPostTjunction( e );
+	DressColorPostTjunction( e );
+
 	if( dmapGlobals.entityNum != 0 )
 	{
 		return;
 	}
 
 	DressDecalsPostTjunction( e );
+}
+
+/*
+====================
+DressParseNumbers
+====================
+*/
+int DressParseNumbers( const char* text, float* values, int maxValues )
+{
+	int		count = 0;
+	bool	negate = false;
+
+	const char* p = text;
+	while( *p != '\0' )
+	{
+		if( isspace( ( unsigned char )*p ) )
+		{
+			p++;
+			continue;
+		}
+
+		// one word
+		const char* end = p;
+		while( *end != '\0' && !isspace( ( unsigned char )*end ) )
+		{
+			end++;
+		}
+		const int length = ( int )( end - p );
+
+		if( length == 1 && ( *p == '(' || *p == ')' ) )
+		{
+			p = end;
+			continue;
+		}
+		if( length == 1 && *p == '-' )
+		{
+			// the lexer's minus before the number it belongs to; a second one is not a number
+			if( negate )
+			{
+				return -1;
+			}
+			negate = true;
+			p = end;
+			continue;
+		}
+
+		// the whole word, and a plain finite number (strtod also reads "inf" and "nan")
+		char* parsed;
+		const double value = strtod( p, &parsed );
+		if( parsed != end || !( value > -1.0e30 && value < 1.0e30 ) || count == maxValues )
+		{
+			return -1;
+		}
+		values[count++] = ( float )( negate ? -value : value );
+		negate = false;
+		p = end;
+	}
+
+	// a trailing minus with no number after it
+	return negate ? -1 : count;
 }
 
 /*

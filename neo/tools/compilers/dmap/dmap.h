@@ -251,6 +251,7 @@ typedef struct optimizeGroup_s
 
 	bool				surfaceEmited;
 	bool				vertexColor;		// the tris carry a meaningful vertex colour: written as .proc vertexFormat 1
+	bool				notBrushSides;		//puncho - Phase 2C P3: some tri came in through AddMapTriToAreas (a patch, mesh, inlined model or dress pass), not from a brush side: it may carry normals of its own, so the smoothing pass leaves the group alone
 
 	mapTri_t* 			triList;
 	mapTri_t* 			regeneratedTris;	// after each island optimization
