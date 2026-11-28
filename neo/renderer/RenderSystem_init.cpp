@@ -115,7 +115,7 @@ idCVar r_useTrilinearFiltering( "r_useTrilinearFiltering", "1", CVAR_RENDERER | 
 idCVar r_mocOccluderMinPixels( "r_mocOccluderMinPixels", "0", CVAR_RENDERER | CVAR_FLOAT, "skip occluder surfaces smaller than this projected diameter" );
 idCVar r_mocOccluderMaxDist( "r_mocOccluderMaxDist", "0", CVAR_RENDERER | CVAR_FLOAT, "skip occluder surfaces beyond this distance" );
 idCVar r_mocTriangleBudget( "r_mocTriangleBudget", "0", CVAR_RENDERER | CVAR_INTEGER, "maximum occluder triangles submitted per view; zero unlimited" );
-idCVar r_mocFixes( "r_mocFixes", "0", CVAR_RENDERER | CVAR_INTEGER, "MOC fixes: 1 spot depth, 2 whole tiles, 4 near-plane proxies, 8 culled-light log" );
+idCVar r_mocFixes( "r_mocFixes", "7", CVAR_RENDERER | CVAR_INTEGER, "MOC fixes: 1 spot depth, 2 whole tiles, 4 near-plane proxies, 8 culled-light log" );
 idCVar r_lightGatherGrid( "r_lightGatherGrid", "0", CVAR_RENDERER | CVAR_INTEGER, "minimum area refs for spatial light gather; zero off" );
 idCVar r_lightGatherCell( "r_lightGatherCell", "1024", CVAR_RENDERER | CVAR_FLOAT, "minimum light-gather XY cell extent" );
 idCVar r_lightGatherCompare( "r_lightGatherCompare", "0", CVAR_RENDERER | CVAR_BOOL, "count refs the spatial gather drops that the plain walk would pass at its table or light bounds test" );
